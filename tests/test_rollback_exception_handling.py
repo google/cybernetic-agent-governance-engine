@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.gateway.governance.contracts import Violation
+from src.gateway.governance.contracts import MutatingTier, Violation
 from tests.fixtures.governor import make_governor
 
 # Hermetic: uses mock governor with mock tiers, no live services.
@@ -40,26 +40,29 @@ def mock_governor_with_tiers(classification_engine):
     mock_opa = Mock()
     mock_opa.evaluate_policy = AsyncMock(return_value={"allow": True})
 
-    tier_a = Mock()
+    tier_a = Mock(spec=MutatingTier)
     tier_a.tier_name = "tier_a"
     tier_a.phase = 2
     tier_a.order = 1
     tier_a.commit = AsyncMock()
     tier_a.rollback = AsyncMock()
+    tier_a.confirm = AsyncMock()
 
-    tier_b = Mock()
+    tier_b = Mock(spec=MutatingTier)
     tier_b.tier_name = "tier_b"
     tier_b.phase = 2
     tier_b.order = 2
     tier_b.commit = AsyncMock()
     tier_b.rollback = AsyncMock()
+    tier_b.confirm = AsyncMock()
 
-    tier_c = Mock()
+    tier_c = Mock(spec=MutatingTier)
     tier_c.tier_name = "tier_c"
     tier_c.phase = 2
     tier_c.order = 3
     tier_c.commit = AsyncMock()
     tier_c.rollback = AsyncMock()
+    tier_c.confirm = AsyncMock()
 
     gov = make_governor(
         opa=mock_opa,

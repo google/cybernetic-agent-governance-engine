@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -30,7 +31,6 @@ from src.gateway.governance.ftra.models import (
     RegistryState,
     TerminalClassification,
 )
-from src.gateway.governance.ftra.semantic_validator import validate_tool_input
 from src.gateway.governance.governor.metrics import GovernorMetrics, governor_metrics
 from src.gateway.governance.governor.pipeline import Stage, StageContext, StageOutput
 from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
@@ -43,7 +43,9 @@ OBSERVATION_NAME = "observation.name"
 class FtraStage(Stage):
     """Stage for FTRA boundary check.
 
-    Classifies the action against the active domain's terminal registry and,
+    FTRA owns irreversibility only (docs/governance/FTRA_SCOPE.md): it does no
+    parameter value validation. It classifies the action against the active
+    domain's terminal registry and,
     for a registered terminal with an autonomous envelope, applies the
     conditional-FTRA predicate (``autonomy.conditional_clear_reason``) using
     the domain's ``magnitude_extractor`` and the agent's reported confidence.
@@ -101,19 +103,6 @@ class FtraStage(Stage):
             _t0 = time.perf_counter()
 
             try:
-                semantic_result = validate_tool_input(tool_name, tool_input)
-                span.set_attribute(
-                    "cage.ftra.semantic_validation_passed", semantic_result.is_valid
-                )
-                if not semantic_result.is_valid:
-                    span.set_attribute(
-                        "cage.ftra.semantic_failure_code", semantic_result.failure_code
-                    )
-                    span.set_attribute(
-                        "cage.ftra.semantic_failed_parameter",
-                        semantic_result.failed_parameter or "",
-                    )
-
                 classifier = self._get_ftra_classifier()
                 provenance = classifier.classify_with_provenance(tool_name)
                 classification = provenance.classification
@@ -124,36 +113,33 @@ class FtraStage(Stage):
                     and classification == TerminalClassification.IRREVERSIBLE_TERMINAL
                 )
 
-                if not semantic_result.is_valid:
-                    logger.warning(
-                        "⚠️ FTRA Semantic Boundary Breach: Action '%s' failed semantic "
-                        "validation. Failure code: %s. Violations: %s",
-                        tool_name,
-                        semantic_result.failure_code,
-                        semantic_result.violations,
-                    )
-                    result = FtraBoundaryResult.from_semantic_breach(
-                        semantic_result=semantic_result,
-                        action_name=tool_name,
-                        classification=classification,
-                        registry_state=registry_state,
-                    )
-                else:
-                    clear_reason = conditional_clear_reason(
-                        classification=classification,
-                        registry_state=registry_state,
-                        envelope=provenance.envelope,
-                        magnitude=safe_magnitude(self._magnitude_extractor, tool_input),
-                        confidence=reported_confidence(tool_input),
-                        confidence_floor=get_agent_confidence_threshold(),
-                    )
-                    result = FtraBoundaryResult.from_classification(
-                        classification=classification,
-                        action_name=tool_name,
-                        registry_state=registry_state,
-                        bypassed_ftra_node=bypassed_ftra_node,
-                        clear_reason=clear_reason,
-                    )
+                # The only shape check FTRA owns: the magnitude the envelope
+                # compares. ``safe_magnitude`` yields None when there is no
+                # extractor, the extractor raises, or it returns a bool or a
+                # non-number; ``conditional_clear_reason`` never clears on None,
+                # a non-finite or a non-positive magnitude. Value policy belongs
+                # to STPA UCAs and OPA (docs/governance/FTRA_SCOPE.md).
+                magnitude = safe_magnitude(self._magnitude_extractor, tool_input)
+                span.set_attribute(
+                    "cage.ftra.magnitude_known",
+                    magnitude is not None and math.isfinite(magnitude),
+                )
+
+                clear_reason = conditional_clear_reason(
+                    classification=classification,
+                    registry_state=registry_state,
+                    envelope=provenance.envelope,
+                    magnitude=magnitude,
+                    confidence=reported_confidence(tool_input),
+                    confidence_floor=get_agent_confidence_threshold(),
+                )
+                result = FtraBoundaryResult.from_classification(
+                    classification=classification,
+                    action_name=tool_name,
+                    registry_state=registry_state,
+                    bypassed_ftra_node=bypassed_ftra_node,
+                    clear_reason=clear_reason,
+                )
 
                 if result.bypassed_ftra_node:
                     logger.warning(

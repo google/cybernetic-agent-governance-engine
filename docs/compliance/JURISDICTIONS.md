@@ -35,8 +35,7 @@ This document provides lean technical profiles for CAGE's jurisdiction-specific 
 | **IR-1** | Incident Response Policy and Procedures | POAM, runbooks | N/A |
 | **AU-2** | Audit Events — AgentSight Kernel + Cilium L7 Flows | AgentSight syscall traces | 3,600 (1h) |
 | **SI-7** | Software Integrity — AgentSight File Integrity Monitoring | AgentSight FIM events | 14,400 (4h) |
-| **AC-4** | Information Flow Enforcement — FTRA Parameter Smuggling Protection | FTRA flow enforcement traces | N/A |
-| **SI-10** | Input Validation — Multi-Component Protection | NeMo + FTRA validation traces | N/A |
+| **SI-10** | Input Validation — Multi-Component Protection | NeMo rails + STPA/OPA value checks, recorded by the FTRA boundary check | N/A |
 
 **Note:** Universal ISO/IEC 42001 controls (A.5.2, A.5.3, A.6.2, A.8.4, A.9.2, SC-4) also apply. See [Universal Controls](#universal-controls-isoiec-42001).
 
@@ -52,9 +51,7 @@ Governance events emitted by US_FED deployments that map to registered controls:
 | `cilium_l7_flow` | SC-7 | Cilium Hubble flow logs | `nist.SC-7.passed` |
 | `agentsight_syscall` | AU-2 | AgentSight eBPF daemon | `nist.AU-2.passed` |
 | `agentsight_fim` | SI-7 | AgentSight file integrity monitor | `nist.SI-7.passed` |
-| `ftra_boundary_check` | SI-10 | FTRA semantic validator | `nist.SI-10.passed` |
-| `ftra_semantic_validation` | SI-10 | FTRA ActionSchema validator | `nist.SI-10.passed` |
-| `ftra_flow_enforcement` | AC-4 | FTRA parameter flow enforcer | `nist.AC-4.passed` |
+| `ftra_boundary_check` | SI-10 | FTRA boundary check (value validation by STPA/OPA; see [FTRA_SCOPE.md](../governance/FTRA_SCOPE.md)) | `nist.SI-10.passed` |
 
 **Universal events** (all regions): `nemo_input_scan`, `nemo_output_rail`, `opa_policy_check`, `otel_trace`, `stpa_validation`, `causal_gatekeeper`, `saga_rollback`, `context_accumulate`, `defer_parking`
 
@@ -284,7 +281,7 @@ The following controls apply to **ALL** deployment regions:
 
 ### Jurisdictional Isolation Invariants
 
-1. **US_FED-only controls** (SA-11, SC-7, SC-8, AC-2, IR-1, AU-2, SI-7, AC-4, SI-10) must **NOT** appear in EU_ECB or APAC_MAS SSPs.
+1. **US_FED-only controls** (SA-11, SC-7, SC-8, AC-2, IR-1, AU-2, SI-7, SI-10) must **NOT** appear in EU_ECB or APAC_MAS SSPs.
 2. **EU_ECB-only controls** (Article 12, Article 13) must **NOT** appear in US_FED or APAC_MAS SSPs.
 3. **APAC_MAS-only controls** (MAS-FEAT-1) must **NOT** appear in US_FED or EU_ECB SSPs.
 4. **Universal controls** (A.5.2, A.5.3, A.6.2, A.8.4, A.9.2, SC-4) apply to **ALL** regions.
@@ -313,10 +310,10 @@ eu_ecb_controls = get_control_meta("EU_ECB")
 CI enforces jurisdictional separation via [`tests/test_compliance_bridge.py::TestFtraControlMappings`](../../tests/test_compliance_bridge.py):
 
 ```python
-def test_ac4_not_in_eu_ecb():
-    """AC-4 must NOT be present in EU_ECB controls (jurisdictional isolation)."""
+def test_si10_not_in_eu_ecb():
+    """SI-10 must NOT be present in EU_ECB controls (jurisdictional isolation)."""
     eu_ecb_controls = get_control_meta("EU_ECB")
-    assert "AC-4" not in eu_ecb_controls
+    assert "SI-10" not in eu_ecb_controls
 ```
 
 ---

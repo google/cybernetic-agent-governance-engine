@@ -50,7 +50,7 @@ class TestPhysicalAIPlugin:
         """Plugin has expected metadata."""
         plugin = PhysicalAICagePlugin()
         assert plugin.name == "physical_ai"
-        assert plugin.api_version == "1.0"
+        assert plugin.api_version == "2.0"
         assert isinstance(get_plugin(), PhysicalAICagePlugin)
 
     def test_control_constants(self):

@@ -21,6 +21,7 @@ decoupling the Gateway from the specific application implementations.
 import hashlib
 import math
 import time
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -170,7 +171,7 @@ def coerce_bound(value: object) -> float | None:
 
 @dataclass(frozen=True)
 class Violation:
-    """Structured violation emitted by a GovernanceTierPlugin.
+    """Structured violation emitted by a governance tier or kernel stage.
 
     Every ``evaluate()`` or ``commit()`` call on a domain tier returns a
     (possibly empty) list of ``Violation`` objects.  A non-empty list causes
@@ -295,44 +296,34 @@ class CommitReceipt:
 
 
 # ---------------------------------------------------------------------------
-# GovernanceTierPlugin — domain-specific governance tier protocol
+# Governance tiers — ReadOnlyTier (phase 1) and MutatingTier (phase 2)
 # ---------------------------------------------------------------------------
 
 
-class GovernanceTierPlugin(Protocol):
-    """Protocol for a domain-specific governance evaluation tier.
+class GovernanceTier(ABC):
+    """A domain- or jurisdiction-contributed governance tier.
 
-    Domain plugins implement this protocol for each
-    governance tier they contribute to the kernel.  Tiers are handed over in
-    ``PluginContribution.tiers`` and fixed when ``assemble_governor()`` builds
-    the (immutable) governor.  They are executed in ``(phase, order,
-    tier_name)`` order by the governor pipeline.
+    Never subclassed directly: a tier is either a :class:`ReadOnlyTier`
+    (phase 1, validation only) or a :class:`MutatingTier` (phase 2, reserves
+    and releases state). The kind is nominal, so ``phase`` is derived from
+    the class and never declared by the tier (ADR-009). A mutating tier that
+    forgets a hook cannot be instantiated; it is never silently run as a
+    read-only one.
 
-    Phase semantics:
-        - **Phase 1** (``phase == 1``): read-only validation.  ``evaluate()``
-          is called; ``commit()`` and ``rollback()`` are never called.
-        - **Phase 2** (``phase == 2``): atomic mutation.  ``commit()`` is
-          called if all Phase 1 tiers passed and returns a ``CommitReceipt``
-          when it mutated state.  On failure, ``rollback(receipt)`` is called
-          in LIFO order for every receipt issued so far.
-
-    The ``order`` property (D5 fix) is the explicit integer ordering value
-    that corresponds to the paper's tier numbering.  It replaces the v1
-    alphabetic ``tier_name`` sort, which silently inverted the Consensus →
-    Causal sequence asserted by ``proof/model.py``.
+    Tiers are handed over in ``PluginContribution.tiers`` (or a
+    ``JurisdictionContribution``) and fixed when ``assemble_governor()``
+    builds the immutable governor. They run in ``(phase, order, tier_name)``
+    order. ``order`` (D5 fix) is the explicit integer matching the paper's
+    tier numbering; ``tier_name`` only breaks ties.
     """
 
     @property
+    @abstractmethod
     def tier_name(self) -> str:
         """Stable identifier for this tier (e.g. 'cbf', 'fiscal')."""
-        ...
 
     @property
-    def phase(self) -> int:
-        """1 = read-only validation, 2 = atomic mutation."""
-        ...
-
-    @property
+    @abstractmethod
     def order(self) -> int:
         """Explicit integer tier order matching the formal model.
 
@@ -340,11 +331,11 @@ class GovernanceTierPlugin(Protocol):
         used only as a deterministic tie-break when two tiers share the same
         ``(phase, order)`` pair.
         """
-        ...
 
-    def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        """Return True if this tier has governance authority over the action."""
-        ...
+    @property
+    @abstractmethod
+    def phase(self) -> int:
+        """1 for a :class:`ReadOnlyTier`, 2 for a :class:`MutatingTier`. Derived, never declared."""
 
     @property
     def runtime_requirements(self) -> tuple[str, ...]:
@@ -356,44 +347,91 @@ class GovernanceTierPlugin(Protocol):
         """
         return ()
 
+    @abstractmethod
+    def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+        """Return True if this tier has governance authority over the action."""
+
+    @abstractmethod
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only evaluation.  Return violations (may be empty).
 
-        Phase 1: the tier's validation.  Phase 2: a side-effect-free preview
-        of ``commit()``, run under DRY_RUN so ``verify()`` reports the refusal
-        live execution would produce.  Must never mutate state.
+        Read-only tier: the tier's validation.  Mutating tier: a
+        side-effect-free preview of ``commit()`` (DRY_RUN, or approval
+        pending).  Must never mutate state.
         """
-        ...
 
+
+class ReadOnlyTier(GovernanceTier):
+    """Phase-1 tier: ``evaluate()`` only. It holds and changes no state.
+
+    Defining ``commit`` / ``rollback`` / ``confirm`` on a read-only tier is
+    refused when the governor wraps it (``DomainTierStage``): such a tier
+    meant to mutate and must be a :class:`MutatingTier`.
+    """
+
+    @property
+    def phase(self) -> int:
+        return 1
+
+
+class MutatingTier(GovernanceTier):
+    """Phase-2 tier: reserves state for a request and settles it afterwards.
+
+    Lifecycle of one reservation (``CommitReceipt``):
+
+    * ``commit()`` reserves, once phase 1 is clean under a committing profile;
+    * ``rollback(receipt)`` releases it — the run was refused, or the sealed
+      action was not carried out;
+    * ``confirm(receipt)`` makes it permanent — the sealed action was carried
+      out (``SymbolicGovernor.settle(seal, executed=True)``).
+
+    A reservation that is never settled (the process died between seal and
+    actuation) must expire on the tier's own clock: ``commit()`` may not
+    assume ``confirm()`` or ``rollback()`` will ever arrive.
+    """
+
+    @property
+    def phase(self) -> int:
+        return 2
+
+    @abstractmethod
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        """Phase 2: atomic state mutation.
+        """Reserve atomically.
 
         Returns ``(violations, receipt)``.  ``receipt`` is not None if and only
         if state was mutated.  A commit that returns violations must either
         have mutated nothing (receipt None) or return its receipt so the caller
         can undo it.  A commit that raises must leave no state mutated.
-        Phase-1 tiers return ``([], None)``.
         """
-        ...
 
+    @abstractmethod
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        """Phase 2: undo the commit described by ``receipt`` (LIFO on failure).
+        """Release the reservation described by ``receipt`` (LIFO on failure).
 
         Decides what to undo from ``receipt`` alone; must never re-read
         ``params`` for a magnitude or a handle.
         """
-        ...
+
+    @abstractmethod
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """Make the reservation in ``receipt`` permanent: the action was carried out.
+
+        A tier whose commit is already final (nothing expires) implements this
+        as a no-op. Decides from ``receipt`` alone, like ``rollback``.
+        """
 
 
 # ---------------------------------------------------------------------------
 # CagePlugin — capability plugin discovered via entry points (D7 fix)
 # ---------------------------------------------------------------------------
 
-CAGE_PLUGIN_API_VERSION = "1.0"
+CAGE_PLUGIN_API_VERSION = "2.0"
 
 
 @dataclass(frozen=True)
@@ -493,7 +531,7 @@ class PluginContribution:
     """
 
     domain: str
-    tiers: tuple["GovernanceTierPlugin", ...] = ()
+    tiers: tuple["GovernanceTier", ...] = ()
     invariants: tuple["InvariantModel", ...] = ()
     uca_rules: tuple["UcaRule", ...] = ()
     saga_compensators: tuple["SagaCompensator", ...] = ()

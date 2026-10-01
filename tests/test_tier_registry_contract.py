@@ -116,11 +116,14 @@ def test_symbolic_governor_requires_context_at_initialization() -> None:
 
 
 def test_tier_registration_requires_callable_with_predictable_signature() -> None:
-    """Tier plugins must implement GovernanceTierPlugin protocol methods."""
-    from src.gateway.governance.contracts import GovernanceTierPlugin
+    """Tiers declare the read-only hooks; only mutating tiers declare commit/rollback/confirm."""
+    from src.gateway.governance.contracts import GovernanceTier, MutatingTier, ReadOnlyTier
 
-    for method_name in ("claims_action", "evaluate", "commit"):
-        assert hasattr(GovernanceTierPlugin, method_name), f"GovernanceTierPlugin must declare {method_name}"
+    for method_name in ("claims_action", "evaluate"):
+        assert hasattr(GovernanceTier, method_name), f"GovernanceTier must declare {method_name}"
+    for method_name in ("commit", "rollback", "confirm"):
+        assert method_name in MutatingTier.__abstractmethods__, f"MutatingTier must require {method_name}"
+        assert not hasattr(ReadOnlyTier, method_name), f"ReadOnlyTier must not declare {method_name}"
 
 
 def test_domain_plugins_must_not_import_from_kernel() -> None:
@@ -310,17 +313,13 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     Enforcement: run_pipeline() via SymbolicGovernor.verify().
     """
     from unittest.mock import MagicMock
-    from src.gateway.governance.contracts import GovernanceTierPlugin
+    from src.gateway.governance.contracts import ReadOnlyTier
     from tests.fixtures.governor import make_governor
 
-    class BrokenTier(GovernanceTierPlugin):
+    class BrokenTier(ReadOnlyTier):
         @property
         def tier_name(self) -> str:
             return "broken_tier"
-
-        @property
-        def phase(self) -> int:
-            return 1
 
         @property
         def order(self) -> int:
@@ -331,12 +330,6 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
 
         async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
             raise RuntimeError("Tier crashed with unexpected exception")
-
-        async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Any], Any]:
-            return [], None
-
-        async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
-            pass
 
     gov = make_governor(
         classifier=classification_engine,
@@ -365,17 +358,13 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     """
     import asyncio
     from unittest.mock import MagicMock
-    from src.gateway.governance.contracts import GovernanceTierPlugin
+    from src.gateway.governance.contracts import ReadOnlyTier
     from tests.fixtures.governor import make_governor
 
-    class TimeoutTier(GovernanceTierPlugin):
+    class TimeoutTier(ReadOnlyTier):
         @property
         def tier_name(self) -> str:
             return "timeout_tier"
-
-        @property
-        def phase(self) -> int:
-            return 1
 
         @property
         def order(self) -> int:
@@ -386,12 +375,6 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
 
         async def evaluate(self, action: str, params: dict[str, Any]) -> list[Any]:
             raise asyncio.TimeoutError("Tier evaluation exceeded SLA budget")
-
-        async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Any], Any]:
-            return [], None
-
-        async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
-            pass
 
     gov = make_governor(
         classifier=classification_engine,

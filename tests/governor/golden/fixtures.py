@@ -56,7 +56,7 @@ class Scenario:
 
     # Mocks configuration
     ftra_classification: TerminalClassification = TerminalClassification.READ_ONLY
-    ftra_semantic_breach: bool = False
+    ftra_registry_state: RegistryState = RegistryState.REGISTERED
 
     stpa_violations: list[str] = field(default_factory=list)
 
@@ -212,23 +212,14 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
         domain_tiers=domain_tiers,
     )
 
-    # Mock FTRA boundary check to return deterministic result without loading registry
-    if scenario.ftra_semantic_breach:
-        ftra_res = FtraBoundaryResult(
-            requires_hitl=True,
-            irreversibility_score=1.0,
-            classification=f"{scenario.ftra_classification.value}_SEMANTIC_BREACH",
-            terminal_match=scenario.action,
-            violations=[Violation(tier="ftra", code="FTRA_SEMANTIC_BREACH", message=f"FTRA Semantic Boundary Breach: Action '{scenario.action}' failed semantic validation.", kind=ViolationKind.HARD)],
-            bypassed_ftra_node=False,
-        )
-    else:
-        # Golden scenarios model registered actions outside any autonomous envelope.
-        ftra_res = FtraBoundaryResult.from_classification(
-            scenario.ftra_classification,
-            scenario.action,
-            registry_state=RegistryState.REGISTERED,
-        )
+    # Mock FTRA boundary check to return deterministic result without loading registry.
+    # Golden scenarios model registered actions outside any autonomous envelope,
+    # unless a scenario overrides the registry provenance.
+    ftra_res = FtraBoundaryResult.from_classification(
+        scenario.ftra_classification,
+        scenario.action,
+        registry_state=scenario.ftra_registry_state,
+    )
     mock_ftra_check = AsyncMock(return_value=ftra_res)
     from src.gateway.governance.governor.stages.ftra import FtraStage
     ftra_stage = next(s for s in governor.stages if isinstance(s, FtraStage))
@@ -414,13 +405,14 @@ SCENARIOS: list[Scenario] = [
         ftra_classification=TerminalClassification.EXTERNALLY_REVERSIBLE,
     ),
 
-    # 21. FTRA semantic breach
+    # 21. FTRA registry unavailable (HARD; replaces the deleted semantic-breach scenario)
     Scenario(
-        id="21_ftra_semantic_breach",
-        description="FTRA boundary check detects semantic breach in action parameters",
+        id="21_ftra_registry_unavailable",
+        description="FTRA boundary check cannot load the terminal registry and fails closed",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
-        ftra_semantic_breach=True,
+        ftra_classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+        ftra_registry_state=RegistryState.UNAVAILABLE,
     ),
 
     # 22. Consensus REJECT

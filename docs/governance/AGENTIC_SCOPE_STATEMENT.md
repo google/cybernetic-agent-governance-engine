@@ -194,9 +194,9 @@ layer propagate to the governed system.
 The local confidence pre-check in `src/gateway/governance/governor/stages/confidence.py` Tier 2 applies
 `AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable) to the ConsensusEngine's
 own LLM calls. If the governance LLM call has `confidence < 0.95`, the request is
-escalated to HITL rather than silently allowed. A **structural corroboration heuristic**
-(POAM-TIER2-001) derives an independent confidence signal from STPA violation count and
-OPA decision margin to contradict unconditionally high self-reported confidence.
+escalated to HITL rather than silently allowed. High self-reported confidence cannot
+override a structural refusal: every STPA finding and every undecided OPA verdict is
+`HARD`, and the pipeline stops before the confidence stage runs.
 
 ### 6.2 Residual Risk
 

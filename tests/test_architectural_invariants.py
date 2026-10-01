@@ -230,8 +230,7 @@ async def test_execute_trade_action_traverses_actuator():
                         amount=10.0,
                         currency="USD",
                         confidence=0.95,
-                        governor=MagicMock(),
-                        safety_filter=AsyncMock(),
+                        governor=MagicMock(settle=AsyncMock(return_value=[])),
                     )
 
     # Assert the actuate spy was called

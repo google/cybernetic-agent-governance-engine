@@ -59,7 +59,7 @@ class FinanceCagePlugin(CagePlugin):
     """The finance domain capability plugin."""
 
     name = "finance"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = DomainConfig(
         ftra_registry_path=Path(__file__).resolve().parents[2] / "config" / "ftra" / "terminal_registry.json",
         # src/cage_finance/opa/trade_governance.rego
@@ -119,7 +119,7 @@ class FinanceCagePlugin(CagePlugin):
             safety_filter=cbf,
             consensus=consensus_gate,
             narrowers=(AmountNarrower(),),
-            tool_provider=FinancialToolProvider(safety_filter=cbf),
+            tool_provider=FinancialToolProvider(),
             threshold_sections={"finance": FinanceThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},

@@ -70,7 +70,7 @@
         "twap_window_seconds": 300,
         "_comment_b8": "B8 — Maximum TWAP slippage in basis points (1 bps = 0.01%). HITL_ESCALATE severity. 50 bps = 0.5% max slippage. Window defaults to 300 seconds.",
         "b10_min_rollback_window_seconds": 60,
-        "_comment_b10": "B10 — Minimum rollback window (seconds). HARD_BLOCK severity. Must be >= 60s to justify EXTERNALLY_REVERSIBLE classification. If B10 fails, action is re-classified to IRREVERSIBLE_TERMINAL."
+        "_comment_b10": "B10 — Minimum rollback window (seconds). Must be >= 60s to justify EXTERNALLY_REVERSIBLE classification. A closed rollback window is a HITL violation (B10_ROLLBACK_WINDOW_CLOSED): the request parks for human approval. A missing or invalid threshold is HARD_BLOCK."
       }
     },
     "healthcare": {

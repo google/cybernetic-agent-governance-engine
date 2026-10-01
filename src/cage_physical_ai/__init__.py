@@ -20,13 +20,13 @@ from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTi
 from src.cage_physical_ai.tiers.physical_consensus_tier import (
     PhysicalSafetyConsensusTier,
 )
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import GovernanceTier
 
 
 def create_physical_ai_tiers(
     cbf: Any = None,
     consensus_engine: Any = None,
-) -> tuple[GovernanceTierPlugin, ...]:
+) -> tuple[GovernanceTier, ...]:
     """Create physical AI domain governance tiers.
 
     Returns:

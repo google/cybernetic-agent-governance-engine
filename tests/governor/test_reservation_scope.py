@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
+from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation, ViolationKind
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 ENTRY_POINTS = ("govern", "revalidate_post_hitl")
 
 
-class _Tier:
+class _Tier(MutatingTier):
     """Phase-2 tier double recording commit/rollback order."""
 
     def __init__(
@@ -68,7 +68,6 @@ class _Tier:
         self.commit_started = asyncio.Event()
 
     tier_name = property(lambda self: self._name)
-    phase = property(lambda self: 2)
     order = property(lambda self: self._order)
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
@@ -85,6 +84,9 @@ class _Tier:
         if self._commit_raises is not None:
             raise self._commit_raises
         return [], CommitReceipt(tier=self._name, magnitude=float(self._order))
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        self.log.append(f"confirm:{self._name}")
 
     async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         assert receipt.tier == self._name

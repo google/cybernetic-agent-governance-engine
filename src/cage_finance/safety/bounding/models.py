@@ -86,6 +86,15 @@ class ContractResult:
             "description": "Structured diagnostic information for audit trail and human review"
         },
     )
+    code: str | None = field(
+        default=None,
+        metadata={
+            "description": (
+                "Violation code for a refusal; None means the tier derives "
+                "BOUNDING_<contract_id>_<severity>"
+            )
+        },
+    )
 
     def __post_init__(self) -> None:
         """Validate contract result invariants."""

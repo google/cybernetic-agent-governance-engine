@@ -35,7 +35,7 @@ from opentelemetry.trace import Status, StatusCode
 from src.gateway.governance.classification_engine import ClassificationContext
 from src.gateway.governance.constants import ControlRegistry
 from src.gateway.governance.contracts import (
-    GovernanceTierPlugin,
+    GovernanceTier,
     Violation,
     ViolationKind,
 )
@@ -51,6 +51,7 @@ from src.gateway.governance.governor.pipeline import (
     run_pipeline,
 )
 from src.gateway.governance.governor.sealing import run_sealed
+from src.gateway.governance.governor.settlement import SettlementLedger, settle
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.verdicts import (
     handle_defer,
@@ -76,7 +77,7 @@ tracer = trace.get_tracer(__name__)
 class SymbolicGovernor:
     """Immutable governor over one set of assembled components."""
 
-    __slots__ = ("_components", "_stages")
+    __slots__ = ("_components", "_settlements", "_stages")
 
     def __init__(self, components: GovernorComponents) -> None:
         # order_stages rejects duplicate tier names and sorts by (phase, order);
@@ -84,6 +85,9 @@ class SymbolicGovernor:
         stages = (*components.core_stages, *order_stages(components.plugin_tiers))
         object.__setattr__(self, "_components", components)
         object.__setattr__(self, "_stages", stages)
+        # The ledger's binding is fixed; its entries are the per-seal commits
+        # awaiting settle().  The governor's configuration stays immutable.
+        object.__setattr__(self, "_settlements", SettlementLedger())
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise AttributeError(f"SymbolicGovernor is immutable; cannot set {name!r}")
@@ -100,7 +104,7 @@ class SymbolicGovernor:
         return self._stages
 
     @property
-    def domain_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+    def domain_tiers(self) -> tuple[GovernanceTier, ...]:
         return tuple(
             sorted(
                 self._components.domain_tiers,
@@ -109,7 +113,7 @@ class SymbolicGovernor:
         )
 
     @property
-    def tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+    def tiers(self) -> tuple[GovernanceTier, ...]:
         """Domain and jurisdiction tiers in pipeline order."""
         return tuple(
             sorted(
@@ -298,7 +302,9 @@ class SymbolicGovernor:
             )
 
             ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
-            result, seal = await run_sealed(self.stages, ctx, params, path="govern")
+            result, seal = await run_sealed(
+                self.stages, ctx, params, path="govern", settlements=self._settlements
+            )
             if seal is None:
                 seal = await self._sealed_narrow(tool_name, params, result)
             span.set_attribute("cage.seal_issued", True)
@@ -342,7 +348,12 @@ class SymbolicGovernor:
 
         ctx = StageContext(action=action, params=copy.deepcopy(narrowed), profile=Profile.FULL)
         rerun, seal = await run_sealed(
-            self.stages, ctx, narrowed, path="govern_narrow", on_seal=_deliver
+            self.stages,
+            ctx,
+            narrowed,
+            path="govern_narrow",
+            settlements=self._settlements,
+            on_seal=_deliver,
         )
         span = trace.get_current_span()
         span.set_attribute("cage.governance.narrow_reverified", seal is not None)
@@ -417,7 +428,11 @@ class SymbolicGovernor:
                 )
             ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
             result, seal = await run_sealed(
-                self.stages, ctx, params, path="revalidate_post_hitl"
+                self.stages,
+                ctx,
+                params,
+                path="revalidate_post_hitl",
+                settlements=self._settlements,
             )
             if result.barrier_outcome is not None:
                 span.set_attribute("toctou.barrier_outcome", result.barrier_outcome.value)
@@ -429,6 +444,35 @@ class SymbolicGovernor:
                     await _deny_drift(action, params, result, approved)
                 await _deny(action, params, result)
             return seal
+
+    async def settle(self, seal: str, *, executed: bool) -> list[Violation]:
+        """Settle the phase-2 commits behind ``seal`` after the sealed action.
+
+        Call once the action has run (``executed=True``: every mutating tier
+        confirms its reservation) or definitively has not (``executed=False``:
+        every reservation is released, last in first out).  Returns one HARD
+        ``CONFIRM_FAILED`` / ``ROLLBACK_FAILED`` violation per failed hook;
+        those need manual reconciliation.
+
+        Idempotent: a seal with no held commits (none were made, it was
+        already settled, or it outlived the ledger's hold window) settles to
+        ``[]``.  A seal that is never settled is left to each tier's own
+        expiry; see :mod:`.settlement`.
+        """
+        with tracer.start_as_current_span("symbolic_governor.settle") as span:
+            commits = self._settlements.take(seal)
+            span.set_attribute("cage.settlement.executed", executed)
+            span.set_attribute("cage.settlement.commit_count", len(commits))
+            failures = await settle(commits, executed=executed)
+            span.set_attribute("cage.settlement.failure_count", len(failures))
+            if failures:
+                span.set_status(Status(StatusCode.ERROR, "settlement failed"))
+                logger.critical(
+                    "settlement (executed=%s) failed for %s; manual reconciliation required",
+                    executed,
+                    ", ".join(v.tier for v in failures),
+                )
+            return failures
 
     async def verify(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """Dry-run the pipeline and classify it; commit, park and seal nothing.
@@ -486,7 +530,6 @@ class SymbolicGovernor:
                 "tier_failures": list(result.tier_failures),
                 "opa_results": result.opa_verdict,
                 "pending_payload": None,
-                "stpa_violation_count": ctx.stpa_violation_count,
                 "ftra_boundary_result": result.ftra,
                 "tier_violations": violations,
             }

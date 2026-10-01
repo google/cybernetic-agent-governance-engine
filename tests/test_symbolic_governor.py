@@ -1083,9 +1083,9 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit.return_value = (True, "SAFE", 0.0)
     
-    from src.gateway.governance.contracts import Violation, ViolationKind
-    
-    fiscal_tier = AsyncMock()
+    from src.gateway.governance.contracts import MutatingTier, Violation, ViolationKind
+
+    fiscal_tier = MagicMock(spec=MutatingTier)  # async hooks become AsyncMocks
     fiscal_tier.tier_name = "fiscal"
     fiscal_tier.phase = 2
     fiscal_tier.order = 4

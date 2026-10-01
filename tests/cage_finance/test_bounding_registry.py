@@ -67,12 +67,11 @@ class TestBoundingContractRegistry:
             venue="NYSE",
         )
 
-        results, override = registry.evaluate_all(request)
+        results = registry.evaluate_all(request)
 
         assert len(results) == 1
         assert results[0].contract_id == "B1"
         assert results[0].admitted is True
-        assert override is None
 
     def test_evaluate_all_b1_fail(self):
         """Registry evaluates B1 contract failure."""
@@ -92,13 +91,12 @@ class TestBoundingContractRegistry:
             venue="NYSE",
         )
 
-        results, override = registry.evaluate_all(request)
+        results = registry.evaluate_all(request)
 
         assert len(results) == 1
         assert results[0].contract_id == "B1"
         assert results[0].admitted is False
         assert results[0].severity == ContractSeverity.HARD_BLOCK
-        assert override is None
 
     def test_evaluate_all_fail_fast_stops_on_hard_block(self):
         """Registry stops evaluation after first HARD_BLOCK failure."""
@@ -118,15 +116,15 @@ class TestBoundingContractRegistry:
             venue="NYSE",
         )
 
-        results, _override = registry.evaluate_all(request)
+        results = registry.evaluate_all(request)
 
         # Should stop after B1 fails (fail-fast optimization)
         assert len(results) == 1
         assert results[0].contract_id == "B1"
         assert results[0].admitted is False
 
-    def test_evaluate_b10_classification_override(self):
-        """Registry propagates B10 classification override when it fails."""
+    def test_evaluate_b10_closed_window_is_hitl(self):
+        """A closed B10 rollback window is a HITL result, not a HARD block or override."""
         thresholds = {
             "bounding": {
                 "enabled_contracts": ["B10"],
@@ -154,12 +152,13 @@ class TestBoundingContractRegistry:
             rollback_window_seconds=300,
         )
 
-        results, override = registry.evaluate_all(request)
+        results = registry.evaluate_all(request)
 
         assert len(results) == 1
         assert results[0].contract_id == "B10"
         assert results[0].admitted is False
-        assert override == "IRREVERSIBLE_TERMINAL"  # Critical!
+        assert results[0].severity == ContractSeverity.HITL_ESCALATE
+        assert results[0].code == "B10_ROLLBACK_WINDOW_CLOSED"
 
     def test_evaluate_unknown_contract_raises(self):
         """Registry raises ValueError for unknown contract ID."""

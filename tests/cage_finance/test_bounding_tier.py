@@ -14,6 +14,9 @@
 
 """Tests for BoundingContractTierPlugin integration."""
 
+from contextlib import asynccontextmanager
+from unittest.mock import MagicMock
+
 import pytest
 
 from src.cage_finance.safety.bounding.models import ContractSeverity
@@ -189,50 +192,113 @@ class TestBoundingContractTierPlugin:
         assert violations[0].code == "INVALID_REQUEST_PARAMS"
         assert violations[0].kind == ViolationKind.HARD
 
+    def test_is_read_only(self):
+        """Bounding is a ReadOnlyTier: it defines no commit, rollback or confirm."""
+        from src.gateway.governance.contracts import ReadOnlyTier
+
+        tier = BoundingContractTierPlugin(BoundingContractRegistry({"bounding": {}}))
+        assert isinstance(tier, ReadOnlyTier)
+        assert not any(hasattr(tier, hook) for hook in ("commit", "rollback", "confirm"))
+
+
+def _b10_tier(capability: dict | Exception) -> BoundingContractTierPlugin:
+    provider = MagicMock()
+    if isinstance(capability, Exception):
+        provider.verify_rollback_window.side_effect = capability
+    else:
+        provider.verify_rollback_window.return_value = capability
+    registry = BoundingContractRegistry(
+        {"bounding": {"enabled_contracts": ["B10"], "b10_min_rollback_window_seconds": 60}},
+        rollback_provider=provider,
+    )
+    return BoundingContractTierPlugin(registry)
+
+
+_B10_PARAMS = {
+    "symbol": "AAPL",
+    "amount": 1000.0,
+    "side": "buy",
+    "venue": "NYSE",
+    "rollback_window_seconds": 300,
+}
+_OPEN = {"supported": True, "api_available": True, "max_window_seconds": 600}
+
+
+class TestB10ClosedWindowIsHitl:
+    """A closed rollback window parks the request; it is never an override."""
+
     @pytest.mark.asyncio
-    async def test_commit_returns_empty(self):
-        """Bounding tier has no commit phase (evaluation only)."""
-        thresholds = {
-            "bounding": {
-                "enabled_contracts": ["B1"],
-                "max_single_order_usd": 50000.0,
-            }
-        }
-        registry = BoundingContractRegistry(thresholds)
-        tier = BoundingContractTierPlugin(registry)
-
-        params = {
-            "symbol": "AAPL",
-            "amount": 10000.0,
-            "side": "buy",
-            "venue": "NYSE",
-        }
-
-        violations, receipt = await tier.commit("execute_trade_bounded", params)
-
-        assert len(violations) == 0
-        assert receipt is None  # read-only tier: nothing mutated, no receipt
+    @pytest.mark.parametrize(
+        "capability",
+        [
+            RuntimeError("settlement provider down"),
+            {**_OPEN, "supported": False},
+            {**_OPEN, "api_available": False},
+            {**_OPEN, "max_window_seconds": 120},
+        ],
+        ids=["provider_unavailable", "unsupported", "api_down", "window_over_capability"],
+    )
+    async def test_closed_window_is_a_hitl_violation(self, capability):
+        violations = await _b10_tier(capability).evaluate("execute_trade_bounded", _B10_PARAMS)
+        assert len(violations) == 1
+        assert violations[0].code == "B10_ROLLBACK_WINDOW_CLOSED"
+        assert violations[0].kind == ViolationKind.HITL
 
     @pytest.mark.asyncio
-    async def test_rollback_noop(self):
-        """Bounding tier rollback is a no-op (stateless)."""
-        thresholds = {
-            "bounding": {
-                "enabled_contracts": ["B1"],
-                "max_single_order_usd": 50000.0,
-            }
-        }
-        registry = BoundingContractRegistry(thresholds)
-        tier = BoundingContractTierPlugin(registry)
+    async def test_window_below_minimum_is_a_hitl_violation(self):
+        params = {**_B10_PARAMS, "rollback_window_seconds": 30}
+        violations = await _b10_tier(_OPEN).evaluate("execute_trade_bounded", params)
+        assert [(v.code, v.kind) for v in violations] == [
+            ("B10_ROLLBACK_WINDOW_CLOSED", ViolationKind.HITL)
+        ]
 
-        params = {
-            "symbol": "AAPL",
-            "amount": 10000.0,
-            "side": "buy",
-            "venue": "NYSE",
-        }
+    @pytest.mark.asyncio
+    async def test_open_window_admits(self):
+        assert await _b10_tier(_OPEN).evaluate("execute_trade_bounded", _B10_PARAMS) == []
 
-        from src.gateway.governance.contracts import CommitReceipt
+    @pytest.mark.asyncio
+    async def test_tier_keeps_no_per_request_state(self):
+        """The removed override was per-request state on a shared tier."""
+        tier = _b10_tier({**_OPEN, "supported": False})
+        before = dict(vars(tier))
+        await tier.evaluate("execute_trade_bounded", _B10_PARAMS)
+        assert vars(tier) == before
 
-        # Should not raise
-        await tier.rollback("execute_trade_bounded", params, CommitReceipt(tier=tier.tier_name))
+
+@pytest.fixture
+def defer_redis(monkeypatch: pytest.MonkeyPatch):
+    fakeredis = pytest.importorskip("fakeredis.aioredis")
+    from src.gateway.governance import defer_queue as defer_queue_mod
+
+    redis = fakeredis.FakeRedis(decode_responses=True)
+
+    @asynccontextmanager
+    async def _queue():
+        yield defer_queue_mod.DeferQueue(redis)
+
+    monkeypatch.setattr(defer_queue_mod, "open_defer_queue", _queue)
+    return defer_queue_mod
+
+
+@pytest.mark.asyncio
+async def test_closed_window_parks_an_approval_token(defer_redis) -> None:
+    """End to end: B10's closed window yields REQUIRE_APPROVAL with a parked token."""
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.assembly import GovernorComponents
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+    from tests.fixtures.governor import allow_opa, default_classifier
+
+    governor = SymbolicGovernor(
+        GovernorComponents(
+            opa=allow_opa(),
+            core_stages=(),
+            classifier=default_classifier(),
+            posture=DeploymentPosture.TEST,
+            domain_tiers=(_b10_tier({**_OPEN, "supported": False}),),
+        )
+    )
+    result = await governor.validate_action("execute_trade_bounded", dict(_B10_PARAMS))
+    assert result["verdict"] == "REQUIRE_APPROVAL"
+    assert result["deferred_id"]
+    async with defer_redis.open_defer_queue() as queue:
+        assert await queue.get(result["deferred_id"]) is not None

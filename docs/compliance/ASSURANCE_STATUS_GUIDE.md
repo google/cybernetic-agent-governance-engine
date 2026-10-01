@@ -195,7 +195,7 @@ props:
 4. THIRD_PARTY_ASSESSED → FedRAMP ATO granted by PMO
 
 **Key Controls:**
-- AC-2, AC-4, AU-2, IR-1, SA-11, SC-7, SC-8, SI-7, SI-10
+- AC-2, AU-2, IR-1, SA-11, SC-7, SC-8, SI-7, SI-10
 
 **Evidence Sources:**
 - Lula OSCAL validations ([`compliance/lula/`](../../compliance/lula/))

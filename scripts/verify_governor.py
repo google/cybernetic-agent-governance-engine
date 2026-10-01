@@ -35,8 +35,8 @@ from unittest.mock import AsyncMock, MagicMock
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.gateway.governance.contracts import (
-    GovernanceTierPlugin,
     PluginContribution,
+    ReadOnlyTier,
     Violation,
 )
 from src.gateway.governance.env_posture import resolve_posture
@@ -48,11 +48,10 @@ os.environ.setdefault("CAGE_DOMAIN", "finance")
 _ACTION = "check_balance"
 
 
-class _PassTier(GovernanceTierPlugin):
+class _PassTier(ReadOnlyTier):
     """Claims the probe action so the full kernel profile (incl. confidence) runs."""
 
     tier_name = "verify_probe"
-    phase = 1
     order = 1
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
@@ -64,7 +63,7 @@ class _PassTier(GovernanceTierPlugin):
 
 class _ProbePlugin:
     name = "verify_probe"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
     def contribute(self) -> PluginContribution:

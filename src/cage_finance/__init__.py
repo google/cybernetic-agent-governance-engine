@@ -26,7 +26,7 @@ from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import GovernanceTier
 from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
@@ -66,7 +66,7 @@ def create_finance_tiers(
     fiscal_guard: Any,
     consensus_gate: Any,
     bounding_registry: BoundingContractRegistry | None = None,
-) -> tuple[GovernanceTierPlugin, ...]:
+) -> tuple[GovernanceTier, ...]:
     """Create finance domain governance tiers for construction-time registration.
 
     Task 2.1 (ARCH-2): Tier registration is now immutable at construction time.

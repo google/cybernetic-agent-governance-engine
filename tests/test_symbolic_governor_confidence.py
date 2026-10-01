@@ -24,17 +24,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.gateway.governance.contracts import ReadOnlyTier
 from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
-class _ClaimAllTier:
-    """No-op phase-1 tier that claims every action, so the action is governed
+class _ClaimAllTier(ReadOnlyTier):
+    """No-op read-only tier that claims every action, so the action is governed
     and ConfidenceStage runs (confidence is only enforced on governed actions)."""
 
     tier_name = "claim_all"
-    phase = 1
     order = 0
 
     def claims_action(self, action, params):
@@ -42,12 +42,6 @@ class _ClaimAllTier:
 
     async def evaluate(self, action, params):
         return []
-
-    async def commit(self, action, params):
-        return [], None
-
-    async def rollback(self, action, params, receipt):
-        return None
 
 
 @pytest.fixture

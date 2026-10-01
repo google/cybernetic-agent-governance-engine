@@ -17,7 +17,7 @@ from typing import Any
 
 from src.gateway.governance.contracts import (
     CommitReceipt,
-    GovernanceTierPlugin,
+    MutatingTier,
     Violation,
     ViolationKind,
     coerce_bound,
@@ -29,11 +29,18 @@ from src.cage_finance.tiers.cbf_tier import CostResolver
 logger = logging.getLogger(__name__)
 
 
-class FiscalTierPlugin(GovernanceTierPlugin):
+class FiscalTierPlugin(MutatingTier):
     """Fiscal guard tier (phase 2, order 4).
 
     Stateless across requests: the ``ReservationToken`` from ``commit()`` is
-    returned in the ``CommitReceipt`` and handed back to ``rollback()``.
+    returned in the ``CommitReceipt`` and handed back to ``confirm()`` or
+    ``rollback()``.
+
+    ``commit()`` only *reserves* (ADR-009): the spend becomes permanent in
+    ``confirm()``, which the kernel calls once the sealed trade has actually
+    executed (``SymbolicGovernor.settle(seal, executed=True)``).  A
+    reservation that is never settled (crash between seal and actuation,
+    or a sealed run nothing actuates) expires after the guard's TTL.
 
     Claims by cost (any action with a positive cash cost counts against the
     daily cap) and reserves that same cost.
@@ -50,10 +57,6 @@ class FiscalTierPlugin(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "fiscal"
-
-    @property
-    def phase(self) -> int:
-        return 2
 
     @property
     def order(self) -> int:
@@ -79,20 +82,18 @@ class FiscalTierPlugin(GovernanceTierPlugin):
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
         if token.rejected:
             return [await self._limit_violation(agent_id)], None
-
-        try:
-            await self.guard.confirm(token)
-        except BaseException:
-            # A raising commit must leave nothing reserved: the caller gets no
-            # receipt, so it could never release this token itself.
-            await self.guard.release(token)
-            raise
         return [], CommitReceipt(tier=self.tier_name, magnitude=token.amount_usd, token=token)
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
         await self.guard.release(receipt.token)
+
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """The trade executed: the reservation stops expiring and counts for good."""
+        await self.guard.confirm(receipt.token)
 
     async def _limit_violation(self, agent_id: str) -> Violation:
         """NARROWABLE refusal whose ``bound`` is the headroom left in the cap.

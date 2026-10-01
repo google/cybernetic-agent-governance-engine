@@ -131,11 +131,13 @@ The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) runs
 | 2    | Agentic Confidence Check   | `confidence_score ≥ threshold` (`confidence.agent_threshold`) | Kernel stage |
 | 3a   | Control Barrier Function   | `h(x) ≥ 0` (state-space boundary)                       | Domain tier (finance `cbf`; healthcare dose barrier; physical-AI kinematic barrier) |
 | 3b   | OPA Rego Policy            | Declarative policy rules in the domain's OPA package    | Kernel stage (package from `DomainConfig.opa_package`) |
-| 4    | Fiscal Limit Reservation   | Atomic Redis reservation against the daily fiscal cap   | Finance tier (`FiscalLimitGuard`, [`src/cage_finance/safety/`](../../src/cage_finance/safety/)) |
+| 4    | Fiscal Limit Reservation   | Atomic Lua reservation against the daily fiscal cap; pending until confirmed after actuation | Finance tier (`FiscalLimitGuard`, [`src/cage_finance/safety/`](../../src/cage_finance/safety/)) |
 | 5    | Multi-Model Consensus      | Heterogeneous critic agreement (kernel `ConsensusGate`, domain-injected critics) | Domain tier |
 | 6    | DoWhy Causal Gatekeeper    | Placebo refutation `p-value ≥ 0.05` (kernel engine, domain-injected `CausalSpec`) | Finance tier |
 
-The FULL profile reserves a Tier 7 `fria` slot, but no FRIA stage or tier is registered at HEAD (see §2.5.2). Kernel stages carry no domain vocabulary; domain tiers live in `src/cage_{domain}/tiers/` and reach the kernel only through `PluginContribution`. Decision boundaries are parameterized through [`governance_thresholds.json`](../../config/governance_thresholds.json) — kernel sections at the top level, domain sections under `domains.<domain>` — and the regional compliance profile, not through imperative code branches.
+Domain tiers subclass exactly one of two base classes in [`contracts.py`](../../src/gateway/governance/contracts.py) ([ADR-009](../adr/ADR-009-tier-protocol-split.md)): a `ReadOnlyTier` only evaluates (phase 1); a `MutatingTier` also implements `commit()`, `rollback()` and `confirm()` (phase 2). `confirm()` runs only after the actuator accepts the action, via `SymbolicGovernor.settle()`.
+
+Kernel stages carry no domain vocabulary; domain tiers live in `src/cage_{domain}/tiers/` and reach the kernel only through `PluginContribution`. Decision boundaries are parameterized through [`governance_thresholds.json`](../../config/governance_thresholds.json) — kernel sections at the top level, domain sections under `domains.<domain>` — and the regional compliance profile, not through imperative code branches.
 
 #### Composition root
 

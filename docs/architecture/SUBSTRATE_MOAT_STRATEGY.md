@@ -71,9 +71,9 @@ The matrix claims CAGE uses **Redis optimistic concurrency locking (WATCH/MULTI/
 
 This is confirmed by:
 - [`ControlBarrierFunction._update_state_unsafe()`](../../src/gateway/governance/safety/cbf_engine.py) — WATCH/MULTI/EXEC with retry (internal rollback/unsafe test utility)
-- [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1414) — Lua atomic check+commit (zero TOCTOU window)
-- [`FiscalLimitGuard.reserve()`](../../src/cage_finance/safety/fiscal_limit_guard.py:371) — atomic pre-reservation of the operational budget cap (daily fiscal cap in the financial deployment); a finance-plugin (Layer 2) phase-2 tier
-- [`DeferQueue.park()`](../../src/gateway/governance/defer_queue.py:620) and [`_resolve()`](../../src/gateway/governance/defer_queue.py:722) — MULTI/EXEC pipeline for DEFER token state transitions
+- [`ControlBarrierFunction.atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py) — Lua atomic check+commit (zero TOCTOU window)
+- [`FiscalLimitGuard.reserve()`](../../src/cage_finance/safety/fiscal_limit_guard.py) — atomic pre-reservation of the operational budget cap (daily fiscal cap in the financial deployment); a finance-plugin (Layer 2) phase-2 tier
+- [`DeferQueue.park()`](../../src/gateway/governance/defer_queue.py) and [`_resolve()`](../../src/gateway/governance/defer_queue.py) — MULTI/EXEC pipeline for DEFER token state transitions
 
 The `audit:state_ledger` Redis list receives a KMS-signed entry on every atomic commit, creating an append-only tamper-evident log at the database tier.
 
@@ -94,7 +94,7 @@ The matrix claims CAGE uses a **4-state asymmetric router** where high-confidenc
 - `< 0.70`: `DEFERRABLE` violation → `DEFER` (parked in the `DeferQueue`)
 
 **Two-phase read/mutate ordering:**  
-[`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (FTRA, STPA, OPA, confidence & structural corroboration, consensus, causal gatekeeper, and — under `EU_ECB` only — the `fria` tier) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after Phase 1.
+[`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py) evaluates the read-only tiers (FTRA, STPA, OPA, confidence, consensus, causal gatekeeper, and — under `EU_ECB` only — the `fria` tier) in Phase 1 and the mutating tiers (CBF `atomic_verify_and_commit()`, fiscal reservation) in Phase 2. The earlier CBF+OPA `asyncio.gather()` overlap was deliberately removed from this path so that no budget is reserved behind a policy that later denies; the documented trade-off is `CBF_ms` added sequentially after Phase 1.
 
 **DeferQueue parking:**  
 [`DeferQueue`](../../src/gateway/governance/defer_queue.py:416) parks tokens in Redis `db=1` (isolated, `noeviction` policy) with a 4-hour TTL. The three-phase replay flow (PARK → HYDRATE → REPLAY) allows automated data-hydration to re-admit parked tokens without human intervention.

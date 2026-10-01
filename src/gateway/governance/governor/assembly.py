@@ -49,7 +49,7 @@ from src.gateway.governance.contracts import (
     CagePlugin,
     ConsensusContribution,
     ConsensusProvider,
-    GovernanceTierPlugin,
+    GovernanceTier,
     InvariantModel,
     Narrower,
     PluginContribution,
@@ -94,7 +94,7 @@ class GovernorComponents:
     opa: PolicyClient
     core_stages: tuple[Stage, ...]
     classifier: ClassificationEngine
-    domain_tiers: tuple[GovernanceTierPlugin, ...] = ()
+    domain_tiers: tuple[GovernanceTier, ...] = ()
     narrowers: tuple[Narrower, ...] = ()
     invariants: tuple[InvariantModel, ...] = ()
     uca_rules: tuple[object, ...] = ()
@@ -126,11 +126,11 @@ class GovernorComponents:
         object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
 
     @property
-    def jurisdiction_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+    def jurisdiction_tiers(self) -> tuple[GovernanceTier, ...]:
         return self.jurisdiction.tiers if self.jurisdiction is not None else ()
 
     @property
-    def plugin_tiers(self) -> tuple[GovernanceTierPlugin, ...]:
+    def plugin_tiers(self) -> tuple[GovernanceTier, ...]:
         """Every non-kernel tier: the domain's, then the jurisdiction's."""
         return (*self.domain_tiers, *self.jurisdiction_tiers)
 
@@ -356,7 +356,7 @@ def _known_actions(plugins: Sequence[CagePlugin], contributions: Sequence[Plugin
     return actions
 
 
-def _reject_slot_collisions(tiers: Sequence[GovernanceTierPlugin], actions: Iterable[str]) -> None:
+def _reject_slot_collisions(tiers: Sequence[GovernanceTier], actions: Iterable[str]) -> None:
     for action in sorted(actions):
         slots: dict[tuple[int, int], list[str]] = defaultdict(list)
         for tier in tiers:
@@ -369,7 +369,7 @@ def _reject_slot_collisions(tiers: Sequence[GovernanceTierPlugin], actions: Iter
                 )
 
 
-def _reject_ungoverned_irreversible(plugins: Sequence[CagePlugin], tiers: Sequence[GovernanceTierPlugin]) -> None:
+def _reject_ungoverned_irreversible(plugins: Sequence[CagePlugin], tiers: Sequence[GovernanceTier]) -> None:
     from src.gateway.governance.ftra.models import TerminalClassification
 
     irreversible = TerminalClassification.IRREVERSIBLE_TERMINAL.value

@@ -25,9 +25,9 @@ from typing import Any
 import pytest
 
 from src.gateway.governance.contracts import (
-    GovernanceTierPlugin,
     InvariantModel,
     PluginContribution,
+    ReadOnlyTier,
     Violation,
 )
 from src.gateway.governance.env_posture import DeploymentPosture
@@ -50,17 +50,13 @@ _POSTURE = DeploymentPosture.TEST
 _FLAGS = DecisionFlags(defer=False, narrow=False)
 
 
-class _Tier(GovernanceTierPlugin):
-    def __init__(self, name: str, actions: tuple[str, ...], phase: int = 1, order: int = 1) -> None:
-        self._name, self._phase, self._order, self._actions = name, phase, order, actions
+class _Tier(ReadOnlyTier):
+    def __init__(self, name: str, actions: tuple[str, ...], order: int = 1) -> None:
+        self._name, self._order, self._actions = name, order, actions
 
     @property
     def tier_name(self) -> str:
         return self._name
-
-    @property
-    def phase(self) -> int:
-        return self._phase
 
     @property
     def order(self) -> int:
@@ -74,7 +70,7 @@ class _Tier(GovernanceTierPlugin):
 
 
 class _Plugin:
-    api_version = "1.0"
+    api_version = "2.0"
 
     def __init__(self, name: str, domain_config: Any = None, **contribution: Any) -> None:
         self.name = name

@@ -55,7 +55,6 @@ class StageContext:
     params: Mapping[str, Any]
     profile: Profile
     opa_verdict: OpaVerdict | None = None
-    stpa_violation_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -88,7 +87,9 @@ class Stage(Protocol):
     :class:`StageOutput` when they also report per-request facts (OPA verdict,
     FTRA result).  Mutating stages implement ``preview()`` (side-effect-free:
     used under DRY_RUN and whenever phase 1 left only non-HARD findings, see
-    :func:`phase2_mode`), ``commit()`` and ``rollback()``.  A stage must never
+    :func:`phase2_mode`), ``commit()``, ``rollback()`` and ``confirm()``
+    (ADR-009: called through the governor's settlement ledger once the
+    sealed action has run).  A stage must never
     keep per-request state on itself — neither a ``CommitReceipt`` (the
     request's ``ReservationScope`` holds those) nor a decoded result (return
     a ``StageOutput``).
@@ -107,6 +108,9 @@ class Stage(Protocol):
 
     # Mutating stages only: undo exactly what ``receipt`` records.
     async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None: ...
+
+    # Mutating stages only: the sealed action ran; make ``receipt`` permanent.
+    async def confirm(self, ctx: StageContext, receipt: CommitReceipt) -> None: ...
 
 
 class Phase2Mode(StrEnum):
@@ -303,8 +307,6 @@ async def run_pipeline(
             current_ctx = dataclasses.replace(current_ctx, opa_verdict=opa_verdict)
         if output.ftra is not None:
             ftra_result = output.ftra
-        if stage.name == "stpa":
-            current_ctx = dataclasses.replace(current_ctx, stpa_violation_count=len(stage_violations))
         
         if stage_violations:
             violations.extend(stage_violations)

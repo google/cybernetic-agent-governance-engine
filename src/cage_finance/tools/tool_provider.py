@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.market_service import get_market_data
-from src.gateway.governance.contracts import DomainToolProvider, SafetyFilter
+from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
@@ -80,7 +80,6 @@ async def execute_trade_action(
     drawdown: float | None = None,
     *,
     governor: "SymbolicGovernor",
-    safety_filter: SafetyFilter,
 ) -> str:
     """Execute a financial trade under strict governance.
 
@@ -112,8 +111,8 @@ async def execute_trade_action(
             full run fails closed on the missing parameter.
         drawdown: Daily drawdown, an STPA input (UCA-5). Omitted, the full
             run fails closed on the missing parameter.
-        governor: The assembled governor that must seal the trade.
-        safety_filter: The CBF whose state is restored if actuation fails.
+        governor: The assembled governor that seals the trade and settles its
+            reservations once the broker has answered.
     """
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -173,137 +172,135 @@ async def execute_trade_action(
 
     seal = governance_result
 
-    # Step 2: ConsequenceGateway evaluation (ADR-008 Phase 2)
-    # Check if governance_result contains a consequence_token (minted by a
-    # normative provider's validation)
-    # For now, consequence_token would be passed separately if present
-    # This is a placeholder for future integration
+    # Every exit from here on settles the seal's phase-2 commits exactly once
+    # (ADR-009): confirmed only if the broker accepted the trade, released on
+    # every other path (blocked receipt, invalid seal, dry run, rejection,
+    # actuation error).
+    executed = False
+    try:
+        # Step 2: ConsequenceGateway evaluation (ADR-008 Phase 2)
+        # Check if governance_result contains a consequence_token (minted by a
+        # normative provider's validation)
+        # For now, consequence_token would be passed separately if present
+        # This is a placeholder for future integration
 
-    # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
-    # A narrowed committing run (SymbolicGovernor._sealed_narrow) seals the
-    # clamped params and issues a single-use receipt naming them.
-    action_params = params  # Default: use original params
+        # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
+        # A narrowed committing run (SymbolicGovernor._sealed_narrow) seals the
+        # clamped params and issues a single-use receipt naming them.
+        action_params = params  # Default: use original params
 
-    from src.gateway.governance.narrow_receipt import narrow_receipt_key
-    from src.gateway.infrastructure.redis_client import redis_client
+        from src.gateway.governance.narrow_receipt import narrow_receipt_key
+        from src.gateway.infrastructure.redis_client import redis_client
 
-    receipt_key = narrow_receipt_key(seal)
+        receipt_key = narrow_receipt_key(seal)
 
-    # Attempt to fetch NARROW receipt (fail-silent if not present)
-    if redis_client is not None:
-        try:
-            receipt_data = await redis_client.get(receipt_key)
-            if receipt_data:
-                # Delete receipt immediately (one-time use — fetch-and-burn pattern)
-                await redis_client.delete(receipt_key)
+        # Attempt to fetch NARROW receipt (fail-silent if not present)
+        if redis_client is not None:
+            try:
+                receipt_data = await redis_client.get(receipt_key)
+                if receipt_data:
+                    # Delete receipt immediately (one-time use — fetch-and-burn pattern)
+                    await redis_client.delete(receipt_key)
 
-                receipt_payload = json.loads(receipt_data)
-                narrowed_params = receipt_payload.get("narrowed_params", {})
-                receipt_signature = receipt_payload.get("original_signature", "")
+                    receipt_payload = json.loads(receipt_data)
+                    narrowed_params = receipt_payload.get("narrowed_params", {})
+                    receipt_signature = receipt_payload.get("original_signature", "")
 
-                # Verify original signature matches (prevents receipt forgery)
-                if receipt_signature != seal:
-                    logger.error(
-                        "🚫 execute_trade: NARROW receipt signature mismatch. "
-                        "Receipt sig=%s, Seal=%s",
-                        receipt_signature[:16],
-                        seal[:16],
+                    # Verify original signature matches (prevents receipt forgery)
+                    if receipt_signature != seal:
+                        logger.error(
+                            "🚫 execute_trade: NARROW receipt signature mismatch. "
+                            "Receipt sig=%s, Seal=%s",
+                            receipt_signature[:16],
+                            seal[:16],
+                        )
+                        return "BLOCKED: Narrowing receipt signature mismatch — possible forgery attempt"
+
+                    # Use narrowed params for trade execution
+                    action_params = narrowed_params
+                    logger.info(
+                        "📐 execute_trade: NARROW receipt validated and consumed. "
+                        "Using narrowed params: %s",
+                        {
+                            k: narrowed_params.get(k)
+                            for k in ["symbol", "amount", "confidence"]
+                        },
                     )
-                    return "BLOCKED: Narrowing receipt signature mismatch — possible forgery attempt"
-
-                # Use narrowed params for trade execution
-                action_params = narrowed_params
-                logger.info(
-                    "📐 execute_trade: NARROW receipt validated and consumed. "
-                    "Using narrowed params: %s",
-                    {
-                        k: narrowed_params.get(k)
-                        for k in ["symbol", "amount", "confidence"]
-                    },
+            except json.JSONDecodeError as exc:
+                logger.error(
+                    "🚫 execute_trade: NARROW receipt payload invalid JSON: %s",
+                    exc,
                 )
-        except json.JSONDecodeError as exc:
+                return "BLOCKED: Narrowing receipt payload corrupted"
+            except Exception as exc:
+                # Only log errors, don't block — receipt may legitimately not exist
+                logger.debug(
+                    "execute_trade: NARROW receipt lookup failed (may be ALLOW verdict): %s",
+                    exc,
+                )
+
+        # Step 4: Seal verification and consumption (Gap 2 fix / CAGE-SEC-008)
+        # verify_and_consume_seal() burns the single-use nonce in Redis, preventing replay attacks.
+        # Phase 3.2: Verify seal against the params that will actually be executed (narrowed or original)
+        try:
+            await verify_and_consume_seal(seal, "execute_trade", action_params)
+        except SymbolicGovernorViolation as exc:
             logger.error(
-                "🚫 execute_trade: NARROW receipt payload invalid JSON: %s",
-                exc,
+                "🔒 execute_trade_action: routing seal verification FAILED — "
+                "blocking execution (No-Direct-Bind invariant). Reason: %s",
+                exc.reason,
             )
-            return "BLOCKED: Narrowing receipt payload corrupted"
-        except Exception as exc:
-            # Only log errors, don't block — receipt may legitimately not exist
-            logger.debug(
-                "execute_trade: NARROW receipt lookup failed (may be ALLOW verdict): %s",
-                exc,
-            )
+            return "BLOCKED: routing seal invalid, expired, or already consumed — governance authority unresolved."
 
-    # Step 4: Seal verification and consumption (Gap 2 fix / CAGE-SEC-008)
-    # verify_and_consume_seal() burns the single-use nonce in Redis, preventing replay attacks.
-    # Phase 3.2: Verify seal against the params that will actually be executed (narrowed or original)
-    try:
-        await verify_and_consume_seal(seal, "execute_trade", action_params)
-    except SymbolicGovernorViolation as exc:
-        logger.error(
-            "🔒 execute_trade_action: routing seal verification FAILED — "
-            "blocking execution (No-Direct-Bind invariant). Reason: %s",
-            exc.reason,
-        )
-        return "BLOCKED: routing seal invalid, expired, or already consumed — governance authority unresolved."
+        if dry_run:
+            return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
 
-    if dry_run:
-        return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
-
-    # Step 5: Construct ExecutionClearance (ADR-008 Phase 2 + v3.0 Routing)
-    # Build the clearance structure required by the ActuatorRegistry
-    clearance = ExecutionClearance(
-        thread_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
-        decision="ALLOW",
-        decision_path="DIRECT",
-        action="execute_trade",
-        target=str(action_params.get("symbol", "")),
-        operator_urn=str(action_params.get("trader_id", "agent_001")),
-        issued_at=int(time.time()),
-        issued_at_provenance="CONSTRUCTION_TIME",
-        correlation_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
-        correlation_id_source="THREAD_DERIVED",
-        governance_decision_digest=seal,
-        opa_input_digest=hashlib.sha256(
-            json.dumps(action_params, sort_keys=True).encode()
-        ).hexdigest(),
-        nonce=str(uuid.uuid4()).replace("-", "")[:32],
-        params=action_params,
-        executor_id="cage_finance_broker",
-        target_route="local://default",
-        consequence_ceiling="HIGH_FINANCIAL",
-        approvals=[],  # Populated by dual-control in future phases
-        required_quorum=0,  # No quorum required for single-agent trades
-    )
-
-    # Step 6: Dispatch through ActuatorRegistry (ADR-008 Phase 1)
-    actuator = get_actuator_registry().get_actuator("execute_trade")
-    if actuator is None:
-        raise SymbolicGovernorViolation(
-            "CRITICAL: No actuator registered for execute_trade.",
+        # Step 5: Construct ExecutionClearance (ADR-008 Phase 2 + v3.0 Routing)
+        # Build the clearance structure required by the ActuatorRegistry
+        clearance = ExecutionClearance(
+            thread_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
+            decision="ALLOW",
+            decision_path="DIRECT",
             action="execute_trade",
+            target=str(action_params.get("symbol", "")),
+            operator_urn=str(action_params.get("trader_id", "agent_001")),
+            issued_at=int(time.time()),
+            issued_at_provenance="CONSTRUCTION_TIME",
+            correlation_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
+            correlation_id_source="THREAD_DERIVED",
+            governance_decision_digest=seal,
+            opa_input_digest=hashlib.sha256(
+                json.dumps(action_params, sort_keys=True).encode()
+            ).hexdigest(),
+            nonce=str(uuid.uuid4()).replace("-", "")[:32],
+            params=action_params,
+            executor_id="cage_finance_broker",
+            target_route="local://default",
+            consequence_ceiling="HIGH_FINANCIAL",
+            approvals=[],  # Populated by dual-control in future phases
+            required_quorum=0,  # No quorum required for single-agent trades
         )
 
-    try:
-        from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+        # Step 6: Dispatch through ActuatorRegistry (ADR-008 Phase 1)
+        actuator = get_actuator_registry().get_actuator("execute_trade")
+        if actuator is None:
+            raise SymbolicGovernorViolation(
+                "CRITICAL: No actuator registered for execute_trade.",
+                action="execute_trade",
+            )
 
-        receipt = await actuator.actuate(clearance)
-        await ingest_actuation_receipt(
-            clearance, receipt, actuator_id=getattr(actuator, "actuator_id", None)
-        )
+        try:
+            from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+
+            receipt = await actuator.actuate(clearance)
+            await ingest_actuation_receipt(
+                clearance, receipt, actuator_id=getattr(actuator, "actuator_id", None)
+            )
+        except Exception as exc:
+            logger.error("Actuation error: %s", exc)
+            return f"ERROR: {exc}"
 
         if not receipt.accepted:
-            # Actuation rejected — rollback state if possible
-            if hasattr(safety_filter, "rollback_state"):
-                raw_amt = action_params.get("amount")
-                rollback_amt = (
-                    float(raw_amt)
-                    if isinstance(raw_amt, (int, float, str))
-                    else float(amount)
-                )
-                await safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
-
-            # Format findings for error message
             findings_str = "; ".join(
                 f"{f.get('code', 'UNKNOWN')}: {f.get('detail', '')}"
                 for f in receipt.findings
@@ -312,33 +309,25 @@ async def execute_trade_action(
                 f"Actuation rejected: {findings_str}", action="execute_trade"
             )
 
-        # Success — return formatted result
+        executed = True
         return f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} (Receipt ID: {receipt.receipt_id})"
+    finally:
+        await _settle(governor, seal, executed=executed)
 
-    except SymbolicGovernorViolation:
-        raise
-    except Exception as exc:
-        logger.error("Actuation error: %s", exc)
-        if hasattr(safety_filter, "rollback_state"):
-            raw_amt = action_params.get("amount")
-            rollback_amt = (
-                float(raw_amt)
-                if isinstance(raw_amt, (int, float, str))
-                else float(amount)
-            )
-            await safety_filter.rollback_state(rollback_amt)  # type: ignore[misc, func-returns-value]
-        return f"ERROR: {exc}"
+
+async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) -> None:
+    """Confirm or release the seal's reservations; failures need reconciliation."""
+    failures = await governor.settle(seal, executed=executed)
+    for violation in failures:
+        logger.critical(
+            "execute_trade: settlement (executed=%s) failed: %s", executed, violation.message
+        )
 
 
 class FinancialToolProvider(DomainToolProvider):
-    def __init__(self, *, safety_filter: SafetyFilter) -> None:
-        self._safety_filter = safety_filter
-
     def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
-        safety_filter = self._safety_filter
-
         # The MCP schema must expose only the agent-facing parameters, so the
-        # governor and safety filter are bound here rather than in the signature.
+        # governor is bound here rather than in the signature.
         @server.tool(name="execute_trade_action", description=execute_trade_action.__doc__)
         async def _execute_trade_tool(
             symbol: str,
@@ -356,7 +345,7 @@ class FinancialToolProvider(DomainToolProvider):
             return await execute_trade_action(
                 symbol, amount, currency, confidence, transaction_id, trader_id, trader_role, dry_run,
                 deferred_id, latency_ms, drawdown,
-                governor=governor, safety_filter=safety_filter,
+                governor=governor,
             )
 
         @server.tool()

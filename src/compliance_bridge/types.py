@@ -368,15 +368,6 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
                 "fedramp": "SI-7 (Software, Firmware, and Information Integrity)",
             },
         },
-        "AC-4": {
-            "name": "Information Flow Enforcement — FTRA Parameter Smuggling Protection",
-            "scoreName": "nist.AC-4.passed",
-            "iso_clause": "NIST SP 800-53 Rev 5 AC-4",
-            "frameworks": {
-                "fedramp": "AC-4 (Information Flow Enforcement)",
-                "aarm": "AARM-V3 (Confused Deputy), AARM-V5 (Prompt Injection)",
-            },
-        },
         "SI-10": {
             "name": "Input Validation — Multi-Component Protection",
             "scoreName": "nist.SI-10.passed",
@@ -387,7 +378,8 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
             },
             # Multi-component control implemented jointly by:
             # (1) NeMo Guardrails — PII validation, content masking
-            # (2) FTRA Semantic Validator — ActionSchema validation, boundary checks, injection mitigation
+            # (2) STPA UCA rules + domain OPA policy — parameter value validation
+            #     (FTRA classifies irreversibility only; docs/governance/FTRA_SCOPE.md)
         },
     },
     # ------------------------------------------------------------------
@@ -589,9 +581,7 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
         "agentsight_syscall": "AU-2",  # AgentSight execve/connect syscall events
         "agentsight_fim": "SI-7",  # AgentSight file integrity events
         "cilium_l7_flow": "SC-7",  # Cilium L7 FQDN enforcement evidence
-        "ftra_boundary_check": "SI-10",  # FTRA semantic boundary validation
-        "ftra_semantic_validation": "SI-10",  # FTRA ActionSchema validation
-        "ftra_flow_enforcement": "AC-4",  # FTRA parameter smuggling protection
+        "ftra_boundary_check": "SI-10",  # FTRA boundary check (value validation delegated to STPA/OPA)
     },
 }
 

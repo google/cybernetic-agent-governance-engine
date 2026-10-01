@@ -23,7 +23,6 @@
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
           "consensus_engine.check_consensus",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -36,7 +35,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -86,7 +84,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -546,7 +543,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -603,7 +599,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -653,7 +648,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -700,7 +694,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -749,7 +742,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -798,7 +790,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -847,7 +838,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -896,7 +886,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -950,7 +939,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1007,7 +995,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1027,13 +1014,13 @@
       }
     }
   },
-  "21_ftra_semantic_breach": {
-    "description": "FTRA boundary check detects semantic breach in action parameters",
+  "21_ftra_registry_unavailable": {
+    "description": "FTRA boundary check cannot load the terminal registry and fails closed",
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[FTRA_SEMANTIC_BREACH] FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "first_violation_code": "[FTRA_REGISTRY_UNAVAILABLE] FTRA Boundary Check: the terminal registry could not be loaded; refusing 'execute_trade' (fail-closed).",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
@@ -1042,7 +1029,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[FTRA_SEMANTIC_BREACH] FTRA Semantic Boundary Breach: Action 'execute_trade' failed semantic validation.",
+        "first_violation_code": "[FTRA_REGISTRY_UNAVAILABLE] FTRA Boundary Check: the terminal registry could not be loaded; refusing 'execute_trade' (fail-closed).",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
@@ -1055,14 +1042,13 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "FTRA_SEMANTIC_BREACH",
+        "first_violation_code": "FTRA_REGISTRY_UNAVAILABLE",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check"
@@ -1104,7 +1090,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1156,7 +1141,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1208,7 +1192,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1318,7 +1301,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1367,7 +1349,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1495,7 +1476,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1553,7 +1533,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1603,7 +1582,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1649,7 +1627,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1695,7 +1672,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1741,7 +1717,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
@@ -1832,7 +1807,6 @@
         "seal_issued": true,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
           "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]

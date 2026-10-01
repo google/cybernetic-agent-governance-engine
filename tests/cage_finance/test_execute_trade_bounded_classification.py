@@ -21,8 +21,9 @@ the confidence hard-gate (per VEC-004 conformance vector).
 Critical design point:
 - execute_trade is IRREVERSIBLE_TERMINAL (T₀ worst-case, blocks low-confidence)
 - execute_trade_bounded is EXTERNALLY_REVERSIBLE (allows HITL review at any confidence)
-- When B10 rollback window validation fails, it emits a classification override
-  to IRREVERSIBLE_TERMINAL, preventing execution
+- When B10 rollback window validation fails, the bounding tier raises a HITL
+  violation (B10_ROLLBACK_WINDOW_CLOSED): the request parks for approval, as an
+  irreversible action would
 """
 
 import pytest
@@ -44,7 +45,7 @@ class TestExecuteTradeBoundedClassification:
         - execute_trade_bounded extends execute_trade with rollback_window_seconds
         - B10 contract validates the rollback window is sufficient for external reversibility
         - When B10 passes, action remains EXTERNALLY_REVERSIBLE (enables HITL at any confidence)
-        - When B10 fails, it emits classification override to IRREVERSIBLE_TERMINAL
+        - When B10 fails, the bounding tier parks the request for approval (HITL)
         """
         classifier = IrreversibilityClassifier()
         classification = classifier.classify("execute_trade_bounded")

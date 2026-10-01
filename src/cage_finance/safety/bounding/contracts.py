@@ -22,8 +22,10 @@ All contracts follow the fail-closed principle:
 - Inclusive boundary conditions (per Ratified Decision 1)
 
 Contract Severity Taxonomy:
-- HARD_BLOCK: Safety invariant, must not be violated (B1, B2, B4, B7, B9, B10)
-- HITL_ESCALATE: Requires human review before proceeding (B3, B5, B6, B8)
+- HARD_BLOCK: Safety invariant, must not be violated (B1, B2, B4, B7, B9;
+  B10 configuration errors)
+- HITL_ESCALATE: Requires human review before proceeding (B3, B5, B6, B8;
+  B10 closed rollback window, code ``B10_ROLLBACK_WINDOW_CLOSED``)
 """
 
 import logging
@@ -1095,23 +1097,56 @@ def contract_b7_audit_trail_sealing(request: BoundedTradeRequest) -> ContractRes
 # ============================================================================
 
 
+#: Violation code for a closed rollback window (Phase 7, ADR-009 companion).
+B10_ROLLBACK_WINDOW_CLOSED = "B10_ROLLBACK_WINDOW_CLOSED"
+
+
+def _b10_window_closed(
+    request: BoundedTradeRequest, reason: str, **detail: Any
+) -> ContractResult:
+    """The trade cannot be shown reversible: a human must approve it.
+
+    B10 is what justifies classifying ``execute_trade_bounded`` as
+    EXTERNALLY_REVERSIBLE.  When the rollback window is closed, that
+    justification is gone for this request, so the request is treated the
+    way FTRA treats an irreversible action: it parks for human approval
+    (HITL) instead of clearing autonomously.
+    """
+    return ContractResult(
+        contract_id="B10",
+        admitted=False,
+        severity=ContractSeverity.HITL_ESCALATE,
+        code=B10_ROLLBACK_WINDOW_CLOSED,
+        findings=[
+            {
+                "reason": reason,
+                "symbol": request.symbol,
+                "venue": request.venue,
+                **detail,
+                "note": "Reversibility not established — human approval required",
+            }
+        ],
+    )
+
+
 def contract_b10_rollback_window(
     request: BoundedTradeRequest,
     thresholds: dict[str, Any],
     rollback_provider: RollbackCapabilityProvider,
-) -> tuple[ContractResult, str | None]:
+) -> ContractResult:
     """B10 — Rollback window validation.
 
-    Per Phase 5 Master Plan Section 4.10:
-    - Severity: HARD_BLOCK
-    - Predicate: A cancel/unwind path exists AND rollback window is sufficient
+    - Predicate: a cancel/unwind path exists AND the rollback window is sufficient
     - Threshold key: bounding.b10_min_rollback_window_seconds
     - Provider: RollbackCapabilityProvider
-    - Fail-closed: Unknown settlement deadline → block
 
-    **CRITICAL**: B10 is the contract that justifies the EXTERNALLY_REVERSIBLE
-    classification. If B10 fails, the action must be re-classified to
-    IRREVERSIBLE_TERMINAL for that request (per Ratified Decision 2).
+    B10 is the contract that justifies the EXTERNALLY_REVERSIBLE
+    classification.  A closed window (provider unavailable, venue without
+    rollback, rollback API down, window outside the venue's capability or
+    below the minimum) is a HITL violation with code
+    ``B10_ROLLBACK_WINDOW_CLOSED``: the request parks for approval exactly as
+    an irreversible action would.  A missing or invalid threshold is a
+    configuration error and stays HARD_BLOCK.
 
     Args:
         request: Bounded trade request to validate
@@ -1119,9 +1154,7 @@ def contract_b10_rollback_window(
         rollback_provider: Provider for venue rollback capabilities
 
     Returns:
-        Tuple of (ContractResult, Optional[classification_override]):
-        - ContractResult with admitted=True if rollback window is sufficient
-        - classification_override="IRREVERSIBLE_TERMINAL" if B10 fails, else None
+        ContractResult with admitted=True if the rollback window is sufficient.
     """
     contract_id = "B10"
 
@@ -1130,19 +1163,16 @@ def contract_b10_rollback_window(
         "b10_min_rollback_window_seconds"
     )
     if min_rollback_window_seconds is None:
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Missing threshold: bounding.b10_min_rollback_window_seconds",
-                        "symbol": request.symbol,
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Missing threshold: bounding.b10_min_rollback_window_seconds",
+                    "symbol": request.symbol,
+                }
+            ],
         )
 
     # Validate threshold is non-negative
@@ -1150,20 +1180,17 @@ def contract_b10_rollback_window(
         not isinstance(min_rollback_window_seconds, (int, float))
         or min_rollback_window_seconds < 0
     ):
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Invalid threshold: bounding.b10_min_rollback_window_seconds must be non-negative",
-                        "symbol": request.symbol,
-                        "threshold_value": min_rollback_window_seconds,
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Invalid threshold: bounding.b10_min_rollback_window_seconds must be non-negative",
+                    "symbol": request.symbol,
+                    "threshold_value": min_rollback_window_seconds,
+                }
+            ],
         )
 
     # Query rollback capability from provider
@@ -1173,113 +1200,39 @@ def contract_b10_rollback_window(
             rollback_window_seconds=request.rollback_window_seconds,
         )
     except RuntimeError as e:
-        # Provider unavailable → fail-closed with re-classification
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Rollback capability provider unavailable",
-                        "symbol": request.symbol,
-                        "venue": request.venue,
-                        "error": str(e),
-                        "note": "Cannot verify reversibility — re-classifying to IRREVERSIBLE_TERMINAL",
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
+        return _b10_window_closed(
+            request, "Rollback capability provider unavailable", error=str(e)
         )
 
-    # Validate venue supports rollback
     if not capability.get("supported", False):
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Venue does not support rollback/cancellation",
-                        "symbol": request.symbol,
-                        "venue": request.venue,
-                        "note": "No external reversibility path exists — re-classifying to IRREVERSIBLE_TERMINAL",
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
-        )
+        return _b10_window_closed(request, "Venue does not support rollback/cancellation")
 
-    # Validate rollback API is operational
     if not capability.get("api_available", False):
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Venue rollback API is not currently operational",
-                        "symbol": request.symbol,
-                        "venue": request.venue,
-                        "note": "Cannot guarantee reversibility — re-classifying to IRREVERSIBLE_TERMINAL",
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
-        )
+        return _b10_window_closed(request, "Venue rollback API is not currently operational")
 
-    # Validate rollback window is sufficient (inclusive boundary)
+    # Validate rollback window is within venue capability (inclusive boundary)
     max_window_seconds = capability.get("max_window_seconds", 0)
     if request.rollback_window_seconds > max_window_seconds:
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Requested rollback window exceeds venue capability",
-                        "symbol": request.symbol,
-                        "venue": request.venue,
-                        "requested_window_seconds": request.rollback_window_seconds,
-                        "max_window_seconds": max_window_seconds,
-                        "note": "Rollback window too long — re-classifying to IRREVERSIBLE_TERMINAL",
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
+        return _b10_window_closed(
+            request,
+            "Requested rollback window exceeds venue capability",
+            requested_window_seconds=request.rollback_window_seconds,
+            max_window_seconds=max_window_seconds,
         )
 
     # Validate requested window meets minimum threshold (inclusive boundary per Ratified Decision 1)
     if request.rollback_window_seconds < min_rollback_window_seconds:
-        return (
-            ContractResult(
-                contract_id=contract_id,
-                admitted=False,
-                severity=ContractSeverity.HARD_BLOCK,
-                findings=[
-                    {
-                        "reason": "Requested rollback window below minimum threshold",
-                        "symbol": request.symbol,
-                        "venue": request.venue,
-                        "requested_window_seconds": request.rollback_window_seconds,
-                        "min_threshold_seconds": min_rollback_window_seconds,
-                        "note": "Insufficient rollback window — re-classifying to IRREVERSIBLE_TERMINAL",
-                    }
-                ],
-            ),
-            "IRREVERSIBLE_TERMINAL",  # Re-classify upward
+        return _b10_window_closed(
+            request,
+            "Requested rollback window below minimum threshold",
+            requested_window_seconds=request.rollback_window_seconds,
+            min_threshold_seconds=min_rollback_window_seconds,
         )
 
     # All checks passed — rollback window is sufficient
-    return (
-        ContractResult(
-            contract_id=contract_id,
-            admitted=True,
-            severity=ContractSeverity.HARD_BLOCK,
-            findings=[],
-        ),
-        None,  # No classification override (remains EXTERNALLY_REVERSIBLE)
+    return ContractResult(
+        contract_id=contract_id,
+        admitted=True,
+        severity=ContractSeverity.HARD_BLOCK,
+        findings=[],
     )

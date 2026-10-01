@@ -21,7 +21,6 @@ async def test_confidence_stage_happy_path(mock_threshold):
         action="test_action",
         params={"confidence": 0.9},
         profile=Profile.FULL,
-        stpa_violation_count=0,
         opa_verdict=OpaVerdict.ALLOW,
     )
     stage = ConfidenceStage()
@@ -54,7 +53,6 @@ async def test_confidence_stage_fail_closed(mock_threshold, invalid_val, expecte
         action="test_action",
         params={"confidence": invalid_val},
         profile=Profile.FULL,
-        stpa_violation_count=0,
     )
     stage = ConfidenceStage()
 
@@ -76,7 +74,6 @@ async def test_confidence_stage_rejects_bool_confidence(mock_threshold, bool_val
         action="test_action",
         params={"confidence": bool_val},
         profile=Profile.FULL,
-        stpa_violation_count=0,
         opa_verdict=OpaVerdict.ALLOW,
     )
     stage = ConfidenceStage()
@@ -93,17 +90,18 @@ async def test_confidence_stage_rejects_bool_confidence(mock_threshold, bool_val
     "src.gateway.governance.governor.stages.confidence.get_agent_confidence_threshold",
     return_value=0.8,
 )
-async def test_confidence_stage_structural_corroboration_override(mock_threshold):
-    # Agent claims 0.9 confidence (>= 0.8), but STPA violations > 0
+async def test_confidence_stage_judges_confidence_alone(mock_threshold):
+    """No structural override: the stage reads only the agent's confidence.
+
+    STPA findings and an undecided OPA verdict are HARD upstream, so
+    run_pipeline never reaches this stage with either (see
+    tests/governor/test_confidence_unreachable_after_hard.py).
+    """
     ctx = StageContext(
         action="test_action",
         params={"confidence": 0.9},
         profile=Profile.FULL,
-        stpa_violation_count=1,
     )
     stage = ConfidenceStage()
 
-    violations = await stage.run(ctx)
-    assert len(violations) == 1
-    assert violations[0].code == "TIER2_STRUCTURAL_OVERRIDE"
-    assert violations[0].kind == ViolationKind.HITL
+    assert await stage.run(ctx) == []

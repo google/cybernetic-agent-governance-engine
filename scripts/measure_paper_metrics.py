@@ -251,7 +251,7 @@ class _BenchFinancePlugin:
     """
 
     name = "finance"
-    api_version = "1.0"
+    api_version = "2.0"
 
     def __init__(self, *, cbf: Any, fiscal_guard: Any, consensus: Any) -> None:
         from src.cage_finance.plugin import FinanceCagePlugin  # noqa: PLC0415

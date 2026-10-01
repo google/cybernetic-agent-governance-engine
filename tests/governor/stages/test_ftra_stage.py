@@ -28,8 +28,8 @@ async def test_ftra_stage_fail_closed_on_error():
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
     stage = FtraStage()
     
-    # We want to test the actual exception handling in _ftra_boundary_check
-    with patch("src.gateway.governance.governor.stages.ftra.validate_tool_input", side_effect=Exception("Boom")):
+    # The real exception handling in _ftra_boundary_check: the classifier raises.
+    with patch.object(stage, "_get_ftra_classifier", side_effect=Exception("Boom")):
         out = await stage.run(ctx)
         violations = list(out.violations)
         
@@ -37,3 +37,21 @@ async def test_ftra_stage_fail_closed_on_error():
         assert violations[0].code == "FTRA_ERROR"
         assert violations[0].kind == ViolationKind.HARD
         assert "Boom" in violations[0].message
+        assert out.ftra is not None
+        assert out.ftra.requires_hitl is True
+        assert out.ftra.classification == "IRREVERSIBLE_TERMINAL"
+
+
+@pytest.mark.asyncio
+async def test_ftra_stage_fail_closed_when_classify_raises():
+    """A classifier whose lookup raises fails closed to a HARD FTRA_ERROR."""
+    ctx = StageContext(action="test_action", params={"amount": 1.0}, profile=Profile.FULL)
+    stage = FtraStage(magnitude_extractor=lambda p: p["amount"])
+    classifier = MagicMock()
+    classifier.classify_with_provenance.side_effect = RuntimeError("registry lookup exploded")
+    stage._ftra_classifier = classifier
+
+    out = await stage.run(ctx)
+
+    assert [(v.code, v.kind) for v in out.violations] == [("FTRA_ERROR", ViolationKind.HARD)]
+    assert out.ftra is not None and out.ftra.auto_cleared is False

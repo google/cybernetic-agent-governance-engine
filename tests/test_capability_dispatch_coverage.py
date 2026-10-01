@@ -26,21 +26,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import ReadOnlyTier
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from tests.fixtures.governor import make_governor
 
 
-class MockTier(GovernanceTierPlugin):
+class MockTier(ReadOnlyTier):
     """Mock tier that claims all actions for testing."""
 
     @property
     def tier_name(self) -> str:
         return "mock_tier"
-
-    @property
-    def phase(self) -> int:
-        return 1
 
     @property
     def order(self) -> int:
@@ -52,12 +48,6 @@ class MockTier(GovernanceTierPlugin):
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list:
         return []
-
-    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list, Any]:
-        return [], None
-
-    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
-        pass
 
 
 @pytest.fixture

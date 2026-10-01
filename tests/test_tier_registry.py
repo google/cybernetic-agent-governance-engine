@@ -16,23 +16,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.gateway.governance.contracts import MutatingTier, ReadOnlyTier
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from tests.fixtures.governor import make_governor as build_governor
 
 
-class MockTier:
-    def __init__(self, name, phase, order):
+class _StubBehaviour:
+    def __init__(self, name, order):
         self._tier_name = name
-        self._phase = phase
         self._order = order
 
     @property
     def tier_name(self) -> str:
         return self._tier_name
-
-    @property
-    def phase(self) -> int:
-        return self._phase
 
     @property
     def order(self) -> int:
@@ -44,11 +40,25 @@ class MockTier:
     async def evaluate(self, action, params) -> list:
         return []
 
+
+class _ReadOnlyStub(_StubBehaviour, ReadOnlyTier):
+    pass
+
+
+class _MutatingStub(_StubBehaviour, MutatingTier):
     async def commit(self, action, params) -> tuple:
         return [], None
 
     async def rollback(self, action, params, receipt) -> None:
         pass
+
+    async def confirm(self, action, params, receipt) -> None:
+        pass
+
+
+def MockTier(name, phase, order):
+    """A read-only (phase 1) or mutating (phase 2) no-op tier."""
+    return (_ReadOnlyStub if phase == 1 else _MutatingStub)(name, order)
 
 
 def make_governor(*tiers, classification_engine) -> SymbolicGovernor:

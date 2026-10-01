@@ -227,12 +227,16 @@ class TestCausalCacheHelpers:
             result = causal_gatekeeper._causal_cache_get_sync("missing-key")
         assert result is None
 
-    def test_cache_get_sync_returns_parsed_dict_on_hit(self):
-        """_causal_cache_get_sync parses and returns cached JSON."""
+    def test_cache_get_sync_returns_parsed_verdict_on_hit(self):
+        """_causal_cache_get_sync parses cached JSON into a WorldModelVerdict."""
         import json
 
+        from src.gateway.governance.causal.gatekeeper import WorldModelVerdict
+
         mock_redis = MagicMock()
-        payload = json.dumps({"result": True, "reason": "all_checks_passed"})
+        payload = json.dumps(
+            {"trusted": True, "beta": 0.25, "reason": "world_model_trusted"}
+        )
         mock_redis.get.return_value = payload
 
         with patch(
@@ -241,7 +245,32 @@ class TestCausalCacheHelpers:
             from src.gateway.governance.causal import gatekeeper as causal_gatekeeper
 
             result = causal_gatekeeper._causal_cache_get_sync("hit-key")
-        assert result == {"result": True, "reason": "all_checks_passed"}
+        assert result == WorldModelVerdict(True, 0.25, "world_model_trusted")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            # Legacy final-decision payload (pre world-model split).
+            {"result": True, "reason": "all_checks_passed"},
+            # Trusted verdict without a usable slope violates the invariant.
+            {"trusted": True, "beta": None, "reason": "x"},
+            {"trusted": True, "beta": -0.1, "reason": "x"},
+            {"trusted": True, "beta": "0.5", "reason": "x"},
+            {"trusted": "yes", "beta": 0.5, "reason": "x"},
+        ],
+    )
+    def test_cache_get_sync_treats_malformed_verdict_as_miss(self, payload):
+        """A malformed or legacy payload is a cache miss, never a verdict."""
+        import json
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps(payload)
+        with patch(
+            "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+        ):
+            from src.gateway.governance.causal import gatekeeper as causal_gatekeeper
+
+            assert causal_gatekeeper._causal_cache_get_sync("k") is None
 
     def test_cache_get_sync_raises_on_connection_error(self):
         """_causal_cache_get_sync raises RuntimeError on Redis connection error."""
@@ -281,7 +310,9 @@ class TestCausalCacheHelpers:
             with patch(
                 "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
             ):
-                causal_gatekeeper._causal_cache_set_sync("k", True, "reason")
+                causal_gatekeeper._causal_cache_set_sync(
+                    "k", causal_gatekeeper.WorldModelVerdict(True, 0.1, "reason")
+                )
         mock_redis.setex.assert_not_called()
 
     def test_cache_set_sync_writes_when_redis_available(self):
@@ -296,7 +327,9 @@ class TestCausalCacheHelpers:
             with patch(
                 "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
             ):
-                causal_gatekeeper._causal_cache_set_sync("my-key", True, "passed")
+                causal_gatekeeper._causal_cache_set_sync(
+                    "my-key", causal_gatekeeper.WorldModelVerdict(True, 0.1, "passed")
+                )
         mock_redis.setex.assert_called_once()
         call_args = mock_redis.setex.call_args
         assert call_args[0][0] == "my-key"
@@ -314,7 +347,9 @@ class TestCausalCacheHelpers:
                 "src.gateway.infrastructure.redis_client.sync_redis_client", None
             ):
                 # Should not raise
-                causal_gatekeeper._causal_cache_set_sync("k", False, "no-redis")
+                causal_gatekeeper._causal_cache_set_sync(
+                    "k", causal_gatekeeper.WorldModelVerdict(False, None, "no-redis")
+                )
 
 
 class TestCausalSafetyCheckNoDoWhy:

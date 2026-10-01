@@ -18,7 +18,7 @@ from typing import Any
 from src.cage_finance.invariants import finance_cost_resolver
 from src.gateway.governance.contracts import (
     CommitReceipt,
-    GovernanceTierPlugin,
+    MutatingTier,
     Violation,
 )
 from src.gateway.governance.safety.barrier_tier import (
@@ -32,7 +32,7 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 CostResolver = Callable[[str, dict[str, Any]], float]
 
 
-class CBFTierPlugin(GovernanceTierPlugin):
+class CBFTierPlugin(MutatingTier):
     """CBF guard tier (phase 2, order 3).
 
     Claims by cost, not by name: any action whose ``cost_resolver`` cost is
@@ -52,10 +52,6 @@ class CBFTierPlugin(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "cbf"
-
-    @property
-    def phase(self) -> int:
-        return 2
 
     @property
     def order(self) -> int:
@@ -81,3 +77,8 @@ class CBFTierPlugin(GovernanceTierPlugin):
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
         await rollback_barrier(self.cbf, receipt)
+
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """The debit is final at commit; nothing expires, so nothing to confirm."""

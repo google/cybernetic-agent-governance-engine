@@ -20,7 +20,7 @@ from typing import Any
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS, HIGH_STAKES_CLINICAL_ACTIONS
 from src.gateway.governance.consensus import ConsensusGate, extract_field_magnitude, load_critic_specs
 from src.gateway.governance.contracts import (
-    CommitReceipt, ConsensusContribution, CriticSpec, GovernanceTierPlugin, Violation, ViolationKind,
+    ConsensusContribution, CriticSpec, ReadOnlyTier, Violation, ViolationKind,
 )
 
 _CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
@@ -43,7 +43,7 @@ def build_healthcare_consensus_gate() -> ConsensusGate:
     return ConsensusGate.from_contribution(build_healthcare_consensus_contribution())
 
 
-class ClinicalConsensusTier(GovernanceTierPlugin):
+class ClinicalConsensusTier(ReadOnlyTier):
     """Clinical consensus tier (phase 1, order 5)."""
 
     def __init__(self, consensus_engine: Any = None) -> None:
@@ -56,10 +56,6 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "clinical_consensus"
-
-    @property
-    def phase(self) -> int:
-        return 1
 
     @property
     def order(self) -> int:
@@ -83,14 +79,3 @@ class ClinicalConsensusTier(GovernanceTierPlugin):
         reason = str(result.get("reason") or "Multi-critic consensus not achieved")
         kind = ViolationKind.HITL if status == "ESCALATE" else ViolationKind.HARD
         return self._reject(reason, kind=kind)
-
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> tuple[list[Violation], CommitReceipt | None]:
-        return [], None
-
-    async def rollback(
-        self, action: str, params: dict[str, Any], receipt: CommitReceipt
-    ) -> None:
-        pass
-

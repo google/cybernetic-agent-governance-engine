@@ -24,7 +24,7 @@ from src.gateway.governance.contracts import (
 
 class ValidPlugin:
     name = "test"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
     def contribute(self):
@@ -33,7 +33,7 @@ class ValidPlugin:
 
 class WrongNamePlugin:
     name = "wrong"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
     def contribute(self):
@@ -42,7 +42,7 @@ class WrongNamePlugin:
 
 class IncompatibleVersionPlugin:
     name = "test"
-    api_version = "2.0"
+    api_version = "3.0"
     domain_config = None
 
     def contribute(self):
@@ -51,7 +51,7 @@ class IncompatibleVersionPlugin:
 
 class MinorVersionOkPlugin:
     name = "test"
-    api_version = "1.5"
+    api_version = "2.5"
     domain_config = None
 
     def contribute(self):
@@ -64,7 +64,7 @@ class NotAPlugin:
 
 class MissingContributePlugin:
     name = "test"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
 
@@ -72,7 +72,7 @@ class LegacyRegisterOnlyPlugin:
     """Implements only the removed mutate-the-governor hook; must be rejected."""
 
     name = "test"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
     def register(self, governor, tool_server=None):
@@ -140,4 +140,22 @@ def test_legacy_register_only_plugin_raises_type_error():
 @pytest.mark.local
 @pytest.mark.unit
 def test_cage_plugin_api_version_constant():
-    assert CAGE_PLUGIN_API_VERSION == "1.0"
+    assert CAGE_PLUGIN_API_VERSION == "2.0"
+
+
+class PreTierSplitPlugin:
+    """Built against API 1.x (the duck-typed tier Protocol); must be rejected."""
+
+    name = "test"
+    api_version = "1.0"
+    domain_config = None
+
+    def contribute(self):
+        return PluginContribution(domain=self.name)
+
+
+@pytest.mark.local
+@pytest.mark.unit
+def test_pre_tier_split_major_version_raises():
+    with pytest.raises(ValueError):
+        validate_plugin(PreTierSplitPlugin(), entry_point_name="test")

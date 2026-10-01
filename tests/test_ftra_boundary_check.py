@@ -37,12 +37,6 @@ from src.gateway.governance.ftra.models import (
     RegistryState,
     TerminalClassification,
 )
-from src.gateway.governance.ftra.semantic_validator import (
-    ACTION_SCHEMAS,
-    ActionSchema,
-    ParameterConstraint,
-    register_action_schema,
-)
 
 if TYPE_CHECKING:
     from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -124,43 +118,6 @@ class TestFtraBoundaryResult:
 # ---------------------------------------------------------------------------
 # SymbolicGovernor FTRA Boundary Check Tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def register_test_schemas_boundary():
-    """Register test schemas for boundary check tests."""
-    ACTION_SCHEMAS.clear()
-
-    # Register minimal schema for execute_trade
-    register_action_schema(
-        "execute_trade",
-        ActionSchema(
-            action_name="execute_trade",
-            parameters=(
-                ParameterConstraint(
-                    name="symbol",
-                    required=True,
-                    param_type=str,
-                ),
-                ParameterConstraint(
-                    name="amount",
-                    required=True,
-                    param_type=(int, float),
-                    min_value=0.01,
-                ),
-                ParameterConstraint(
-                    name="currency",
-                    required=True,
-                    param_type=str,
-                ),
-            ),
-            allow_extra_parameters=True,
-        ),
-    )
-
-    yield
-
-    ACTION_SCHEMAS.clear()
 
 
 @pytest.fixture
@@ -519,22 +476,23 @@ class TestFtraBoundaryCheckInputValidation:
         self,
         symbolic_governor: SymbolicGovernor,
     ) -> None:
-        """Verify _ftra_boundary_check fails on empty dict for actions with required params.
+        """An empty dict is classified on the action name alone.
 
-        v2.1 semantic validation: empty dict triggers semantic validation failure
-        for actions with required parameters like execute_trade.
+        FTRA validates no parameter values (docs/governance/FTRA_SCOPE.md):
+        with no magnitude the autonomous envelope cannot clear, so the
+        registered terminal stays HITL.
         """
-        # Empty dict triggers semantic validation failure for execute_trade
         result = await _ftra_stage(symbolic_governor)._ftra_boundary_check(
             tool_name="execute_trade",
             tool_input={},
             detect_bypass=True,
         )
 
-        # v2.1: Semantic breach for missing required parameters
-        assert "SEMANTIC_BREACH" in result.classification
+        assert result.classification == "IRREVERSIBLE_TERMINAL"
+        assert result.registry_state is RegistryState.REGISTERED
         assert result.requires_hitl is True
-
+        assert result.auto_cleared is False
+        assert [v.code for v in result.violations] == ["FTRA_REGISTERED_IRREVERSIBLE"]
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 

@@ -17,6 +17,9 @@
 Every seal the governor issues (ALLOW on each entry point, and NARROW over
 re-verified params) goes through ``run_sealed``.  Phase-2 commits stay in
 force only once the seal is issued; any other exit rolls them all back.
+The commits behind an issued seal go to the governor's
+:class:`~.settlement.SettlementLedger`, which confirms or releases them once
+the caller reports whether the sealed action ran.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from src.gateway.governance.governor.pipeline import (
     run_pipeline,
 )
 from src.gateway.governance.governor.reservation import ReservationScope
+from src.gateway.governance.governor.settlement import SettlementLedger
 from src.gateway.governance.governor.verdicts import issue_seal
 
 
@@ -41,6 +45,7 @@ async def run_sealed(
     params: dict[str, Any],
     *,
     path: str,
+    settlements: SettlementLedger,
     on_seal: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[PipelineResult, str | None]:
     """Run ``ctx.profile`` and seal ``params`` if the run is clean.
@@ -50,7 +55,8 @@ async def run_sealed(
     has rolled every commit back.  ``on_seal(seal)`` runs inside the scope
     before the commits are kept: if it raises, they are rolled back and the
     error propagates, so a seal whose companion artefact (e.g. a NARROW
-    receipt) could not be delivered never holds reserved headroom.
+    receipt) could not be delivered never holds reserved headroom.  Once the
+    seal is issued its commits are held in ``settlements`` under the seal.
     """
     async with ReservationScope() as scope:
         result = await run_pipeline(stages, ctx, profile=ctx.profile, scope=scope)
@@ -60,7 +66,7 @@ async def run_sealed(
         seal = await issue_seal(ctx.action, params, path=path)
         if on_seal is not None:
             await on_seal(seal)
-        scope.seal_issued(seal)
+        settlements.hold(seal, scope.seal_issued(seal))
         return result, seal
 
 

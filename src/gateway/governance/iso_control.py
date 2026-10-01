@@ -184,7 +184,7 @@ def stamp_iso_control(
                   immediately without raising.
         ingress_stage: Integer enforcement ingress stage.
                   1 = Tier-1 heuristic (Aho-Corasick)
-                  2 = Tier-2 agentic confidence / structural corroboration
+                  2 = Tier-2 agentic confidence
                   3 = Tier-3 policy (OPA / NeMo)
         control:  ISO 42001 Annex A control identifier, e.g. ``"A.6.1.2"``.
         outcome:  Governance decision — one of ``"PASS"``, ``"BLOCK"``,
@@ -275,9 +275,7 @@ _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
         "agentsight_syscall": "AU-2",  # AgentSight execve/connect syscall events
         "agentsight_fim": "SI-7",  # AgentSight file integrity events
         "cilium_l7_flow": "SC-7",  # Cilium L7 FQDN enforcement evidence
-        "ftra_boundary_check": "SI-10",  # FTRA semantic boundary validation
-        "ftra_semantic_validation": "SI-10",  # FTRA ActionSchema validation
-        "ftra_flow_enforcement": "AC-4",  # FTRA parameter smuggling protection
+        "ftra_boundary_check": "SI-10",  # FTRA boundary check (value validation delegated to STPA/OPA)
     },
 }
 
