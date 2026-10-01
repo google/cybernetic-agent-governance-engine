@@ -73,8 +73,8 @@ def test_schema_file_is_valid_json():
     assert "properties" in schema, "Schema must declare a 'properties' object."
 
 
-def test_all_36_agent_state_fields_present():
-    """Assert all 40 AgentState fields are present under properties.
+def test_all_agent_state_fields_present():
+    """Assert all 38 AgentState fields are present under properties.
 
     Failure means the expected field count has changed. This is a regression guard
     to detect unintentional field additions or removals.
@@ -84,10 +84,12 @@ def test_all_36_agent_state_fields_present():
       - proposed_action (optional): Action payload for @cage_guard decorator
       - governance_envelope (optional): Validation envelope from CageClient
       - governance_status (optional): Governance decision (ALLOWED/DENIED/DEFERRED)
+    Updated from 40 to 38 on 2026-10-01 when the PAUSE verdict was removed:
+      - pause_resume_token and pause_reason dropped from AgentState
     """
     schema_props = get_schema_properties()
-    assert len(schema_props) == 40, (
-        f"Expected exactly 40 properties in AgentState schema, found {len(schema_props)}. "
+    assert len(schema_props) == 38, (
+        f"Expected exactly 38 properties in AgentState schema, found {len(schema_props)}. "
         f"Properties: {sorted(schema_props)}"
     )
 

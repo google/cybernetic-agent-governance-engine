@@ -15,8 +15,8 @@
 """Gateway ingress authentication by mesh workload identity (POAM-2026-080).
 
 Every request to the gateway must come from a trusted workload identity,
-except for a short list of open paths (health, metrics, public keys, pause
-state). This is deny by default: a path that is not explicitly open requires
+except for a short list of open paths (health, metrics, public keys). This
+is deny by default: a path that is not explicitly open requires
 an identity, so a new route is protected the moment it is added.
 
 Where the identity comes from
@@ -63,9 +63,10 @@ CLIENT_IDENTITY_HEADER = "l5d-client-id"
 TRUSTED_IDENTITIES_ENV = "CAGE_TRUSTED_CLIENT_IDENTITIES"
 
 #: Paths that need no caller identity. Everything else is refused unless the
-#: caller presents a trusted identity. Keep in sync with the gateway's open
-#: HTTPRoute (deployment/k8s/linkerd-mtls-policy.yaml and
-#: infra/modules/gateway/mesh-policy); a test enforces that.
+#: caller presents a trusted identity. Only exact paths can be open: there is
+#: no prefix form, so no route family is ever open by accident. Keep in sync
+#: with the gateway's open HTTPRoute (deployment/k8s/linkerd-mtls-policy.yaml
+#: and infra/modules/gateway/mesh-policy); a test enforces that.
 OPEN_EXACT_PATHS: frozenset[str] = frozenset(
     {
         "/health",
@@ -75,7 +76,6 @@ OPEN_EXACT_PATHS: frozenset[str] = frozenset(
         "/governance/.well-known/jwks.json",
     }
 )
-OPEN_PATH_PREFIXES: tuple[str, ...] = ("/v1/pause/",)
 
 _LINKERD_IDENTITY = re.compile(
     r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?"  # service account
@@ -115,7 +115,7 @@ def is_open_path(path: str) -> bool:
     """True if ``path`` needs no caller identity.
 
     Only canonical paths can be open: a path with an empty, ``.`` or ``..``
-    segment is never open, so ``//health`` or ``/v1/pause/../mcp`` falls
+    segment is never open, so ``//health`` or ``/governance/../mcp`` falls
     through to the identity check instead of matching by accident.
     """
     segments = path.split("/")[1:]
@@ -123,14 +123,7 @@ def is_open_path(path: str) -> bool:
         return False
     if segments and segments[-1] in (".", ".."):
         return False
-    if path in OPEN_EXACT_PATHS:
-        return True
-    return any(
-        path.startswith(prefix)
-        and len(path) > len(prefix)
-        and "/" not in path[len(prefix) :]
-        for prefix in OPEN_PATH_PREFIXES
-    )
+    return path in OPEN_EXACT_PATHS
 
 
 def load_identity_policy() -> IdentityPolicy:

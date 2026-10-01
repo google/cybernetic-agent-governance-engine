@@ -80,11 +80,19 @@ _spec.loader.exec_module(model)
 #   - Ungated: 21 (was 19)
 #   - Concurrent: 49 (was 45)
 #   - Skipped tier: 43 (was 39)
+#
+# NOTE (refactor/prune-pause, 2026-10-01): State counts decreased because the
+# PAUSE terminal state and the transient_block flag that reached it were
+# removed; the verdict lattice is ALLOW | NARROW | REQUIRE_APPROVAL | DEFER |
+# DENY and a transient fault is a DENIED terminal. The new counts are:
+#   - Gated: 42 (was 52)
+#   - Skipped tier: 39 (was 49)
+# The ungated model remains at 21 (it never explored the PAUSE path).
 
-EXPECTED_GATED_STATES = 52
+EXPECTED_GATED_STATES = 42
 EXPECTED_UNGATED_STATES = 21
 EXPECTED_CONCURRENT_STATES = 49
-EXPECTED_SKIPPED_TIER_STATES = 49  # Gap 3 and Gap 4 variants (was 39)
+EXPECTED_SKIPPED_TIER_STATES = 39  # Gap 3 and Gap 4 variants
 
 
 # ---------------------------------------------------------------------------
@@ -234,9 +242,8 @@ def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
                     seal_present=False,
                     resolved_allow=False,
                     profile=state.profile,
-            narrower_present=state.narrower_present,
-            clamped_params_valid=state.clamped_params_valid,
-            transient_block=state.transient_block,
+                    narrower_present=state.narrower_present,
+                    clamped_params_valid=state.clamped_params_valid,
                 )
                 return
         yield from model.gated_transitions(state)
@@ -251,7 +258,7 @@ def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
 
 
 # ---------------------------------------------------------------------------
-# C1-sub — NARROW and PAUSE states (audit remediation 2026-08-18)
+# C1-sub — NARROW state (audit remediation 2026-08-18); PAUSE removed 2026-10-01
 # ---------------------------------------------------------------------------
 
 
@@ -267,31 +274,28 @@ def test_narrow_state_is_reachable_and_has_seal() -> None:
         assert state.clamped_params_valid is True, "NARROW implies clamped_params_valid"
 
 
-def test_pause_state_is_reachable_and_has_no_seal() -> None:
-    """PAUSE is retryable, not an ALLOW: no seal issued."""
+def test_no_pause_phase_is_modelled_or_reachable() -> None:
+    """The model names no PAUSE: every reachable phase is in PHASES and the
+    runtime enum has no such verdict either (refactor/prune-pause)."""
+    from src.gateway.governance.decisions import GovernanceDecision
+
+    assert "PAUSE" not in model.PHASES
+    assert "TRANSIENT" not in model.VIOLATION_KINDS
+    assert not hasattr(model.State, "transient_block")
+    assert "PAUSE" not in {d.value for d in GovernanceDecision}
     states = model.enumerate_reachable(model.gated_transitions)
-    pause = [s for s in states if s.phase == "PAUSE"]
-    assert pause, "expected at least one PAUSE state"
-    for state in pause:
-        assert state.seal_present is False, "PAUSE must have seal_present=FALSE"
-        assert state.resolved_allow is False, "PAUSE must have resolvedAllow=FALSE"
-        assert state.transient_block is True, "PAUSE implies transient_block"
-        assert state.all_tiers_passed(), "PAUSE requires all tiers to pass first"
+    assert all(s.phase in model.PHASES for s in states)
+    assert not any(s.phase == "PAUSE" for s in states)
 
 
-def test_narrow_and_pause_are_terminal() -> None:
-    """NARROW and PAUSE have no successors in the gated model."""
+def test_narrow_is_terminal() -> None:
+    """NARROW has no successors in the gated model."""
     states = model.enumerate_reachable(model.gated_transitions)
     narrow = [s for s in states if s.phase == "NARROW"]
-    pause = [s for s in states if s.phase == "PAUSE"]
-
+    assert narrow
     for state in narrow:
         successors = list(model.gated_transitions(state))
         assert successors == [], "NARROW must be terminal (no successors)"
-
-    for state in pause:
-        successors = list(model.gated_transitions(state))
-        assert successors == [], "PAUSE must be terminal (no successors)"
 
 
 def test_narrow_satisfies_no_direct_bind() -> None:
@@ -319,12 +323,11 @@ def test_ungated_narrow_variant_violates_the_invariant() -> None:
     assert counterexample.seal_present is False
 
 
-def test_initial_state_has_no_threshold_or_transient_flags() -> None:
-    """Initial state has soft_threshold_exceeded=FALSE and transient_block=FALSE."""
+def test_initial_state_has_no_narrow_flags() -> None:
+    """Initial state has narrower_present=FALSE and clamped_params_valid=FALSE."""
     initial = model.initial_state()
     assert initial.narrower_present is False
     assert initial.clamped_params_valid is False
-    assert initial.transient_block is False
 
 
 # ---------------------------------------------------------------------------

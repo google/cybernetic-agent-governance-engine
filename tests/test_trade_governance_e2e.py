@@ -228,7 +228,6 @@ def _classifier(*, narrow: bool = False, narrowers: list[Any] | None = None) -> 
         confidence_threshold=0.95,
         defer_enabled=True,
         narrow_enabled=narrow,
-        pause_enabled=False,
     )
 
 

@@ -331,36 +331,6 @@ class TestEnvelopeTransportEdgeCases:
         assert data.get("schema_version") == "1.0.0"
         assert data["verdict"] == "DEFER"
 
-    def test_pause_verdict_still_returns_flat_format(
-        self, client, mock_symbolic_governor
-    ):
-        """PAUSE verdicts still use legacy flat format."""
-        mock_symbolic_governor.validate_action = AsyncMock(
-            return_value={
-                "verdict": "PAUSE",
-                "pause_receipt": None,  # Simplified for test
-                "violations": ["rate limited"],
-                "seal": "",
-                "latency_ms": 0.5,
-            }
-        )
-
-        with patch(
-            "src.gateway.server.governance_middleware._emit_pause_receipt",
-            new=AsyncMock(return_value=None),
-        ):
-            resp = client.post(
-                "/validate-action",
-                json={"action": "execute_trade", "params": {"amount": 100}},
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-
-        # Should have legacy schema_version
-        assert data.get("schema_version") == "1.0.0"
-        assert data["verdict"] == "PAUSE"
-
     def test_external_attestations_preserved_in_envelope(
         self, client, mock_symbolic_governor
     ):

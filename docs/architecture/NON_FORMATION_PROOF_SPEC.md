@@ -94,8 +94,8 @@ the structured per-tier failure record — one is emitted per failing tier
 ### 2.2 `decisions.py` — canonical decision vocabulary
 
 [`GovernanceDecision`](../../src/gateway/governance/decisions.py:81) is the
-five-state enum (`ALLOW/DENY/PAUSE/NARROW/REQUIRE_APPROVAL/DEFER`) that must
-label the receipt's outcome. Only `DENY` (and, per §7, `PAUSE` when it times
+five-state enum (`ALLOW/DENY/NARROW/REQUIRE_APPROVAL/DEFER`) that must
+label the receipt's outcome. Only `DENY` (there is no longer a `PAUSE` that times
 out to auto-deny) triggers `GovernanceRefusalReceipt` issuance. `DEFER` and
 `REQUIRE_APPROVAL` are explicitly **not** non-formation claims — they are
 open questions about *whether* the action forms, not proofs that it did not;

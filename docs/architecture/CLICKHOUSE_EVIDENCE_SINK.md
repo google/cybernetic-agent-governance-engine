@@ -180,6 +180,9 @@ for field; `prev_hash` is `""` at genesis (the sink maps it to `NULL`).
 3. The sparse optional header members (`classification_reason`,
    `narrowing_applied`, `pause_token`) change the header bytes when present, so
    they are persisted verbatim and re-emitted in the canonical rebuild.
+   `pause_token` is **legacy and read-only** since the `PAUSE` verdict was removed
+   (2026-10-01): nothing writes it any more, but it stays in the DDL and the
+   rebuild so historical `cage-audit/3.0` records still verify.
 
 ---
 
@@ -266,7 +269,7 @@ pruning is unusually effective here.
 | `kms_signature` | `Nullable(String)` | Variable-length base64. Always `NULL` for stream-sourced rows: the gateway no longer signs records, and provenance lives in the per-batch custody attestation in the cold store. Retained for schema compatibility. |
 | `hash_algorithm`, `canonicalization` | `LowCardinality(String)` | Inside the hash; required for verification and future algorithm agility. |
 | `evidence_class` | `Enum8('GOVERNANCE' = 1, 'INFRA' = 2)` `DEFAULT 'GOVERNANCE'` | **Not** part of the hash. Separates chained governance evidence from unchained infrastructure telemetry ingested via `POST /v1/infra/events`; drives the `infra_events_mv` projection (§6.4). `Enum8` rather than `LowCardinality(String)` so an unknown class is rejected at `INSERT`. |
-| `classification_reason`, `narrowing_applied`, `pause_token` | `Nullable(String)` | Sparse header members; presence changes the canonical header bytes, so they must round-trip verbatim. |
+| `classification_reason`, `narrowing_applied`, `pause_token` | `Nullable(String)` | Sparse header members; presence changes the canonical header bytes, so they must round-trip verbatim. `pause_token` is legacy (no writer since the `PAUSE` verdict was removed) and is retained only for historical-record verification. |
 | `ingested_at` | `DateTime64(3, 'UTC')` `DEFAULT now64(3)` | Sink-side arrival time. **Not** part of the hash — it is deliberately excluded from every canonical rebuild. Powers ingestion-lag SLOs and late-arrival forensics. |
 | `redis_msg_id` | `String` | Redis Stream `XADD` id (`<ms>-<seq>`). The idempotency/reconciliation handle between Redis and ClickHouse after a sink retry. |
 

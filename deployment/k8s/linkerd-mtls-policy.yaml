@@ -240,7 +240,7 @@ spec:
 # Mirrors infra/modules/gateway/mesh-policy (the Terraform path). Once a
 # Server has HTTPRoutes, Linkerd refuses requests that match no route, and a
 # route without an AuthorizationPolicy admits nobody:
-#   gateway-open   exact open paths + GET pause state → any client (probes, scrapers, JWKS readers)
+#   gateway-open   exact open paths                   → any client (probes, scrapers, JWKS readers)
 #   gateway-gated  PathPrefix "/" (everything else)   → cage-advisor-sa only
 # The gateway repeats this check on l5d-client-id (WorkloadIdentityMiddleware,
 # CAGE_TRUSTED_CLIENT_IDENTITIES in gateway.yaml), so deleting these objects
@@ -296,10 +296,6 @@ spec:
         - path:
             type: Exact
             value: "/governance/.well-known/jwks.json"
-        - path:
-            type: PathPrefix
-            value: "/v1/pause/"
-          method: GET
 
 ---
 apiVersion: policy.linkerd.io/v1beta3

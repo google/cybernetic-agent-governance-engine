@@ -445,13 +445,13 @@ class ValidateActionRequest(BaseModel):
 def _serialize_receipt(
     receipt_obj: Any,
 ) -> dict[str, Any]:
-    """Serialize RefusalReceipt or PauseReceipt to a dict for evidence ingestion.
+    """Serialize a RefusalReceipt to a dict for evidence ingestion.
 
     Preserves the receipt's computed proof_hash exactly without recomputation.
     Handles nested frozen dataclasses (GovernanceTierFailure).
 
     Args:
-        receipt_obj: RefusalReceipt or PauseReceipt instance.
+        receipt_obj: RefusalReceipt instance.
 
     Returns:
         Serialized dict suitable for JSON encoding and evidence stream ingestion.
@@ -472,81 +472,6 @@ def _serialize_receipt(
             return obj
 
     return _convert_value(receipt_obj)
-
-
-async def _emit_pause_receipt(
-    action_id: str,
-    pause_receipt: Any,
-) -> None:
-    """Emit a signed OSCAL compliance receipt for a PAUSE decision (A3).
-
-    PAUSE decisions are neither approved nor denied; they indicate transient
-    conditions (rate limiting, circuit breaker, resource unavailable) that
-    will resolve without human intervention.
-
-    The pause receipt is signed via KMS and published to the evidence stream
-    for tamper-evident audit trail parity with DENY and ALLOW decisions.
-
-    Args:
-        action_id:     The tool / action name that was paused.
-        pause_receipt: Full PauseReceipt object from validate_action result.
-    """
-    if pause_receipt is None:
-        logger.warning(
-            "⚠️ [A3] _emit_pause_receipt called with pause_receipt=None for action='%s'",
-            action_id,
-        )
-        return
-
-    receipt_id = str(uuid.uuid4())
-    timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
-
-    # A3: Serialize the full PauseReceipt with proof_hash intact
-    receipt_payload: dict[str, Any] = _serialize_receipt(pause_receipt)
-    receipt_payload["type"] = "GOVERNANCE_PAUSE_RECEIPT"
-    receipt_payload["receipt_id"] = receipt_id
-    receipt_payload["action_id"] = action_id
-    receipt_payload["timestamp_utc"] = timestamp_utc
-    receipt_payload["oscal_control_ref"] = "ISO-42001-A.8.4"
-    receipt_payload["kms_signature"] = ""
-
-    # Sign the receipt via KMS
-    try:
-        signer = get_governance_signer()
-        signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
-        receipt_payload["kms_signature"] = signer.sign(signable)
-    except Exception as sign_exc:
-        logger.error(
-            "❌ [A3] Failed to KMS-sign pause receipt for action '%s' "
-            "(receipt_id=%s): %s — receipt will be emitted unsigned.",
-            action_id,
-            receipt_id,
-            sign_exc,
-        )
-
-    # Publish to evidence stream
-    try:
-        sink = get_evidence_sink()
-        await sink.ingest(receipt_payload)
-        logger.info(
-            "⏸️ [A3] Signed OSCAL pause receipt emitted: action='%s' "
-            "receipt_id=%s pause_token=%s kms_signed=%s has_proof_hash=%s",
-            action_id,
-            receipt_id,
-            pause_receipt.pause_token
-            if hasattr(pause_receipt, "pause_token")
-            else "unknown",
-            bool(receipt_payload["kms_signature"]),
-            "proof_hash" in receipt_payload,
-        )
-    except Exception as emit_exc:
-        logger.error(
-            "❌ [A3] Failed to emit OSCAL pause receipt for action '%s' "
-            "(receipt_id=%s): %s — PAUSE decision will still proceed.",
-            action_id,
-            receipt_id,
-            emit_exc,
-        )
 
 
 async def _emit_refusal_receipt(
@@ -799,21 +724,12 @@ async def validate_action_endpoint(
             policy_version_id=body.policy_version_id,
         )
 
-        # A3: Emit pause receipt for PAUSE verdicts before responding
-        verdict = result.get("verdict")
-        if verdict == "PAUSE":
-            pause_receipt = result.get("pause_receipt")
-            if pause_receipt is not None:
-                await _emit_pause_receipt(
-                    action_id=body.action,
-                    pause_receipt=pause_receipt,
-                )
-
         # Phase 1, §3.2: HTTP 202 Accepted for FlowSignal ESCALATE decisions
         # When the verdict is DEFER and it's an external provider escalation, return
         # HTTP 202 with an async receipt body so clients know to poll for resolution.
         # Detection: defer_reason == "EXTERNAL_HOLD" OR
         #            is_external_hold == True (explicit marker from FRIA tier)
+        verdict = result.get("verdict")
         defer_reason = result.get("defer_reason", "")
         is_external_hold = result.get("is_external_hold", False)
 
@@ -889,7 +805,7 @@ async def validate_action_endpoint(
             )
             return JSONResponse(content=envelope.to_dict(include_signature=True))
 
-        # REQUIRE_APPROVAL (carries ``deferred_id``), DEFER and PAUSE: flat format
+        # REQUIRE_APPROVAL (carries ``deferred_id``) and DEFER: flat format
         payload = {"schema_version": "1.0.0", **result}
         return JSONResponse(content=jsonable_encoder(payload))
 

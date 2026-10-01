@@ -209,18 +209,6 @@
         "null"
       ]
     },
-    "pause_resume_token": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "pause_reason": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "consecutive_denials": {
       "type": "integer"
     },

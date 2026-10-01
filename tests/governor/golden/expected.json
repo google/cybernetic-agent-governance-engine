@@ -1573,54 +1573,8 @@
       }
     }
   },
-  "32_pause_path_enabled": {
-    "description": "Transient condition routes to PAUSE when enabled",
-    "action": "execute_trade",
-    "entry_points": {
-      "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[TEST_VIOLATION] rate limit exceeded on upstream venue",
-        "seal_issued": false,
-        "collaborators_called": [
-          "ftra_stage._ftra_boundary_check",
-          "publish_refusal",
-          "stpa_validator.validate"
-        ]
-      },
-      "govern": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[TEST_VIOLATION] rate limit exceeded on upstream venue",
-        "seal_issued": false,
-        "collaborators_called": [
-          "ftra_stage._ftra_boundary_check",
-          "publish_refusal",
-          "stpa_validator.validate"
-        ]
-      },
-      "revalidate_post_hitl": {
-        "outcome": "ALLOW",
-        "first_violation_code": null,
-        "seal_issued": true,
-        "collaborators_called": [
-          "cbf.atomic_verify_and_commit",
-          "fiscal_guard.confirm",
-          "fiscal_guard.reserve",
-          "opa_client.evaluate_policy"
-        ]
-      },
-      "verify": {
-        "outcome": "DENY",
-        "first_violation_code": "TEST_VIOLATION",
-        "seal_issued": false,
-        "collaborators_called": [
-          "ftra_stage._ftra_boundary_check",
-          "stpa_validator.validate"
-        ]
-      }
-    }
-  },
-  "33_pause_path_disabled": {
-    "description": "Transient condition falls back to DENY when PAUSE is disabled",
+  "32_transient_fault_is_deny": {
+    "description": "A transient upstream fault is a HARD finding and denies with a refusal receipt",
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {

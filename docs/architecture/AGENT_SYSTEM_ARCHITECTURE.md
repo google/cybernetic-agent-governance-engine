@@ -100,8 +100,6 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `ftra_defer_id`         | `str \| None` — Correlation UUID for DEFER requests| Extended          | `defer_node`                  |
 | `narrow_status`         | `str \| None` — `"NARROWED"` / `"NOT_NARROWED"`     | Extended          | `SymbolicGovernor`            |
 | `narrowed_params`       | `dict \| None` — Clamped parameters from NARROW     | Extended          | `SymbolicGovernor`            |
-| `pause_resume_token`    | `str \| None` — Token for PAUSE resumption         | Extended          | `SymbolicGovernor`            |
-| `pause_reason`          | `str \| None` — Reason code for transient PAUSE    | Extended          | `SymbolicGovernor`            |
 | `consecutive_denials`   | `int` — Sequential DENY counter (reset on ALLOW)   | Extended          | `SymbolicGovernor`            |
 | `last_violation`        | `dict \| None` — Most recent structured violation   | Extended          | `SymbolicGovernor`            |
 | `deferral_ticket_id`    | `str \| None` — Ticket ID from `DeferralPending`   | Extended          | `safety_node` / `defer_node`  |

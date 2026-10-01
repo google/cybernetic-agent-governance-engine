@@ -156,7 +156,7 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     Governance Contract:
         - Every tool call must be routed ALLOW or NARROW, or carry the
           ``deferred_id`` of a human-approved REQUIRE_APPROVAL
-        - Refusals, DEFER / PAUSE verdicts, HTTP errors, timeouts and an
+        - Refusals, DEFER verdicts, HTTP errors, timeouts and an
           unreachable gateway all refuse the batch: this node does not run,
           ``governance_status`` becomes "DENIED" and the subgraph ends
         - The gateway commits and seals inside ``execute_trade_action``; the

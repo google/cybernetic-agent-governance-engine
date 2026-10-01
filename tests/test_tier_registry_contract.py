@@ -448,12 +448,11 @@ def test_evidence_artifacts_must_be_immutable() -> None:
     """
     from src.gateway.governance.evidence.stream import EvidenceCommitResult
     from src.gateway.governance.evidence.cold_store import ColdStoreReceipt
-    from src.gateway.governance.contracts import RefusalReceipt, PauseReceipt
+    from src.gateway.governance.contracts import RefusalReceipt
 
     assert getattr(EvidenceCommitResult, "__dataclass_params__").frozen is True
     assert getattr(ColdStoreReceipt, "__dataclass_params__").frozen is True
     assert getattr(RefusalReceipt, "__dataclass_params__").frozen is True
-    assert getattr(PauseReceipt, "__dataclass_params__").frozen is True
 
 
 def test_evidence_chain_must_preserve_temporal_order() -> None:

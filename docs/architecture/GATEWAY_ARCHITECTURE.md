@@ -53,19 +53,16 @@ stateDiagram-v2
     Aggregation --> Priority0_DENY: Contains Hard Violation (STPA/CBF/OPA DENY)
     Aggregation --> Priority1_OPA: OPA Manual Review
     Aggregation --> Priority2_HITL: Contains HITL Violation (FTRA hit, 0.70 <= conf < 0.95)
-    Aggregation --> Priority3_PAUSE: Contains Transient Issues
-    Aggregation --> Priority4_NARROW: Every Violation Narrowable
-    Aggregation --> Priority5_DEFER: Confidence Starved
+    Aggregation --> Priority3_NARROW: Every Violation Narrowable
+    Aggregation --> Priority4_DEFER: Confidence Starved
     Aggregation --> ALLOW: No Violations
 
     Priority0_DENY --> DENY
     Priority1_OPA --> REQUIRE_APPROVAL
     Priority2_HITL --> REQUIRE_APPROVAL
-    Priority3_PAUSE --> PAUSE
-    Priority4_NARROW --> NARROW
-    Priority5_DEFER --> DEFER
+    Priority3_NARROW --> NARROW
+    Priority4_DEFER --> DEFER
 
-    PAUSE --> [*]: Await Retry Signal
     DEFER --> [*]: Park in DeferQueue
     REQUIRE_APPROVAL --> [*]: Route to HITL Escalation
     DENY --> [*]: Abort Workflow
@@ -78,11 +75,10 @@ stateDiagram-v2
   1. `Hard Violation (STPA / CBF / OPA DENY)` → `DENY`
   2. `OPA Manual Review` → `REQUIRE_APPROVAL`
   3. `HITL Violation (FTRA hit, confidence in [FRIA_ZONE_DEFER, AGENT_CONFIDENCE_THRESHOLD))` → `REQUIRE_APPROVAL`
-  4. `Transient Issues (Rate limits, circuit breakers)` → `PAUSE`
-  5. `Every violation NARROWABLE + narrower proposal` → `NARROW` (after re-verification)
-  6. `Confidence-Starved (< FRIA_ZONE_DEFER)` → `DEFER`
-  7. Anything else with violations → `DENY`; `Zero Violations` → `ALLOW`
-- **Canonical Decision Vocabulary**: The Gateway strictly enforces a six-state decision vocabulary ([`src/gateway/governance/decisions.py`](../../src/gateway/governance/decisions.py)): `ALLOW`, `DENY`, `DEFER`, `PAUSE`, `NARROW`, and `REQUIRE_APPROVAL`.
+  4. `Every violation NARROWABLE + narrower proposal` → `NARROW` (after re-verification)
+  5. `Confidence-Starved (< FRIA_ZONE_DEFER)` → `DEFER`
+  6. Anything else with violations → `DENY`; `Zero Violations` → `ALLOW`
+- **Canonical Decision Vocabulary**: The Gateway strictly enforces a five-state decision vocabulary ([`src/gateway/governance/decisions.py`](../../src/gateway/governance/decisions.py)): `ALLOW`, `DENY`, `DEFER`, `NARROW`, and `REQUIRE_APPROVAL`. Transient operational failures (rate limits, circuit breakers, Redis timeouts) are `HARD` violations and resolve to `DENY`; there is no separate "pause" verdict (the former one was removed on 2026-10-01 because no tier ever produced a `TRANSIENT` violation).
 - **Structural Subtyping**: Decoupled from concrete implementations via `Protocol` interfaces in [`src/gateway/governance/contracts.py`](../../src/gateway/governance/contracts.py) (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, `CausalGatekeeper`, `GovernanceTierPlugin`, `InvariantModel`). Consensus critics (`CriticSpec` / `ConsensusContribution`), causal specs (`CausalSpec`) and narrowing results (`NarrowingResult`) are domain-injected; the kernel carries no finance defaults.
 - **Fail-Closed Startup Invariants**: The composition root ([`governor/bootstrap.py`](../../src/gateway/governance/governor/bootstrap.py)) loads the single `CAGE_DOMAIN` plugin, assembles an immutable governor from its contribution ([`governor/assembly.py`](../../src/gateway/governance/governor/assembly.py) rejects slot collisions, duplicate domains/threshold sections, ungoverned irreversible actions and invariants failing V1–V4), refuses unfilled engine slots, registers compliance overlays, then [`governor/posture.py`](../../src/gateway/governance/governor/posture.py) checks that each tier's runtime requirements, the KMS signing mode and key, Redis, the reconciliation provider, the reconciler trust anchor and the governance salt are healthy before traffic is served. Nothing runs at import time. The governor lives on `app.state.governor` and is passed explicitly to middleware, tool providers and node factories.
 
@@ -108,11 +104,10 @@ The symbolic governance pipeline is executed for every governed action by [`run_
 After all tiers execute, violations are aggregated and classified by [`ClassificationEngine.classify()`](../../src/gateway/governance/governor/verdicts.py) to determine the final governance decision. Classification operates on structured [`Violation`](../../src/gateway/governance/contracts.py) dataclasses, each carrying an explicit [`ViolationKind`](../../src/gateway/governance/contracts.py) field:
 
 **ViolationKind Precedence Hierarchy** (highest to lowest):
-1. **`HARD`** → `DENY` — Non-negotiable safety gates (STPA violations, CBF barrier breaches, explicit OPA DENY). Cannot be narrowed, deferred, or paused.
+1. **`HARD`** → `DENY` — Non-negotiable safety gates (STPA violations, CBF barrier breaches, explicit OPA DENY). Cannot be narrowed or deferred.
 2. **`HITL`** → `REQUIRE_APPROVAL` — Requires explicit human sign-off (OPA `MANUAL_REVIEW`, FTRA boundary hits).
 3. **`NARROWABLE`** → `NARROW` — Threshold violations that can be clamped to allowed values (e.g., `amount: 15000 → 10000`). Requires every violation to be `NARROWABLE`, a registered [`Narrower`](../../src/gateway/governance/narrower.py) proposal, and a clean FULL re-run on the clamped params (see *NARROW re-run requirement* below). Otherwise falls back to `DENY`.
-4. **`TRANSIENT`** → `PAUSE` — Temporary conditions that will resolve without intervention (rate limits, circuit breakers). Feature flag: `CAGE_PAUSE_ENABLED` (default: `true`). When disabled, falls back to `DENY`.
-5. **`DEFERRABLE`** → `DEFER` — Soft violations indicating data starvation or ambiguity (low confidence `< FRIA_ZONE_DEFER`). The gateway parks the context in its `DeferQueue` (see [`DEFERRAL_QUEUE.md`](DEFERRAL_QUEUE.md)). Feature flag: `CAGE_DEFER_ENABLED` (default: `true`).
+4. **`DEFERRABLE`** → `DEFER` — Soft violations indicating data starvation or ambiguity (low confidence `< FRIA_ZONE_DEFER`). The gateway parks the context in its `DeferQueue` (see [`DEFERRAL_QUEUE.md`](DEFERRAL_QUEUE.md)). Feature flag: `CAGE_DEFER_ENABLED` (default: `true`).
 
 **Classification Invariants:**
 - **Fail-closed by construction**: Every `Violation` requires an explicit `kind` field (no default). Construction without `kind` raises `TypeError`.
@@ -219,7 +214,6 @@ flowchart TD
     
     SymGov -->|ALLOW| ConsGate[[Consequence Gateway\n(Atomic Verification)]]
     SymGov -->|DEFER| Defer[[Defer Queue\n(Redis db=1, 4h TTL)]]
-    SymGov -->|PAUSE| Pause[[Pause Manager\n(Transient Hold)]]
     SymGov -->|DENY| Deny[[Terminal Block\n(Saga LIFO Rollback)]]
     
     ConsGate --> Actuator[Execution Actuator\n(Registered Action)]
@@ -312,23 +306,12 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 }
 ```
 
-**Response — `PAUSE` (HTTP 202):**
-```json
-{
-  "verdict": "PAUSE",
-  "pause_token": "pause-tok-71e982b1",
-  "reason": "Circuit breaker OPEN: downstream upstream throttled"
-}
-```
-
 ### 4.2 Supporting Governance Primitives
 
 - `POST /governance/revalidate-post-hitl`: Re-runs the `POST_HITL` profile after human approval (used by the advisor; refused for actions no domain tier claims).
 - `POST /governance/check`: Contextual pre-execution check evaluating intent before inference.
 - `GET /governance/policy-version`: Returns active policy SHA-256 and compliance revision metadata.
 - `GET /governance/jwks` & `GET /.well-known/jwks.json`: Public JSON Web Key Set for verifying KMS/asymmetric governance tokens.
-- `GET /v1/pause/{pause_token}`: Inspect state of a paused execution.
-- `POST /v1/pause/{pause_token}/resume`: Resume a paused execution with optional parameter overrides.
 - `POST /tools/execute`: Protected tool execution; the caller must present a trusted Linkerd workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)). Governed tools (e.g. finance's `execute_trade_action`) run the governor themselves and dispatch through `ActuatorRegistry`.
 - `POST /v1/nemo/propose-refinement`, `POST /v1/nemo/approve-refinement/{proposal_id}`, `GET /v1/nemo/proposals/pending`, `POST /v1/nemo/apply-refinement`: NeMo guardrail refinement workflow ([`hybrid_server.py`](../../src/gateway/server/hybrid_server.py)).
 - The DEFER resolution API (`GET /v1/defer/pending`, `GET /v1/defer/{id}`, `POST /v1/defer/{id}/inject`, `POST /v1/defer/{id}/escalate`) is served by the compliance bridge ([`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py)), not the gateway.
@@ -533,7 +516,7 @@ src/gateway/
 │   │   └── normative.py        # NormativeProvider protocol, baselines & evidence seals
 │   ├── consequence_gateway.py # Atomic execution authorization & token consumption
 │   ├── contracts.py        # Protocol interfaces (structural subtyping)
-│   ├── decisions.py        # Canonical six-state decision vocabulary
+│   ├── decisions.py        # Canonical five-state decision vocabulary
 │   ├── defer_queue.py      # Redis db=1 confidence-starvation deferral queue
 │   ├── execution_actuator.py # ExecutionActuator protocol & ActuatorRegistry
 │   ├── kms_signer.py       # Governance signer (cloud providers live in src/integrations/)

@@ -80,7 +80,6 @@ class Scenario:
     # Feature flags
     defer_enabled: bool = True
     narrow_enabled: bool = False
-    pause_enabled: bool = False
     register_narrower: bool = False
 
 
@@ -131,7 +130,6 @@ def build_governor_for_scenario(scenario: Scenario) -> tuple[SymbolicGovernor, d
         confidence_threshold=0.70,
         defer_enabled=scenario.defer_enabled,
         narrow_enabled=scenario.narrow_enabled,
-        pause_enabled=scenario.pause_enabled,
     )
 
     # 5. Domain Tiers
@@ -533,24 +531,13 @@ SCENARIOS: list[Scenario] = [
         defer_enabled=False,
     ),
 
-    # 32. PAUSE path enabled (transient condition)
+    # 32. Transient infrastructure fault is a plain DENY (there is no PAUSE)
     Scenario(
-        id="32_pause_path_enabled",
-        description="Transient condition routes to PAUSE when enabled",
+        id="32_transient_fault_is_deny",
+        description="A transient upstream fault is a HARD finding and denies with a refusal receipt",
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
         stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="rate limit exceeded on upstream venue", kind=ViolationKind.HARD)],
-        pause_enabled=True,
-    ),
-
-    # 33. PAUSE path disabled (transient condition falls back to DENY)
-    Scenario(
-        id="33_pause_path_disabled",
-        description="Transient condition falls back to DENY when PAUSE is disabled",
-        action="execute_trade",
-        params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
-        stpa_violations=[Violation(tier="stpa", code="TEST_VIOLATION", message="rate limit exceeded on upstream venue", kind=ViolationKind.HARD)],
-        pause_enabled=False,
     ),
 
     # 34. NARROW path enabled with registered narrower

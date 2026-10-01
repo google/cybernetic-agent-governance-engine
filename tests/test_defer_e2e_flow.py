@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Conformance tests for canonical governance decision models (DEFER, NARROW, PAUSE).
+Conformance tests for canonical governance decision models (DEFER, NARROW).
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from src.gateway.governance.decisions import (
     DeferResponse,
     GovernanceDecision,
     NarrowResponse,
-    PauseResponse,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -112,52 +111,6 @@ class TestNarrowResponseModel:
         assert len(body["constraints_applied"]) == 1
 
 
-class TestPauseResponseModel:
-    """Tests for the PauseResponse Pydantic model."""
-
-    def test_pause_response_required_fields(self):
-        """PauseResponse requires pause_token, pause_reason, etc."""
-        from datetime import datetime, timezone
-
-        resp = PauseResponse(
-            pause_token="test-pause-token",
-            pause_reason="RATE_LIMITED",
-            resume_endpoint="/v1/pause/test-pause-token/resume",
-            expires_at=datetime.now(tz=timezone.utc),
-        )
-
-        assert resp.decision == "PAUSE"
-        assert resp.pause_token == "test-pause-token"
-        assert resp.pause_reason == "RATE_LIMITED"
-        assert "/resume" in resp.resume_endpoint
-
-    def test_pause_response_to_http_body(self):
-        """PauseResponse.to_http_body() produces correct structure."""
-        from datetime import datetime, timezone
-
-        expires = datetime(2026, 8, 15, 14, 0, 0, tzinfo=timezone.utc)
-
-        resp = PauseResponse(
-            pause_token="pause-http-test",
-            pause_reason="CIRCUIT_OPEN",
-            resume_endpoint="/v1/pause/pause-http-test/resume",
-            expires_at=expires,
-            estimated_wait_seconds=60,
-            retry_after_seconds=30,
-        )
-
-        body = resp.to_http_body()
-
-        assert body["decision"] == "PAUSE"
-        assert body["pause_token"] == "pause-http-test"
-        assert body["pause_reason"] == "CIRCUIT_OPEN"
-        assert body["resume_endpoint"] == "/v1/pause/pause-http-test/resume"
-        assert body["expires_at"] == "2026-08-15T14:00:00+00:00"
-        assert body["estimated_wait_seconds"] == 60
-        assert body["retry_after_seconds"] == 30
-        assert body["verdict"] == GovernanceDecision.PAUSE
-
-
 class TestDecisionVocabularyConformance:
     """Conformance tests for GovernanceDecision canonical vocabulary."""
 
@@ -167,8 +120,11 @@ class TestDecisionVocabularyConformance:
         assert hasattr(GovernanceDecision, "DENY")
         assert hasattr(GovernanceDecision, "DEFER")
         assert hasattr(GovernanceDecision, "NARROW")
-        assert hasattr(GovernanceDecision, "PAUSE")
         assert hasattr(GovernanceDecision, "REQUIRE_APPROVAL")
+        # The lattice is closed: exactly these five, no PAUSE.
+        assert {d.value for d in GovernanceDecision} == {
+            "ALLOW", "DENY", "DEFER", "NARROW", "REQUIRE_APPROVAL",
+        }
 
     def test_governance_decision_values(self):
         """GovernanceDecision enum values match expected strings."""
@@ -176,7 +132,6 @@ class TestDecisionVocabularyConformance:
         assert GovernanceDecision.DENY.value == "DENY"
         assert GovernanceDecision.DEFER.value == "DEFER"
         assert GovernanceDecision.NARROW.value == "NARROW"
-        assert GovernanceDecision.PAUSE.value == "PAUSE"
         assert GovernanceDecision.REQUIRE_APPROVAL.value == "REQUIRE_APPROVAL"
 
     def test_governance_decision_is_string_enum(self):

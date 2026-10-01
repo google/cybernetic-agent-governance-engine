@@ -47,6 +47,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
@@ -55,34 +56,24 @@ logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
 # Valid decision values — enforced by build_provenance_record
 # ---------------------------------------------------------------------------
 
-#: Canonical decision values accepted by build_provenance_record().
+#: Canonical decision values accepted by build_provenance_record(): exactly
+#: the members of the GovernanceDecision enum.
 #:
-#: This set includes:
-#:   - Canonical gateway-boundary decisions (GovernanceDecision enum):
-#:     ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL
-#:   - Execution-phase statuses (LangGraph node provenance records):
-#:     BLOCK, ESCALATE (retained for backward compatibility)
-#:
-#: The six canonical decisions (from src/gateway/governance/decisions.py):
+#: The five canonical decisions (from src/gateway/governance/decisions.py):
 #:   - ALLOW: Action approved, routing seal issued
 #:   - DENY: Action blocked, no seal issued
 #:   - DEFER: Action cannot be evaluated, missing trusted context
 #:   - NARROW: Action allowed with constrained/clamped parameters
-#:   - PAUSE: Action temporarily suspended awaiting external resume signal
 #:   - REQUIRE_APPROVAL: Action requires human sign-off before execution
 #:
-#: See src/gateway/governance/decisions.py for the full canonical vocabulary.
-VALID_DECISIONS = frozenset(
-    {
-        # Canonical gateway-boundary decisions (GovernanceDecision enum)
-        "ALLOW",
-        "DENY",
-        "DEFER",
-        "NARROW",
-        "PAUSE",
-        "REQUIRE_APPROVAL",
-    }
-)
+#: Historical records may carry the removed ``PAUSE`` value; readers tolerate
+#: it via :data:`LEGACY_PAUSE`, but no new record may be built with it.
+VALID_DECISIONS = frozenset(d.value for d in GovernanceDecision)
+
+#: Decision value written by the PAUSE verdict before it was removed. Kept
+#: only so evidence readers can name the value in old records; it is not in
+#: :data:`VALID_DECISIONS` and ``build_provenance_record`` rejects it.
+LEGACY_PAUSE = "PAUSE"
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +91,7 @@ class ProvenanceRecord:
         input_hash:   SHA-256 hex digest of the node's input data.
         output_hash:  SHA-256 hex digest of the node's output data.
         decision:     Governance decision. Canonical values:
-                      "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL".
+                      "ALLOW" | "DENY" | "DEFER" | "NARROW" | "REQUIRE_APPROVAL".
         parent_hash:  SHA-256 hex digest of the previous record in the chain,
                       or None for the first record.
     """
@@ -179,7 +170,7 @@ def build_provenance_record(
         input_data:  The node's input dict (will be hashed, not stored).
         output_data: The node's output dict (will be hashed, not stored).
         decision:    Governance decision. Canonical values:
-                     "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL".
+                     "ALLOW" | "DENY" | "DEFER" | "NARROW" | "REQUIRE_APPROVAL".
         parent_hash: Hash of the previous record in the chain, or None.
 
     Returns:

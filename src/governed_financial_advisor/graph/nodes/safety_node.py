@@ -40,8 +40,8 @@ routing-seal secret, signer or governor of its own.
 
 Fail-closed: only an explicit ALLOW, NARROW or REQUIRE_APPROVAL verdict
 routes onward (nothing is committed here; the gateway commits only inside
-``execute_trade_action``). A DENIED verdict, a
-PAUSE / unknown / missing verdict, a DEFER without a ticket, an HTTP error, a
+``execute_trade_action``). A DENIED verdict, an
+unknown / missing verdict, a DEFER without a ticket, an HTTP error, a
 timeout or an unreachable gateway all produce ``BLOCKED``.
 
 MAX_CONSECUTIVE_DENIALS = 2: Policy-probing attack mitigation. When an agent
@@ -135,7 +135,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         "APPROVED", consecutive_denials reset to 0
       - DENIED (``PermissionError``) → "BLOCKED" (or HARD_PAUSE on budget exhaustion)
       - DEFER with a ``defer_id`` → "DEFERRED" with the gateway's ticket
-      - Anything else (PAUSE, unknown verdict, HTTP error, timeout,
+      - Anything else (unknown verdict, HTTP error, timeout,
         unreachable gateway) → "BLOCKED" with ``GATEWAY_ERROR`` / ``NOT_APPROVED``
 
     Args:

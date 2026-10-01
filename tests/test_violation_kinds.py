@@ -16,7 +16,7 @@
 Test suite for ViolationKind precedence-based classification.
 
 Verifies that the structured Violation dataclass correctly enforces:
-  1. ViolationKind precedence order (HARD > HITL > NARROWABLE > TRANSIENT > DEFERRABLE)
+  1. ViolationKind precedence order (HARD > HITL > NARROWABLE > DEFERRABLE)
   2. Fail-closed construction (kind is required, no default)
   3. Classification bypasses free-text inspection (HARD with "exceeds max" → DENY, not NARROW)
   4. NARROWABLE violations without a registered narrower → DENY
@@ -42,15 +42,14 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
         (ViolationKind.HARD, 1),
         (ViolationKind.HITL, 2),
         (ViolationKind.NARROWABLE, 3),
-        (ViolationKind.TRANSIENT, 4),
-        (ViolationKind.DEFERRABLE, 5),
+        (ViolationKind.DEFERRABLE, 4),
     ],
 )
 def test_violation_kind_precedence(kind, expected_precedence):
     """ViolationKind precedence order is enforced.
     
     Verifies that the ViolationKind enum encodes the expected precedence
-    hierarchy: HARD > HITL > NARROWABLE > TRANSIENT > DEFERRABLE.
+    hierarchy: HARD > HITL > NARROWABLE > DEFERRABLE.
     
     This precedence determines which verdict is returned when multiple
     violation types are present. The highest-precedence kind wins.
@@ -60,14 +59,21 @@ def test_violation_kind_precedence(kind, expected_precedence):
         ViolationKind.HARD: 1,
         ViolationKind.HITL: 2,
         ViolationKind.NARROWABLE: 3,
-        ViolationKind.TRANSIENT: 4,
-        ViolationKind.DEFERRABLE: 5,
+        ViolationKind.DEFERRABLE: 4,
     }
     
     assert precedence_map[kind] == expected_precedence, (
         f"ViolationKind.{kind.name} has precedence {precedence_map[kind]}, "
         f"expected {expected_precedence}"
     )
+
+
+def test_violation_kind_has_no_transient_member():
+    """The TRANSIENT kind (and with it PAUSE) was removed: nothing can emit it."""
+    assert not hasattr(ViolationKind, "TRANSIENT")
+    assert {k.value for k in ViolationKind} == {"hard", "hitl", "deferrable", "narrowable"}
+    with pytest.raises(ValueError):
+        ViolationKind("transient")
 
 
 def test_violation_requires_kind():

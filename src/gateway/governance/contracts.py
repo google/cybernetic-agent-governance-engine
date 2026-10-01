@@ -139,52 +139,6 @@ class RefusalReceipt:
             object.__setattr__(self, "proof_hash", hashlib.sha256(canon).hexdigest())
 
 
-@dataclass(frozen=True)
-class PauseReceipt:
-    """Immutable audit-grade proof emitted whenever an action is paused.
-
-    Similar to RefusalReceipt but for PAUSE decisions — transient conditions
-    that will resolve without human intervention or data-hydration.
-
-    PAUSE decisions are neither approved nor denied; they indicate:
-      - Rate limiting (soft, will clear with time)
-      - Circuit breaker open (external dependency unavailable)
-      - Resource temporarily unavailable (quota exhausted, capacity exceeded)
-      - Coordination wait (cross-agent synchronization)
-
-    The pause_token is stored in Redis and can be used to resume the request
-    via POST /v1/pause/{pause_token}/resume.
-
-    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
-    """
-
-    thread_id: str
-    action: str
-    pause_reason: str  # e.g., "RATE_LIMITED", "CIRCUIT_OPEN", "RESOURCE_UNAVAILABLE"
-    pause_token: str
-    violations: list[str] = field(default_factory=list)
-    standing_at_pause: dict[str, Any] = field(default_factory=dict)
-    estimated_wait_seconds: int = field(default=60)
-    expires_at_utc: str = field(default="")
-    timestamp: float = field(default_factory=time.time)
-    proof_hash: str = field(default="")
-
-    def __post_init__(self) -> None:
-        if not self.proof_hash:
-            payload = {
-                "thread_id": self.thread_id,
-                "action": self.action,
-                "pause_reason": self.pause_reason,
-                "pause_token": self.pause_token,
-                "standing_at_pause": self.standing_at_pause,
-                "timestamp": self.timestamp,
-            }
-            from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-
-            canon = jcs_canonicalize_plan(payload)
-            object.__setattr__(self, "proof_hash", hashlib.sha256(canon).hexdigest())
-
-
 # ---------------------------------------------------------------------------
 # Violation — structured domain-tier violation record (D8 / F5 fix)
 # ---------------------------------------------------------------------------
@@ -193,12 +147,11 @@ class PauseReceipt:
 class ViolationKind(StrEnum):
     """Classification of violation severity and disposition.
     
-    Precedence: HARD > HITL > NARROWABLE > TRANSIENT > DEFERRABLE
+    Precedence: HARD > HITL > NARROWABLE > DEFERRABLE
     """
     HARD = "hard"
     HITL = "hitl"
     DEFERRABLE = "deferrable"
-    TRANSIENT = "transient"
     NARROWABLE = "narrowable"
 
 
@@ -222,7 +175,7 @@ class Violation:
     Every ``evaluate()`` or ``commit()`` call on a domain tier returns a
     (possibly empty) list of ``Violation`` objects.  A non-empty list causes
     the action to be denied; classification by ``kind`` determines the verdict
-    (DENY, REQUIRE_APPROVAL, DEFER, PAUSE, or NARROW).
+    (DENY, REQUIRE_APPROVAL, DEFER, or NARROW).
 
     This replaces ad-hoc violation strings with a structured record that
     preserves the tier name, machine-readable code, human-readable message,
@@ -524,7 +477,6 @@ class PluginContribution:
         threshold_sections: Threshold schema per section name under
             ``domains.<domain>`` (4b.7); keys must be unique across domains.
         execution_verbs: Claim-detector execution verbs (4b.13).
-        standing_projector: Standing projection for refusal receipts (4b.16).
         ground_truth_providers: External ground-truth readers keyed by
             ``invariant_id`` (4b.2).
         registered_actions: Every action this domain exposes.
@@ -548,7 +500,6 @@ class PluginContribution:
     narrowers: tuple["Narrower", ...] = ()
     threshold_sections: Mapping[str, type] = field(default_factory=dict)
     execution_verbs: frozenset[str] = frozenset()
-    standing_projector: Any | None = None
     ground_truth_providers: Mapping[str, Any] = field(default_factory=dict)
     registered_actions: frozenset[str] = frozenset()
     magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None

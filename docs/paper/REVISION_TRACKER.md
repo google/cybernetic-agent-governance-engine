@@ -407,29 +407,32 @@ make previously optional security controls mandatory.
 
 | # | Change | Current paper framing | Updated framing | Files affected | Paper sections |
 |---|---|---|---|---|---|
-| G1 | **NARROW/PAUSE Governance Decisions** | "four-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER)" | "six-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER/NARROW/PAUSE)" | [`decisions.py`](../../src/gateway/governance/decisions.py), [`pause_primitive.py`](../../src/gateway/governance/pause_primitive.py) | Abstract (line 7), §3.1, §7.1 |
-| G2 | **`ClassificationEngine.classify()` Classification Helper** | No description of violation routing | New five-way classification routing (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) | [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py) | §4.2 (add explanation of violation routing) |
+| G1 | **NARROW Governance Decision** | "four-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER)" | "five-state router (ALLOW/DENY/REQUIRE_APPROVAL/DEFER/NARROW)" — a sixth `PAUSE` state existed 2026-08-16 → 2026-10-01 and was removed as unreachable | [`decisions.py`](../../src/gateway/governance/decisions.py) | Abstract (line 7), §3.1, §7.1 |
+| G2 | **`ClassificationEngine.classify()` Classification Helper** | No description of violation routing | New four-way classification routing (DENY/REQUIRE_APPROVAL/NARROW/DEFER) | [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py) | §4.2 (add explanation of violation routing) |
 | G3 | **FTRA Boundary Check Now Mandatory** | Gated by `CAGE_FTRA_BOUNDARY_ENABLED` flag (default false) | Runs unconditionally, flag removed per POAM-2026-030-B | [`src/gateway/governance/governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py) | §4.7 (update zero-trust controls description) |
 | G4 | **Reconciliation Replay Defense Now Implemented** | §7.2/§7.3 describe this as "open, unmitigated vulnerability" | Now implemented as opt-in via `CAGE_RECONCILIATION_REPLAY_DEFENSE` | [`cbf.py`](../../src/gateway/governance/safety/cbf_engine.py), [`reconciliation_worker.py`](../../src/gateway/governance/reconciliation/daemon.py) | §7.2/§7.3 (update to reflect implemented status) |
 | G5 | **Evidence Chain Blocking Gate Default Changed** | `EVIDENCE_CHAIN_BLOCKING` default unspecified or false | Now defaults to `"true"` | [`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py) | Appendix C env-var table |
 
-### G1: NARROW/PAUSE Governance Decisions
+### G1: NARROW Governance Decision
 
-**Change summary:** The governance router now supports six decision states instead of four.
+**Change summary:** The governance router now supports five decision states instead of four.
 
 - **NARROW**: Restricts the scope of an agent action without full denial (e.g., limit
   parameter ranges, reduce tool access)
-- **PAUSE**: Temporarily suspends execution pending external event or timeout (e.g.,
-  waiting for rate-limit window, human review queue capacity)
+
+A sixth state, `PAUSE` (temporary suspension pending an external event), was added
+alongside `NARROW` and **removed on 2026-10-01**: no tier ever produced the
+`TRANSIENT` violation that routed to it, so it was unreachable in every posture. A
+transient fault is a `HARD` violation → `DENY` with a refusal receipt. The paper must
+not describe a pause verdict.
 
 **Evidence:**
 - [`GovernanceDecision`](../../src/gateway/governance/decisions.py) enum extended with
-  `NARROW` and `PAUSE` members
-- [`PausePrimitive`](../../src/gateway/governance/pause_primitive.py) implements the
-  pause/resume lifecycle with configurable timeout and resumption triggers
+  the `NARROW` member (the lattice is `ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENY`)
+- `docs/BREAKING_CHANGES_v3.md` P4-1–P4-5 record the `PAUSE` removal
 
 **Paper impact:** Abstract, §3.1 (decision taxonomy), and §7.1 (limitations) must be
-updated to reflect the six-state model.
+updated to reflect the five-state model.
 
 ### G2: `_classify_violation()` Classification Helper
 
@@ -438,12 +441,12 @@ decision based on violation type, severity, and context.
 
 **Evidence:**
 - [`src/gateway/governance/governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py) —
-  `ClassificationEngine.classify()` implements five-way routing:
-  - `DENY`: Hard policy violations (e.g., PII in output, prohibited actions)
-  - `DEFER`: Requires additional context or escalation
-  - `NARROW`: Partial compliance possible with scope restriction
-  - `PAUSE`: Temporary hold for rate-limiting or capacity
-  - `REQUIRE_APPROVAL`: Human-in-the-loop approval required
+  `ClassificationEngine.classify()` implements four-way routing by `ViolationKind`
+  precedence:
+  - `DENY`: `HARD` — safety gates and transient infrastructure faults
+  - `REQUIRE_APPROVAL`: `HITL` — human-in-the-loop approval required
+  - `NARROW`: `NARROWABLE` — partial compliance possible with scope restriction
+  - `DEFER`: `DEFERRABLE` — requires additional context
 
 **Paper impact:** §4.2 should describe the violation classification logic as part of
 the symbolic governor's decision pipeline.
@@ -515,7 +518,7 @@ Any change to the governance decision space or `_run_checks()` outcome domain mu
 mirrored in:
 
 - [`proof/model.py`](../../proof/model.py) — state-count verification may need updating
-  if NARROW/PAUSE are modeled as distinct terminal/intermediate states
+  if NARROW is modeled as a distinct terminal state (it is; there is no PAUSE phase)
 - [`docs/architecture/FORMAL_VERIFICATION.md`](../architecture/FORMAL_VERIFICATION.md) —
   reachable-state tables
 - ``CAGE_ARXIV.MD`` — abstract decision-count claim, §4.4 proof,
@@ -525,9 +528,9 @@ mirrored in:
 
 | Item | Verification needed |
 |---|---|
-| `_run_checks()` outcome domain | Now includes NARROW/PAUSE; proof model must cover these transitions |
+| `_run_checks()` outcome domain | Now includes NARROW; proof model covers these transitions (`phases_closed` asserts no PAUSE phase) |
 | FTRA boundary check mandatory | `gated_transitions()` in proof model should reflect unconditional FTRA |
-| `proof/model.py` state count | May need re-enumeration if NARROW/PAUSE add distinct reachable states |
+| `proof/model.py` state count | Re-enumerated: gated 42 / ungated 21 / DoWhy-absent 39 / ungated-NARROW 40 after the PAUSE removal |
 
 **Status:** Verification pending — `proof/model.py` state-count impact assessment not
 yet completed for Phase 1 changes.

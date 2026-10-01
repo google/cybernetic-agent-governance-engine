@@ -1417,5 +1417,4 @@ def classification_engine(narrower_registry):
         confidence_threshold=0.70,
         defer_enabled=True,
         narrow_enabled=False,
-        pause_enabled=False,
     )

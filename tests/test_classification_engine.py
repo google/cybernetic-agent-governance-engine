@@ -14,14 +14,16 @@
 
 """Unit tests for ClassificationEngine decision routing logic.
 
-Tests verify the 7-step classification decision tree:
+Tests verify the 6-step classification decision tree:
 1. Hard violations → DENY
 2. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
 3. HITL violations → REQUIRE_APPROVAL
-4. Transient violations → PAUSE (if enabled) or DENY
-5. Narrowable violations → NARROW (if narrower available) or DENY
-6. Deferrable violations → DEFER (if low confidence) or DENY
-7. Default fallback → DENY
+4. Narrowable violations → NARROW (if narrower available) or DENY
+5. Deferrable violations → DEFER (if low confidence) or DENY
+6. Default fallback → DENY
+
+There is no PAUSE step: ``ViolationKind`` has no TRANSIENT member and the
+engine accepts no ``pause_enabled`` knob.
 """
 
 import pytest
@@ -122,62 +124,17 @@ def test_hitl_violation_returns_require_approval():
     assert result.metadata["classification_reason"] == "hitl_required"
 
 
-def test_transient_with_pause_enabled_returns_pause():
-    """Transient violations with pause_enabled=True return PAUSE."""
-    engine = ClassificationEngine(
-        narrower_registry=NarrowerRegistry(),
-        confidence_threshold=0.70,
-        pause_enabled=True,
-    )
-
-    context = ClassificationContext(
-        violations=[
-            Violation(
-                tier="test",
-                code="TEST",
-                message="Test transient violation",
-                kind=ViolationKind.TRANSIENT,
-            )
-        ],
-        confidence=0.85,
-        opa_decision=None,
-        policy_ambiguous=False,
-        params={},
-    )
-
-    result = engine.classify(context, "test_action")
-
-    assert result.decision == GovernanceDecision.PAUSE
-    assert result.metadata["classification_reason"] == "transient_condition"
-
-
-def test_transient_with_pause_disabled_returns_deny():
-    """Transient violations with pause_enabled=False fall back to DENY."""
-    engine = ClassificationEngine(
-        narrower_registry=NarrowerRegistry(),
-        confidence_threshold=0.70,
-        pause_enabled=False,
-    )
-
-    context = ClassificationContext(
-        violations=[
-            Violation(
-                tier="test",
-                code="TEST",
-                message="Test transient violation",
-                kind=ViolationKind.TRANSIENT,
-            )
-        ],
-        confidence=0.85,
-        opa_decision=None,
-        policy_ambiguous=False,
-        params={},
-    )
-
-    result = engine.classify(context, "test_action")
-
-    assert result.decision == GovernanceDecision.DENY
-    assert result.metadata["classification_reason"] == "transient_disabled_fallback"
+def test_engine_has_no_pause_knob():
+    """The PAUSE path is gone: ``pause_enabled`` is not a constructor argument
+    and the decision enum has no PAUSE member for it to return."""
+    with pytest.raises(TypeError):
+        ClassificationEngine(
+            narrower_registry=NarrowerRegistry(),
+            confidence_threshold=0.70,
+            pause_enabled=True,  # type: ignore[call-arg]
+        )
+    assert not hasattr(GovernanceDecision, "PAUSE")
+    assert not hasattr(ViolationKind, "TRANSIENT")
 
 
 def test_narrowable_with_narrower_available_returns_narrow():
@@ -414,7 +371,7 @@ def test_adversarial_messages_do_not_override_hard_kind():
         narrower_registry=NarrowerRegistry(),
         confidence_threshold=0.70,
     )
-    # Give a HARD violation a message containing words that used to map to NARROW, TRANSIENT, HITL, DEFER
+    # Give a HARD violation a message containing words that used to map to NARROW, HITL, DEFER
     context = ClassificationContext(
         violations=[
             Violation(

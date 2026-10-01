@@ -109,11 +109,6 @@ def is_cage_narrow_enabled() -> bool:
     return env_flag("CAGE_NARROW_ENABLED", False)
 
 
-def is_cage_pause_enabled() -> bool:
-    """PAUSE decision path (``CAGE_PAUSE_ENABLED``, default on)."""
-    return env_flag("CAGE_PAUSE_ENABLED", True)
-
-
 DOMAIN_ENV_VAR = "CAGE_DOMAIN"
 
 

@@ -69,8 +69,6 @@ async def _execute_scenario_entry_point(
         new_callable=AsyncMock,
         return_value=("mock-defer-token", True),
     ), patch(
-        "src.gateway.governance.pause_primitive.PauseManager"
-    ), patch(
         "src.gateway.governance.governor.verdicts.publish_refusal",
         new_callable=AsyncMock
     ) as mock_publish_refusal:

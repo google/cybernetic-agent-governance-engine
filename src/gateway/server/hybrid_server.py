@@ -359,37 +359,6 @@ async def healthz():  # type: ignore[no-untyped-def]
 
 
 # ---------------------------------------------------------------------------
-# PAUSE Resume Endpoints (Phase 1.4)
-# ---------------------------------------------------------------------------
-
-
-@root_app.post("/v1/pause/{pause_token}/resume")
-async def resume_paused_request(
-    pause_token: str,
-    request: Request,
-) -> JSONResponse:
-    """Resume a paused execution."""
-    from src.gateway.governance.pause_primitive import handle_resume_request
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = None
-
-    status_code, response_body = await handle_resume_request(pause_token, body)
-    return JSONResponse(status_code=status_code, content=response_body)
-
-
-@root_app.get("/v1/pause/{pause_token}")
-async def get_pause_state(pause_token: str) -> JSONResponse:
-    """Get current pause state."""
-    from src.gateway.governance.pause_primitive import handle_get_pause_state
-
-    status_code, response_body = await handle_get_pause_state(pause_token)
-    return JSONResponse(status_code=status_code, content=response_body)
-
-
-# ---------------------------------------------------------------------------
 # NeMo Refinement Proposal/Approval Flow (Gateway-owned NeMo rails)
 # ---------------------------------------------------------------------------
 

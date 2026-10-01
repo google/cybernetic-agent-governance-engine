@@ -35,7 +35,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,7 +55,6 @@ from src.gateway.governance.env_posture import (
     DeploymentPosture,
     is_cage_defer_enabled,
     is_cage_narrow_enabled,
-    is_cage_pause_enabled,
 )
 from src.gateway.governance.ftra.autonomy import MagnitudeExtractor
 from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -66,7 +65,6 @@ from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.ftra import FtraStage
 from src.gateway.governance.governor.stages.opa import OpaStage
 from src.gateway.governance.governor.stages.stpa import StpaStage
-from src.gateway.governance.governor.verdicts import default_standing_projector
 from src.gateway.governance.narrower import NarrowerRegistry
 from src.gateway.governance.null_components import (
     NullConsensusProvider,
@@ -95,7 +93,6 @@ class GovernorComponents:
     ground_truth_providers: Mapping[str, object] = field(default_factory=dict)
     safety_filter: SafetyFilter = field(default_factory=NullSafetyFilter)
     consensus: ConsensusProvider = field(default_factory=NullConsensusProvider)
-    standing_projector: Callable[[dict[str, Any]], dict[str, Any]] = default_standing_projector
     execution_verbs: frozenset[str] = field(default_factory=frozenset)
     contributions: tuple[PluginContribution, ...] = ()
     posture: DeploymentPosture = DeploymentPosture.PRODUCTION
@@ -129,11 +126,10 @@ class DecisionFlags:
 
     defer: bool
     narrow: bool
-    pause: bool
 
     @classmethod
     def from_env(cls) -> DecisionFlags:
-        return cls(defer=is_cage_defer_enabled(), narrow=is_cage_narrow_enabled(), pause=is_cage_pause_enabled())
+        return cls(defer=is_cage_defer_enabled(), narrow=is_cage_narrow_enabled())
 
 
 def kernel_stages(
@@ -214,7 +210,6 @@ def assemble_governor(
         stpa_validator = STPAValidator(rules=uca_rules)
     from src.gateway.governance.schemas.thresholds import get_agent_confidence_threshold
 
-    standing_projector = _single_slot("standing_projector", contributions) or default_standing_projector
     execution_verbs = frozenset(v for c in contributions for v in c.execution_verbs)
     raw_consensus = _single_slot("consensus", contributions)
     magnitude_extractor = _single_slot("magnitude_extractor", contributions)
@@ -244,7 +239,6 @@ def assemble_governor(
             confidence_threshold=get_agent_confidence_threshold(),
             defer_enabled=flags.defer,
             narrow_enabled=flags.narrow,
-            pause_enabled=flags.pause,
         ),
         domain_tiers=tiers,
         narrowers=narrowers,
@@ -254,7 +248,6 @@ def assemble_governor(
         ground_truth_providers=ground_truth_providers,
         safety_filter=_single_slot("safety_filter", contributions) or NullSafetyFilter(),
         consensus=resolved_consensus,
-        standing_projector=standing_projector,  # type: ignore[arg-type]
         execution_verbs=execution_verbs,
         contributions=contributions,
         posture=posture,

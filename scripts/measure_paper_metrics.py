@@ -321,7 +321,7 @@ def _build_governor(
         posture=DeploymentPosture.DEV,
         opa=_make_mock_opa_client(opa_decision),
         stpa_validator=_make_mock_stpa_validator(stpa_violations),
-        flags=DecisionFlags(defer=False, narrow=False, pause=False),
+        flags=DecisionFlags(defer=False, narrow=False),
     )
     # Mirror bootstrap_governor(): register the domain's compliance overlays so
     # ControlRegistry resolves its controls (e.g. the causal tier's CTRL_MRM_004).

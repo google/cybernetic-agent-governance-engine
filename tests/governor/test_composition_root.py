@@ -47,7 +47,7 @@ from tests.fixtures.governor import allow_opa, clean_stpa
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _POSTURE = DeploymentPosture.TEST
-_FLAGS = DecisionFlags(defer=False, narrow=False, pause=False)
+_FLAGS = DecisionFlags(defer=False, narrow=False)
 
 
 class _Tier(GovernanceTierPlugin):

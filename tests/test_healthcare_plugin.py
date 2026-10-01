@@ -150,7 +150,7 @@ class TestHealthcarePlugin:
             posture=DeploymentPosture.DEV,
             opa=OPAClient("dosing.governance"),
             stpa_validator=STPAValidator(),
-            flags=DecisionFlags(defer=True, narrow=False, pause=False),
+            flags=DecisionFlags(defer=True, narrow=False),
         )
 
         # Verify tiers registered
@@ -307,7 +307,7 @@ class TestHealthcarePlugin:
                 posture=DeploymentPosture.DEV,
                 opa=allow_opa(),
                 stpa_validator=clean_stpa(),
-                flags=DecisionFlags(defer=False, narrow=False, pause=False),
+                flags=DecisionFlags(defer=False, narrow=False),
             )
             assert len(governor._components.ground_truth_providers) == 1
             for stage in governor.stages:

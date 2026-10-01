@@ -15,16 +15,12 @@
 # Supplied by infra/modules/gateway; empty renders nothing callable.
 trustedIdentities: []
 
-# Must match OPEN_EXACT_PATHS / OPEN_PATH_PREFIXES in
-# src/gateway/server/workload_identity.py. tests/test_gateway_mesh_policy.py
-# fails if they drift.
+# Must match OPEN_EXACT_PATHS in src/gateway/server/workload_identity.py.
+# tests/test_gateway_mesh_policy.py fails if they drift. Only exact paths can
+# be open; there is no prefix form.
 openExactPaths:
   - /health
   - /healthz
   - /metrics
   - /governance/jwks
   - /governance/.well-known/jwks.json
-# GET only. The app additionally requires exactly one segment after the
-# prefix, so POST /v1/pause/<token>/resume stays behind an identity.
-openGetPrefixes:
-  - /v1/pause/

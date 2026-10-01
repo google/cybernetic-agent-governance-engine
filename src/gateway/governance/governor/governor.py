@@ -55,7 +55,6 @@ from src.gateway.governance.governor.verdicts import (
     handle_defer,
     handle_deny,
     handle_narrow,
-    handle_pause,
     handle_require_approval,
     reported_confidence,
 )
@@ -178,17 +177,6 @@ class SymbolicGovernor:
 
             if classification.decision == GovernanceDecision.REQUIRE_APPROVAL:
                 meta = await self._reverified_narrow_hint(action, meta)
-
-            if classification.decision == GovernanceDecision.PAUSE:
-                return await handle_pause(
-                    action,
-                    params,
-                    violations,
-                    list(result.tier_failures),
-                    meta,
-                    latency_ms,
-                    standing_projector=self._components.standing_projector,
-                )
 
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
@@ -464,7 +452,6 @@ _VERDICT_HANDLERS = {
     GovernanceDecision.DENY: handle_deny,
     GovernanceDecision.REQUIRE_APPROVAL: handle_require_approval,
     GovernanceDecision.DEFER: handle_defer,
-    GovernanceDecision.PAUSE: handle_pause,
     # NARROW is not here: SymbolicGovernor._narrow_candidate() re-verifies it.
 }
 

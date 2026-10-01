@@ -15,8 +15,8 @@
 """
 Unit tests for ClassificationEngine.
 
-This test module provides 100% branch coverage for the five-way classification
-logic that routes violations to DENY, DEFER, NARROW, PAUSE, or REQUIRE_APPROVAL.
+This test module provides 100% branch coverage for the four-way classification
+logic that routes violations to DENY, DEFER, NARROW, or REQUIRE_APPROVAL.
 
 Test markers:
     @pytest.mark.unit — isolated unit tests with no external dependencies
@@ -57,7 +57,6 @@ def _make_classification_engine(
     narrower_registry: NarrowerRegistry,
     defer_enabled: bool = True,
     narrow_enabled: bool = False,
-    pause_enabled: bool = False,
     confidence_threshold: float = 0.70,
 ) -> ClassificationEngine:
     """Helper to create a ClassificationEngine with custom settings."""
@@ -66,7 +65,6 @@ def _make_classification_engine(
         confidence_threshold=confidence_threshold,
         defer_enabled=defer_enabled,
         narrow_enabled=narrow_enabled,
-        pause_enabled=pause_enabled,
     )
 
 
@@ -82,8 +80,6 @@ def _make_violations(violation_strings: list[str]) -> list[Violation]:
             kind = ViolationKind.HARD
         elif any(marker in v_str for marker in ["Manual Review", "[CTRL_OPA_001]"]):
             kind = ViolationKind.HITL
-        elif any(marker in v_str for marker in ["Rate limit", "Circuit breaker", "Quota exhausted", "temporarily unavailable"]):
-            kind = ViolationKind.TRANSIENT
         elif any(marker in v_str for marker in ["Amount exceeds", "Scope exceeds", "Date range exceeds"]):
             kind = ViolationKind.NARROWABLE
         elif "Confidence Violation" in v_str or "POAM-TIER2" in v_str:
@@ -300,17 +296,18 @@ class TestClassifyViolationRequireApproval:
 
 
 # ---------------------------------------------------------------------------
-# TestClassifyViolation — PAUSE Path
+# TestClassifyViolation — No PAUSE path
 # ---------------------------------------------------------------------------
 
 
-class TestClassifyViolationPause:
-    """Tests for PAUSE (resumable suspension) path."""
+class TestClassifyViolationNoPause:
+    """The PAUSE path was removed: a transient infrastructure fault is a HARD
+    finding and classifies DENY; nothing in the engine can suspend a request."""
 
-    def test_transient_violations_return_pause_when_enabled(self, narrower_registry):
-        """Transient violations → PAUSE (when enabled)."""
-        engine = _make_classification_engine(narrower_registry, pause_enabled=True)
+    def test_transient_fault_message_is_a_plain_deny(self, narrower_registry):
+        engine = _make_classification_engine(narrower_registry)
         violations = _make_violations(["Rate limit exceeded: too many requests"])
+        assert violations[0].kind == ViolationKind.HARD
 
         context = ClassificationContext(
             violations=violations,
@@ -319,28 +316,14 @@ class TestClassifyViolationPause:
             policy_ambiguous=False,
             params={},
         )
-
-        result = engine.classify(context, "test_action")
-
-        assert result.decision == GovernanceDecision.PAUSE
-        assert result.metadata["classification_reason"] == "transient_condition"
-
-    def test_pause_disabled_falls_back_to_deny(self, narrower_registry):
-        """When pause_enabled=False, PAUSE candidates fall back to DENY."""
-        engine = _make_classification_engine(narrower_registry, pause_enabled=False)
-        violations = _make_violations(["Rate limit exceeded"])
-
-        context = ClassificationContext(
-            violations=violations,
-            confidence=0.99,
-            opa_decision=None,
-            policy_ambiguous=False,
-            params={},
-        )
-
         result = engine.classify(context, "test_action")
 
         assert result.decision == GovernanceDecision.DENY
+        assert result.metadata["classification_reason"] == "hard_violation"
+
+    def test_no_decision_is_pause(self, narrower_registry):
+        assert "PAUSE" not in {d.value for d in GovernanceDecision}
+        assert not hasattr(ViolationKind, "TRANSIENT")
 
 
 # ---------------------------------------------------------------------------

@@ -19,13 +19,14 @@
 # (EXPECTED_GATED_STATES / EXPECTED_UNGATED_STATES / EXPECTED_CONCURRENT_STATES)
 # and must be regenerated (``uv run python proof/model.py``) whenever the
 # transition relation changes:
-#   - Gated sequential model:     44 reachable states
-#   - Concurrent CBF/OPA model:   49 reachable states (strict superset of gated)
+#   - Gated sequential model:     42 reachable states
+#   - Concurrent CBF/OPA model:   49 reachable states
 #   - Ungated (direct-bind) model: 21 reachable states
-# NARROW/PAUSE terminal states are included in the counts above, enabled by:
-#   - soft_threshold_exceeded flag (enables NARROW terminal state)
-#   - transient_block flag (enables PAUSE terminal state)
-#   - Non-deterministic branching in tier PASS transitions
+# The NARROW terminal state is included in the counts above, enabled by:
+#   - narrower_present / clamped_params_valid flags (NARROW terminal state)
+#   - Non-deterministic branching in tier FAIL transitions
+# There is no PAUSE state: a transient infrastructure fault is a DENIED
+# terminal with a refusal receipt (refactor/prune-pause).
 #
 # For MULTI-AGENT cross-Redis contention (distributed locking, split-brain
 # scenarios, cross-shard coordination), see: proof/distributed_cbf_model.py
@@ -153,12 +154,11 @@ TIER_LABELS: dict[str, str] = {
 
 
 # Execution phases — mirrors the TLA+ state machine.
-# Updated to include NARROW and PAUSE states per C1-sub audit remediation:
 #   - NARROW: All tiers pass but action parameters exceed soft thresholds;
 #             seal issued on clamped params, resolvedAllow=TRUE (ALLOW variant)
-#   - PAUSE:  Transient condition (rate limiting, circuit breaker) detected;
-#             no seal issued, retryable without action modification
-PHASES = ("PENDING", "CHECKING", "SEAL_ISSUED", "EXECUTED", "DENIED", "NARROW", "PAUSE")
+# The verdict lattice is ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENY;
+# anything the runtime cannot classify, including a transient fault, is DENIED.
+PHASES = ("PENDING", "CHECKING", "SEAL_ISSUED", "EXECUTED", "DENIED", "NARROW")
 PROFILES = ("FULL", "POST_HITL", "DRY_RUN")
 
 # Pipeline phase per tier: phase 2 tiers mutate (reserve barrier headroom or
@@ -213,7 +213,7 @@ def post_hitl_runs_every_phase2_tier() -> bool:
 # for the outcome, by ``run_pipeline`` + ``ClassificationEngine`` (parity in
 # ``tests/test_formal_profile_parity.py``). Kinds mirror ``contracts.ViolationKind``.
 
-VIOLATION_KINDS: tuple[str, ...] = ("HARD", "HITL", "DEFERRABLE", "TRANSIENT", "NARROWABLE")
+VIOLATION_KINDS: tuple[str, ...] = ("HARD", "HITL", "DEFERRABLE", "NARROWABLE")
 
 
 def phase2_mode(profile: str, phase1_kinds: frozenset[str]) -> str:
@@ -283,20 +283,17 @@ class State:
 
     Attributes:
         phase:          Current execution phase (PENDING, CHECKING, SEAL_ISSUED,
-                        EXECUTED, DENIED, NARROW, PAUSE).
+                        EXECUTED, DENIED, NARROW).
         tier_results:   Tuple of (tier_name, result) pairs where result is
                         "PASS", "FAIL", or "PENDING".
         seal_present:   True if a valid routing seal has been issued.
         resolved_allow: True if all tiers have passed AND a seal is present.
                         This is the ``resolvedAllow`` variable in the TLA+ spec.
                         NARROW states have resolved_allow=TRUE (they are ALLOW variants).
-                        PAUSE states have resolved_allow=FALSE (retryable, not allowed).
         profile:        The execution profile defining which tiers are evaluated.
         narrower_present: True if a domain narrower proposed clamped parameters.
         clamped_params_valid: True if re-evaluating the FULL profile on the clamped
                               parameters yielded 0 violations.
-        transient_block: True if a transient condition (rate limit, circuit breaker)
-                        caused the PAUSE. Only relevant for PAUSE state transitions.
         seal_consumed:  (Peer Review Fix - Gap 2 alignment) True if the seal has been
                         consumed by the actuator. Seals are single-use: once consumed,
                         the same seal cannot authorize another EXECUTED transition.
@@ -313,7 +310,6 @@ class State:
     profile: str = "FULL"
     narrower_present: bool = False
     clamped_params_valid: bool = False
-    transient_block: bool = False
     seal_consumed: bool = False
     seal_expired: bool = False
 
@@ -339,8 +335,8 @@ class State:
         return self.phase in ("SEAL_ISSUED", "EXECUTED", "NARROW")
 
     def is_terminal(self) -> bool:
-        """True if this state has no successors (EXECUTED, DENIED, NARROW, PAUSE)."""
-        return self.phase in ("EXECUTED", "DENIED", "NARROW", "PAUSE")
+        """True if this state has no successors (EXECUTED, DENIED, NARROW)."""
+        return self.phase in ("EXECUTED", "DENIED", "NARROW")
 
 
 def initial_state() -> State:
@@ -353,7 +349,6 @@ def initial_state() -> State:
         profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-        transient_block=False,
         seal_consumed=False,
         seal_expired=False,
     )
@@ -372,7 +367,6 @@ def gated_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            transient_block=False,
             seal_consumed=False,
             seal_expired=False,
             profile=state.profile,
@@ -386,13 +380,12 @@ def gated_transitions(state: State) -> Iterator[State]:
         pending_tiers = [t for t in TIERS if t in required_tiers and results.get(t, "PENDING") == "PENDING"]
 
         if not pending_tiers:
-            if state.transient_block:
+            if state.profile != "DRY_RUN":
                 yield State(
-                    phase="PAUSE",
+                    phase="SEAL_ISSUED",
                     tier_results=state.tier_results,
-                    seal_present=False,
-                    resolved_allow=False,
-                    transient_block=True,
+                    seal_present=True,
+                    resolved_allow=True,
                     seal_consumed=False,
                     seal_expired=False,
                     profile=state.profile,
@@ -400,33 +393,18 @@ def gated_transitions(state: State) -> Iterator[State]:
                     clamped_params_valid=state.clamped_params_valid,
                 )
             else:
-                if state.profile != "DRY_RUN":
-                    yield State(
-                        phase="SEAL_ISSUED",
-                        tier_results=state.tier_results,
-                        seal_present=True,
-                        resolved_allow=True,
-                        transient_block=False,
-                        seal_consumed=False,
-                        seal_expired=False,
-                        profile=state.profile,
-                        narrower_present=state.narrower_present,
-                        clamped_params_valid=state.clamped_params_valid,
-                    )
-                else:
-                    # Dry run never issues a seal, but doesn't block execution in test/dry modes
-                    yield State(
-                        phase="EXECUTED",
-                        tier_results=state.tier_results,
-                        seal_present=False,
-                        resolved_allow=True,
-                        transient_block=False,
-                        seal_consumed=False,
-                        seal_expired=False,
-                        profile=state.profile,
-                        narrower_present=state.narrower_present,
-                        clamped_params_valid=state.clamped_params_valid,
-                    )
+                # Dry run never issues a seal, but doesn't block execution in test/dry modes
+                yield State(
+                    phase="EXECUTED",
+                    tier_results=state.tier_results,
+                    seal_present=False,
+                    resolved_allow=True,
+                    seal_consumed=False,
+                    seal_expired=False,
+                    profile=state.profile,
+                    narrower_present=state.narrower_present,
+                    clamped_params_valid=state.clamped_params_valid,
+                )
         else:
             next_tier = pending_tiers[0]
             for outcome in ("PASS", "FAIL"):
@@ -444,7 +422,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
@@ -457,7 +434,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
@@ -470,7 +446,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=True,
                         resolved_allow=True,
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
@@ -484,27 +459,12 @@ def gated_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=state.transient_block,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
                         narrower_present=False,
                         clamped_params_valid=False,
                     )
-                    # Model transient block (only if not already set)
-                    if not state.transient_block:
-                        yield State(
-                            phase="CHECKING",
-                            tier_results=new_tier_results,
-                            seal_present=False,
-                            resolved_allow=False,
-                            transient_block=True,
-                            seal_consumed=False,
-                            seal_expired=False,
-                            profile=state.profile,
-                            narrower_present=False,
-                            clamped_params_valid=False,
-                        )
 
     elif state.phase == "SEAL_ISSUED":
         if not state.seal_consumed and not state.seal_expired:
@@ -513,7 +473,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                 tier_results=state.tier_results,
                 seal_present=True,
                 resolved_allow=True,
-                transient_block=False,
                 seal_consumed=True,
                 seal_expired=False,
                 profile=state.profile,
@@ -525,7 +484,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                 tier_results=state.tier_results,
                 seal_present=False,
                 resolved_allow=False,
-                transient_block=False,
                 seal_consumed=False,
                 seal_expired=True,
                 profile=state.profile,
@@ -539,7 +497,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                 tier_results=state.tier_results,
                 seal_present=False,
                 resolved_allow=False,
-                transient_block=False,
                 seal_consumed=True,
                 seal_expired=False,
                 profile=state.profile,
@@ -552,7 +509,6 @@ def gated_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            transient_block=False,
             seal_consumed=False,
             seal_expired=False,
             profile=state.profile,
@@ -582,7 +538,6 @@ def ungated_transitions(state: State) -> Iterator[State]:
             profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-            transient_block=False,
         )
 
     elif state.phase == "CHECKING":
@@ -599,7 +554,6 @@ def ungated_transitions(state: State) -> Iterator[State]:
                     profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-                    transient_block=False,
                 )
             else:
                 # Direct-bind shortcut: skip SEAL_ISSUED, go straight to EXECUTED
@@ -613,7 +567,6 @@ def ungated_transitions(state: State) -> Iterator[State]:
                     profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-                    transient_block=False,
                 )
         else:
             next_tier = pending_tiers[0]
@@ -631,7 +584,6 @@ def ungated_transitions(state: State) -> Iterator[State]:
                         profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-                        transient_block=False,
                     )
                 else:
                     yield State(
@@ -642,7 +594,6 @@ def ungated_transitions(state: State) -> Iterator[State]:
                         profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-                        transient_block=False,
                     )
 
     elif state.phase == "SEAL_ISSUED":
@@ -655,7 +606,6 @@ def ungated_transitions(state: State) -> Iterator[State]:
             profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-            transient_block=False,
         )
 
 
@@ -671,7 +621,6 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=False,
             resolved_allow=False,
-            transient_block=False,
             seal_consumed=False,
             seal_expired=False,
             profile=state.profile,
@@ -693,7 +642,6 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
                         tier_results=state.tier_results,
                         seal_present=False,  # ← No seal issued!
                         resolved_allow=False,  # ← Authority not resolved!
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
@@ -706,33 +654,18 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
                         tier_results=state.tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
                         narrower_present=state.narrower_present,
                         clamped_params_valid=state.clamped_params_valid,
                     )
-            elif state.transient_block:
-                yield State(
-                    phase="PAUSE",
-                    tier_results=state.tier_results,
-                    seal_present=False,
-                    resolved_allow=False,
-                    transient_block=True,
-                    seal_consumed=False,
-                    seal_expired=False,
-                    profile=state.profile,
-                    narrower_present=state.narrower_present,
-                    clamped_params_valid=state.clamped_params_valid,
-                )
             else:
                 yield State(
                     phase="SEAL_ISSUED",
                     tier_results=state.tier_results,
                     seal_present=True,
                     resolved_allow=True,
-                    transient_block=False,
                     seal_consumed=False,
                     seal_expired=False,
                     profile=state.profile,
@@ -752,7 +685,6 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
@@ -764,7 +696,6 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=False,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
@@ -777,26 +708,12 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
                         tier_results=new_tier_results,
                         seal_present=False,
                         resolved_allow=False,
-                        transient_block=state.transient_block,
                         seal_consumed=False,
                         seal_expired=False,
                         profile=state.profile,
                         narrower_present=False,
                         clamped_params_valid=False,
                     )
-                    if not state.transient_block:
-                        yield State(
-                            phase="CHECKING",
-                            tier_results=new_tier_results,
-                            seal_present=False,
-                            resolved_allow=False,
-                            transient_block=True,
-                            seal_consumed=False,
-                            seal_expired=False,
-                            profile=state.profile,
-                            narrower_present=False,
-                            clamped_params_valid=False,
-                        )
 
     elif state.phase == "NARROW":
         # Bug: NARROW can transition to EXECUTED without seal verification
@@ -805,7 +722,6 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=False,  # ← No seal!
             resolved_allow=False,  # ← Authority not resolved! VIOLATION
-            transient_block=False,
             seal_consumed=False,
             seal_expired=False,
             profile=state.profile,
@@ -819,7 +735,6 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
             tier_results=state.tier_results,
             seal_present=True,
             resolved_allow=True,
-            transient_block=False,
             seal_consumed=False,
             seal_expired=False,
             profile=state.profile,
@@ -963,7 +878,6 @@ def main() -> None:
                     seal_present=False,
                     resolved_allow=False,
                     profile=state.profile, narrower_present=state.narrower_present, clamped_params_valid=state.clamped_params_valid,
-                    transient_block=state.transient_block,
                 )
                 return
         yield from gated_transitions(state)
@@ -1018,7 +932,6 @@ def main() -> None:
                     profile="FULL",
         narrower_present=False,
         clamped_params_valid=False,
-                    transient_block=False,
                     seal_consumed=False,
                     seal_expired=False,
                 )
@@ -1036,26 +949,18 @@ def main() -> None:
         print("  → Fix: govern() now issues seal; callers verify before executing.")
     print()
 
-    # ── NARROW/PAUSE state-space sub-proofs ───────────────────────────────────
-    print("NARROW/PAUSE state-space sub-proofs (C1-sub audit remediation):")
+    # ── NARROW state-space sub-proofs ─────────────────────────────────────────
+    print("NARROW state-space sub-proofs (C1-sub audit remediation):")
     print()
 
-    # Count NARROW and PAUSE states in the gated model
+    # Count NARROW states in the gated model
     narrow_states = [s for s in gated_states if s.phase == "NARROW"]
-    pause_states = [s for s in gated_states if s.phase == "PAUSE"]
     print(f"  NARROW states: {len(narrow_states)}")
     for s in narrow_states:
         print(
             f"    → resolvedAllow={s.resolved_allow}  "
             f"seal_present={s.seal_present}  "
             f"narrower_present={s.narrower_present}  clamped_params_valid={s.clamped_params_valid}"
-        )
-    print(f"  PAUSE states: {len(pause_states)}")
-    for s in pause_states:
-        print(
-            f"    → resolvedAllow={s.resolved_allow}  "
-            f"seal_present={s.seal_present}  "
-            f"transient_block={s.transient_block}"
         )
     print()
 
@@ -1076,14 +981,10 @@ def main() -> None:
     profile_fail_blocks = all(not s.any_profile_tier_failed() for s in seal_issued_states)
     print(f"  No SEAL_ISSUED states have any failed profile tier: {profile_fail_blocks}")
 
-
-    # Verify PAUSE states do NOT have seal_present=TRUE (they are retryable, not ALLOW)
-    pause_no_seal = all(
-        not s.seal_present and not s.resolved_allow for s in pause_states
-    )
-    print(
-        f"  PAUSE states have seal_present=FALSE and resolvedAllow=FALSE: {pause_no_seal}"
-    )
+    # Every phase the model can reach is one the runtime can name: no state
+    # outside PHASES exists (there is no PAUSE).
+    phases_closed = all(s.phase in PHASES for s in gated_states)
+    print(f"  Every reachable phase is in PHASES: {phases_closed}")
     print()
 
     # ── Ungated NARROW negative control ───────────────────────────────────────
@@ -1113,16 +1014,14 @@ def main() -> None:
     assert not no_seal_holds, (
         "PROOF FAILED: no-seal govern() should violate No-Direct-Bind!"
     )
-    # NARROW/PAUSE assertions
+    # NARROW assertions
     assert narrow_valid, (
         "PROOF FAILED: NARROW states must have resolvedAllow=TRUE and seal_present=TRUE!"
     )
     assert profile_allow_valid, "PROOF FAILED: SEAL_ISSUED requires all profile tiers to pass!"
     assert profile_fail_blocks, "PROOF FAILED: SEAL_ISSUED state with failed profile tier!"
 
-    assert pause_no_seal, (
-        "PROOF FAILED: PAUSE states must have seal_present=FALSE and resolvedAllow=FALSE!"
-    )
+    assert phases_closed, "PROOF FAILED: a reachable state has a phase outside PHASES!"
     assert not ungated_narrow_holds, (
         "PROOF FAILED: ungated NARROW variant should violate No-Direct-Bind!"
     )
@@ -1146,10 +1045,8 @@ def main() -> None:
     print("  3. The pre-fix govern() path (no seal) provably violates the invariant.")
     print(f"  4. NARROW states ({len(narrow_states)}) are ALLOW variants with")
     print("     resolvedAllow=TRUE and seal_present=TRUE (seal on clamped params).")
-    print(f"  5. PAUSE states ({len(pause_states)}) are retryable with")
-    print(
-        "     resolvedAllow=FALSE and seal_present=FALSE (no execution without re-check)."
-    )
+    print("  5. Every reachable phase is in PHASES: the model names no verdict")
+    print("     the runtime lacks (there is no PAUSE).")
     print("  6. The ungated NARROW variant produces a counterexample, confirming")
     print("     the seal gate is load-bearing for NARROW decisions as well.")
     print("  7. POST_HITL re-runs every phase-2 tier, kernel or plugin-named")

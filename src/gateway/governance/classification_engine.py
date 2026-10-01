@@ -14,14 +14,16 @@
 
 """Classification Engine for routing violations to governance decisions.
 
-Implements the five-way decision tree:
+Implements the four-way decision tree over violations:
   DENY ← ViolationKind.HARD
   REQUIRE_APPROVAL ← ViolationKind.HITL or OPA MANUAL_REVIEW (with an advisory
                      ``narrow_hint`` when every other finding is NARROWABLE)
   DEFER ← ViolationKind.DEFERRABLE + confidence below threshold
-  PAUSE ← ViolationKind.TRANSIENT (feature-gated)
   NARROW ← every violation NARROWABLE + a narrower proposal (candidate only:
            SymbolicGovernor re-verifies the clamped params before sealing)
+
+There is no PAUSE: a transient infrastructure fault is a DENY with a refusal
+receipt, never a suspended request.
 """
 
 from __future__ import annotations
@@ -56,8 +58,8 @@ class ClassificationResult:
 class ClassificationEngine:
     """Standalone classification engine for governance decisions.
     
-    Routes violations to DENY, DEFER, NARROW, PAUSE, or REQUIRE_APPROVAL
-    based on ViolationKind, confidence thresholds, and registered narrowers.
+    Routes violations to DENY, DEFER, NARROW, or REQUIRE_APPROVAL based on
+    ViolationKind, confidence thresholds, and registered narrowers.
     """
     
     def __init__(
@@ -66,13 +68,11 @@ class ClassificationEngine:
         confidence_threshold: float = 0.70,
         defer_enabled: bool = True,
         narrow_enabled: bool = False,
-        pause_enabled: bool = False,
     ):
         self._narrower_registry = narrower_registry
         self._confidence_threshold = confidence_threshold
         self._defer_enabled = defer_enabled
         self._narrow_enabled = narrow_enabled
-        self._pause_enabled = pause_enabled
     
     def classify(
         self,
@@ -85,11 +85,10 @@ class ClassificationEngine:
           1. HARD violations → DENY
           2. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
           3. HITL violations → REQUIRE_APPROVAL
-          4. TRANSIENT violations → PAUSE (if enabled, else DENY)
-          5. Every violation NARROWABLE + narrower proposal → NARROW candidate
+          4. Every violation NARROWABLE + narrower proposal → NARROW candidate
              (the governor re-runs FULL on the clamped params; else DENY)
-          6. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
-          7. Default → DENY
+          5. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
+          6. Default → DENY
         """
         if not context.violations:
             # Should not be called with empty violations
@@ -119,26 +118,7 @@ class ClassificationEngine:
         if any(v.kind == ViolationKind.HITL for v in normalized_violations):
             return self._require_approval("hitl_required", context, action)
         
-        # Step 4: TRANSIENT violations → PAUSE (if enabled)
-        if any(v.kind == ViolationKind.TRANSIENT for v in normalized_violations):
-            if self._pause_enabled:
-                return ClassificationResult(
-                    decision=GovernanceDecision.PAUSE,
-                    metadata={
-                        "classification_reason": "transient_condition",
-                        "pause_reason": "RESOURCE_UNAVAILABLE",
-                    },
-                )
-            else:
-                return ClassificationResult(
-                    decision=GovernanceDecision.DENY,
-                    metadata={
-                        "classification_reason": "transient_disabled_fallback",
-                        "deferrable": False,
-                    },
-                )
-        
-        # Step 5: NARROW only if EVERY violation is NARROWABLE and a narrower
+        # Step 4: NARROW only if EVERY violation is NARROWABLE and a narrower
         # proposes clamped params (proof/model.py NARROW conditions (a), (b)).
         # A mixed set falls through (fail closed).  The proposal is NOT an
         # authorisation: the governor re-runs the FULL profile on it (c);
@@ -160,7 +140,7 @@ class ClassificationEngine:
                     },
                 )
         
-        # Step 6: DEFERRABLE violations + low confidence → DEFER
+        # Step 5: DEFERRABLE violations + low confidence → DEFER
         deferrable_violations = [
             v for v in normalized_violations if v.kind == ViolationKind.DEFERRABLE
         ]
@@ -176,7 +156,7 @@ class ClassificationEngine:
                     },
                 )
         
-        # Step 7: Default fallback → DENY
+        # Step 6: Default fallback → DENY
         return ClassificationResult(
             decision=GovernanceDecision.DENY,
             metadata={
