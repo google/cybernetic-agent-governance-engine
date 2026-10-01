@@ -18,7 +18,7 @@ Checks performed:
   1. Health checks — GET /, /health, /v1/models on the Cloud Run URL
      (or CAGE_GATEWAY_URL if set) to confirm the service is reachable.
   2. Ingress identity enforcement (Track C, gates U-15 / U-16, POAM-2026-080):
-       U-15: POST to /governance/check without a trusted mesh workload
+       U-15: POST to /governance/validate-action without a trusted mesh workload
              identity → must return HTTP 403 (deny by default)
        U-16: GET /health (open path) → must return HTTP 200
      The gateway authenticates callers by Linkerd mTLS workload identity, so
@@ -57,9 +57,9 @@ if not _gateway_url:
     )
 BASE_URL = _gateway_url.rstrip("/")
 
-_GOVERNANCE_CHECK_PATH = "/governance/check"
-_GOVERNANCE_CHECK_BODY: bytes = json.dumps(
-    {"tool_name": "verify_content_safety", "params": {}},
+_GOVERNANCE_VALIDATE_PATH = "/governance/validate-action"
+_GOVERNANCE_VALIDATE_BODY: bytes = json.dumps(
+    {"action": "verify_content_safety", "params": {}},
     separators=(",", ":"),
 ).encode()
 
@@ -109,7 +109,7 @@ def verify_deployment() -> bool:
 def check_identity_enforcement(gateway_url: str) -> bool:
     """Verify the gateway refuses unauthenticated callers and keeps /health open.
 
-    U-15: POST /governance/check with no trusted workload identity → expect 403.
+    U-15: POST /governance/validate-action with no trusted workload identity → expect 403.
     U-16: GET /health → expect 200 (open path, no identity required).
 
     Args:
@@ -122,12 +122,12 @@ def check_identity_enforcement(gateway_url: str) -> bool:
     print(f"\n🔒 Ingress identity checks against {gateway_url}")
 
     # ── U-15: unauthenticated call to a gated route must be refused ─────────
-    url = f"{gateway_url}{_GOVERNANCE_CHECK_PATH}"
-    print(f"  [U-15] POST {_GOVERNANCE_CHECK_PATH} (no workload identity) → expect 403 ...")
+    url = f"{gateway_url}{_GOVERNANCE_VALIDATE_PATH}"
+    print(f"  [U-15] POST {_GOVERNANCE_VALIDATE_PATH} (no workload identity) → expect 403 ...")
     try:
         resp = requests.post(
             url,
-            data=_GOVERNANCE_CHECK_BODY,
+            data=_GOVERNANCE_VALIDATE_BODY,
             headers={"Content-Type": "application/json"},
             timeout=10,
         )

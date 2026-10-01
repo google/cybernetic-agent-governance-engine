@@ -875,7 +875,7 @@ error is returned as an error, never as `SUCCESS`.
 |---|---|---|
 | `check_market_status` | Market data lookup | None |
 | `get_market_sentiment` | Sentiment analysis | None |
-| `simulate_governance_check` | Dry-run governance sim | Forwarded to gateway |
+| `simulate_governance_check` | Dry-run governance sim; `verdict` is a `GovernanceDecision` value | Forwarded to gateway |
 | `trigger_safety_intervention` | Lock system | None |
 | `verify_content_safety` | NeMo content check | None |
 | `evaluate_policy` | OPA Rego evaluation | Forwarded to gateway |

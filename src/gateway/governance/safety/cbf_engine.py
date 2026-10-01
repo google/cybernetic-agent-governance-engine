@@ -440,7 +440,6 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
 
         self.tracer: Any = get_tracer("src.gateway.governance.safety")
         self._lua_sha: str | None = None
-        self._local_debits: float = 0.0
         self._last_seen_epoch: int = self._fetch_initial_fence_epoch_sync(
             skip_epoch_seed
         )
@@ -1143,7 +1142,27 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
             )
         return cost
 
+    def admits(self, balance: float, cost: float) -> tuple[bool, float, float]:
+        """Pure discrete-time CBF step from ``balance`` under ``cost``.
+
+        Returns ``(safe, h_next, required_h_next)``: a positive cost is safe
+        iff ``h(balance - cost) >= max((1 - gamma) * h(balance), 0)``; a zero
+        cost is always safe. Reads and writes nothing.
+        """
+        h_t = self.evaluate_barrier(balance)
+        h_next = self.evaluate_barrier(balance - cost)
+        required_h_next = (1.0 - self.gamma) * h_t
+        safe = cost <= 0 or not (h_next < required_h_next or h_next < 0)
+        return safe, h_next, required_h_next
+
     async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
+        """Side-effect-free preview: would ``action_name`` be admitted now?
+
+        Reads the barrier state and returns ``"SAFE"`` or the refusal text;
+        it never debits anything, in Redis or in this process, so any number
+        of previews leave the engine exactly as they found it. Only
+        :meth:`atomic_verify_and_commit` (``commit_barrier``) spends headroom.
+        """
         state = await self._read_cbf_state_atomic()
         balance_source: str = str(state.get("source", "unknown"))
 
@@ -1214,14 +1233,11 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                 span.set_attribute("safety.result", result)
             return result
 
-        effective_state = current_state - self._local_debits
-        next_state = effective_state - cost
-        h_t = self.evaluate_barrier(effective_state)
-        h_next = self.evaluate_barrier(next_state)
-        required_h_next = (1.0 - self.gamma) * h_t
+        next_state = current_state - cost
+        safe, h_next, required_h_next = self.admits(current_state, cost)
 
         result = "SAFE"
-        if cost > 0 and (h_next < required_h_next or h_next < 0):
+        if not safe:
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
             )
@@ -1235,9 +1251,6 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                 span.set_attribute("safety.bankruptcy", True)
                 span.set_attribute("safety.bankruptcy_deficit", abs(h_next))
 
-        if result == "SAFE" and cost > 0:
-            self._local_debits += cost
-
         if span:
             span.set_attribute("safety.cash.next", next_state)
             span.set_attribute("safety.barrier.h_next", h_next)
@@ -1248,8 +1261,8 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
     async def admissible_cost(self) -> float | None:
         """Largest positive cost ``verify_action`` would admit right now.
 
-        Uses the same state and arithmetic as :meth:`_do_verify_action`: a
-        cost ``c > 0`` is safe iff ``h_t - c >= max((1 - gamma) * h_t, 0)``.
+        Uses the same state and arithmetic as :meth:`admits`: a cost
+        ``c > 0`` is safe iff ``h_t - c >= max((1 - gamma) * h_t, 0)``.
         Read-only. ``None`` when the state is unavailable or the fence epoch
         regressed (the barrier then refuses everything; there is no bound to
         offer). A snapshot only: narrowed params are re-verified.
@@ -1257,7 +1270,7 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
         state = await self._read_cbf_state_atomic()
         if state.get("current_cash") is None or state.get("source") == "epoch_regression":
             return None
-        h_t = self.evaluate_barrier(float(state["current_cash"]) - self._local_debits)
+        h_t = self.evaluate_barrier(float(state["current_cash"]))
         bound = h_t - max((1.0 - self.gamma) * h_t, 0.0)
         return bound if math.isfinite(bound) and bound > 0 else 0.0
 
@@ -1315,10 +1328,6 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
         raise RuntimeError(
             f"CBF _update_state_unsafe failed after {self._MAX_RETRIES} retries due to concurrent writes."
         )
-
-    def reset_local_debits(self) -> None:
-        """Reset the local intra-window debit accumulator to zero."""
-        self._local_debits = 0.0
 
     async def rollback_state(
         self,

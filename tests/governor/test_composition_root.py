@@ -265,7 +265,7 @@ async def test_empty_governor_denies_verify() -> None:
 
 async def test_empty_governor_denies_revalidate_post_hitl() -> None:
     with pytest.raises(GovernanceError):
-        await _assemble().revalidate_post_hitl(*_IRREVERSIBLE)
+        await _assemble().revalidate_post_hitl(*_IRREVERSIBLE, approved_barrier_preview=None)
 
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────

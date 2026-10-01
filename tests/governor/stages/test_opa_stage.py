@@ -53,15 +53,16 @@ def test_decode_opa_verdict(raw_input, expected_verdict):
 
 @pytest.mark.asyncio
 async def test_opa_stage_returns_empty_list_for_allow():
-    """OpaStage returns [] for ALLOW verdict."""
+    """OpaStage returns no violations and the ALLOW verdict."""
     client = MockPolicyClient({"allow": True})
     stage = OpaStage(client)
     
     from src.gateway.governance.governor.pipeline import StageContext
     ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
-    violations = await stage.run(ctx)
+    out = await stage.run(ctx)
+    violations = list(out.violations)
     assert violations == []
-    assert stage.decoded_verdict == OpaVerdict.ALLOW
+    assert out.opa_verdict == OpaVerdict.ALLOW
 
 
 @pytest.mark.asyncio
@@ -72,11 +73,12 @@ async def test_opa_stage_returns_hard_violation_for_deny():
     
     from src.gateway.governance.governor.pipeline import StageContext
     ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
-    violations = await stage.run(ctx)
+    out = await stage.run(ctx)
+    violations = list(out.violations)
     assert len(violations) == 1
     assert violations[0].code == "OPA_DENY"
     assert violations[0].kind == ViolationKind.HARD
-    assert stage.decoded_verdict == OpaVerdict.DENY
+    assert out.opa_verdict == OpaVerdict.DENY
 
 
 @pytest.mark.asyncio
@@ -87,11 +89,12 @@ async def test_opa_stage_returns_hitl_violation_for_manual_review():
     
     from src.gateway.governance.governor.pipeline import StageContext
     ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
-    violations = await stage.run(ctx)
+    out = await stage.run(ctx)
+    violations = list(out.violations)
     assert len(violations) == 1
     assert violations[0].code == "OPA_MANUAL_REVIEW"
     assert violations[0].kind == ViolationKind.HITL
-    assert stage.decoded_verdict == OpaVerdict.MANUAL_REVIEW
+    assert out.opa_verdict == OpaVerdict.MANUAL_REVIEW
 
 
 @pytest.mark.asyncio
@@ -102,11 +105,12 @@ async def test_opa_stage_returns_hard_violation_for_unknown():
     
     from src.gateway.governance.governor.pipeline import StageContext
     ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
-    violations = await stage.run(ctx)
+    out = await stage.run(ctx)
+    violations = list(out.violations)
     assert len(violations) == 1
     assert violations[0].code == "OPA_UNKNOWN_VERDICT"
     assert violations[0].kind == ViolationKind.HARD
-    assert stage.decoded_verdict is None
+    assert out.opa_verdict is None
 
 
 @pytest.mark.asyncio
@@ -117,10 +121,11 @@ async def test_opa_stage_returns_hard_violation_on_exception():
     
     from src.gateway.governance.governor.pipeline import StageContext
     ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
-    violations = await stage.run(ctx)
+    out = await stage.run(ctx)
+    violations = list(out.violations)
     assert len(violations) == 1
     assert violations[0].code == "OPA_ERROR"
     assert violations[0].kind == ViolationKind.HARD
     assert "Connection lost" in violations[0].message
-    assert stage.decoded_verdict is None
+    assert out.opa_verdict is None
 

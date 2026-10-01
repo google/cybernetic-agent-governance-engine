@@ -32,7 +32,7 @@ from src.gateway.governance.ftra.models import (
 )
 from src.gateway.governance.ftra.semantic_validator import validate_tool_input
 from src.gateway.governance.governor.metrics import GovernorMetrics, governor_metrics
-from src.gateway.governance.governor.pipeline import Stage, StageContext
+from src.gateway.governance.governor.pipeline import Stage, StageContext, StageOutput
 from src.gateway.governance.schemas.thresholds import get_fria_zone_allow
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,11 @@ class FtraStage(Stage):
     conditional-FTRA predicate (``autonomy.conditional_clear_reason``) using
     the domain's ``magnitude_extractor`` and the agent's reported confidence.
     Without an extractor no magnitude is known, so nothing clears.
-    """
 
-    result: FtraBoundaryResult | None = None
+    ``run()`` returns the :class:`FtraBoundaryResult` in a
+    :class:`StageOutput`; the instance is shared across requests and holds
+    nothing about any one of them.
+    """
 
     name: str = "ftra"
     mutating: bool = False
@@ -70,13 +72,13 @@ class FtraStage(Stage):
             self._ftra_classifier = IrreversibilityClassifier()
         return self._ftra_classifier
 
-    async def run(self, ctx: StageContext) -> list[Violation]:
-        self.result = await self._ftra_boundary_check(
+    async def run(self, ctx: StageContext) -> StageOutput:
+        result = await self._ftra_boundary_check(
             tool_name=ctx.action,
             tool_input=dict(ctx.params),
             detect_bypass=True,
         )
-        return list(self.result.violations)
+        return StageOutput(violations=tuple(result.violations), ftra=result)
 
     async def _ftra_boundary_check(
         self,

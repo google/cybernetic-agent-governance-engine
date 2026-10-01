@@ -57,6 +57,17 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking Changes
 
+#### refactor(gateway)! — Remove dead HTTP check route, legacy shims and per-request state on shared stages (Phase 5)
+
+- **`POST /governance/check` removed**; use `POST /governance/validate-action` or the MCP tool `simulate_governance_check`, which now returns a `GovernanceDecision` `verdict` (from `verify()`'s new `decision`) instead of `APPROVED`/`REJECTED`. `scripts/verify_remote.py` (U-15) and `tests/load/locustfile.py` target `validate-action`.
+- **`SymbolicGovernor._run_checks()` removed**; callers use `verify()`.
+- **Per-request facts off shared stages.** `OpaStage` / `FtraStage` return a frozen `StageOutput`; `decoded_verdict` / `result` are gone. `tests/governor/test_stage_output_isolation.py` pins that `run()` leaves stage state untouched and that interleaved requests with out-of-order OPA answers each see their own verdict.
+- **Pure CBF preview (F-8).** `verify_action()` never debits (`admits()`); the in-process `_local_debits` / `reset_local_debits()` are removed. Commits still debit once through `atomic_verify_and_commit()` and the Redis `cbf:local_debits` list (`tests/governor/test_cbf_preview_purity.py`).
+- **Approval binding (D-H).** Approvals are stamped server-side with the token's `barrier_preview`; `consume_approval()` refuses a mismatched binding and `revalidate_post_hitl(..., approved_barrier_preview=)` refuses `PASS`→`FAIL` drift with `[APPROVAL_CONTEXT_DRIFT]` and no seal (`tests/test_trade_governance_e2e.py`).
+- **Dead `fria` tier removed** from `proof/model.py` (8 tiers; state counts 38/19/35) and from the AAIF stage map; tier-count docs updated.
+- **Content-aware STPA freshness (F-3)**: sha256 of a fresh compile first, commit order as fallback. `patch2.py` / `patch3.py` deleted (F-6).
+- See `docs/BREAKING_CHANGES_v3.md` P5-1–P5-8.
+
 #### feat(governance)! — Preview phase-2 barriers before human approval (Phase 2)
 
 - **Phase 2 is gated by violation kind.** `phase2_mode(profile, phase1_kinds)` in `src/gateway/governance/governor/pipeline.py` returns `SKIP` (any HARD), `PREVIEW` (only non-HARD findings, or `DRY_RUN`) or `COMMIT` (clean phase 1 under `FULL` / `POST_HITL`). Under a pending approval every claiming barrier is previewed side-effect-free, so a HARD barrier (CBF, `dose_barrier`) denies **before** a human is asked, and a NARROWABLE breach (`FISCAL_LIMIT_EXCEEDED`) still parks the request with the breach shown. Nothing is committed unless the request is about to be sealed.

@@ -16,7 +16,8 @@ async def test_ftra_stage_happy_path():
         mock_result.violations = []
         mock_check.return_value = mock_result
         
-        violations = await stage.run(ctx)
+        out = await stage.run(ctx)
+        violations = list(out.violations)
         
         assert violations == []
         mock_check.assert_called_once_with(tool_name="test_action", tool_input={}, detect_bypass=True)
@@ -29,7 +30,8 @@ async def test_ftra_stage_fail_closed_on_error():
     
     # We want to test the actual exception handling in _ftra_boundary_check
     with patch("src.gateway.governance.governor.stages.ftra.validate_tool_input", side_effect=Exception("Boom")):
-        violations = await stage.run(ctx)
+        out = await stage.run(ctx)
+        violations = list(out.violations)
         
         assert len(violations) == 1
         assert violations[0].code == "FTRA_ERROR"

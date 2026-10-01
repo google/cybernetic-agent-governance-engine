@@ -83,7 +83,7 @@ class TestConfidenceValidPassCases:
     @pytest.mark.asyncio
     async def test_valid_confidence_096_passes(self, mock_governor, classification_engine):
         """Valid confidence score 0.96 should pass validation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 0.96}
         )
@@ -96,7 +96,7 @@ class TestConfidenceValidPassCases:
     @pytest.mark.asyncio
     async def test_valid_confidence_098_passes(self, mock_governor, classification_engine):
         """Valid confidence score 0.98 should pass validation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 0.98}
         )
@@ -109,7 +109,7 @@ class TestConfidenceValidPassCases:
     @pytest.mark.asyncio
     async def test_valid_confidence_10_passes(self, mock_governor, classification_engine):
         """Valid confidence score 1.0 (maximum) should pass validation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 1.0}
         )
@@ -126,7 +126,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_none_confidence_triggers_violation(self, mock_governor, classification_engine):
         """None confidence score should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": None}
         )
@@ -139,7 +139,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_nan_confidence_triggers_violation(self, mock_governor, classification_engine):
         """NaN confidence score should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": math.nan}
         )
@@ -152,7 +152,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_positive_inf_triggers_violation(self, mock_governor, classification_engine):
         """Positive infinity confidence should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": math.inf}
         )
@@ -165,7 +165,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_negative_inf_triggers_violation(self, mock_governor, classification_engine):
         """Negative infinity confidence should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": -math.inf}
         )
@@ -180,7 +180,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_negative_confidence_triggers_violation(self, mock_governor, classification_engine):
         """Negative confidence score should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": -0.5}
         )
@@ -193,7 +193,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_confidence_exceeds_max_triggers_violation(self, mock_governor, classification_engine):
         """Confidence score > 1.0 should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 1.5}
         )
@@ -206,7 +206,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_string_confidence_triggers_violation(self, mock_governor, classification_engine):
         """String confidence score should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": "0.8"}
         )
@@ -219,7 +219,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_list_confidence_triggers_violation(self, mock_governor, classification_engine):
         """List confidence score should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": [0.8]}
         )
@@ -232,7 +232,7 @@ class TestConfidenceFailClosedValidation:
     @pytest.mark.asyncio
     async def test_dict_confidence_triggers_violation(self, mock_governor, classification_engine):
         """Dict confidence score should trigger fail-closed violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": {"score": 0.8}}
         )
@@ -246,7 +246,7 @@ class TestConfidenceFailClosedValidation:
     async def test_below_threshold_triggers_violation(self, mock_governor, classification_engine):
         """Confidence below threshold should trigger violation."""
         # Threshold is 0.95, so 0.5 should fail
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 0.5}
         )
@@ -263,7 +263,7 @@ class TestConfidenceEdgeCases:
     @pytest.mark.asyncio
     async def test_zero_confidence_valid_but_below_threshold(self, mock_governor, classification_engine):
         """Zero confidence is valid numeric value but should fail threshold check."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 0.0}
         )
@@ -276,7 +276,7 @@ class TestConfidenceEdgeCases:
     @pytest.mark.asyncio
     async def test_exactly_at_threshold_passes(self, mock_governor, classification_engine):
         """Confidence exactly at threshold (0.95) should pass."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 0.95}
         )
@@ -289,7 +289,7 @@ class TestConfidenceEdgeCases:
     @pytest.mark.asyncio
     async def test_integer_confidence_valid(self, mock_governor, classification_engine):
         """Integer confidence score (1) should be valid."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={"confidence": 1}  # Integer, not float
         )
@@ -302,7 +302,7 @@ class TestConfidenceEdgeCases:
     @pytest.mark.asyncio
     async def test_missing_key_entirely_triggers_violation(self, mock_governor, classification_engine):
         """Missing confidence_score key entirely should trigger violation."""
-        result = await mock_governor._run_checks(
+        result = await mock_governor.verify(
             tool_name="check_balance",
             params={}  # No confidence_score key at all
         )

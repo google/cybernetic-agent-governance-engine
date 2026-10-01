@@ -1,6 +1,6 @@
 # Adapted from the open-source implementation by LalaSkye (Apache 2.0)
 # Original repository: https://github.com/LalaSkye/no-direct-bind
-# Modifications: Adapted for the CAGE 9-tier governance architecture,
+# Modifications: Adapted for the CAGE 8-tier governance architecture,
 # extended with Gap 1/2/3/4 sub-proofs and a concurrency-interleaving
 # sub-proof, and integrated with CAGE state machine phases
 # (PENDING → CHECKING → SEAL_ISSUED → EXECUTED/DENIED).
@@ -16,12 +16,12 @@
 # It proves the No-Direct-Bind invariant holds for sequential tier evaluations.
 #
 # State counts — these are PINNED by tests/test_no_direct_bind_proof.py
-# (EXPECTED_GATED_STATES / EXPECTED_UNGATED_STATES / EXPECTED_CONCURRENT_STATES)
+# (EXPECTED_GATED_STATES / EXPECTED_UNGATED_STATES / EXPECTED_SKIPPED_TIER_STATES)
 # and must be regenerated (``uv run python proof/model.py``) whenever the
 # transition relation changes:
-#   - Gated sequential model:     42 reachable states
-#   - Concurrent CBF/OPA model:   49 reachable states
-#   - Ungated (direct-bind) model: 21 reachable states
+#   - Gated sequential model:     38 reachable states
+#   - Ungated (direct-bind) model: 19 reachable states
+#   - Skipped-tier (Gap 4) model: 35 reachable states
 # The NARROW terminal state is included in the counts above, enabled by:
 #   - narrower_present / clamped_params_valid flags (NARROW terminal state)
 #   - Non-deterministic branching in tier FAIL transitions
@@ -52,7 +52,7 @@ Theorem (No-Direct-Bind):
         NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
 This file:
-  1. Defines the CAGE 9-tier governance state machine (FTRA + 8 in-pipeline tiers).
+  1. Defines the CAGE 8-tier governance state machine (FTRA + 7 in-pipeline tiers).
   2. Enumerates every reachable state via BFS.
   3. Asserts the invariant holds in ALL reachable states.
   4. Defines an ungated (direct-bind) variant and proves it VIOLATES the
@@ -76,30 +76,15 @@ structure of the CAGE pipeline:
 
 Scope of the model
 ------------------
-The tuple models ``SymbolicGovernor._run_checks()`` — Tiers 1 through 7,
-with Tier 3 split into its concurrent ``cbf`` and ``opa`` components.
-Tier 0.5 (FTRA) is deliberately NOT in the tuple: it is a *pre-execution*
-gate that runs at the LangGraph graph level, before ``_run_checks()`` is
-invoked, and operates on a whole ``ExecutionPlan`` rather than a single tool
-call.  Its verdict (CLEAR | HITL_REQUIRED | BLOCKED) is recorded separately
-in the LangGraph state.  See ``src/gateway/governance/ftra/node_factory.py``
-and ``src/governed_financial_advisor/graph/graph.py``.
-
-Tier 7 (FRIA) caveat
---------------------
-The ``fria`` tier is included in the tuple because ``enforce_fria_boundary()``
-runs as a distinct step inside ``_run_checks()`` after the causal gatekeeper.
-However, the *adaptive* FRIA enforcement path (lines 603-660 of
-``symbolic_governor.py``) is gated on
-``CAGE_NORMATIVE_PROVIDER != "static"``.  That environment variable is not
-set in any committed deployment manifest, so the adaptive path is unreachable
-in the reference deployment.  The unconditional portion (OTel attribute
-stamping, lines 662-693) always runs.  The proof models the tier as present
-and capable of blocking (FAIL) — which is the conservative, safe-side
-assumption: if the tier can block, the invariant must hold even when it does.
-What the proof does NOT claim is that the adaptive FRIA logic is exercised in
-the reference deployment; that depends on ``CAGE_NORMATIVE_PROVIDER`` being
-set to a non-static value.
+The tuple models the kernel stages that ``run_pipeline()``
+(``src/gateway/governance/governor/pipeline.py``) runs for every governed
+call made through ``SymbolicGovernor.govern()`` / ``verify()``: Tier 0.5
+(FTRA) and Tiers 1 through 6, with Tier 3 split into its concurrent ``cbf``
+and ``opa`` components.  Plugin-contributed tiers (e.g. finance's
+``bounding`` or healthcare's ``dose_barrier``) add no proof states of their
+own; they are covered structurally by ``PLUGIN_TIER_PHASE`` so the POST_HITL
+predicate cannot skip a plugin-named phase-2 tier.  There is no ``fria``
+tier: no pipeline stage of that name exists.
 
 Gaps closed by this proof:
   Gap 1: Proves the ungated (no-seal) architecture violates the invariant,
@@ -120,8 +105,8 @@ from dataclasses import dataclass
 # State definition
 # ---------------------------------------------------------------------------
 
-# Governance tiers in execution order, mirroring the sequence of checks in
-# ``SymbolicGovernor._run_checks()``.  Each tier can be PENDING, PASS or FAIL.
+# Governance tiers in execution order, mirroring the kernel stages composed
+# by ``run_pipeline()``.  Each tier can be PENDING, PASS or FAIL.
 #
 # Tier numbering follows the paper (§4.2).  Tier 3 is split into its two
 # concurrently-evaluated components (``cbf`` and ``opa``) because each can
@@ -137,7 +122,6 @@ TIERS = (
     "fiscal",  # Tier 4:  fiscal limit pre-reservation
     "consensus",  # Tier 5:  multi-agent consensus gate
     "causal",  # Tier 6:  DoWhy causal gatekeeper
-    "fria",  # Tier 7:  FRIA normative boundary enforcement
 )
 
 TIER_LABELS: dict[str, str] = {
@@ -149,7 +133,6 @@ TIER_LABELS: dict[str, str] = {
     "fiscal": "Tier 4",
     "consensus": "Tier 5",
     "causal": "Tier 6",
-    "fria": "Tier 7",
 }
 
 

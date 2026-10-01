@@ -133,9 +133,9 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | `get_causal_lock_p_value_threshold()` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 6) |
 | `get_causal_lock_placebo_effect_magnitude()` | `0.2` | Maximum tolerated placebo effect magnitude |
 | `get_causal_lock_risk_boundary()` | `0.95` | Risk boundary above which causal lock is enforced |
-| `get_fria_zone_allow()` | `0.95` | Confidence floor for autonomous approval (Tier 6b) |
-| `get_fria_zone_defer()` | `0.70` | Confidence floor for deferred human review (Tier 6b) |
-| `get_agent_confidence_threshold()` | `0.95` | Fast-fail confidence threshold (Tier 1) |
+| `get_fria_zone_allow()` | `0.95` | Confidence floor for autonomous approval (FRIA zone getter; not wired into `run_pipeline()`) |
+| `get_fria_zone_defer()` | `0.70` | Confidence floor for deferred human review (FRIA zone getter; not wired into `run_pipeline()`) |
+| `get_agent_confidence_threshold()` | `0.95` | Fast-fail confidence threshold (Tier 2) |
 
 ---
 

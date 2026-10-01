@@ -58,7 +58,7 @@ from src.gateway.governance.ftra.models import (
     RegistryState,
     TerminalClassification,
 )
-from src.gateway.governance.governor.pipeline import Profile, StageContext
+from src.gateway.governance.governor.pipeline import Profile, StageContext, StageOutput
 from src.gateway.governance.governor.stages.ftra import FtraStage
 from src.gateway.governance.schemas.thresholds import get_fria_zone_allow
 
@@ -119,8 +119,12 @@ def _stage(registry_path: Path, extractor: Any = _magnitude) -> tuple[FtraStage,
     return stage, metrics
 
 
-async def _run(stage: FtraStage, action: str, **params: Any) -> list[Any]:
+async def _output(stage: FtraStage, action: str, **params: Any) -> StageOutput:
     return await stage.run(StageContext(action=action, params=params, profile=Profile.FULL))
+
+
+async def _run(stage: FtraStage, action: str, **params: Any) -> list[Any]:
+    return list((await _output(stage, action, **params)).violations)
 
 
 # ── provenance codes ─────────────────────────────────────────────────────────
@@ -320,9 +324,10 @@ def test_finance_envelope_is_the_10k_ceiling() -> None:
 @pytest.mark.asyncio
 async def test_stage_clears_inside_envelope(registry: Path) -> None:
     stage, metrics = _stage(registry)
-    assert await _run(stage, "move_funds", amount=50.0, confidence=_HIGH) == []
-    assert stage.result is not None and stage.result.auto_cleared
-    assert stage.result.registry_state is RegistryState.REGISTERED
+    out = await _output(stage, "move_funds", amount=50.0, confidence=_HIGH)
+    assert out.violations == ()
+    assert out.ftra is not None and out.ftra.auto_cleared
+    assert out.ftra.registry_state is RegistryState.REGISTERED
     metrics.ftra_boundary_check.assert_called_once_with("conditional_clear")
 
 

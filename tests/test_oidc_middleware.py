@@ -260,7 +260,7 @@ class TestOIDCValidationMiddleware:
             scope = {
                 "type": "http",
                 "method": "GET",
-                "path": "/governance/check",
+                "path": "/governance/validate-action",
                 "query_string": b"",
                 "headers": [],  # no Authorization header
             }
@@ -299,7 +299,7 @@ class TestOIDCValidationMiddleware:
                 scope = {
                     "type": "http",
                     "method": "POST",
-                    "path": "/governance/check",
+                    "path": "/governance/validate-action",
                     "query_string": b"",
                     "headers": [
                         (b"authorization", b"Bearer bad.token.here"),

@@ -307,7 +307,7 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     Rationale: Fail-closed on ambiguity prevents partial failures
     from creating untracked capability escalation.
 
-    Enforcement: SymbolicGovernor._run_checks() logic.
+    Enforcement: run_pipeline() via SymbolicGovernor.verify().
     """
     from unittest.mock import MagicMock
     from src.gateway.governance.contracts import GovernanceTierPlugin
@@ -459,7 +459,7 @@ def test_evidence_chain_must_preserve_temporal_order() -> None:
     """Evidence artifacts must preserve tier execution order via timestamps.
 
     Contract: Evidence chain timestamp sequence must match tier
-    execution order (FTRA → STPA → Confidence → ... → FRIA).
+    execution order (FTRA → STPA → Confidence → ... → Causal).
 
     Rationale: Temporal order enables causality analysis and replay
     debugging (which tier blocked the action, and when).
@@ -506,9 +506,9 @@ def test_tier_count_matches_published_proof_model() -> None:
     sys.modules["cage_proof_model"] = model
     spec.loader.exec_module(model)
 
-    # Verify tier count (updated for ARCH-1: 9 tiers including FTRA)
-    assert len(model.TIERS) == 9, (
-        f"Expected 9 governance tiers in proof model; got {len(model.TIERS)}: "
+    # Verify tier count (ARCH-1 added FTRA; the dead `fria` tier was removed)
+    assert len(model.TIERS) == 8, (
+        f"Expected 8 governance tiers in proof model; got {len(model.TIERS)}: "
         f"{model.TIERS}"
     )
 

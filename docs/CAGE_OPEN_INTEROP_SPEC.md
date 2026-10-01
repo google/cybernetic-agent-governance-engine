@@ -682,7 +682,7 @@ actuation. The caller must present a trusted mesh workload identity
 |---|---|---|
 | `check_market_status` | Market data lookup | None |
 | `get_market_sentiment` | Sentiment analysis | None |
-| `simulate_governance_check` | Dry-run governance simulation | None |
+| `simulate_governance_check` | Dry-run governance simulation; returns a `GovernanceDecision` `verdict` (`ALLOW` iff no violations) | None |
 | `trigger_safety_intervention` | Lock system | None |
 | `verify_content_safety` | AI safety guardrails content check | None |
 | `evaluate_policy` | Policy evaluation engine assessment | None |

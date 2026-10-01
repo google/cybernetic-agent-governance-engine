@@ -70,9 +70,9 @@ component-definition:
                 Access enforcement is implemented via out-of-process PDP client mediation.
                 The CAGE Client SDK delegates all access control decisions to the central
                 governance gateway (src/gateway/governance/symbolic_governor.py), which
-                evaluates requests against the 9-tier governance pipeline (FTRA Tier 0.5,
+                evaluates requests against the 8-tier governance pipeline (FTRA Tier 0.5,
                 STPA Tier 1, Confidence Tier 2, CBF/OPA Tier 3, Fiscal Tier 4, Consensus
-                Tier 5, Causal Tier 6, FRIA Tier 7).
+                Tier 5, Causal Tier 6).
 
                 The SDK enforces fail-closed semantics: actions are BLOCKED by default
                 unless a valid HMAC-SHA256 routing seal is returned by the governance
@@ -139,7 +139,7 @@ component-definition:
 
                 The SDK enforces traceparent propagation across all governance API calls,
                 ensuring that distributed traces can be correlated across client sessions,
-                gateway evaluations, and downstream tier executions (OPA, CBF, FRIA).
+                gateway evaluations, and downstream tier executions (OPA, CBF).
 
                 W3C Trace Context specification: https://www.w3.org/TR/trace-context/
               props:

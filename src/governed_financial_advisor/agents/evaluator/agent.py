@@ -139,7 +139,8 @@ async def simulate_governance_check(
     It does NOT enforce governance or block execution.  Mandatory enforcement
     is handled in infrastructure by the ``safety_check`` LangGraph node.
 
-    Returns structured dict with status, violations, and OPA results.
+    Returns structured dict with ``verdict`` (a ``GovernanceDecision`` value,
+    or ``"ERROR"``), violations, and OPA results.
 
     BUG-MCP-DICT-001 fix: GatewayMCPClient.call_tool() always returns a plain
     ``str`` — it joins every MCP content block's ``.text`` field with "\\n"
@@ -181,13 +182,13 @@ async def simulate_governance_check(
                 raw[:500],
             )
         return {
-            "status": "ERROR",
+            "verdict": "ERROR",
             "message": f"Unexpected MCP response type/shape: {raw!r:.200}",
             "violations": ["System Error"],
         }
     except Exception as e:
         logger.error(f"Safety Simulation Failed: {e}")
-        return {"status": "ERROR", "message": str(e), "violations": ["System Error"]}
+        return {"verdict": "ERROR", "message": str(e), "violations": ["System Error"]}
 
 
 # --- NEW: SAFETY INTERVENTION TOOL (Module 5) ---

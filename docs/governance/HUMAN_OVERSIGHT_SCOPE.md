@@ -130,28 +130,36 @@ on the OTel span at override time.
 
 **Source:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
 
-The `SymbolicGovernor` Tier 7 FRIA zone classification determines whether a
-governance decision is handled automatically or escalated to human review. The
-thresholds are env-overridable constants (`FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER`)
-enforced at runtime:
+FRIA zone classification is the `enforce_fria_boundary()` primitive in
+[`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py),
+available to integrations that hold a `NormativeProvider`. It is **not** wired
+into `run_pipeline()` and is **not** a `SymbolicGovernor` pipeline tier. When an
+integration calls it, it determines whether a governance decision is handled
+automatically or escalated. The function reads its boundaries from
+`get_agent_confidence_threshold()` (default 0.95) and `DEFER_CONFIDENCE_THRESHOLD`
+(0.70); the env-overridable constants (`FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER`)
+carry the same defaults:
 
 ### FRIA Zone Classification
 
 | Score | Zone | Disposition | Human Required? |
 |---|---|---|---|
 | score ≥ `FRIA_ZONE_ALLOW` (0.95) | ALLOW | Async attestation — automated pass | No |
-| `FRIA_ZONE_DEFER` (0.70) ≤ score < 0.95 | DEFER | Synchronous blocking gate — human review | **Yes** |
+| `FRIA_ZONE_DEFER` (0.70) ≤ score < 0.95 | DEFER | Synchronous blocking gate — external provider validation | Only on provider escalation (`EXTERNAL_HOLD`) |
 | score < `FRIA_ZONE_DEFER` (0.70) | BLOCK | Hard block | **Yes** |
 
 The DEFER zone maps directly to the DeferQueue escalation path. A DEFER decision
-writes an escalation record to the queue and blocks the request until a human
-reviewer resolves it within the applicable SLA (see
+parks a `DeferToken` (`EXTERNAL_VALIDATION`) in the caller-supplied queue and
+blocks until the external provider responds or
+`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS` (default 5.0 s) expires; a timeout fails
+closed (DENY). If the provider flags `needs_human_review`, an `EXTERNAL_HOLD`
+token is parked for a human reviewer to resolve within the applicable SLA (see
 [SLA Requirements by Region](#sla-requirements-by-region)).
 
 ### Consensus Requirement
 
-Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 5)
-before reaching the FRIA zone classifier. The consensus engine
+Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 5).
+The consensus engine
 ([`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py)) invokes multiple
 LLM critics with a **10-second hard timeout** (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s) per critic call. Unanimity is
 required; a single dissenting critic escalates the decision to human review via
@@ -222,7 +230,7 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    claiming phase-2 tier** (`cbf`, `fiscal` and any plugin barrier such as
    healthcare `dose_barrier`) and commits them — the state most likely to drift
    during a HITL review window (cash balance, spend and policy state may have
-   changed). STPA, consensus, causal, and FRIA tiers are **not** re-run.
+   changed). STPA, consensus, and causal tiers are **not** re-run.
 7. **Audit record persisted:** Override decision stored in Langfuse compliance project
 
 ---

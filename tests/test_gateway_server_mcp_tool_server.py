@@ -280,7 +280,8 @@ class TestMCPToolServerFunctions:
 
             mod.app.state.governor = _mock_governor()
             res = await mod.simulate_governance_check("buy", {"amount": 100})
-            assert res["status"] == "APPROVED"
+            assert res["verdict"] == "ALLOW"
+            assert "status" not in res
             assert res["message"] == "No violations detected."
 
     @pytest.mark.asyncio
@@ -302,10 +303,31 @@ class TestMCPToolServerFunctions:
             mod.app.state.governor = _mock_governor(verify_result={"violations": [refusal]})
 
             res = await mod.simulate_governance_check("execute_trade", {"amount": 100})
-            assert res["status"] == "REJECTED"
+            # verify() reported no classified decision: fail closed to DENY.
+            assert res["verdict"] == "DENY"
             assert res["message"] == "[CBF_BARRIER_VIOLATED] UNSAFE: bankruptcy"
             assert res["violations"][0]["kind"] == "hard"
             json.dumps(res)  # MCP responses must be JSON-serializable
+
+    @pytest.mark.asyncio
+    async def test_simulate_governance_check_reports_classified_verdict(self):
+        """With violations, the verdict is verify()'s classified decision."""
+        import sys
+
+        from src.gateway.governance.contracts import Violation, ViolationKind
+
+        hitl = Violation(
+            tier="opa", code="OPA_MANUAL_REVIEW", message="needs review", kind=ViolationKind.HITL
+        )
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.governor = _mock_governor(
+                verify_result={"violations": [hitl], "decision": "REQUIRE_APPROVAL"}
+            )
+            res = await mod.simulate_governance_check("execute_trade", {"amount": 100})
+            assert res["verdict"] == "REQUIRE_APPROVAL"
 
     @pytest.mark.asyncio
     async def test_evaluate_policy_internal_allow(self):

@@ -308,8 +308,8 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 
 ### 4.2 Supporting Governance Primitives
 
+- `POST /governance/validate-action`: Non-committing governance decision (`ALLOW` / `NARROW` / `REQUIRE_APPROVAL` / `DEFER` / `DENY`); the former `POST /governance/check` route was removed (use this route, or the MCP tool `simulate_governance_check` for a DRY_RUN preview).
 - `POST /governance/revalidate-post-hitl`: Re-runs the `POST_HITL` profile after human approval (used by the advisor; refused for actions no domain tier claims).
-- `POST /governance/check`: Contextual pre-execution check evaluating intent before inference.
 - `GET /governance/policy-version`: Returns active policy SHA-256 and compliance revision metadata.
 - `GET /governance/jwks` & `GET /.well-known/jwks.json`: Public JSON Web Key Set for verifying KMS/asymmetric governance tokens.
 - `POST /tools/execute`: Protected tool execution; the caller must present a trusted Linkerd workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)). Governed tools (e.g. finance's `execute_trade_action`) run the governor themselves and dispatch through `ActuatorRegistry`.

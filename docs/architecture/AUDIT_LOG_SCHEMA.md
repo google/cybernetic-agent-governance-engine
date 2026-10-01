@@ -189,7 +189,7 @@ output, and the audit-record test fails if it appears in `str(receipt)`,
 
 ### Governance Tier Index
 
-The governance pipeline is a **9-tier two-phase symbolic governor** (`proof/model.py` `TIER_LABELS`: Tiers `0.5` through `7`). Active backing verifiers are OPA, Control Barrier Functions (CBF), multi-agent consensus, and TLA+ formal models.
+The governance pipeline is a **8-tier two-phase symbolic governor** (`proof/model.py` `TIER_LABELS`: Tiers `0.5` through `6`). Active backing verifiers are OPA, Control Barrier Functions (CBF), multi-agent consensus, and TLA+ formal models.
 
 | Tier | Phase | Gate | Control | Source |
 |------|-------|------|---------|--------|
@@ -199,7 +199,6 @@ The governance pipeline is a **9-tier two-phase symbolic governor** (`proof/mode
 | 2 | Phase 1 (read-only) | Agentic model confidence threshold + structural corroboration (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `src/gateway/governance/governor/stages/confidence.py` |
 | 5 | Phase 1 (read-only) | Multi-agent consensus (≥$10,000 USD) | ISO 42001 A.8.4 | `src/gateway/governance/consensus/engine.py` |
 | 6 | Phase 1 (read-only) | DoWhy causal gatekeeper (placebo refutation, p<0.05) | `CTRL_MRM_004`, `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
-| 7 | Phase 1 (read-only) | Adaptive FRIA gate (EU_ECB only) | `CTRL_FRIA_006` | `src/gateway/governance/normative_provider.py` |
 | 3a | Phase 2 (mutating) | Control Barrier Function (CBF) | `CTRL_MRM_004` (`h(x)≥0`, γ=0.5) | `src/gateway/governance/safety/cbf_engine.py` |
 | 4 | Phase 2 (mutating) | Fiscal Limit Pre-Reservation (`FiscalLimitGuard`, daily cap $500k) | Redis atomic WATCH/MULTI/EXEC | `src/cage_finance/safety/fiscal_limit_guard.py` |
 

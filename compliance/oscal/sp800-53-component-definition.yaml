@@ -101,6 +101,16 @@ component-definition:
                 rejects injection attempts for quorum-3 defer reasons (line 1377-1392) and
                 rejects injection if token has partial approvals (line 1394-1405), preventing
                 circumvention of the dual-control requirement via automated data injection.
+
+                Approval binding (D-H, 2026-10-01): DeferQueue.approve() stamps each
+                ApprovalRecord server-side with approved_barrier_preview, the phase-2 barrier
+                snapshot (PASS/FAIL) recorded on the token when it was parked; a client-supplied
+                value is overwritten. consume_approval() refuses a token whose approvals are bound
+                to a different snapshot, and SymbolicGovernor.revalidate_post_hitl() refuses the
+                committing run with GovernanceError [APPROVAL_CONTEXT_DRIFT] when an approval
+                given against PASS meets barriers that now refuse; no routing seal is minted and
+                phase-2 commits are rolled back. Verified by tests/test_trade_governance_e2e.py
+                (D-H scenarios) against real DeferQueue, CBF and fiscal state in fakeredis.
               props:
                 - name: implementation-status
                   value: implemented
@@ -110,6 +120,8 @@ component-definition:
                   value: "2026-09-07"
                 - name: spiffe-enforcement-date
                   value: "2026-09-22"
+                - name: approval-binding-date
+                  value: "2026-10-01"
                 - name: breaking-change
                   value: "removed X-Agent-ID and X-SPIFFE-ID header parsing; mTLS client certificate required"
               description: |
@@ -173,6 +185,9 @@ component-definition:
                 - href: "../../tests/test_defer_dual_control_auth.py"
                   rel: test
                   text: "Adversarial dual-control authentication test coverage"
+                - href: "../../tests/test_trade_governance_e2e.py"
+                  rel: test
+                  text: "Approval binding to the approved barrier snapshot (APPROVAL_CONTEXT_DRIFT)"
 
             - uuid: "4ccc6861-3f69-476a-9ff2-cbd215b18d46"
               control-id: au-12

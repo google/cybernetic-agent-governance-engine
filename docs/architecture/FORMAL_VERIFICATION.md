@@ -190,7 +190,7 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`](../../proof/model.py). The proof requires no external dependencies beyond the Python standard library.
 
-**Scope of the model.** The tuple covers the **STERA Runtime Pipeline** together with the FTRA boundary gate, giving **9 tuple positions**: `ftra`, `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria` (see `TIERS` and `TIER_LABELS` in [`proof/model.py`](../../proof/model.py)). FTRA is modelled as **Tier 0.5** — it was folded into the tuple to close the proof/implementation divergence tracked as ARCH-1. At runtime FTRA is the first kernel stage of `run_pipeline()` (`FtraStage`, [`governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py)); a graph-level FTRA node ([`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)) additionally classifies whole `ExecutionPlan`s in the LangGraph harness. `cbf` and `opa` occupy separate positions (Tier 3a / 3b) because each can independently block the action. **`fria` is an over-approximation:** at HEAD no stage or tier named `fria` exists and `enforce_fria_boundary()` is not called by `run_pipeline()`; `fria` survives only as a label in `PROFILE_STAGES` ([`pipeline.py`](../../src/gateway/governance/governor/pipeline.py)). The only live FRIA-adjacent behaviour is the confidence stage's FRIA zone defer threshold. Modelling an extra tier that can FAIL is the safe-side assumption — the invariant holds whether or not it blocks — but the proof does not claim a live Tier 7 gate. The model also carries the three pipeline profiles (`FULL`, `POST_HITL`, `DRY_RUN`) as `PROFILE_STAGES`, mirroring [`pipeline.py`](../../src/gateway/governance/governor/pipeline.py); BFS starts from the `FULL` profile.
+**Scope of the model.** The tuple covers the **STERA Runtime Pipeline** together with the FTRA boundary gate, giving **8 tuple positions**: `ftra`, `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal` (see `TIERS` in [`proof/model.py`](../../proof/model.py)). FTRA is modelled as **Tier 0.5** — it was folded into the tuple to close the proof/implementation divergence tracked as ARCH-1 — and at runtime it is the first phase-1 stage of `run_pipeline()` ([`src/gateway/governance/governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py)); the plan-level LangGraph gate in [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) records its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) separately. There is no `fria` position: no pipeline stage of that name exists. `cbf` and `opa` occupy separate positions (Tier 3a / 3b) because each can independently block the action. Plugin tiers (finance `bounding`, healthcare `dose_barrier`) add no positions; `PLUGIN_TIER_PHASE` keeps the POST_HITL predicate from skipping them.
 
 > **Scope limitation:** The current BFS proof covers the governance state machine (52-state gated model). It does not model the full implementation including the LangGraph harness or Redis state. A TLA+/Alloy extension to the full implementation is tracked as future work.
 
@@ -200,7 +200,7 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 
 | Component | Definition |
 | --------- | ---------- |
-| **Tiers** | `ftra` → `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (9 tuple positions, in order) |
+| **Tiers** | `ftra` → `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` (8 tuple positions, in order; there is no `fria` stage, so the model has no such tier) |
 | **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROW` (no `PAUSE` phase exists; `phases_closed` asserts the model names no verdict the runtime lacks) |
 | **`resolvedAllow`** | `TRUE` if and only if all profile tiers have passed (or a narrower's clamped params re-verified clean) **and** a valid routing seal has been issued |
 | **Terminal states** | `EXECUTED` (success), `NARROW` (seal issued on clamped params) and `DENIED` (fail-closed) |
@@ -215,12 +215,12 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 **Proof results (run: `uv run python proof/model.py`):**
 
 ```
-[gated]   Reachable states: 42
-[gated]   No-Direct-Bind holds over all 42 reachable states: True
+[gated]   Reachable states: 38
+[gated]   No-Direct-Bind holds over all 38 reachable states: True
 [gated]   EXECUTED states: 1
 [gated]     → resolvedAllow=True  seal_present=True
 
-[ungated] Reachable states: 21
+[ungated] Reachable states: 19
 [ungated] No-Direct-Bind holds: False
 [ungated] direct-bind shortcut produces a violation: True
 [ungated] Counterexample state:
@@ -229,15 +229,10 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 [ungated]   seal_present  = False
 [ungated]   tier_results  = {'ftra': 'PASS', 'stpa': 'PASS', 'confidence': 'PASS',
                              'cbf': 'PASS', 'opa': 'PASS', 'fiscal': 'PASS',
-                             'consensus': 'PASS', 'causal': 'PASS', 'fria': 'PASS'}
-
-Gap-specific sub-proofs:
-  Gap 1 (no routing seal on approval): reachable states=21, invariant holds=False
-  Gap 4 (DoWhy absent): reachable states=39, invariant holds=True
-  Gap 2 (govern() no seal): reachable states=21, invariant holds=False
+                             'consensus': 'PASS', 'causal': 'PASS'}
 
 NARROW state-space sub-proofs (C1-sub audit remediation):
-  NARROW states: 9
+  NARROW states: 8
     → resolvedAllow=True  seal_present=True  narrower_present=True  clamped_params_valid=True
   NARROW states have resolvedAllow=TRUE and seal_present=TRUE: True
   Every reachable phase is in PHASES: True
@@ -249,13 +244,19 @@ Ungated NARROW negative control (C1-sub):
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all nine tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters; transient operational failures are `HARD` violations and terminate in `DENIED`.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all eight tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters; transient operational failures are `HARD` violations and terminate in `DENIED`.
 
+<<<<<<< HEAD
 ### Evaluation Order: Sequential Two-Phase Pipeline
 
 `gated_transitions()` advances tiers in a fixed order. The runtime matches this: every profile (`FULL`, `POST_HITL`, `DRY_RUN`) goes through `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py), which runs the read-only stages sequentially in Phase 1 (FTRA → STPA → OPA → confidence → Phase-1 domain tiers, stopping at the first HARD violation) and the mutating stages sequentially in Phase 2 (CBF → fiscal) only when Phase 1 produced zero violations. There is no concurrent CBF ∥ OPA evaluation on any path, so no interleaving sub-proof is required.
 
 > **Model maintenance note:** An earlier revision of `proof/model.py` contained a `concurrent_tier_transitions()` interleaving sub-proof (49 states). It is no longer in the model; the `EXPECTED_CONCURRENT_STATES` constant and the "Concurrent CBF/OPA model" header comment in [`tests/test_no_direct_bind_proof.py`](../../tests/test_no_direct_bind_proof.py) and [`proof/model.py`](../../proof/model.py) are vestigial and assert nothing.
+=======
+### Tier Order and the CBF / OPA Split
+
+`gated_transitions()` advances tiers in a fixed order. `cbf` and `opa` are separate tuple positions because each can block the action on its own. The model does **not** enumerate CBF/OPA interleavings: the former `concurrent_tier_transitions()` sub-proof was removed from `proof/model.py`, and at runtime the question no longer arises, because `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py) runs OPA as a phase-1 read-only stage and CBF as a phase-2 mutating stage, on every path including `revalidate_post_hitl()`.
+>>>>>>> 810e4ea (refactor(gateway)!: remove check route, legacy shims and stage state)
 
 ### Closure of the Direct-Bind Shortcut (Gap 2)
 

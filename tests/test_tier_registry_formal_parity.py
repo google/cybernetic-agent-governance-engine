@@ -86,7 +86,7 @@ class TestFormalModelParity:
 
         The formal model in proof/model.py defines:
             TIERS = ("ftra", "stpa", "confidence", "cbf", "opa", "fiscal",
-                     "consensus", "causal", "fria")
+                     "consensus", "causal")
 
         When a domain plugin registers its tiers with the correct order
         values, the resulting registered_tier_names() must produce the
@@ -164,7 +164,6 @@ class TestFormalModelParity:
             "fiscal",
             "consensus",
             "causal",
-            "fria",
         )
         assert formal_model.TIERS == expected, (
             f"proof/model.py TIERS changed! Expected {expected}, got {formal_model.TIERS}"
@@ -189,7 +188,7 @@ class TestFormalModelParity:
         import proof.model as formal_model
 
         valid_labels = set(formal_model.TIER_LABELS.values())
-        # We explicitly allow 'Tier 1' through 'Tier 7' and 'Tier 0.5', 'Tier 3a', 'Tier 3b'
+        # We explicitly allow 'Tier 1' through 'Tier 6' and 'Tier 0.5', 'Tier 3a', 'Tier 3b'
         # based on valid_labels.
         # But this test checks for any 'Tier <number>' pattern in code.
 

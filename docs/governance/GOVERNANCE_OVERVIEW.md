@@ -39,7 +39,7 @@ We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mit
 
 ### 2. The Dynamic Risk-Adaptive Stack
 
-The architecture enforces "Defense in Depth" through a **9-tier `SymbolicGovernor` pipeline** (`Tier 0.5` through `Tier 7`, executed in two phases via `run_pipeline()` in `src/gateway/governance/governor/pipeline.py`) backed by supporting infrastructure layers and the broader **15 security & governance control points** wrapping the entire system.
+The architecture enforces "Defense in Depth" through a **8-tier `SymbolicGovernor` pipeline** (`Tier 0.5` through `Tier 6`, executed in two phases via `run_pipeline()` in `src/gateway/governance/governor/pipeline.py`) backed by supporting infrastructure layers and the broader **15 security & governance control points** wrapping the entire system.
 
 > **See also:** [`docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md`](NEURO_SYMBOLIC_GOVERNANCE.md) for the full neuro-symbolic architecture detail.
 
@@ -54,9 +54,9 @@ NeMo Guardrails runs **before** the governor pipeline is invoked. It is integrat
 - **No governance context injection:** NeMo input rails do not run STPA/CBF checks or receive their results. The former `pre_check()` context injection was removed (#261) because no Colang flow consumed it; all governance checks run once, in the governor pipeline.
 - **Observability (ISO 42001):** A custom `NeMoOTelCallback` intercepts every guardrail intervention and emits an OpenTelemetry span with `langfuse.trace.metadata.guardrail.outcome` and `langfuse.trace.metadata.iso.control_id="A.6.2.8"`.
 
-#### The 9-Tier Two-Phase Governance Pipeline (`SymbolicGovernor` / `run_pipeline()`)
+#### The 8-Tier Two-Phase Governance Pipeline (`SymbolicGovernor` / `run_pipeline()`)
 
-The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchestrated by `run_pipeline()` in `src/gateway/governance/governor/pipeline.py`) is the central enforcement engine. Tier labels follow the authoritative `TIER_LABELS` mapping in `proof/model.py` (`Tier 0.5` through `Tier 7`). Execution is split into **Phase 1** (sequential read-only validation stages) and **Phase 2** (sequential mutating commit stages with LIFO rollback via `ReservationScope`), where Phase 2 **commits** only if all Phase 1 stages produce zero violations (non-`HARD` findings run it as a side-effect-free preview instead; see [Two-Phase Pipeline Execution](#two-phase-pipeline-execution-phase-1-read-only--phase-2-mutating-commitrollback)):
+The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchestrated by `run_pipeline()` in `src/gateway/governance/governor/pipeline.py`) is the central enforcement engine. Tier labels follow the authoritative `TIER_LABELS` mapping in `proof/model.py` (`Tier 0.5` through `Tier 6`). Execution is split into **Phase 1** (sequential read-only validation stages) and **Phase 2** (sequential mutating commit stages with LIFO rollback via `ReservationScope`), where Phase 2 **commits** only if all Phase 1 stages produce zero violations (non-`HARD` findings run it as a side-effect-free preview instead; see [Two-Phase Pipeline Execution](#two-phase-pipeline-execution-phase-1-read-only--phase-2-mutating-commitrollback)):
 
 | Tier | Phase | Name | Implementation | Notes |
 |------|-------|------|---------------|-------|
@@ -66,8 +66,7 @@ The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchest
 | **Tier 2** | Phase 1 (Read-Only) | Agentic Confidence Gate | `ConfidenceStage.run()` (`src/gateway/governance/governor/stages/confidence.py`) | Checks self-reported confidence against `get_agent_confidence_threshold()` (default 0.95; `EU_ECB` elevates to 0.97). Runs after `stpa` and `opa` so the POAM-TIER2-001 structural corroboration heuristic can flag high self-reported confidence contradicted by `stpa_violation_count` or `opa_verdict`. |
 | **Tier 5** | Phase 1 (Read-Only) | Multi-Agent Consensus | `ConsensusGate.check_consensus()` (`src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py`) | For trades exceeding $10,000 USD: two concurrent LLM critics ("Risk Manager" and "Compliance Officer") must reach unanimity. 10-second per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s). Any dissent or error escalates. Degraded-quorum routing: `ERROR + APPROVE → ESCALATE` (HITL) is explicitly handled. |
 | **Tier 6** | Phase 1 (Read-Only) | DoWhy Causal Gatekeeper | `causal_safety_check()` (`src/gateway/governance/causal/gatekeeper.py`, `src/cage_finance/tiers/causal_tier.py`) | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Dispatched via `asyncio.to_thread`. Fail-safe: blocks on any exception or missing live telemetry in production. Redis connection errors are fail-closed (raise `RuntimeError`); absent keys return `None` (first-boot safe). |
-| **Tier 7** | Phase 1 (Read-Only) | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp (`src/gateway/governance/normative_provider.py`) | Adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score against `get_fria_zone_allow()` and `get_fria_zone_defer()`) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
-| **Tier 3a** | Phase 2 (Mutating) | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` (`src/gateway/governance/safety/cbf_engine.py`, `src/cage_finance/tiers/cbf_tier.py`) | Redis-backed cash balance invariant. Uses Lua atomic check+commit. Reads KMS-signed reconciled balance (POAM-023 / POAM-2026-038) when available. CBF tracks `_local_debits` locally; `effective_balance = snapshot_balance - _local_debits` is used for all checks to prevent intra-window double-spend. Commits in Phase 2 only after all Phase 1 stages pass with zero violations. |
+| **Tier 3a** | Phase 2 (Mutating) | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` (`src/gateway/governance/safety/cbf_engine.py`, `src/cage_finance/tiers/cbf_tier.py`) | Redis-backed cash balance invariant. Uses Lua atomic check+commit. Reads KMS-signed reconciled balance (POAM-023 / POAM-2026-038) when available. Each commit appends its debit to the Redis `cbf:local_debits` list (inside the Lua script), which is subtracted from the reconciled snapshot to prevent intra-window double-spend; previews (`verify_action()`) never debit. Commits in Phase 2 only after all Phase 1 stages pass with zero violations. |
 | **Tier 4** | Phase 2 (Mutating) | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (`src/gateway/governance/safety/resource_guard.py`, `src/cage_finance/safety/fiscal_limit_guard.py`, `src/cage_finance/tiers/fiscal_tier.py`) | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC, read-write) in Phase 2 after all read-only tiers pass. `ReservationScope` rolls back committed Phase 2 stages in LIFO order (`rollback_state()`) if a subsequent mutating stage fails or no routing seal is issued. |
 
 **Routing Seal v2 timing & evidence binding:** The KMS-backed routing seal (`generate_seal_with_evidence()` in `src/gateway/governance/routing_seal.py`) is issued **only after all pipeline tiers complete successfully**. The seal utilizes a 4-tuple format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` where the SHA-256 `record_hash` of the durable evidence item is folded directly into the HMAC input. In production (`CAGE_REQUIRE_EVIDENCE_BINDING=true`), actuators strictly reject un-bound or tampered seals.
@@ -116,9 +115,9 @@ The following components are essential infrastructure but are **not** numbered g
 
 > **Sources:** [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py), [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py), [`proof/model.py`](../../proof/model.py)
 
-`SymbolicGovernor` and `run_pipeline()` implement a strict **9-tier, two-phase governance pipeline** (`TIER_LABELS` in `proof/model.py`: `Tier 0.5` through `Tier 7`). Every tool execution request must pass all applicable Phase 1 read-only stages with zero violations before Phase 2 mutating stages commit, and all Phase 2 stages must commit cleanly before a routing seal is issued.
+`SymbolicGovernor` and `run_pipeline()` implement a strict **8-tier, two-phase governance pipeline** (`TIER_LABELS` in `proof/model.py`: `Tier 0.5` through `Tier 6`). Every tool execution request must pass all applicable Phase 1 read-only stages with zero violations before Phase 2 mutating stages commit, and all Phase 2 stages must commit cleanly before a routing seal is issued.
 
-### 9-Tier Pipeline (`proof/model.py` Tier Labels)
+### 8-Tier Pipeline (`proof/model.py` Tier Labels)
 
 | Tier | Stage ID | Phase | Name | Key Invariant / Action | Source Module |
 |------|----------|-------|------|------------------------|---------------|
@@ -130,7 +129,6 @@ The following components are essential infrastructure but are **not** numbered g
 | **Tier 4** | `fiscal` | Phase 2 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically reserves the daily fiscal cap in Redis (WATCH/MULTI/EXEC, read-write) in Phase 2. `rollback_state()` reverses the Redis debit via `ReservationScope` if a downstream stage fails. | `src/gateway/governance/safety/resource_guard.py`, `src/cage_finance/safety/fiscal_limit_guard.py`, `src/cage_finance/tiers/fiscal_tier.py` |
 | **Tier 5** | `consensus` | Phase 1 | Consensus (high-value trades) | Unanimous multi-critic gate; threshold $10,000 USD (US_FED); 10-second per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s). Degraded-quorum routing: `ERROR + APPROVE → ESCALATE` (HITL) is explicitly handled. | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py` |
 | **Tier 6** | `causal` | Phase 1 | Causal gatekeeper | DoWhy `CausalModel` + Placebo Treatment Refuter (50 sims, p < 0.05, \|eff\| > 0.2); `asyncio.to_thread` dispatch. Redis connection errors are fail-closed (raise `RuntimeError`); absent keys return `None` (first-boot safe). | `src/gateway/governance/causal/gatekeeper.py`, `src/cage_finance/tiers/causal_tier.py` |
-| **Tier 7** | `fria` | Phase 1 | FRIA normative boundary + attestation | Adaptive enforcement (ALLOW/DEFER/DENY based on consensus score) + EU AI Act Art. 29a OTel attestation | `src/gateway/governance/normative_provider.py`, `src/gateway/governance/governor/governor.py` |
 
 > **Note:** PII sanitization (`src/gateway/governance/pii_sanitizer.py`) and confabulation scoring (`src/gateway/governance/confabulation_scorer.py`) are **not** sequential stages of `run_pipeline()`. PII sanitization runs inside `src/gateway/governance/uca_logger.py` immediately before a UCA audit record is written to the WORM ledger. Confabulation scoring is a standalone Langfuse observability metric computed independently of the governance decision path.
 
@@ -146,7 +144,7 @@ This invariant is enforced structurally: `validate_action()` is the single choke
 
 In `src/gateway/governance/governor/pipeline.py`, `run_pipeline()` separates read-only validation stages from state-mutating reservation stages:
 
-1. **Phase 1 — Sequential Read-Only Validation:** Executes `ftra` (Tier 0.5) → `stpa` (Tier 1) → `opa` (Tier 3b) → `confidence` (Tier 2) → Phase-1 domain tiers (`consensus` Tier 5, `causal` Tier 6, `fria` Tier 7). Running `stpa` and `opa` before `confidence` supplies `stpa_violation_count` and `opa_verdict` on `StageContext` for Tier 2 structural corroboration. Evaluation stops immediately at the first `ViolationKind.HARD` violation.
+1. **Phase 1 — Sequential Read-Only Validation:** Executes `ftra` (Tier 0.5) → `stpa` (Tier 1) → `opa` (Tier 3b) → `confidence` (Tier 2) → Phase-1 domain tiers (`consensus` Tier 5, `causal` Tier 6). Running `stpa` and `opa` before `confidence` supplies `stpa_violation_count` and `opa_verdict` on `StageContext` for Tier 2 structural corroboration. Evaluation stops immediately at the first `ViolationKind.HARD` violation.
 2. **Phase 2 — Gated by `phase2_mode(profile, phase1_kinds)`:**
    - **SKIP** if Phase 1 produced any `HARD` finding: the request is refused and no barrier is consulted.
    - **PREVIEW** if Phase 1 produced any other finding (e.g. an OPA `MANUAL_REVIEW` that parks the trade for a human, or a `NARROWABLE` finding), or under `Profile.DRY_RUN` (`SymbolicGovernor.verify()` / `validate_action()`): `_preview_mutating()` calls each mutating stage's side-effect-free `preview()` and never `commit()`. It continues past non-`HARD` findings and stops at the first `HARD` one. The result is recorded as `PipelineResult.barrier_preview` (`PASS` / `FAIL`) plus `preview_violations`, surfaced in the verdict meta and in the DeferToken `opa_input_snapshot` so the reviewer sees every barrier breach before approving. A `HARD` preview finding (e.g. a CBF or dose barrier) denies before any human is asked.
@@ -154,17 +152,17 @@ In `src/gateway/governance/governor/pipeline.py`, `run_pipeline()` separates rea
 
    If a committing `govern()` run fails only on `NARROWABLE` findings and narrowing is enabled, `SymbolicGovernor._sealed_narrow()` re-runs the full sealed pipeline on the clamped parameters and, inside the same `ReservationScope`, writes a single-use `narrow:receipt:<seal>` (`src/gateway/governance/narrow_receipt.py`) that the domain tool consumes. If the clamped parameters still breach, or the receipt cannot be written, the commits roll back and the request is denied.
 
-### FRIA Zone Decision Semantics (Tier 7)
+### FRIA Zone Classification Primitive (not a pipeline tier)
 
-The Fundamental Rights Impact Assessment (FRIA) at Tier 7 classifies each request into one of three zones based on a composite governance score:
+Fundamental Rights Impact Assessment (FRIA) zone classification is the `enforce_fria_boundary()` primitive in [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py), available to integrations that hold a `NormativeProvider`. It is **not** wired into `run_pipeline()` and is **not** a pipeline tier (`TIER_LABELS` in `proof/model.py` has no FRIA entry). Given a caller-supplied consensus score, it classifies the request into one of three zones:
 
 | Zone | Score Condition | Decision | Mechanism |
 |------|----------------|----------|-----------|
-| **ALLOW** | score ≥ `FRIA_ZONE_ALLOW` (0.95) | Proceed; async attestation emitted | OTel span stamped with EU AI Act Art. 29a attestation |
-| **DEFER** | 0.70 ≤ score < 0.95 (`FRIA_ZONE_DEFER`) | Synchronous blocking gate | Request held; pushed to DEFER queue (Redis db=1, 4 h TTL) for human review |
-| **BLOCK** | score < 0.70 | Hard deny | Request rejected; violation logged with `[CTRL_FRIA_006]` prefix |
+| **ALLOW** | score ≥ 0.95 | Proceed; async attestation emitted | Detached task calls `provider.validate_fria()` and `provider.submit_evidence()`; a post-hoc rejection is logged, never retroactively blocked |
+| **DEFER** | 0.70 ≤ score < 0.95 | Synchronous blocking gate | `DeferToken` (`EXTERNAL_VALIDATION`, default 4 h TTL) parked in the caller-supplied `DeferQueue`; blocks on `provider.validate_fria()` up to `CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS` (default 5.0 s); timeout fails closed (DENY) |
+| **BLOCK** | score < 0.70 | Hard deny | Local DENY (`LOCAL_HARD_DENY`); no external call |
 
-Constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (accessed via `get_fria_zone_allow()` / `get_fria_zone_defer()` in [`src/gateway/governance/schemas/thresholds.py`](../../src/gateway/governance/schemas/thresholds.py), overridable via env vars).
+Thresholds: `enforce_fria_boundary()` reads the ALLOW boundary from `get_agent_confidence_threshold()` (default 0.95) and the DEFER boundary from `DEFER_CONFIDENCE_THRESHOLD` (0.70, `src/gateway/governance/defer_queue.py`). The separate constants `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (accessed via `get_fria_zone_allow()` / `get_fria_zone_defer()` in [`src/gateway/governance/schemas/thresholds.py`](../../src/gateway/governance/schemas/thresholds.py), overridable via env vars) carry the same defaults.
 
 ---
 
@@ -184,7 +182,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t))
 
 where γ = 0.5 (from `config/governance_thresholds.json` → `cbf.gamma`), `min_cash_balance` = $1,000 USD. If `h(S(t)) ≥ 0` and the condition holds for all t, then `h(S(t)) ≥ 0` for all t ≥ 0 — the cash balance never falls below `min_cash_balance`.
 
-> **Implementation note (intra-window double-spend prevention):** CBF tracks `_local_debits` locally; `effective_balance = snapshot_balance - _local_debits` is used for all checks to prevent double-spend within the KMS snapshot refresh window. Call `reset_local_debits()` on each successful reconciliation cycle.
+> **Implementation note (intra-window double-spend prevention):** `verify_action()` is a pure, side-effect-free preview (`admits(balance, cost)`); it never debits anything. Intra-window double-spend protection lives in Redis: the commit path (`atomic_verify_and_commit()`, called by `commit_barrier`) appends each debit to the `cbf:local_debits` list inside its Lua script and subtracts that list from a reconciled snapshot balance; the reconciliation daemon trims it with `trim_local_debits_through_sequence_sync()` once a signed snapshot covers those debits.
 
 > **Source:** [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)
 
@@ -210,7 +208,9 @@ Additionally, the Placebo Treatment Refuter (50 simulations) must confirm the wo
 
 > **Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py)
 
-### FRIA Zone Boundaries — Tier 7
+### FRIA Zone Boundaries — `enforce_fria_boundary()` primitive (not a pipeline tier)
+
+These boundaries apply only when an integration calls `enforce_fria_boundary()`; `run_pipeline()` does not evaluate them (see [FRIA Zone Classification Primitive](#fria-zone-classification-primitive-not-a-pipeline-tier)).
 
 ```
 score ≥ 0.95              →  ALLOW  (async attestation)
@@ -279,7 +279,7 @@ All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`
 | `CTRL_TEL_003` | THR-TEL-003 | ISO 42001 §A.9.4 | Agentic | `src/gateway/governance/telemetry_provider.py`, `src/gateway/governance/causal/gatekeeper.py` *(All Regions)* |
 | `CTRL_MRM_004` | THR-MRM-004 | SR 26-2 §IV — Model Risk Management | Traditional ML | `src/gateway/governance/safety/cbf_engine.py` (`ControlBarrierFunction`), `src/gateway/governance/causal/gatekeeper.py` — **US_FED only**; ISO 42001 §A.9.4 is the universal equivalent |
 | `CTRL_OPA_005` | THR-OPA-005 | ISO 42001 §A.6.1 | Agentic | `src/gateway/governance/governor/stages/opa.py` — Tier 3b OPA policy check *(All Regions)* |
-| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `src/gateway/governance/normative_provider.py` — Tier 7 FRIA normative boundary + attestation — **EU_ECB only** |
+| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `src/gateway/governance/normative_provider.py` — FRIA normative boundary + attestation — **EU_ECB only** |
 | `CTRL_TQP_007` | THR-TQP-007 | ISO 42001 Annex A.4 | Agentic | `src/gateway/governance/token_quota_proxy.py` — per-session token + step-count quota enforcement *(All Regions)* |
 | `CTRL_DFR_008` | THR-DFR-008 | CSA AARM-V7 / ISO 42001 §A.8.4 | AARM Primitive | `src/gateway/governance/defer_queue.py` — DEFER State Machine *(All Regions)* |
 | `CTRL_FTRA_001` | — | ISO 42001 §A.9.4 | Agentic | `src/gateway/governance/ftra/node_factory.py`, `src/gateway/governance/governor/stages/ftra.py` — Tier 0.5 reachability gate *(All Regions)* |
@@ -359,7 +359,7 @@ The gateway-side `validate_action()` / `verify_seal()` pair is the single choke 
 
 1. Validates Pydantic schema (infrastructure boundary — not a pipeline step).
 2. Optionally verifies `policy_version_id` against `ControlRegistry.active_hash` to detect substrate policy drift.
-3. Invokes the full `SymbolicGovernor` two-phase pipeline (`run_pipeline()` in `src/gateway/governance/governor/pipeline.py`): Phase 1 read-only stages — FTRA (Tier 0.5) → STPA (Tier 1) → OPA (Tier 3b) → Confidence (Tier 2) → Consensus (Tier 5) → Causal Gatekeeper (Tier 6) → FRIA (Tier 7) — followed by Phase 2 mutating stages — CBF (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4) — committed on zero violations, previewed read-only on non-`HARD` findings, and skipped on a `HARD` finding.
+3. Invokes the full `SymbolicGovernor` two-phase pipeline (`run_pipeline()` in `src/gateway/governance/governor/pipeline.py`): Phase 1 read-only stages — FTRA (Tier 0.5) → STPA (Tier 1) → OPA (Tier 3b) → Confidence (Tier 2) → Consensus (Tier 5) → Causal Gatekeeper (Tier 6) — followed by Phase 2 mutating stages — CBF (Tier 3a) → Fiscal Limit Pre-Reservation (Tier 4) — committed on zero violations, previewed read-only on non-`HARD` findings, and skipped on a `HARD` finding.
 4. Issues the governor's KMS-signed routing seal (`src/gateway/governance/routing_seal.py`; HMAC fallback in dev/test only) only after all tiers pass.
 5. The downstream actuator calls `verify_seal()` before firing — the wrapped action is never invoked if the seal is missing, expired, or tampered.
 6. Wraps execution in ISO 42001-stamped OpenTelemetry spans.
@@ -406,7 +406,7 @@ For detailed deployment instructions, see **[DEPLOYMENT_RULES.md](../operations/
 
 The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`, Tier 0.5)** (`src/gateway/governance/ftra/` and `src/gateway/governance/governor/stages/ftra.py`) operates both as an in-graph **Pre-Execution Boundary Gate** — a dedicated LangGraph node inserted between `evaluator` and `safety_check` that analyzes a proposed multi-step `ExecutionPlan` *before any step runs* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0 — and as **Tier 0.5** (`FtraStage`) at the start of `run_pipeline()` for every per-tool-call request.
 
-> **Note:** FTRA (`ftra`, Tier 0.5) is included in the `TIERS` state tuple in [`proof/model.py`](../../proof/model.py) for the 9-tier `NoDirectBind` BFS verification.
+> **Note:** FTRA (`ftra`, Tier 0.5) is included in the `TIERS` state tuple in [`proof/model.py`](../../proof/model.py) for the 8-tier `NoDirectBind` BFS verification.
 
 - **`src/gateway/governance/ftra/classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`; fail-closed for unregistered actions
 - **`src/gateway/governance/ftra/graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute the reachable terminals and critical path
