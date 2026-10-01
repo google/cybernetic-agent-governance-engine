@@ -55,6 +55,9 @@ ${BOLD}Options${RESET}
   --skip-build            Skip container image builds
   --kubeconfig=PATH       Kubeconfig path (agnostic target only)
   --var KEY=VALUE         Override any Terraform variable
+  --verify-e2e            After apply, run the live trade-governance e2e Job
+                          (make test-gke-e2e; needs REGISTRY_URL and the
+                          cage-e2e-credentials Secret)
 
 ${BOLD}Examples${RESET}
   # Deploy to local k3s cluster
@@ -338,6 +341,7 @@ deploy_terraform_target() {
   # Parse remaining arguments
   local kubeconfig_path=""
   local kubeconfig_context=""
+  local verify_e2e=false
   
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -360,6 +364,10 @@ deploy_terraform_target() {
         ;;
       --skip-build)
         export SKIP_BUILD=true
+        shift
+        ;;
+      --verify-e2e)
+        verify_e2e=true
         shift
         ;;
       *)
@@ -495,6 +503,19 @@ deploy_terraform_target() {
   info "To view MinIO console:"
   echo "  kubectl port-forward svc/minio 9001:9001 -n <NAMESPACE>"
   echo "  Open: http://localhost:9001"
+
+  if [[ "$verify_e2e" == "true" ]]; then
+    header "Live Trade-Governance E2E Verification"
+    if [[ -z "${REGISTRY_URL:-}" ]]; then
+      REGISTRY_URL=$(_read_env_var REGISTRY_URL)
+      export REGISTRY_URL
+    fi
+    make test-gke-e2e REGISTRY_URL="$REGISTRY_URL" || {
+      error "Live trade-governance e2e verification failed"
+      exit 1
+    }
+    success "Live trade-governance e2e verification passed"
+  fi
 }
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

@@ -53,9 +53,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -147,6 +149,12 @@ class DeferReason(str, Enum):
     """External normative provider returned an escalation decision requiring
     human-in-the-loop approval. Transaction is parked with provider-specified TTL
     (default: 300s). On expiry, routes to governance-hitl-dlq topic for operator review."""
+
+    HITL_REQUIRED = "HITL_REQUIRED"
+    """The governor classified the action REQUIRE_APPROVAL. The token is the
+    gateway-owned record of the pending approval: operators approve it via
+    ``DeferQueue.approve()`` and the single committing run consumes it exactly
+    once via ``DeferQueue.consume_approval()``."""
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +385,7 @@ _DEFER_REASON_QUORUM: dict[DeferReason, int] = {
     DeferReason.FTRA_IRREVERSIBLE_TERMINAL: 3,
     DeferReason.EXTERNAL_VALIDATION: 3,
     DeferReason.EXTERNAL_HOLD: 3,
+    DeferReason.HITL_REQUIRED: 2,
     DeferReason.CONFIDENCE_BELOW_THRESHOLD: 2,
     DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE: 2,
     DeferReason.INSUFFICIENT_CONTEXT: 2,
@@ -907,6 +916,57 @@ class DeferQueue:
             return False
 
     # ------------------------------------------------------------------
+    # consume_approval — spend a quorum-approved HITL token exactly once
+    # ------------------------------------------------------------------
+
+    async def consume_approval(
+        self,
+        defer_id: str,
+        *,
+        action: str,
+        covers: Callable[[dict[str, Any]], bool],
+    ) -> DeferToken | None:
+        """Consume an approved ``HITL_REQUIRED`` token for ``action``, exactly once.
+
+        The token must be a governor-parked approval (``HITL_REQUIRED``) that
+        ``approve()`` resolved by reaching quorum (``resolution == "ESCALATED"``),
+        that was parked for ``action``, and whose approved params satisfy
+        ``covers`` (checked before consumption, so a mismatched request does
+        not burn the approval). Consumption is the ``RESOLVED -> CONSUMED``
+        compare-and-swap in :meth:`atomic_resolve`, so of any number of
+        concurrent callers at most one receives the token.
+
+        Returns:
+            The consumed token, or ``None`` when the token is unknown, is not
+            an approval, is not (yet) approved, was parked for another action,
+            does not cover the request, or was already consumed. Every
+            ``None`` must block execution.
+        """
+        token, status, _rev = await self._read_token_with_rev(defer_id)
+        if token is None:
+            logger.warning("[defer_queue] consume_approval: unknown defer_id=%s", defer_id)
+            return None
+        distinct_approvers = len({a.approver_urn for a in token.approvals})
+        approved_params = token.opa_input_snapshot.get("params")
+        refusal = None
+        if token.defer_reason != DeferReason.HITL_REQUIRED:
+            refusal = f"reason {token.defer_reason.value} is not an approval"
+        elif status != "RESOLVED" or token.resolution != "ESCALATED":
+            refusal = f"status={status} resolution={token.resolution} is not an approval"
+        elif distinct_approvers < token.required_quorum:
+            refusal = f"{distinct_approvers}/{token.required_quorum} approvals"
+        elif token.opa_input_snapshot.get("action") != action:
+            refusal = f"parked for {token.opa_input_snapshot.get('action')!r}, not {action!r}"
+        elif not isinstance(approved_params, dict) or not covers(approved_params):
+            refusal = "approved params do not cover the request"
+        if refusal is not None:
+            logger.warning("[defer_queue] consume_approval refused defer_id=%s: %s", defer_id, refusal)
+            return None
+        if not await self.atomic_resolve(defer_id, expected_status="RESOLVED", new_status="CONSUMED"):
+            return None  # another caller consumed it first (replay)
+        return token
+
+    # ------------------------------------------------------------------
     # approve — append an approval and check quorum (Phase 2, Stream B)
     # ------------------------------------------------------------------
 
@@ -1197,6 +1257,23 @@ class DeferQueue:
 #: than MANUAL_REVIEW, preventing operational fatigue from fundamentally incomplete
 #: context windows. See UCA-7 in src/gateway/governance/ontology.py.
 DEFER_CONFIDENCE_THRESHOLD: float = 0.70
+
+
+@asynccontextmanager
+async def open_defer_queue() -> AsyncIterator[DeferQueue]:
+    """Open the gateway's DeferQueue on Redis ``db=1`` for one unit of work.
+
+    The single accessor shared by the governor (which parks tokens) and the
+    committing run (which consumes approvals), so both always see one queue.
+    """
+    import redis.asyncio as aioredis
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    client = aioredis.from_url(redis_url, db=1, decode_responses=True)
+    try:
+        yield DeferQueue(client)
+    finally:
+        await client.aclose()
 
 
 # ---------------------------------------------------------------------------

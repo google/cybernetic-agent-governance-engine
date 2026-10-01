@@ -27,6 +27,8 @@ class GovernanceError(Exception):
                  Contains ``control_id``, ``primary_framework``,
                  ``legacy_citation``, etc. sourced from control_mappings.json.
         receipt: Optional immutable RefusalReceipt proof object.
+        violations: Every violation behind the refusal, deciding one first.
+                    Defaults to ``[message]``.
     """
 
     def __init__(
@@ -34,7 +36,9 @@ class GovernanceError(Exception):
         message: str,
         payload: dict[str, Any] | None = None,
         receipt: RefusalReceipt | None = None,
+        violations: list[str] | None = None,
     ) -> None:
         super().__init__(message)
         self.payload: dict[str, Any] = payload or {}
         self.receipt: RefusalReceipt | None = receipt
+        self.violations: list[str] = list(violations) if violations else [message]

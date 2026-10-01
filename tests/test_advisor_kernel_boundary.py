@@ -190,22 +190,44 @@ def _client_with(handler) -> object:
     return client
 
 
+def test_gateway_client_has_no_post_hitl_path() -> None:
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
+
+    assert not hasattr(GatewayClient, "revalidate_post_hitl")
+
+
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_approved() -> None:
+async def test_validate_action_returns_require_approval_with_deferred_id() -> None:
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"verdict": "APPROVED"})
+        return httpx.Response(
+            200, json={"verdict": "REQUIRE_APPROVAL", "deferred_id": "d-1", "violations": []}
+        )
 
-    result = await _client_with(handler).revalidate_post_hitl("execute_trade", {"amount": 1.0})
+    result = await _client_with(handler).validate_action("execute_trade", {"amount": 1.0})
 
-    assert result["verdict"] == "APPROVED"
-    assert seen == {
-        "path": "/governance/revalidate-post-hitl",
-        "body": {"action": "execute_trade", "params": {"amount": 1.0}},
+    assert result["verdict"] == "REQUIRE_APPROVAL"
+    assert result["deferred_id"] == "d-1"
+    assert "seal" not in result
+    assert seen["path"] == "/governance/validate-action"
+    assert seen["body"]["params"] == {"amount": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_validate_action_unwraps_allow_envelope() -> None:
+    envelope = {
+        "envelope_version": "3.0",
+        "envelope_type": "cage_governance_decision",
+        "payload": {"verdict": "ALLOW", "violations": []},
     }
+    client = _client_with(lambda request: httpx.Response(200, json=envelope))
+    result = await client.validate_action("execute_trade", {})
+    assert result["verdict"] == "ALLOW"
 
 
 @pytest.mark.asyncio
@@ -214,21 +236,23 @@ async def test_revalidate_post_hitl_approved() -> None:
     [
         httpx.Response(403, json={"verdict": "DENIED", "violations": ["CBF Violation"]}),
         httpx.Response(200, json={"verdict": "DENIED"}),
+        httpx.Response(200, json={"verdict": "APPROVED"}),
+        httpx.Response(200, json={"verdict": "REQUIRE_APPROVAL"}),
         httpx.Response(200, json={}),
     ],
-    ids=["denied_403", "denied_200", "no_verdict"],
+    ids=["denied_403", "denied_200", "legacy_approved", "approval_without_token", "no_verdict"],
 )
-async def test_revalidate_post_hitl_without_approval_raises(response: httpx.Response) -> None:
+async def test_validate_action_without_routable_verdict_raises(response: httpx.Response) -> None:
     client = _client_with(lambda request: response)
     with pytest.raises(PermissionError):
-        await client.revalidate_post_hitl("execute_trade", {})
+        await client.validate_action("execute_trade", {})
 
 
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_server_error_raises() -> None:
+async def test_validate_action_server_error_raises() -> None:
     client = _client_with(lambda request: httpx.Response(500))
     with pytest.raises(httpx.HTTPStatusError):
-        await client.revalidate_post_hitl("execute_trade", {})
+        await client.validate_action("execute_trade", {})
 
 
 # ---------------------------------------------------------------------------

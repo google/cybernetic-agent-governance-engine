@@ -28,12 +28,38 @@ from typing import Any
 import httpx
 from opentelemetry.propagate import inject as otel_inject
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governance_envelope import unwrap_governance_envelope
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 
 logger = logging.getLogger("infrastructure.gateway_client")
 
 _GATEWAY_URL_DEFAULT = "http://localhost:8080"
+
+#: Verdicts the advisor may route on. DENY arrives as HTTP 403; anything else
+#: (including a missing or legacy verdict string) is refused.
+_ROUTABLE_VERDICTS = frozenset(
+    {
+        GovernanceDecision.ALLOW,
+        GovernanceDecision.NARROW,
+        GovernanceDecision.REQUIRE_APPROVAL,
+        GovernanceDecision.DEFER,
+        GovernanceDecision.PAUSE,
+    }
+)
+
+
+def _violations(response: httpx.Response) -> list[str]:
+    try:
+        body = response.json()
+    except ValueError:
+        return ["governance denied"]
+    violations = body.get("violations") if isinstance(body, dict) else None
+    return [str(v) for v in violations] if violations else ["governance denied"]
+
+
+def _is_policy_drift(response: httpx.Response) -> bool:
+    return any("Substrate Policy Drift Detected" in v for v in _violations(response))
 
 
 class GatewayClient:
@@ -109,176 +135,94 @@ class GatewayClient:
         policy_version_id: str | None = None,
         timeout: float = 60.0,
     ) -> dict[str, Any]:
-        """Submit a tool execution plan to the Gateway for governance validation.
+        """Ask the gateway how ``action`` must be routed; nothing is committed.
 
-        This is the **Option 2: Unified Gateway Governance Routing** client
-        method.  Calls ``POST /governance/validate-action`` on the Hybrid
-        Gateway, which runs Tier 3a (CBF) + Tier 3b (OPA) and returns a verdict
-        with an HMAC-SHA256 routing seal on approval.
+        Calls ``POST /governance/validate-action``. The gateway runs the
+        non-committing (DRY_RUN) profile and never mints a routing seal: the
+        single committing run happens inside the gateway when the governed tool
+        (e.g. ``execute_trade_action``) executes.
 
         W3C Trace Context Propagation
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         The active OpenTelemetry span context is injected into the outbound
-        HTTP headers via ``opentelemetry.propagate.inject(headers)``.  This
-        injects the ``traceparent`` (and ``tracestate``) header so that the
-        Gateway's ``cage.validate_action``, ``cage.cbf_action_check``, and
-        ``cage.opa_action_check`` child spans are attached to the GFA's
-        ``cage.tool_execute`` root span in Langfuse — producing a single unified
-        trace tree rather than two disconnected fragments.
-
-        Without this injection, Langfuse logs two separate orphan traces with no
-        parent-child relationship, making the audit trail unreadable.
+        HTTP headers via ``opentelemetry.propagate.inject(headers)`` so the
+        gateway's ``cage.validate_action`` span is a child of the advisor's
+        ``cage.tool_execute`` span in Langfuse (one trace tree, not two).
 
         Args:
             action:            Tool / policy action name (e.g. ``"execute_trade"``).
             params:            Structured execution plan parameters dict.
             policy_version_id: Pinned baseline policy version signature hash (optional).
-            timeout:           HTTP timeout in seconds (default 60s).  OPA cold-start
-                               can take up to 20s on the first evaluation after a pod
-                               rollout; 60s covers that with a safety margin.  Warm
-                               steady-state evaluations complete in 30-80ms.
+            timeout:           HTTP timeout in seconds (default 60s; covers OPA
+                               cold start after a pod rollout).
 
         Returns:
-            Dict with keys:
-                - ``verdict``:     ``"APPROVED"`` | ``"DENIED"``
-                - ``violations``:  list[str] — empty on approval
-                - ``seal``:        HMAC routing seal string (empty on denial)
-                - ``latency_ms``:  Gateway-reported governance check latency
+            The unwrapped result. ``verdict`` is a :class:`GovernanceDecision`
+            value other than ``DENY``: ``ALLOW``, ``NARROW`` (with
+            ``narrowed_params``), ``REQUIRE_APPROVAL`` (with the ``deferred_id``
+            of the gateway-held approval token), ``DEFER`` or ``PAUSE``.
 
         Raises:
-            PermissionError: If the Gateway returns a DENIED verdict.
-            httpx.HTTPStatusError: On 4xx / 5xx Gateway errors.
+            PermissionError: On a refusal (HTTP 403 / ``DENY``) or any verdict
+                outside the canonical vocabulary — the caller must block.
+            httpx.HTTPStatusError: On other 4xx / 5xx Gateway errors.
             httpx.TimeoutException: If the Gateway does not respond within timeout.
         """
         client = await self._ensure_client()
-
-        # ── W3C Trace Context injection ───────────────────────────────────────
-        # Inject the active OTel span context so the Gateway's governance child
-        # spans (cage.validate_action → cage.cbf_action_check + cage.opa_action_check
-        # → cage.routing_seal) attach to the GFA's cage.tool_execute parent span.
         headers: dict[str, str] = {"Content-Type": "application/json"}
         otel_inject(headers)  # Injects W3C 'traceparent' from current span context
-
         payload = {
             "action": action,
             "params": params,
             "policy_version_id": policy_version_id,
         }
-        response = await client.post(
-            "/governance/validate-action",
-            json=payload,
-            headers=headers,
-            timeout=timeout,
-        )
 
-        if response.status_code == 403:
-            try:
-                result = response.json()
-                if "violations" in result and any(
-                    "Substrate Policy Drift Detected" in v for v in result["violations"]
-                ):
-                    logger.warning(
-                        "Substrate drift caught during session. Fetching updated baseline pin and replaying."
-                    )
-                    fresh_version_id = await self.get_policy_version(timeout=timeout)
-                    payload["policy_version_id"] = fresh_version_id
+        async def _post() -> httpx.Response:
+            return await client.post(
+                "/governance/validate-action",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            )
 
-                    retry_response = await client.post(
-                        "/governance/validate-action",
-                        json=payload,
-                        headers=headers,
-                        timeout=timeout,
-                    )
-                    if retry_response.status_code == 403:
-                        logger.error(
-                            "Consecutive policy drift check failed. Cluster synchronization boundary out-of-bounds."
-                        )
-                    retry_response.raise_for_status()
-                    result = unwrap_governance_envelope(retry_response.json())
-
-                    verdict = result.get("verdict", "DENIED")
-                    if verdict == "DENIED":
-                        violations = result.get("violations", ["governance denied"])
-                        logger.warning(
-                            "🚫 validate_action DENIED by Gateway (after retry): action=%s violations=%s",
-                            action,
-                            violations,
-                        )
-                        raise PermissionError(
-                            f"Governance DENIED '{action}': {'; '.join(violations)}"
-                        )
-                    logger.info(
-                        "✅ validate_action APPROVED by Gateway (after retry): action=%s latency=%.1fms",
-                        action,
-                        result.get("latency_ms", 0),
-                    )
-                    return result
-            except PermissionError:
-                raise
-            except Exception as exc:
-                logger.error("Failed to recover from policy drift: %s", exc)
-                response.raise_for_status()
-
-        response.raise_for_status()
-        result: dict[str, Any] = unwrap_governance_envelope(response.json())  # type: ignore[no-redef]  # reuse name after 403 branch which may also assign result
-
-        verdict = result.get("verdict", "DENIED")
-        if verdict == "DENIED":
-            violations = result.get("violations", ["governance denied"])
+        response = await _post()
+        if response.status_code == 403 and _is_policy_drift(response):
             logger.warning(
-                "🚫 validate_action DENIED by Gateway: action=%s violations=%s",
+                "Substrate drift caught during session. Fetching updated baseline pin and replaying."
+            )
+            payload["policy_version_id"] = await self.get_policy_version(timeout=timeout)
+            response = await _post()
+        if response.status_code == 403:
+            raise PermissionError(
+                f"Governance DENIED '{action}': {'; '.join(_violations(response))}"
+            )
+        response.raise_for_status()
+
+        result: dict[str, Any] = unwrap_governance_envelope(response.json())
+        verdict = result.get("verdict")
+        if verdict not in _ROUTABLE_VERDICTS:
+            violations = [str(v) for v in result.get("violations") or []]
+            logger.warning(
+                "🚫 validate_action refused: action=%s verdict=%s violations=%s",
                 action,
+                verdict,
                 violations,
             )
             raise PermissionError(
-                f"Governance DENIED '{action}': {'; '.join(violations)}"
+                f"Governance returned no routable verdict for '{action}' "
+                f"(verdict={verdict!r}): {'; '.join(violations)}"
             )
-
+        if verdict == GovernanceDecision.REQUIRE_APPROVAL and not result.get("deferred_id"):
+            # No approval token was parked, so no human can ever approve it.
+            raise PermissionError(
+                f"Governance requires approval for '{action}' but parked no deferred_id"
+            )
         logger.info(
-            "✅ validate_action APPROVED by Gateway: action=%s latency=%.1fms",
+            "validate_action: action=%s verdict=%s latency=%.1fms",
             action,
+            verdict,
             result.get("latency_ms", 0),
         )
-        return result
-
-    @side_effect_node(kind="api_call", external_system="gateway_api")
-    async def revalidate_post_hitl(
-        self,
-        action: str,
-        params: dict[str, Any],
-        timeout: float = 60.0,
-    ) -> dict[str, Any]:
-        """Ask the gateway to re-validate a human-approved action (TOCTOU closure).
-
-        Calls ``POST /governance/revalidate-post-hitl``. The governor and its
-        signer run only in the gateway; this returns a verdict, never a seal.
-
-        Raises:
-            PermissionError: On a DENIED verdict (HTTP 403) or any response
-                other than an explicit APPROVED — the caller must block.
-            httpx.HTTPError: On transport failures; callers must also block.
-        """
-        client = await self._ensure_client()
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        otel_inject(headers)
-        response = await client.post(
-            "/governance/revalidate-post-hitl",
-            json={"action": action, "params": params},
-            headers=headers,
-            timeout=timeout,
-        )
-        if response.status_code == 403:
-            violations = response.json().get("violations") or ["governance denied"]
-            raise PermissionError(
-                f"Post-HITL re-validation DENIED '{action}': "
-                + "; ".join(str(v) for v in violations)
-            )
-        response.raise_for_status()
-        result: dict[str, Any] = response.json()
-        if result.get("verdict") != "APPROVED":
-            raise PermissionError(
-                f"Post-HITL re-validation returned no APPROVED verdict for '{action}'"
-            )
         return result
 
     @side_effect_node(kind="api_call", external_system="gateway_api")

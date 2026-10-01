@@ -737,14 +737,21 @@ container.
 Open paths (no identity needed): `GET /health`, `GET /healthz`, `GET /metrics`,
 `GET /governance/jwks`, `GET /governance/.well-known/jwks.json`, and
 `GET /v1/pause/<token>`. Every other path is deny-by-default, including
-`/mcp/*`, `/tools/execute`, `/governance/*` (`check`, `validate-action`,
-`revalidate-post-hitl`), `POST /v1/pause/<token>/resume` and `/inference/*`.
+`/mcp/*`, `/tools/execute`, `/governance/*` (`check`, `validate-action`),
+`POST /v1/pause/<token>/resume` and `/inference/*`.
 
-`POST /governance/revalidate-post-hitl` re-runs the governor's post-HITL
-check (`SymbolicGovernor.revalidate_post_hitl`) for an approved trade. It
-returns `{"verdict": "APPROVED"}` with no seal on success, and 403
-`{"verdict": "DENIED", "violations": [...]}` with a refusal receipt on
-failure.
+`POST /governance/validate-action` is non-committing: it runs the DRY_RUN
+profile (phase-2 tiers preview only), mints no routing seal, and answers
+`ALLOW`, `NARROW` (an unsealed `narrowed_params` candidate),
+`REQUIRE_APPROVAL` (with the `deferred_id` of a `HITL_REQUIRED` token parked
+in the gateway's DeferQueue), `DEFER`, `PAUSE`, or 403 `DENIED`. The single
+committing run happens inside the `execute_trade_action` tool: without a
+`deferred_id` it is `SymbolicGovernor.govern()` (FULL profile); with one, the
+gateway consumes the quorum-approved token exactly once
+(`DeferQueue.consume_approval`) and runs `SymbolicGovernor.revalidate_post_hitl()`
+(POST_HITL profile) on the fresh params. Approvals are recorded only through
+the compliance bridge `POST /v1/defer/{defer_id}/escalate` (operator identity
+required). There is no `/governance/revalidate-post-hitl` endpoint.
 
 APPROVED `POST /governance/validate-action` responses carry a signed
 governance envelope. The governor's KMS-signed routing seal

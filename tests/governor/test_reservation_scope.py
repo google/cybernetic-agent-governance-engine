@@ -44,7 +44,8 @@ from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-ENTRY_POINTS = ("validate_action", "govern", "revalidate_post_hitl")
+#: The committing entry points. ``validate_action`` runs DRY_RUN: no scope, no seal.
+ENTRY_POINTS = ("govern", "revalidate_post_hitl")
 
 
 class _Tier:
@@ -144,8 +145,25 @@ async def test_issued_seal_keeps_commits(entry_point: str, seal: AsyncMock) -> N
     result = await _call(_governor(_two_tiers(log)), entry_point)
 
     assert log == ["commit:cbf", "commit:fiscal"]
-    sealed = result["seal"] if entry_point == "validate_action" else result
-    assert sealed == "sealed"
+    assert result == "sealed"
+
+
+@pytest.mark.asyncio
+async def test_validate_action_neither_commits_nor_seals(
+    seal: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_scope(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("validate_action must not open a ReservationScope")
+
+    monkeypatch.setattr(sealing_module, "ReservationScope", no_scope)
+    log: list[str] = []
+
+    result = await _governor(_two_tiers(log)).validate_action("act", {})
+
+    assert result["verdict"] == "ALLOW"
+    assert "seal" not in result
+    assert log == []
+    seal.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -176,7 +194,7 @@ async def test_cancellation_during_seal_propagates_after_rollback(seal: AsyncMoc
         return "never"
 
     seal.side_effect = slow_seal
-    task = asyncio.create_task(_governor(_two_tiers(log)).validate_action("act", {}))
+    task = asyncio.create_task(_governor(_two_tiers(log)).govern("act", {}))
     await sealing.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

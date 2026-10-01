@@ -17,8 +17,11 @@
 ``gateway_tool_guard`` gates the data-analyst and governed-trader tool
 executors on ``POST /governance/validate-action``. These tests drive the real
 ``GatewayClient`` over an ``httpx.MockTransport`` and assert that the wrapped
-node runs only on an explicit APPROVED verdict for every tool call, and that
-every other outcome refuses the whole batch without executing any tool.
+node runs only when every tool call is routed ALLOW or NARROW, that a
+single-call REQUIRE_APPROVAL parks for a human (only when the guard is
+``approvable``), that an approved ``deferred_id`` is forwarded to the tool
+rather than re-validated, and that every other outcome refuses the whole
+batch without executing any tool.
 """
 
 from __future__ import annotations
@@ -41,7 +44,9 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-_APPROVED = {"verdict": "APPROVED", "violations": [], "latency_ms": 1.0}
+_ALLOW = {"verdict": "ALLOW", "violations": [], "latency_ms": 1.0}
+_NARROW = {"verdict": "NARROW", "violations": [], "narrowed_params": {"amount": 50.0}}
+_REQUIRE_APPROVAL = {"verdict": "REQUIRE_APPROVAL", "deferred_id": "d-1", "violations": []}
 
 
 @pytest.fixture
@@ -71,9 +76,11 @@ class _SpyNode:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.states: list[dict[str, Any]] = []
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         self.calls += 1
+        self.states.append(state)
         return {"messages": [ToolMessage(content="executed", tool_call_id="t1")]}
 
 
@@ -92,7 +99,7 @@ def _call(call_id: str, symbol: str = "AAPL", amount: float = 100.0) -> dict[str
 class TestGuardApproval:
     @pytest.mark.asyncio
     async def test_all_approved_runs_node(self, gateway) -> None:
-        seen = gateway(lambda r: httpx.Response(200, json=_APPROVED))
+        seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
         spy = _SpyNode()
 
         result = await gateway_tool_guard("execute_trade")(spy)(
@@ -113,7 +120,7 @@ class TestGuardApproval:
 
     @pytest.mark.asyncio
     async def test_no_tool_calls_does_not_run_node(self, gateway) -> None:
-        seen = gateway(lambda r: httpx.Response(200, json=_APPROVED))
+        seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
         spy = _SpyNode()
 
         result = await gateway_tool_guard("execute_trade")(spy)(
@@ -126,7 +133,7 @@ class TestGuardApproval:
 
 
 class TestGuardFailClosed:
-    """Any non-APPROVED gateway outcome refuses the batch; no tool runs."""
+    """Any outcome other than ALLOW/NARROW (or a parked approval) refuses; no tool runs."""
 
     @pytest.mark.parametrize(
         "handler",
@@ -153,6 +160,18 @@ class TestGuardFailClosed:
                 id="defer",
             ),
             pytest.param(lambda r: httpx.Response(200, json={}), id="no-verdict"),
+            pytest.param(
+                lambda r: httpx.Response(200, json={"verdict": "APPROVED"}),
+                id="legacy-approved",
+            ),
+            pytest.param(
+                lambda r: httpx.Response(200, json={"verdict": "REQUIRE_APPROVAL"}),
+                id="approval-without-deferred-id",
+            ),
+            pytest.param(
+                lambda r: httpx.Response(200, json=_REQUIRE_APPROVAL),
+                id="approval-not-approvable",
+            ),
         ],
     )
     @pytest.mark.asyncio
@@ -197,7 +216,7 @@ class TestGuardFailClosed:
             symbol = json.loads(request.content)["params"]["symbol"]
             if symbol == "EVIL":
                 return httpx.Response(403, json={"verdict": "DENIED"})
-            return httpx.Response(200, json=_APPROVED)
+            return httpx.Response(200, json=_ALLOW)
 
         gateway(handler)
         spy = _SpyNode()
@@ -213,6 +232,134 @@ class TestGuardFailClosed:
         assert "another tool call in the same batch was refused" in by_id["ok"]
 
 
+class TestGuardNarrow:
+    @pytest.mark.asyncio
+    async def test_narrow_runs_node_as_candidate(self, gateway) -> None:
+        gateway(lambda r: httpx.Response(200, json=_NARROW))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade")(spy)(_state(_call("t1")))
+
+        assert spy.calls == 1
+        assert result["governance_status"] == "ALLOWED"
+        assert result["governance_envelope"]["verdict"] == "NARROW"
+
+
+class TestGuardRequireApproval:
+    @pytest.mark.asyncio
+    async def test_single_call_parks_for_approval_without_running(self, gateway) -> None:
+        gateway(lambda r: httpx.Response(200, json=_REQUIRE_APPROVAL))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
+            _state(_call("t1"))
+        )
+
+        assert spy.calls == 0
+        assert result["governance_status"] == "REQUIRE_APPROVAL"
+        assert result["deferred_id"] == "d-1"
+        (msg,) = result["messages"]
+        assert msg.tool_call_id == "t1"
+        assert "Awaiting human approval" in msg.content
+
+    @pytest.mark.asyncio
+    async def test_approval_in_multi_call_batch_refuses(self, gateway) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            symbol = json.loads(request.content)["params"]["symbol"]
+            return httpx.Response(200, json=_REQUIRE_APPROVAL if symbol == "BIG" else _ALLOW)
+
+        gateway(handler)
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
+            _state(_call("small"), _call("big", symbol="BIG"))
+        )
+
+        assert spy.calls == 0
+        assert result["governance_status"] == "DENIED"
+        assert "deferred_id" not in result
+
+    @pytest.mark.asyncio
+    async def test_model_supplied_deferred_id_is_not_sent_to_validate(self, gateway) -> None:
+        seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+        call = _call("t1")
+        call["args"]["deferred_id"] = "forged"
+
+        await gateway_tool_guard("execute_trade", approvable=True)(spy)(_state(call))
+
+        (request,) = seen
+        assert "deferred_id" not in json.loads(request.content)["params"]
+
+
+class TestGuardApprovedResume:
+    @staticmethod
+    def _approved_state(*calls: dict[str, Any], approved: Any = True) -> dict[str, Any]:
+        return {
+            **_state(*calls),
+            "deferred_id": "d-1",
+            "approval_decision": {"approved": approved, "reviewer": "r@x"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_approved_forwards_deferred_id_without_revalidating(self, gateway) -> None:
+        seen = gateway(lambda r: httpx.Response(500))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
+            self._approved_state(_call("t1"))
+        )
+
+        assert seen == []  # the gateway re-validates inside execute_trade_action
+        assert spy.calls == 1
+        (call,) = spy.states[0]["messages"][-1].tool_calls
+        assert call["args"]["deferred_id"] == "d-1"
+        assert result["governance_status"] == "ALLOWED"
+        # Single-use on the advisor side too.
+        assert result["deferred_id"] is None
+        assert result["approval_decision"] is None
+
+    @pytest.mark.asyncio
+    async def test_approved_multi_call_batch_refuses(self, gateway) -> None:
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
+            self._approved_state(_call("a"), _call("b", symbol="MSFT"))
+        )
+
+        assert spy.calls == 0
+        assert result["governance_status"] == "DENIED"
+        assert result["deferred_id"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("approved", [False, None, "true"], ids=["rejected", "none", "truthy-str"])
+    async def test_non_true_approval_revalidates(self, gateway, approved) -> None:
+        seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
+            self._approved_state(_call("t1"), approved=approved)
+        )
+
+        assert len(seen) == 1
+        assert spy.calls == 0
+        assert result["governance_status"] == "DENIED"
+
+    @pytest.mark.asyncio
+    async def test_not_approvable_ignores_approval_state(self, gateway) -> None:
+        seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade")(spy)(
+            self._approved_state(_call("t1"))
+        )
+
+        assert len(seen) == 1
+        assert spy.calls == 0
+        assert result["governance_status"] == "DENIED"
+
+
 class TestSubgraphWiring:
     def test_trader_ends_on_refusal(self) -> None:
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
@@ -222,6 +369,15 @@ class TestSubgraphWiring:
         assert route_after_tools({"governance_status": "DENIED"}) == END
         assert route_after_tools({}) == END
         assert route_after_tools({"governance_status": "ALLOWED"}) == "executor"
+
+    def test_trader_routes_parked_approval_to_human(self) -> None:
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            route_after_tools,
+        )
+
+        parked = {"governance_status": "REQUIRE_APPROVAL", "deferred_id": "d-1"}
+        assert route_after_tools(parked) == "approval"
+        assert route_after_tools({"governance_status": "REQUIRE_APPROVAL"}) == END
 
     def test_trader_graph_compiles_with_guarded_tools(self) -> None:
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (

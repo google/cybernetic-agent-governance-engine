@@ -25,7 +25,10 @@ Key responsibilities:
   - Submit it to ``POST /governance/validate-action`` via the advisor's
     standard ``GatewayClient.validate_action()``
   - Handle the gateway verdict:
-      * APPROVED → reset consecutive_denials, route to execution
+      * ALLOW / NARROW / REQUIRE_APPROVAL → safety_status "APPROVED": reset
+        consecutive_denials and route to the governed trader, whose
+        ``gateway_tool_guard`` re-asks the gateway per tool call and parks
+        REQUIRE_APPROVAL for a human before anything executes
       * DENIED   → increment consecutive_denials, store violation, route to explainer
       * DEFER    → store the gateway's deferral ticket, route to defer_node
 
@@ -35,7 +38,9 @@ advisor is an untrusted, zero-identity client (POAM-2026-080): the gateway
 authenticates it by mesh workload identity, and the advisor holds no
 routing-seal secret, signer or governor of its own.
 
-Fail-closed: only an explicit APPROVED verdict approves. A DENIED verdict, a
+Fail-closed: only an explicit ALLOW, NARROW or REQUIRE_APPROVAL verdict
+routes onward (nothing is committed here; the gateway commits only inside
+``execute_trade_action``). A DENIED verdict, a
 PAUSE / unknown / missing verdict, a DEFER without a ticket, an HTTP error, a
 timeout or an unreachable gateway all produce ``BLOCKED``.
 
@@ -52,10 +57,21 @@ from typing import Any
 
 import httpx
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 
 logger = logging.getLogger("SafetyNode")
+
+#: Gateway verdicts that may proceed to the governed trader. REQUIRE_APPROVAL
+#: proceeds because the human-approval path lives in the trader subgraph.
+_PROCEED_VERDICTS = frozenset(
+    {
+        GovernanceDecision.ALLOW,
+        GovernanceDecision.NARROW,
+        GovernanceDecision.REQUIRE_APPROVAL,
+    }
+)
 
 # Policy-probing attack mitigation constant (ADR-008)
 MAX_CONSECUTIVE_DENIALS = 2
@@ -115,7 +131,8 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
     the verdict onto agent state.
 
     Fail-closed semantics:
-      - APPROVED → safety_status "APPROVED", consecutive_denials reset to 0
+      - ALLOW, NARROW or REQUIRE_APPROVAL (with ``deferred_id``) → safety_status
+        "APPROVED", consecutive_denials reset to 0
       - DENIED (``PermissionError``) → "BLOCKED" (or HARD_PAUSE on budget exhaustion)
       - DEFER with a ``defer_id`` → "DEFERRED" with the gateway's ticket
       - Anything else (PAUSE, unknown verdict, HTTP error, timeout,
@@ -207,9 +224,10 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
 
     verdict = result.get("verdict") if isinstance(result, dict) else None
 
-    if verdict == "APPROVED":
+    if verdict in _PROCEED_VERDICTS:
         logger.info(
-            "✅ Safety Node: Action ALLOWED by governance (envelope_id=%s)",
+            "✅ Safety Node: gateway routed action %s (envelope_id=%s)",
+            verdict,
             result.get("envelope_id", "unknown"),
         )
         return {
@@ -234,7 +252,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         }
 
     logger.warning(
-        "🚫 Safety Node: Gateway returned no APPROVED verdict (verdict=%r) — failing closed",
+        "🚫 Safety Node: Gateway returned no routable verdict (verdict=%r) — failing closed",
         verdict,
     )
     return _blocked(

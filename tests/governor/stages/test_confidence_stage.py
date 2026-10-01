@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from src.gateway.governance.contracts import ViolationKind
-from src.gateway.governance.governor.governor import _reported_confidence
+from src.gateway.governance.governor.verdicts import reported_confidence as _reported_confidence
 from src.gateway.governance.governor.pipeline import OpaVerdict, Profile, StageContext
 from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 

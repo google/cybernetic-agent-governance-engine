@@ -45,7 +45,6 @@ GATED = [
     "/tools/execute",
     "/governance/check",
     "/governance/validate-action",
-    "/governance/revalidate-post-hitl",
     "/governance/policy-version",
     "/inference/v1/chat/completions",
     "/v1/pause/tok/resume",
@@ -269,7 +268,7 @@ def test_real_gateway_refuses_unidentified_calls_to_governed_routes() -> None:
     client = TestClient(root_app)
     for path in (
         "/tools/execute",
-        "/governance/revalidate-post-hitl",
+        "/governance/validate-action",
         "/governance/check",
     ):
         assert client.post(path, json={}).status_code == 403, path

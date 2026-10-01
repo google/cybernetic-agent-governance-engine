@@ -117,6 +117,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `live_external` | Hits a third-party partner API. Never combined with `integration`. | `--run-live-external` |
 | `chaos` | Fault injection / failover (e.g. Redis primary loss). | `--run-chaos` |
 | `load` | Locust load tests on dedicated infrastructure. | Dedicated CI job |
+| `e2e` | Live trade flow against a deployed gateway over the mesh (`tests/e2e/`). | `--run-e2e` / `make test-gke-e2e` |
 
 **`local` vs `unit` — the distinction:**
 

@@ -28,15 +28,17 @@ A. /governance/check endpoint
    - Governance denial (verify() returns violations) → 200 REJECTED
 
 B. /governance/validate-action endpoint
-   - Happy path: valid action → 200 APPROVED
+   - Happy path: valid action → 200 ALLOW (no seal)
    - GovernanceError → 403 DENIED (not 500)
    - Internal exception → 500 with "Internal governance error" (MED-03 fix)
    - detail field never contains stack trace or internal variable names
 
-C. /governance/revalidate-post-hitl endpoint (POAM-2026-079)
-   - APPROVED → 200 verdict, no seal in the response
-   - GovernanceError → 403 DENIED + refusal receipt
-   - Internal exception → 500 without leaking details
+C. enforce_approved_governance (POAM-2026-079)
+   - /governance/revalidate-post-hitl no longer exists
+   - Consumed approval → POST_HITL commit + seal
+   - Missing/unapproved approval, queue outage, raising matcher → refused
+     with an AC-3 refusal receipt; nothing is committed
+   - POST_HITL refusal → PermissionError + SC-4 refusal receipt
 
 D. _emit_refusal_receipt()
    - Signs receipt via KMS signer and calls evidence sink
@@ -54,7 +56,7 @@ from __future__ import annotations
 
 import json
 import os
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -115,9 +117,8 @@ def mock_symbolic_governor():
     )
     gov.validate_action = AsyncMock(
         return_value={
-            "verdict": "APPROVED",
+            "verdict": "ALLOW",
             "violations": [],
-            "seal": "fake-seal",
             "latency_ms": 1.0,
         }
     )
@@ -258,7 +259,7 @@ class TestValidateActionEndpoint:
         return TestClient(governance_app, raise_server_exceptions=False)
 
     def test_validate_action_happy_path_approved(self, client, mock_symbolic_governor):
-        """Valid action returns 200 with APPROVED verdict in canonical envelope."""
+        """Valid action returns 200 with an ALLOW verdict in the canonical envelope."""
         resp = client.post(
             "/validate-action",
             json={
@@ -283,9 +284,9 @@ class TestValidateActionEndpoint:
 
         # Assert that the payload contains the governance result
         payload = data["payload"]
-        assert payload["verdict"] == "APPROVED"
+        assert payload["verdict"] == "ALLOW"
         assert payload["violations"] == []
-        assert "seal" in payload
+        assert "seal" not in payload
 
         # Assert signature presence (may be None if KMS not active in test)
         assert "signature" in data or data.get("signature") is None
@@ -413,78 +414,136 @@ class TestValidateActionEndpoint:
 
 
 # ===========================================================================
-# C. /revalidate-post-hitl endpoint tests (POAM-2026-079)
+# C. Post-approval committing run (POAM-2026-079)
 # ===========================================================================
 
 
-class TestRevalidatePostHitlEndpoint:
-    """POST /revalidate-post-hitl: the advisor's only path to post-HITL re-checks."""
+class TestRevalidatePostHitlRemoved:
+    """POST_HITL runs only inside execute_trade_action, never as an HTTP route."""
 
-    @pytest.fixture()
-    def client(self, mock_symbolic_governor, mock_kms_signer):
-        from src.gateway.server.governance_middleware import governance_app
-
-        return TestClient(governance_app, raise_server_exceptions=False)
-
-    def test_approved_returns_verdict_and_no_seal(self, client, mock_symbolic_governor):
-        """APPROVED returns a verdict only; the seal never leaves the gateway."""
+    def test_revalidate_post_hitl_route_is_gone(self, gov_client, mock_symbolic_governor):
+        """The advisor can no longer trigger a POST_HITL run over HTTP."""
         mock_symbolic_governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
-        params = {"symbol": "AAPL", "amount": 10.0}
-
-        resp = client.post(
-            "/revalidate-post-hitl", json={"action": "execute_trade", "params": params}
+        resp = gov_client.post(
+            "/revalidate-post-hitl",
+            json={"action": "execute_trade", "params": {"amount": 10.0}},
         )
+        assert resp.status_code in (404, 405)
+        mock_symbolic_governor.revalidate_post_hitl.assert_not_awaited()
 
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["verdict"] == "APPROVED"
-        assert "seal" not in body and "SEAL" not in resp.text
-        mock_symbolic_governor.revalidate_post_hitl.assert_awaited_once_with(
-            action="execute_trade", params=params
-        )
 
-    def test_governance_denial_returns_403_and_emits_refusal_receipt(
-        self, client, mock_symbolic_governor
-    ):
-        """A POST_HITL refusal is a 403 DENIED and enters the evidence chain."""
-        from src.gateway.governance.governor.governor import GovernanceError
+class TestEnforceApprovedGovernance:
+    """``enforce_approved_governance``: consume the approval once, then commit + seal."""
 
-        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(
-            side_effect=GovernanceError("CBF Violation: h(next) < 0")
-        )
-        emit = AsyncMock(return_value=None)
-        with patch("src.gateway.server.governance_middleware._emit_refusal_receipt", new=emit):
-            resp = client.post(
-                "/revalidate-post-hitl",
-                json={"action": "execute_trade", "params": {"amount": 10.0}},
+    @staticmethod
+    def _queue(token: Any):
+        queue = MagicMock()
+        queue.consume_approval = AsyncMock(return_value=token)
+
+        @asynccontextmanager
+        async def _open():
+            yield queue
+
+        return queue, _open
+
+    async def _call(self, governor, open_queue, emit, covers=lambda a, p: True):
+        from src.gateway.server import governance_middleware as gm
+
+        with (
+            patch("src.gateway.governance.defer_queue.open_defer_queue", new=open_queue),
+            patch.object(gm, "_emit_refusal_receipt", new=emit),
+        ):
+            return await gm.enforce_approved_governance(
+                governor,
+                "execute_trade",
+                {"symbol": "AAPL", "amount": 10.0},
+                deferred_id="defer-1",
+                approval_covers=covers,
             )
 
-        assert resp.status_code == 403
-        assert resp.json()["verdict"] == "DENIED"
+    async def test_consumed_approval_runs_post_hitl_and_returns_seal(self):
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        queue, open_queue = self._queue(MagicMock(thread_id="thread-9"))
+        emit = AsyncMock()
+
+        seal = await self._call(governor, open_queue, emit)
+
+        assert seal == "SEAL"
+        governor.revalidate_post_hitl.assert_awaited_once_with(
+            "execute_trade", {"symbol": "AAPL", "amount": 10.0}, trace_id="thread-9"
+        )
+        assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
+        emit.assert_not_awaited()
+
+    async def test_no_approval_refuses_with_receipt_and_never_commits(self):
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        _, open_queue = self._queue(None)
+        emit = AsyncMock()
+
+        with pytest.raises(PermissionError, match="defer-1"):
+            await self._call(governor, open_queue, emit)
+
+        governor.revalidate_post_hitl.assert_not_awaited()
         emit.assert_awaited_once()
-        assert emit.await_args.kwargs["action_id"] == "execute_trade"
+        assert emit.await_args.kwargs["oscal_control_ref"] == "AC-3"
 
-    def test_internal_error_returns_500_without_leaking(self, client, mock_symbolic_governor):
-        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(
-            side_effect=RuntimeError("secret_internal_detail")
-        )
-        resp = client.post(
-            "/revalidate-post-hitl", json={"action": "execute_trade", "params": {}}
-        )
-        assert resp.status_code == 500
-        assert "secret_internal_detail" not in resp.text
+    async def test_queue_unavailable_fails_closed(self):
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
 
-    def test_non_finite_float_rejected(self, client, mock_symbolic_governor):
-        mock_symbolic_governor.revalidate_post_hitl = AsyncMock()
-        resp = client.post(
-            "/revalidate-post-hitl",
-            content=b'{"action": "execute_trade", "params": {"amount": NaN}}',
-            headers={"Content-Type": "application/json"},
+        @asynccontextmanager
+        async def _broken():
+            raise ConnectionError("redis down")
+            yield  # pragma: no cover
+
+        emit = AsyncMock()
+        with pytest.raises(PermissionError):
+            await self._call(governor, _broken, emit)
+        governor.revalidate_post_hitl.assert_not_awaited()
+        emit.assert_awaited_once()
+
+    async def test_raising_matcher_never_authorises(self):
+        """A covers() that raises is treated as "does not cover"."""
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        seen: list[bool] = []
+
+        queue = MagicMock()
+
+        async def _consume(defer_id, *, action, covers):
+            seen.append(covers({"symbol": "AAPL"}))
+            return None
+
+        queue.consume_approval = _consume
+
+        @asynccontextmanager
+        async def _open():
+            yield queue
+
+        def _boom(approved, params):
+            raise KeyError("amount")
+
+        with pytest.raises(PermissionError):
+            await self._call(governor, _open, AsyncMock(), covers=_boom)
+        assert seen == [False]
+        governor.revalidate_post_hitl.assert_not_awaited()
+
+    async def test_post_hitl_refusal_raises_with_receipt(self):
+        from src.gateway.governance.governor.governor import GovernanceError
+
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(
+            side_effect=GovernanceError("CBF Violation: h(next) < 0")
         )
-        # Rejected by request validation (the 422 body cannot echo NaN, so
-        # the framework may surface it as 500); never evaluated either way.
-        assert resp.status_code in (422, 500)
-        mock_symbolic_governor.revalidate_post_hitl.assert_not_awaited()
+        _, open_queue = self._queue(MagicMock(thread_id="t"))
+        emit = AsyncMock()
+
+        with pytest.raises(PermissionError, match="CBF Violation"):
+            await self._call(governor, open_queue, emit)
+        emit.assert_awaited_once()
+        assert emit.await_args.kwargs["oscal_control_ref"] == "SC-4"
 
 
 # ===========================================================================
@@ -863,11 +922,10 @@ class TestFlowSignalHttp202Receipt:
     def test_approved_verdict_still_returns_200(
         self, client_for_flowsignal, mock_kms_signer
     ):
-        """APPROVED verdict returns HTTP 200 with canonical envelope (ADR-008 Phase 3)."""
+        """ALLOW verdict returns HTTP 200 with canonical envelope (ADR-008 Phase 3)."""
         approved_result = {
-            "verdict": "APPROVED",
+            "verdict": "ALLOW",
             "violations": [],
-            "seal": "valid-seal",
             "latency_ms": 1.0,
         }
         mock_gov = _mock_governor()
@@ -882,6 +940,6 @@ class TestFlowSignalHttp202Receipt:
         assert resp.status_code == 200
         data = resp.json()
 
-        # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
+        # ADR-008 Phase 3: ALLOW verdicts return canonical envelope
         assert data.get("envelope_version") == "3.0"
-        assert data["payload"]["verdict"] == "APPROVED"
+        assert data["payload"]["verdict"] == "ALLOW"

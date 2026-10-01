@@ -747,5 +747,15 @@ vector and a deprecation window would have preserved it.
 
 ---
 
+## Unreleased — Single Committing Trade Run (Phase 0)
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **TG-1** | Gateway API | `POST /governance/validate-action` runs the DRY_RUN profile in [`governor.py`](../src/gateway/governance/governor/governor.py): no seal, no scope reservation. `REQUIRE_APPROVAL` returns a `deferred_id` parked in the gateway [`DeferQueue`](../src/gateway/governance/defer_queue.py). The `APPROVED` verdict is no longer emitted. | A preview that commits budget or mints a seal turned every advisory check into a consequence; only the execution boundary may commit. | Callers expecting a `seal` field get none; [`GatewayClient.validate_action`](../src/governed_financial_advisor/infrastructure/gateway_client.py) raises `PermissionError` on `APPROVED` or on `REQUIRE_APPROVAL` without `deferred_id`. |
+| **TG-2** | Gateway API | `POST /governance/revalidate-post-hitl` removed. Approved trades call `execute_trade_action(..., deferred_id=...)`; the gateway consumes the approval atomically and runs the POST_HITL profile in [`governance_middleware.py`](../src/gateway/server/governance_middleware.py) (`enforce_approved_governance`). | Approval state held by the advisor was forgeable and replayable; custody now lives in the kernel and each approval authorises exactly one execution. | 404/405 on the removed route; a replayed, unapproved or mismatched `deferred_id` returns `BLOCKED`. |
+| **TG-3** | Advisor graph | [`governed_trader_graph.py`](../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) enters at `executor`; HITL is reached only via a gateway `REQUIRE_APPROVAL`. `post_hitl_revalidate` is a slippage gate only. | The gateway, not the advisor, decides whether a human is needed. | Advisor-side approval thresholds have no effect. |
+
+---
+
 **Last updated:** 2026-09-22 (v3.1.0 Zero-Trust Identity & Egress clean breaks ZT-1–ZT-6)
 

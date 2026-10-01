@@ -17,17 +17,16 @@ Approval Node — LangGraph native human-in-the-loop interrupt.
 
 Phase 2.1: Uses dynamic interrupt() primitive instead of static interrupt_before.
 
-The node ALWAYS calls interrupt() when reached. Conditional routing logic
-(risk_score > 0.7 OR amount > 10000) belongs in the graph's routing edges,
-not in the node itself.
+The node ALWAYS calls interrupt() when reached. The graph routes here only
+when the gateway answered REQUIRE_APPROVAL and parked a ``deferred_id``; the
+advisor applies no approval thresholds of its own.
 
 Flow:
-  1. Graph routes to approval_node based on runtime conditions
+  1. The gateway returns REQUIRE_APPROVAL with a ``deferred_id``
   2. approval_node calls interrupt(payload) → GraphInterrupt suspends execution
-  3. Human reviewer discovers the pending interrupt via GET /v1/approvals/pending
-     and resumes through the LangGraph SDK with Command(resume={...}).
-     (The POST /v1/approvals/{thread_id}/resume route was removed in 7ab1acd;
-     external clients use the SDK.)
+  3. Reviewers record the authoritative approval against ``deferred_id`` at the
+     compliance bridge (POST /v1/defer/{deferred_id}/escalate), then resume the
+     graph through the LangGraph SDK with Command(resume={...}).
   4. interrupt() returns resume payload, node updates state and returns Command
 
 Pure LangGraph — no static compile-time interrupts, no BullMQ.
@@ -65,6 +64,10 @@ def approval_node(state: dict[str, Any]) -> Command:
     ttl_seconds: int = int(os.getenv("HITL_APPROVAL_TTL_SECONDS", "300"))
     trade_payload: dict[str, Any] = {
         "reason": "trade_approval_required",
+        # The gateway-held approval token. The authoritative approval is
+        # recorded against it at POST /v1/defer/{deferred_id}/escalate (the
+        # compliance bridge); this interrupt only pauses the advisor's graph.
+        "deferred_id": state.get("deferred_id"),
         "trade": {
             "execution_plan": state.get("execution_plan_output"),
             "evaluation_result": state.get("evaluation_result"),

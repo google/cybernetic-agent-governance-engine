@@ -80,7 +80,7 @@ The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchest
 5. `NARROW` — policy violation with partial-authority option; clamps execution parameters to safe bounds.
 6. `PAUSE` — system or market transient overload; issues `pause_token` via `PausePrimitiveManager` with retry metadata.
 
-**HITL (Human-in-the-Loop):** Handled by `src/gateway/governance/defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; after human approval, `revalidate_post_hitl()` re-runs OPA (Tier 3b) and every Phase-2 mutating domain tier (CBF Tier 3a and Fiscal Tier 4) under `Profile.POST_HITL` before proceeding, rolling back committed tiers LIFO on failure.
+**HITL (Human-in-the-Loop):** Handled by `src/gateway/governance/defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; after human approval, `execute_trade_action(deferred_id=...)` consumes the approved token once and `revalidate_post_hitl()` re-runs OPA (Tier 3b) and the CBF (Tier 3a) and Fiscal (Tier 4) mutating tiers under `Profile.POST_HITL` in the gateway before actuation, rolling back committed tiers LIFO on failure.
 
 **Startup guards:** `src/gateway/governance/governor/posture.py` and `src/gateway/governance/governor/bootstrap.py` run startup assertions that raise `RuntimeError` if:
 - `dowhy` is not installed in production (Tier 6 would be silently absent)

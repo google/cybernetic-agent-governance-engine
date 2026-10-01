@@ -888,7 +888,7 @@ class TestValidateActionPauseHandler:
                 )
 
                 assert result["verdict"] == GovernanceDecision.PAUSE
-                assert result["seal"] == ""  # No seal for PAUSE
+                assert "seal" not in result  # validate-action never seals
                 assert "pause_token" in result
                 assert result["pause_reason"] == "RATE_LIMITED"
                 assert "resume_endpoint" in result
@@ -1268,7 +1268,7 @@ class TestPauseReceipt:
 
 
 def _stub_pipeline(mock_result):
-    """Patch run_pipeline where run_sealed (validate_action's check path) calls it with a canned result."""
+    """Patch run_pipeline where validate_action (DRY_RUN) calls it with a canned result."""
     from unittest.mock import AsyncMock, patch
 
     from src.gateway.governance.contracts import Violation, ViolationKind
@@ -1290,6 +1290,6 @@ def _stub_pipeline(mock_result):
         committed_stages=(),
     )
     return patch(
-        "src.gateway.governance.governor.sealing.run_pipeline",
+        "src.gateway.governance.governor.governor.run_pipeline",
         new=AsyncMock(return_value=result),
     )

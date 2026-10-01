@@ -185,11 +185,11 @@ Defined in `src/governed_financial_advisor/graph/subgraphs/data_analyst_graph.py
 The `execute_tool` node is the subgraph's `tool_executor_node` wrapped by `gateway_tool_guard("fetch_market_data")`. The upstream `doer` node emits the tool calls; the guard submits each one to the gateway's `POST /governance/validate-action` before the fetch runs.
 
 ### 5.2 Governed Trader Subgraph
-Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is conditional via `route_approval`: high-risk/high-value threads enter the `approval` node (the dynamic `interrupt()` gate of §7), all others go straight to `executor`.
+Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is always `executor`; the gateway, not the advisor, decides whether a human is needed. When the guarded `tools` node receives `REQUIRE_APPROVAL` with a gateway-issued `deferred_id`, `route_after_tools` routes to the `approval` node (the dynamic `interrupt()` gate of §7); `ALLOWED` loops back to `executor`, and any refusal ends the subgraph.
 1. **HITL Gate (`approval`)**: `approval_node` suspends the subgraph via `interrupt()`; on resume it issues `Command(goto="post_hitl_rehydrate")` when approved or `Command(goto="rejection")` when refused.
 2. **State Rehydration (`post_hitl_rehydrate`)**: Restores the parked execution context after resume.
-3. **Continuous State Revalidation (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift, asserts drift $\le$ `max_slippage_pct`, and re-runs governance with fresh prices through the gateway's `POST /governance/revalidate-post-hitl` (`GatewayClient().revalidate_post_hitl()`). On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`.
-4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an explicit `APPROVED` verdict from the gateway's `POST /governance/validate-action`. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
+3. **Reviewer Slippage Gate (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift and asserts drift $\le$ `max_slippage_pct` (advisor-side, no governance call). On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`; on `PASSED` it returns to `executor`, which re-proposes the trade with the `deferred_id`.
+4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an `ALLOW`/`NARROW` verdict from the gateway's `POST /governance/validate-action` (a non-committing preview) or, on the approved path, a `deferred_id` that the gateway consumes inside `execute_trade_action`. The single committing governance run (POST_HITL profile for approved trades) happens in the gateway at execution time. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
 5. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
 
 ---
@@ -232,7 +232,7 @@ Split votes or errors trigger HITL escalation, eliminating single-model blind sp
 
 ### 7.1 Dynamic `interrupt()` Gate
 
-HITL is implemented with the **LangGraph dynamic `interrupt()` primitive**, not with static graph configuration. Neither `create_graph()` nor `create_uncheckpointed_graph()` passes `interrupt_before` to `.compile()`; instead `approval_node` (`src/governed_financial_advisor/graph/nodes/approval_node.py`) calls `interrupt()` from `langgraph.types` at runtime. Whether the gate is reached at all is a routing decision (`route_after_safety` in the parent graph, `route_approval` in the governed-trader subgraph), so the approval condition is evaluated against live state rather than frozen at compile time.
+HITL is implemented with the **LangGraph dynamic `interrupt()` primitive**, not with static graph configuration. Neither `create_graph()` nor `create_uncheckpointed_graph()` passes `interrupt_before` to `.compile()`; instead `approval_node` (`src/governed_financial_advisor/graph/nodes/approval_node.py`) calls `interrupt()` from `langgraph.types` at runtime. Whether the gate is reached at all is a routing decision (`route_after_safety` in the parent graph, `route_after_tools` in the governed-trader subgraph, driven by the gateway's `REQUIRE_APPROVAL` verdict), so the approval condition is evaluated against live state rather than frozen at compile time.
 
 When `approval_node` executes it:
 

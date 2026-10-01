@@ -6,12 +6,11 @@
       "validate_action": {
         "outcome": "ALLOW",
         "first_violation_code": null,
-        "seal_issued": true,
+        "seal_issued": false,
         "collaborators_called": [
-          "cbf.atomic_verify_and_commit",
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
-          "fiscal_guard.confirm",
-          "fiscal_guard.reserve",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "stpa_validator.validate"
@@ -112,7 +111,7 @@
         "first_violation_code": "[CBF_BARRIER_VIOLATED] UNSAFE: position limit exceeded",
         "seal_issued": false,
         "collaborators_called": [
-          "cbf.atomic_verify_and_commit",
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -166,7 +165,7 @@
         "first_violation_code": "[CBF_BARRIER_VIOLATED] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
         "seal_issued": false,
         "collaborators_called": [
-          "cbf.atomic_verify_and_commit",
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -220,7 +219,7 @@
         "first_violation_code": "[CBF_BARRIER_VIOLATED] Fence epoch regression: current 5 < seen 6",
         "seal_issued": false,
         "collaborators_called": [
-          "cbf.atomic_verify_and_commit",
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -1204,10 +1203,9 @@
         "first_violation_code": "[FISCAL_LIMIT_EXCEEDED] Daily fiscal limit exceeded for anonymous. Fiscal Limit Pre-Reservation REJECTED",
         "seal_issued": false,
         "collaborators_called": [
-          "cbf.atomic_verify_and_commit",
-          "cbf.rollback_state",
+          "cbf.verify_action",
           "consensus_engine.check_consensus",
-          "fiscal_guard.reserve",
+          "fiscal_guard.would_accept",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
           "publish_refusal",
@@ -1355,7 +1353,7 @@
       "validate_action": {
         "outcome": "ALLOW",
         "first_violation_code": null,
-        "seal_issued": true,
+        "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
@@ -1853,7 +1851,7 @@
       "validate_action": {
         "outcome": "ALLOW",
         "first_violation_code": null,
-        "seal_issued": true,
+        "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",

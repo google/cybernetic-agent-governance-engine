@@ -521,8 +521,8 @@ make test-mesh
 bash scripts/port_forward_staging.sh --daemon
 uv run python scripts/test_live_gke_services.py
 
-# Step 6: Live end-to-end governance flow & Langfuse trace ingestion
-uv run python scripts/test_gke_e2e_flow.py
+# Step 6: Live trade-governance e2e (in-cluster meshed Job running tests/e2e/)
+REGISTRY_URL=<registry> make test-gke-e2e
 
 # Step 7: OPA Rego governance policies against live cluster OPA (20/20 checks)
 uv run pytest tests/test_trade_governance_rego.py --run-integration -v

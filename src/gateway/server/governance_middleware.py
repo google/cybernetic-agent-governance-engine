@@ -33,16 +33,19 @@ import math
 import os
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
 from pydantic import BaseModel, field_validator
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
@@ -120,6 +123,78 @@ async def enforce_governance(
         return seal
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
+        await _emit_refusal_receipt(
+            action_id=tool_name,
+            refusal_reason=str(exc),
+            oscal_control_ref="SC-4",
+            params=params,
+            receipt=exc.receipt,
+        )
+        raise PermissionError(f"Governance Blocked: {exc}")
+
+
+async def enforce_approved_governance(
+    governor: SymbolicGovernor,
+    tool_name: str,
+    params: dict[str, Any],
+    *,
+    deferred_id: str,
+    approval_covers: Callable[[dict[str, Any], dict[str, Any]], bool],
+) -> str:
+    """Commit and seal a human-approved action: the post-approval committing run.
+
+    1. Consume the ``HITL_REQUIRED`` token ``deferred_id`` from the gateway's
+       DeferQueue exactly once. It must be quorum-approved, parked for
+       ``tool_name``, and ``approval_covers(approved_params, params)`` must
+       hold, so an approval for one action cannot authorise a different or
+       larger one. Consumption is a compare-and-swap: a replayed or concurrent
+       ``deferred_id`` is refused.
+    2. Run ``SymbolicGovernor.revalidate_post_hitl()`` (POST_HITL profile:
+       commit + seal) on the fresh ``params``.
+
+    The approval is spent before re-validation, so a re-validation refusal
+    also burns it: the operator must approve a fresh request.
+
+    Returns:
+        The routing seal for ``params``.
+
+    Raises:
+        PermissionError: The approval is missing, unapproved, mismatched or
+            already consumed, or post-approval re-validation refused.
+    """
+    from src.gateway.governance.defer_queue import open_defer_queue
+
+    def _covers(approved: dict[str, Any]) -> bool:
+        try:
+            return bool(approval_covers(approved, params))
+        except Exception as exc:  # a raising matcher never authorises
+            logger.warning("approval_covers raised for %s: %s", tool_name, exc)
+            return False
+
+    try:
+        async with open_defer_queue() as queue:
+            token = await queue.consume_approval(
+                deferred_id, action=tool_name, covers=_covers
+            )
+    except Exception as exc:  # queue unreachable: no approval can be proven
+        logger.error("DeferQueue unavailable consuming %s: %s", deferred_id, exc)
+        token = None
+    if token is None:
+        reason = f"no unconsumed approval {deferred_id!r} covers this {tool_name}"
+        await _emit_refusal_receipt(
+            action_id=tool_name,
+            refusal_reason=reason,
+            oscal_control_ref="AC-3",
+            params=params,
+        )
+        raise PermissionError(f"Governance Blocked: {reason}")
+
+    try:
+        return await governor.revalidate_post_hitl(
+            tool_name, params, trace_id=token.thread_id
+        )
+    except GovernanceError as exc:
+        logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
         await _emit_refusal_receipt(
             action_id=tool_name,
             refusal_reason=str(exc),
@@ -349,24 +424,6 @@ class ValidateActionRequest(BaseModel):
     action: str
     params: dict[str, Any]
     policy_version_id: str | None = None
-
-    @field_validator("params")
-    @classmethod
-    def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
-        for key, val in v.items():
-            if isinstance(val, float) and not math.isfinite(val):
-                raise ValueError(
-                    f"params[{key!r}] contains non-finite float {val!r} "
-                    "— NaN and Infinity are not permitted"
-                )
-        return v
-
-
-class RevalidatePostHitlRequest(BaseModel):
-    """Payload for POST /governance/revalidate-post-hitl."""
-
-    action: str
-    params: dict[str, Any]
 
     @field_validator("params")
     @classmethod
@@ -692,13 +749,16 @@ async def validate_action_endpoint(
         - Tier 6: DoWhy Causal Gatekeeper — refutation-based safety lock
         - Tier 7: Adaptive FRIA Enforcement (EU AI Act Art. 29a)
 
-    The routing seal is issued ONLY after all tiers pass — a seal issued
-    before full pipeline completion would imply governance approval that
-    was never actually granted.
+    This endpoint is a non-committing decision: phase-2 tiers are previewed,
+    nothing is reserved, and no routing seal is minted. The caller uses the
+    verdict only for routing; the single committing run (commit + seal +
+    actuation) happens inside the gateway when the governed tool executes.
 
     Returns:
-        JSON with ``verdict`` (APPROVED|DENIED), ``violations`` list,
-        ``seal`` (HMAC-SHA256 routing seal on approval), and ``latency_ms``.
+        ``ALLOW`` / ``NARROW`` (NARROW carries ``narrowed_params``) as a signed
+        governance envelope; ``REQUIRE_APPROVAL`` with the ``deferred_id`` of
+        the gateway-held approval token; ``DEFER`` (202 for external holds);
+        or 403 ``DENIED`` with a refusal receipt.
     """
     # GHSA-v3h4-8458-5ww3: the caller is authenticated before any processing by
     # WorkloadIdentityMiddleware (mesh identity, POAM-2026-080) on the root app.
@@ -781,8 +841,8 @@ async def validate_action_endpoint(
                 content=receipt_payload,
             )
 
-        # ADR-008 Phase 3: Build canonical signed envelope for APPROVED verdicts
-        if verdict == "APPROVED":
+        # ADR-008 Phase 3: Build canonical signed envelope for admissible verdicts
+        if verdict in (GovernanceDecision.ALLOW, GovernanceDecision.NARROW):
             from src.gateway.governance.seams.attestation import ExternalAttestation
 
             # Convert dict attestations to ExternalAttestation objects
@@ -820,7 +880,7 @@ async def validate_action_endpoint(
             envelope = await builder.build(
                 action=body.action,
                 params=body.params,
-                governance_result=result,
+                governance_result=jsonable_encoder(result),
                 record_hash=result.get("record_hash"),
                 agent_id=result.get("agent_id"),
                 tiers_passed=result.get("tiers_passed", []),
@@ -829,9 +889,9 @@ async def validate_action_endpoint(
             )
             return JSONResponse(content=envelope.to_dict(include_signature=True))
 
-        # Fall through for non-APPROVED, non-DEFER verdicts (legacy flat format)
+        # REQUIRE_APPROVAL (carries ``deferred_id``), DEFER and PAUSE: flat format
         payload = {"schema_version": "1.0.0", **result}
-        return JSONResponse(content=payload)
+        return JSONResponse(content=jsonable_encoder(payload))
 
     except GovernanceError as exc:
         # P6: emit a signed OSCAL compliance receipt for every hard refusal.
@@ -863,74 +923,6 @@ async def validate_action_endpoint(
         )
     except Exception:
         logger.error("❌ validate_action internal error", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal governance error")
-    finally:
-        otel_context.detach(token)
-
-
-@governance_app.post("/revalidate-post-hitl")
-async def revalidate_post_hitl_endpoint(
-    request: Request,
-    body: RevalidatePostHitlRequest,
-) -> JSONResponse:
-    """Pre-actuation re-validation of a human-approved action (TOCTOU closure).
-
-    Runs ``SymbolicGovernor.revalidate_post_hitl()`` under the ``POST_HITL``
-    profile: only the claimed barriers (CBF, OPA) are re-checked against the
-    fresh parameters the advisor re-hydrated after the approval pause.
-
-    The governor, its signer and its barrier state live only in the gateway
-    (POAM-2026-079): the advisor asks over the network and receives a verdict,
-    never a seal. The seal the pipeline mints stays inside this process and
-    expires unused; the trade itself is sealed again by ``execute_trade_action``.
-
-    Returns 200 ``{"verdict": "APPROVED"}`` or 403 ``{"verdict": "DENIED",
-    "violations": [...]}``. A refusal emits the same signed receipt as
-    ``/validate-action`` — refusals are primary evidence.
-    """
-    client_ip = _client_ip(request)
-    if not _check_validate_action_rate_limit(client_ip):
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "rate_limit_exceeded",
-                "message": (
-                    f"Too many requests to /revalidate-post-hitl from {client_ip}. "
-                    f"Limit: {_RATE_LIMIT_MAX} requests per {_RATE_LIMIT_WINDOW}s."
-                ),
-            },
-        )
-
-    governor = governor_of(request.app)  # fail closed before any evaluation
-    token = otel_context.attach(otel_extract(dict(request.headers)))
-    t0 = time.perf_counter()
-    try:
-        await governor.revalidate_post_hitl(action=body.action, params=body.params)
-        return JSONResponse(
-            content={
-                "schema_version": "1.0.0",
-                "verdict": "APPROVED",
-                "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
-            }
-        )
-    except GovernanceError as exc:
-        await _emit_refusal_receipt(
-            action_id=body.action,
-            refusal_reason=str(exc),
-            oscal_control_ref="SC-4",
-            params=body.params,
-            receipt=exc.receipt,
-        )
-        return JSONResponse(
-            status_code=403,
-            content={
-                "schema_version": "2.0.0",
-                "verdict": "DENIED",
-                "violations": getattr(exc, "violations", [str(exc)]),
-            },
-        )
-    except Exception:
-        logger.error("❌ revalidate_post_hitl internal error", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal governance error")
     finally:
         otel_context.detach(token)

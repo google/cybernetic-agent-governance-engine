@@ -192,7 +192,7 @@ The script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry
 
 ### CBF Read-Only `verify_action()`
 
-`ControlBarrierFunction.verify_action()` is **read-only** — it reads the current cash balance via `_read_cbf_state_atomic()` but does **not** modify Redis state. It is the side-effect-free preview used by the CBF tier's `evaluate()` (via [`preview_barrier()`](../../src/gateway/governance/safety/barrier_tier.py)); `commit()` and `rollback()` go through `commit_barrier()` / `rollback_barrier()` in the same module, which the `DRY_RUN` profile (`verify()`) runs instead of committing. Enforcing profiles (`validate_action`, `govern`, `revalidate_post_hitl`) commit through `atomic_verify_and_commit()` instead.
+`ControlBarrierFunction.verify_action()` is **read-only** — it reads the current cash balance via `_read_cbf_state_atomic()` but does **not** modify Redis state. It is the side-effect-free preview used by the CBF tier's `evaluate()` (via [`preview_barrier()`](../../src/gateway/governance/safety/barrier_tier.py)); `commit()` and `rollback()` go through `commit_barrier()` / `rollback_barrier()` in the same module, which the `DRY_RUN` profile (`verify()` and `validate_action()`) runs instead of committing. The committing profiles (`govern`, `revalidate_post_hitl`) commit through `atomic_verify_and_commit()` instead.
 
 > **Implementation note (intra-window double-spend prevention):** `verify_action()` uses `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved trades since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle.
 
