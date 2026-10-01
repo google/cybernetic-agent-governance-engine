@@ -269,6 +269,79 @@ def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
     assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 4
 
 
+_PROJECT_IAM_BLOCK = re.compile(
+    r'^\s*resource\s+"google_project_iam_[a-z_]+"[^{]*\{.*?^\s*\}',
+    re.M | re.S,
+)
+_LEGACY_STORAGE_ROLE = re.compile(
+    r'role\s*=\s*"roles/storage\.legacy(?:Bucket|Object)(?:Reader|Writer|Owner)"'
+)
+
+
+def _find_project_scoped_legacy_storage_roles(
+    sources: list[tuple[str, str]],
+) -> list[str]:
+    offenders: list[str] = []
+    for label, text in sources:
+        for match in _PROJECT_IAM_BLOCK.finditer(text):
+            if _LEGACY_STORAGE_ROLE.search(match.group(0)):
+                offenders.append(f"{label}: project-scoped legacy storage role")
+    return offenders
+
+
+def test_vllm_bucket_reader_is_bucket_scoped_not_project_scoped() -> None:
+    """vLLM model bucket metadata reader must be bucket-scoped (google_storage_bucket_iam_member).
+
+    GCP rejects roles/storage.legacyBucketReader in project-level IAM policies
+    (even with a resource.name condition), so the binding must live on the
+    model bucket resource directly.
+    """
+    iam_tf = (_GKE / "iam.tf").read_text()
+    match = re.search(
+        r'^\s*resource\s+"google_storage_bucket_iam_member"\s+"vllm_bucket_reader"\s*\{(.*?)^\s*\}',
+        iam_tf,
+        re.M | re.S,
+    )
+    assert match is not None, (
+        "vllm_bucket_reader must be declared as google_storage_bucket_iam_member in iam.tf"
+    )
+    body = match.group(1)
+    assert re.search(r"bucket\s*=\s*local\.model_bucket_name\b", body)
+    assert re.search(r'role\s*=\s*"roles/storage\.legacyBucketReader"', body)
+    assert re.search(
+        r'member\s*=\s*"serviceAccount:\$\{google_service_account\.vllm\.email\}"',
+        body,
+    )
+    assert 'resource "google_project_iam_member" "vllm_bucket_reader"' not in iam_tf
+
+    tf_sources = [(str(p.relative_to(_REPO)), p.read_text()) for p in _tf_sources()]
+    assert _find_project_scoped_legacy_storage_roles(tf_sources) == []
+
+
+def test_project_scoped_legacy_storage_role_scanner_detects_violation() -> None:
+    planted = [
+        (
+            "infra/targets/gcp-gke/iam.tf",
+            """
+resource "google_project_iam_member" "vllm_bucket_reader" {
+  count   = var.enable_vllm ? 1 : 0
+  project = var.project_id
+  role    = "roles/storage.legacyBucketReader"
+  member  = "serviceAccount:${google_service_account.vllm.email}"
+
+  condition {
+    title      = "cage-vllm-model-bucket-metadata-only"
+    expression = "resource.name.startsWith(\\"projects/_/buckets/${local.model_bucket_name}\\")"
+  }
+}
+""",
+        )
+    ]
+    assert _find_project_scoped_legacy_storage_roles(planted) == [
+        "infra/targets/gcp-gke/iam.tf: project-scoped legacy storage role"
+    ]
+
+
 def test_signing_key_policies_are_authoritative() -> None:
     kms_tf = (_GKE / "kms_signing.tf").read_text()
     assert 'resource "google_kms_crypto_key_iam_policy" "signing_key"' in kms_tf
