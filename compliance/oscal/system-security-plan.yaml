@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-01T16:13:05Z'
+    last-modified: '2026-10-01T19:27:33Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -844,12 +844,24 @@ system-security-plan:
     - uuid: g7000002-0000-4000-8000-000000000002
       control-id: ac-3
       description: 'Access enforcement is implemented via Open Policy Agent (OPA)
-        evaluating Rego policies on every request. The system_authz.rego policy enforces
-        RBAC role-based access decisions. The finance_policy.rego enforces fiscal
-        limits by role (junior: $5,000/$10,000 single/daily; senior: $500,000/$1,000,000).
-        OPA decisions are logged to stdout and captured by Cloud Logging for audit.
-        All OPA enforce decisions are emitted as OTel spans tagged with control-id
-        AC-3 for automated compliance verification via Lula.
+        evaluating Rego policies on every request and SymbolicGovernor two-phase pipeline
+        enforcement (src/gateway/governance/governor/governor.py). The system_authz.rego
+        policy enforces RBAC role-based access decisions. The finance_policy.rego
+        enforces fiscal limits by role (junior: $5,000/$10,000 single/daily; senior:
+        $500,000/$1,000,000). Pre-flight validation (SymbolicGovernor.validate_action)
+        runs under Profile.DRY_RUN, mutates no state, mints no GovernanceSeal, and
+        parks REQUIRE_APPROVAL verdicts in DeferQueue (DeferReason.HITL_REQUIRED)
+        with a side-effect-free phase-2 barrier preview (Phase2Mode.PREVIEW), returning
+        deferred_id. A single committing run executes per trade: execute_trade_action(...,
+        deferred_id=...) atomically consumes the human-approved token via DeferQueue.consume_approval()
+        and invokes SymbolicGovernor.revalidate_post_hitl() inside src/gateway/server/governance_middleware.py
+        (enforce_approved_governance). Any narrow_hint / narrowed_params attached
+        to REQUIRE_APPROVAL is purely advisory, dry-run re-verified before surfacing
+        (_reverified_narrow_hint) and re-verified in full by the committing run (_sealed_narrow
+        with tamper-evident issue_narrow_receipt inside ReservationScope). OPA decisions
+        are logged to stdout and captured by Cloud Logging for audit. All OPA enforce
+        decisions are emitted as OTel spans tagged with control-id AC-3 for automated
+        compliance verification via Lula.
 
         '
       props:
@@ -1262,7 +1274,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 11\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-01T16:13:05Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-01T19:27:32Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1303,7 +1315,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-01T16:13:05Z'
+        value: '2026-10-01T19:27:32Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
