@@ -26,7 +26,6 @@ import copy
 import inspect
 import json
 import logging
-import math
 import time
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -57,6 +56,7 @@ from src.gateway.governance.governor.verdicts import (
     handle_narrow,
     handle_pause,
     handle_require_approval,
+    reported_confidence,
 )
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
@@ -115,6 +115,15 @@ class SymbolicGovernor:
         params: dict[str, Any],
         policy_version_id: str | None = None,
     ) -> dict[str, Any]:
+        """Decide ``action`` without committing anything or minting a seal.
+
+        Runs the DRY_RUN profile: phase-2 (mutating) stages answer through
+        their side-effect-free ``preview()``, so no barrier state moves and no
+        ``ReservationScope`` exists. The verdict (ALLOW, NARROW candidate,
+        REQUIRE_APPROVAL with a ``deferred_id``, DEFER, or DENY via
+        ``GovernanceError``) only routes the caller. The single committing run
+        is :meth:`govern` or, after approval, :meth:`revalidate_post_hitl`.
+        """
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
@@ -125,21 +134,18 @@ class SymbolicGovernor:
             _check_policy_pin(policy_version_id)
 
             t0 = time.perf_counter()
-            ctx = StageContext(action=action, params=params, profile=Profile.FULL)
-            result, seal = await run_sealed(
-                self.stages, ctx, params, path="validate_action"
-            )
+            ctx = StageContext(action=action, params=params, profile=Profile.DRY_RUN)
+            result = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
             latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
-            if seal is not None:
+            if not result.violations:
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
                 return {
                     "verdict": GovernanceDecision.ALLOW,
                     "violations": [],
-                    "seal": seal,
                     "latency_ms": latency_ms,
                     "agent_id": params.get("_caller_principal", ""),
                 }
@@ -148,7 +154,7 @@ class SymbolicGovernor:
             classification = self._components.classifier.classify(
                 ClassificationContext(
                     violations=violations,
-                    confidence=_reported_confidence(params),
+                    confidence=reported_confidence(params),
                     opa_decision=result.opa_verdict.value
                     if result.opa_verdict
                     else None,
@@ -167,7 +173,7 @@ class SymbolicGovernor:
             )
 
             if classification.decision == GovernanceDecision.NARROW:
-                return await self._narrow(action, params, result, meta, t0)
+                return await self._narrow_candidate(action, params, result, meta, t0)
 
             if classification.decision == GovernanceDecision.PAUSE:
                 return await handle_pause(
@@ -187,7 +193,7 @@ class SymbolicGovernor:
             )
             return await verdict if inspect.isawaitable(verdict) else verdict
 
-    async def _narrow(
+    async def _narrow_candidate(
         self,
         action: str,
         params: dict[str, Any],
@@ -195,25 +201,27 @@ class SymbolicGovernor:
         meta: dict[str, Any],
         t0: float,
     ) -> dict[str, Any]:
-        """Seal a narrower's proposal only if the FULL profile passes on it.
+        """Offer a narrower's proposal only if the DRY_RUN profile passes on it.
 
-        proof/model.py NARROW (c): the clamped params are re-verified in a new
-        ReservationScope, so their commits back the seal (or are rolled back).
-        The re-run is never classified, so the narrower runs once per request.
+        proof/model.py NARROW (c): the clamped params must pass every stage.
+        The re-check previews phase-2 stages (nothing is reserved) and is never
+        classified, so the narrower runs once per request. No seal is minted:
+        executing the proposal is a separate committing run over it.
         """
         proposal = meta.get("narrowed_params")
         if not isinstance(proposal, dict):
             await _deny(action, params, result)
-        verified = copy.deepcopy(proposal)  # the exact params that get sealed
+        verified = copy.deepcopy(proposal)  # the exact params the response names
         ctx = StageContext(
-            action=action, params=copy.deepcopy(verified), profile=Profile.FULL
+            action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
         )
-        rerun, seal = await run_sealed(self.stages, ctx, verified, path="narrow")
+        rerun = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
         latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+        reverified = not rerun.violations
         trace.get_current_span().set_attribute(
-            "cage.governance.narrow_reverified", seal is not None
+            "cage.governance.narrow_reverified", reverified
         )
-        if seal is None:
+        if not reverified:
             deny_meta = {
                 **meta,
                 **_ftra_meta(rerun),
@@ -234,7 +242,6 @@ class SymbolicGovernor:
             action,
             params,
             verified,
-            seal=seal,
             violations=list(result.violations),
             classification_meta=meta,
             latency_ms=latency_ms,
@@ -253,7 +260,7 @@ class SymbolicGovernor:
             if seal is None:
                 await _deny(tool_name, params, result)
             span.set_attribute("cage.seal_issued", True)
-            span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
+            span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
             return seal
 
     async def revalidate_post_hitl(
@@ -312,7 +319,7 @@ class SymbolicGovernor:
                     ]
                 )
                 if violations
-                else "APPROVED",
+                else GovernanceDecision.ALLOW,
             )
             return {
                 "violations": violations,
@@ -351,7 +358,7 @@ _VERDICT_HANDLERS = {
     GovernanceDecision.REQUIRE_APPROVAL: handle_require_approval,
     GovernanceDecision.DEFER: handle_defer,
     GovernanceDecision.PAUSE: handle_pause,
-    # NARROW is not here: it is sealed only via SymbolicGovernor._narrow().
+    # NARROW is not here: SymbolicGovernor._narrow_candidate() re-verifies it.
 }
 
 
@@ -380,22 +387,6 @@ def _check_policy_pin(policy_version_id: str | None) -> None:
             f"Substrate Policy Drift Detected. Session pinned to version signature "
             f"'{policy_version_id}', but active runtime baseline has evolved to hash '{active_hash}'."
         )
-
-
-def _reported_confidence(params: dict[str, Any]) -> float:
-    """Agent self-reported confidence; unparseable values classify as 0.0.
-
-    ConfidenceStage already emits a HARD violation for invalid values, so this
-    only feeds classification and can never widen a verdict.
-    """
-    raw = params.get("confidence", 0.0)
-    if isinstance(raw, bool):
-        return 0.0
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return 0.0
-    return value if math.isfinite(value) else 0.0
 
 
 def _ftra_meta(result: Any) -> dict[str, Any]:

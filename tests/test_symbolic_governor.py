@@ -121,6 +121,9 @@ async def test_symbolic_governor_confidence_fail(mock_ftra_safe, classification_
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
+    # A well-formed consensus approval, so confidence is the only (and so the
+    # reported) violation: handle_deny reports HARD violations first.
+    consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
     governor = make_governor(
         opa=opa_client,
@@ -812,8 +815,8 @@ class TestValidateActionDecisionRouting:
     """
 
     @pytest.mark.asyncio
-    async def test_allow_decision_returns_seal(self, mock_ftra_safe, classification_engine):
-        """ALLOW verdict returns a routing seal."""
+    async def test_allow_decision_returns_no_seal(self, mock_ftra_safe, classification_engine):
+        """ALLOW from validate_action routes only: no seal, nothing committed."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -842,8 +845,9 @@ class TestValidateActionDecisionRouting:
         from src.gateway.governance.decisions import GovernanceDecision
 
         assert result["verdict"] == GovernanceDecision.ALLOW
-        assert result["seal"]  # Non-empty seal
+        assert "seal" not in result
         assert result["violations"] == []
+        safety_filter.atomic_verify_and_commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_deny_decision_raises_governance_error(self, mock_ftra_safe, classification_engine):
@@ -902,12 +906,29 @@ class TestValidateActionDecisionRouting:
 
         params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
 
-        result = await governor.validate_action("execute_trade", params)
+        from contextlib import asynccontextmanager
+
+        import fakeredis
+
+        from src.gateway.governance import defer_queue as defer_queue_mod
+
+        store = fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+        @asynccontextmanager
+        async def _queue():
+            yield defer_queue_mod.DeferQueue(store)
+
+        with patch.object(defer_queue_mod, "open_defer_queue", _queue):
+            result = await governor.validate_action("execute_trade", params)
+            token = await defer_queue_mod.DeferQueue(store).get(result["deferred_id"])
 
         from src.gateway.governance.decisions import GovernanceDecision
 
         assert result["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
-        assert result["seal"] == ""  # No seal for REQUIRE_APPROVAL
+        assert "seal" not in result
+        assert token is not None
+        assert token.defer_reason == defer_queue_mod.DeferReason.HITL_REQUIRED
+        safety_filter.atomic_verify_and_commit.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

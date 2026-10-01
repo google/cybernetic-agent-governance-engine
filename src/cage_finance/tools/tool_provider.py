@@ -31,7 +31,10 @@ from src.cage_finance.tools.market_service import get_market_data
 from src.gateway.governance.contracts import DomainToolProvider, SafetyFilter
 from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.seams.actuation import ExecutionClearance
-from src.gateway.server.governance_middleware import enforce_governance
+from src.gateway.server.governance_middleware import (
+    enforce_approved_governance,
+    enforce_governance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,27 @@ logger = logging.getLogger(__name__)
 # for all execute_trade_action calls.
 _broker_actuator = BrokerActuator()
 get_actuator_registry().register(_broker_actuator, claims={"execute_trade"})
+
+
+#: Params an approval binds exactly; the amount may only shrink (see _approval_covers_trade).
+_APPROVAL_BOUND_FIELDS = ("symbol", "currency", "trader_id", "trader_role")
+
+
+def _approval_covers_trade(approved: dict, requested: dict) -> bool:
+    """True iff an approval of ``approved`` authorises executing ``requested``.
+
+    Same instrument, currency, trader and role, and an amount in
+    ``(0, approved amount]``: re-hydration may shrink a trade, never grow or
+    redirect it.
+    """
+    if any(approved.get(f) != requested.get(f) for f in _APPROVAL_BOUND_FIELDS):
+        return False
+    try:
+        approved_amount = float(approved["amount"])
+        requested_amount = float(requested["amount"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return 0.0 < requested_amount <= approved_amount
 
 
 async def execute_trade_action(
@@ -51,15 +75,19 @@ async def execute_trade_action(
     trader_id: str = "agent_001",
     trader_role: str = "junior",
     dry_run: bool = False,
+    deferred_id: str | None = None,
     *,
     governor: "SymbolicGovernor",
     safety_filter: SafetyFilter,
 ) -> str:
     """Execute a financial trade under strict governance.
 
-    Gap 2 fix (No-Direct-Bind): ``enforce_governance()`` now returns a routing
-    seal.  This function verifies the seal before executing the trade, ensuring
-    that execution cannot proceed by ignoring the governance response.
+    This is the single committing run for a trade: ``/governance/validate-action``
+    only routes, and never reserves budget or mints a seal.
+
+    Gap 2 fix (No-Direct-Bind): governance returns a routing seal. This
+    function verifies the seal before executing the trade, ensuring that
+    execution cannot proceed by ignoring the governance response.
     Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
     Args:
@@ -74,6 +102,10 @@ async def execute_trade_action(
         trader_id: Identifier of the requesting agent or user.
         trader_role: RBAC role used for fiscal-limit enforcement.
         dry_run: When True, governance checks run but no broker call is made.
+        deferred_id: The ``deferred_id`` a REQUIRE_APPROVAL verdict returned,
+            once operators have approved it. With it, the gateway consumes
+            that approval exactly once and re-validates the fresh params under
+            the POST_HITL profile; without it, the trade is governed in full.
         governor: The assembled governor that must seal the trade.
         safety_filter: The CBF whose state is restored if actuation fails.
     """
@@ -83,10 +115,11 @@ async def execute_trade_action(
     )
 
     logger.info(
-        "Tool Call: execute_trade(%s, %s, confidence=%s)",
+        "Tool Call: execute_trade(%s, %s, confidence=%s, deferred_id=%s)",
         symbol,
         amount,
         confidence,
+        deferred_id,
     )
     if not transaction_id:
         transaction_id = str(uuid.uuid4())
@@ -102,9 +135,18 @@ async def execute_trade_action(
         "dry_run": dry_run,
     }
 
-    # Step 1: Enforce governance and obtain seal
+    # Step 1: Enforce governance (commit + seal) and obtain the seal
     try:
-        governance_result = await enforce_governance(governor, "execute_trade", params)
+        if deferred_id:
+            governance_result = await enforce_approved_governance(
+                governor,
+                "execute_trade",
+                params,
+                deferred_id=deferred_id,
+                approval_covers=_approval_covers_trade,
+            )
+        else:
+            governance_result = await enforce_governance(governor, "execute_trade", params)
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
 
@@ -296,9 +338,11 @@ class FinancialToolProvider(DomainToolProvider):
             trader_id: str = "agent_001",
             trader_role: str = "junior",
             dry_run: bool = False,
+            deferred_id: str | None = None,
         ) -> str:
             return await execute_trade_action(
                 symbol, amount, currency, confidence, transaction_id, trader_id, trader_role, dry_run,
+                deferred_id,
                 governor=governor, safety_filter=safety_filter,
             )
 

@@ -55,7 +55,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Redis schema for defer tokens now includes a `rev` (revision) field. Existing tokens are migrated transparently (absent `rev` treated as `0`).
 - `cage-client` SDK bumped to v0.2.0 (#313).
 
-### Breaking Changes
+#### test(gateway)! — Single committing trade run & approval custody (Phase 0)
+
+- `POST /governance/validate-action` is now a non-committing DRY_RUN preview: it never mints a seal or reserves scope. `ALLOW`/`NARROW` return an unsealed envelope; `REQUIRE_APPROVAL` parks a gateway `DeferQueue` token (`DeferReason.HITL_REQUIRED`, quorum 2) and returns its `deferred_id`. The legacy `APPROVED` verdict is gone.
+- `POST /governance/revalidate-post-hitl` and `GatewayClient.revalidate_post_hitl` are removed. `execute_trade_action(..., deferred_id=...)` atomically consumes the approval (`DeferQueue.consume_approval`, CAS `RESOLVED→CONSUMED`) and runs the POST_HITL profile inside the gateway (`enforce_approved_governance`); refusals emit AC-3 / SC-4 receipts.
+- The advisor no longer decides whether a human is needed: the governed-trader subgraph enters at `executor` and routes to `approval` only on a gateway `REQUIRE_APPROVAL` with `deferred_id`; `post_hitl_revalidate` is a reviewer slippage gate only.
+- `scripts/test_gke_e2e_flow.py` is replaced by the hermetic `tests/test_trade_governance_e2e.py` and the live, opt-in `tests/e2e/test_gke_trade_flow.py` (`--run-e2e`, `make test-gke-e2e`, `deploy_all.sh --verify-e2e`).
 
 #### Evidence custody moves to the compliance bridge
 

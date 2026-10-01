@@ -197,11 +197,14 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    - `OVERRIDE` — approve the previously blocked action; override is logged via `hitl_override_audit_span()`
    - `UPHOLD` — confirm the block; decision is logged
    - `DEFER` — escalate to senior reviewer; re-queued with extended SLA
-6. **Post-HITL re-validation:** On human approval, `revalidate_post_hitl()` in
+6. **Post-HITL re-validation:** On human approval, `execute_trade_action`
+   consumes the quorum-approved `HITL_REQUIRED` token exactly once
+   (`DeferQueue.consume_approval`) and runs `revalidate_post_hitl()` in
    [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)
-   re-runs **only Tiers 3a and 3b** (CBF + OPA) — the tiers most likely to drift
-   during a HITL review window (cash balance and policy state may have changed).
-   STPA, consensus, causal, and FRIA tiers are **not** re-run.
+   inside the gateway. Under the `POST_HITL` profile it re-runs **only OPA, CBF
+   and Fiscal** — the tiers most likely to drift during a HITL review window
+   (cash balance, spend and policy state may have changed). STPA, consensus,
+   causal, and FRIA tiers are **not** re-run (widening this is Phase 1).
 7. **Audit record persisted:** Override decision stored in Langfuse compliance project
 
 ---

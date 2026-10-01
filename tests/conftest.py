@@ -486,6 +486,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Run chaos tests (Redis failover scenarios). Skipped by default.",
     )
     parser.addoption(
+        "--run-e2e",
+        action="store_true",
+        default=False,
+        help="Run live end-to-end tests marked with @pytest.mark.e2e (require a deployed gateway).",
+    )
+    parser.addoption(
         "--regen-golden",
         action="store_true",
         default=False,
@@ -514,6 +520,7 @@ SELECTION_MARKERS: frozenset[str] = frozenset(
         "chaos",
         "live_external",
         "partner_integration",
+        "e2e",
     }
 )
 
@@ -579,6 +586,7 @@ def pytest_collection_modifyitems(
     run_live_external = config.getoption("--run-live-external")
     run_partner_integration = config.getoption("--run-partner-integration")
     run_chaos = config.getoption("--run-chaos")
+    run_e2e = config.getoption("--run-e2e")
 
     skip_integration = pytest.mark.skip(
         reason=(
@@ -601,6 +609,9 @@ def pytest_collection_modifyitems(
     skip_chaos = pytest.mark.skip(
         reason=("Chaos test — Redis failover scenarios. Pass --run-chaos to enable.")
     )
+    skip_e2e = pytest.mark.skip(
+        reason="Live e2e test — requires a deployed gateway. Pass --run-e2e to enable."
+    )
 
     for item in items:
         if "integration" in item.keywords and not run_integration:
@@ -613,6 +624,8 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_partner_integration)
         if "chaos" in item.keywords and not run_chaos:
             item.add_marker(skip_chaos)
+        if "e2e" in item.keywords and not run_e2e:
+            item.add_marker(skip_e2e)
 
 
 # ── OPA reachability fixtures ────────────────────────────────────────────────

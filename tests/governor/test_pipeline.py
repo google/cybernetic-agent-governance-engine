@@ -110,13 +110,18 @@ async def test_domain_tier_with_plugin_name_is_not_filtered_out() -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_hitl_keeps_its_narrow_scope() -> None:
-    """POST_HITL re-checks only its named stages, not every domain tier."""
+@pytest.mark.xfail(
+    strict=True,
+    reason="Phase 1: POST_HITL filters phase-2 tiers by name, so a domain barrier "
+    "(e.g. healthcare dose_barrier) never re-runs after approval (G2).",
+)
+async def test_post_hitl_runs_every_phase2_tier() -> None:
+    """POST_HITL re-checks every claiming phase-2 tier, not a named subset."""
     log: list[str] = []
-    stages = order_stages([_Tier("dose_barrier", deny=True, log=log)])
+    stages = order_stages([_Tier("dose_barrier", phase=2, deny=True, log=log)])
     result = await run_scoped(stages, _ctx(Profile.POST_HITL), profile=Profile.POST_HITL)
-    assert result.violations == ()
-    assert log == []
+    assert [v.tier for v in result.violations] == ["dose_barrier"]
+    assert log == ["commit:dose_barrier"]
 
 
 @pytest.mark.asyncio

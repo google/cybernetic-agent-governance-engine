@@ -64,8 +64,7 @@ def mock_v3_envelope_approved():
             "controls_satisfied": ["CTRL_OPA_001", "CTRL_CBF_002"],
         },
         "payload": {
-            "verdict": "APPROVED",
-            "seal": "seal-abc123",
+            "verdict": "ALLOW",
             "violations": [],
             "latency_ms": 42.5,
         },
@@ -119,8 +118,7 @@ def mock_v3_envelope_denied():
 def mock_legacy_flat_response():
     """Mock HTTP response with legacy flat dictionary (pre-v3.0)."""
     return {
-        "verdict": "APPROVED",
-        "seal": "seal-legacy-123",
+        "verdict": "ALLOW",
         "violations": [],
         "latency_ms": 30.0,
     }
@@ -136,7 +134,7 @@ async def test_gfa_unwraps_v3_envelope_correctly(mock_v3_envelope_approved):
     instead of unwrapping `result["payload"]["verdict"]`.
 
     Expected behavior:
-    - Verdict should be "APPROVED" (from payload)
+    - Verdict should be "ALLOW" (from payload)
     - Seal should be present (from payload)
     - Envelope metadata should be merged into the result
     """
@@ -157,10 +155,10 @@ async def test_gfa_unwraps_v3_envelope_correctly(mock_v3_envelope_approved):
         )
 
         # Verify unwrapping occurred correctly
-        assert result["verdict"] == "APPROVED", (
+        assert result["verdict"] == "ALLOW", (
             "Verdict should be unwrapped from payload"
         )
-        assert result["seal"] == "seal-abc123", "Seal should be unwrapped from payload"
+        assert "seal" not in result, "validate-action never carries a seal"
         assert result["violations"] == [], "Violations should be unwrapped from payload"
         assert result["latency_ms"] == 42.5, "Latency should be unwrapped from payload"
 
@@ -215,7 +213,7 @@ async def test_gfa_preserves_envelope_metadata(mock_v3_envelope_approved):
 
     Expected behavior:
     - All top-level envelope fields are merged into the returned dictionary
-    - Payload fields are at the top level (verdict, seal, violations, latency_ms)
+    - Payload fields are at the top level (verdict, violations, latency_ms)
     - Envelope metadata is accessible alongside payload data
     """
     client = GatewayClient()
@@ -243,7 +241,7 @@ async def test_gfa_preserves_envelope_metadata(mock_v3_envelope_approved):
 
         # Verify payload data is at top level
         assert "verdict" in result
-        assert "seal" in result
+        assert "seal" not in result
         assert "violations" in result
         assert "latency_ms" in result
 
@@ -276,8 +274,7 @@ async def test_gfa_falls_back_gracefully_on_legacy_flat_dict(mock_legacy_flat_re
         result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
 
         # Verify legacy flat response is processed correctly
-        assert result["verdict"] == "APPROVED"
-        assert result["seal"] == "seal-legacy-123"
+        assert result["verdict"] == "ALLOW"
         assert result["violations"] == []
         assert result["latency_ms"] == 30.0
 
@@ -334,7 +331,6 @@ async def test_gfa_unwraps_v3_envelope_on_retry_path(mock_v3_envelope_approved):
         result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
 
         # Verify unwrapping occurred correctly on retry path
-        assert result["verdict"] == "APPROVED"
-        assert result["seal"] == "seal-abc123"
+        assert result["verdict"] == "ALLOW"
         assert result["envelope_id"] == "env-test-12345"
         assert result["envelope_version"] == "3.0"

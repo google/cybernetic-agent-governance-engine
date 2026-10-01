@@ -161,9 +161,8 @@ def test_middleware_validate_action_version_matching(registry):
     active_hash = registry.active_hash
 
     mock_gov_result = {
-        "verdict": "APPROVED",
+        "verdict": "ALLOW",
         "violations": [],
-        "seal": "mock-seal-hash",
         "latency_ms": 12.5,
     }
 
@@ -185,7 +184,7 @@ def test_middleware_validate_action_version_matching(registry):
         # ADR-008 Phase 3: APPROVED verdicts now return canonical envelope
         data = resp.json()
         assert data.get("envelope_version") == "3.0"
-        assert data["payload"]["verdict"] == "APPROVED"
+        assert data["payload"]["verdict"] == "ALLOW"
 
         mock_validate.assert_awaited_once_with(
             action="execute_trade",
@@ -282,9 +281,8 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
                 return httpx.Response(
                     status_code=200,
                     json={
-                        "verdict": "APPROVED",
+                        "verdict": "ALLOW",
                         "violations": [],
-                        "seal": "valid-retry-seal",
                         "latency_ms": 10.0,
                     },
                 )
@@ -305,14 +303,13 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
             policy_version_id="stale-hash",
         )
 
-        assert res["verdict"] == "APPROVED"
-        assert res["seal"] == "valid-retry-seal"
+        assert res["verdict"] == "ALLOW"
         # Verify 3 calls total: 2 POSTs and 1 GET
         assert len(mock_api.calls) == 3
 
 
 def _stub_pipeline(mock_result):
-    """Patch run_pipeline where run_sealed (validate_action's check path) calls it with a canned result."""
+    """Patch run_pipeline where validate_action (DRY_RUN) calls it with a canned result."""
     from unittest.mock import AsyncMock, patch
 
     from src.gateway.governance.contracts import Violation, ViolationKind
@@ -326,6 +323,6 @@ def _stub_pipeline(mock_result):
         violations=violations, tier_failures=(), opa_verdict=None, ftra=None, committed_stages=(),
     )
     return patch(
-        "src.gateway.governance.governor.sealing.run_pipeline",
+        "src.gateway.governance.governor.governor.run_pipeline",
         new=AsyncMock(return_value=result),
     )

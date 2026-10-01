@@ -87,7 +87,7 @@ The legacy HMAC GOVERNANCE_SALT fallback has been removed.
 - Tests fail during import phase before fixtures can set up environment
 
 **Workaround:**
-- Use standalone HTTP smoke tests (provided in `scripts/test_live_gke_services.py` and `scripts/test_gke_e2e_flow.py`)
+- Use standalone HTTP smoke tests (provided in `scripts/test_live_gke_services.py`; the former `scripts/test_gke_e2e_flow.py` has been replaced by `make test-gke-e2e`)
 - These bypass module imports and test services directly
 
 **Fix Required:**
@@ -108,12 +108,10 @@ The legacy HMAC GOVERNANCE_SALT fallback has been removed.
    - Langfuse authentication test
    - **Usage:** `uv run python scripts/test_live_gke_services.py`
 
-2. **`scripts/test_gke_e2e_flow.py`**
-   - End-to-end functional validation
-   - Gateway governance flow test
-   - vLLM inference test
-   - Langfuse trace creation test
-   - **Usage:** `uv run python scripts/test_gke_e2e_flow.py`
+2. **`tests/e2e/test_gke_trade_flow.py`** (replaces the removed `scripts/test_gke_e2e_flow.py`)
+   - Live trade-governance scenarios (S0–S4) run as an in-cluster meshed Job
+   - JWKS `kid`-resolved envelope verification
+   - **Usage:** `REGISTRY_URL=<registry> make test-gke-e2e`
 
 ### Port-Forward Status
 
@@ -175,5 +173,5 @@ ps aux | grep "kubectl port-forward" | grep -v grep
 bash -c 'set -a; source .env; set +a; uv run python scripts/test_live_gke_services.py'
 
 # Run functional end-to-end tests
-bash -c 'set -a; source .env; set +a; uv run python scripts/test_gke_e2e_flow.py'
+REGISTRY_URL=<registry> make test-gke-e2e
 ```

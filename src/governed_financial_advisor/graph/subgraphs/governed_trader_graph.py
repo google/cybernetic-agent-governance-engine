@@ -18,19 +18,25 @@ Governed Trader Subgraph (Native LangGraph)
 Implements the Executor as a LangGraph state machine linking
 a fast LLM to MCP ToolNodes for trade execution.
 
-Phase 1b: Approval gate added before executor using LangGraph-native
-interrupt / Command mechanism.  When approval_required=True, the graph
-pauses at approval_node and waits for a human to resume via:
+The gateway decides whether a trade needs a human; the advisor applies no
+approval thresholds of its own. Flow:
+
+    START → executor → tools (gateway_tool_guard)
+        ALLOW / NARROW    → execute_trade_action runs (the gateway's single
+                            committing run) → executor
+        REQUIRE_APPROVAL  → approval (interrupt, carries ``deferred_id``)
+                            → post_hitl_rehydrate → post_hitl_revalidate
+                            (slippage gate) → executor → tools, which forwards
+                            ``deferred_id`` so the gateway consumes the
+                            approval once and re-validates the fresh params
+        anything else     → END
+
+The authoritative approval is recorded against ``deferred_id`` in the
+gateway's DeferQueue (compliance bridge ``POST /v1/defer/{id}/escalate``); the
+graph is resumed via the LangGraph SDK with:
 
     Command(resume={"approved": bool, "reviewer": str,
                     "rationale": str, "max_slippage_pct": float})
-
-via the LangGraph SDK.  Pending interrupts are discoverable through
-GET /v1/approvals/pending.  The POST /v1/approvals/{thread_id}/resume route
-was removed in 7ab1acd when HITL migrated to the interrupt() primitive.
-
-Approval threshold: trade value > $10,000 OR risk_score > 0.7
-(derived from the evaluation_result parsed in should_require_approval).
 """
 
 import json
@@ -58,6 +64,11 @@ from src.gateway.observability.attributes import (
     TRACE_METADATA_CURRENT_NODE,
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
+from src.governed_financial_advisor.graph.governance.tool_guard import (
+    GOVERNANCE_ALLOWED,
+    GOVERNANCE_REQUIRE_APPROVAL,
+    gateway_tool_guard,
+)
 from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
@@ -74,8 +85,8 @@ class GovernedTraderState(TypedDict):
     messages: Annotated[list[BaseMessage], "messages"]
     execution_plan: str
     evaluation_result: str
-    # Approval fields (populated by the parent graph or by approval_node)
-    approval_required: bool
+    # Approval fields (populated by gateway_tool_guard and approval_node)
+    deferred_id: str | None  # gateway-held approval token (REQUIRE_APPROVAL)
     approval_decision: dict[str, Any] | None
     hitl_expires_at: str | None  # TTL expiration timestamp for pending state
     # TOCTOU Remediation — Phase 2 (Slippage Bounds + TTL)
@@ -83,11 +94,11 @@ class GovernedTraderState(TypedDict):
     # are re-sampled and re-validated at the moment of actuation, not at check-time.
     data_analyst_ticker: str | None  # passed from parent graph for re-hydration
     rehydration_result: dict | None  # fresh market snapshot + drift metrics
-    post_hitl_safety_status: str | None  # "APPROVED" | "BLOCKED" after re-validation
+    post_hitl_safety_status: str | None  # "PASSED" | "BLOCKED" after the slippage gate
 
     # Written by gateway_tool_guard (POST /governance/validate-action)
-    governance_envelope: dict[str, Any] | None  # Gateway APPROVED verdict
-    governance_status: str | None  # "ALLOWED" | "DENIED"
+    governance_envelope: dict[str, Any] | None  # Gateway ALLOW/NARROW verdict
+    governance_status: str | None  # "ALLOWED" | "DENIED" | "REQUIRE_APPROVAL"
 
 
 # ---------------------------------------------------------------------------
@@ -127,78 +138,6 @@ def get_executor_instruction() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Approval threshold helper
-# ---------------------------------------------------------------------------
-
-
-def should_require_approval(state: GovernedTraderState) -> bool:
-    """
-    Returns True when the trade meets the high-value / high-risk threshold.
-
-    Threshold rules (matches TypeScript BullMQ approval logic):
-      - Trade value > $10,000, OR
-      - risk_score > 0.7 (parsed from evaluation_result JSON)
-
-    Falls back to the explicit ``approval_required`` flag in state so that
-    the parent graph can force approval independently of auto-detection.
-    """
-    # Explicit override from parent graph state
-    if state.get("approval_required"):
-        return True
-
-    # Auto-detect from evaluation_result JSON
-    eval_result_raw: str = state.get("evaluation_result", "")
-    try:
-        eval_result: dict[str, Any] = (
-            json.loads(eval_result_raw)
-            if isinstance(eval_result_raw, str)
-            else eval_result_raw
-        )
-        risk_score: float = float(eval_result.get("risk_score", 0.0))
-        if risk_score > 0.7:
-            logger.info(
-                "[GovernedTrader] risk_score=%.2f > 0.7 → approval required.",
-                risk_score,
-            )
-            return True
-    except (json.JSONDecodeError, ValueError, TypeError):
-        pass  # Cannot parse — fall through to plan-based check
-
-    # Auto-detect from execution_plan JSON (trade value)
-    plan_raw: str = state.get("execution_plan", "")
-    try:
-        plan: dict[str, Any] = (
-            json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
-        )
-        for step in plan.get("steps", []):
-            amount = float(step.get("amount", 0))
-            if amount > 10_000:
-                logger.info(
-                    "[GovernedTrader] Trade amount $%.2f > $10,000 → approval required.",
-                    amount,
-                )
-                return True
-    except (json.JSONDecodeError, ValueError, TypeError):
-        pass
-
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Approval routing edge
-# ---------------------------------------------------------------------------
-
-
-def route_approval(state: GovernedTraderState) -> str:
-    """Conditional edge: route to approval_node if required, else executor."""
-    if should_require_approval(state):
-        logger.info("[GovernedTrader] Routing to approval_node.")
-        return "approval"
-    logger.info("[GovernedTrader] No approval required — routing directly to executor.")
-    return "executor"
-
-
-# ---------------------------------------------------------------------------
 # Executor nodes (CAGE governance enforced)
 # ---------------------------------------------------------------------------
 
@@ -215,14 +154,17 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     executes.
 
     Governance Contract:
-        - Every tool call must receive an explicit APPROVED verdict
-        - DENIED / DEFER / PAUSE verdicts, HTTP errors, timeouts and an
+        - Every tool call must be routed ALLOW or NARROW, or carry the
+          ``deferred_id`` of a human-approved REQUIRE_APPROVAL
+        - Refusals, DEFER / PAUSE verdicts, HTTP errors, timeouts and an
           unreachable gateway all refuse the batch: this node does not run,
           ``governance_status`` becomes "DENIED" and the subgraph ends
+        - The gateway commits and seals inside ``execute_trade_action``; the
+          advisor never holds a seal
 
-    TOCTOU Closure: This node executes AFTER post_hitl_revalidate_node when
-    approval was required, ensuring fresh market data and slippage bounds are
-    validated at actuation time, not check time.
+    TOCTOU Closure: after approval, ``execute_trade_action(deferred_id=...)``
+    re-validates the fresh params in the gateway (POST_HITL profile) at
+    actuation time, not check time.
     """
     from langchain_mcp_adapters.tools import load_mcp_tools
 
@@ -350,13 +292,17 @@ def should_continue(state: GovernedTraderState) -> str:
 
 
 def route_after_tools(state: GovernedTraderState) -> str:
-    """End the subgraph on a governance refusal; otherwise loop to the executor.
+    """Route on the ``gateway_tool_guard`` outcome.
 
-    Only an explicit ``ALLOWED`` from ``gateway_tool_guard`` continues the loop,
-    so a refused trade cannot be re-proposed by the executor in the same run.
+    ``ALLOWED`` loops to the executor; ``REQUIRE_APPROVAL`` (with a gateway
+    ``deferred_id``) pauses at the approval node; anything else ends the
+    subgraph, so a refused trade cannot be re-proposed in the same run.
     """
-    if state.get("governance_status") == "ALLOWED":
+    status = state.get("governance_status")
+    if status == GOVERNANCE_ALLOWED:
         return "executor"
+    if status == GOVERNANCE_REQUIRE_APPROVAL and state.get("deferred_id"):
+        return "approval"
     logger.warning("[GovernedTrader] Gateway refused the tool batch — ending subgraph.")
     return END
 
@@ -369,8 +315,8 @@ def route_after_tools(state: GovernedTraderState) -> str:
 # at the exact moment of execution — not at the moment of human check.
 #
 # Architectural invariant: the SymbolicGovernor runs only in the gateway
-# (POAM-2026-079). Re-validation is a network call whose non-APPROVED outcomes
-# all block; the advisor cannot approve, seal or actuate a trade itself.
+# (POAM-2026-079). Governance re-validation happens there when the approved
+# deferred_id is consumed; the advisor cannot approve, seal or actuate a trade.
 # ---------------------------------------------------------------------------
 
 
@@ -522,40 +468,22 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             return _skipped_result(f"yfinance_error: {exc}")
 
 
-@side_effect_node(kind="api_call", external_system="gateway_api")
 async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any]:
-    """TOCTOU Remediation — Pre-Actuation Re-Validation Node.
+    """TOCTOU Remediation — reviewer slippage gate.
 
-    Tests the human-approved intent against fresh market reality using the
-    reviewer's slippage tolerance as the bounded acceptance envelope.
-
-    Enforcement tiers re-run at this node:
-        Tier 3a: Control Barrier Function (CBF) — cash balance against fresh state
-        Tier 3b: OPA Rego policy — drawdown, position limits, fiscal cap
-
-    Tiers NOT re-run (input-time checks, independent of market state):
-        Tier 0.5: FTRA action classification & reachability
-        Tier 1: STPA/STAMP UCA validation
-        Tier 2: Agent confidence pre-check
-        Tier 4: Fiscal Limit Pre-Reservation
-        Tier 5: Multi-agent consensus
-        Tier 6: DoWhy causal gatekeeper
-        Tier 7: FRIA normative boundary enforcement
-
-    The re-check runs in the gateway (``POST /governance/revalidate-post-hitl``),
-    the only process that hosts the ``SymbolicGovernor`` (POAM-2026-079). A
-    DENIED verdict, a gateway error or an unreachable gateway all BLOCK.
+    Blocks when the market moved further during review than the reviewer's
+    ``max_slippage_pct`` allows. This is the only check the advisor applies
+    after approval: governance re-validation of the fresh params runs in the
+    gateway (POST_HITL profile) when ``execute_trade_action`` consumes the
+    ``deferred_id`` — the only process that hosts the ``SymbolicGovernor``
+    (POAM-2026-079).
 
     Emits OTel span attributes:
-        toctou.revalidation.result           — APPROVED | BLOCKED
-        toctou.revalidation.block_reason     — slippage | governance_violation
+        toctou.revalidation.result           — PASSED | BLOCKED
+        toctou.revalidation.block_reason     — price_slippage_exceeded
         toctou.revalidation.drift_pct        — measured drift at execution time
         toctou.revalidation.max_slippage_pct — reviewer's approved tolerance
     """
-    from src.governed_financial_advisor.infrastructure.gateway_client import (
-        GatewayClient,
-    )
-
     tracer = get_tracer()
 
     with tracer.start_as_current_span("GovernedTrader: HITL Revalidation") as span:
@@ -572,9 +500,8 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         if drift_pct is not None:
             span.set_attribute("toctou.revalidation.drift_pct", drift_pct)
 
-        # --- Step 1: Slippage gate -------------------------------------------
-        # This is the primary TOCTOU closure: the reviewer's approved tolerance
-        # defines the mathematical envelope within which execution is permitted.
+        # The reviewer's approved tolerance defines the envelope within which
+        # execution is permitted.
         if drift_pct is not None and drift_pct > max_slippage_pct:
             block_reason = (
                 f"Market price of {rehydration.get('ticker', 'the asset')} drifted "
@@ -596,88 +523,8 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
                 "rehydration_result": {**rehydration, "block_reason": block_reason},
             }
 
-        # --- Step 2: Reconstruct trade params with fresh market data ----------
-        fresh_params: dict[str, Any] = {}
-        try:
-            plan_raw = state.get("execution_plan", "")
-            plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
-            for step in plan.get("steps", []):
-                if step.get("action") in (
-                    "execute_trade",
-                    "buy",
-                    "sell",
-                    "BUY",
-                    "SELL",
-                ):
-                    fresh_params = {
-                        "action": "execute_trade",
-                        "symbol": step.get(
-                            "symbol", rehydration.get("ticker", "UNKNOWN")
-                        ),
-                        "amount": float(step.get("amount", 0)),
-                        "currency": step.get("currency", "USD"),
-                        "confidence": float(step.get("confidence", 0.99)),
-                        "trader_role": step.get("trader_role", "junior"),
-                        "latency_ms": 0.0,
-                    }
-                    # Inject fresh price so CBF / OPA evaluate against live reality.
-                    fresh_price = rehydration.get("fresh_price")
-                    if fresh_price:
-                        fresh_params["price"] = fresh_price
-                    break
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-
-        if not fresh_params:
-            # Fallback when plan cannot be parsed — use minimal safe defaults.
-            fresh_params = {
-                "action": "execute_trade",
-                "symbol": rehydration.get("ticker", "UNKNOWN"),
-                "amount": 0,
-                "confidence": 0.99,
-                "latency_ms": 0.0,
-            }
-
-        span.set_attribute("toctou.revalidation.symbol", fresh_params.get("symbol", ""))
-        fresh_price_logged = rehydration.get("fresh_price") or 0.0
-        span.set_attribute("toctou.revalidation.fresh_price", fresh_price_logged)
-
-        # --- Step 3: Tier 3a (CBF) + Tier 3b (OPA) targeted re-check ---
-        # Post-HITL revalidation: only Tiers 3a (CBF) and 3b (OPA) are re-checked.
-        # Tiers 1 (STPA), 2 (confidence), 5 (consensus), and 6 (causal) are
-        # deterministic w.r.t. the static approved plan and do not need re-evaluation.
-        # Network call to the gateway's governor: the advisor holds no kernel,
-        # no signer and no barrier state, so it cannot approve its own trade.
-        span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
-        try:
-            await GatewayClient().revalidate_post_hitl(
-                action="execute_trade", params=fresh_params
-            )
-
-            logger.info(
-                "[RevalidateNode] ✅ Post-HITL re-validation APPROVED — %s within safe bounds.",
-                fresh_params.get("symbol"),
-            )
-            span.set_attribute("toctou.revalidation.result", "APPROVED")
-            return {"post_hitl_safety_status": "APPROVED"}
-
-        except Exception as exc:  # DENIED, gateway error or unreachable: fail closed
-            block_reason = (
-                f"Governance re-validation failed after human approval: {exc}. "
-                f"Market conditions changed during the review period."
-            )
-            logger.warning(
-                "[RevalidateNode] ⛔ Post-HITL governance violation: %s", exc
-            )
-            span.set_attribute("toctou.revalidation.result", "BLOCKED")
-            span.set_attribute(
-                "toctou.revalidation.block_reason", "governance_violation"
-            )
-            span.set_attribute("toctou.revalidation.violation", str(exc))
-            return {
-                "post_hitl_safety_status": "BLOCKED",
-                "rehydration_result": {**rehydration, "block_reason": block_reason},
-            }
+        span.set_attribute("toctou.revalidation.result", "PASSED")
+        return {"post_hitl_safety_status": "PASSED"}
 
 
 def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
@@ -734,15 +581,13 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
 
 
 def route_post_revalidation(state: GovernedTraderState) -> str:
-    """Route after HITL re-validation: executor if APPROVED, drift_blocked if BLOCKED."""
+    """Route after the slippage gate: drift_blocked if BLOCKED, else executor."""
     if state.get("post_hitl_safety_status") == "BLOCKED":
         logger.info(
             "[GovernedTrader] Post-HITL re-validation BLOCKED — routing to drift_blocked."
         )
         return "drift_blocked"
-    logger.info(
-        "[GovernedTrader] Post-HITL re-validation APPROVED — routing to executor."
-    )
+    logger.info("[GovernedTrader] Slippage gate passed — routing to executor.")
     return "executor"
 
 
@@ -750,13 +595,12 @@ def route_post_revalidation(state: GovernedTraderState) -> str:
 # Build Graph
 # ---------------------------------------------------------------------------
 
-from src.governed_financial_advisor.graph.governance.tool_guard import (
-    gateway_tool_guard,
+# Every tool call is routed by the gateway (POST /governance/validate-action)
+# before execution; REQUIRE_APPROVAL pauses for a human, and any other
+# non-executable outcome refuses the batch (fail closed).
+guarded_tool_executor_node = gateway_tool_guard("execute_trade", approvable=True)(
+    tool_executor_node
 )
-
-# Every tool call is validated by the gateway (POST /governance/validate-action)
-# before execution; any non-APPROVED outcome refuses the batch (fail closed).
-guarded_tool_executor_node = gateway_tool_guard("execute_trade")(tool_executor_node)
 
 
 def build_governed_trader_graph() -> Any:
@@ -781,16 +625,12 @@ def build_governed_trader_graph() -> Any:
     builder.add_node("executor", executor_node)
     builder.add_node("tools", guarded_tool_executor_node)  # CAGE governance enforced
 
-    # Entry: conditional — approval required or not
-    builder.add_conditional_edges(
-        START,
-        route_approval,
-        {"approval": "approval", "executor": "executor"},
-    )
+    # Entry: the gateway, not the advisor, decides whether a human is needed.
+    builder.add_edge(START, "executor")
 
     # After approval_node (approved path): Command(goto="post_hitl_rehydrate") routes here.
     # TOCTOU remediation chain:
-    #   post_hitl_rehydrate → post_hitl_revalidate → executor (APPROVED) | drift_blocked (BLOCKED)
+    #   post_hitl_rehydrate → post_hitl_revalidate → executor (PASSED) | drift_blocked (BLOCKED)
     # After approval_node (rejected path): Command(goto="rejection") routes to rejection_node.
     # LangGraph resolves Command.goto automatically — no explicit edge from approval needed.
     builder.add_edge("post_hitl_rehydrate", "post_hitl_revalidate")
@@ -801,10 +641,13 @@ def build_governed_trader_graph() -> Any:
     )
     builder.add_edge("drift_blocked", END)
 
-    # Executor tool-call loop; a gateway refusal terminates the subgraph.
+    # Executor tool-call loop; REQUIRE_APPROVAL pauses for a human and a
+    # gateway refusal terminates the subgraph.
     builder.add_conditional_edges("executor", should_continue, {"tools": "tools", END: END})
     builder.add_conditional_edges(
-        "tools", route_after_tools, {"executor": "executor", END: END}
+        "tools",
+        route_after_tools,
+        {"executor": "executor", "approval": "approval", END: END},
     )
 
     # Rejection terminates the subgraph

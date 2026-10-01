@@ -89,7 +89,7 @@ def _approved_envelope() -> dict[str, Any]:
         "envelope_version": "3.0",
         "envelope_id": "env-1",
         "signature": "sig-abc",
-        "payload": {"verdict": "APPROVED", "violations": [], "latency_ms": 4.2},
+        "payload": {"verdict": "ALLOW", "violations": [], "latency_ms": 4.2},
     }
 
 
@@ -132,6 +132,24 @@ class TestSafetyNodeVerdicts:
         assert result["consecutive_denials"] == 0
         assert result["last_violation"] is None
         assert result["governance_signature"] == "sig-abc"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"verdict": "NARROW", "violations": [], "narrowed_params": {"amount": 1.0}},
+            {"verdict": "REQUIRE_APPROVAL", "deferred_id": "d-1", "violations": []},
+        ],
+        ids=["narrow", "require-approval"],
+    )
+    @pytest.mark.asyncio
+    async def test_routable_verdicts_proceed_to_the_trader(self, gateway, body) -> None:
+        """The trader's tool guard re-asks the gateway and parks approvals."""
+        gateway(lambda r: httpx.Response(200, json=body))
+
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
+
+        assert result["safety_status"] == "APPROVED"
+        assert result["consecutive_denials"] == 0
 
     @pytest.mark.asyncio
     async def test_defer_with_ticket_defers(self, gateway) -> None:
@@ -235,6 +253,8 @@ class TestSafetyNodeFailClosed:
             {"verdict": "PAUSE"},
             {"verdict": "DEFER"},  # DEFER without a ticket cannot be parked
             {"verdict": "approved"},
+            {"verdict": "APPROVED"},  # legacy vocabulary is not routable
+            {"verdict": "REQUIRE_APPROVAL"},  # no deferred_id was parked
             {"violations": []},
         ],
     )

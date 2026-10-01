@@ -1,25 +1,12 @@
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""NARROW from ``validate_action`` is an unsealed, re-verified candidate.
 
-"""P3c: NARROW re-runs the FULL profile on the clamped params before sealing.
-
-Before P3c, ``handle_narrow`` sealed the narrower's proposal without
-re-running any check.  The NARROWABLE stage (e.g. fiscal) had already been
-rolled back, so the NARROW seal authorised an action with no reservation and
-no policy check on the clamped params.  proof/model.py defines NARROW as:
-(a) every violation is NARROWABLE, (b) a narrower returned a proposal, and
-(c) the FULL profile passes on the clamped params.  Otherwise DENY.
+proof/model.py defines NARROW as: (a) every violation is NARROWABLE, (b) a
+narrower returned a proposal, and (c) every stage passes on the clamped
+params; otherwise DENY. ``validate_action`` runs the non-committing DRY_RUN
+profile, so it checks (c) by *previewing* the clamped params: nothing is
+reserved, nothing is committed and no seal is minted. Executing the proposal
+is a separate committing run over it (S10, Phase 2 — see the strict xfail at
+the bottom).
 """
 
 from __future__ import annotations
@@ -58,9 +45,10 @@ REQUESTED = 5000.0
 
 
 class _Budget:
-    """Phase-2 tier double: reserves ``params["amount"]`` up to ``limit``.
+    """Phase-2 tier double limiting ``params["amount"]`` to ``limit``.
 
-    Above the limit it refuses with a violation of ``kind`` and mutates nothing.
+    ``evaluate()`` (the DRY_RUN preview) and ``commit()`` refuse above the
+    limit with a violation of ``kind``; every hook call is logged.
     """
 
     def __init__(
@@ -83,20 +71,33 @@ class _Budget:
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         return True
 
-    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    def _refusal(self, amount: float) -> list[Violation]:
+        if self.limit is not None and amount > self.limit:
+            return [
+                Violation(
+                    tier=self._name,
+                    code="LIMIT_EXCEEDED",
+                    message=f"{amount:g} > {self.limit:g}",
+                    kind=self.kind,
+                )
+            ]
         return []
+
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        amount = float(params["amount"])
+        refused = self._refusal(amount)
+        self.log.append(f"{'preview-reject' if refused else 'preview'}:{self._name}:{amount:g}")
+        if self.mutate_params:
+            params["amount"] = 999_999.0  # a misbehaving tier must not change the answer
+        return refused
 
     async def commit(self, action: str, params: dict[str, Any]):
         amount = float(params["amount"])
-        if self.limit is not None and amount > self.limit:
+        refused = self._refusal(amount)
+        if refused:
             self.log.append(f"reject:{self._name}:{amount:g}")
-            violation = Violation(
-                tier=self._name, code="LIMIT_EXCEEDED", message=f"{amount:g} > {self.limit:g}", kind=self.kind
-            )
-            return [violation], None
+            return refused, None
         self.log.append(f"commit:{self._name}:{amount:g}")
-        if self.mutate_params:
-            params["amount"] = 999_999.0  # a misbehaving tier must not change what gets sealed
         return [], CommitReceipt(tier=self._name, magnitude=amount)
 
     async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
@@ -185,11 +186,11 @@ def refusals(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     return mock
 
 
-# ── Re-run passes → NARROW over exactly the re-verified params ─────────────
+# ── Re-verification passes → unsealed NARROW candidate ────────────────────
 
 
 @pytest.mark.asyncio
-async def test_rerun_passes_seals_clamped_params_with_fresh_reservation(seal: AsyncMock) -> None:
+async def test_rerun_passes_offers_clamped_params_without_committing(seal: AsyncMock) -> None:
     log: list[str] = []
     policy = _Policy()
     clamp = _Clamp(cap=1000.0)
@@ -198,18 +199,18 @@ async def test_rerun_passes_seals_clamped_params_with_fresh_reservation(seal: As
     result = await gov.validate_action(ACTION, _params())
 
     assert result["verdict"] == GovernanceDecision.NARROW
-    assert result["seal"] == "sealed-narrow"
+    assert "seal" not in result
     assert result["narrowed_params"] == {"amount": 1000.0, "agent_id": "agent-1"}
     assert result["original_params"] == _params()
-    seal.assert_awaited_once_with(ACTION, result["narrowed_params"], path="narrow")
-    # The fiscal reservation behind the seal is for the clamped amount, and it stays.
-    assert log == ["reject:fiscal:5000", "commit:fiscal:1000"]
+    seal.assert_not_awaited()
+    # Both runs previewed; nothing was reserved.
+    assert log == ["preview-reject:fiscal:5000", "preview:fiscal:1000"]
     assert policy.seen == [REQUESTED, 1000.0]  # OPA re-checked the clamped params
     assert clamp.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_sealed_params_are_the_verified_snapshot_even_if_a_tier_mutates_its_input(
+async def test_offered_params_are_the_verified_snapshot_even_if_a_tier_mutates_its_input(
     seal: AsyncMock,
 ) -> None:
     log: list[str] = []
@@ -218,17 +219,15 @@ async def test_sealed_params_are_the_verified_snapshot_even_if_a_tier_mutates_it
 
     result = await gov.validate_action(ACTION, _params())
 
-    sealed_params = seal.await_args.args[1]
-    assert sealed_params == {"amount": 1000.0, "agent_id": "agent-1"}
-    assert result["narrowed_params"] is sealed_params
-    assert result["classification_meta"]["narrowed_params"] is sealed_params
+    assert result["narrowed_params"] == {"amount": 1000.0, "agent_id": "agent-1"}
+    assert result["classification_meta"]["narrowed_params"] is result["narrowed_params"]
 
 
-# ── Re-run fails → DENY, no seal, re-run commits rolled back ───────────────
+# ── Re-verification fails → DENY ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_opa_denies_clamped_params_denies_without_seal(seal: AsyncMock, refusals: AsyncMock) -> None:
+async def test_opa_denies_clamped_params_denies(seal: AsyncMock, refusals: AsyncMock) -> None:
     log: list[str] = []
     policy = _Policy(deny_amounts=frozenset({1000.0}))
     gov = _governor([policy, *order_stages([_Budget("fiscal", 4, log, limit=1000.0)])], _Clamp(cap=1000.0))
@@ -238,12 +237,12 @@ async def test_opa_denies_clamped_params_denies_without_seal(seal: AsyncMock, re
 
     seal.assert_not_awaited()
     assert info.value.payload["classification_reason"] == "narrow_reverification_failed"
-    assert log == ["reject:fiscal:5000"]  # OPA stopped the re-run before any commit
+    assert log == ["preview-reject:fiscal:5000"]  # OPA stopped the re-run before phase 2
     refusals.assert_awaited_once()  # the refusal is primary evidence
 
 
 @pytest.mark.asyncio
-async def test_proposal_that_still_violates_denies_rolls_back_and_narrows_once(seal: AsyncMock) -> None:
+async def test_proposal_that_still_violates_denies_and_narrows_once(seal: AsyncMock) -> None:
     log: list[str] = []
     clamp = _Clamp(cap=2000.0)  # the clamp is not tight enough for the 1000 limit
     tiers = [_Budget("cbf", 1, log), _Budget("fiscal", 4, log, limit=1000.0)]
@@ -254,24 +253,20 @@ async def test_proposal_that_still_violates_denies_rolls_back_and_narrows_once(s
 
     seal.assert_not_awaited()
     assert clamp.calls == 1  # never narrowed twice, even though the re-run is NARROWABLE again
-    assert log == [
-        "commit:cbf:5000", "reject:fiscal:5000", "rollback:cbf:5000",  # original run
-        "commit:cbf:2000", "reject:fiscal:2000", "rollback:cbf:2000",  # re-run
-    ]
+    assert not [entry for entry in log if entry.startswith(("commit", "rollback"))]
 
 
 @pytest.mark.asyncio
-async def test_seal_failure_on_narrow_path_rolls_back_rerun_commits(seal: AsyncMock) -> None:
+async def test_validate_action_never_commits_or_seals(seal: AsyncMock) -> None:
     log: list[str] = []
-    seal.side_effect = RuntimeError("KMS unavailable")
     tiers = [_Budget("cbf", 1, log), _Budget("fiscal", 4, log, limit=1000.0)]
     gov = _governor([_Policy(), *order_stages(tiers)], _Clamp(cap=1000.0))
 
-    with pytest.raises(RuntimeError, match="KMS unavailable"):
-        await gov.validate_action(ACTION, _params())
+    await gov.validate_action(ACTION, {"amount": 10.0, "agent_id": "agent-1"})  # ALLOW
+    await gov.validate_action(ACTION, _params())  # NARROW
 
-    seal.assert_awaited_once()
-    assert log[-4:] == ["commit:cbf:1000", "commit:fiscal:1000", "rollback:fiscal:1000", "rollback:cbf:1000"]
+    seal.assert_not_awaited()
+    assert all(entry.startswith("preview") for entry in log), log
 
 
 # ── NARROW preconditions (a) and (b) ──────────────────────────────────────
@@ -328,7 +323,7 @@ async def test_narrow_enabled_flag_unset_never_narrows(seal: AsyncMock, monkeypa
 
     assert clamp.calls == 0
     seal.assert_not_awaited()
-    assert log == ["reject:fiscal:5000"]
+    assert log == ["preview-reject:fiscal:5000"]
 
 
 # ── Fail-closed guards ─────────────────────────────────────────────────────
@@ -350,16 +345,16 @@ async def test_narrow_classification_without_proposal_denies(seal: AsyncMock) ->
         await gov.validate_action(ACTION, _params())
 
     seal.assert_not_awaited()
-    assert log == ["reject:fiscal:5000"]
+    assert log == ["preview-reject:fiscal:5000"]
 
 
-@pytest.mark.parametrize("bad_seal", ["", None])
-def test_handle_narrow_refuses_without_a_seal(bad_seal: Any) -> None:
-    with pytest.raises(GovernanceError, match="has no seal"):
-        handle_narrow(
-            ACTION, _params(), {"amount": 1000.0},
-            seal=bad_seal, violations=[], classification_meta={},
-        )
+def test_handle_narrow_result_carries_no_seal() -> None:
+    result = handle_narrow(
+        ACTION, _params(), {"amount": 1000.0},
+        violations=[], classification_meta={},
+    )
+    assert result["verdict"] == GovernanceDecision.NARROW
+    assert "seal" not in result
 
 
 # ── Parity with proof/model.py's NARROW definition ─────────────────────────
@@ -396,8 +391,26 @@ async def test_production_matches_model_narrow_outcome(
     if phase == "NARROW":
         result = await gov.validate_action(ACTION, _params())
         assert result["verdict"] == GovernanceDecision.NARROW
-        seal.assert_awaited_once()  # model: NARROW has seal_present=True
     else:
         with pytest.raises(GovernanceError):
             await gov.validate_action(ACTION, _params())
-        seal.assert_not_awaited()
+    # The model's NARROW seal belongs to the committing run (S10), never to validate.
+    seal.assert_not_awaited()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="S10 (Phase 2): the committing run does not yet seal a narrowed proposal",
+)
+@pytest.mark.asyncio
+async def test_s10_committing_run_seals_the_narrowed_params(seal: AsyncMock) -> None:
+    log: list[str] = []
+    gov = _governor(
+        [_Policy(), *order_stages([_Budget("fiscal", 4, log, limit=1000.0)])], _Clamp(cap=1000.0)
+    )
+
+    sealed = await gov.govern(ACTION, _params())
+
+    assert sealed == "sealed-narrow"
+    seal.assert_awaited_once_with(ACTION, {"amount": 1000.0, "agent_id": "agent-1"}, path="narrow")
+    assert log[-1] == "commit:fiscal:1000"

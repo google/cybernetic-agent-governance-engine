@@ -62,9 +62,8 @@ def mock_symbolic_governor():
     gov = _mock_governor()
     gov.validate_action = AsyncMock(
         return_value={
-            "verdict": "APPROVED",
+            "verdict": "ALLOW",
             "violations": [],
-            "seal": "test-seal",
             "latency_ms": 1.5,
             "tiers_passed": ["stpa", "cbf", "opa"],
             "controls_satisfied": ["CTRL_OPA_001", "CTRL_CBF_002"],
@@ -193,9 +192,9 @@ class TestEnvelopeTransportApproved:
         data = resp.json()
         payload = data["payload"]
 
-        assert payload["verdict"] == "APPROVED"
+        assert payload["verdict"] == "ALLOW"
         assert payload["violations"] == []
-        assert payload["seal"] == "test-seal"
+        assert "seal" not in payload
         assert "latency_ms" in payload
 
     def test_approved_envelope_contains_signature(
@@ -368,9 +367,8 @@ class TestEnvelopeTransportEdgeCases:
         """External attestations are embedded in the envelope."""
         mock_symbolic_governor.validate_action = AsyncMock(
             return_value={
-                "verdict": "APPROVED",
+                "verdict": "ALLOW",
                 "violations": [],
-                "seal": "test-seal",
                 "latency_ms": 1.5,
                 "tiers_passed": ["stpa", "cbf", "opa"],
                 "controls_satisfied": ["CTRL_OPA_001"],

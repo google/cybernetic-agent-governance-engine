@@ -372,9 +372,8 @@ async def test_validate_action_returns_canonical_envelope(monkeypatch):
     mock_gov = MagicMock(spec=SymbolicGovernor)
     mock_gov.validate_action = AsyncMock(
         return_value={
-            "verdict": "APPROVED",
+            "verdict": "ALLOW",
             "action": "execute_trade",
-            "routing_seal": "test-seal-" + "b" * 56,
         }
     )
     monkeypatch.setattr(governance_app.state, "governor", mock_gov, raising=False)
@@ -424,8 +423,8 @@ async def test_validate_action_returns_canonical_envelope(monkeypatch):
     # Assert payload contains the verdict
     assert isinstance(body["payload"], dict), "payload must be a dict"
     assert "verdict" in body["payload"], "payload missing required field: verdict"
-    assert body["payload"]["verdict"] == "APPROVED", (
-        f"Expected APPROVED, got {body['payload']['verdict']}"
+    assert body["payload"]["verdict"] == "ALLOW", (
+        f"Expected ALLOW, got {body['payload']['verdict']}"
     )
 
 

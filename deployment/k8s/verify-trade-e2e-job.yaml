@@ -1,0 +1,100 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Live trade-governance e2e verification (tests/e2e/test_gke_trade_flow.py).
+#
+# Runs in-mesh as the advisor's workload identity, so the gateway authenticates
+# it exactly as it authenticates the advisor (peer-verified l5d-client-id).
+# Launched by `make test-gke-e2e` / `./deploy_all.sh --verify-e2e`.
+#
+# Credentials come from the adopter-created Secret `cage-e2e-credentials`
+# (keys: internal-token, operator-principals, unmeshed-gateway-url) — never
+# literal values in this manifest.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cage-verify-trade-e2e
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/name: cage-verify-trade-e2e
+    app.kubernetes.io/part-of: cybernetic-governance-engine
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: cage-verify-trade-e2e
+      annotations:
+        linkerd.io/inject: enabled
+        # Let the Job complete: the proxy exits when the test container does.
+        config.alpha.linkerd.io/proxy-wait-before-exit-seconds: "0"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: cage-advisor-sa
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: verify-trade-e2e
+          image: ${REGISTRY_URL}/governed-financial-advisor:latest
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -eo pipefail
+              cd /app
+              status=0
+              python3 -m pytest tests/e2e/test_gke_trade_flow.py --run-e2e \
+                -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v --tb=short || status=$?
+              # Stop the Linkerd proxy so the Job can terminate.
+              curl -fsS -X POST http://localhost:4191/shutdown || true
+              exit "$status"
+          env:
+            - name: CAGE_E2E_GATEWAY_URL
+              value: "http://gateway.governance-stack.svc.cluster.local:8080"
+            - name: CAGE_E2E_BRIDGE_URL
+              value: "http://compliance-bridge.governance-stack.svc.cluster.local"
+            - name: CAGE_E2E_UNMESHED_GATEWAY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cage-e2e-credentials
+                  key: unmeshed-gateway-url
+            - name: CAGE_E2E_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cage-e2e-credentials
+                  key: internal-token
+            - name: CAGE_E2E_OPERATOR_PRINCIPALS
+              valueFrom:
+                secretKeyRef:
+                  name: cage-e2e-credentials
+                  key: operator-principals
+            - name: LANGSMITH_TRACING
+              value: "false"
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

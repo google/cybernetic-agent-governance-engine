@@ -14,13 +14,16 @@
 
 import json
 import logging
-import os
+import math
 import re
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+
+if TYPE_CHECKING:
+    from src.gateway.governance.defer_queue import DeferReason
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import GovernanceTierFailure, Violation, ViolationKind
@@ -42,6 +45,22 @@ def resolve_thread_id(params: dict[str, Any]) -> str:
     if "transaction_id" in params:
         return str(params["transaction_id"])
     return "unknown"
+
+
+def reported_confidence(params: dict[str, Any]) -> float:
+    """Agent self-reported confidence; unparseable values classify as 0.0.
+
+    ConfidenceStage already emits a HARD violation for invalid values, so this
+    only feeds classification and parking and can never widen a verdict.
+    """
+    raw = params.get("confidence", 0.0)
+    if isinstance(raw, bool):
+        return 0.0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    return value if math.isfinite(value) else 0.0
 
 
 def build_refusal_receipt(
@@ -108,6 +127,21 @@ async def issue_seal(action: str, params: dict[str, Any], *, path: str) -> str:
         return seal
 
 
+def _reason_from_classification(classification_meta: dict[str, Any]) -> "DeferReason":
+    from src.gateway.governance.defer_queue import DeferReason
+
+    reason_str = str(classification_meta.get("classification_reason", "")).lower()
+    if "confidence" in reason_str:
+        return DeferReason.CONFIDENCE_BELOW_THRESHOLD
+    if "context" in reason_str or "missing" in reason_str:
+        return DeferReason.INSUFFICIENT_CONTEXT
+    if "ambiguous" in reason_str:
+        return DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE
+    if "data" in reason_str and "starvation" in reason_str:
+        return DeferReason.DATA_STARVATION
+    return DeferReason.CONFIDENCE_BELOW_THRESHOLD
+
+
 async def _park_defer_context(
     action: str,
     params: dict[str, Any] | None,
@@ -116,8 +150,15 @@ async def _park_defer_context(
     confidence: float,
     classification_meta: dict[str, Any],
     violations: list[Violation],
-) -> str:
-    from src.gateway.governance.defer_queue import DeferQueue, DeferReason, DeferToken
+    *,
+    defer_reason: "DeferReason | None" = None,
+) -> tuple[str, bool]:
+    """Park a DeferToken and return ``(defer_id, persisted)``.
+
+    ``persisted`` is False when the queue was unreachable: the id then names
+    no stored token, so nothing can approve or resume it.
+    """
+    from src.gateway.governance.defer_queue import DeferToken, open_defer_queue
 
     effective_thread_id = thread_id or str(uuid.uuid4())
 
@@ -129,49 +170,27 @@ async def _park_defer_context(
         "classification_reason": classification_meta.get("classification_reason", ""),
     }
 
-    reason_str = classification_meta.get("classification_reason", "")
-    if "confidence" in reason_str.lower():
-        defer_reason = DeferReason.CONFIDENCE_BELOW_THRESHOLD
-    elif "context" in reason_str.lower() or "missing" in reason_str.lower():
-        defer_reason = DeferReason.INSUFFICIENT_CONTEXT
-    elif "ambiguous" in reason_str.lower():
-        defer_reason = DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE
-    elif "data" in reason_str.lower() and "starvation" in reason_str.lower():
-        defer_reason = DeferReason.DATA_STARVATION
-    else:
-        defer_reason = DeferReason.CONFIDENCE_BELOW_THRESHOLD
-
     token = DeferToken(
         thread_id=effective_thread_id,
-        defer_reason=defer_reason,
+        defer_reason=defer_reason or _reason_from_classification(classification_meta),
         opa_input_snapshot=opa_input_snapshot,
-        confidence_score=confidence,
+        confidence_score=min(max(confidence, 0.0), 1.0),
         aarm_vector="AARM-V7",
     )
 
-    async def _park() -> str:
-        import redis.asyncio as aioredis
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        try:
-            queue = DeferQueue(client)
-            return await queue.park(token)
-        finally:
-            await client.aclose()
-
     try:
-        return await _park()
+        async with open_defer_queue() as queue:
+            return await queue.park(token), True
     except Exception as exc:
-        logger.warning(
-            "DeferQueue park failed (%s) — using local defer_id only "
-            "(token NOT persisted to Redis; HITL API will not find it). "
-            "action=%s thread_id=%s",
+        logger.error(
+            "DeferQueue park failed (%s) — token NOT persisted; nothing can "
+            "approve or resume it. action=%s thread_id=%s",
             exc, action, effective_thread_id,
         )
-        return token.defer_id
+        return token.defer_id, False
 
 
-def handle_require_approval(
+async def handle_require_approval(
     action: str,
     params: dict[str, Any],
     violations: list[Violation],
@@ -179,20 +198,42 @@ def handle_require_approval(
     classification_meta: dict[str, Any],
     latency_ms: float = 0.0,
 ) -> dict[str, Any]:
+    """Park the pending approval in the gateway's DeferQueue; mint no seal.
+
+    The returned ``deferred_id`` names the ``HITL_REQUIRED`` token operators
+    approve (``DeferQueue.approve``) and the committing run consumes. It is
+    ``None`` when the token could not be persisted: such a request can never
+    be approved, so the caller must treat it as refused.
+    """
+    from src.gateway.governance.defer_queue import DeferReason
+
     span = trace.get_current_span()
+    defer_id, persisted = await _park_defer_context(
+        action=action,
+        params=params,
+        metadata={"action": action, "params": params},
+        thread_id=params.get("thread_id"),
+        confidence=reported_confidence(params),
+        classification_meta=classification_meta,
+        violations=violations,
+        defer_reason=DeferReason.HITL_REQUIRED,
+    )
+    deferred_id = defer_id if persisted else None
     span.set_attribute("cage.verdict", GovernanceDecision.REQUIRE_APPROVAL)
+    span.set_attribute("cage.deferred_id", deferred_id or "")
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.REQUIRE_APPROVAL)
     span.set_status(Status(StatusCode.OK))
     logger.info(
-        "🔶 handle_require_approval REQUIRE_APPROVAL: action=%s reason=%s (%.1fms)",
+        "🔶 handle_require_approval REQUIRE_APPROVAL: action=%s reason=%s deferred_id=%s (%.1fms)",
         action,
         classification_meta.get("classification_reason", ""),
+        deferred_id,
         latency_ms,
     )
     return {
         "verdict": GovernanceDecision.REQUIRE_APPROVAL,
         "violations": violations,
-        "seal": "",
+        "deferred_id": deferred_id,
         "latency_ms": latency_ms,
         "classification_meta": classification_meta,
     }
@@ -214,13 +255,12 @@ async def handle_defer(
         "params": params,
         "action": action,
     }
-    _confidence = float(params.get("confidence", 0.0))
-    defer_token = await _park_defer_context(
+    defer_token, _persisted = await _park_defer_context(
         action=action,
         params=params,
         metadata=defer_metadata,
         thread_id=params.get("thread_id"),
-        confidence=_confidence,
+        confidence=reported_confidence(params),
         classification_meta=classification_meta,
         violations=violations,
     )
@@ -240,7 +280,6 @@ async def handle_defer(
     return {
         "verdict": GovernanceDecision.DEFER,
         "violations": violations,
-        "seal": "",
         "latency_ms": latency_ms,
         "classification_meta": classification_meta,
         "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
@@ -353,7 +392,6 @@ async def handle_pause(
     return {
         "verdict": GovernanceDecision.PAUSE,
         "violations": violations,
-        "seal": "",
         "latency_ms": latency_ms,
         "classification_meta": classification_meta,
         "pause_token": pause_token,
@@ -373,20 +411,19 @@ def handle_narrow(
     original_params: dict[str, Any],
     narrowed_params: dict[str, Any],
     *,
-    seal: str,
     violations: list[Violation],
     classification_meta: dict[str, Any],
     latency_ms: float = 0.0,
 ) -> dict[str, Any]:
-    """Build the NARROW response for params that were already re-verified.
+    """Build the NARROW-candidate response for params that were re-verified.
 
-    Issues no seal: ``SymbolicGovernor`` seals ``narrowed_params`` only after
-    re-running the FULL profile on them.  ``narrowed_params`` is echoed back
-    as given (never re-read from ``classification_meta``) so the response
-    names exactly the params the seal covers.
+    ``SymbolicGovernor.validate_action`` re-runs the DRY_RUN profile (phase-2
+    stages through ``preview()``) on the narrower's proposal before calling
+    this; nothing is committed and no seal is minted. ``narrowed_params`` is
+    echoed back as given (never re-read from ``classification_meta``) so the
+    response names exactly the params that were re-verified. Executing them
+    is a separate committing run that governs them again.
     """
-    if not isinstance(seal, str) or not seal:
-        raise GovernanceError(f"NARROW for {action} has no seal; refusing")  # fail closed
     span = trace.get_current_span()
     narrowing_reason = classification_meta.get("narrowing_reason", "Constraints applied")
     constraints_applied = classification_meta.get("constraints_applied", {})
@@ -405,7 +442,6 @@ def handle_narrow(
     return {
         "verdict": GovernanceDecision.NARROW,
         "violations": violations,
-        "seal": seal,
         "latency_ms": latency_ms,
         "agent_id": agent_id,
         "classification_meta": {**classification_meta, "narrowed_params": narrowed_params},
@@ -436,10 +472,14 @@ async def handle_deny(
     )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
     await publish_refusal(receipt)
+    # Lead with the violation that decided the refusal (a HARD one when
+    # present), so a co-occurring HITL finding never masks the real cause.
+    ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.HARD)
     raise GovernanceError(
-        _error_message(violations[0]),
-        payload={**(classification_meta or {}), **_control_payload(violations[0])},
+        _error_message(ordered[0]),
+        payload={**(classification_meta or {}), **_control_payload(ordered[0])},
         receipt=receipt,
+        violations=[_error_message(v) for v in ordered],
     )
 
 
