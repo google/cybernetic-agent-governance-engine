@@ -115,6 +115,10 @@ spec:
               value: "cage:evidence:stream"
             - name: EVIDENCE_CUSTODY_INTERVAL_S
               value: "60"
+            - name: EVIDENCE_VERIFY_INTERVAL_S
+              value: "300"
+            - name: EVIDENCE_VERIFY_PREFIX
+              value: "evidence"
 
             # ClickHouse query-plane sink (src/compliance_bridge/clickhouse_sink.py)
             - name: CLICKHOUSE_ENABLED

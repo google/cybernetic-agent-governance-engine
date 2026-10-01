@@ -236,10 +236,10 @@ class Actuator01Adapter:
         4. Sign for quorum — one signature per operator (signatures)
         5. Submit over mTLS (client)
         6. Classify response (response_classifier)
-        7. Return ActuationReceipt
+        7. Ingest ActuationReceipt into the hash-chained evidence stream and return
 
         Fail-closed: any step that fails returns ``accepted=False`` with
-        structured findings.
+        structured findings and emits an ``ACTUATION_REFUSAL_RECEIPT`` event.
 
         Args:
             clearance: ``ExecutionClearance`` from the governance decision.
@@ -247,6 +247,15 @@ class Actuator01Adapter:
         Returns:
             ``ActuationReceipt`` with accept/reject status and evidence fields.
         """
+        from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+
+        receipt = await self._actuate_once(clearance)
+        await ingest_actuation_receipt(
+            clearance, receipt, actuator_id=self.actuator_id
+        )
+        return receipt
+
+    async def _actuate_once(self, clearance: ExecutionClearance) -> ActuationReceipt:
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
         # ── v3.0 Security Gates ───────────────────────────────────────────

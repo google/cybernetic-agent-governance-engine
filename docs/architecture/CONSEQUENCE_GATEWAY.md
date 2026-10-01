@@ -22,6 +22,7 @@ sequenceDiagram
     participant Gateway as ConsequenceGateway
     participant KMS as KMS Signer
     participant Store as Authority Store (Redis)
+    participant Evidence as EvidenceStreamSink
     
     Adapter->>Gateway: evaluate(token, action_payload)
     Gateway->>KMS: Verify JWS Signature & Claims
@@ -31,7 +32,9 @@ sequenceDiagram
     Gateway->>Gateway: Assert Hash == claims.act (TOCTOU Defense)
     Gateway->>Store: consume_once(rec, binding_hash)
     Store-->>Gateway: Result: Consumed Successfully
+    Gateway->>Evidence: _emit_evaluation() -> CONSEQUENCE_GATEWAY_DECISION / REFUSAL
     Gateway-->>Adapter: ConsequenceDecision.EXECUTE
+    Adapter->>Evidence: ingest_actuation_receipt() -> ACTUATION_RECEIPT / REFUSAL_RECEIPT
 ```
 
 ### 2.1 Pre-Dispatch Credential Authorization (ALLOW Path)
@@ -41,6 +44,7 @@ outbound identity needed to perform it. On the ALLOW path, the downstream
 actuator runs a further set of gates before any envelope is built or any byte
 leaves the process. In the reference actuator
 [`Actuator01Adapter.actuate()`](../../src/integrations/actuator_01/adapter.py)
+(and domain actuators such as [`BrokerActuator.actuate()`](../../src/cage_finance/actuators/broker_actuator.py))
 these are:
 
 | Gate | Check | Terminal finding on failure |
@@ -66,14 +70,20 @@ It is held only in a local variable for the duration of the dispatch — nothing
 caches it, and it is never written into the signed envelope, the envelope
 digest, or the resulting `ActuationReceipt`.
 
-**Fail-closed:** any exception raised by the broker — including
+**Fail-closed & Audit Evidence Ingestion:** any exception raised by the broker — including
 `CredentialAccessDenied` (SVID not authorized) and `CredentialNotFound` (no
 secret for the tool) — aborts the dispatch before envelope construction and
 returns `ActuationReceipt(accepted=False, retryable=False, envelope_digest=None)`
 carrying a single `TERMINAL` finding with code `CREDENTIAL_BROKER_FAILED`. No
 canonical envelope is built, no quorum signature is produced, and no HTTP
-request is issued. When no broker is configured the actuator dispatches without
-`extra_headers`; the broker is an opt-in hardening seam, not a mandatory gate.
+request is issued. Every terminal actuation outcome is recorded in
+[`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) via idempotent
+[`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py) as
+`ACTUATION_RECEIPT` (`accepted=True`) or `ACTUATION_REFUSAL_RECEIPT` (`accepted=False`,
+including `CREDENTIAL_BROKER_FAILED`, `EXECUTOR_ID_MISMATCH`, and `TARGET_ROUTE_MISMATCH`),
+so post-evaluation actuation refusals enter the tamper-evident evidence chain with the same
+completeness as pre-execution governance verdicts. When no broker is configured the actuator
+dispatches without `extra_headers`; the broker is an opt-in hardening seam, not a mandatory gate.
 
 Behaviour is pinned by
 [`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py).
@@ -85,15 +95,18 @@ The lifecycle revolves around the `ConsequenceToken` and its corresponding autho
 - **Minting**: Upon governance clearance, a short-TTL JWS is minted. It encapsulates the actor (`sub`), thread (`tid`), authority record ID (`rec`), and action digest (`act`).
 - **Transit**: The token travels transparently through execution queues alongside the raw action payload.
 - **Consumption (Atomic)**: The `ConsequenceAuthorityStore` consumes the record (`rec`) binding it to the unique execution tuple.
+- **Evidence Emission**: `ConsequenceGateway._emit_evaluation()` appends `CONSEQUENCE_GATEWAY_DECISION` (`EXECUTE`) or `CONSEQUENCE_GATEWAY_REFUSAL` (`BLOCK` / `HOLD`) to [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py).
 - **Rejection States**:
   - `TOKEN_INVALID`: Cryptographic signature failure or TTL expiration.
   - `ACTION_BINDING_MISMATCH`: The hash of the presented payload does not match the signed `act` claim.
   - `ALREADY_CONSUMED`: The token was previously consumed (Replay attempt).
   - `AUTHORITY_RECORD_BINDING_MISMATCH`: The record was consumed by a different payload/thread (Substitution attempt).
+  - `REDIS_ERROR`: Authority store unreachable or errored during consumption.
+  - `EVIDENCE_CHAIN_UNAVAILABLE`: Connected `EvidenceStreamSink` failed to commit the `EXECUTE` decision record; `evaluate()` fails closed by downgrading `EXECUTE` to `BLOCK`.
 
 ## 4. Operational Guarantees & Edge Cases
 
-- **Fail-Closed Evaluation**: Any cryptographic failure, payload mismatch, or Redis connectivity error immediately collapses the decision to `BLOCK`. It never silently defaults to `EXECUTE`.
+- **Fail-Closed Evaluation**: Any cryptographic failure, payload mismatch, Redis connectivity error, or connected evidence-stream failure on `EXECUTE` immediately collapses the decision to `BLOCK`. It never silently defaults to `EXECUTE`.
 - **TOCTOU Elimination**: By JCS-canonicalizing the raw runtime payload and re-deriving the SHA-256 hash immediately before consumption, the gateway completely eliminates Time-of-Check to Time-of-Use tampering vectors.
 - **Clock Skew Tolerance**: The token verifier permits an `iat` claim up to 5 seconds in the future to mitigate minor NTP drift across distributed Kubernetes nodes.
 - **Algorithm Confusion Prevention**: Token verification asserts that the header `alg` matches the verifying `KMSGovernanceSigner`'s `jose_alg`, and rejects `alg: none` outright.
@@ -101,6 +114,7 @@ The lifecycle revolves around the `ConsequenceToken` and its corresponding autho
 ## 5. Configuration Contracts & Runtime Matrix
 
 - **Storage Backend (Redis)**: The `ConsequenceAuthorityStore` relies on a highly available Redis instance for atomic `SETNX` or LUA-based single-use consumptions.
+- **Evidence Stream Sink**: `ConsequenceGateway` accepts an optional `evidence_sink` (or resolves the active [`get_evidence_sink()`](../../src/gateway/governance/evidence/stream.py) singleton) to record `CONSEQUENCE_GATEWAY_DECISION` and `CONSEQUENCE_GATEWAY_REFUSAL` events.
 - **KMS Signer**: The token is signed and verified by the gateway governance signer (`KMS_GOVERNANCE_KEY`; cloud providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`). Under an enforcing posture the gateway's startup checks (`kms_signing_mode`, `kms_ready` in [`governor/posture.py`](../../src/gateway/governance/governor/posture.py)) refuse to start on a software/HMAC signer or an unreachable or disabled key. Only dev, test and CI may use software signers.
 - **Canonicalization Contract**: Downstream execution payloads must be strictly JSON-serializable to support stable JCS (JSON Canonicalization Scheme, RFC 8785) hashing.
 

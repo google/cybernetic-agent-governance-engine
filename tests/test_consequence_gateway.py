@@ -567,3 +567,91 @@ async def test_concurrency_exactly_one_execute(
             "ALREADY_CONSUMED",
             "AUTHORITY_RECORD_BINDING_MISMATCH",
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Evidence stream ingestion & fail-closed on unavailable chain
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_consequence_gateway_emits_decisions_to_evidence_stream(
+    gateway: ConsequenceGateway,
+    signer,
+    action_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EXECUTE and BLOCK decisions are hash-chained into EvidenceStreamSink."""
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
+
+    stream_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    sink = EvidenceStreamSink()
+    sink._redis = stream_redis
+    sink._running = True
+    monkeypatch.setattr(
+        "src.gateway.governance.evidence.stream._evidence_sink", sink
+    )
+
+    action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
+    token = ConsequenceToken.mint(
+        sub="actor-123",
+        tid="thread-456",
+        rec="rec-010",
+        act=action_digest,
+        ver="v1",
+        ttl_seconds=60,
+        signer=signer,
+    )
+
+    res_exec = await gateway.evaluate(token=token, action_payload=action_payload)
+    assert res_exec.decision == ConsequenceDecision.EXECUTE
+
+    res_block = await gateway.evaluate(token=token, action_payload=action_payload)
+    assert res_block.decision == ConsequenceDecision.BLOCK
+    assert res_block.reason_code == "ALREADY_CONSUMED"
+
+    entries = await stream_redis.xrange(sink._stream_key)
+    assert len(entries) == 2
+    _, first = entries[0]
+    _, second = entries[1]
+    assert first["event_type"] == "CONSEQUENCE_GATEWAY_DECISION"
+    assert json.loads(first["payload_json"])["decision"] == "EXECUTE"
+    assert second["event_type"] == "CONSEQUENCE_GATEWAY_REFUSAL"
+    assert second["prev_hash"] == first["record_hash"]
+    assert json.loads(second["payload_json"])["reason_code"] == "ALREADY_CONSUMED"
+
+
+@pytest.mark.asyncio
+async def test_consequence_gateway_fails_closed_when_evidence_chain_unavailable(
+    gateway: ConsequenceGateway,
+    signer,
+    action_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An EXECUTE decision downgrades to BLOCK when the evidence chain raises EvidenceChainUnavailableError."""
+    from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+
+    broken_sink = MagicMock()
+    broken_sink.ingest = AsyncMock(
+        side_effect=EvidenceChainUnavailableError("chain head corrupted")
+    )
+    monkeypatch.setattr(
+        "src.gateway.governance.evidence.stream.get_evidence_sink",
+        lambda: broken_sink,
+    )
+
+    action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
+    token = ConsequenceToken.mint(
+        sub="actor-123",
+        tid="thread-456",
+        rec="rec-011",
+        act=action_digest,
+        ver="v1",
+        ttl_seconds=60,
+        signer=signer,
+    )
+
+    result = await gateway.evaluate(token=token, action_payload=action_payload)
+    assert result.decision == ConsequenceDecision.BLOCK
+    assert result.reason_code == "EVIDENCE_CHAIN_UNAVAILABLE"
+    assert "chain head corrupted" in result.detail

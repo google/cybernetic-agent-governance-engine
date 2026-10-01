@@ -259,6 +259,29 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "EVIDENCE_VERIFY_INTERVAL_S"
+            value = tostring(var.evidence_verify_interval_s)
+          }
+
+          env {
+            name  = "EVIDENCE_VERIFY_PREFIX"
+            value = var.evidence_verify_prefix
+          }
+
+          env {
+            name  = "OSCAL_REQUIRE_VERIFIED_CUSTODY"
+            value = tostring(var.oscal_require_verified_custody != null ? var.oscal_require_verified_custody : contains(["staging", "prod", "production"], lower(var.cage_env)))
+          }
+
+          dynamic "env" {
+            for_each = var.evidence_trust_anchors_file != "" ? [1] : []
+            content {
+              name  = "EVIDENCE_TRUST_ANCHORS_FILE"
+              value = var.evidence_trust_anchors_file
+            }
+          }
+
+          env {
             name  = "REDIS_TLS"
             value = tostring(var.enable_redis_tls)
           }

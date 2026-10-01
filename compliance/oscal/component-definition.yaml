@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-09-29T18:35:18Z'
+    last-modified: '2026-09-29T20:08:29Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -606,7 +606,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-09-29T18:35:18Z'
+      value: '2026-09-29T20:08:29Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -664,7 +664,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/ftra/schemas.py
     - name: last-compiled
-      value: '2026-09-29T18:35:18Z'
+      value: '2026-09-29T20:08:29Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-validator01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home

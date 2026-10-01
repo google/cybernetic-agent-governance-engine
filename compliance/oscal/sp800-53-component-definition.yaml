@@ -886,10 +886,23 @@ component-definition:
                 workload identity. Because the gateway that produces the records cannot
                 sign them, and the custodian that signs them cannot author gateway
                 decisions, neither workload alone can fabricate an attested record. The
-                signed body itself asserts evidentiary true; verifiers must resolve the
-                public key by signature.key_id from an independently fetched key manifest,
-                never from the attestation. Unsigned attestations are non-evidentiary by
-                construction (see AU-9(3)).
+                signed body itself asserts evidentiary true. CustodyVerifier
+                (src/compliance_bridge/evidence_verifier.py) reads the archive back and
+                resolves the public key by signature.key_id from trust anchors loaded
+                out-of-band (the EVIDENCE_KMS_KEY provider plus an optional
+                EVIDENCE_TRUST_ANCHORS_FILE for retired versions), never from the
+                attestation, and rejects gateway or reconciler kids. It also binds each
+                attestation to its data object, re-verifies every record, and fails on
+                any undeclared break in chain continuity. Unsigned attestations are
+                non-evidentiary by construction (see AU-9(3)). The compliance-bridge
+                lifespan (src/compliance_bridge/main.py) runs CustodyVerifier.run_forever()
+                on a configurable schedule (EVIDENCE_VERIFY_INTERVAL_S), exports Prometheus
+                counters and gauges (cage_evidence_verification_runs_total,
+                cage_evidence_verified_batches, cage_evidence_verification_failures,
+                cage_evidence_declared_gaps, cage_evidence_non_evidentiary_batches), exposes
+                on-demand verification at GET /v1/evidence/verify, and gates OSCAL Assessment
+                Results citation in src/compliance_bridge/oscal_exporter.py via
+                CustodyVerificationReport.assert_citable().
               props:
                 - name: implementation-status
                   value: partial
@@ -903,6 +916,15 @@ component-definition:
                 - href: "../../src/compliance_bridge/evidence_custodian.py"
                   rel: implementation
                   text: "Batch attestation signed with EVIDENCE_KMS_KEY"
+                - href: "../../src/compliance_bridge/evidence_verifier.py"
+                  rel: implementation
+                  text: "CustodyVerifier kid-resolved read-back verification, scheduler, and citation gate"
+                - href: "../../src/compliance_bridge/oscal_exporter.py"
+                  rel: implementation
+                  text: "OSCAL Assessment Results custody citation gate and attestation provenance links"
+                - href: "../../tests/test_evidence_verifier.py"
+                  rel: test
+                  text: "Tamper, deletion, foreign-kid, unknown-kid, citation gate, and endpoint fail-closed paths"
 
             - uuid: "bd0486b6-1a05-4f64-9784-752c72b2f843"
               control-id: ac-6

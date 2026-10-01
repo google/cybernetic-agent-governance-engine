@@ -63,6 +63,9 @@ metadata ``evidentiary=false``, and counted as
 ``cage_evidence_custody_batches_total{outcome="written_unsigned"}``. Anything
 that cites an attestation as evidence (OSCAL, POAM closure, audit export)
 must pass it through :func:`assert_citable`, which fails closed on it.
+:mod:`src.compliance_bridge.evidence_verifier` performs the full read-back
+verification (kid-resolved signature, object binding, record re-verification
+and cross-batch continuity).
 
 Environment variables
 ---------------------
@@ -152,9 +155,10 @@ def assert_citable(attestation: dict[str, Any]) -> None:
 
     Checks the structural markers only: schema, ``signature_status`` of
     ``SIGNED``, ``evidentiary`` true, and a complete ``signature`` object.
-    Cryptographic verification is separate and must resolve the public key
-    by ``signature.key_id`` from an independently fetched key manifest,
-    never from the document itself.
+    Cryptographic verification is separate:
+    :class:`~src.compliance_bridge.evidence_verifier.CustodyVerifier` resolves
+    the public key by ``signature.key_id`` from independently loaded trust
+    anchors, never from the document itself.
 
     Raises:
         NonEvidentiaryAttestationError: The attestation is unsigned, marked

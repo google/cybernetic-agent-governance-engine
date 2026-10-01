@@ -834,6 +834,7 @@ module "compliance_bridge" {
   evidence_stream_redis_db    = local.evidence_stream_redis_db
   evidence_stream_key         = local.evidence_stream_key
   evidence_custody_interval_s = 60
+  evidence_verify_interval_s  = 300
   enable_redis_tls            = var.enable_memorystore_tls
   redis_auth_mode             = local.governance_redis_auth
 

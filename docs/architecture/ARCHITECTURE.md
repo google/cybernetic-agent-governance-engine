@@ -114,8 +114,10 @@ graph TB
     SYM -.->|BLOCKED / Audit| EVID
     CQG -->|Verified Token| ACTUATOR
     CQG -->|Seal & Audit| EVID
+    ACTUATOR -->|ingest_actuation_receipt| EVID
     EVID --> R_HOT
     R_HOT -->|Compliance-bridge EvidenceCustodian<br/>re-verify, KMS attest, put-if-absent| CH_COLD
+    CH_COLD -->|CustodyVerifier<br/>kid-resolved verify, assert_citable| OSCAL_CITE[OSCAL Assessment Results]
 ```
 
 ### Hot-Path Execution Steps
@@ -125,7 +127,7 @@ graph TB
    - **Phase 1 (Read-Only Inspection)**: Runs the non-mutating stages sequentially — FTRA, STPA, OPA, confidence, then the domain's read-only tiers by `(phase, order)` (e.g. bounding, consensus, causal) — and stops at the first `HARD` violation.
    - **Phase 2 (Atomic Mutation)**: Only if Phase 1 produced zero violations do the mutating tiers commit (e.g. discrete-time Control Barrier Functions via Redis Lua scripts and fiscal reservations). Each commit returns a `CommitReceipt` held by the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)); any Phase 2 failure rolls back exactly the recorded receipts in LIFO order.
 4. **Seal & Actuation Clearance**: On a clean run the governor issues a routing seal inside the same `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)). Commits stay in force only once the seal is issued; a failing or cancelled seal rolls them all back. The seal is a KMS-signed JWT bound to a durable evidence record ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)). When an external normative provider admits an action, a short-lived KMS-signed ConsequenceToken (JWS) is also minted ([`consequence_token_service.py`](../../src/gateway/governance/consequence_token_service.py)) for single-use verification by the [`ConsequenceGateway`](CONSEQUENCE_GATEWAY.md).
-5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, PauseReceipt), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1) and asynchronously drained to durable cold storage.
+5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, PauseReceipt, `CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`, and `ACTUATION_RECEIPT` / `ACTUATION_REFUSAL_RECEIPT` via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1), asynchronously drained to durable cold storage by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py), and verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py).
 
 ---
 
@@ -193,7 +195,7 @@ stateDiagram-v2
   - `DEFER:{id}`: Hashed deferral payloads parked for human-in-the-loop (HITL) resolution.
   - `DEFER:expiry_index`: Sorted set (ZSET) tracking TTL expiration timestamps.
   - `evidence:stream`: Monotonically increasing, hash-chained transaction log.
-- **Long-Term Cold Archive (Object Storage)**: The gateway only produces evidence. The compliance bridge's `EvidenceCustodian` ([`evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py)) reads the stream from a durable cursor (default every 60 seconds, `EVIDENCE_CUSTODY_INTERVAL_S`), re-verifies the hash chain, signs a `cage-evidence-batch/1` attestation with `EVIDENCE_KMS_KEY`, and writes each batch with put-if-absent semantics. In the `gcp-gke` target the retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../../infra/modules/worm_bucket/)) is the system of record.
+- **Long-Term Cold Archive & Read-Back Verification (Object Storage)**: The gateway only produces evidence. The compliance bridge's `EvidenceCustodian` ([`evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py)) reads the stream from a durable cursor (default every 60 seconds, `EVIDENCE_CUSTODY_INTERVAL_S`), re-verifies the hash chain, signs a `cage-evidence-batch/1` attestation with `EVIDENCE_KMS_KEY`, and writes each batch with put-if-absent semantics. `CustodyVerifier` ([`evidence_verifier.py`](../../src/compliance_bridge/evidence_verifier.py)) periodically reads the archive back (`EVIDENCE_VERIFY_INTERVAL_S`, default 300 seconds), verifies batch signatures against `kid`-resolved trust anchors (`EVIDENCE_KMS_KEY` + optional `EVIDENCE_TRUST_ANCHORS_FILE`), re-checks every record and cross-batch link, and gates OSCAL assessment citations (`OSCAL_REQUIRE_VERIFIED_CUSTODY=true` in staging/prod). In the `gcp-gke` target the retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../../infra/modules/worm_bucket/)) is the system of record.
 
 ---
 

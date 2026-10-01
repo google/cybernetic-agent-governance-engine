@@ -32,6 +32,7 @@ from typing import Any
 from src.gateway.governance.evidence.cold_store import (
     ColdStoreError,
     ColdStoreHealth,
+    ColdStoreNotFoundError,
     ColdStoreReceipt,
     EvidenceColdStore,
 )
@@ -235,6 +236,48 @@ class GcsColdStore(EvidenceColdStore):
         metadata: Mapping[str, str] | None = None,
     ) -> tuple[ColdStoreReceipt, bool]:
         return await asyncio.to_thread(self._sync_put_if_absent, key, content, metadata)
+
+    def _sync_get(self, key: str) -> bytes:
+        client = self._get_client()
+        bucket_name = self._resolve_bucket()
+        blob = client.bucket(bucket_name).blob(key)
+
+        from google.api_core.exceptions import NotFound
+
+        try:
+            return bytes(blob.download_as_bytes(timeout=self._timeout))
+        except NotFound as exc:
+            raise ColdStoreNotFoundError(
+                f"GCS object not found: '{key}'", backend_id="gcs"
+            ) from exc
+        except Exception as exc:
+            raise ColdStoreError(
+                f"GCS download failed for key '{key}': {exc}",
+                backend_id="gcs",
+            ) from exc
+
+    async def get(self, key: str) -> bytes:
+        return await asyncio.to_thread(self._sync_get, key)
+
+    def _sync_list_keys(self, prefix: str) -> list[str]:
+        client = self._get_client()
+        bucket_name = self._resolve_bucket()
+        try:
+            # list_blobs pages transparently when iterated.
+            return sorted(
+                blob.name
+                for blob in client.list_blobs(
+                    bucket_name, prefix=prefix, timeout=self._timeout
+                )
+            )
+        except Exception as exc:
+            raise ColdStoreError(
+                f"GCS list failed for prefix '{prefix}': {exc}",
+                backend_id="gcs",
+            ) from exc
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        return await asyncio.to_thread(self._sync_list_keys, prefix)
 
     def health(self) -> ColdStoreHealth:
         if not self._bucket_name:

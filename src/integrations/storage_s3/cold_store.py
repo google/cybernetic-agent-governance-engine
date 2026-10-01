@@ -32,6 +32,7 @@ from typing import Any
 from src.gateway.governance.evidence.cold_store import (
     ColdStoreError,
     ColdStoreHealth,
+    ColdStoreNotFoundError,
     ColdStoreReceipt,
     EvidenceColdStore,
 )
@@ -322,6 +323,45 @@ class S3ColdStore(EvidenceColdStore):
         metadata: Mapping[str, str] | None = None,
     ) -> tuple[ColdStoreReceipt, bool]:
         return await asyncio.to_thread(self._sync_put_if_absent, key, content, metadata)
+
+    def _sync_get(self, key: str) -> bytes:
+        client = self._get_client()
+        bucket_name = self._resolve_bucket()
+        try:
+            response = client.get_object(Bucket=bucket_name, Key=key)
+            return bytes(response["Body"].read())
+        except Exception as exc:
+            if isinstance(exc, _BotocoreClientError):
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code in ("404", "NoSuchKey", "NotFound"):
+                    raise ColdStoreNotFoundError(
+                        f"S3 object not found: '{key}'", backend_id="s3"
+                    ) from exc
+            raise ColdStoreError(
+                f"S3 download failed for key '{key}': {exc}",
+                backend_id="s3",
+            ) from exc
+
+    async def get(self, key: str) -> bytes:
+        return await asyncio.to_thread(self._sync_get, key)
+
+    def _sync_list_keys(self, prefix: str) -> list[str]:
+        client = self._get_client()
+        bucket_name = self._resolve_bucket()
+        keys: list[str] = []
+        try:
+            paginator = client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+                keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        except Exception as exc:
+            raise ColdStoreError(
+                f"S3 list failed for prefix '{prefix}': {exc}",
+                backend_id="s3",
+            ) from exc
+        return sorted(keys)
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        return await asyncio.to_thread(self._sync_list_keys, prefix)
 
     def health(self) -> ColdStoreHealth:
         if not self._bucket_name:

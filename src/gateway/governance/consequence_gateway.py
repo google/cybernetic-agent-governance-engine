@@ -113,6 +113,68 @@ class ConsequenceGateway:
         self._store = store
         self._signer = signer
 
+    async def _emit_evaluation(
+        self,
+        evaluation: ConsequenceEvaluation,
+        *,
+        claims: object | None = None,
+        recomputed_digest: str | None = None,
+    ) -> ConsequenceEvaluation:
+        """Emit a ``ConsequenceEvaluation`` record to the hash-chained evidence stream.
+
+        For ``BLOCK`` / ``HOLD`` outcomes, ingestion errors are logged without
+        suppressing the refusal verdict. For ``EXECUTE``, an
+        ``EvidenceChainUnavailableError`` on a connected sink fails closed by
+        downgrading the decision to ``BLOCK`` (``EVIDENCE_CHAIN_UNAVAILABLE``).
+        """
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+            get_evidence_sink,
+        )
+
+        event_type = (
+            "CONSEQUENCE_GATEWAY_DECISION"
+            if evaluation.decision == ConsequenceDecision.EXECUTE
+            else "CONSEQUENCE_GATEWAY_REFUSAL"
+        )
+        event = {
+            "type": event_type,
+            "controlId": "AC-3",
+            "decision": evaluation.decision.value,
+            "reason_code": evaluation.reason_code,
+            "detail": evaluation.detail,
+            "rec": getattr(claims, "rec", None),
+            "tid": getattr(claims, "tid", None),
+            "sub": getattr(claims, "sub", None),
+            "act": getattr(claims, "act", None),
+            "ver": getattr(claims, "ver", None),
+            "recomputed_digest": recomputed_digest,
+        }
+        try:
+            sink = get_evidence_sink()
+            await sink.ingest(event)
+        except EvidenceChainUnavailableError as exc:
+            logger.error(
+                "[ConsequenceGateway] Evidence stream unavailable on %s (%s): %s",
+                evaluation.decision.value,
+                evaluation.reason_code,
+                exc,
+            )
+            if evaluation.decision == ConsequenceDecision.EXECUTE:
+                return ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="EVIDENCE_CHAIN_UNAVAILABLE",
+                    detail=str(exc),
+                )
+        except Exception as exc:
+            logger.error(
+                "[ConsequenceGateway] Failed to emit %s (%s): %s",
+                event_type,
+                evaluation.reason_code,
+                exc,
+            )
+        return evaluation
+
     async def evaluate(
         self,
         token: str,
@@ -132,10 +194,12 @@ class ConsequenceGateway:
             claims = ConsequenceToken.verify(token, signer=self._signer)
         except ConsequenceTokenError as exc:
             logger.warning("[ConsequenceGateway] Token verification failed: %s", exc)
-            return ConsequenceEvaluation(
-                decision=ConsequenceDecision.BLOCK,
-                reason_code="TOKEN_INVALID",
-                detail=str(exc),
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="TOKEN_INVALID",
+                    detail=str(exc),
+                )
             )
 
         # Steps 3-4: JCS digest re-verification (closes TOCTOU gap)
@@ -148,9 +212,13 @@ class ConsequenceGateway:
                 "[ConsequenceGateway] ACTION_BINDING_MISMATCH rec=%s",
                 claims.rec,
             )
-            return ConsequenceEvaluation(
-                decision=ConsequenceDecision.BLOCK,
-                reason_code="ACTION_BINDING_MISMATCH",
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="ACTION_BINDING_MISMATCH",
+                ),
+                claims=claims,
+                recomputed_digest=recomputed_digest,
             )
 
         # Step 5: atomic single-use consumption
@@ -168,10 +236,14 @@ class ConsequenceGateway:
         except Exception as exc:
             # Fail-closed: Redis error → BLOCK (never silently EXECUTE on Redis failure)
             logger.error("[ConsequenceGateway] Redis error during consumption: %s", exc)
-            return ConsequenceEvaluation(
-                decision=ConsequenceDecision.BLOCK,
-                reason_code="REDIS_ERROR",
-                detail=str(exc),
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="REDIS_ERROR",
+                    detail=str(exc),
+                ),
+                claims=claims,
+                recomputed_digest=recomputed_digest,
             )
 
         if not consumed:
@@ -187,9 +259,13 @@ class ConsequenceGateway:
                 reason_code,
                 claims.rec,
             )
-            return ConsequenceEvaluation(
-                decision=ConsequenceDecision.BLOCK,
-                reason_code=reason_code,
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code=reason_code,
+                ),
+                claims=claims,
+                recomputed_digest=recomputed_digest,
             )
 
         # Step 6: EXECUTE
@@ -197,7 +273,11 @@ class ConsequenceGateway:
             "[ConsequenceGateway] EXECUTE granted rec=%s",
             claims.rec,
         )
-        return ConsequenceEvaluation(
-            decision=ConsequenceDecision.EXECUTE,
-            reason_code="OK",
+        return await self._emit_evaluation(
+            ConsequenceEvaluation(
+                decision=ConsequenceDecision.EXECUTE,
+                reason_code="OK",
+            ),
+            claims=claims,
+            recomputed_digest=recomputed_digest,
         )

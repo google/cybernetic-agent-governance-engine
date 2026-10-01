@@ -4,18 +4,18 @@
 
 The Evidence Chain is a core component of the Layer 1 Kernel responsible for maintaining a cryptographically verifiable, durable ledger of all governance and compliance events. It elevates standard application logging into a tamper-evident, hash-chained evidence sequence required by ISO 42001 and AARM compliance mandates.
 
-**Trust Boundaries (producer / custodian split)**:
-- **Producer — gateway (Layer 1)**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) sanitizes, canonicalizes and hash-chains each governance event and appends it to a Redis Stream. The gateway holds **no evidence signing key and no cold store**; it cannot attest to or archive its own evidence.
-- **Custodian — compliance bridge (Layer 3)**: [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) independently re-verifies the chain, signs a per-batch attestation with the dedicated `EVIDENCE_KMS_KEY`, writes batch + attestation to the WORM cold store, and advances a durable cursor.
-- **Downstream (Storage Adapters)**: The custodian writes through the abstract `EvidenceColdStore` protocol ([`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)). Concrete backends (`GcsColdStore` in [`src/integrations/storage_gcs/cold_store.py`](../../src/integrations/storage_gcs/cold_store.py), `S3ColdStore` in [`src/integrations/storage_s3/cold_store.py`](../../src/integrations/storage_s3/cold_store.py)) are lazy-imported from Layer 3 by [`factory.py`](../../src/gateway/governance/evidence/factory.py).
+**Trust Boundaries (producer / custodian / verifier split)**:
+- **Producer — gateway (Layer 1)**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) sanitizes, canonicalizes and hash-chains each governance event (from [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py), [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py), [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py), and [`GovernanceEventBus`](../../src/compliance_bridge/sse_events.py)) and appends it to a Redis Stream. The gateway holds **no evidence signing key and no cold store**; it cannot attest to or archive its own evidence.
+- **Custodian & Verifier — compliance bridge (Layer 3)**: [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) independently re-verifies the chain, signs a per-batch attestation with the dedicated `EVIDENCE_KMS_KEY`, writes batch + attestation to the WORM cold store, and advances a durable cursor. [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) reads the archive back on `EVIDENCE_VERIFY_INTERVAL_S`, verifies signatures against out-of-band `kid`-resolved trust anchors, re-checks every record and batch link, and gates OSCAL assessment citations (`assert_citable()`).
+- **Downstream (Storage Adapters)**: The custodian and verifier operate through the abstract `EvidenceColdStore` protocol ([`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)). Concrete backends (`GcsColdStore` in [`src/integrations/storage_gcs/cold_store.py`](../../src/integrations/storage_gcs/cold_store.py), `S3ColdStore` in [`src/integrations/storage_s3/cold_store.py`](../../src/integrations/storage_s3/cold_store.py)) are lazy-imported from Layer 3 by [`factory.py`](../../src/gateway/governance/evidence/factory.py).
 
 ## 2. Data & Execution Flow
 
-The hot path (gateway) only hashes and appends. Signing and archival run out of band in a separate workload with a separate identity.
+The hot path (gateway) only hashes and appends. Signing, archival, and read-back verification run out of band in a separate workload with a separate identity.
 
 ```mermaid
 flowchart TD
-    EventBus["GovernanceEventBus.publish()"] --> Ingest["EvidenceStreamSink.ingest()"]
+    EventBus["GovernanceEventBus / ConsequenceGateway /\ningest_actuation_receipt()"] --> Ingest["EvidenceStreamSink.ingest()"]
 
     subgraph Producer["Gateway (producer, no key)"]
         Ingest --> PII[PIISanitizer.sanitize_dict]
@@ -26,14 +26,16 @@ flowchart TD
 
     CAS --> Redis[("Redis Stream\ndb=1, noeviction")]
 
-    subgraph Custodian["Compliance bridge (custodian)"]
+    subgraph Custodian["Compliance bridge (custodian + verifier)"]
         Redis --> Verify["Re-verify chain after cursor"]
         Verify --> Sign["Sign batch attestation (EVIDENCE_KMS_KEY)"]
         Sign --> Put["put_if_absent batch + attestation"]
         Put --> Cursor["Advance durable cursor"]
+        VerifyArchive["CustodyVerifier.run_forever() /\nverify_for_citation()"] --> OSCAL["OSCAL /v1/oscal/assessment-results\n(assert_citable)"]
     end
 
     Put --> Integrations["WORM cold store\n(GCS / S3)"]
+    Integrations --> VerifyArchive
 ```
 
 ## 3. State Machine & Lifecycle
@@ -54,7 +56,7 @@ The lifecycle of an evidence record spans multiple durability tiers:
 - **Retry-Safe Custody**: Before writing, the custodian records `pending_end_id` on the cursor. If the cold-store write fails, the cursor does not advance and the next cycle retries exactly the same range; object keys and bytes are deterministic, so `put_if_absent()` makes a replay an idempotent skip. Outcomes are counted in `cage_evidence_custody_batches_total{outcome}` and `cage_evidence_cold_store_writes_total{backend,outcome}`.
 - **Fail-Closed on Integrity Violations**: A broken link, bad record hash, sequence regression or same-sequence fork halts custody at that entry (the cursor never advances past it) and logs CRITICAL. A sequence gap — e.g. entries trimmed by `maxlen` before custody — is logged CRITICAL, counted in `cage_evidence_custody_gaps_total`, and recorded in the attestation rather than hidden. A clean genesis rotation to a new `chain_id` is accepted.
 - **Fail-Closed on Signing**: When signatures are required (enforcing posture), a signing failure aborts the batch without writing.
-- **Unsigned Attestations Are Not Evidence**: In permissive postures (dev/test/ci) without an active `EVIDENCE_KMS_KEY` signer, or when signing fails there, the attestation is written with `signature_status: "UNSIGNED"`, `evidentiary: false` and `signature: null`, under a distinct key (`<first>-<last>.attestation.unsigned.json`), with object metadata `evidentiary=false` on both the batch and the attestation, and counted as `cage_evidence_custody_batches_total{outcome="written_unsigned"}`. Signed attestations carry `signature_status: "SIGNED"` and `evidentiary: true` inside the signed body. Anything that cites an attestation as evidence (OSCAL statements, POAM closure, audit exports) must first call [`assert_citable()`](../../src/compliance_bridge/evidence_custodian.py), which raises `NonEvidentiaryAttestationError` for unsigned, non-evidentiary or incomplete attestations. `assert_citable()` checks structure only; cryptographic verification must resolve the public key by `signature.key_id` from an independently fetched key manifest.
+- **Unsigned Attestations Are Not Evidence**: In permissive postures (dev/test/ci) without an active `EVIDENCE_KMS_KEY` signer, or when signing fails there, the attestation is written with `signature_status: "UNSIGNED"`, `evidentiary: false` and `signature: null`, under a distinct key (`<first>-<last>.attestation.unsigned.json`), with object metadata `evidentiary=false` on both the batch and the attestation, and counted as `cage_evidence_custody_batches_total{outcome="written_unsigned"}`. Signed attestations carry `signature_status: "SIGNED"` and `evidentiary: true` inside the signed body. Anything that cites an attestation as evidence (OSCAL statements, POAM closure, audit exports) must first call [`assert_citable()`](../../src/compliance_bridge/evidence_custodian.py), which raises `NonEvidentiaryAttestationError` for unsigned, non-evidentiary or incomplete attestations. `assert_citable()` checks structure only; cryptographic verification is done by the verifier (§4.2).
 - **Vendor Decoupling**: The Layer 1 kernel is strictly decoupled from cloud SDKs (like `boto3` or `google-cloud-storage`) and holds no signer. Gate G3 no longer allowlists any `compliance_bridge` import from the evidence factory.
 
 ### 4.1 System of Record (`gcp-gke` Target)
@@ -63,42 +65,52 @@ In [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf), `modu
 
 The gateway manifests set `EVIDENCE_STREAM_ENABLED` but deliberately not `EVIDENCE_COLD_STORE` or `EVIDENCE_KMS_KEY`: archival and signing belong to the compliance bridge, which also receives the evidence stream Redis connection settings. Under an enforcing posture the bridge refuses to start custody with a `null` cold store or without a signing key (`EvidenceCustodyConfigError`).
 
-### 4.2 Actuation Refusals and Credential Denials — Current Status
+### 4.2 Read-Back Verification (`evidence_verifier.py`)
 
-CAGE's stated standard is that refusals are primary evidence: a DENY carries the
-same evidentiary weight as an ALLOW. At the actuation edge this is **not yet
-wired**, and this document records the actual state rather than the intent.
+[`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) reads the archive back and decides what may be cited. It trusts nothing it reads:
 
-What is true today:
+- **Per batch** (`verify_batch()`): the attestation must pass `assert_citable()`; a `signature.key_id` belonging to the gateway seal key or the reconciler snapshot key is rejected; the signature over the attestation body (everything except `signature`) must verify against a public key resolved **by kid from an independently loaded trust-anchor set**; the attestation key, `data_key` and the chain/range in the object path must agree; the data object's SHA-256 must equal `content_sha256`; and every record is re-verified (hash, `prev_hash` link, contiguous sequence, `chain_id`, first/last stream IDs, entry count, last record hash). A validly signed attestation therefore cannot vouch for a forged record.
+- **Across batches** (`verify_all()`): signed batches are grouped by `chain_id` and ordered by sequence. Each must continue the previous one. A jump is accepted only when the later attestation itself declares the gap, and is reported in `declared_gaps`; an undeclared jump (a deleted batch or chain head) fails. A data object with no attestation, or an unexpected object under the prefix, fails. Unsigned attestations are listed in `non_evidentiary` and never counted as verified, so an unsigned batch inside a signed chain fails continuity.
+- **Trust anchors**: `load_evidence_trust_anchors()` fetches the public key(s) of `EVIDENCE_KMS_KEY` from the KMS provider, plus an optional operator-mounted `EVIDENCE_TRUST_ANCHORS_FILE` (JSON `{kid: pem}`) for retired key versions. Manifest kids must be versions of the same crypto key as `EVIDENCE_KMS_KEY` and never the gateway or reconciler key. With no anchors, every signed attestation fails on unknown kid.
+- **Outcomes & Citability**: a verification failure is a verdict; a backend error (`ColdStoreError` other than `ColdStoreNotFoundError`) propagates and is not. `CustodyVerificationReport.citable` is `True` only when `report.ok` is `True`, at least one signed batch verified (`len(report.verified) >= 1`), and `report.declared_gaps` is empty; `report.assert_citable()` (and `verifier.verify_for_citation()`) raises `EvidenceVerificationError` otherwise, so an empty archive, an unsigned-only archive, or a gap-trimmed chain cannot be cited. CLI: `uv run python -m src.compliance_bridge.evidence_verifier [--prefix P] [--require-citable] [--json]`.
+- **Scheduled Loop, Metrics & Citation Gating**: When `EVIDENCE_STREAM_ENABLED=true`, the compliance-bridge lifespan ([`main.py`](../../src/compliance_bridge/main.py)) starts `CustodyVerifier.from_env().run_forever()` on `EVIDENCE_VERIFY_INTERVAL_S` (default `300s`, failing closed at startup under an enforcing posture when `EVIDENCE_COLD_STORE=null` or when no trust anchors are configured). Each cycle updates Prometheus metrics `cage_evidence_verification_runs_total{outcome="ok"|"failed"|"error"}`, `cage_evidence_verified_batches`, `cage_evidence_verification_failures`, `cage_evidence_declared_gaps`, and `cage_evidence_non_evidentiary_batches`. `GET /v1/evidence/verify` runs an on-demand verification cycle (`200` on pass, `409` on failure or uncitable archive with `require_citable=true`, `503` on cold-store outage). `GET /v1/oscal/assessment-results` (when `verify_custody=true` or `OSCAL_REQUIRE_VERIFIED_CUSTODY=true`) and `build_oscal_assessment_results(..., custody_report=...)` ([`oscal_exporter.py`](../../src/compliance_bridge/oscal_exporter.py)) enforce `assert_citable()` (`409 EVIDENCE_CUSTODY_UNVERIFIED` / `503 EVIDENCE_STORE_UNAVAILABLE`) and attach `evidence-custody-verified-batches`, `evidence-custody-chain-head`, `evidence-custody-key-id`, and `links[rel="evidence-attestation"]` to the OSCAL result entry.
+- **Read seam**: the verifier needs `EvidenceColdStore.get()` (exact bytes; `ColdStoreNotFoundError` when missing) and `list_keys()` (all pages, sorted), implemented by the GCS, S3 and null backends. The compliance bridge's existing bucket-scoped `roles/storage.objectViewer` covers both.
 
-- Credential-denial refusals are **terminal and fail-closed**. When the
-  credential broker seam raises — `CredentialAccessDenied`, `CredentialNotFound`,
-  or any other `CredentialBrokerError` — the reference actuator returns
-  `ActuationReceipt(accepted=False, retryable=False, envelope_digest=None)` with
-  a single `TERMINAL` finding coded `CREDENTIAL_BROKER_FAILED`, and performs no
-  envelope construction, no signing, and no network dispatch. See
-  [`adapter.py`](../../src/integrations/actuator_01/adapter.py) and
-  [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md).
-- The refusal is structured and attributable: the finding's `detail` carries the
-  broker's message, and the receipt is returned to the caller.
+### 4.3 Actuation Refusals, Credential Denials, and ConsequenceGateway Decisions
 
-What is **not** true today:
+CAGE's standard is that refusals are primary evidence: a DENY carries the same
+evidentiary weight as an ALLOW. Both the actuation seam and the post-FRIA
+`ConsequenceGateway` emit hash-chained `cage-audit/3.0` records to
+[`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py):
 
-- No code path passes an `ActuationReceipt` — accepted or refused — to
-  [`EvidenceStreamSink.ingest()`](../../src/gateway/governance/evidence/stream.py).
-  `CREDENTIAL_BROKER_FAILED` therefore does **not** appear as a hash-chained
-  record in `cage:evidence:stream`, and is not archived to the cold store.
-  The only production consumer of a receipt is
-  [`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py), which
-  converts a rejected receipt into a `SymbolicGovernorViolation` carrying the
-  formatted findings.
-- [`consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)
-  does not emit evidence records either; it returns a `ConsequenceDecision` and
-  leaves persistence to its caller.
-
-Closing this gap requires an explicit ingestion call on the refusal path. Until
-that exists, treat actuation refusals as *logged and propagated*, not as
-*tamper-evident chained evidence*.
+- **Credential-denial and actuation refusals (`ACTUATION_REFUSAL_RECEIPT`)**:
+  When the credential broker seam raises (`CredentialAccessDenied`,
+  `CredentialNotFound`, or any other `CredentialBrokerError`), or when identity,
+  route, clearance, quorum, or transport validation fails, the actuator returns
+  `ActuationReceipt(accepted=False, ...)` with structured findings (e.g.
+  `CREDENTIAL_BROKER_FAILED`, `EXECUTOR_ID_MISMATCH`, `TARGET_ROUTE_MISMATCH`)
+  and performs no unauthorized network dispatch. See
+  [`adapter.py`](../../src/integrations/actuator_01/adapter.py),
+  [`broker_actuator.py`](../../src/cage_finance/actuators/broker_actuator.py),
+  and [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md).
+- **Idempotent actuation receipt ingestion (`ingest_actuation_receipt`)**:
+  [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)
+  is invoked inside [`Actuator01Adapter.actuate()`](../../src/integrations/actuator_01/adapter.py),
+  [`BrokerActuator.actuate()`](../../src/cage_finance/actuators/broker_actuator.py),
+  and [`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py)
+  (deduplicated per `ActuationReceipt` instance via `receipt.evidence_id`),
+  emitting `ACTUATION_REFUSAL_RECEIPT` on `accepted=False` and
+  `ACTUATION_RECEIPT` on `accepted=True` into `cage:evidence:stream`.
+- **`ConsequenceGateway` decisions (`CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`)**:
+  [`ConsequenceGateway.evaluate()`](../../src/gateway/governance/consequence_gateway.py)
+  emits every `EXECUTE` (`CONSEQUENCE_GATEWAY_DECISION`) and `BLOCK` / `HOLD`
+  (`CONSEQUENCE_GATEWAY_REFUSAL`, including `TOKEN_INVALID`,
+  `ACTION_BINDING_MISMATCH`, `ALREADY_CONSUMED`,
+  `AUTHORITY_RECORD_BINDING_MISMATCH`, and `REDIS_ERROR`) to
+  `EvidenceStreamSink.ingest()`. If a connected evidence sink raises
+  `EvidenceChainUnavailableError` on an `EXECUTE` verdict, `ConsequenceGateway`
+  fails closed by downgrading the decision to `BLOCK`
+  (`EVIDENCE_CHAIN_UNAVAILABLE`).
 
 ## 5. Configuration Contracts & Runtime Matrix
 
@@ -115,7 +127,7 @@ Gateway (producer):
 - `EVIDENCE_CHAIN_BLOCKING`: Commit evidence synchronously before seal issuance (default: `true`). Non-blocking under an enforcing posture requires `CAGE_ALLOW_NONBLOCKING_PROD=true`.
 - `EVIDENCE_COMMIT_TIMEOUT_S`: Blocking commit timeout in seconds (default: `5.0`).
 
-Compliance bridge (custodian):
+Compliance bridge (custodian & verifier):
 
 - `EVIDENCE_CUSTODY_INTERVAL_S`: Seconds between custody cycles (default: `60`).
 - `EVIDENCE_CUSTODY_BATCH_SIZE`: Maximum entries per batch (default: `5000`).
@@ -123,5 +135,9 @@ Compliance bridge (custodian):
 - `EVIDENCE_COLD_STORE_BUCKET`: Global bucket fallback; regional overrides are resolved by [`residency.py`](../../src/gateway/governance/evidence/residency.py).
 - `EVIDENCE_COLD_STORE_CMEK_KEY`: CMEK key for the GCS backend.
 - `EVIDENCE_KMS_KEY`: Attestation signing key, resolved by `build_evidence_signer()` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)); required when enforcing and refused if it equals the gateway or reconciler key.
+- `EVIDENCE_TRUST_ANCHORS_FILE`: Optional path to a JSON `{kid: pem}` trust-anchor manifest for retired versions of `EVIDENCE_KMS_KEY`.
+- `EVIDENCE_VERIFY_INTERVAL_S`: Seconds between background `CustodyVerifier.run_forever()` cycles (default: `300`).
+- `EVIDENCE_VERIFY_PREFIX`: Cold-store object key prefix inspected by `CustodyVerifier` (default: `evidence`).
+- `OSCAL_REQUIRE_VERIFIED_CUSTODY`: When `true`, `GET /v1/oscal/assessment-results` requires a citable `CustodyVerificationReport` even when `verify_custody=true` is not passed on the query string (default: `false`; automatically `true` in Terraform for `staging`/`prod`/`production`).
 
 Removed: `EVIDENCE_STREAM_KMS_SIGN` and `EVIDENCE_COLD_STORE_FLUSH_SECONDS` (the gateway no longer signs or flushes).

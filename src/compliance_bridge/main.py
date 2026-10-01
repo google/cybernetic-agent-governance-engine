@@ -174,12 +174,17 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     from src.gateway.governance.env_posture import is_enforcing
 
     from .evidence_custodian import EvidenceCustodian, EvidenceCustodyConfigError
+    from .evidence_verifier import CustodyVerifier
 
     _custodian: EvidenceCustodian | None = None
     _custody_task: asyncio.Task | None = None
+    _verifier: CustodyVerifier | None = None
+    _verify_task: asyncio.Task | None = None
+    app.state.evidence_verifier = None
     if os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true":
         try:
             _custodian = EvidenceCustodian.from_env()
+            _verifier = CustodyVerifier.from_env()
         except EvidenceCustodyConfigError as cfg_err:
             if is_enforcing():
                 logger.critical("🚨 STARTUP FAILURE: evidence custody: %s", cfg_err)
@@ -202,6 +207,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             _custodian.run_forever(), name="evidence-custodian"
         )
         logger.info("✅ Evidence custodian started")
+    if _verifier is not None:
+        app.state.evidence_verifier = _verifier
+        _verify_task = asyncio.create_task(
+            _verifier.run_forever(), name="evidence-verifier"
+        )
+        logger.info("✅ Evidence custody verifier started")
 
     # ------------------------------------------------------------------
     # POAM-014 / NIST SC-28: CMEK validation for evidence artifact storage.
@@ -255,7 +266,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     try:
         yield
     finally:
-        for _task in (_sla_task, _lula_task, _custody_task):
+        for _task in (_sla_task, _lula_task, _custody_task, _verify_task):
             if _task is None:
                 continue
             _task.cancel()
@@ -263,6 +274,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 await _task
             except asyncio.CancelledError:
                 pass
+        app.state.evidence_verifier = None
         if _custodian is not None:
             await _custodian.aclose()
         logger.info("🛑 compliance-bridge shutting down.")
@@ -854,6 +866,79 @@ def _build_cer_index() -> CERIndex | None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_evidence_verifier():
+    """Return the active CustodyVerifier or construct one from environment."""
+    from .evidence_custodian import EvidenceCustodyConfigError
+    from .evidence_verifier import CustodyVerifier
+
+    active = getattr(app.state, "evidence_verifier", None)
+    if active is not None:
+        return active
+    try:
+        return CustodyVerifier.from_env()
+    except EvidenceCustodyConfigError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "EVIDENCE_CUSTODY_UNVERIFIED",
+                "message": str(exc),
+            },
+        ) from exc
+
+
+@app.get(
+    "/v1/evidence/verify",
+    tags=["compliance"],
+    summary="Verify WORM evidence archive custody and cryptographic chain continuity",
+)
+async def verify_evidence_custody(
+    prefix: str | None = Query(
+        default=None,
+        description="Cold-store prefix to inspect (defaults to EVIDENCE_VERIFY_PREFIX / 'evidence-stream/')",
+    ),
+    require_citable: bool = Query(
+        default=False,
+        description=(
+            "Return 409 unless at least one signed batch verifies and no "
+            "declared stream gaps exist"
+        ),
+    ),
+) -> JSONResponse:
+    """Independently verify WORM archive batches against out-of-band trust anchors.
+
+    Returns 200 with the structured ``CustodyVerificationReport`` when the
+    archive satisfies the requested verification level, 409 when any batch
+    fails verification (or when ``require_citable=true`` and the archive is
+    not citable), and 503 when the cold-store backend is unreachable.
+    """
+    from src.gateway.governance.evidence.cold_store import ColdStoreError
+
+    from .evidence_verifier import EvidenceVerificationError
+
+    verifier = _resolve_evidence_verifier()
+    try:
+        report = await verifier.verify_all(prefix=prefix)
+    except ColdStoreError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "EVIDENCE_STORE_UNAVAILABLE",
+                "message": str(exc),
+            },
+        ) from exc
+
+    payload = report.to_dict()
+    if not report.ok:
+        return JSONResponse(status_code=409, content=payload)
+    if require_citable and not report.citable:
+        try:
+            report.assert_citable()
+        except EvidenceVerificationError as exc:
+            payload["citation_error"] = str(exc)
+        return JSONResponse(status_code=409, content=payload)
+    return JSONResponse(status_code=200, content=payload)
+
+
 @app.get(
     "/v1/oscal/assessment-results",
     tags=["compliance"],
@@ -871,6 +956,13 @@ async def export_oscal_assessment_results(
     audit_id: str | None = Query(
         default=None, description="Audit ID (auto-generated if absent)"
     ),
+    verify_custody: bool = Query(
+        default=False,
+        description=(
+            "Verify WORM evidence custody and fail closed (409) unless at least "
+            "one signed batch verifies with zero failures and zero declared gaps"
+        ),
+    ),
 ) -> JSONResponse:
     """Generate an OSCAL Assessment Results document from live metrics.
 
@@ -884,6 +976,36 @@ async def export_oscal_assessment_results(
       - ``props.evidence_age_seconds`` — seconds since last evidence trace
       - ``props.framework`` — cross-reference to EU AI Act / NIST AI RMF / FedRAMP
     """
+    _require_custody = (
+        verify_custody
+        or os.environ.get("OSCAL_REQUIRE_VERIFIED_CUSTODY", "false").lower() == "true"
+    )
+    custody_report = None
+    if _require_custody:
+        from src.gateway.governance.evidence.cold_store import ColdStoreError
+
+        from .evidence_verifier import EvidenceVerificationError
+
+        verifier = _resolve_evidence_verifier()
+        try:
+            custody_report = await verifier.verify_for_citation()
+        except EvidenceVerificationError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "EVIDENCE_CUSTODY_UNVERIFIED",
+                    "message": str(exc),
+                },
+            ) from exc
+        except ColdStoreError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "EVIDENCE_STORE_UNAVAILABLE",
+                    "message": str(exc),
+                },
+            ) from exc
+
     _audit_id = audit_id or f"cage-export-{int(time.time())}"
     controls_data: dict = {}
 
@@ -928,6 +1050,7 @@ async def export_oscal_assessment_results(
         audit_id=_audit_id,
         window_hours=window_hours,
         cer_index=cer_index,
+        custody_report=custody_report,
     )
 
     if format == "yaml":

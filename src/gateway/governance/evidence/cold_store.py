@@ -27,6 +27,7 @@ Contract Specification:
     - ColdStoreReceipt: immutable record of successful persistence
     - ColdStoreHealth: snapshot of storage backend availability
     - ColdStoreError: unified exception boundary for cold storage failures
+    - ColdStoreNotFoundError: the requested object does not exist
 """
 
 from __future__ import annotations
@@ -48,6 +49,14 @@ class ColdStoreError(Exception):
     def __init__(self, message: str, backend_id: str = "unknown") -> None:
         super().__init__(message)
         self.backend_id = backend_id
+
+
+class ColdStoreNotFoundError(ColdStoreError):
+    """No object exists under the requested key.
+
+    Distinct from other ``ColdStoreError``s so a verifier can tell a missing
+    object (evidence gap or deletion) from a transient backend failure.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -154,6 +163,35 @@ class EvidenceColdStore(Protocol):
 
         Raises:
             ColdStoreError: On backend failure.
+        """
+        ...
+
+    async def get(self, key: str) -> bytes:
+        """Read the exact bytes stored under key.
+
+        Args:
+            key: Object key/path to read.
+
+        Returns:
+            The stored bytes, unmodified.
+
+        Raises:
+            ColdStoreNotFoundError: No object exists under key.
+            ColdStoreError: On connectivity or permission errors.
+        """
+        ...
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        """List every object key that starts with prefix, sorted.
+
+        Args:
+            prefix: Key prefix to enumerate (e.g. ``evidence-stream/``).
+
+        Returns:
+            Sorted list of matching keys (all pages, not just the first).
+
+        Raises:
+            ColdStoreError: On connectivity or permission errors.
         """
         ...
 

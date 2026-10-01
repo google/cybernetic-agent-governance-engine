@@ -232,7 +232,12 @@ async def execute_trade_action(
         )
 
     try:
+        from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+
         receipt = await actuator.actuate(clearance)
+        await ingest_actuation_receipt(
+            clearance, receipt, actuator_id=getattr(actuator, "actuator_id", None)
+        )
 
         if not receipt.accepted:
             # Actuation rejected — rollback state if possible
