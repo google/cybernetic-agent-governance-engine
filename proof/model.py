@@ -161,11 +161,48 @@ TIER_LABELS: dict[str, str] = {
 PHASES = ("PENDING", "CHECKING", "SEAL_ISSUED", "EXECUTED", "DENIED", "NARROW", "PAUSE")
 PROFILES = ("FULL", "POST_HITL", "DRY_RUN")
 
+# Pipeline phase per tier: phase 2 tiers mutate (reserve barrier headroom or
+# budget) and so must re-check after a human approves (TOCTOU). Phase 1 tiers
+# are read-only.
+TIER_PHASE: dict[str, int] = {tier: 1 for tier in TIERS} | {"cbf": 2, "fiscal": 2}
+
+# Plugin-named phase-2 tiers (not in TIERS: they do not add proof states, but
+# the POST_HITL predicate must cover them). E.g. healthcare's ``dose_barrier``
+# or finance's ``bounding``: a name filter that lists only kernel tiers would
+# skip them after approval.
+PLUGIN_TIER_PHASE: dict[str, int] = {"domain_barrier": 2}
+
+# Read-only tiers re-checked after approval (policy may change while waiting).
+POST_HITL_READ_ONLY_TIERS: frozenset[str] = frozenset({"opa"})
+
+
+def runs_under_profile(profile: str, tier: str, phase: int) -> bool:
+    """Whether ``tier`` (in pipeline ``phase``) runs under ``profile``.
+
+    Structural, never by name: POST_HITL runs every phase-2 tier plus the
+    read-only tiers in POST_HITL_READ_ONLY_TIERS; FULL and DRY_RUN run all.
+    Mirrored by ``src/gateway/governance/governor/pipeline.py::stage_runs_under``
+    (``tests/test_formal_profile_parity.py``).
+    """
+    if profile == "POST_HITL":
+        return phase == 2 or tier in POST_HITL_READ_ONLY_TIERS
+    return True
+
+
 PROFILE_STAGES: dict[str, frozenset[str]] = {
-    "FULL": frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
-    "POST_HITL": frozenset({"opa", "cbf", "fiscal"}),
-    "DRY_RUN": frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
+    profile: frozenset(t for t in TIERS if runs_under_profile(profile, t, TIER_PHASE[t]))
+    for profile in PROFILES
 }
+
+
+def post_hitl_runs_every_phase2_tier() -> bool:
+    """Claim: no phase-2 tier (kernel or plugin-named) is skipped after approval."""
+    phases = TIER_PHASE | PLUGIN_TIER_PHASE
+    return all(
+        runs_under_profile("POST_HITL", tier, phase)
+        for tier, phase in phases.items()
+        if phase == 2
+    )
 
 
 @dataclass(frozen=True)
@@ -1017,6 +1054,9 @@ def main() -> None:
     assert not ungated_narrow_holds, (
         "PROOF FAILED: ungated NARROW variant should violate No-Direct-Bind!"
     )
+    assert post_hitl_runs_every_phase2_tier(), (
+        "PROOF FAILED: POST_HITL skips a phase-2 tier!"
+    )
 
     print("✅ All assertions passed.")
     print()
@@ -1033,6 +1073,8 @@ def main() -> None:
     )
     print("  6. The ungated NARROW variant produces a counterexample, confirming")
     print("     the seal gate is load-bearing for NARROW decisions as well.")
+    print("  7. POST_HITL re-runs every phase-2 tier, kernel or plugin-named")
+    print("     (post_hitl_runs_every_phase2_tier).")
     print()
     print("PLAUSIBLE (not proved here):")
     print("  That this model generalises to the full production CAGE stack.")

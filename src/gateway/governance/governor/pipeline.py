@@ -94,16 +94,23 @@ class PipelineResult:
     commits: tuple[tuple[Stage, CommitReceipt], ...] = ()
 
 
-# Stage names must be members of proof/model.py TIERS
-PROFILE_STAGES: Mapping[Profile, frozenset[str]] = {
-    Profile.FULL: frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
-    Profile.DRY_RUN: frozenset({"ftra", "stpa", "confidence", "cbf", "opa", "fiscal", "consensus", "causal", "fria"}),
-    Profile.POST_HITL: frozenset({"opa", "cbf", "fiscal"}),  # decision 1: fiscal re-checked post-approval
-}
+#: Read-only stages re-run after human approval (TOCTOU): policy may have
+#: changed while the request waited. Must be members of proof/model.py TIERS.
+POST_HITL_READ_ONLY_STAGES: frozenset[str] = frozenset({"opa"})
 
-# Profiles under which every registered domain tier runs, whatever its name.
-PROFILE_RUNS_ALL_DOMAIN_TIERS: frozenset[Profile] = frozenset({Profile.FULL, Profile.DRY_RUN})
 
+def stage_runs_under(profile: Profile, *, name: str, mutating: bool) -> bool:
+    """Whether a stage runs under ``profile`` — decided by structure, not by name.
+
+    FULL and DRY_RUN run every stage. POST_HITL runs the read-only stages in
+    :data:`POST_HITL_READ_ONLY_STAGES` plus **every** mutating (phase-2)
+    stage, so a plugin-named barrier (``dose_barrier``, ``bounding``) re-checks
+    after approval exactly like ``cbf`` and ``fiscal``. Mirrors
+    ``proof/model.py::runs_under_profile`` (``tests/test_formal_profile_parity.py``).
+    """
+    if profile == Profile.POST_HITL:
+        return mutating or name in POST_HITL_READ_ONLY_STAGES
+    return True
 
 
 def _claims_failure(stage: Stage, exc: Exception) -> Violation:
@@ -140,9 +147,7 @@ async def run_pipeline(
     _check_scope(profile, scope)
     span = trace.get_current_span()
     
-    # a. Select stages whose name in PROFILE_STAGES[profile]
-    allowed_stage_names = PROFILE_STAGES[profile]
-    
+    # a. Select the stages that run under this profile (stage_runs_under).
     profile_stages = []
     claimed_domains = []
     # A domain tier whose claims() raised is treated as claiming the action and
@@ -152,12 +157,10 @@ async def run_pipeline(
 
     for s in stages:
         is_domain_tier = hasattr(s, "claims")
-        # PROFILE_STAGES names kernel stages.  Domain tiers carry plugin-chosen
-        # names (e.g. "dose_barrier"), so filtering them by name would silently
-        # skip them (fail-open).  Every claiming domain tier runs under the
-        # profiles in PROFILE_RUNS_ALL_DOMAIN_TIERS; POST_HITL keeps its scope.
-        if s.name not in allowed_stage_names and not (
-            is_domain_tier and profile in PROFILE_RUNS_ALL_DOMAIN_TIERS
+        # Structural, never by name: domain tiers carry plugin-chosen names
+        # (e.g. "dose_barrier"), and a name filter would silently skip them.
+        if not stage_runs_under(
+            profile, name=s.name, mutating=bool(getattr(s, "mutating", False))
         ):
             continue
 

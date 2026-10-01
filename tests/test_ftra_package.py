@@ -1623,6 +1623,7 @@ class TestFtraIntegration:
         from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
         from src.gateway.governance.ftra.models import (
             FtraBoundaryResult,
+            RegistryState,
             TerminalClassification,
         )
         from src.gateway.governance.ftra.node_factory import create_ftra_node
@@ -1665,11 +1666,11 @@ class TestFtraIntegration:
             )
 
             # Verify FtraBoundaryResult factory produces consistent result
-            in_registry = action_name in classifier.known_actions()
+            provenance = classifier.classify_with_provenance(action_name)
             boundary_result = FtraBoundaryResult.from_classification(
                 classification=classification,
                 action_name=action_name,
-                in_registry=in_registry,
+                registry_state=provenance.registry_state,
             )
             assert boundary_result.requires_hitl == expected_hitl, (
                 f"HITL requirement mismatch for '{action_name}': "
@@ -1698,6 +1699,7 @@ class TestFtraIntegration:
         """
         from src.gateway.governance.ftra.models import (
             FtraBoundaryResult,
+            RegistryState,
             TerminalClassification,
         )
 
@@ -1705,7 +1707,7 @@ class TestFtraIntegration:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
             action_name="execute_trade",
-            in_registry=True,
+            registry_state=RegistryState.REGISTERED,
         )
         assert result.requires_hitl is True
         assert result.irreversibility_score == 1.0
@@ -1718,7 +1720,7 @@ class TestFtraIntegration:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.READ_ONLY,
             action_name="check_balance",
-            in_registry=True,
+            registry_state=RegistryState.REGISTERED,
         )
         assert result.requires_hitl is False
         assert result.irreversibility_score == 0.0
@@ -1730,23 +1732,23 @@ class TestFtraIntegration:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.REVERSIBLE,
             action_name="update_preferences",
-            in_registry=True,
+            registry_state=RegistryState.REGISTERED,
         )
         assert result.requires_hitl is False
         assert result.irreversibility_score == 0.5
         assert result.classification == "REVERSIBLE"
 
-        # Unknown action (fail-closed) → in_registry=False
+        # Unknown action (fail-closed) → UNREGISTERED
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
             action_name="unknown_action",
-            in_registry=False,
+            registry_state=RegistryState.UNREGISTERED,
             bypassed_ftra_node=True,
         )
         assert result.requires_hitl is True
         assert result.terminal_match is None
         assert result.bypassed_ftra_node is True
-        assert "not found" in result.violations[0].message
+        assert result.violations[0].code == "FTRA_UNREGISTERED_ACTION"
 
     def test_ftra_integration_with_mixed_plan_actions(self, tmp_path):
         """Test FTRA handling of plans with mixed action types.

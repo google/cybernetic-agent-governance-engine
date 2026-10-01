@@ -52,7 +52,7 @@ class GovernorMetrics:
         )
 
     def ftra_boundary_check(self, result: str) -> None:
-        """Count one FTRA boundary check outcome (``passed``, ``hitl_required``, ``error``)."""
+        """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""
         if self._ftra_boundary_checks is not None:
             self._ftra_boundary_checks.labels(result=result).inc()
 

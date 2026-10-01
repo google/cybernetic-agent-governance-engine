@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from typing import Any
 
+from src.cage_finance.invariants import finance_cost_resolver
 from src.gateway.governance.contracts import (
     CommitReceipt,
     GovernanceTierPlugin,
@@ -26,12 +28,26 @@ from src.gateway.governance.safety.barrier_tier import (
 )
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
+#: ``(action, params) -> cash cost``; raises on a malformed amount.
+CostResolver = Callable[[str, dict[str, Any]], float]
+
 
 class CBFTierPlugin(GovernanceTierPlugin):
-    """CBF guard tier (phase 2, order 3)."""
+    """CBF guard tier (phase 2, order 3).
 
-    def __init__(self, cbf: ControlBarrierFunction):
+    Claims by cost, not by name: any action whose ``cost_resolver`` cost is
+    positive spends cash and so must pass the barrier. A resolver that raises
+    (negative or non-finite amount) propagates; the pipeline turns it into a
+    HARD ``TIER_EXCEPTION`` (fail closed).
+    """
+
+    def __init__(
+        self,
+        cbf: ControlBarrierFunction,
+        cost_resolver: CostResolver = finance_cost_resolver,
+    ):
         self.cbf = cbf
+        self._cost = cost_resolver
 
     @property
     def tier_name(self) -> str:
@@ -46,7 +62,7 @@ class CBFTierPlugin(GovernanceTierPlugin):
         return 3
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action == "execute_trade"
+        return self._cost(action, params) > 0
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); spends no barrier headroom."""

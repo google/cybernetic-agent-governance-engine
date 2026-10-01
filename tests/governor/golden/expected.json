@@ -899,7 +899,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "REQUIRE_APPROVAL",
-        "first_violation_code": "FTRA_IRREVERSIBLE",
+        "first_violation_code": "FTRA_REGISTERED_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -910,7 +910,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[FTRA_IRREVERSIBLE] FTRA Boundary Check: Action 'execute_trade' is classified as IRREVERSIBLE_TERMINAL",
+        "first_violation_code": "[FTRA_REGISTERED_IRREVERSIBLE] FTRA Boundary Check: Action 'execute_trade' is registered as IRREVERSIBLE_TERMINAL and is outside its autonomous envelope. Human-in-the-loop review required before execution.",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -933,7 +933,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "FTRA_IRREVERSIBLE",
+        "first_violation_code": "FTRA_REGISTERED_IRREVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -950,7 +950,7 @@
     "entry_points": {
       "validate_action": {
         "outcome": "REQUIRE_APPROVAL",
-        "first_violation_code": "FTRA_IRREVERSIBLE",
+        "first_violation_code": "FTRA_REGISTERED_EXTERNALLY_REVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -961,7 +961,7 @@
       },
       "govern": {
         "outcome": "GovernanceError",
-        "first_violation_code": "[FTRA_IRREVERSIBLE] FTRA Boundary Check: Action 'execute_trade' is classified as EXTERNALLY_REVERSIBLE",
+        "first_violation_code": "[FTRA_REGISTERED_EXTERNALLY_REVERSIBLE] FTRA Boundary Check: Action 'execute_trade' is registered as EXTERNALLY_REVERSIBLE and is outside its autonomous envelope. Human-in-the-loop review required before execution.",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -984,7 +984,7 @@
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "FTRA_IRREVERSIBLE",
+        "first_violation_code": "FTRA_REGISTERED_EXTERNALLY_REVERSIBLE",
         "seal_issued": false,
         "collaborators_called": [
           "consensus_engine.check_consensus",
@@ -1285,6 +1285,9 @@
         "first_violation_code": null,
         "seal_issued": true,
         "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
       },
@@ -1331,6 +1334,9 @@
         "first_violation_code": null,
         "seal_issued": true,
         "collaborators_called": [
+          "cbf.atomic_verify_and_commit",
+          "fiscal_guard.confirm",
+          "fiscal_guard.reserve",
           "opa_client.evaluate_policy"
         ]
       },

@@ -207,7 +207,8 @@ async def test_fiscal_concurrent_same_transaction_id_each_release_own_token() ->
     await tier.rollback("execute_trade", params, r1)
 
     assert [c.args[0] for c in guard.release.await_args_list] == [t2, t1]
-    assert set(vars(tier)) == {"guard"}  # no per-request state on the shared tier
+    # No per-request state on the shared tier: only construction-time collaborators.
+    assert set(vars(tier)) == {"guard", "_cost"}
 
 
 @pytest.mark.asyncio

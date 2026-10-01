@@ -14,7 +14,6 @@
 
 import json
 import logging
-import math
 import re
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -25,6 +24,7 @@ from opentelemetry.trace import Status, StatusCode
 if TYPE_CHECKING:
     from src.gateway.governance.defer_queue import DeferReason
 
+from src.gateway.governance.agent_confidence import reported_confidence
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import GovernanceTierFailure, Violation, ViolationKind
 from src.gateway.governance.contracts import RefusalReceipt
@@ -45,22 +45,6 @@ def resolve_thread_id(params: dict[str, Any]) -> str:
     if "transaction_id" in params:
         return str(params["transaction_id"])
     return "unknown"
-
-
-def reported_confidence(params: dict[str, Any]) -> float:
-    """Agent self-reported confidence; unparseable values classify as 0.0.
-
-    ConfidenceStage already emits a HARD violation for invalid values, so this
-    only feeds classification and parking and can never widen a verdict.
-    """
-    raw = params.get("confidence", 0.0)
-    if isinstance(raw, bool):
-        return 0.0
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return 0.0
-    return value if math.isfinite(value) else 0.0
 
 
 def build_refusal_receipt(
@@ -235,6 +219,7 @@ async def handle_require_approval(
         "violations": violations,
         "deferred_id": deferred_id,
         "latency_ms": latency_ms,
+        "classification_reason": classification_meta.get("classification_reason", ""),
         "classification_meta": classification_meta,
     }
 

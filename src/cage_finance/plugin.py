@@ -38,6 +38,7 @@ from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
 from src.gateway.governance.consensus.engine import (
     _background_audit_worker,
+    extract_field_magnitude,
 )
 from src.gateway.governance.contracts import (
     CagePlugin,
@@ -124,6 +125,7 @@ class FinanceCagePlugin(CagePlugin):
             execution_verbs=FINANCE_EXECUTION_VERBS,
             standing_projector=finance_standing_projector,
             registered_actions=REGISTERED_ACTIONS,
+            magnitude_extractor=extract_field_magnitude("amount"),
             safety_filter=cbf,
             consensus=consensus_gate,
             narrowers=(AmountNarrower(),),

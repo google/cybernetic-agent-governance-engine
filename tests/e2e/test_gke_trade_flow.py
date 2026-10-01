@@ -142,6 +142,8 @@ def _trade(amount: float, role: str = "junior", **extra: Any) -> dict[str, Any]:
         "confidence": 0.98,
         "trader_id": f"e2e-{uuid.uuid4().hex[:12]}",
         "trader_role": role,
+        "latency_ms": 10.0,  # STPA UCA-2 input
+        "drawdown": 0.0,  # STPA UCA-5 input
         **extra,
     }
 
@@ -238,7 +240,6 @@ async def test_s0_unidentified_caller_is_refused(live: Live) -> None:
 # ── S1a / S1b: autonomous paths (Phase 1) ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1 (S1a): FTRA marks every execute_trade HITL")
 async def test_s1a_small_junior_trade_allows_and_executes_once(live: Live) -> None:
     params = _trade(500.0)
     resp = await live.validate("execute_trade", params)
@@ -247,13 +248,12 @@ async def test_s1a_small_junior_trade_allows_and_executes_once(live: Live) -> No
     assert (await live.execute(params)).startswith("EXECUTED")
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1 (S1b): FTRA masks OPA MANUAL_REVIEW")
 async def test_s1b_mid_junior_trade_requires_approval_for_opa_review(live: Live) -> None:
     resp = await live.validate("execute_trade", _trade(7_500.0))
     body = _body(resp)
     assert body["verdict"] == "REQUIRE_APPROVAL"
     assert body["classification_reason"] == "opa_manual_review"
-    assert body.get("ftra_violations") == []
+    assert [v for v in body["violations"] if "FTRA" in str(v)] == []
 
 
 # ── S1 / S2 / S3: the approval path ──────────────────────────────────────────

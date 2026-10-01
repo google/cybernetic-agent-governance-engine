@@ -65,6 +65,7 @@ from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.classification_engine import ClassificationEngine
+from src.gateway.governance.consensus import extract_field_magnitude
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.defer_queue import ApprovalRecord, DeferQueue
 from src.gateway.governance.evidence import stream as evidence_stream
@@ -198,6 +199,8 @@ class Gateway:
             params["trader_role"],
             False,
             deferred_id,
+            params.get("latency_ms"),
+            params.get("drawdown"),
             governor=self.governor,
             safety_filter=self.cbf,
         )
@@ -281,6 +284,7 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
             DoseBarrierTier(DoseLimitEngine()),
         ),
         safety_filter=cbf,
+        magnitude_extractor=extract_field_magnitude("amount"),
     )
     governance_app.state.governor = governor
 
@@ -519,11 +523,10 @@ async def test_s12_unregistered_action_never_auto_clears(gw: Gateway) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Later phases (strict xfail: they must fail today, and fail the suite when fixed)
+# Phase 1: conditional FTRA, provenance codes, claim-by-cost, structural POST_HITL
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1: FTRA sends every execute_trade to HITL")
 async def test_s1a_small_trade_allowed_then_committed_exactly_once(gw: Gateway) -> None:
     params = trade(500.0, role="junior")
     body = _body(await gw.validate(params))
@@ -535,7 +538,6 @@ async def test_s1a_small_trade_allowed_then_committed_exactly_once(gw: Gateway) 
     assert await gw.fiscal.current_spend_usd() == 500.0
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1: FTRA emits HITL for every execute_trade")
 async def test_s1b_opa_manual_review_alone_requires_approval(gw: Gateway) -> None:
     resp = await gw.validate(trade(7_500.0, role="junior"))
     body = _body(resp)
@@ -544,27 +546,23 @@ async def test_s1b_opa_manual_review_alone_requires_approval(gw: Gateway) -> Non
     assert [v for v in body["violations"] if "FTRA" in str(v)] == []
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1: FTRA provenance codes (FTRA_REGISTERED_IRREVERSIBLE)")
 async def test_s1_require_approval_names_ftra_provenance(gw: Gateway) -> None:
     body = _body(await gw.validate(trade(20_000.0)))
     assert any("FTRA_REGISTERED_IRREVERSIBLE" in str(v) for v in body["violations"])
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1: FTRA provenance codes (FTRA_UNREGISTERED_ACTION)")
 async def test_s12_unregistered_action_names_its_provenance(gw: Gateway) -> None:
     body = _body(await _unregistered(gw))
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
     assert any("FTRA_UNREGISTERED_ACTION" in str(v) for v in body["violations"])
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1: CBF claims execute_trade_bounded by cost")
 async def test_s13_bounded_trade_is_claimed_by_the_cash_barrier(gw: Gateway) -> None:
     await gw.cbf_redis.set(_CASH_KEY, "1000.0")
     resp = await gw.validate(trade(3_000.0), action="execute_trade_bounded")
     assert any("cbf" in str(v).lower() for v in _body(resp).get("violations", []))
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 1: POST_HITL runs every phase-2 tier (dose_barrier)")
 async def test_s11_post_hitl_reruns_the_dose_barrier(gw: Gateway) -> None:
     params = {"dose_mg": 600, "trader_role": "senior", "amount": 0.0}
     with pytest.raises(GovernanceError) as refused:

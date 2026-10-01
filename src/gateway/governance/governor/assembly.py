@@ -32,6 +32,7 @@ governor assembled with no plugins denies by construction.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -56,6 +57,7 @@ from src.gateway.governance.env_posture import (
     is_cage_narrow_enabled,
     is_cage_pause_enabled,
 )
+from src.gateway.governance.ftra.autonomy import MagnitudeExtractor
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.invariants import validate_invariant
 from src.gateway.governance.governor.metrics import GovernorMetrics
@@ -135,10 +137,24 @@ class DecisionFlags:
 
 
 def kernel_stages(
-    opa: PolicyClient, stpa_validator: object | None, *, metrics: GovernorMetrics | None = None
+    opa: PolicyClient,
+    stpa_validator: object | None,
+    *,
+    metrics: GovernorMetrics | None = None,
+    magnitude_extractor: MagnitudeExtractor | None = None,
 ) -> tuple[Stage, ...]:
-    """The domain-agnostic stages every governor runs before its domain tiers."""
-    return (FtraStage(metrics), StpaStage(stpa_validator), OpaStage(opa), ConfidenceStage())
+    """The domain-agnostic stages every governor runs before its domain tiers.
+
+    ``magnitude_extractor`` is the domain's reader of action magnitude; FTRA
+    needs it to clear a registered terminal inside its autonomous envelope.
+    Without one, no terminal clears autonomously (fail closed).
+    """
+    return (
+        FtraStage(metrics, magnitude_extractor),
+        StpaStage(stpa_validator),
+        OpaStage(opa),
+        ConfidenceStage(),
+    )
 
 
 def assemble_governor(
@@ -201,9 +217,14 @@ def assemble_governor(
     standing_projector = _single_slot("standing_projector", contributions) or default_standing_projector
     execution_verbs = frozenset(v for c in contributions for v in c.execution_verbs)
     raw_consensus = _single_slot("consensus", contributions)
+    magnitude_extractor = _single_slot("magnitude_extractor", contributions)
     if isinstance(raw_consensus, ConsensusContribution):
         from src.gateway.governance.consensus.engine import ConsensusGate
 
+        if raw_consensus.magnitude_extractor is None and magnitude_extractor is not None:
+            raw_consensus = dataclasses.replace(
+                raw_consensus, magnitude_extractor=magnitude_extractor
+            )
         resolved_consensus: ConsensusProvider = ConsensusGate.from_contribution(raw_consensus)
     elif raw_consensus is not None:
         resolved_consensus = raw_consensus  # type: ignore[assignment]
@@ -212,7 +233,12 @@ def assemble_governor(
 
     components = GovernorComponents(
         opa=opa,
-        core_stages=kernel_stages(opa, stpa_validator, metrics=metrics),
+        core_stages=kernel_stages(
+            opa,
+            stpa_validator,
+            metrics=metrics,
+            magnitude_extractor=magnitude_extractor,  # type: ignore[arg-type]
+        ),
         classifier=ClassificationEngine(
             narrower_registry=NarrowerRegistry(narrowers=list(narrowers)),
             confidence_threshold=get_agent_confidence_threshold(),

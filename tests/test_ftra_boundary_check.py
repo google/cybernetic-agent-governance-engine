@@ -34,6 +34,7 @@ import pytest
 
 from src.gateway.governance.ftra.models import (
     FtraBoundaryResult,
+    RegistryState,
     TerminalClassification,
 )
 from src.gateway.governance.ftra.semantic_validator import (
@@ -59,7 +60,7 @@ class TestFtraBoundaryResult:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
             action_name="execute_trade",
-            in_registry=True,
+            registry_state=RegistryState.REGISTERED,
             bypassed_ftra_node=True,
         )
 
@@ -78,7 +79,7 @@ class TestFtraBoundaryResult:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.READ_ONLY,
             action_name="prompt_injection_check",
-            in_registry=True,
+            registry_state=RegistryState.REGISTERED,
             bypassed_ftra_node=False,
         )
 
@@ -95,7 +96,7 @@ class TestFtraBoundaryResult:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.REVERSIBLE,
             action_name="some_reversible_action",
-            in_registry=True,
+            registry_state=RegistryState.REGISTERED,
             bypassed_ftra_node=False,
         )
 
@@ -109,13 +110,14 @@ class TestFtraBoundaryResult:
         result = FtraBoundaryResult.from_classification(
             classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
             action_name="unknown_action",
-            in_registry=False,
+            registry_state=RegistryState.UNREGISTERED,
             bypassed_ftra_node=True,
         )
 
         assert result.requires_hitl is True
         assert result.terminal_match is None
-        assert "not found in terminal_registry.json" in result.violations[0].message
+        assert result.violations[0].code == "FTRA_UNREGISTERED_ACTION"
+        assert "not in the domain's terminal registry" in result.violations[0].message
         assert "failing closed to IRREVERSIBLE_TERMINAL" in result.violations[0].message
 
 

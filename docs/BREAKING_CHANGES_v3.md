@@ -757,5 +757,18 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-**Last updated:** 2026-09-22 (v3.1.0 Zero-Trust Identity & Egress clean breaks ZT-1–ZT-6)
+## Unreleased — Structural POST_HITL, FTRA Provenance, Conditional FTRA (Phase 1)
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **P1-1** | Pipeline | `PROFILE_STAGES` and `PROFILE_RUNS_ALL_DOMAIN_TIERS` removed from [`pipeline.py`](../src/gateway/governance/governor/pipeline.py); selection is `stage_runs_under(profile, name=, mutating=)`. POST_HITL runs `opa` plus every claiming phase-2 tier. | A name list silently skipped plugin barriers (healthcare `dose_barrier`) after approval; selection now follows structure (`mutating`), not names. Proved in [`proof/model.py`](../proof/model.py) (`post_hitl_runs_every_phase2_tier`). | `ImportError` on `PROFILE_STAGES`. |
+| **P1-2** | FTRA | `FTRA_IRREVERSIBLE` replaced by provenance codes (`FTRA_REGISTERED_IRREVERSIBLE`, `FTRA_REGISTERED_EXTERNALLY_REVERSIBLE`, `FTRA_UNREGISTERED_ACTION`, `FTRA_REGISTRY_ENTRY_INVALID`, `FTRA_REGISTRY_UNAVAILABLE`); `FtraBoundaryResult.from_classification` takes `registry_state=` instead of `in_registry=`. An unreadable registry is HARD (DENY). | One code hid whether the domain said "terminal" or the kernel defaulted to it; reviewers and auditors need the provenance, and an unreadable registry is not a reviewable state. | `TypeError` on `in_registry=`; consumers matching `FTRA_IRREVERSIBLE` see no match. Classification keys on `ViolationKind`, so verdicts are unchanged except UNAVAILABLE. |
+| **P1-3** | FTRA registry | Optional signed `autonomous_envelope` in the terminal registry ([`classifier.py`](../src/gateway/governance/ftra/classifier.py), [`autonomy.py`](../src/gateway/governance/ftra/autonomy.py)). The digest covers `{autonomous_envelope, terminals}` when present; an unsigned envelope refuses to load. | Every in-range trade escalating to a human made HITL a rubber stamp; the ceiling is authority, so it is signed like the terminals. | A hand-edited envelope without `--rehash` fails the integrity check at load. |
+| **P1-4** | Contracts | `PluginContribution.magnitude_extractor` added; `ConsensusContribution.magnitude_extractor` defaults to `None` and inherits the plugin's. | One magnitude reader per domain feeds consensus and conditional FTRA alike. | A domain without an extractor never clears FTRA autonomously and consensus sees magnitude 0.0. |
+| **P1-5** | Finance tiers | [`CBFTierPlugin`](../src/cage_finance/tiers/cbf_tier.py) / [`FiscalTierPlugin`](../src/cage_finance/tiers/fiscal_tier.py) claim by `cost_resolver` cost > 0; `execute_trade_bounded` is now claimed. | A name list let a new cash-spending action bypass the barrier. | A malformed amount is a HARD `TIER_EXCEPTION`. |
+| **P1-6** | Finance surface | `release_wire` removed from the finance registry, `REGISTERED_ACTIONS` and STPA UCA-11. | Tier 3 commercial-deployment-only interface (AGENTS.md); recorded as an OSCAL customer-responsibility statement. | `release_wire` is unregistered: `FTRA_UNREGISTERED_ACTION` (HITL), and no tier governs it post-approval. |
+
+---
+
+**Last updated:** 2026-09-30 (Phase 1 clean breaks P1-1–P1-6)
 

@@ -231,7 +231,8 @@ def test_finance_domain_plugin_registers_fiscal_tier() -> None:
     assert plugin.tier_name == "fiscal"
     assert plugin.phase == 2
     assert plugin.order == 4
-    assert plugin.claims_action("execute_trade", {}) is True
+    assert plugin.claims_action("execute_trade", {"amount": 100.0}) is True
+    assert plugin.claims_action("execute_trade", {"amount": 0.0}) is False  # claims by cost
     assert plugin.claims_action("prescribe_medication", {}) is False
 
 

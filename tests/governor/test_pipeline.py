@@ -103,18 +103,13 @@ def _ctx(profile: Profile = Profile.FULL) -> StageContext:
 
 @pytest.mark.asyncio
 async def test_domain_tier_with_plugin_name_is_not_filtered_out() -> None:
-    """A tier named outside PROFILE_STAGES (e.g. healthcare) must still deny."""
+    """A plugin-named tier (e.g. healthcare's dose_barrier) must still deny."""
     stages = order_stages([_Tier("dose_barrier", deny=True)])
     result = await run_scoped(stages, _ctx())
     assert [v.tier for v in result.violations] == ["dose_barrier"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Phase 1: POST_HITL filters phase-2 tiers by name, so a domain barrier "
-    "(e.g. healthcare dose_barrier) never re-runs after approval (G2).",
-)
 async def test_post_hitl_runs_every_phase2_tier() -> None:
     """POST_HITL re-checks every claiming phase-2 tier, not a named subset."""
     log: list[str] = []

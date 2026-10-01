@@ -50,6 +50,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from src.gateway.governance.ftra.autonomy import (
+    MagnitudeExtractor,
+    conditional_clear_reason,
+    safe_magnitude,
+)
 from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
 from src.gateway.governance.ftra.models import (
     CLASSIFICATION_SEVERITY,
@@ -57,7 +62,10 @@ from src.gateway.governance.ftra.models import (
     ReachabilityResult,
     TerminalClassification,
 )
-from src.gateway.governance.schemas.thresholds import get_fria_zone_defer
+from src.gateway.governance.schemas.thresholds import (
+    get_fria_zone_allow,
+    get_fria_zone_defer,
+)
 
 if TYPE_CHECKING:
     from src.gateway.governance.ftra.models import (
@@ -78,10 +86,20 @@ class PlanGraphAnalyzer:
     Args:
         classifier: Optional :class:`IrreversibilityClassifier` instance.
                     Defaults to a new instance using the default registry path.
+        magnitude_extractor: The domain's reader of step magnitude. With one,
+            a reachable *registered* terminal inside its autonomous envelope
+            (``autonomy.conditional_clear_reason``, same predicate as the
+            boundary stage) does not drive the verdict. Without one nothing
+            clears autonomously (fail closed).
     """
 
-    def __init__(self, classifier: IrreversibilityClassifier | None = None) -> None:
+    def __init__(
+        self,
+        classifier: IrreversibilityClassifier | None = None,
+        magnitude_extractor: MagnitudeExtractor | None = None,
+    ) -> None:
         self._classifier = classifier or IrreversibilityClassifier()
+        self._magnitude_extractor = magnitude_extractor
 
     # ------------------------------------------------------------------
     # Public API
@@ -198,11 +216,17 @@ class PlanGraphAnalyzer:
         # Classify each reachable node
         # ----------------------------------------------------------------
         reachable_terminals: list[str] = []
+        auto_cleared: list[str] = []
         worst_case = TerminalClassification.READ_ONLY
+        # Worst classification among steps that still need a human: drives the verdict.
+        gating = TerminalClassification.READ_ONLY
+        steps_by_id = {step.id: step for step in steps}
 
         for step_id in reachable_ids:
             action: str = G.nodes[step_id].get("action", step_id)
-            classification = self._classifier.classify(action)
+            classification, cleared = self._classify_step(
+                action, steps_by_id[step_id].parameters, confidence
+            )
 
             if (
                 CLASSIFICATION_SEVERITY[classification]
@@ -216,6 +240,12 @@ class PlanGraphAnalyzer:
                 TerminalClassification.EXTERNALLY_REVERSIBLE,
             ):
                 reachable_terminals.append(step_id)
+                if cleared:
+                    auto_cleared.append(step_id)
+                    continue
+
+            if CLASSIFICATION_SEVERITY[classification] > CLASSIFICATION_SEVERITY[gating]:
+                gating = classification
 
         # ----------------------------------------------------------------
         # Critical path to first IRREVERSIBLE_TERMINAL node
@@ -240,31 +270,32 @@ class PlanGraphAnalyzer:
                 )
 
         # ----------------------------------------------------------------
-        # Determine verdict
+        # Determine verdict (from the worst classification still needing a human)
         # ----------------------------------------------------------------
         fria_zone_defer = get_fria_zone_defer()
-        if worst_case == TerminalClassification.IRREVERSIBLE_TERMINAL:
+        if gating == TerminalClassification.IRREVERSIBLE_TERMINAL:
             if confidence >= fria_zone_defer:
                 verdict = FTRAVerdict.HITL_REQUIRED
             else:
                 verdict = FTRAVerdict.BLOCKED
-        elif worst_case == TerminalClassification.EXTERNALLY_REVERSIBLE:
+        elif gating == TerminalClassification.EXTERNALLY_REVERSIBLE:
             # EXTERNALLY_REVERSIBLE always routes to HITL_REQUIRED, not subject to
             # the confidence hard-gate. A settlement window means human review is
             # meaningful even at low confidence, whereas an irreversible commit at
             # low confidence warrants outright blocking.
             verdict = FTRAVerdict.HITL_REQUIRED
         else:
-            # REVERSIBLE or READ_ONLY → CLEAR
+            # REVERSIBLE, READ_ONLY, or every terminal inside its envelope → CLEAR
             verdict = FTRAVerdict.CLEAR
 
         logger.info(
             "FTRA analysis complete: plan='%s' steps=%d reachable=%d "
-            "terminals=%d worst_case=%s confidence=%.3f verdict=%s",
+            "terminals=%d auto_cleared=%d worst_case=%s confidence=%.3f verdict=%s",
             plan_id,
             len(steps),
             len(reachable_ids),
             len(reachable_terminals),
+            len(auto_cleared),
             worst_case.value,
             confidence,
             verdict.value,
@@ -279,7 +310,30 @@ class PlanGraphAnalyzer:
             confidence_at_analysis=confidence,
             total_steps=len(steps),
             reachable_step_count=len(reachable_ids),
+            auto_cleared_terminals=auto_cleared,
         )
+
+    def _classify_step(
+        self, action: str, parameters: dict[str, Any], confidence: float
+    ) -> tuple[TerminalClassification, bool]:
+        """``(classification, cleared)`` for one step.
+
+        Without a magnitude extractor nothing can clear, so the plain
+        classification is used. With one, the provenance-aware classification
+        feeds the same predicate as the boundary stage.
+        """
+        if self._magnitude_extractor is None:
+            return self._classifier.classify(action), False
+        provenance = self._classifier.classify_with_provenance(action)
+        reason = conditional_clear_reason(
+            classification=provenance.classification,
+            registry_state=provenance.registry_state,
+            envelope=provenance.envelope,
+            magnitude=safe_magnitude(self._magnitude_extractor, parameters),
+            confidence=confidence,
+            confidence_floor=get_fria_zone_allow(),
+        )
+        return provenance.classification, reason is not None
 
     # ------------------------------------------------------------------
     # Diagnostic helpers

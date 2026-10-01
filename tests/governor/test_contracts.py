@@ -22,7 +22,10 @@ from src.gateway.governance.governor import (
     Profile,
     StageContext,
 )
-from src.gateway.governance.governor.pipeline import PROFILE_STAGES
+from src.gateway.governance.governor.pipeline import (
+    POST_HITL_READ_ONLY_STAGES,
+    stage_runs_under,
+)
 from src.gateway.governance.governor.errors import GovernanceError as NewGovernanceError
 from src.gateway.governance.governor.governor import GovernanceError as OldGovernanceError
 
@@ -58,15 +61,19 @@ def test_pipeline_result_frozen():
 
 
 def test_profile_stages_match_proof_tiers():
+    from proof.model import TIER_PHASE
+
     proof_tiers = frozenset(TIERS)
-    
-    # EVERY name must be a member of proof/model.py TIERS
-    for profile, stages in PROFILE_STAGES.items():
-        assert stages.issubset(proof_tiers), f"Profile {profile} has invalid stages"
-        
-    assert PROFILE_STAGES[Profile.FULL] == proof_tiers
-    assert PROFILE_STAGES[Profile.DRY_RUN] == proof_tiers
-    assert PROFILE_STAGES[Profile.POST_HITL] == frozenset({"opa", "cbf", "fiscal"})
+    assert POST_HITL_READ_ONLY_STAGES.issubset(proof_tiers)
+
+    def selected(profile: Profile) -> frozenset[str]:
+        return frozenset(
+            t for t in TIERS if stage_runs_under(profile, name=t, mutating=TIER_PHASE[t] == 2)
+        )
+
+    assert selected(Profile.FULL) == proof_tiers
+    assert selected(Profile.DRY_RUN) == proof_tiers
+    assert selected(Profile.POST_HITL) == frozenset({"opa", "cbf", "fiscal"})
 
 
 def test_governance_error_identity_preserved():

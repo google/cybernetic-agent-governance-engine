@@ -22,3 +22,10 @@ HEALTHCARE_GOVERNED_ACTIONS = frozenset(
         "adjust_dosage",
     ]
 )
+
+# Always convene consensus.
+HIGH_STAKES_CLINICAL_ACTIONS: frozenset[str] = frozenset(
+    {"administer_medication", "override_contraindication", "order_controlled_substance"}
+)
+# Equals the FTRA registry's terminals (config/ftra/terminal_registry.json).
+REGISTERED_ACTIONS = HEALTHCARE_GOVERNED_ACTIONS | HIGH_STAKES_CLINICAL_ACTIONS | {"dose_order"}
