@@ -15,12 +15,12 @@
 > - **Evidence Stream Schema Consolidation (CR-1):** Canonical `1.1` schema enforcing 6-field `record_hash` cryptographic binding.
 > - **Centralized Threshold Governance:** Numeric thresholds centralized under `config/thresholds/<REGION>_BASELINE.json` accessed via typed accessor functions.
 > - **Operational External Reconciliation (POAM-023 / POAM-2026-038 CLOSED):** GCS WORM ledger + Cloud KMS signing + 300s TTL in Redis.
-> - **PAUSE & NARROW Primitives:** Resumable pause tokens with fence-epoch protection and bounded partial-authority execution.
+> - **NARROW Primitive:** Bounded partial-authority execution on re-verified clamped parameters.
 > - **Seams Contracts Extraction:** Zero-kernel-import boundaries isolating `NormativeProvider`, `AttestationProvider`, and `ExecutionActuator` in `src/gateway/governance/seams/`.
 
 > - **External Hold Generalization:** `DeferReason.EXTERNAL_HOLD` replaces legacy vendor-specific `FLOWSIGNAL_ESCALATION` routing.
 
-> - **Full RefusalReceipt v3:** Complete `RefusalReceipt` v3 and `PauseReceipt` serialization into the evidence stream.
+> - **Full RefusalReceipt v3:** Complete `RefusalReceipt` v3 serialization into the evidence stream.
 
 > - **Attestation Failure Attributability:** First-class `provider_name` logging and `fetch_error` attribution, along with Ed25519 CER signature verification.
 
@@ -78,7 +78,6 @@ The `SymbolicGovernor` in `src/gateway/governance/governor/governor.py` (orchest
 3. `REQUIRE_APPROVAL` — triggers HITL approval workflow; state checkpointed to Redis.
 4. `DEFER` — low confidence or incomplete data; context parked in `DeferQueue` (`db=1`, `noeviction`) for asynchronous data injection.
 5. `NARROW` — policy violation with partial-authority option; clamps execution parameters to safe bounds.
-6. `PAUSE` — system or market transient overload; issues `pause_token` via `PausePrimitiveManager` with retry metadata.
 
 **HITL (Human-in-the-Loop):** Handled by `src/gateway/governance/defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; after human approval, `execute_trade_action(deferred_id=...)` consumes the approved token once and `revalidate_post_hitl()` re-runs OPA (Tier 3b) and the CBF (Tier 3a) and Fiscal (Tier 4) mutating tiers under `Profile.POST_HITL` in the gateway before actuation, rolling back committed tiers LIFO on failure.
 

@@ -16,7 +16,7 @@
 
 The old default called ``ClassificationEngine()`` without its required
 ``narrower_registry`` and crashed.  A silent default would also ignore the
-deployment's defer/narrow/pause posture, so the classifier is mandatory on
+deployment's defer/narrow posture, so the classifier is mandatory on
 ``GovernorComponents`` and the governor accepts nothing but components.
 """
 

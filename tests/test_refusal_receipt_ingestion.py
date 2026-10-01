@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Test suite for A2 + A3: Full RefusalReceipt and PauseReceipt ingestion.
+Test suite for A2: Full RefusalReceipt ingestion.
 
 Verifies that the evidence stream receives the complete v3 receipt with
 tier_failures, 5-part proof chain, and computed proof_hash intact.
@@ -23,11 +23,9 @@ import pytest
 
 from src.gateway.governance.contracts import (
     GovernanceTierFailure,
-    PauseReceipt,
     RefusalReceipt,
 )
 from src.gateway.server.governance_middleware import (
-    _emit_pause_receipt,
     _emit_refusal_receipt,
     _serialize_receipt,
 )
@@ -129,27 +127,6 @@ class TestSerializeReceipt:
         assert serialized["control_id"] == "CAGE-CTRL-003"
         assert serialized["protected_consequence"] == "overdraft_prevention"
         assert serialized["non_formation_proof"] == "cbf_barrier_active"
-
-    def test_serialize_pause_receipt_preserves_proof_hash(self):
-        """A3 requirement: PauseReceipt proof_hash is preserved."""
-        pause_receipt = PauseReceipt(
-            thread_id="test-thread-pause",
-            action="execute_trade",
-            pause_reason="RATE_LIMITED",
-            pause_token="pause-token-abc123",
-            standing_at_pause={"symbol": "TSLA", "amount": 1000.0},
-            estimated_wait_seconds=60,
-        )
-
-        original_proof_hash = pause_receipt.proof_hash
-        assert original_proof_hash != "", "PauseReceipt should have computed proof_hash"
-
-        serialized = _serialize_receipt(pause_receipt)
-
-        assert serialized["proof_hash"] == original_proof_hash
-        assert serialized["pause_reason"] == "RATE_LIMITED"
-        assert serialized["pause_token"] == "pause-token-abc123"
-        assert serialized["estimated_wait_seconds"] == 60
 
 
 class TestEmitRefusalReceiptIntegration:
@@ -312,82 +289,5 @@ class TestEmitRefusalReceiptIntegration:
         # Verify error was logged
         assert any(
             "Failed to emit OSCAL refusal receipt" in record.message
-            for record in caplog.records
-        )
-
-
-class TestEmitPauseReceiptIntegration:
-    """Integration tests for A3: PauseReceipt emission."""
-
-    @pytest.mark.asyncio
-    async def test_emit_pause_receipt_contains_proof_hash(self, monkeypatch):
-        """A3 requirement: Emitted pause receipt contains proof_hash."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        mock_sink = MagicMock()
-        mock_sink.ingest = AsyncMock()
-        monkeypatch.setattr(
-            "src.gateway.server.governance_middleware.get_evidence_sink",
-            lambda: mock_sink,
-        )
-
-        mock_signer = MagicMock()
-        mock_signer.sign = MagicMock(return_value="pause-kms-sig")
-        monkeypatch.setattr(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            lambda: mock_signer,
-        )
-
-        pause_receipt = PauseReceipt(
-            thread_id="pause-test-thread",
-            action="execute_trade",
-            pause_reason="CIRCUIT_OPEN",
-            pause_token="pause-xyz789",
-            standing_at_pause={"symbol": "AMD", "amount": 500.0},
-            estimated_wait_seconds=120,
-        )
-
-        original_proof_hash = pause_receipt.proof_hash
-
-        await _emit_pause_receipt(
-            action_id="execute_trade",
-            pause_receipt=pause_receipt,
-        )
-
-        assert mock_sink.ingest.called
-        ingested_payload = mock_sink.ingest.call_args[0][0]
-
-        # A3 requirement: proof_hash is byte-identical
-        assert ingested_payload["proof_hash"] == original_proof_hash
-        assert ingested_payload["type"] == "GOVERNANCE_PAUSE_RECEIPT"
-        assert ingested_payload["pause_reason"] == "CIRCUIT_OPEN"
-        assert ingested_payload["pause_token"] == "pause-xyz789"
-        assert ingested_payload["estimated_wait_seconds"] == 120
-        assert ingested_payload["kms_signature"] == "pause-kms-sig"
-        assert ingested_payload["oscal_control_ref"] == "ISO-42001-A.8.4"
-
-    @pytest.mark.asyncio
-    async def test_emit_pause_receipt_none_returns_early(self, monkeypatch, caplog):
-        """A3: _emit_pause_receipt with None logs warning and returns."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        mock_sink = MagicMock()
-        mock_sink.ingest = AsyncMock()
-        monkeypatch.setattr(
-            "src.gateway.server.governance_middleware.get_evidence_sink",
-            lambda: mock_sink,
-        )
-
-        await _emit_pause_receipt(
-            action_id="execute_trade",
-            pause_receipt=None,
-        )
-
-        # Should not call ingest
-        assert not mock_sink.ingest.called
-
-        # Should log warning
-        assert any(
-            "[A3]" in record.message and "pause_receipt=None" in record.message
             for record in caplog.records
         )

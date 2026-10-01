@@ -164,14 +164,6 @@ class AgentState(TypedDict):
     narrow_status: str | None  # default None
     narrowed_params: dict[str, Any] | None  # default None
 
-    # PAUSE Primitive — Execution Suspension (CAGE_IMPLEMENTATION_SPECS §4.3)
-    # Set when governance requires HITL review before proceeding.
-    # pause_resume_token: UUID for resuming suspended execution via DeferQueue.
-    # pause_reason:       Human-readable justification for the pause, e.g.:
-    #                     "HITL review required for high-value transaction"
-    pause_resume_token: str | None  # default None
-    pause_reason: str | None  # default None
-
     # Policy-Probing Attack Mitigation (ADR-008 Enforcement)
     # consecutive_denials: Counter of sequential DENY verdicts without ALLOW reset.
     #                      Incremented on PolicyViolationException, reset to 0 on ALLOW.

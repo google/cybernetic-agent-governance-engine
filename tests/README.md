@@ -319,7 +319,7 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `test_defer_queue.py`                 | `unit`                     | Hermetic `fakeredis` DeferQueue tests: park/resolve/get/list/expire, `DEFER_CONFIDENCE_THRESHOLD == 0.70`, `db=1` isolation, 4-hour TTL default |
 | `test_aarm_mapper.py`                 | `unit`                     | 11-vector ledger completeness, NEUTRALIZED/PARTIAL/EXPOSED scoring, SECURE/DEGRADED/CRITICAL posture classification |
 | `test_compliance_bridge_integration.py` | `integration`            | **104-test live GKE suite** (Groups 1–17): audit ingest, controls API, OSCAL export, SSE stream, Langfuse eval dataset, AARM conformance report, Context Accumulator chain integrity, DEFER queue endpoints |
-| `test_refusal_receipt_ingestion.py`   | `unit` / `local`           | Serialization of complete RefusalReceipt v3 and PauseReceipt into evidence stream; preserves 5-part proof chain and proof_hash |
+| `test_refusal_receipt_ingestion.py`   | `unit` / `local`           | Serialization of complete RefusalReceipt v3 into evidence stream; preserves 5-part proof chain and proof_hash |
 | `test_consequence_token_service.py`   | `unit` / `local`           | In-kernel ConsequenceToken minting, asymmetric signature verification, and TTL expiry |
 | `test_content_address.py`             | `unit` / `local`           | SHA-256 immutable ContentAddress kernel primitive and serialization |
 | `test_external_hold_generalization.py`| `unit` / `local`           | Dynamic finding-field driven external hold TTL and DeferReason.EXTERNAL_HOLD parity |

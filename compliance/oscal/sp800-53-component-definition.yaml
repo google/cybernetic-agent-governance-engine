@@ -72,7 +72,7 @@ component-definition:
                 inbound API request through deployment/system_authz.rego. Before any
                 handler runs, WorkloadIdentityMiddleware
                 (src/gateway/server/workload_identity.py) rejects with 403 every request
-                outside a small open-path list (health, metrics, JWKS, pause-status reads)
+                outside a small exact open-path list (health, metrics, JWKS; no prefixes)
                 unless its Linkerd-verified l5d-client-id is listed in
                 CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only), verified in CI by
                 tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
@@ -212,9 +212,12 @@ component-definition:
                 all dual-schema machinery (v1.0/v1.1 support) from the evidence pipeline
                 and compliance-bridge. Hash-chain canonicalization in evidence_stream.py
                 and context_accumulator.py now uses RFC 8785 JCS (jcs_canonicalize_plan)
-                exclusively, with a /2.0 schema sentinel. The six canonical decision values
-                (ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL) are enforced in
-                provenance_chain.py (VALID_DECISIONS). The compliance-bridge aggregates
+                exclusively, with a /2.0 schema sentinel. The five canonical decision values
+                (ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL) are enforced in
+                provenance_chain.py (VALID_DECISIONS, derived from the GovernanceDecision
+                enum). PAUSE was removed on 2026-10-01: a transient infrastructure fault
+                is a DENY with a refusal receipt; historical PAUSE records remain readable
+                (provenance_chain.LEGACY_PAUSE) but cannot be newly built. The compliance-bridge aggregates
                 spans into OSCAL Assessment Results via audit_workflow.py.
 
                 3. ATTESTATION FETCH AUDIT (Phase 5b C3, POAM-2026-072, 2026-09-09):
@@ -241,7 +244,7 @@ component-definition:
                 - name: jcs-canonicalization
                   value: "RFC 8785 JCS for deterministic cross-platform evidence integrity"
                 - name: canonical-decision-vocabulary
-                  value: "ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL"
+                  value: "ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL"
                 - name: attestation-fetch-audit-implementation-date
                   value: "2026-09-09"
               links:

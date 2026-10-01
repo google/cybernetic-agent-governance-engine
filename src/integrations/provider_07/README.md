@@ -18,7 +18,7 @@ The `provider_07` adapter integrates a **Bayesian belief network inference servi
 The adapter maps InferTheta's tri-state decision model (`ALLOW`, `REFUSE`, `ESCALATE`) to CAGE's [`NormativeProvider`](../../gateway/governance/normative_provider.py) seam contract, ensuring:
 - **Cryptographic verifiability** via out-of-band JWKS and Ed25519 signatures
 - **Fail-closed enforcement** on network failures, schema violations, and unknown signing keys
-- **Tamper-evident audit chain** for DENY and PAUSE receipts alongside ALLOW approvals
+- **Tamper-evident audit chain** for DENY and DEFER receipts alongside ALLOW approvals
 
 ---
 

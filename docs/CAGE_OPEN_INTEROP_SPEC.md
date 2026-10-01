@@ -1,6 +1,6 @@
 # CAGE Open Interoperability Specification — Developer Preview Spec
 
-> **Version:** 1.0-preview
+> **Version:** 1.1-preview (1.0-preview published `/v1/pause/*` and a `PAUSE` verdict; both were removed — a transient fault is a `DENY` with a refusal receipt)
 > **Audience:** External software publishers and integration partners
 > **Status:** Developer Preview — subject to change before general availability
 > **Distribution:** Cleared for external distribution — sanitized per security review 2026-07-05
@@ -96,12 +96,11 @@ cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
 ```
 
 **Open paths (no identity):** `GET /health`, `GET /healthz`, `GET /metrics`,
-`GET /governance/jwks`, `GET /governance/.well-known/jwks.json`,
-`GET /v1/pause/<token>`.
+`GET /governance/jwks`, `GET /governance/.well-known/jwks.json` — exact paths
+only, no prefixes.
 
 **Every other path requires a trusted identity**, including `/mcp/*`,
-`/tools/execute`, `/governance/*`, `POST /v1/pause/<token>/resume` and
-`/inference/*`. Callers through Agent Gateway / Envoy or a plain ingress have
+`/tools/execute`, `/governance/*` and `/inference/*`. Callers through Agent Gateway / Envoy or a plain ingress have
 no trusted identity and are refused.
 
 **Implementation:** [`src/gateway/server/workload_identity.py`](../src/gateway/server/workload_identity.py)

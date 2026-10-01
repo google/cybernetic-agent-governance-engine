@@ -195,7 +195,7 @@ At this point, **NVIDIA Halos takes full control of physical safety**:
 * **Simplex Architecture:** If the advanced trajectory planner enters an unstable state, Halos instantaneously fails over to a deterministic baseline safety controller (Lui Sha Simplex model).
 
 #### Stage 4: Upstream Telemetry Feedback & Dynamic Re-Attestation
-Halos continuously streams physical telemetry back to CAGE’s `TelemetryProvider` and `ReconciliationDaemon`. If Halos detects an operational context shift (e.g., humans unexpectedly entering a collaborative zone), CAGE transitions the agent's governance state from `ALLOW` to `NARROW` (speed clamping) or `PAUSE` (hold position).
+Halos continuously streams physical telemetry back to CAGE’s `TelemetryProvider` and `ReconciliationDaemon`. If Halos detects an operational context shift (e.g., humans unexpectedly entering a collaborative zone), CAGE transitions the agent's governance state from `ALLOW` to `NARROW` (speed clamping) or `DENY` (hold position; the actuator's safe-state is the fail-closed outcome).
 
 ---
 

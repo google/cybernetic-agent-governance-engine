@@ -88,7 +88,7 @@ def _assemble(*plugins: Any) -> SymbolicGovernor:
         posture=DeploymentPosture.TEST,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
-        flags=DecisionFlags(defer=False, narrow=False, pause=False),
+        flags=DecisionFlags(defer=False, narrow=False),
     )
 
 

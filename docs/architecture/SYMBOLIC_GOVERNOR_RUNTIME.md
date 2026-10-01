@@ -6,7 +6,7 @@
 
 The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) is the primary neuro-symbolic governance layer in the CAGE architecture, implementing the Governance/Reasoning Plane from Tallam's Five-Plane Reference Architecture. It sits below the request ingress and above the execution actuators.
 
-Its role is to evaluate requested actions against multiple domain-agnostic invariant tiers (e.g., STPA safety bounds, Control Barrier Functions, OPA policies, Causal models). Crucially, the Governor does not directly execute actions; it classifies aggregate validation results into discrete, actionable execution states (ALLOW, DENY, DEFER, PAUSE, NARROW, REQUIRE_APPROVAL) that the downstream `ConsequenceGateway` and `ExecutionActuator` enforce.
+Its role is to evaluate requested actions against multiple domain-agnostic invariant tiers (e.g., STPA safety bounds, Control Barrier Functions, OPA policies, Causal models). Crucially, the Governor does not directly execute actions; it classifies aggregate validation results into discrete, actionable execution states (ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL) that the downstream `ConsequenceGateway` and `ExecutionActuator` enforce.
 
 **Trust Boundaries**:
 - **Upstream (Client/Agents)**: Provides actions and self-assessed confidence scores. The Governor treats these inputs as untrusted and requires cryptographic or systemic verification. The governor runs only in the gateway process; the governed advisor reaches it through gateway endpoints (`/governance/validate-action`, `/governance/revalidate-post-hitl`, `/tools/execute`) and hosts no governor of its own.
@@ -30,19 +30,16 @@ stateDiagram-v2
     Aggregation --> Priority0_DENY: Contains Hard Violation (STPA/CBF/OPA DENY)
     Aggregation --> Priority1_OPA: OPA Manual Review
     Aggregation --> Priority2_HITL: Contains HITL Violation (FTRA hit, 0.70 <= conf < 0.95)
-    Aggregation --> Priority3_PAUSE: Contains Transient Issues
-    Aggregation --> Priority4_NARROW: Every Violation Narrowable
-    Aggregation --> Priority5_DEFER: Confidence Starved
+    Aggregation --> Priority3_NARROW: Every Violation Narrowable
+    Aggregation --> Priority4_DEFER: Confidence Starved
     Aggregation --> ALLOW: No Violations
 
     Priority0_DENY --> DENY
     Priority1_OPA --> REQUIRE_APPROVAL
     Priority2_HITL --> REQUIRE_APPROVAL
-    Priority3_PAUSE --> PAUSE
-    Priority4_NARROW --> NARROW
-    Priority5_DEFER --> DEFER
+    Priority3_NARROW --> NARROW
+    Priority4_DEFER --> DEFER
 
-    PAUSE --> [*]: Await Retry Signal
     DEFER --> [*]: Park in DeferQueue
     REQUIRE_APPROVAL --> [*]: Route to HITL Escalation
     DENY --> [*]: Abort Workflow
@@ -56,8 +53,7 @@ stateDiagram-v2
 The classification sequence maps violations into explicit states, satisfying CSA AARM specifications:
 
 - **REQUIRE_APPROVAL**: Triggered by `HITL` violations (FTRA boundary hits, confidence between `FRIA_ZONE_DEFER` and `AGENT_CONFIDENCE_THRESHOLD`) or an OPA `MANUAL_REVIEW`. Escalates to human-in-the-loop (HITL) workflows; after approval, `revalidate_post_hitl()` re-runs the `POST_HITL` profile (OPA plus the claimed CBF and fiscal tiers) and refuses actions no domain tier claims.
-- **DENY**: Hard safety constraints (STPA unsafe control actions, CBF barrier violations, explicit OPA denials). Any phase-2 commits are rolled back LIFO from their receipts, and a `RefusalReceipt` is published to the evidence chain.
-- **PAUSE**: Transient conditions (rate limits, circuit breakers). Pauses execution awaiting an explicit resume signal without discarding context. (Opt-in via `CAGE_PAUSE_ENABLED`).
+- **DENY**: Hard safety constraints (STPA unsafe control actions, CBF barrier violations, explicit OPA denials) and transient infrastructure faults (rate limits, circuit breakers, unreachable dependencies). Causes immediate workflow termination (Saga LIFO rollback) with a refusal receipt. There is no suspended/`PAUSE` state: the caller retries a fresh request. Any phase-2 commits are rolled back LIFO from their receipts, and a `RefusalReceipt` is published to the evidence chain.
 - **NARROW**: Clamps threshold violations (e.g., amount) to allowed values. Returned only if every violation is `NARROWABLE`, a registered narrower proposes clamped params, and a FULL re-run on those params (in a new `ReservationScope`) has zero violations; the seal covers exactly the re-verified params, otherwise `DENY`. (Opt-in via `CAGE_NARROW_ENABLED`).
 - **DEFER**: Resolves confidence starvation (confidence `< FRIA_ZONE_DEFER`) by parking the context in the gateway's Redis `db=1` [DeferQueue](DEFERRAL_QUEUE.md) for automated hydration or dual-control escalation (AARM-V7 Context Window Overflow mitigation).
 
@@ -77,7 +73,6 @@ The Governor's execution paths are manipulated via the following environment and
 - **Threshold Configuration**: `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) and `FRIA_ZONE_DEFER` (default 0.70) are loaded from `config/governance_thresholds.json` and set the boundaries between autonomous allowance, human approval and deferral. Domain thresholds live under `domains.<domain>` and are validated at assembly.
 - **Feature Flags (Environment Variables)**, read once at assembly via [`env_posture.py`](../../src/gateway/governance/env_posture.py):
   - `CAGE_DEFER_ENABLED` (default: `true`): If `false`, confidence starvation falls back directly to `DENY`.
-  - `CAGE_PAUSE_ENABLED` (default: `true`): If `false`, transient violations fall back to `DENY`.
   - `CAGE_NARROW_ENABLED` (default: `false`): If `false`, clampable threshold limits fall back to `DENY`.
 - **Production Guardrails**: The CBF tier has no fail-open flag. Under an enforcing posture, a tier whose runtime requirement (e.g. `dowhy`) fails to import, `RECONCILIATION_PROVIDER=stub`, an invariant with no registered `GroundTruthProvider`, or a missing or invalid `RECONCILER_KMS_KEY` trust anchor raises `PostureViolation` at startup.
 

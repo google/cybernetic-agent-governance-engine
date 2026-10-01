@@ -673,133 +673,25 @@ class TestSymbolicGovernorNarrow:
 
 
 # ---------------------------------------------------------------------------
-# TestSymbolicGovernorPause — PAUSE decision path tests (Phase 1.6)
+# No PAUSE path (refactor/prune-pause)
 # ---------------------------------------------------------------------------
 
 
-class TestSymbolicGovernorPause:
-    """Tests for PAUSE decision paths in validate_action().
+class TestNoPausePath:
+    """The governor has no PAUSE verdict: the handler table names exactly the
+    three non-ALLOW, non-NARROW verdicts and the enum has no PAUSE member."""
 
-    PAUSE is returned for transient conditions that will resolve without
-    human intervention, such as rate limiting or circuit breaker states.
-
-    Note: These tests verify the response structure when PAUSE is returned.
-    The actual classification logic is tested in test_classify_violation.py.
-    """
-
-    @pytest.mark.asyncio
-    async def test_pause_verdict_includes_pause_token(self, monkeypatch, classification_engine):
-        """PAUSE verdict includes a pause_token for resumption.
-
-        This test verifies the expected response structure when the governor
-        returns a PAUSE verdict with a pause token for resumption tracking.
-        """
-        from unittest.mock import patch
-
+    def test_verdict_handlers_name_no_pause(self):
         from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.governor import governor as governor_module
 
-        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-
-        opa_client = AsyncMock()
-        opa_client.evaluate_policy.return_value = "ALLOW"
-
-        safety_filter = AsyncMock()
-        safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
-
-        consensus_engine = AsyncMock()
-        consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-
-        governor = make_governor(
-            opa=opa_client,
-            safety_filter=safety_filter,
-            consensus=consensus_engine,
-            classifier=classification_engine,
-            domain_tiers=(
-                CBFTierPlugin(safety_filter),
-                ConsensusTierPlugin(consensus_engine),
-            ),
-        )
-
-        # Mock validate_action to return PAUSE response
-        pause_result = {
-            "verdict": GovernanceDecision.PAUSE,
-            "violations": ["Rate limit exceeded"],
-            "seal": "",
-            "thread_id": "",
-            "classification_meta": {
-                "pause_reason": "RATE_LIMITED",
-                "pausable": True,
-                "estimated_wait_seconds": 60,
-            },
+        assert set(governor_module._VERDICT_HANDLERS) == {
+            GovernanceDecision.DENY,
+            GovernanceDecision.REQUIRE_APPROVAL,
+            GovernanceDecision.DEFER,
         }
-
-        with patch.object(
-            type(governor), "validate_action", AsyncMock(return_value=pause_result)
-        ):
-            result = await governor.validate_action("execute_trade", {})
-
-        assert result["verdict"] == GovernanceDecision.PAUSE
-        meta = result.get("classification_meta", {})
-        assert meta.get("pause_reason") == "RATE_LIMITED"
-        assert meta.get("pausable") is True
-
-    @pytest.mark.asyncio
-    async def test_pause_verdict_includes_resume_endpoint(self, monkeypatch, classification_engine):
-        """PAUSE response provides classification_meta for HTTP layer to build resume_endpoint.
-
-        This test verifies the classification_meta includes circuit breaker
-        information that the HTTP layer uses to construct the resume endpoint.
-        """
-        from unittest.mock import patch
-
-        from src.gateway.governance.decisions import GovernanceDecision
-
-        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-
-        opa_client = AsyncMock()
-        opa_client.evaluate_policy.return_value = "ALLOW"
-
-        safety_filter = AsyncMock()
-        safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
-
-        consensus_engine = AsyncMock()
-        consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-
-        governor = make_governor(
-            opa=opa_client,
-            safety_filter=safety_filter,
-            consensus=consensus_engine,
-            classifier=classification_engine,
-            domain_tiers=(
-                CBFTierPlugin(safety_filter),
-                ConsensusTierPlugin(consensus_engine),
-            ),
-        )
-
-        # Mock validate_action to return PAUSE response for circuit breaker
-        pause_result = {
-            "verdict": GovernanceDecision.PAUSE,
-            "violations": ["Circuit breaker is open"],
-            "seal": "",
-            "thread_id": "",
-            "classification_meta": {
-                "pause_reason": "CIRCUIT_OPEN",
-                "pausable": True,
-                "violation_types": ["CIRCUIT_OPEN"],
-                "estimated_wait_seconds": 30,
-            },
-        }
-
-        with patch.object(
-            type(governor), "validate_action", AsyncMock(return_value=pause_result)
-        ):
-            result = await governor.validate_action("execute_trade", {})
-
-        assert result["verdict"] == GovernanceDecision.PAUSE
-        meta = result.get("classification_meta", {})
-        assert "CIRCUIT_OPEN" in str(meta.get("violation_types", []))
+        assert not hasattr(GovernanceDecision, "PAUSE")
+        assert not hasattr(governor_module, "handle_pause")
 
 
 # ---------------------------------------------------------------------------

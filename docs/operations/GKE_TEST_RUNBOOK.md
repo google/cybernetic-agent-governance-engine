@@ -340,7 +340,7 @@ Partner integration tests enforce the **Trust Anchor Isolation** invariant from 
 
 - **Never verify a signature against an embedded key**: Public keys must be resolved out-of-band by `kid` from an independently-fetched key manifest (e.g., Provider 02 JWK endpoint)
 - **Resolution status is not verification status**: Successful CER fetch proves receipt exists, not signature validity
-- **Refusals are primary evidence**: DENY and PAUSE receipts must enter the tamper-evident chain with the same completeness as ALLOW approvals
+- **Refusals are primary evidence**: DENY and DEFER receipts must enter the tamper-evident chain with the same completeness as ALLOW approvals
 
 ---
 

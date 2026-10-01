@@ -36,10 +36,9 @@ from src.gateway.governance.confidence_claim_detector import (
     _HIGH_STAKES_ACTIONS as CONF_HIGH_STAKES,
     detect_confidence_claim,
 )
-from src.gateway.governance.contracts import PauseReceipt, PluginContribution
+from src.gateway.governance.contracts import PluginContribution
 from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.governance.governor.assembly import DecisionFlags, assemble_governor
-from src.gateway.governance.governor.verdicts import handle_pause
 from src.gateway.governance.hitl_escalator import (
     EscalationReason,
     EscalationRequest,
@@ -241,84 +240,23 @@ class TestAaifAdapterAgnosticism:
         assert ucas[0]["action"] != "execute_trade"
 
 
-class TestPauseReceiptStandingProjector:
-    """§4b.16: PauseReceipt uses the plugin's standing_projector or falls back to default."""
+class TestNoStandingProjectorSlot:
+    """§4b.16 is retired with PAUSE: a plugin contributes no standing_projector
+    and the kernel keeps no slot for one (refactor/prune-pause)."""
 
-    @pytest.mark.asyncio
-    async def test_pause_receipt_uses_plugin_standing_projector_and_default_fallback(
-        self,
-    ) -> None:
-        mock_pm = MagicMock()
-        mock_pm.pause_request = AsyncMock(return_value="pause-tok-1")
-        mock_state = MagicMock()
-        mock_state.expires_at_utc = "2026-10-01T00:00:00Z"
-        mock_pm.get_pause_state = AsyncMock(return_value=mock_state)
+    def test_plugin_contribution_has_no_standing_projector(self) -> None:
+        import dataclasses
 
-        params = {
-            "thread_id": "t-1",
-            "patient_id": "P-99",
-            "dose_mg": 40.0,
-            "confidence": 0.85,
+        from src.gateway.governance.governor.assembly import GovernorComponents
+
+        assert "standing_projector" not in {
+            f.name for f in dataclasses.fields(PluginContribution)
         }
-
-        with (
-            patch(
-                "src.gateway.governance.env_posture.is_cage_pause_enabled",
-                return_value=True,
-            ),
-            patch(
-                "src.gateway.governance.pause_primitive.PauseManager",
-                return_value=mock_pm,
-            ),
-        ):
-            # 1. Default projector when none is registered
-            default_res = await handle_pause(
-                action="administer_medication",
-                params=params,
-                violations=[],
-                tier_failures=[],
-                classification_meta={"pause_reason": "RATE_LIMITED"},
-            )
-            default_receipt: PauseReceipt = default_res["pause_receipt"]
-            assert default_receipt.standing_at_pause == {"confidence": 0.85}
-
-            # 2. Custom plugin standing_projector wired via assemble_governor
-            class _MedicalPlugin:
-                name = "medical"
-                api_version = "1.0"
-                domain_config = None
-
-                def contribute(self) -> PluginContribution:
-                    return PluginContribution(
-                        domain="medical",
-                        standing_projector=lambda p: {
-                            "patient_id": p.get("patient_id"),
-                            "dose_mg": p.get("dose_mg"),
-                            "confidence": p.get("confidence"),
-                        },
-                    )
-
-            governor = assemble_governor(
-                [_MedicalPlugin()],
-                posture=DeploymentPosture.TEST,
-                opa=allow_opa(),
-                stpa_validator=clean_stpa(),
-                flags=DecisionFlags(defer=False, narrow=False, pause=True),
-            )
-            custom_res = await handle_pause(
-                action="administer_medication",
-                params=params,
-                violations=[],
-                tier_failures=[],
-                classification_meta={"pause_reason": "RATE_LIMITED"},
-                standing_projector=governor.components.standing_projector,
-            )
-            custom_receipt: PauseReceipt = custom_res["pause_receipt"]
-            assert custom_receipt.standing_at_pause == {
-                "patient_id": "P-99",
-                "dose_mg": 40.0,
-                "confidence": 0.85,
-            }
+        assert "standing_projector" not in {
+            f.name for f in dataclasses.fields(GovernorComponents)
+        }
+        with pytest.raises(TypeError):
+            PluginContribution(domain="x", standing_projector=lambda p: p)  # type: ignore[call-arg]
 
 
 class TestResourceGuardKernelName:

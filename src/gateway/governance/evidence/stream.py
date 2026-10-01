@@ -280,7 +280,7 @@ class EvidenceRecord:
 
     Core fields:
         evidence_id: Unique identifier for the evidence record.
-        decision: Governance decision (ALLOW, DENY, DEFER, NARROW, PAUSE).
+        decision: Governance decision (ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL).
         timestamp: UTC timestamp when the decision was made.
         tool_name: Name of the tool that was governed.
         control_id: NIST/ISO control identifier (e.g., "A.5.3").
@@ -297,7 +297,9 @@ class EvidenceRecord:
     v1.1 metadata fields:
         classification_reason: Human-readable reason for DEFER decisions.
         narrowing_applied: Dict describing narrowing constraints for NARROW decisions.
-        pause_token: Unique token for PAUSE decisions (for resumption).
+        pause_token: Legacy. Written by the removed PAUSE verdict; kept so
+            historical ``cage-audit/3.0`` records hash identically. No writer
+            exists at HEAD.
     """
 
     # Core fields (required)
@@ -652,7 +654,8 @@ def _link_hash(
         trace_id: 32-hex-character OTel trace ID.
         classification_reason: Reason for DEFER decisions (optional).
         narrowing_applied: Narrowing constraints for NARROW decisions (optional).
-        pause_token: Token for PAUSE decisions (optional).
+        pause_token: Legacy PAUSE-verdict token (optional, read-only; see
+            :class:`EvidenceRecord`).
 
     Returns:
         SHA-256 hex digest of the record.

@@ -154,7 +154,7 @@ class TestPhysicalAIPlugin:
             posture=DeploymentPosture.DEV,
             opa=allow_opa(),
             stpa_validator=clean_stpa(),
-            flags=DecisionFlags(defer=True, narrow=False, pause=False),
+            flags=DecisionFlags(defer=True, narrow=False),
         )
         assert len(governor.components.invariants) == 3
         assert len(governor.components.ground_truth_providers) == 3
@@ -214,7 +214,7 @@ class TestPhysicalAIPlugin:
                 posture=DeploymentPosture.DEV,
                 opa=allow_opa(),
                 stpa_validator=clean_stpa(),
-                flags=DecisionFlags(defer=False, narrow=False, pause=False),
+                flags=DecisionFlags(defer=False, narrow=False),
             )
             assert len(governor._components.ground_truth_providers) == 3
             for stage in governor.stages:

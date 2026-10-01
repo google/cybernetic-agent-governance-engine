@@ -47,6 +47,7 @@ GATED = [
     "/governance/validate-action",
     "/governance/policy-version",
     "/inference/v1/chat/completions",
+    "/v1/pause/tok",
     "/v1/pause/tok/resume",
     "/unknown",
 ]
@@ -120,7 +121,7 @@ def test_duplicate_identity_headers_are_refused() -> None:
     assert resp.status_code == 403
 
 
-@pytest.mark.parametrize("path", [*sorted(OPEN_EXACT_PATHS), "/v1/pause/tok"])
+@pytest.mark.parametrize("path", sorted(OPEN_EXACT_PATHS))
 def test_open_paths_need_no_identity(path: str) -> None:
     assert _client(ENFORCED).get(path).status_code == 200
 
@@ -131,9 +132,8 @@ def test_open_paths_need_no_identity(path: str) -> None:
         "//health",
         "/health/",
         "/./health",
-        "/v1/pause/",
-        "/v1/pause/../mcp",
-        "/v1/pause/a/../../mcp",
+        "/governance/../mcp",
+        "/governance/a/../../mcp",
         "/governance//jwks",
         "/governance/jwks/..",
         "health",
@@ -259,7 +259,8 @@ def test_every_open_path_is_a_real_gateway_route() -> None:
     routes = _route_paths(root_app.routes)
     missing = sorted(p for p in OPEN_EXACT_PATHS - {"/metrics"} if p not in routes)
     assert missing == []
-    assert "/v1/pause/{pause_token}" in routes
+    # The PAUSE routes are gone with the verdict; nothing under /v1/pause may exist.
+    assert not any(r.startswith("/v1/pause") for r in routes)
 
 
 def test_real_gateway_refuses_unidentified_calls_to_governed_routes() -> None:

@@ -44,7 +44,7 @@ from tests.fixtures.governor import allow_opa, clean_stpa
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-_FLAGS = DecisionFlags(defer=False, narrow=False, pause=False)
+_FLAGS = DecisionFlags(defer=False, narrow=False)
 
 
 @dataclass(frozen=True)

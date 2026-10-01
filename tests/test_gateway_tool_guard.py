@@ -151,7 +151,9 @@ class TestGuardFailClosed:
             pytest.param(lambda r: httpx.Response(500), id="gateway-500"),
             pytest.param(lambda r: httpx.Response(401), id="unauthenticated-401"),
             pytest.param(
-                lambda r: httpx.Response(200, json={"verdict": "PAUSE"}), id="pause"
+                # PAUSE was removed from GovernanceDecision; a gateway that still
+                # says it is speaking a vocabulary the advisor does not route on.
+                lambda r: httpx.Response(200, json={"verdict": "PAUSE"}), id="legacy-pause"
             ),
             pytest.param(
                 lambda r: httpx.Response(

@@ -21,6 +21,7 @@ Phase: 2 (core hardening)
 import pytest
 
 from src.gateway.governance.provenance_chain import (
+    LEGACY_PAUSE,
     VALID_DECISIONS,
     build_provenance_record,
     compute_hash,
@@ -142,7 +143,7 @@ class TestBuildProvenanceRecord:
         """VALID_DECISIONS contains exactly the six canonical decision values.
 
         Canonical gateway-boundary decisions (GovernanceDecision enum):
-          ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL
+          ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL
 
         Legacy values BLOCK and ESCALATE have been removed.
         """
@@ -152,13 +153,26 @@ class TestBuildProvenanceRecord:
                 "DENY",
                 "DEFER",
                 "NARROW",
-                "PAUSE",
                 "REQUIRE_APPROVAL",
             }
         )
         # Regression guard: legacy values must be rejected
         assert "BLOCK" not in VALID_DECISIONS
         assert "ESCALATE" not in VALID_DECISIONS
+        assert LEGACY_PAUSE not in VALID_DECISIONS
+
+    def test_legacy_pause_is_named_but_not_buildable(self):
+        """Readers may name the removed PAUSE value for old records, but no new
+        provenance record can be built with it (fail closed)."""
+        assert LEGACY_PAUSE == "PAUSE"
+        with pytest.raises(ValueError, match="Invalid decision 'PAUSE'"):
+            build_provenance_record(
+                trace_id="trace-pause",
+                node_id="test_node",
+                input_data={},
+                output_data={},
+                decision=LEGACY_PAUSE,
+            )
 
     def test_all_valid_decisions_accepted(self):
         """build_provenance_record accepts all valid decision values."""
@@ -167,7 +181,6 @@ class TestBuildProvenanceRecord:
             "DENY",
             "DEFER",
             "NARROW",
-            "PAUSE",
             "REQUIRE_APPROVAL",
         ]
         for decision in all_decisions:

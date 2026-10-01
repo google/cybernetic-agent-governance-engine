@@ -206,7 +206,7 @@ def _assemble(plugins):
         posture=DeploymentPosture.DEV,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
-        flags=DecisionFlags(defer=True, narrow=False, pause=False),
+        flags=DecisionFlags(defer=True, narrow=False),
     )
 
 

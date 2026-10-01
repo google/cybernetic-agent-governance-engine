@@ -172,7 +172,7 @@ def _assemble(**contribution: Any) -> Any:
         posture=DeploymentPosture.TEST,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
-        flags=DecisionFlags(defer=False, narrow=False, pause=False),
+        flags=DecisionFlags(defer=False, narrow=False),
     )
 
 

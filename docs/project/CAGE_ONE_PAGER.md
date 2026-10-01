@@ -15,7 +15,7 @@ The cost of inaction is concrete: a single unchecked `execute_trade_action` call
 **CAGE introduces evidentiary independence & fail-closed runtime safety:**
 
 - **Cloud KMS HSM-backed governance signing & Routing Seal v2** — asymmetric signing via Google Cloud KMS; private key never leaves the HSM; 4-tuple HMAC seal `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binds SHA-256 evidence record hash with fail-closed actuator enforcement (`CAGE_REQUIRE_EVIDENCE_BINDING=true`)
-- **6 Governance State Machine Primitives** — full first-class runtime execution for `ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`
+- **5 Governance State Machine Primitives** — full first-class runtime execution for `ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW`
 - **Lua-Atomic CBF with Strict Replica Barrier & Monotonic Fence Epoch** — collapses barrier check and balance deduction into atomic Redis Lua (`atomic_verify_and_commit()`), enforces synchronous `WAIT` replication with automatic fail-closed rollback on replica timeout, and prevents stale-state replay via monotonic `safety:fence_epoch`
 - **Human-gated NeMo refinement** — the autonomous Langfuse → KFP → NeMo hot-reload loop is severed; all config refinements require explicit human approval with reviewer identity and rationale before applying
 - **Heterogeneous multi-model consensus** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend; no single model can consent to its own output

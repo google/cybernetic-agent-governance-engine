@@ -210,7 +210,7 @@ All imports and test mocks must use these canonical locations:
 - **Seam Implementation**: Synchronous gate adapters implement `NormativeProvider` (`fetch_baseline`, `validate_fria`, `submit_evidence`).
 - **Trust Anchors — Never Verify Against an Embedded Key**: Never verify a signature against a public key supplied by the signed document. Resolve keys by `kid` from an independently-fetched key manifest, cached out-of-band. Enforce in the type system. Fail closed on unknown `kid`.
 - **Resolution Status Is Not Verification Status**: Successful fetch proves receipt exists, not signature validity. Return `UNVERIFIED` until cryptographic verification succeeds.
-- **Refusals Are Primary Evidence**: DENY and PAUSE receipts must enter the tamper-evident chain with the same completeness as ALLOW approvals.
+- **Refusals Are Primary Evidence**: DENY receipts (and DEFER / REQUIRE_APPROVAL tokens) must enter the tamper-evident chain with the same completeness as ALLOW approvals.
 - **Generic in Code, Specific in Prose**: Layer 1 kernel and Layer 3 package paths use anonymized namespaces (`provider_01`, `actuator_01`); vendor brand names belong in prose and READMEs only.
 - **Completeness Principle**: CAGE must be *safety- and security-complete*, not *commercially complete*. If a safety or security property can't be verified without a component, that component is implemented for real. Data may be simulated; security primitives (key custody, asymmetric signing, trust anchors, workload identity, tamper-evident storage) may not.
 - **Interface Tiering**: Classify every external interface before adding or keeping it:

@@ -44,7 +44,6 @@ _ROUTABLE_VERDICTS = frozenset(
         GovernanceDecision.NARROW,
         GovernanceDecision.REQUIRE_APPROVAL,
         GovernanceDecision.DEFER,
-        GovernanceDecision.PAUSE,
     }
 )
 
@@ -160,7 +159,7 @@ class GatewayClient:
             The unwrapped result. ``verdict`` is a :class:`GovernanceDecision`
             value other than ``DENY``: ``ALLOW``, ``NARROW`` (with
             ``narrowed_params``), ``REQUIRE_APPROVAL`` (with the ``deferred_id``
-            of the gateway-held approval token), ``DEFER`` or ``PAUSE``.
+            of the gateway-held approval token) or ``DEFER``.
 
         Raises:
             PermissionError: On a refusal (HTTP 403 / ``DENY``) or any verdict

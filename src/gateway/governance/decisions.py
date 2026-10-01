@@ -81,6 +81,9 @@ from typing import Literal
 class GovernanceDecision(str, Enum):
     """Canonical five-state governance decision vocabulary for the CAGE gateway boundary.
 
+    ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENY. There is no PAUSE: a
+    transient infrastructure fault is a DENY with a refusal receipt.
+
     This enum MUST be used for:
       - validate_action() return values (``verdict`` key)
       - HTTP response body ``verdict`` fields on gateway endpoints
@@ -98,32 +101,6 @@ class GovernanceDecision(str, Enum):
 
     DENY = "DENY"
     """Action is blocked. No routing seal issued. Violation details included."""
-
-    PAUSE = "PAUSE"
-    """Action is temporarily suspended awaiting an external resume signal.
-
-    Unlike DEFER (which queues for automated data-hydration), PAUSE suspends
-    execution waiting for an explicit resume API call. Useful for:
-      - Rate limiting (soft, will clear with time)
-      - Circuit breaker open (external dependency unavailable)
-      - Coordination wait (cross-agent synchronization)
-      - Resource temporarily unavailable
-
-    HTTP response: 503 Service Unavailable with Retry-After header.
-    Response body includes:
-      - pause_token: UUID for resuming via POST /v1/pause/{pause_token}/resume
-      - pause_reason: Enum-style reason code (RATE_LIMITED, CIRCUIT_OPEN, etc.)
-      - expires_at: ISO-8601 UTC timestamp when pause expires (auto-deny)
-      - estimated_wait_seconds: Optional hint for client polling
-
-    Client action: Call POST /v1/pause/{pause_token}/resume when ready to proceed,
-    or wait for timeout (which results in auto-deny).
-
-    Feature flag: CAGE_PAUSE_ENABLED (default: false — opt-in).
-    When disabled, PAUSE candidates fall back to DENY.
-
-    Control mapping: CTRL_PAUSE_001 (see config/control_mappings.json)
-    """
 
     NARROW = "NARROW"
     """Action is allowed but with constrained/clamped parameters.
@@ -205,7 +182,6 @@ OPA_TO_CANONICAL: dict[str, GovernanceDecision] = {
 # ---------------------------------------------------------------------------
 
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -348,87 +324,4 @@ class NarrowResponse(BaseModel):
             "execution_allowed": self.execution_allowed,
             # Canonical verdict field for consistency with other decisions
             "verdict": GovernanceDecision.NARROW,
-        }
-
-
-# ---------------------------------------------------------------------------
-# PauseResponse — HTTP response model for PAUSE decisions
-# ---------------------------------------------------------------------------
-
-
-class PauseResponse(BaseModel):
-    """Pydantic model for PAUSE decision HTTP response serialization.
-
-    Used by the gateway to serialize PAUSE responses with
-    consistent structure. HTTP 503 Service Unavailable is returned for PAUSE.
-
-    The PAUSE primitive allows resumable suspension of action execution.
-    Unlike DEFER (which queues for human review or data-hydration), PAUSE
-    suspends execution waiting for an external signal to resume — useful for
-    rate limiting, circuit breaking, or coordination scenarios.
-
-    Fields:
-        decision:               Always "PAUSE" for this model.
-        pause_token:            UUID v4 token for resuming via POST
-                                /v1/pause/{pause_token}/resume.
-        pause_reason:           Enum-style reason code (RATE_LIMITED,
-                                CIRCUIT_OPEN, COORDINATION_WAIT, etc.).
-        resume_endpoint:        URL path to resume the paused request.
-        expires_at:             ISO-8601 UTC timestamp when pause expires
-                                (auto-deny if not resumed by this time).
-        estimated_wait_seconds: Optional hint for client polling/retry.
-        retry_after_seconds:    Seconds until client should retry (maps to
-                                HTTP Retry-After header).
-
-    Feature flag: CAGE_PAUSE_ENABLED (default: false — opt-in).
-    When disabled, PAUSE candidates fall back to DENY.
-
-    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
-    """
-
-    decision: Literal["PAUSE"] = Field(
-        default="PAUSE",
-        description="Always PAUSE for this model",
-    )
-    pause_token: str = Field(
-        ...,
-        description="UUID v4 token for resuming the paused request",
-    )
-    pause_reason: str = Field(
-        ...,
-        description="Reason code for the pause (RATE_LIMITED, CIRCUIT_OPEN, etc.)",
-    )
-    resume_endpoint: str = Field(
-        ...,
-        description="URL path to resume the paused request",
-    )
-    expires_at: datetime = Field(
-        ...,
-        description="ISO-8601 UTC timestamp when pause expires (auto-deny)",
-    )
-    estimated_wait_seconds: int | None = Field(
-        default=None,
-        description="Optional hint for client polling/retry interval",
-    )
-    retry_after_seconds: int = Field(
-        default=60,
-        description="Seconds until client should retry (HTTP Retry-After header)",
-    )
-
-    def to_http_body(self) -> dict[str, Any]:
-        """Serialize to HTTP response body dict.
-
-        Returns:
-            Dict suitable for JSON serialization in HTTP 503 response.
-        """
-        return {
-            "decision": self.decision,
-            "pause_token": self.pause_token,
-            "pause_reason": self.pause_reason,
-            "resume_endpoint": self.resume_endpoint,
-            "expires_at": self.expires_at.isoformat(),
-            "estimated_wait_seconds": self.estimated_wait_seconds,
-            "retry_after_seconds": self.retry_after_seconds,
-            # Canonical verdict field for consistency with other decisions
-            "verdict": GovernanceDecision.PAUSE,
         }

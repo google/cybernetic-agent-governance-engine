@@ -33,7 +33,7 @@ Fail-closed contract, per batch:
   ``REQUIRE_APPROVAL`` with a ``deferred_id`` →
   no tool runs; ``governance_status`` becomes ``REQUIRE_APPROVAL`` and the
   ``deferred_id`` is stored so the graph can pause for a human;
-* a refusal (403 / DENY), DEFER, PAUSE, an unknown verdict, a
+* a refusal (403 / DENY), DEFER, an unknown verdict, a
   ``REQUIRE_APPROVAL`` without a ``deferred_id``, an HTTP error, a timeout or
   an unreachable gateway → the whole batch is refused.
 

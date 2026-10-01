@@ -201,22 +201,22 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 | Component | Definition |
 | --------- | ---------- |
 | **Tiers** | `ftra` → `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (9 tuple positions, in order) |
-| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROW` \| `PAUSE` |
+| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROW` (no `PAUSE` phase exists; `phases_closed` asserts the model names no verdict the runtime lacks) |
 | **`resolvedAllow`** | `TRUE` if and only if all profile tiers have passed (or a narrower's clamped params re-verified clean) **and** a valid routing seal has been issued |
-| **Terminal states** | `EXECUTED`, `DENIED`, `NARROW`, `PAUSE` |
+| **Terminal states** | `EXECUTED` (success), `NARROW` (seal issued on clamped params) and `DENIED` (fail-closed) |
 
 **Transition rules (gated architecture):**
 
 - Any tier failure transitions to `DENIED` — fail-closed by construction — unless a narrower proposes clamped params **and** re-running the `FULL` profile on those params yields zero violations (`narrower_present ∧ clamped_params_valid`), in which case the state is `NARROW` with a seal on the clamped params. A narrower whose re-run fails still ends in `DENIED`. This mirrors the runtime: `SymbolicGovernor._narrow()` re-runs `FULL` on a deep copy of the proposal inside a fresh `ReservationScope` via `sealing.run_sealed()` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)), and seals those exact params or denies.
-- All tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE` (or to `PAUSE`, with no seal, when a transient block is flagged).
+- All tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE`.
 - `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid, unconsumed, and unexpired.
 - `SEAL_ISSUED` → `DENIED` if the seal is invalid, consumed, or expired (e.g., TTL elapsed, HMAC mismatch).
 
 **Proof results (run: `uv run python proof/model.py`):**
 
 ```
-[gated]   Reachable states: 52
-[gated]   No-Direct-Bind holds over all 52 reachable states: True
+[gated]   Reachable states: 42
+[gated]   No-Direct-Bind holds over all 42 reachable states: True
 [gated]   EXECUTED states: 1
 [gated]     → resolvedAllow=True  seal_present=True
 
@@ -233,23 +233,23 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 
 Gap-specific sub-proofs:
   Gap 1 (no routing seal on approval): reachable states=21, invariant holds=False
-  Gap 4 (DoWhy absent): reachable states=49, invariant holds=True
+  Gap 4 (DoWhy absent): reachable states=39, invariant holds=True
   Gap 2 (govern() no seal): reachable states=21, invariant holds=False
 
-NARROW/PAUSE state-space sub-proofs (C1-sub audit remediation):
+NARROW state-space sub-proofs (C1-sub audit remediation):
   NARROW states: 9
     → resolvedAllow=True  seal_present=True  narrower_present=True  clamped_params_valid=True
-  PAUSE states: 1
-    → resolvedAllow=False  seal_present=False  transient_block=True
+  NARROW states have resolvedAllow=TRUE and seal_present=TRUE: True
+  Every reachable phase is in PHASES: True
 
 Ungated NARROW negative control (C1-sub):
-  Reachable states: 50
+  Reachable states: 40
   No-Direct-Bind holds: False
 
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all nine tiers pass, because no seal was issued and no seal was verified. The 9 `NARROW` states (one per tier position at which a failure can be narrowed) all carry a seal on re-verified clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all nine tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters; transient operational failures are `HARD` violations and terminate in `DENIED`.
 
 ### Evaluation Order: Sequential Two-Phase Pipeline
 
@@ -459,7 +459,7 @@ record_n = ProvenanceRecord(
     node_id     = <LangGraph node name>,
     input_hash  = SHA-256(jcs_canonicalize_plan(input_data)),
     output_hash = SHA-256(jcs_canonicalize_plan(output_data)),
-    decision    = "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL",
+    decision    = "ALLOW" | "DENY" | "DEFER" | "NARROW" | "REQUIRE_APPROVAL",
     parent_hash = chain_hash(record_{n-1})   # None for first record
 )
 ```
@@ -476,7 +476,7 @@ $$\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \t
 
 **Complexity:** $O(n)$ construction and $O(n)$ verification — linear in the number of governance nodes traversed per request.
 
-**Valid decisions:** the canonical six — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`. `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
+**Valid decisions:** the canonical five — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `REQUIRE_APPROVAL` (`VALID_DECISIONS` is derived from the `GovernanceDecision` enum; the retired `PAUSE` value is rejected). `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
 
 In production, each record is signed with the KMS key ring via [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
 
@@ -574,7 +574,7 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` (run: `uv
 
 ## Step 14: Evidence Serialization and KMS Staging/Production Requirements
 
-**Claim:** Full `RefusalReceipt` v3 and `PauseReceipt` serialization correctly preserve all components of the proof chain and maintain identical `proof_hash` properties during re-hydration. Moreover, production and staging environments strictly require KMS-backed signing for evidence streams.
+**Claim:** Full `RefusalReceipt` v3 serialization correctly preserves all components of the proof chain and maintain identical `proof_hash` properties during re-hydration. Moreover, production and staging environments strictly require KMS-backed signing for evidence streams.
 
 **Proof:**
 1. Serialization mechanisms capture `tier_failures`, ensuring the 5-part proof chain is maintained intact upon ingestion.

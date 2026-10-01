@@ -127,7 +127,7 @@ graph TB
    - **Phase 1 (Read-Only Inspection)**: Runs the non-mutating stages sequentially — FTRA, STPA, OPA, confidence, then the domain's read-only tiers by `(phase, order)` (e.g. bounding, consensus, causal) — and stops at the first `HARD` violation.
    - **Phase 2 (Atomic Mutation)**: Only if Phase 1 produced zero violations do the mutating tiers commit (e.g. discrete-time Control Barrier Functions via Redis Lua scripts and fiscal reservations). Each commit returns a `CommitReceipt` held by the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)); any Phase 2 failure rolls back exactly the recorded receipts in LIFO order.
 4. **Seal & Actuation Clearance**: On a clean run the governor issues a routing seal inside the same `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)). Commits stay in force only once the seal is issued; a failing or cancelled seal rolls them all back. The seal is a KMS-signed JWT bound to a durable evidence record ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)). When an external normative provider admits an action, a short-lived KMS-signed ConsequenceToken (JWS) is also minted ([`consequence_token_service.py`](../../src/gateway/governance/consequence_token_service.py)) for single-use verification by the [`ConsequenceGateway`](CONSEQUENCE_GATEWAY.md).
-5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, PauseReceipt, `CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`, and `ACTUATION_RECEIPT` / `ACTUATION_REFUSAL_RECEIPT` via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1), asynchronously drained to durable cold storage by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py), and verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py).
+5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, `CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`, and `ACTUATION_RECEIPT` / `ACTUATION_REFUSAL_RECEIPT` via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1), asynchronously drained to durable cold storage by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py), and verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py).
 
 ---
 
@@ -184,7 +184,7 @@ stateDiagram-v2
     Consequence_Verification --> Executed: Action Dispatched
     Executed --> [*]
     BLOCKED --> AppendEvidence: Emit RefusalReceipt
-    DEFERRED --> AppendEvidence: Emit PauseReceipt
+    DEFERRED --> AppendEvidence: Park DeferToken
     AppendEvidence --> [*]
 ```
 
@@ -223,7 +223,6 @@ System initialization and regional behavior are driven by environmental flags an
 | `CAGE_DOMAIN` | str | *(required)* | Names the single domain plugin this process runs (`cage.plugins` entry-point name, e.g. `finance`). Unset, multi-valued, unknown, or `DomainConfig`-less values abort startup. |
 | `OPA_URL` | str | *(required)* | OPA base URL with no path. The decision path is `/v1/data/<DomainConfig.opa_package>`; startup aborts unless OPA has that package and its `opa_required_rules` loaded. |
 | `CAGE_DEFER_ENABLED` | bool | `true` | Enables the 4-state AARM deferral primitive and Redis parking queue. |
-| `CAGE_PAUSE_ENABLED` | bool | `true` | Enables transient execution suspension and resume-token lifecycle. |
 | `REDIS_URL` | str | Required | Connection URI for the primary Redis cluster (db=0 and db=1). |
 | `KMS_GOVERNANCE_KEY` | str | Required when enforcing | Cloud KMS key the gateway signs seals and tokens with. The reconciler signs with `RECONCILER_KMS_KEY` and the compliance bridge with `EVIDENCE_KMS_KEY`; each must be a separate key. |
 

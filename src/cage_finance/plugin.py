@@ -55,15 +55,6 @@ FINANCE_EXECUTION_VERBS: frozenset[str] = frozenset(
 )
 
 
-def finance_standing_projector(params: dict) -> dict:
-    """Project finance standing parameters for refusal/pause receipts."""
-    return {
-        "symbol": params.get("symbol"),
-        "amount": params.get("amount"),
-        "confidence": params.get("confidence"),
-    }
-
-
 class FinanceCagePlugin(CagePlugin):
     """The finance domain capability plugin."""
 
@@ -123,7 +114,6 @@ class FinanceCagePlugin(CagePlugin):
             saga_compensators=SAGA_COMPENSATORS,
             ground_truth_providers={cash_barrier.invariant_id: cash_provider},
             execution_verbs=FINANCE_EXECUTION_VERBS,
-            standing_projector=finance_standing_projector,
             registered_actions=REGISTERED_ACTIONS,
             magnitude_extractor=extract_field_magnitude("amount"),
             safety_filter=cbf,

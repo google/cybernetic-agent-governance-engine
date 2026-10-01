@@ -226,7 +226,7 @@ header = {
 | `OSCAL_FINDING` | — | `AUDIT_FINDING` | Lula validation finding |
 | `AUDIT_START` | — | — (no mapping) | Audit session start marker |
 | `CHAIN_SEALED` | — | `CONTEXT_CHAIN_SEALED` | Hash chain sealed |
-| — | Embedded in `record` | `GOVERNANCE_DECISION` | Governor verdict (ALLOW/DENY/DEFER/NARROW/PAUSE) |
+| — | Embedded in `record` | `GOVERNANCE_DECISION` | Governor verdict (ALLOW/DENY/DEFER/NARROW/REQUIRE_APPROVAL) |
 | — | `event_type: hitl_approval` | `DEFER_RESOLVED` (when approved) | Human-in-the-loop approval |
 | — | — | `GOVERNANCE_VIOLATION` | Critical FAIL finding |
 | — | — | `REMEDIATION_GENERATED` | LLM-generated remediation |

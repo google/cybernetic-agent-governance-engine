@@ -38,7 +38,6 @@ import yaml
 from src.gateway.server.workload_identity import (
     _LINKERD_IDENTITY,
     OPEN_EXACT_PATHS,
-    OPEN_PATH_PREFIXES,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -82,30 +81,26 @@ def _by(docs: list[dict], kind: str, name: str) -> dict:
     return matches[0]
 
 
-def open_route_paths(route: dict) -> tuple[set[str], set[str]]:
-    """(exact paths, GET-only prefixes) of an open HTTPRoute."""
+def open_route_paths(route: dict) -> set[str]:
+    """Exact paths of an open HTTPRoute. Only exact paths may be open: a
+    prefix (of any method) would open a route family, so it is rejected."""
     exact: set[str] = set()
-    get_prefixes: set[str] = set()
     for rule in route["spec"]["rules"]:
         for match in rule["matches"]:
             path = match["path"]
             if path["type"] == "Exact":
                 exact.add(path["value"])
-            elif path["type"] == "PathPrefix" and match.get("method") == "GET":
-                get_prefixes.add(path["value"])
             else:
-                raise AssertionError(f"open route may only hold Exact paths or GET prefixes: {match}")
-    return exact, get_prefixes
+                raise AssertionError(f"open route may only hold Exact paths: {match}")
+    return exact
 
 
 def gateway_policy_violations(docs: list[dict]) -> list[str]:
     """Every way the raw gateway policy can drift from the app's policy."""
     problems: list[str] = []
-    exact, prefixes = open_route_paths(_by(docs, "HTTPRoute", "gateway-open"))
+    exact = open_route_paths(_by(docs, "HTTPRoute", "gateway-open"))
     if exact != set(OPEN_EXACT_PATHS):
         problems.append(f"open exact paths {sorted(exact)} != app {sorted(OPEN_EXACT_PATHS)}")
-    if prefixes != set(OPEN_PATH_PREFIXES):
-        problems.append(f"open prefixes {sorted(prefixes)} != app {sorted(OPEN_PATH_PREFIXES)}")
 
     gated = _by(docs, "HTTPRoute", "gateway-gated")
     matches = [m for r in gated["spec"]["rules"] for m in r["matches"]]
@@ -191,7 +186,7 @@ def test_all_linkerd_objects_use_served_api_versions() -> None:
 def test_chart_open_paths_match_app_policy() -> None:
     values = yaml.safe_load((_CHART / "values.yaml").read_text())
     assert set(values["openExactPaths"]) == set(OPEN_EXACT_PATHS)
-    assert set(values["openGetPrefixes"]) == set(OPEN_PATH_PREFIXES)
+    assert "openGetPrefixes" not in values, "no prefix may be open; only exact paths"
     assert values["trustedIdentities"] == []
 
 
@@ -278,11 +273,15 @@ def test_detects_an_extra_open_path() -> None:
     assert any("open exact paths" in p for p in gateway_policy_violations(_mutated(add_open)))
 
 
-def test_detects_an_open_prefix_without_method() -> None:
+@pytest.mark.parametrize("method", [None, "GET"])
+def test_detects_any_open_prefix(method: str | None) -> None:
+    """A PathPrefix on the open route, with or without a method, is refused:
+    the gateway opens exact paths only."""
     def add_prefix(docs):
-        _by(docs, "HTTPRoute", "gateway-open")["spec"]["rules"][0]["matches"].append(
-            {"path": {"type": "PathPrefix", "value": "/governance/"}}
-        )
+        match = {"path": {"type": "PathPrefix", "value": "/governance/"}}
+        if method:
+            match["method"] = method
+        _by(docs, "HTTPRoute", "gateway-open")["spec"]["rules"][0]["matches"].append(match)
     with pytest.raises(AssertionError, match="open route may only hold"):
         gateway_policy_violations(_mutated(add_prefix))
 

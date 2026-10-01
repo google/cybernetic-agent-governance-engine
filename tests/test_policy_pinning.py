@@ -316,7 +316,7 @@ def _stub_pipeline(mock_result):
     from src.gateway.governance.governor.pipeline import PipelineResult
     violations = tuple(
         v if isinstance(v, Violation)
-        else Violation(tier="test", code="TEST", message=str(v), kind=ViolationKind.TRANSIENT)
+        else Violation(tier="test", code="TEST", message=str(v), kind=ViolationKind.HARD)
         for v in mock_result.get("violations", [])
     )
     result = PipelineResult(

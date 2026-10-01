@@ -136,7 +136,7 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
             posture=DeploymentPosture.TEST,
             opa=mock_opa,
             stpa_validator=clean_stpa(),
-            flags=DecisionFlags(defer=False, narrow=False, pause=False),
+            flags=DecisionFlags(defer=False, narrow=False),
         )
         assert governor.components.unfilled_slots == ("safety_filter", "consensus")
 

@@ -735,16 +735,16 @@ identity (there is no permissive dev/test mode). The mesh policy in
 container.
 
 Open paths (no identity needed): `GET /health`, `GET /healthz`, `GET /metrics`,
-`GET /governance/jwks`, `GET /governance/.well-known/jwks.json`, and
-`GET /v1/pause/<token>`. Every other path is deny-by-default, including
-`/mcp/*`, `/tools/execute`, `/governance/*` (`check`, `validate-action`),
-`POST /v1/pause/<token>/resume` and `/inference/*`.
+`GET /governance/jwks` and `GET /governance/.well-known/jwks.json` — exact
+paths only; there is no open prefix. Every other path is deny-by-default,
+including `/mcp/*`, `/tools/execute`, `/governance/*` (`check`,
+`validate-action`) and `/inference/*`.
 
 `POST /governance/validate-action` is non-committing: it runs the DRY_RUN
 profile (phase-2 tiers preview only), mints no routing seal, and answers
 `ALLOW`, `NARROW` (an unsealed `narrowed_params` candidate),
 `REQUIRE_APPROVAL` (with the `deferred_id` of a `HITL_REQUIRED` token parked
-in the gateway's DeferQueue), `DEFER`, `PAUSE`, or 403 `DENIED`. The single
+in the gateway's DeferQueue), `DEFER`, or 403 `DENIED`. The single
 committing run happens inside the `execute_trade_action` tool: without a
 `deferred_id` it is `SymbolicGovernor.govern()` (FULL profile); with one, the
 gateway consumes the quorum-approved token exactly once

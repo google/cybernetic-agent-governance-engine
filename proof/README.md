@@ -44,14 +44,14 @@ Models the 9-tier CAGE governance pipeline (updated for ARCH-1):
 
 **Note**: Tier 3 (CBF/OPA) is split because these checks run concurrently via `asyncio.gather()`. The proof verifies the invariant holds under every interleaving.
 
-### State Counts (Post-ARCH-1)
+### State Counts (post refactor/prune-pause)
 
 | Model Variant | Reachable States | Invariant Holds? |
 |---------------|------------------|------------------|
-| Gated (correct CAGE) | 44 | ✅ TRUE |
+| Gated (correct CAGE) | 42 | ✅ TRUE |
 | Ungated (direct-bind) | 21 | ❌ FALSE (counterexample) |
 | Concurrent CBF∥OPA | 49 | ✅ TRUE |
-| Skipped tier (CBF/causal) | 43 | ✅ TRUE (structural) |
+| Skipped tier (CBF/causal) | 39 | ✅ TRUE (structural) |
 
 ### Gap Proofs
 
@@ -61,10 +61,10 @@ The model proves four concrete CAGE gaps:
 - **Gap 2**: `govern()` without seal issuance violates NoDirectBind
 - **Gap 4**: DoWhy `ImportError` (causal tier silently skipped) preserves structure but removes a mandatory check
 
-### NARROW/PAUSE States (C1-sub Audit Remediation)
+### NARROW State (C1-sub Audit Remediation)
 
 - **NARROW**: Soft threshold exceeded → seal issued on clamped parameters (ALLOW variant, `resolvedAllow=TRUE`)
-- **PAUSE**: Transient condition (rate limit, circuit breaker) → no seal, retryable (`resolvedAllow=FALSE`)
+- There is no PAUSE state. The verdict lattice is `ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENY`; a transient infrastructure fault is a DENIED terminal with a refusal receipt. `main()` asserts every reachable phase is in `PHASES`.
 
 ### Running the Proof
 
@@ -82,7 +82,7 @@ uv run pytest tests/test_no_direct_bind_proof.py -v
 
 PROVED:
   1. The gated CAGE architecture satisfies No-Direct-Bind over the
-     entire reachable state space (44 states).
+     entire reachable state space (42 states).
   2. The ungated (direct-bind) variant provably violates the invariant.
   ...
 ```
@@ -260,7 +260,7 @@ These are **not provable in the Python BFS model** (which abstracts FTRA as a bi
   run: uv run pytest tests/test_no_direct_bind_proof.py -v
 ```
 
-Regression tests pin the exact state counts (44/21/49/43). Any change to tier logic that alters these numbers fails CI and triggers a review of `docs/paper/REVISION_TRACKER.md` (published figures must stay consistent with proof).
+Regression tests pin the exact state counts (42/21/49/39). Any change to tier logic that alters these numbers fails CI and triggers a review of `docs/paper/REVISION_TRACKER.md` (published figures must stay consistent with proof).
 
 ### TLA+ (Manual Validation)
 
@@ -289,4 +289,4 @@ All proof artifacts in this directory are released under the Apache 2.0 License.
 
 The Python BFS model (`model.py`) is adapted from the open-source implementation by LalaSkye (Apache 2.0), available at: https://github.com/LalaSkye/no-direct-bind
 
-Modifications: Extended to CAGE's 9-tier architecture, added NARROW/PAUSE states, seal consumption semantics, and FTRA tier.
+Modifications: Extended to CAGE's 9-tier architecture, added the NARROW state, seal consumption semantics, and FTRA tier.

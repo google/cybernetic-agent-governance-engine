@@ -21,7 +21,7 @@
    CAGE Governed Financial Advisor (GFA) workflow. It captures:
    
    - Graph lifecycle phases (INIT → ROUTING → GOVERNANCE_CHECK → LLM_CALL → RESPONSE/ERROR)
-   - Canonical GovernanceDecision branching (ALLOW/DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL)
+   - Canonical GovernanceDecision branching (ALLOW/DENY/DEFER/NARROW/REQUIRE_APPROVAL)
    - Evidence chain commit points (routing seal generation)
    - Fence epoch validation integration (EXTENDS DistributedCBF concepts)
    - HITL interrupt/park semantics with TTL expiration
@@ -52,7 +52,7 @@
    - REQUIRE_APPROVAL → HITL queue (human sign-off required)
    - DEFER            → DeferQueue (automated data-hydration)
    - NARROW           → Clamped parameters, action proceeds with constraints
-   - PAUSE            → Temporarily suspended, resume API required
+   (There is no PAUSE: a transient fault is a DENY with a refusal receipt.)
 
    Verification Status:
    - Python BFS (proof/model.py): 21-state automaton for 8-tier governance
@@ -97,7 +97,6 @@ Phases == {
     "LLM_CALL",              \* LLM inference in progress
     "HITL_PENDING",          \* Awaiting human-in-the-loop approval
     "DEFER_PENDING",         \* Parked in DeferQueue for data hydration
-    "PAUSE_PENDING",         \* Temporarily paused, awaiting resume
     "RESPONSE",              \* Successful completion with output
     "ERROR",                 \* Terminal error state
     "Active",                \* Client session active
@@ -112,8 +111,7 @@ GovernanceDecisions == {
     "DENY",
     "REQUIRE_APPROVAL",
     "DEFER",
-    "NARROW",
-    "PAUSE"
+    "NARROW"
 }
 
 \* FTRA verdicts (from ftra/models.py FTRAVerdict enum)
@@ -355,16 +353,6 @@ GovernanceNarrow ==
                    seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
                    guardrail_blocked, output_rail_applied, resolved_allow>>
 
-(* GovernancePause: GOVERNANCE_CHECK → PAUSE_PENDING
-   Governance pauses for external resume signal. *)
-GovernancePause ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ phase' = "PAUSE_PENDING"
-    /\ governance_decision' = "PAUSE"
-    /\ UNCHANGED <<loop_count, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
 (* FTRAClear: FTRA_CHECK → LLM_CALL
    FTRA clears the plan, proceed to safety_check and LLM execution. *)
 FTRAClear ==
@@ -484,24 +472,6 @@ DeferTimeout ==
                    seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
                    guardrail_blocked, output_rail_applied, resolved_allow>>
 
-(* PauseResume: PAUSE_PENDING → GOVERNANCE_CHECK
-   Paused request receives resume signal, retry governance. *)
-PauseResume ==
-    /\ phase = "PAUSE_PENDING"
-    /\ phase' = "GOVERNANCE_CHECK"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
-(* PauseTimeout: PAUSE_PENDING → ERROR
-   Pause TTL expires without resume. *)
-PauseTimeout ==
-    /\ phase = "PAUSE_PENDING"
-    /\ phase' = "ERROR"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
 (* LoopBack: GOVERNANCE_CHECK → ROUTING
    Loop back for re-planning (safety breaker check). *)
 LoopBack ==
@@ -580,7 +550,6 @@ Next ==
     \/ GovernanceRequireApproval
     \/ GovernanceDefer
     \/ GovernanceNarrow
-    \/ GovernancePause
     \/ FTRAClear
     \/ FTRAHITLRequired
     \/ FTRABlocked
@@ -592,8 +561,6 @@ Next ==
     \/ HITLTick
     \/ DeferResolve
     \/ DeferTimeout
-    \/ PauseResume
-    \/ PauseTimeout
     \/ LoopBack
     \/ LoopCapExceeded
     \/ TriggerDenial
@@ -632,7 +599,7 @@ HITLEventuallyResolves ==
    - Full LangGraph node lifecycle (GUARDRAIL through OUTPUT_RAIL)
    - HITL interrupt/TTL semantics (hitl_expires_at)
    - FTRA Tier 0.5 integration (CLEAR/HITL_REQUIRED/BLOCKED)
-   - DEFER/NARROW/PAUSE decision paths
+   - DEFER/NARROW decision paths
 
    The extended state space is larger than the Python model, but the
    core NoDirectBind property should still hold: RESPONSE is only
