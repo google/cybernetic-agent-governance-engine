@@ -64,8 +64,9 @@ The following are **in scope** for security reports:
 - Authentication/authorisation bypass in the governance pipeline
 - Governance tier bypass (violations of the NoDirectBind invariant)
 - Injection vulnerabilities (prompt injection, SQL injection, etc.)
-- Cryptographic weaknesses in the Cloud KMS signing, HMAC-SHA256 fallback, or
-  SHA-256 hash-chain implementation
+- Cryptographic weaknesses in the Cloud KMS signing, kid-resolved trust anchors,
+  development-only software signers (Ed25519 / HMAC-SHA256), routing seals, or
+  the SHA-256 hash-chain implementation
 - Control Barrier Function (CBF) race conditions or invariant violations
 - Secrets or credentials exposed in the repository
 
@@ -95,19 +96,19 @@ deployment. Key security controls are documented in:
 
 | Control | Implementation |
 |---------|---------------|
-| Governance signing | Cloud KMS HSM-backed asymmetric signing; HMAC-SHA256 fallback in dev/CI; 90-day rotation cadence per `KEY_ROTATION.md` |
-| Routing seal v2 | 4-tuple token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash; 30-day secret rotation cadence |
+| Governance signing | Cloud KMS asymmetric signing (cloud providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`, loaded via `signer_factory.py`); separate keys per role (gateway seal, reconciler snapshot, compliance-bridge evidence) with kid-resolved verification. Software Ed25519 / HMAC signers are refused under an enforcing posture and allowed only in dev/test/CI. 90-day rotation cadence per `KEY_ROTATION.md` |
+| Routing seal v2 | 4-tuple token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash (KMS-signed JWT seals when a KMS signer is active); internal to `/tools/execute` and `ConsequenceGateway` — **not** used for caller authentication |
 | TLS & Transport Security | NIST SP 800-52 Rev. 2 minimum TLS 1.2+ validation, OIDC JWKS `verify=True` enforcement, and Linkerd mTLS manifest policies (`tests/test_tls_enforcement.py`) |
-| Base Image Hardening | Container images standardized on `python:3.12-slim-bookworm` with build-time security upgrade layers and pinned third-party tags |
+| Base Image Hardening | Container images standardized on `python:3.12-slim-bookworm` with build-time security upgrade layers; images are tagged by git SHA and their digests signed for Binary Authorization at build time (`scripts/build_images.sh`) |
 | Prompt injection detection | Aho-Corasick O(n) scan; 14+ patterns |
 | PII protection | Presidio; 15 entity types; input + output |
-| Human-in-the-loop | Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` |
-| Control Barrier Function | Atomic Redis Lua (`atomic_verify_and_commit()`) with synchronous replica `WAIT` barrier, monotonic `safety:fence_epoch`, and fail-closed state rollback |
+| Human-in-the-loop | Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` (advisor calls the gateway's `POST /governance/revalidate-post-hitl`) |
+| Control Barrier Function | Atomic Redis Lua (`atomic_verify_and_commit()`) with synchronous replica `WAIT` barrier, monotonic `safety:fence_epoch` with a shared high-water mark (`safety:fence_epoch_hwm`), and fail-closed state rollback |
 | Evidence chain integrity | SHA-256 hash-chained NDJSON & Redis Streams db=1; enforced blocking durability in production (`validate_evidence_stream_preconditions()`) |
-| mTLS | Linkerd SPIFFE/SVID; gateway↔OPA, gateway↔NeMo; ServiceAccounts annotated with compliance metadata (`POAM-007,POAM-011`) |
-| Agent identity (v3.1.0) | SPIFFE SVID extracted from the verified mTLS client certificate SAN (`spiffe_extractor.py`); **no** header or body identity path, **no** anonymous fallback; fail-closed 401 `authentication_required` on both HTTP and ext_authz/gRPC ingress. An RFC 9449 `DPoPValidator` ships and is unit-tested but is **not yet wired into any ingress path**. See [`docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
-| Egress credentials (v3.1.0) | `CredentialBrokerAdapter` protocol in Layer 1; the Layer 3 reference actuator fetches per dispatch, keyed on agent SVID and tool name, and attaches the result as request headers. Values are masked in logs and absent from the audit record; fails closed on `CredentialNotFound` / `CredentialAccessDenied` |
-| Egress lockdown | Cilium L7 FQDN allowlist |
+| mTLS | Linkerd mTLS with a Google CAS trust anchor (`infra/modules/service_mesh`); gateway ingress restricted by Linkerd `Server` / `HTTPRoute` / `AuthorizationPolicy`; one KSA/GSA per workload |
+| Caller identity | Gateway ingress requires a Linkerd-verified `l5d-client-id` that matches `CAGE_TRUSTED_CLIENT_IDENTITIES` ([`WorkloadIdentityMiddleware`](src/gateway/server/workload_identity.py)); enforced in every environment, **no** header/body identity fallback, fail-closed 403. An RFC 9449 `DPoPValidator` (`src/gateway/server/dpop_validator.py`) ships and is unit-tested but is **not yet wired into any ingress path**. See [`docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
+| Egress credentials (v3.1.0) | `CredentialBrokerAdapter` protocol in Layer 1; the Layer 3 reference actuator fetches per dispatch, keyed on agent identity and tool name, and attaches the result as request headers. Values are masked in logs and absent from the audit record; fails closed on `CredentialNotFound` / `CredentialAccessDenied` |
+| Egress lockdown | GKE Dataplane V2 `NetworkPolicy` + `FQDNNetworkPolicy` allowlists; DNS egress restricted to kube-dns and Cloud DNS (`deployment/k8s/cilium/egress-lockdown.yaml`) |
 | Token quota enforcement | Per-session step-count (≤12) and token (≤100k) via Redis atomic Lua counters; fail-closed |
 
 > **Note:** CAGE v3.x is a reference architecture. Regulated-environment deployers
@@ -117,7 +118,7 @@ deployment. Key security controls are documented in:
 
 ### KMS Cryptographic Signing Security
 
-> **Replay-attack closure:** KMS-signed reconciliation payloads embed a `signed_at` Unix timestamp. The verifier (`KmsSigner.verify()`) rejects any payload where `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`).
+> **Replay-attack closure:** KMS-signed reconciliation payloads embed a `signed_at` Unix timestamp. The verifier (`KMSGovernanceSigner.verify()` in `kms_signer.py`) rejects any payload where `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`).
 
 ### Redis / Data-Layer Security
 
@@ -127,15 +128,17 @@ deployment. Key security controls are documented in:
 
 > **Audit Durability Guarantee:** `validate_evidence_stream_preconditions()` halts startup in production if `EVIDENCE_CHAIN_BLOCKING=false`, ensuring no routing seal is issued without durable evidence commitment to the tamper-evident log.
 
-### Zero-Trust Agent Identity (v3.1.0)
+### Zero-Trust Caller Identity
 
-> **Header-spoofing closure:** Agent identity is no longer read from application-layer
-> data. `X-Agent-ID` / `X-SPIFFE-ID` headers and body-supplied `agent_id` fields are
-> ignored; the sole source of truth is the SPIFFE URI SAN of the verified mTLS client
-> certificate. Because every downstream governance tier keys off `agent_id`, a forgeable
-> identity previously undermined tier selection, quota accounting, and A2A authorization
-> simultaneously. Unauthenticated requests now fail closed with 401 on both ingress paths rather
-> than falling back to an anonymous principal.
+> **Header-spoofing closure:** Caller identity is never read from application-layer
+> data. `X-Agent-ID` headers, body-supplied `agent_id` fields, and the
+> `X-CAGE-Routing-Seal` header are not accepted as authentication. The sole source of
+> truth is the `l5d-client-id` header, which the Linkerd inbound proxy sets from the
+> verified mTLS peer certificate (or strips when there is none). The gateway accepts
+> exactly one such header matching `CAGE_TRUSTED_CLIENT_IDENTITIES`, in every
+> environment; anything else fails closed with 403 rather than falling back to an
+> anonymous principal. The mesh `AuthorizationPolicy` independently admits only the
+> advisor's service account (POAM-2026-080).
 
 ### Egress Credential Brokerage (v3.1.0)
 

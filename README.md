@@ -14,7 +14,7 @@ CAGE is an application-agnostic governance substrate that contains **zero built-
 
 Domain specificity and jurisdictional compliance are **configuration, not core requirements**. The finance and healthcare packages shipped in this repository are illustrative example domains that exercise the extension contract — neither is privileged by the kernel.
 
-![v3.0.1](https://img.shields.io/badge/version-3.0.1-brightgreen) ![3921 Tests Passing](https://img.shields.io/badge/tests-3921%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
+![v3.0.1](https://img.shields.io/badge/version-3.0.1-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -29,10 +29,11 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 
 > [!WARNING]
 > **Breaking change.** `X-Agent-ID` / `X-SPIFFE-ID` header parsing and the anonymous
-> fallback are removed. Callers must present a mesh-issued mTLS client certificate
-> carrying a SPIFFE URI SAN; unauthenticated requests fail closed with **401**
-> `authentication_required` on both the HTTP and ext_authz/gRPC paths. No
-> compatibility shim is provided — the removed path was a
+> fallback are removed. Callers must reach the gateway through the Linkerd mesh with an
+> mTLS workload identity (`l5d-client-id`) listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`;
+> requests without a trusted identity fail closed with **403**. The Envoy ext_authz
+> Agent Gateway adapter has since been removed; GKE + Linkerd mTLS is the sole
+> reference deployment. No compatibility shim is provided — the removed path was a
 > spoofing vector.
 
 | Capability | Location | Description |
@@ -94,28 +95,25 @@ Skipped tests represent live GKE cluster integration endpoints (evaluated via `s
 
 ## Platform Compatibility
 
-CAGE is a **Kubernetes-native, cloud-agnostic** AI governance engine. The core governance kernel — OPA policy enforcement, NeMo Guardrails, SymbolicGovernor, Control Barrier Functions, and the LangGraph audit harness — runs on **any conformant Kubernetes 1.24+ cluster** without modification.
+CAGE is a **Kubernetes-native** AI governance engine. The core governance kernel — OPA policy enforcement, NeMo Guardrails, SymbolicGovernor, Control Barrier Functions, and the LangGraph audit harness — has no hard dependency on a specific cloud, but the repository ships only two deployment targets under [`infra/targets/`](infra/targets/):
 
-| Deployment Target | Kubernetes | Cloud Provider | Status |
+| Deployment Target | Path | What it provides | Status |
 |---|---|---|---|
-| GKE (Google Kubernetes Engine) | ✅ Any GKE channel | GCP (optional integrations) | Production-ready |
-| Cloud Run (Serverless) | N/A (Serverless Containers) | GCP | Phase A+B Hardened |
-| EKS (Amazon Elastic Kubernetes Service) | ✅ Any EKS version | AWS (optional integrations) | Supported |
-| AKS (Azure Kubernetes Service) | ✅ Any AKS version | Azure (optional integrations) | Supported |
-| OpenShift | ✅ 4.12+ | On-prem / any cloud | Supported |
-| Vanilla Kubernetes | ✅ 1.24+ | On-prem / any cloud | Supported |
+| GKE (Google Kubernetes Engine) | [`infra/targets/gcp-gke/`](infra/targets/gcp-gke/) | Full reference stack: GKE, Linkerd mTLS mesh (required for gateway ingress identity), managed data services, KMS keyrings, security perimeter | Reference deployment |
+| Any existing Kubernetes cluster (k3s, kind, minikube, …) | [`infra/targets/agnostic/`](infra/targets/agnostic/) | Supporting services only: namespace, MinIO, PostgreSQL, Redis, vLLM, Langfuse, compliance bridge, OPA. No Linkerd mesh or gateway module | Local / development |
+| EKS, AKS, OpenShift, other distributions | — | No dedicated target; portable in principle via the agnostic target plus a Linkerd mesh and a real asymmetric KMS provider | Not tested |
 
 ### Optional GCP Integrations
 
-The following GCP services are **optional drivers** — the system functions fully without them using the listed alternatives:
+The following GCP services are drivers with the listed alternatives. Security primitives are not optional: under an enforcing posture the gateway refuses to start without a real asymmetric KMS signer, and in every posture it rejects callers without a trusted Linkerd workload identity.
 
 | GCP Service | Purpose | Alternative |
 |---|---|---|
-| Cloud KMS | Audit log signing | AWS KMS, Azure Key Vault, HashiCorp Vault |
-| Cloud Storage (GCS) | OSCAL evidence storage | AWS S3, MinIO, local filesystem |
-| GKE Workload Identity | Pod-level IAM | AWS IRSA, Azure Workload Identity, static credentials |
-| Cloud Build | CI/CD | GitHub Actions, GitLab CI, any OCI-compatible CI |
-| Cilium L7 FQDN enforcement | GKE Dataplane V2 (`enable_dataplane_v2=true`) | Open-source Cilium on EKS/AKS; or L3/L4 `NetworkPolicy` baseline only |
+| Cloud KMS | Seal, snapshot, and evidence signing | AWS KMS or Azure Key Vault (`src/integrations/{aws,azure}/kms_provider.py`); software Ed25519/HMAC signers only in DEV/TEST/CI posture |
+| Cloud Storage (GCS) | OSCAL evidence storage / WORM system of record | AWS S3 (`src/integrations/storage_s3/`), MinIO |
+| GKE Workload Identity | Pod-level IAM | AWS IRSA, Azure Workload Identity |
+| Cloud Build | CI/CD | GitHub Actions, GitLab CI, any OCI-compatible CI (GKE images must be built by Cloud Build per [Deployment Rules](docs/operations/DEPLOYMENT_RULES.md)) |
+| GKE `FQDNNetworkPolicy` (Dataplane V2) | FQDN egress allowlists (`enable_dataplane_v2` / `enable_fqdn_network_policy`, on by default in the GKE target) | Open-source Cilium on other clusters; or L3/L4 `NetworkPolicy` baseline only |
 
 ---
 
@@ -134,7 +132,7 @@ To prove that CAGE is truly agnostic and that its universal governance engine wo
 
 **Neither application is part of the core CAGE platform.** Both are client applications and domain plugins designed to demonstrate the substrate's capabilities and prove that the kernel operates identically regardless of whether an action is `execute_trade` or `dose_order`.
 
-**Deny-by-Default Kernel Property:** The bare Layer 1 kernel — a `SymbolicGovernor` constructed with no domain plugin installed — enforces all universal safety mechanisms (FTRA reachability, pipeline orchestration, consensus, causal checks, evidence sealing) but **denies all domain-specific actions** because no plugin has registered action handlers. This is the intended fail-closed behavior: the kernel cannot govern what it does not understand. Domain semantics arrive exclusively through Layer 2 plugins. A deployed server always runs exactly one domain, selected by the required `CAGE_DOMAIN` environment variable.
+**Deny-by-Default Kernel Property:** The bare Layer 1 kernel — a `SymbolicGovernor` assembled by `assemble_governor()` with no domain plugin contributions — enforces all universal safety mechanisms (FTRA reachability, pipeline orchestration, consensus, causal checks, evidence sealing) but **denies all domain-specific actions** because no plugin has registered action handlers. This is the intended fail-closed behavior: the kernel cannot govern what it does not understand. Domain semantics arrive exclusively through Layer 2 plugins. A deployed server always runs exactly one domain, selected by the required `CAGE_DOMAIN` environment variable.
 
 **Domain specificity is added through optional plugins:**
 
@@ -202,18 +200,18 @@ This provides **evidentiary independence** — the system cannot manufacture the
 
 **Layer 1 (L1) — Domain-Neutral Kernel** provides universal enforcement mechanisms:
 
-1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **STERA Runtime Pipeline** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper, adaptive FRIA gate). The evaluation boundary is strictly isolated from side-effect actuators via zero-dependency protocols in `src/gateway/governance/seams/` (Formal Seam Extraction). Combined with network and runtime hardening (Linkerd mTLS, standard Kubernetes NetworkPolicy L3/L4 baseline). **Optional GKE Dataplane V2 overlay** (`deployment/k8s/cilium/`) adds Cilium L7 FQDN enforcement when `enable_dataplane_v2=true`. Acts as the "Controller" in our Controller-Plant architecture.
+1.  **The Governance Gateway** *(L1)*: High-performance inference proxy and MCP tool server enforcing the **STERA Runtime Pipeline** — pre-execution FTRA reachability (Tier 0.5) plus domain-agnostic in-pipeline stages (STPA/UCA validation, consensus arbitration, Control Barrier Function, causal gatekeeper). The evaluation boundary is strictly isolated from side-effect actuators via zero-dependency protocols in `src/gateway/governance/seams/` (Formal Seam Extraction). Combined with network and runtime hardening (Linkerd mTLS with a gateway `AuthorizationPolicy` that admits only the advisor's workload identity, standard Kubernetes NetworkPolicy L3/L4 baseline). The GKE target enables **Dataplane V2 and GKE `FQDNNetworkPolicy`** by default and applies the egress `NetworkPolicy` / `FQDNNetworkPolicy` set from [`infra/targets/gcp-gke/network_policy.tf`](infra/targets/gcp-gke/network_policy.tf), with an equivalent kubectl overlay in `deployment/k8s/cilium/` (legacy directory name; it contains no Cilium CRDs). Acts as the "Controller" in our Controller-Plant architecture.
 2.  **The FTRA Reachability Gate** *(L1)*: Pre-execution Forward-Looking Trajectory Reachability Analyzer ([`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)) that builds a NetworkX directed graph from the agent's `ExecutionPlan`, classifies each step with `IrreversibilityClassifier` against the signed terminal registry, and issues a CLEAR / HITL_REQUIRED / BLOCKED verdict before any tool call is made.
 3.  **The Reusable Agent Harness** *(L1)*: Deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
-4.  **The STPA-to-Policy Compiler** *(L1)*: CLI tool ingesting declarative YAML control structure ([`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml)) and auto-generating OPA Rego policies, NeMo Colang rails, Python `GeneratedSTPAValidator` classes, and LangGraph Saga compensating sub-graphs.
+4.  **The STPA-to-Policy Compiler** *(L1)*: CLI tool ([`src/gateway/governance/stpa_compiler.py`](src/gateway/governance/stpa_compiler.py)) ingesting declarative YAML control structure ([`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml) plus per-domain hazard files such as [`src/cage_finance/config/stpa/trade_hazards.yaml`](src/cage_finance/config/stpa/trade_hazards.yaml)) and auto-generating OPA Rego policies, NeMo Colang rails, and — inside each domain plugin — Python UCA rules and LangGraph Saga compensators (finance: [`src/cage_finance/stpa/`](src/cage_finance/stpa/)).
 5.  **The DoWhy Causal Gatekeeper** *(L1)*: Optional refutation-based causal inference safety lock ([`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py)) validating world-model integrity via DoWhy placebo refutation before allowing high-stakes actions. Integrated as a pipeline stage.
 6.  **The Cryptographic Hash-Chained Context Accumulator** *(L1)*: SHA-256 hash-chained, append-only log of every `OscalFinding`. Each node's `record_hash` binds `SHA-256(prev_hash ‖ content_json ‖ control_id ‖ event_type ‖ node_index ‖ audit_id)`, sealing an unalterable chain-of-custody. Satisfies **ISO 42001 Annex A.5.3** and neutralizes **AARM-V1**.
-7.  **The 6 Governance State Machine Primitives** *(L1)*: Full first-class runtime execution for all six governance primitives (`ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`) in `SymbolicGovernor.validate_action()`. Execution is parked in Redis-backed `DeferQueue` for `DEFER`, partially executed under `NARROW`, and suspended with epoch fencing under `PAUSE`. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
-8.  **Routing Seal v3 (JWT/KMS format)** *(L1)*: 4-tuple cryptographic routing token `<expire_hex>.<action_slug>.<record_hash_hex>.<signature_hex>` produced only after all tiers pass. Actuators fail-closed if `record_hash` is absent or tampered when `CAGE_REQUIRE_EVIDENCE_BINDING=true`.
-9.  **Cloud KMS HSM-Backed Governance Signing** *(L1)*: Asymmetric signing via Google Cloud KMS HSM ([`src/gateway/governance/kms_signer.py`](src/gateway/governance/kms_signer.py)). Private key never leaves the HSM; verification uses locally-embedded public key PEM for sub-millisecond latency.
+7.  **The 6 Governance State Machine Primitives** *(L1)*: Full first-class runtime execution for all six governance primitives (`ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`) in `SymbolicGovernor.validate_action()`. Execution is parked in Redis-backed `DeferQueue` for `DEFER`, re-run through the full pipeline on the narrowed parameters before sealing under `NARROW`, and suspended with epoch fencing under `PAUSE`. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
+8.  **Routing Seal v3 (JWT/KMS format)** *(L1)*: Short-lived JWT ([`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py)) signed by the gateway KMS signer and bound to the SHA-256 evidence `record_hash`, produced only after all tiers pass. Actuators fail-closed if `record_hash` is absent or tampered when `CAGE_REQUIRE_EVIDENCE_BINDING=true`; unknown seal `kid`s fail closed.
+9.  **Cloud KMS HSM-Backed Governance Signing** *(L1)*: Asymmetric signing through `KMSGovernanceSigner` ([`src/gateway/governance/kms_signer.py`](src/gateway/governance/kms_signer.py)). Cloud providers live in Layer 3 (`src/integrations/{gcp,aws,azure}/kms_provider.py`) and are loaded lazily by [`signer_factory.py`](src/gateway/governance/signer_factory.py). Each workload signs with its own key: gateway seals (`KMS_GOVERNANCE_KEY`), reconciler snapshots (`RECONCILER_KMS_KEY`), and compliance-bridge evidence (`EVIDENCE_KMS_KEY`); the advisor holds no signing key. Private keys never leave the HSM; verification uses locally-embedded public key PEM for sub-millisecond latency.
 10. **Heterogeneous Multi-Model Consensus** *(L1)*: `ConsensusModelRegistry` routes each critic persona to distinct vLLM inference backends. No single model can "consent" to its own output — system invariants are no longer vulnerable to shared semantic blind spots.
 11. **Lua-Atomic CBF with Strict Replica Barrier** *(L1)*: Consolidates barrier check and balance debiting into atomic Redis Lua (`atomic_verify_and_commit()`), enforces synchronous `WAIT` replication with fail-closed rollback on replica timeout, prevents stale-state replay via monotonic `safety:fence_epoch`.
-12. **Externally Reconciled CBF Ground Truth** *(L1)*: Sourced from independently reconciled external custody ledger via [`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py) (GCS WORM ledger + Cloud KMS ECDSA-P256 signing with 300s TTL).
+12. **Externally Reconciled CBF Ground Truth** *(L1)*: `GroundTruthReconciler` ([`src/gateway/governance/reconciliation/daemon.py`](src/gateway/governance/reconciliation/daemon.py)) polls domain-contributed `GroundTruthProvider`s (reference backend: a seeded `SimulatedSource` with fault injection), signs verified snapshots with the reconciler's own key (`RECONCILER_KMS_KEY`), and writes TTL-bounded records (300 s default). The CBF verifies each snapshot by `kid` against reconciler-only trust anchors ([`reconciliation/trust.py`](src/gateway/governance/reconciliation/trust.py)) and rejects snapshots signed by the gateway key.
 13. **Mechanized Formal Model** *(L1)*: Exhaustive BFS state-space exploration ([`proof/model.py`](proof/model.py) and [`proof/distributed_cbf_model.py`](proof/distributed_cbf_model.py)) proving the `NoDirectBind` invariant holds across all sequential and concurrent interleavings.
 
 **Layer 2 (L2) — Domain Plugins** contribute domain-specific semantics (exactly one per process, selected via `CAGE_DOMAIN`):
@@ -221,11 +219,10 @@ This provides **evidentiary independence** — the system cannot manufacture the
 14. **Finance Plugin** *(L2)*: Trading controls, `FiscalLimitGuard` (atomic pre-reservation preventing multi-agent "race to the rail"), `CashBarrier` declaration, `execute_trade` tooling, market-abuse critics, LangGraph Saga atomic transaction guarantees with WAL + LIFO rollback ([`src/cage_finance/`](src/cage_finance/)).
 15. **Healthcare Plugin** *(L2)*: Dosing concentration barriers, clinical decision oversight, `dose_order` tooling, `SerumConcentrationBarrier` declaration ([`src/cage_healthcare/`](src/cage_healthcare/)).
 
-**Layer 3 (L3) — Operational Tooling**:
 **Layer 3 (L3) — Integrations & Seam Contracts**:
 
 16. **Native AARM Threat Vector Mapping** *(L3)*: Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns live `NEUTRALIZED | PARTIAL | EXPOSED` verdicts per vector.
-17. **Human-Gated NeMo Refinement** *(L3)*: All incoming policy changes staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying.
+17. **Human-Gated NeMo Refinement** *(L3)*: All incoming policy changes staged via the gateway's `POST /v1/nemo/propose-refinement` ([`hybrid_server.py`](src/gateway/server/hybrid_server.py)) and require explicit human approval with reviewer identity and rationale before applying.
 
 Compliance is not documented after the fact; it is enforced at the point of inference, producing both governed outputs and a cryptographically hash-chained, tamper-evident audit evidence trail in real time.
 
@@ -238,21 +235,21 @@ CAGE is composed of the following runtime subsystems:
 | Subsystem                        | Layer | Root Path                         | Role                                                                        |
 | -------------------------------- | ----- | --------------------------------- | --------------------------------------------------------------------------- |
 | **Gateway / Governance Harness** | **L1** | `src/gateway/governance/`         | Domain-neutral enforcement kernel: FTRA gate, pipeline orchestrator, CBF engine, consensus arbitration, causal gatekeeper, evidence chain, routing seal |
-| **Symbolic Governor Runtime**    | **L1** | `src/gateway/governance/`         | Dispatch loop, 2-phase commit, and interruption taxonomy — see [`SYMBOLIC_GOVERNOR_RUNTIME.md`](docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md) |
+| **Symbolic Governor Runtime**    | **L1** | `src/gateway/governance/governor/` | Immutable `SymbolicGovernor` built only via the composition root (`assemble_governor()` / `bootstrap_governor()`), startup posture checks, dispatch loop, 2-phase commit, and interruption taxonomy — see [`SYMBOLIC_GOVERNOR_RUNTIME.md`](docs/architecture/SYMBOLIC_GOVERNOR_RUNTIME.md) |
 | **Consequence Gateway**          | **L1** | `src/gateway/governance/`         | 6-step token evaluation, JWS verification, and authority store — see [`CONSEQUENCE_GATEWAY.md`](docs/architecture/CONSEQUENCE_GATEWAY.md) |
 | **FTRA Reachability Analyzer**   | **L1** | `src/gateway/governance/ftra/`    | Irreversibility classification and graph bounding — see [`FTRA_REACHABILITY_ANALYZER.md`](docs/architecture/FTRA_REACHABILITY_ANALYZER.md) |
 | **Cryptographic Signer Engine**  | **L1** | `src/gateway/governance/`         | Cloud KMS provider, RFC 8785 JCS canonicalization, and JWKS resolution — see [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](docs/architecture/CRYPTOGRAPHIC_SIGNER_ENGINE.md) |
-| **Ingress Identity Boundary**    | **L1** | `src/gateway/server/workload_identity.py`, `src/gateway/server/dpop_validator.py` | Linkerd mTLS workload identity allowlist enforcement (`WorkloadIdentityMiddleware`) and caller extraction (`extract_client_identity(scope)`), required in every environment and failing closed with 403/401. An RFC 9449 DPoP validator ships but is not yet wired into ingress — see [`AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
+| **Ingress Identity Boundary**    | **L1** | `src/gateway/server/workload_identity.py`, `src/gateway/server/dpop_validator.py` | Linkerd mTLS workload identity allowlist enforcement (`WorkloadIdentityMiddleware`) and caller extraction (`extract_client_identity(scope)`), required in every environment and failing closed with 403. An RFC 9449 DPoP validator ships but is not yet wired into ingress — see [`AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) |
 | **Seam Contracts**               | **L1** | `src/gateway/governance/seams/`   | Zero-kernel-import protocols for external adapters: `normative.py`, `attestation.py`, `actuation.py`, `graph_topology.py`, `credential_broker.py` |
 | **Compliance Bridge**            | **L3** | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API; infrastructure telemetry to ClickHouse |
-| **Vendor Integrations**          | **L3** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `actuator_01/` (execution actuator), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier), `storage_gcs/` (GCS durable sink), `storage_s3/` (S3 durable sink) |
+| **Vendor Integrations**          | **L3** | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `actuator_01/` (execution actuator), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier), `storage_gcs/` (GCS durable sink), `storage_s3/` (S3 durable sink), `gcp/` / `aws/` / `azure/` (KMS signing providers loaded via `signer_factory.py`), `nemo/` (NeMo Guardrails), `telemetry_langfuse/` (Langfuse telemetry) |
 | **Domain Plugins** *(optional)*  | **L2** | `src/cage_finance/`, `src/cage_healthcare/` | Entry-point (`cage.plugins`) capability packages contributing domain-specific tiers, barriers, rails, tools, and compliance overlays. Finance and healthcare are equal-standing example domains; adopters add `src/cage_<domain>/`. **Zero plugins loaded:** kernel denies all domain actions (fail-closed) |
 | **Jurisdictional Configuration** *(config layer)* | **L3** | `config/thresholds/`, `config/compliance/`, `config/opa/` | Region-selected thresholds, control profiles, and policy bundles resolved from `CAGE_DEPLOYMENT_REGION`. No Python code is region-specific |
 | **AgentSight UI**                | **L3** | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
 | **AgentSight eBPF DaemonSet**    | **L3** | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
-| **Reference Application (Finance)** *(demo)* | **Layer 4** | `src/governed_financial_advisor/` | Example-domain LangGraph multi-agent pipeline and FastAPI server. Implemented solely to demo CAGE capabilities in finance; **not** part of the CAGE platform and not required to run the kernel |
+| **Reference Application (Finance)** *(demo)* | **Layer 4** | `src/governed_financial_advisor/` | Example-domain LangGraph multi-agent pipeline and FastAPI server. It hosts no `SymbolicGovernor`, signing key, or Google Cloud identity: governed actions and post-HITL revalidation are forwarded to the gateway (`/tools/execute`, `/governance/revalidate-post-hitl`). Implemented solely to demo CAGE capabilities in finance; **not** part of the CAGE platform and not required to run the kernel |
 
-The layering below separates the **domain-neutral substrate** (always present, zero native applications), the **optional domain plugins** (dashed — load zero, one, or many), and the **jurisdictional configuration layer** (selected at deploy time):
+The layering below separates the **domain-neutral substrate** (always present, zero native applications), the **optional domain plugins** (dashed — a server process loads exactly one, named by `CAGE_DOMAIN`), and the **jurisdictional configuration layer** (selected at deploy time):
 
 ```mermaid
 graph TB
@@ -272,25 +269,21 @@ graph TB
     end
 
     subgraph CORE[Domain-Neutral Governance Substrate -- src/gateway -- Layer 1]
-        FTRA[FTRA Reachability Gate]
         FTRA[FTRA Reachability Gate<br/>Phase 1: Read-only inspection]
         ORCH[Pipeline Orchestrator<br/>A0-A6 arbitration ladder]
-        CBF[Control Barrier Function engine<br/>atomic Lua hop]
-        CBF[Control Barrier Function engine<br/>Phase 2: Atomic mutation]
         CONS[Consensus Arbitration]
         CAUS[Causal Gatekeeper]
-        EVID[Evidence Chain + KMS Routing Seal]
         CGW[Consequence Gateway]
+        CBF[Control Barrier Function engine<br/>Phase 2: Atomic mutation]
         EVID[Redis Streams Hash-Chained Evidence Sink<br/>+ KMS Routing Seal]
     end
 
     REG -.parameterises.-> CORE
     REG -.overlays.-> PLG
     APP -.calls via Gateway / Harness.-> CORE
-    FIN -.registers tiers and barriers.-> CORE
-    HLTH -.registers tiers and barriers.-> CORE
-    CUST -.registers tiers and barriers.-> CORE
-    FTRA --> ORCH --> CBF --> CONS --> CAUS --> EVID
+    FIN -.contributes tiers and barriers.-> CORE
+    HLTH -.contributes tiers and barriers.-> CORE
+    CUST -.contributes tiers and barriers.-> CORE
     FTRA --> ORCH --> CONS --> CAUS --> CGW --> CBF --> EVID
 ```
 
@@ -350,7 +343,8 @@ uv add "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-
 git clone https://github.com/google/cybernetic-agent-governance-engine.git
 cd cybernetic-agent-governance-engine
 
-# Start infrastructure: Gateway :8080, OPA :8181, Redis :6379
+# Start infrastructure: Gateway :8080, OPA :8181, App :3000
+# (Redis is available via docker-compose.local-dev.yml --profile with-redis)
 docker compose up
 
 # Verify gateway health
@@ -398,7 +392,7 @@ app = graph.compile()
 **What happens at runtime:**
 1. LangGraph reaches the `execute_trade` node
 2. `@cage_guard` intercepts execution and calls `http://localhost:8080/governance/validate-action`
-3. CAGE Gateway runs the 8-tier governance pipeline (STPA, OPA, CBF, Consensus, Causal, FRIA)
+3. CAGE Gateway runs the two-phase governance pipeline (Phase 1: FTRA, STPA, OPA, confidence, consensus, causal; Phase 2: CBF and fiscal commits)
 4. **ALLOW** → Node executes; **DENY** → Raises [`PolicyViolationException`](packages/cage-client/src/cage_client/exceptions.py); **DEFER** → Raises [`DeferralPending`](packages/cage-client/src/cage_client/exceptions.py) for HITL parking
 
 ### Architecture: Decoupled PEP/PDP Pattern
@@ -410,7 +404,7 @@ app = graph.compile()
 │                                  │
 │   ┌──────────────────────────┐  │
 │   │ @cage_guard decorator    │──┼──► HTTP/2 ──► CAGE Gateway :8080
-│   │ (lightweight PEP client) │  │                (8-tier PDP pipeline)
+│   │ (lightweight PEP client) │  │                (tiered PDP pipeline)
 │   └──────────────────────────┘  │
 └──────────────────────────────────┘
                                     
@@ -422,7 +416,7 @@ app = graph.compile()
 │                                             │
 │  Gateway :8080  ──► OPA :8181               │
 │                 ──► NeMo Guardrails         │
-│                 ──► Redis :6379 (CBF)       │
+│                 ──► Redis (CBF, optional)   │
 │                 ──► Langfuse (optional)     │
 └─────────────────────────────────────────────┘
 ```
@@ -466,13 +460,24 @@ async def handle_governance_error(state, error):
 For users building governance **into** the CAGE monorepo itself (not consuming it as a library), node factories are available:
 
 ```python
+from src.gateway.governance.governor.bootstrap import bootstrap_governor
 from src.gateway.governance.langgraph_harness import (
+    OpaNodeConfig,
     create_opa_safety_node,
     create_nemo_guardrail_node,
 )
 
-graph.add_node("input_rail", create_nemo_guardrail_node(rail_type="input"))
-graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governance"))
+# The governor is built once by the composition root (reads CAGE_DOMAIN) and passed explicitly
+governor = bootstrap_governor()
+
+graph.add_node("input_rail", create_nemo_guardrail_node())
+graph.add_node(
+    "safety_check",
+    create_opa_safety_node(
+        OpaNodeConfig(policy_action_name="execute_trade", payload_extractor=extract_trade_payload),
+        governor,
+    ),
+)
 ```
 
 **Use node factories when:** You're extending CAGE's kernel or building domain plugins ([`src/cage_finance/`](src/cage_finance/), [`src/cage_healthcare/`](src/cage_healthcare/))
@@ -504,15 +509,15 @@ graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governa
 - **Multi-Jurisdiction Compliance Profiles** — Dynamic loading of regional control profiles (`config/compliance/`) and thresholds (`config/thresholds/`) via `CAGE_DEPLOYMENT_REGION`. Ships `US_FED`, `EU_ECB` (EU AI Act, GDPR Art. 22, DORA, with Step 7 Fundamental Rights Impact Assessment attestation and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles) baselines; adding a jurisdiction is a config-only operation.
 - **Reusable LangGraph Governance Harness** — `OpaNodeConfig` and `NemoNodeConfig` factories allow any agent to inherit enterprise governance (tracing, metrics, fail-closed mechanisms) with pluggable domain-state extractors.
 - **DoWhy Causal Gatekeeper** — Microsoft DoWhy causal inference validates world-model integrity via placebo refutation before allowing high-stakes actions; fail-safe on error (blocks when causal assumptions cannot be verified). The Causal Gatekeeper's Redis fallback is now fail-closed: connection errors raise `RuntimeError` rather than returning a zero sentinel; absent keys return `None` (first-boot safe).
-- **LangGraph Saga Pattern** — STPA compiler now generates WAL forward nodes, idempotent compensating nodes, and a centralized `saga_router_node` from UCA definitions in YAML. UCA-4 (atomic debit/credit failure) is fully enforced. Ghost-state recovery (OOM crash between PENDING and COMPLETED) escalates to `human_review`. Rollback evidence emitted as OTel spans via `SagaCallbackHandler` (ISO 42001 A.8.4). A `rollback_state()` Saga compensation stub has been added to `FiscalLimitGuard` to reverse Redis debits when a downstream tier fails after Tier 3a commitment (saga-atomicity gap, not a concurrency race).
+- **LangGraph Saga Pattern** — STPA compiler generates WAL forward nodes, idempotent compensating nodes, and a centralized `saga_router_node` from UCA definitions in YAML, compiled into the domain plugin (finance: [`src/cage_finance/stpa/saga_nodes.py`](src/cage_finance/stpa/saga_nodes.py)). UCA-4 (atomic debit/credit failure) is fully enforced. Ghost-state recovery (OOM crash between PENDING and COMPLETED) escalates to `human_review`. Rollback evidence emitted as OTel spans via `SagaCallbackHandler` (ISO 42001 A.8.4). A `rollback_state()` Saga compensation stub has been added to `FiscalLimitGuard` to reverse Redis debits when a downstream tier fails after Tier 3a commitment (saga-atomicity gap, not a concurrency race).
 - **FiscalLimitGuard** — Redis `WATCH/MULTI/EXEC` optimistic-lock pre-reservation guard prevents multi-agent "race to the rail" where concurrent threads all read the same OPA limit and all pass. Fail-closed on Redis failure. Integrates with Saga rollback via `release(token)`.
 - **Token Quota Proxy (CTRL_TQP_007)** — `src/gateway/governance/token_quota_proxy.py` enforces hard per-session step-count (`≤12`) and token (`≤100,000`) quotas via Redis atomic Lua counters. Fail-CLOSED: Redis unavailability blocks the request (HTTP 429). Two-phase commit: `check_and_increment()` reserves quota before the vLLM call; `reconcile_actual_tokens()` corrects over-allocation after the response. `rollback_step()` atomically decrements counters on downstream failure. Implements ISO 42001 Annex A.4 (Resource Management). Governance control: `CTRL_TQP_007`.
 - **PII Sanitizer** — `src/gateway/governance/pii_sanitizer.py` applies 8 compiled regex patterns (SSN, credit card, email, phone, API key/Bearer token, and others) sequentially to every UCA compliance record before WORM persistence. Implements ISO 42001 Annex A.6 (Data Lineage and PII Leak Mitigation). Thread-safe; no per-call state.
 - **UCA Logger** — `src/gateway/governance/uca_logger.py` builds, cryptographically signs (Cloud KMS in production; HMAC-SHA256 stub when `CAGE_ENV=test`), and persists 16-field ISO 42001 Clause 6.1 Unsafe Control Action records to a region-gated WORM bucket (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`). Three UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`.
 - **Mandatory NeMo input + output guardrails** — non-bypassable LangGraph nodes generated by the harness; fail-closed on any exception; Presidio PII scan on every request and response.
 - **OPA policy evaluation via direct REST API** — circuit breaker defaults to DENY on failure; generated by the harness router.
-- **STPA-to-Policy Compiler** — CLI tool (`src/gateway/governance/stpa_compiler.py`) ingests `config/stpa_control_structure.yaml` and generates OPA Rego, NeMo Colang rails, a Python `GeneratedSTPAValidator`, and LangGraph Saga nodes — eliminating manual policy transcription errors.
-- **Zero-Trust Network (Z3N) hardening** — Linkerd mTLS `Server`/`AuthorizationPolicy`/`MeshTLSAuthentication` for cryptographic SPIFFE/SVID identity verification; Cilium L7 FQDN egress lockdown for sovereign agent pods. Closes POAM-007 (IA-3); POAM-011 (SC-8) remains Open.
+- **STPA-to-Policy Compiler** — CLI tool (`src/gateway/governance/stpa_compiler.py`) ingests `config/stpa_control_structure.yaml` plus per-domain hazard YAML and generates OPA Rego, NeMo Colang rails, and per-domain Python UCA rules and LangGraph Saga nodes (finance: `GeneratedSTPAValidator` in [`src/cage_finance/stpa/uca_rules.py`](src/cage_finance/stpa/uca_rules.py)) — eliminating manual policy transcription errors.
+- **Zero-Trust Network (Z3N) hardening** — Linkerd mTLS `Server`/`AuthorizationPolicy`/`MeshTLSAuthentication` admitting only the advisor's workload identity at gateway ingress (enforced again in-process by `WorkloadIdentityMiddleware` against `CAGE_TRUSTED_CLIENT_IDENTITIES`); GKE `FQDNNetworkPolicy` plus L3/L4 `NetworkPolicy` egress lockdown on Dataplane V2, with DNS egress restricted to kube-dns and Cloud DNS. Closes POAM-007 (IA-3); POAM-011 (SC-8) remains Open.
 - **Automated OSCAL SSP exporter** — `oscal_ssp_exporter.py` surgically patches the 1,151-line `system-security-plan.yaml` in-place with implementation evidence for every governance control, on every CI run.
 - **HITL Mandatory Rationale** — High-risk actions trigger LangGraph interrupts. Resuming the graph requires a mandatory justification that is cryptographically hashed into the evidence chain BEFORE the thread resumes.
 - **Cryptographic Hash-Chained Context Accumulator (AARM-V1)** — `src/compliance_bridge/context_accumulator.py` promotes the SHA-256 chain-of-custody pattern to the core compliance pipeline. Each `OscalFinding` is hash-linked to the preceding node. A `CHAIN_SEALED` sentinel terminates every run. `chain_root`, `chain_length`, and `chain_integrity_valid` are returned in all audit API responses. Neutralizes **AARM-V1 Memory Poisoning**; satisfies **ISO 42001 A.5.3**.
@@ -524,11 +529,11 @@ graph.add_node("safety_check", create_opa_safety_node(policy_path="trade_governa
 - **OSCAL-compliant compliance bridge** — SSE event bus with 7-year audit retention; ISO 42001, FedRAMP HIGH, and EU AI Act evidence artifacts via Langfuse dual-project setup.
 - **Langfuse observability** — LLM chain-of-thought, tool use, governance verdicts, and compliance scores captured without blocking inference.
 - **Kubernetes-native secret management** — all secrets injected as environment variables via K8s `Secret` objects; no Google Secret Manager.
-- **Cloud KMS HSM governance signatures (v2.0.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution. KMS-signed payloads now embed a `signed_at` timestamp; the verifier rejects payloads older than 300 seconds, closing a replay-attack vector.
+- **Cloud KMS HSM governance signatures (v2.0.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. Software/HMAC fallbacks are permitted only in DEV/TEST/CI posture; under an enforcing posture the `kms_signing_mode` startup check refuses to start. Required before any trade execution. KMS-signed payloads now embed a `signed_at` timestamp; the verifier rejects payloads older than 300 seconds, closing a replay-attack vector.
 - **Human-gated NeMo refinement (v2.0.0)** — All config changes staged as proposals requiring explicit human approval with reviewer identity and rationale. Severs the autonomous hot-reload loop.
 - **Heterogeneous multi-model consensus (v2.0.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots. The degraded-quorum case (`ERROR + APPROVE`) is now explicitly routed to HITL escalation.
-- **Externally reconciled CBF (v2.1.0 — POAM-023 Closed)** — `src/gateway/governance/reconciliation/daemon.py` implements external CBF state reconciliation. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry. The CBF module tracks intra-window debits locally (`_local_debits`) to prevent double-spend within the KMS snapshot refresh window (60 s fetch / 300 s TTL).
-- **Human-in-the-loop approval gate** — LangGraph `interrupt_before=["governed_trader"]`; resume via `POST /v1/approvals/{thread_id}/resume`.
+- **Externally reconciled CBF (v2.1.0 — POAM-023 Closed)** — `src/gateway/governance/reconciliation/daemon.py` implements external CBF state reconciliation. Reconciled snapshots are signed with `RECONCILER_KMS_KEY` before Redis write and verified by `kid`; the CBF fails closed on TTL expiry. Intra-window debits are recorded atomically in a shared Redis ledger (`cbf:local_debits`) and trimmed through the signed sequence, preventing double-spend within the snapshot refresh window (60 s poll / 300 s TTL).
+- **Human-in-the-loop approval gate** — the advisor's `approval_node` suspends the graph with LangGraph's dynamic `interrupt()`; reviewers discover pending interrupts via `GET /v1/approvals/pending` and resume through the LangGraph SDK (`Command(resume=...)`).
 - **W3C traceparent propagation** — full OTel trace waterfall across LangGraph → Gateway → vLLM; 100% sampling for governance decision spans.
 
 ---
@@ -541,7 +546,7 @@ CAGE's runtime safety properties are grounded in formal mathematical constructs 
 
 Source: [`src/gateway/governance/safety/cbf_engine.py`](src/gateway/governance/safety/cbf_engine.py)
 
-The safe set is defined as `S = {x ∈ ℝⁿ : h(x) ≥ 0}` where the barrier function is:
+The safe set is defined as `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. The engine is invariant-parametric: it evaluates the affine barrier `h(x) = x − threshold` for whatever `InvariantModel` the active domain contributes. The finance plugin's `CashBarrier` ([`src/cage_finance/invariants.py`](src/cage_finance/invariants.py)) declares:
 
 ```
 h(x) = cash_balance − min_cash_balance
@@ -559,19 +564,18 @@ This guarantees that the cash balance never drops below the minimum threshold in
 
 Sources: [`src/gateway/governance/governor/governor.py`](src/gateway/governance/governor/governor.py), [`src/gateway/governance/governor/pipeline.py`](src/gateway/governance/governor/pipeline.py), [`proof/model.py`](proof/model.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
 
-Every governed action passes through the following two-phase pipeline (`run_pipeline()`) before a routing seal is issued. Tier labels match `TIER_LABELS` in `proof/model.py` (`Tier 0.5` through `Tier 7`):
+Every governed action passes through the following two-phase pipeline (`run_pipeline()`) before a routing seal is issued. Tier labels match `TIER_LABELS` in `proof/model.py`. The model also carries a `Tier 7` FRIA label as a safe over-approximation, but no FRIA stage or tier runs at HEAD (`"fria"` survives only as a label in `PROFILE_STAGES`, and `run_pipeline()` never calls `enforce_fria_boundary()`):
 
 | Phase | Tier | Name | Mechanism |
 |-------|------|------|-----------|
 | **Phase 1** | **Tier 0.5** | FTRA — Forward-Looking Trajectory Reachability Analyzer | `FtraStage.run()` (`src/gateway/governance/governor/stages/ftra.py`) and `create_ftra_node()` classify terminal steps with `IrreversibilityClassifier` and `PlanGraphAnalyzer`, issuing `CLEAR` / `HITL_REQUIRED` / `BLOCKED` |
 | **Phase 1** | **Tier 1** | STPA/STAMP UCA validation | `StpaStage.run()` / `STPAValidator.validate()` (`src/gateway/governance/governor/stages/stpa.py`, `src/gateway/governance/stpa_validator.py`) checks Unsafe Control Actions defined in the STPA ontology |
-| **Phase 1** | **Tier 3b** | OPA policy evaluation | `OpaStage.run()` (`src/gateway/governance/governor/stages/opa.py`) evaluates `trade.governance` Rego policy prior to state mutation |
-| **Phase 1** | **Tier 2** | Agent confidence & structural corroboration | `ConfidenceStage.run()` (`src/gateway/governance/governor/stages/confidence.py`) checks `get_agent_confidence_threshold()` (default 0.95) and runs POAM-TIER2-001 structural corroboration against `stpa_violation_count` and `opa_verdict` |
+| **Phase 1** | **Tier 3b** | OPA policy evaluation | `OpaStage.run()` (`src/gateway/governance/governor/stages/opa.py`) evaluates the active domain's Rego package (`DomainConfig.opa_package`; finance: `trade.governance`) prior to state mutation |
+| **Phase 1** | **Tier 2** | Agent confidence & structural corroboration | `ConfidenceStage.run()` (`src/gateway/governance/governor/stages/confidence.py`) checks `get_agent_confidence_threshold()` (default 0.95) and runs POAM-TIER2-001 structural corroboration against `stpa_violation_count` and `opa_verdict`; a below-threshold score is DEFERRABLE when under `get_fria_zone_defer()` (0.70), otherwise HITL |
 | **Phase 1** | **Tier 5** | Consensus gate | Heterogeneous multi-model consensus (`src/gateway/governance/consensus/engine.py`) required for trades ≥ $10k; 10-second per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`, default `10.0`s) |
 | **Phase 1** | **Tier 6** | Causal gatekeeper | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) in `src/gateway/governance/causal/gatekeeper.py` validates world-model integrity |
-| **Phase 1** | **Tier 7** | Adaptive FRIA enforcement | `enforce_fria_boundary()` (`src/gateway/governance/normative_provider.py`); `get_fria_zone_allow()` = 0.95, `get_fria_zone_defer()` = 0.70; scores below 0.70 hard-deny locally |
 | **Phase 2** | **Tier 3a** | Control Barrier Function | Lua-atomic check+commit (`atomic_verify_and_commit()` in `src/gateway/governance/safety/cbf_engine.py`) in Redis; runs only after all Phase 1 validation tiers pass with zero violations |
-| **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (`src/gateway/governance/safety/resource_guard.py`, `src/cage_finance/safety/fiscal_limit_guard.py`) atomically pre-reserves daily fiscal cap in Redis with `ReservationScope` LIFO rollback |
+| **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (`src/cage_finance/safety/fiscal_limit_guard.py`, implementing the kernel `ResourceGuard` contract re-exported from `src/gateway/governance/safety/resource_guard.py`) atomically pre-reserves daily fiscal cap in Redis with `ReservationScope` LIFO rollback |
 
 > **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation tiers emit zero violations. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
@@ -605,13 +609,9 @@ The `PlaceboTreatmentRefuter` runs 50 simulations; the causal effect is consider
 
 Source: [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py)
 
-Every governance decision is sealed with an HMAC-SHA256 token in the format:
+Every governance decision is sealed with a JWT signed by the gateway KMS signer (`KMS_GOVERNANCE_KEY`). `generate_seal_with_evidence()` blocks on a durable evidence-chain commit and binds the resulting `record_hash` into the seal, raising `EvidenceChainUnavailableError` if the sink fails.
 
-```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
-```
-
-Tokens carry a 30-second TTL. Unsigned or expired requests return HTTP 403.
+Tokens carry a 30-second TTL (`GOVERNANCE_SEAL_TTL_S`). Unsigned, expired, or unknown-`kid` seals fail verification (`verify_seal()` raises) and the action is not executed. The legacy HMAC compatibility layer keyed by `GOVERNANCE_SALT` remains only for development; the `governance_salt` startup posture check refuses the default salt under an enforcing posture.
 
 ### Provenance Hash Chain
 
@@ -621,7 +621,7 @@ SHA-256 hash chain with O(n) construction. Each node's `record_hash` is `SHA-256
 
 ### Fiscal Limit Guard
 
-Source: [`src/gateway/governance/safety/resource_guard.py`](src/gateway/governance/safety/resource_guard.py)
+Source: [`src/cage_finance/safety/fiscal_limit_guard.py`](src/cage_finance/safety/fiscal_limit_guard.py) (finance plugin; kernel contract in [`src/gateway/governance/safety/resource_guard.py`](src/gateway/governance/safety/resource_guard.py))
 
 - Daily cap: **$500,000** over an 86,400 s rolling window
 - Redis `WATCH/MULTI/EXEC` optimistic-lock pre-reservation prevents multi-agent "race to the rail"
@@ -629,14 +629,14 @@ Source: [`src/gateway/governance/safety/resource_guard.py`](src/gateway/governan
 
 ### STPA Unsafe Control Actions (UCAs)
 
-Source: [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py)
+Source: [`src/cage_finance/config/stpa/trade_hazards.yaml`](src/cage_finance/config/stpa/trade_hazards.yaml) (finance plugin; kernel-level UCAs in [`config/stpa/core_system.yaml`](config/stpa/core_system.yaml))
 
 | UCA ID | Condition | Enforcement |
 |--------|-----------|-------------|
-| **FIN-1** | `trade_value > position_limit` | OPA Rego + GeneratedSTPAValidator |
-| **FIN-2** | `portfolio_concentration > 0.25` | OPA Rego + GeneratedSTPAValidator |
-| **UCA-5** | `order_size > 0.1 × daily_volume` | Saga compensating node + HITL escalation |
-| **UCA-6** | `order_size > threshold × daily_vol` (US_FED: 1%, EU_ECB: 0.5%, APAC_MAS: 0.8%) ⚠️ **SECURITY-CRITICAL THRESHOLD** | Saga compensating node + HITL escalation |
+| **FIN-1** | `sell_percentage > stpa.max_sell_portfolio_fraction` (scope `execute_sell`) | Safety constraint |
+| **FIN-2** | `latency_ms > stpa.max_latency_ms` (scope `execute_trade`, refs UCA-2) | Safety constraint |
+| **UCA-5** | `drawdown > stpa.uca5_drawdown_threshold_pct` (US_FED: 4.5%, EU_ECB: 3.5%, APAC_MAS: 4.0%) | OPA Rego (DENY) + generated Python validator |
+| **UCA-6** | `order_size > stpa.uca6_max_order_volume_fraction × daily_vol` (US_FED: 1%, EU_ECB: 0.5%, APAC_MAS: 0.8%) ⚠️ **SECURITY-CRITICAL THRESHOLD** | OPA Rego (DENY) + generated Python validator |
 
 Full STPA hazard analysis: [`docs/security/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)
 
@@ -662,6 +662,8 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | GKE Development | ☁️ Cloud Build | `./deploy_all.sh --target gcp-gke --env dev --auto-approve` |
 | Local k3d/kind | 🐳 Local Docker | `./deploy_all.sh --target agnostic --env dev` |
 | Docker Compose | 🐳 Local Docker | `docker compose up` |
+
+`infra/targets/` holds exactly two Terraform targets: `agnostic` (any existing Kubernetes cluster) and `gcp-gke`. The `gcp-gke` target is the sole reference cloud deployment (GKE + Linkerd mTLS with a Google CAS trust anchor); alongside the cluster it provisions dual Memorystore for Valkey instances (governance and app), Cloud SQL PostgreSQL for Langfuse, a retention-locked GCS WORM evidence bucket, the ClickHouse operator module, a dedicated signing keyring plus a separate CMEK keyring, and a VPC Service Controls / Binary Authorization perimeter ([`perimeter.tf`](infra/targets/gcp-gke/perimeter.tf)).
 
 **Documentation:**
 - [Deployment Rules](docs/operations/DEPLOYMENT_RULES.md) — Complete deployment policy
@@ -708,8 +710,8 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | **NIST RMF Step 6 (Authorize)**              | ❌ Not started (US_FED only) | No ATO letter issued                                                                                                    |
 | **Infrastructure security**                  | 🟡 Partial              | 12 of 23 SP 800-53 POA&M open (8 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4, POAM-023 CBF reconciliation worker) — see [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) |
 | **PodSecurity (restricted)**                 | ✅ Implemented          | `securityContext` (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`) applied to all 6 app deployment manifests (rc.3) |
-| **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS: SPIFFE/SVID identity for Gateway→OPA, Gateway→NeMo (POAM-007 closed)                                         |
-| **L7 egress boundary**                       | ✅ Implemented          | Cilium CiliumNetworkPolicy: FQDN allowlist for gateway, internal-only lockdown for agent pods                               |
+| **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS (Google CAS trust anchor): workload identity for Gateway→OPA, Gateway→NeMo; gateway ingress admits only the advisor's identity (POAM-007 closed) |
+| **Egress boundary**                          | ✅ Implemented          | GKE `FQDNNetworkPolicy` + L3/L4 `NetworkPolicy` on Dataplane V2: FQDN allowlist for gateway, internal-only lockdown for agent pods, DNS egress restricted to kube-dns / Cloud DNS |
 | **CI vulnerability scanning**                | ✅ Implemented          | pip-audit, Trivy, Grype, CycloneDX SBOM in `.github/workflows/security-scan.yml` (POAM-010 closed)                         |
 
 See [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) for the complete posture breakdown, all open POA&M items, and pre-deployment guidance for regulated environments.
@@ -730,19 +732,21 @@ Copy `.env.example` to `.env` and configure at minimum:
 
 | Variable                                         | Description                                          |
 | ------------------------------------------------ | ---------------------------------------------------- |
-| `CAGE_DEPLOYMENT_REGION`                         | Deployment region baseline (`US_FED`, `EU_ECB`, `APAC_MAS`; default is `US_FED`) |
-| `KMS_GOVERNANCE_KEY`                             | Cloud KMS key resource name for HSM-backed governance signing (v2.0.0) |
-| `KMS_GOVERNANCE_PUBLIC_PEM`                      | Path to public key PEM for local signature verification (v2.0.0) |
-| `GOVERNANCE_SALT`                                | _(Legacy)_ HMAC salt — used as fallback when KMS is not configured |
-| `NEMO_AUTO_APPLY_ENABLED`                        | Set `true` to bypass human-gated refinement (dev/CI only; default `false`) |
-| `RECONCILIATION_PROVIDER`                        | Custody provider (`stub`, `gcs`, `s3` / `object-store`, `plaid`, or `anchorage`; default `stub`) |
+| `CAGE_DOMAIN`                                    | **Required.** The single domain plugin this process runs (`finance` today; `healthcare` / `physical_ai` refuse to start, POAM-2026-077) |
+| `CAGE_DEPLOYMENT_REGION`                         | Deployment region baseline (`US_FED`, `EU_ECB`, `APAC_MAS`, or `LOCAL`) |
+| `CAGE_TRUSTED_CLIENT_IDENTITIES`                 | Linkerd workload identities (`l5d-client-id`) allowed to call the gateway; enforced in every environment |
+| `KMS_GOVERNANCE_KEY`                             | Gateway Cloud KMS key version for routing-seal / envelope signing |
+| `RECONCILER_KMS_KEY`                             | Reconciler snapshot signing key; the gateway needs `publicKeyViewer` on it to verify ground-truth snapshots (required under an enforcing posture) |
+| `EVIDENCE_KMS_KEY`                               | Compliance-bridge evidence batch signing key; must differ from the gateway and reconciler keys |
+| `KMS_GOVERNANCE_PUBLIC_PEM`                      | Optional path to public key PEM for local signature verification |
+| `GOVERNANCE_SALT`                                | _(Legacy)_ HMAC salt for the routing-seal compatibility layer; the default value is refused outside DEV/TEST/CI |
+| `RECONCILIATION_PROVIDER`                        | Reconciliation provider label checked at gateway startup (`simulated` in shipped manifests); unset or `stub` fails the `reconciliation_provider` posture check |
 | `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `_SECRET_KEY` | Keys for ISO 42001 audit Langfuse project            |
 | `REDIS_URL`                                      | Redis connection URL (e.g. `redis://localhost:6379`) |
 | `OPA_URL`                                        | OPA base URL, no path (e.g. `http://localhost:8181`); the decision package comes from the active domain's `DomainConfig.opa_package` |
-| `VLLM_REASONING_API_BASE`                        | vLLM reasoning endpoint (also default for Risk Manager consensus persona) |
-| `VLLM_FAST_API_BASE`                             | vLLM fast-path endpoint (also default for Compliance Officer consensus persona) |
-| `CONSENSUS_RISK_MANAGER_URL`                     | Override vLLM endpoint for Risk Manager critic persona |
-| `CONSENSUS_COMPLIANCE_OFFICER_URL`               | Override vLLM endpoint for Compliance Officer critic persona |
+| `VLLM_REASONING_API_BASE`                        | vLLM reasoning endpoint (also fallback for alternating consensus critic personas) |
+| `VLLM_FAST_API_BASE`                             | vLLM fast-path endpoint (also fallback for alternating consensus critic personas) |
+| `CONSENSUS_{ROLE}_URL` / `CONSENSUS_{ROLE}_MODEL` | Dedicated vLLM endpoint / model for a critic persona (role names come from the domain's critic spec) |
 | `CAGE_NORMATIVE_PROVIDER`                        | External normative provider (`static` or `provider_01`; default `static`) |
 | `STEP_QUOTA_MAX`                                 | Hard step-count limit per agent session for Token Quota Proxy (default: `12`) |
 | `TOKEN_QUOTA_MAX`                                | Hard token limit per agent session for Token Quota Proxy (default: `100000`) |
@@ -790,7 +794,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ### Run Tests
 
 ```bash
-uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short   # 3,921 unit tests passing, 0 failed (82 skipped, 4,148 collected)
+uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
+# Or via the Makefile shortcut:
+make test-fast
 ```
 
 ---
@@ -799,36 +805,40 @@ uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:
 
 **Layer 1 (L1)** — Domain-neutral kernel, always present
 **Layer 2 (L2)** — Domain plugins, exactly one per process (`CAGE_DOMAIN`)
-**Layer 3 (L3)** — Configuration & operational tooling
-**Layer 3 (L3)** — Integrations & Seam Contracts
+**Layer 3 (L3)** — Integrations, seam contracts, configuration & operational tooling
 
 ```
 cybernetic-agent-governance-engine/
 ├── src/
 │   ├── gateway/                      # [L1] Domain-neutral governance kernel
 │   │   ├── governance/               #      SymbolicGovernor, pipeline orchestrator, evidence chain
-│   │   │   ├── kms_signer.py         #      Cloud KMS HSM-backed governance signer
+│   │   │   ├── governor/             #      Composition root + immutable SymbolicGovernor
+│   │   │   │   ├── assembly.py       #        assemble_governor() — validates PluginContributions
+│   │   │   │   ├── bootstrap.py      #        bootstrap_governor() — CAGE_DOMAIN → assemble → posture
+│   │   │   │   ├── posture.py        #        assert_production_posture() startup checks
+│   │   │   │   ├── pipeline.py       #        run_pipeline() — two-phase stage execution
+│   │   │   │   ├── reservation.py    #        ReservationScope — LIFO rollback of phase-2 commits
+│   │   │   │   └── stages/           #        FTRA, STPA, OPA, confidence, domain tiers
+│   │   │   ├── kms_signer.py         #      KMSGovernanceSigner + software providers (dev/test only)
+│   │   │   ├── signer_factory.py     #      Lazy loading of src/integrations/{gcp,aws,azure} KMS providers
+│   │   │   ├── defer_queue.py        #      DeferQueue — HITL parking (ISO 42001 A.8.4)
 │   │   │   ├── consensus/            #      ConsensusModelRegistry + heterogeneous consensus
 │   │   │   │   └── engine.py
-│   │   │   ├── pipeline/             #      Unified governance pipeline orchestration
-│   │   │   │   ├── stage_protocol.py #        GovernanceStage Protocol
-│   │   │   │   ├── orchestrator.py   #        PipelineOrchestrator — execution + HITL routing
-│   │   │   │   ├── defer_queue.py    #        DeferQueue — HITL parking (ISO 42001 A.8.4)
-│   │   │   │   └── stages/           #        FTRA, bounded autonomy, CBF safety
 │   │   │   ├── ftra/                 #      Forward-Looking Trajectory Reachability Analyzer
 │   │   │   │   ├── classifier.py     #        IrreversibilityClassifier — signed registry
 │   │   │   │   ├── graph_analyzer.py #        PlanGraphAnalyzer — DFS reachability
-│   │   │   │   └── bounding_contract.py #     B1–B10 hard constraints
+│   │   │   │   └── node_factory.py   #        create_ftra_node()
 │   │   │   ├── ingress/              #      Policy ingress adapters (ACS/AAIF/OSCAL/Lula)
 │   │   │   ├── safety/               #      Safety components
-│   │   │   │   ├── cbf_engine.py     #        Control Barrier Function (Lua-atomic hop)
-│   │   │   │   └── reconciliation/   #        External ledger reconciliation daemon
+│   │   │   │   └── cbf_engine.py     #        Control Barrier Function (Lua-atomic hop)
+│   │   │   ├── reconciliation/       #      GroundTruthReconciler daemon + reconciler trust anchors
 │   │   │   ├── causal/               #      DoWhy causal gatekeeper
 │   │   │   │   └── gatekeeper.py
-│   │   │   ├── plugin_loader.py      #      cage.plugins entry-point discovery
+│   │   │   ├── plugin_loader.py      #      load_domain_plugin() — CAGE_DOMAIN selection
 │   │   │   ├── token_quota_proxy.py  #      Per-session step/token quota (ISO 42001 A.4)
 │   │   │   └── pii_sanitizer.py      #      Pre-ledger PII sanitization (ISO 42001 A.6)
-│   │   └── server/                   #      MCP tool server + inference proxy
+│   │   ├── observability/langfuse_utils.py # SagaCallbackHandler OTel interceptor
+│   │   └── server/                   #      MCP tool server, hybrid gateway, workload identity
 │   ├── compliance_bridge/            # [L3] OSCAL audit ingest + SSE event bus
 │   │   ├── context_accumulator.py    #      SHA-256 hash-chained Context Accumulator
 │   │   ├── aarm_mapper.py            #      AARM 11-vector static threat ledger
@@ -836,25 +846,28 @@ cybernetic-agent-governance-engine/
 │   ├── integrations/                 # [L3] Vendor-isolated third-party adapters
 │   │   ├── provider_01/              #      External normative provider adapter
 │   │   ├── provider_02/              #      SDK attestation adapter
-│   │   └── provider_03/              #      JCS canonicalization adapter
+│   │   ├── provider_03/              #      JCS canonicalization adapter
+│   │   ├── gcp/  aws/  azure/        #      Cloud KMS signing providers
+│   │   └── nemo/                     #      NeMo Guardrails manager + actions
 │   ├── cage_finance/                 # [L2] Finance domain plugin (optional)
-│   │   ├── plugin.py                 #      FinanceCagePlugin — 4 tiers, rails, tools
+│   │   ├── plugin.py                 #      FinanceCagePlugin — DomainConfig + PluginContribution
 │   │   ├── invariants.py             #      CashBarrier declaration
-│   │   ├── tiers/                    #      cbf (2,3) · fiscal (2,4) · consensus (1,5)
+│   │   ├── tiers/                    #      cbf · fiscal · consensus · causal · bounding · stpa
+│   │   ├── safety/                   #      FiscalLimitGuard, bounding contracts (B1–B10)
+│   │   ├── stpa/                     #      Generated UCA rules + Saga compensators
 │   │   ├── rails/  tools/  opa/      #      NeMo actions, MCP tools, trade_governance.rego
-│   │   └── config/compliance/        #      US_FED / EU_ECB / APAC_MAS overlays
+│   │   └── config/                   #      STPA hazards, critics, causal graph, compliance overlays
 │   ├── cage_healthcare/              # [L2] Healthcare domain plugin (optional)
 │   │   ├── plugin.py                 #      HealthcareCagePlugin — 2 tiers, rails, tools
 │   │   ├── invariants.py             #      SerumConcentrationBarrier declaration
-│   │   ├── tiers/                    #      dose_barrier (2,3) · clinical_consensus (1,5)
+│   │   ├── tiers/                    #      dose_barrier · clinical_consensus
 │   │   └── opa/dosing_governance.rego
 │   ├── agentsight-ui/                # [L3] React/TypeScript operator dashboard
 │   └── governed_financial_advisor/   # [Demo] Reference application (demonstrates CAGE capabilities in finance; not part of CAGE)
-│       ├── graph/state.py            #         AgentState + LedgerEntry WAL schema
-│       └── utils/langfuse_utils.py   #         SagaCallbackHandler OTel interceptor
+│       └── graph/state.py            #         AgentState + LedgerEntry WAL schema
 ├── config/                           # [L3] Jurisdictional configuration layer
-│   ├── stpa_control_structure.yaml   #      Single source of truth for STPA UCAs
-│   ├── ftra/terminal_registry.json   #      Signed FTRA terminal registry (+ detached .sig)
+│   ├── stpa_control_structure.yaml   #      Kernel-level STPA control structure
+│   ├── ftra/terminal_registry.json   #      FTRA terminal registry
 │   ├── compliance/                   #      Regional control-mapping JSON profiles
 │   │   ├── US_FED_BASELINE.json      #        SR 26-2 / NIST AI RMF / ISO 42001
 │   │   ├── EU_ECB_BASELINE.json      #        EU AI Act / DORA / GDPR
@@ -866,17 +879,18 @@ cybernetic-agent-governance-engine/
 │   ├── opa/                          #      Generated OPA Rego policies
 │   └── rails/                        #      NeMo Guardrails Colang 2.x definitions
 ├── compliance/oscal/
-│   ├── system-security-plan.yaml     # [L3] OSCAL SSP (1,151 lines, auto-patched)
+│   ├── system-security-plan.yaml     # [L3] OSCAL SSP (auto-patched)
 │   └── component-definition.yaml     #      OSCAL component registry
+├── infra/targets/                    # [L3] Terraform targets: agnostic, gcp-gke
 ├── deployment/k8s/                   # [L3] Kubernetes manifests
 │   ├── linkerd-mtls-policy.yaml      #      Linkerd mTLS enforcement
-│   └── cilium/                       #      Optional GKE Dataplane V2 L7 overlay
-├── tests/                            #      Full test suite (3,921 local unit passing, 4,148 collected)
+│   └── cilium/                       #      Dataplane V2 NetworkPolicy + FQDNNetworkPolicy egress rules
+├── tests/                            #      Full test suite
 │   ├── test_bare_kernel_portability.py #   Proves L1 kernel boots without vendor SDKs or domain coupling
 │   ├── test_cage_plugin_validation.py  #   Validates L2 plugin API contracts and isolation
 │   ├── test_healthcare_plugin.py       #   Proves second domain pluggability without kernel edits
 │   ├── test_causal_gatekeeper.py     #      DoWhy causal inference tests
-│   ├── test_fiscal_limit_guard.py    #      Multi-agent collision tests
+│   ├── governor/                     #      Composition root, startup posture, golden verdicts
 │   └── ...
 ├── docs/                             #      Architecture, compliance, operational docs
 ├── plans/                            #      Implementation plans & roadmaps

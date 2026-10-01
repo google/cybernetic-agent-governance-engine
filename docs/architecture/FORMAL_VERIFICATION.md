@@ -3,12 +3,12 @@
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-09-09                |
+| **Date**           | 2026-09-29                |
 | **Version**        | 3.0.1                     |
-| **Status**         | Current — v3.0.1 stable; test suite verified; **4,347 local/unit passed, 122 skipped, 0 failed** (`make test-fast`, 2026-09-22); NoDirectBind invariant machine-verified over 44 reachable states (49 under the CBF ∥ OPA interleaving superset); Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
+| **Status**         | Current — v3.0.1 stable; NoDirectBind invariant machine-verified over 52 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
 | **Canonical Path** | `docs/architecture/FORMAL_VERIFICATION.md` |
 
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.1 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
@@ -48,7 +48,7 @@ We evaluate the updated architecture against Stafford Beer's Viable System Model
 
 * **System 1 (Operations):** The `StateGraph` sub-agents generate bounded intent rather than point-in-time snapshots.
 * **System 2 (Coordination):** The addition of the `hitl_expires_at` Time-To-Live (TTL) timestamp to the `AgentState` checkpoint. This guarantees that suspended states cannot persist indefinitely, repairing temporal coordination breakdowns.
-* **System 3 (Control):** The `SymbolicGovernor` now utilizes a bifurcated execution model. Tiers 2 and 4 are explicitly re-triggered post-HITL.
+* **System 3 (Control):** The `SymbolicGovernor` now utilizes a bifurcated execution model. The `POST_HITL` profile explicitly re-runs OPA (Tier 3b), CBF (Tier 3a) and fiscal (Tier 4) after human approval (`PROFILE_STAGES` in [`pipeline.py`](../../src/gateway/governance/governor/pipeline.py)); `revalidate_post_hitl()` refuses any action no domain tier claims.
 * **System 4 (Intelligence):** *Partially realised.* Langfuse trace evaluation and the POAM remediation cycle provide an out-of-band feedback path from operational telemetry to policy revision. An automated, in-band loop that adjusts policy variables at runtime in response to environment feedback is **not implemented** — policy artefacts are statically compiled from `config/stpa_control_structure.yaml` by the STPA compiler. Closing this loop is tracked as future work.
 * **System 5 (Policy):** `ControlRegistry` loads normative profiles.
 
@@ -93,24 +93,26 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | AARM Vector | Threat Description | CAGE Control Point | Neutralization Invariant | Verdict |
 | ----------- | ------------------ | ------------------ | ------------------------ | ------- |
 | **AARM-V1** | Memory Poisoning — attacker mutates the agent's context accumulator to inject false beliefs | SHA-256 hash-chained `OscalFinding` log ([`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py)) | $\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$ — any mutation at node $k$ produces $\text{record\_hash}_k \ne \text{expected}_k$, detectable at $O(n)$ | **NEUTRALIZED** |
-| **AARM-V2** | Goal Hijacking — agent's objective is redirected mid-execution | STPA UCA Validator (Tier 0) + OPA Rego policy (Tier 4) | $\forall \text{action}: \text{UCA}(\text{action}) \notin \{\text{UCA-1}, \dots, \text{UCA-9}\} \land \text{OPA}(\text{action}) = \text{ALLOW}$ | **NEUTRALIZED** |
+| **AARM-V2** | Goal Hijacking — agent's objective is redirected mid-execution | STPA UCA Validator (Tier 1) + OPA Rego policy (Tier 3b) | $\forall \text{action}: \text{UCA}(\text{action}) \notin \{\text{UCA-1}, \dots, \text{UCA-9}\} \land \text{OPA}(\text{action}) = \text{ALLOW}$ | **NEUTRALIZED** |
 | **AARM-V3** | Confused Deputy — agent is manipulated into performing actions on behalf of an unauthorized principal | OPA RBAC (`trade.governance` package) + gateway ingress by Linkerd mTLS workload identity (`WorkloadIdentityMiddleware`, `src/gateway/server/workload_identity.py`) | $\forall \text{tool\_call}: \text{identity}(\text{caller}) \in \text{trusted\_identities} \land \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ | **NEUTRALIZED** |
 | **AARM-V4** | Cross-Agent Propagation — malicious payload propagates across agent boundaries | Linkerd mTLS SPIFFE/SVID identity + NeMo input rail on every agent boundary | $\forall \text{agent\_msg}: \text{SPIFFE\_identity\_verified} \land \text{NeMo}(\text{msg}) = \text{SAFE}$ | **NEUTRALIZED** |
 | **AARM-V5** | Prompt Injection — adversarial input hijacks agent intent | Aho-Corasick Tier-1 scan + NeMo Guardrails Tier-2 + Presidio PII scan | $\forall \text{input}: \text{AhoCorasick}(\text{input}) = \emptyset \land \text{NeMo}(\text{input}) = \text{SAFE}$ before any agent node executes | **NEUTRALIZED** |
-| **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 0) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$ required for ALLOW | **NEUTRALIZED** |
+| **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 1) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$ required for ALLOW | **NEUTRALIZED** |
 | **AARM-V7** | Context Window Overflow — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} \in [0.70, 0.95) \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
 | **AARM-V8** | Temporal Deception — model engineers its own privilege escalation via time-based manipulation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without $\text{reviewer\_identity} \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
 | **AARM-V9** | Privilege Escalation — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`ConsensusModelRegistry`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
-| **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (10 entity types) in NeMo Guardrails output rail + Cilium L7 FQDN egress lockdown (`deployment/k8s/cilium/egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
-| **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in [0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
+| **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (10 entity types) in NeMo Guardrails output rail + GKE Dataplane V2 `NetworkPolicy` / `FQDNNetworkPolicy` egress allowlist (`deployment/k8s/cilium/egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
+| **AARM-V11** | Model Substitution — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + FRIA zone thresholds applied by the confidence stage (`src/gateway/governance/governor/stages/confidence.py`: below `get_fria_zone_defer()` → DEFERRABLE, otherwise HITL); `enforce_fria_boundary()` is not wired into the pipeline | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in [0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until Provider 01 credentials provisioned — POAM-022) |
 
-> **POAM-023 Resolution Note:** Balance staleness is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above. Presidio PII masking and Cilium L7 network policies enforce AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py).
+> **POAM-023 Resolution Note:** Balance staleness is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above. Presidio PII masking and `FQDNNetworkPolicy` egress allowlists enforce AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py).
 
 **AARM Conformance Summary:** 10 of 11 vectors are fully neutralized. AARM-V11 is PARTIAL pending Provider 01 API credential provisioning (POAM-022). The live conformance report is available at `GET /v1/aarm/conformance-report`.
 
 ---
 
 ## Step 5: FiscalLimitGuard Race-Condition Proof
+
+**Source:** [`src/cage_finance/safety/fiscal_limit_guard.py`](../../src/cage_finance/safety/fiscal_limit_guard.py) (Layer 2 finance plugin), wrapped as the Phase 2 fiscal tier by [`src/cage_finance/tiers/fiscal_tier.py`](../../src/cage_finance/tiers/fiscal_tier.py).
 
 **Claim:** The `FiscalLimitGuard` prevents the multi-agent "race to the rail" scenario where $N$ concurrent agents simultaneously read the same OPA fiscal limit, all pass the check, and collectively exceed the daily cap by a factor of $N$.
 
@@ -138,7 +140,7 @@ $$\forall t: S(t) = \sum_{i: \text{committed}(i, t)} r_i \le L$$
 
 **Fail-closed property:** If Redis is unavailable, `FiscalLimitGuard.reserve()` raises `ConnectionError` and the trade is blocked — the system never proceeds without the guard.
 
-**Saga integration:** `FiscalLimitGuard.release(token)` is called by the compensating node `compensate_reverse_trade_node_uca_4` on rollback, restoring the reserved headroom atomically while validating key existence to prevent negative counter underflow across TTL boundaries.
+**Saga integration:** The fiscal tier's `commit()` returns a `CommitReceipt` carrying the `ReservationToken`. If a later Phase 2 commit fails, or the seal is never issued, the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)) rolls back LIFO and the tier's `rollback()` calls `FiscalLimitGuard.release(receipt.token)`. A `confirm()` that raises releases the token before re-raising, so no reservation is left without a receipt. Post-execution reversal is handled by the LangGraph compensating node `compensate_reverse_trade_node_uca_4` ([`saga_nodes.py`](../../src/cage_finance/stpa/saga_nodes.py)). `release()` validates key existence to prevent negative counter underflow across TTL boundaries.
 
 ---
 
@@ -159,7 +161,8 @@ Let $m$ = governance decision payload (JSON), $\sigma$ = signature, $k_{\text{pr
 1. **Binding:** $\sigma$ is cryptographically bound to $m$ via SHA-256 pre-image resistance. Modifying $m$ invalidates $\sigma$.
 2. **Key custody:** Google Cloud Audit Logs provide an immutable, externally attested record of every `cloudkms.cryptoKeyVersions.useToSign` operation, including timestamp, caller identity, and key version. This record is outside CAGE's control plane.
 3. **Temporal attestation:** The Cloud Audit Log timestamp $t_{\text{sign}}$ is authoritative — it cannot be backdated by the CAGE system.
-4. **Fallback scope:** The HMAC-SHA256 fallback (dev/CI only, activated when `CAGE_KMS_KEY_NAME` is unset) does **not** provide non-repudiation — it provides only integrity. The fallback is explicitly prohibited in production: `routing_seal.py` rejects HMAC seals when `CAGE_SEAL_STRICT_MODE` is on (the default) or the environment is production, and refuses the default `GOVERNANCE_SALT` outside development/test.
+4. **Fallback scope:** The software fallback (dev/CI only, used when `KMS_GOVERNANCE_KEY` is unset) is `SoftwareEd25519Provider`, built by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py); a symmetric `SoftwareHMACProvider` exists only for hermetic tests. Neither provides non-repudiation, because the key is not HSM-custodied. Both are prohibited under an enforcing posture: `signer_factory.py` refuses software providers, `kms_signer.py` rejects software/HMAC signatures (K3), and the `kms_signing_mode` startup check in [`governor/posture.py`](../../src/gateway/governance/governor/posture.py) refuses to start. The routing seal's legacy HMAC token path is rejected when `CAGE_SEAL_STRICT_MODE` is on (the default), and the default `GOVERNANCE_SALT` is refused in production.
+5. **Key partitioning:** Each signing role has its own key, and verifiers reject foreign `kid`s. The gateway signs seals and decisions with `KMS_GOVERNANCE_KEY`. The ground-truth reconciler signs snapshots with `RECONCILER_KMS_KEY` ([`reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py)). The compliance bridge signs evidence with `EVIDENCE_KMS_KEY`, and `build_evidence_signer()` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)) refuses a key that matches either of the other two. A compromised workload key therefore cannot forge another role's records.
 
 **Conclusion:** For any governance decision $m$ with signature $\sigma$ produced in production:
 $$\text{verify}(k_{\text{pub}}, m, \sigma) = \text{true} \Rightarrow \exists t_{\text{sign}} \in \text{CloudAuditLog}: \text{KMS.sign}(k_{\text{priv}}, m) \text{ was called at } t_{\text{sign}}$$
@@ -187,9 +190,9 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`](../../proof/model.py). The proof requires no external dependencies beyond the Python standard library.
 
-**Scope of the model.** The tuple covers the **STERA Runtime Pipeline** together with the FTRA boundary gate, giving **9 tuple positions**: `ftra`, `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria` (see `TIERS` in [`proof/model.py`](../../proof/model.py)). FTRA is modelled as **Tier 0.5** — it was folded into the tuple to close the proof/implementation divergence tracked as ARCH-1. Operationally FTRA remains distinct from Tiers 1–7: it is a gateway precondition that runs at the LangGraph graph level, before `SymbolicGovernor._run_checks()` is invoked, and it operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py). `cbf` and `opa` occupy separate positions (Tier 3a / 3b) because the runtime evaluates them concurrently and each can independently block the action.
+**Scope of the model.** The tuple covers the **STERA Runtime Pipeline** together with the FTRA boundary gate, giving **9 tuple positions**: `ftra`, `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria` (see `TIERS` and `TIER_LABELS` in [`proof/model.py`](../../proof/model.py)). FTRA is modelled as **Tier 0.5** — it was folded into the tuple to close the proof/implementation divergence tracked as ARCH-1. At runtime FTRA is the first kernel stage of `run_pipeline()` (`FtraStage`, [`governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py)); a graph-level FTRA node ([`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)) additionally classifies whole `ExecutionPlan`s in the LangGraph harness. `cbf` and `opa` occupy separate positions (Tier 3a / 3b) because each can independently block the action. **`fria` is an over-approximation:** at HEAD no stage or tier named `fria` exists and `enforce_fria_boundary()` is not called by `run_pipeline()`; `fria` survives only as a label in `PROFILE_STAGES` ([`pipeline.py`](../../src/gateway/governance/governor/pipeline.py)). The only live FRIA-adjacent behaviour is the confidence stage's FRIA zone defer threshold. Modelling an extra tier that can FAIL is the safe-side assumption — the invariant holds whether or not it blocks — but the proof does not claim a live Tier 7 gate. The model also carries the three pipeline profiles (`FULL`, `POST_HITL`, `DRY_RUN`) as `PROFILE_STAGES`, mirroring [`pipeline.py`](../../src/gateway/governance/governor/pipeline.py); BFS starts from the `FULL` profile.
 
-> **Scope limitation:** The current BFS proof covers the governance state machine (44-state gated model). It does not model the full implementation including the LangGraph harness or Redis state. A TLA+/Alloy extension to the full implementation is tracked as future work.
+> **Scope limitation:** The current BFS proof covers the governance state machine (52-state gated model). It does not model the full implementation including the LangGraph harness or Redis state. A TLA+/Alloy extension to the full implementation is tracked as future work.
 
 > **Under-approximation note:** The automaton prunes HITL-resumption paths (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope. Actuator-side seal verification (`routing_seal.verify_seal()`) is likewise a distinct trust boundary and is not re-modelled here.
 
@@ -199,21 +202,21 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 | --------- | ---------- |
 | **Tiers** | `ftra` → `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (9 tuple positions, in order) |
 | **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROW` \| `PAUSE` |
-| **`resolvedAllow`** | `TRUE` if and only if all tiers have passed **and** a valid routing seal has been issued |
-| **Terminal states** | `EXECUTED` (success) and `DENIED` (fail-closed) |
+| **`resolvedAllow`** | `TRUE` if and only if all profile tiers have passed (or a narrower's clamped params re-verified clean) **and** a valid routing seal has been issued |
+| **Terminal states** | `EXECUTED`, `DENIED`, `NARROW`, `PAUSE` |
 
 **Transition rules (gated architecture):**
 
-- Any tier failure immediately transitions to `DENIED` — fail-closed by construction.
-- All tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE`.
+- Any tier failure transitions to `DENIED` — fail-closed by construction — unless a narrower proposes clamped params **and** re-running the `FULL` profile on those params yields zero violations (`narrower_present ∧ clamped_params_valid`), in which case the state is `NARROW` with a seal on the clamped params. A narrower whose re-run fails still ends in `DENIED`. This mirrors the runtime: `SymbolicGovernor._narrow()` re-runs `FULL` on a deep copy of the proposal inside a fresh `ReservationScope` via `sealing.run_sealed()` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)), and seals those exact params or denies.
+- All tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE` (or to `PAUSE`, with no seal, when a transient block is flagged).
 - `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid, unconsumed, and unexpired.
 - `SEAL_ISSUED` → `DENIED` if the seal is invalid, consumed, or expired (e.g., TTL elapsed, HMAC mismatch).
 
 **Proof results (run: `uv run python proof/model.py`):**
 
 ```
-[gated]   Reachable states: 44
-[gated]   No-Direct-Bind holds over all 44 reachable states: True
+[gated]   Reachable states: 52
+[gated]   No-Direct-Bind holds over all 52 reachable states: True
 [gated]   EXECUTED states: 1
 [gated]     → resolvedAllow=True  seal_present=True
 
@@ -228,33 +231,35 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
                              'cbf': 'PASS', 'opa': 'PASS', 'fiscal': 'PASS',
                              'consensus': 'PASS', 'causal': 'PASS', 'fria': 'PASS'}
 
-Concurrency sub-proof (CBF ∥ OPA interleaving):
-  Reachable states: 49 (gated: 44) — superset=True
-  No-Direct-Bind holds under every interleaving: True
-  EXECUTED states: 1 (all with resolvedAllow=TRUE: True)
+Gap-specific sub-proofs:
+  Gap 1 (no routing seal on approval): reachable states=21, invariant holds=False
+  Gap 4 (DoWhy absent): reachable states=49, invariant holds=True
+  Gap 2 (govern() no seal): reachable states=21, invariant holds=False
 
 NARROW/PAUSE state-space sub-proofs (C1-sub audit remediation):
-  NARROW states: 1
-    → resolvedAllow=True  seal_present=True  soft_threshold_exceeded=True
+  NARROW states: 9
+    → resolvedAllow=True  seal_present=True  narrower_present=True  clamped_params_valid=True
   PAUSE states: 1
     → resolvedAllow=False  seal_present=False  transient_block=True
+
+Ungated NARROW negative control (C1-sub):
+  Reachable states: 50
+  No-Direct-Bind holds: False
 
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all nine tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all nine tiers pass, because no seal was issued and no seal was verified. The 9 `NARROW` states (one per tier position at which a failure can be narrowed) all carry a seal on re-verified clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
 
-### Concurrency: Order-Independence of the CBF ∥ OPA Gate
+### Evaluation Order: Sequential Two-Phase Pipeline
 
-`gated_transitions()` advances tiers in a fixed order, whereas on the post-HITL revalidation path (`revalidate_post_hitl()` in [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py)) the CBF and OPA checks can be evaluated in either order (while the primary `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py) runs OPA in Phase 1 and CBF in Phase 2). A sequential-only model could therefore mask an ordering-dependent violation across the `{cbf, opa}` pair.
+`gated_transitions()` advances tiers in a fixed order. The runtime matches this: every profile (`FULL`, `POST_HITL`, `DRY_RUN`) goes through `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py), which runs the read-only stages sequentially in Phase 1 (FTRA → STPA → OPA → confidence → Phase-1 domain tiers, stopping at the first HARD violation) and the mutating stages sequentially in Phase 2 (CBF → fiscal) only when Phase 1 produced zero violations. There is no concurrent CBF ∥ OPA evaluation on any path, so no interleaving sub-proof is required.
 
-`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 49 states versus 44 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
-
-Proving the invariant over the superset is a strictly stronger result than proving it over the canonical order alone: the seal gate holds under *every* interleaving, not merely under one scheduling.
+> **Model maintenance note:** An earlier revision of `proof/model.py` contained a `concurrent_tier_transitions()` interleaving sub-proof (49 states). It is no longer in the model; the `EXPECTED_CONCURRENT_STATES` constant and the "Concurrent CBF/OPA model" header comment in [`tests/test_no_direct_bind_proof.py`](../../tests/test_no_direct_bind_proof.py) and [`proof/model.py`](../../proof/model.py) are vestigial and assert nothing.
 
 ### Closure of the Direct-Bind Shortcut (Gap 2)
 
-Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_checks()`:
+Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into its tier checks:
 
 | Path | Seal issued? | Satisfies NoDirectBind? |
 | ---- | ------------ | ----------------------- |
@@ -265,24 +270,24 @@ A caller that caught `GovernanceError` from the old `govern()` path and proceede
 
 **Remediation (v2.0.0-rc.2 / v3.0.0):**
 
-[`symbolic_governor.govern()`](../../src/gateway/governance/governor/stages/ftra.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed every in-pipeline tier (the FTRA boundary gate having already cleared at the LangGraph level). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing, invalid, or already-consumed seal produces an immediate `BLOCKED` response.
+[`SymbolicGovernor.govern()`](../../src/gateway/governance/governor/governor.py) now issues a routing seal on approval and returns it as a `str`. `govern()`, `validate_action()`, `revalidate_post_hitl()` and the NARROW re-run all seal through [`sealing.run_sealed()`](../../src/gateway/governance/governor/sealing.py): it opens a `ReservationScope`, calls `run_pipeline()`, and only on zero violations calls `issue_seal()` → [`routing_seal.generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py). If the seal fails or is cancelled, every Phase 2 commit is rolled back LIFO from its `CommitReceipt`. A refused run that still holds commits raises `[UNROLLED_COMMIT]`. [`governance_middleware.enforce_governance(governor, ...)`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers, and finance's [`execute_trade_action()`](../../src/cage_finance/tools/tool_provider.py) calls `verify_and_consume_seal()` before executing the trade. A missing, invalid or already-consumed seal produces an immediate `BLOCKED` response.
 
-Both `govern()` and `validate_action()` now satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
+`govern()`, `validate_action()` and `revalidate_post_hitl()` all satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
 ### Gap-Specific Sub-Proofs
 
-The proof file also verifies five additional sub-cases:
+The proof file also verifies these sub-cases:
 
 | Sub-proof | Configuration modelled | Invariant holds? | Interpretation |
 | --------- | ---------------------- | ---------------- | -------------- |
 | Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (21 states) | Confirms the seal gate is load-bearing, not decorative |
 | Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** — violation confirmed (21 states) | Proves both seal issuance and actuator verification are load-bearing |
-| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally, 43 states) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
-| C1-sub (ungated NARROW negative control) | NARROW decision reaches `EXECUTED` without seal verification | ❌ **No** — violation confirmed (33 states) | Proves the seal gate is load-bearing for the NARROW path, not only for plain ALLOW |
+| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally, 49 states) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| C1-sub (ungated NARROW negative control) | NARROW decision reaches `EXECUTED` without seal verification | ❌ **No** — violation confirmed (50 states) | Proves the seal gate is load-bearing for the NARROW path, not only for plain ALLOW |
 
-For Gaps 3 and 4, the structural invariant is preserved because the seal is still issued after the remaining tiers pass. However, the *completeness* of the gate is degraded — a mandatory tier is absent. The production startup assertions (see Step 7.1 below) prevent these configurations from being reachable in production at all, closing the gap at the deployment boundary rather than the runtime boundary.
+For Gap 4, the structural invariant is preserved because the seal is still issued after the remaining tiers pass. However, the *completeness* of the gate is degraded — a mandatory tier is absent. The production startup assertions (see Step 7.1 below) prevent these configurations from being reachable in production at all, closing the gap at the deployment boundary rather than the runtime boundary.
 
-### 7.1 Gate Completeness at Startup (Gaps 3 & 4)
+### 7.1 Gate Completeness at Startup (Gap 4)
 
 
 The startup posture check in [`governor/posture.py`](../../src/gateway/governance/governor/posture.py) enforces the remaining gap at pod startup, before the first request is served. It runs once per entry point, after the composition root assembles the governor ([`governor/bootstrap.py`](../../src/gateway/governance/governor/bootstrap.py)), never at import time:
@@ -303,71 +308,83 @@ Additionally, runtime causal gatekeeper errors (previously silently skipped via 
 
 ### Mathematical Formulation
 
-The CAGE financial state machine is governed by a **discrete-time Control Barrier Function (CBF)** (Ames et al., IEEE TAC 2017). The CBF provides a formal certificate that the system's cash balance can never enter an unsafe state, regardless of the sequence of agent actions.
+CAGE state is governed by a **discrete-time Control Barrier Function (CBF)** (Ames et al., IEEE TAC 2017). The CBF provides a formal certificate that a barrier-protected state variable can never enter an unsafe state, regardless of the sequence of agent actions.
+
+The kernel engine (`ControlBarrierFunction`) is **invariant-parametric**: it has no domain defaults and refuses construction without an explicit `InvariantModel` ([`contracts.py`](../../src/gateway/governance/contracts.py)) and a domain `cost_resolver`. An `InvariantModel` declares the affine barrier as data — `invariant_id`, a namespaced Redis `state_key`, a THRESHOLDS `threshold_key` and `gamma`. It is declarative rather than callable, because the barrier must be evaluated inside the atomic Redis Lua hop. Non-affine barriers are a kernel change that requires a new proof obligation.
 
 **Safe set:**
 
 $$\mathcal{S} = \{ x \in \mathbb{R}^n : h(x) \ge 0 \}$$
 
-**Barrier function (cash solvency):**
+**Barrier function (affine, per `InvariantModel`):**
 
-$$h(x) = \text{cash\_balance} - \text{min\_cash\_balance}$$
+$$h(x) = \text{state}[\text{state\_key}] - \text{THRESHOLDS}[\text{threshold\_key}]$$
 
-The system is safe when $h(x) \ge 0$. Bankruptcy ($\text{cash\_balance} < \text{min\_cash\_balance}$) corresponds to $h(x) < 0$.
+For the finance plugin's `CashBarrier` ([`src/cage_finance/invariants.py`](../../src/cage_finance/invariants.py)) this is cash solvency: `state_key = "safety:current_cash"`, `threshold_key = "domains.finance.cbf.min_cash_balance"`, so $h(x) = \text{cash\_balance} - \text{min\_cash\_balance}$. The system is safe when $h(x) \ge 0$. Bankruptcy ($\text{cash\_balance} < \text{min\_cash\_balance}$) corresponds to $h(x) < 0$.
+
+**Invariant validation (V1–V4).** Every plugin-contributed invariant is checked at governor assembly (`assemble_governor()` → `validate_invariant()` in [`governor/invariants.py`](../../src/gateway/governance/governor/invariants.py)) across all domains. Startup is refused on: V1 duplicate `invariant_id`; V2 un-namespaced `state_key` (no `:`); V3 `threshold_key` not resolving in the loaded thresholds; V4 `gamma` outside $(0, 1]$. Validated invariants are recorded on the immutable `GovernorComponents.invariants`.
+
+> **Enforcement scope (POAM-2026-078, Open):** a CBF engine instance still enforces one invariant. Only finance's `CashBarrier` is enforced, through the CBF the finance plugin builds ([`src/cage_finance/plugin.py`](../../src/cage_finance/plugin.py)). The healthcare and physical-AI barriers are validated but not enforced; their barrier tiers have no CBF and fail closed (DENY). See [`docs/POAM.md`](../POAM.md).
 
 **Discrete-time CBF condition:**
 
-$$h(S(t+1)) \ge (1 - \gamma) \cdot h(S(t)) \quad \forall\, t, \quad \gamma \in (0, 1)$$
+$$h(S(t+1)) \ge (1 - \gamma) \cdot h(S(t)) \quad \forall\, t, \quad \gamma \in (0, 1]$$
 
-where $\gamma$ is the decay rate (configured via `THRESHOLDS.cbf.gamma`). This condition ensures that the barrier function cannot decrease faster than the geometric rate $(1 - \gamma)$ per step.
+where $\gamma$ is the decay rate declared by `InvariantModel.gamma` (finance: `CashBarrier.gamma = 0.5`). This condition ensures that the barrier function cannot decrease faster than the geometric rate $(1 - \gamma)$ per step.
 
 **CBF Invariance Theorem:** If $h(S(0)) \ge 0$ and the discrete-time CBF condition holds at every step $t$, then $h(S(t)) \ge 0$ for all $t \ge 0$. The system trajectory remains within the safe set $\mathcal{S}$ indefinitely.
 
-> **Two-Phase Zero-Leakage Architecture:** In CAGE v3.0.0, the **STERA Runtime Pipeline** decouples into Phase 1 (read-only validation gates) and Phase 2 (atomic state mutations). All validation checks (STPA, confidence, OPA, consensus, causal, FRIA) execute in Phase 1 before `atomic_verify_and_commit()` or `reserve()` are invoked. Any validation failure terminates the pipeline in Phase 1 with $S(t+1) = S(t)$, completely eliminating downstream budget leakage and the saga-atomicity gap.
+> **Two-Phase Zero-Leakage Architecture:** In CAGE v3.0.0, the **STERA Runtime Pipeline** decouples into Phase 1 (read-only validation gates) and Phase 2 (atomic state mutations). All validation checks (FTRA, STPA, OPA, confidence, and Phase-1 domain tiers such as consensus and causal) execute in Phase 1 before `atomic_verify_and_commit()` or `reserve()` are invoked. Any validation failure terminates the pipeline in Phase 1 with $S(t+1) = S(t)$.
+>
+> **Phase-2 commit receipts.** Each Phase 2 `commit()` returns `(violations, CommitReceipt | None)`. `CommitReceipt` ([`contracts.py`](../../src/gateway/governance/contracts.py)) records the tier, the magnitude the engine actually deducted, and any tier-owned token. `atomic_verify_and_commit()` returns `(committed, reason, magnitude)`, and the CBF tier stores that magnitude (`commit_barrier()` in [`barrier_tier.py`](../../src/gateway/governance/safety/barrier_tier.py)). `rollback()` undoes exactly what the receipt records; it never re-derives the undo from request params. The request's `ReservationScope` keeps the commits in force only if a seal is issued inside it. Any other exit — a later commit failure, a seal failure, or cancellation — rolls them back LIFO in a shielded task. A failed rollback raises `[ROLLBACK_FAILED]`, so it can never end in ALLOW.
 
 **Enforcement in code:**
 
 ```python
-h_t      = cash_balance - min_cash_balance        # h(S(t))
-h_next   = (cash_balance - cost) - min_cash_balance  # h(S(t+1))
-required = (1.0 - gamma) * h_t                    # CBF threshold
+# evaluate_barrier(x) = x - THRESHOLDS.resolve(invariant.threshold_key)
+effective = current_state - local_debits            # ground truth minus unreconciled debits
+h_t       = evaluate_barrier(effective)             # h(S(t))
+h_next    = evaluate_barrier(effective - cost)      # h(S(t+1)); cost from the domain cost_resolver
+required  = (1.0 - gamma) * h_t                     # CBF threshold
 
-if h_next < required or h_next < 0:
+if cost > 0 and (h_next < required or h_next < 0):
     # UNSAFE — barrier certificate violated
 ```
 
 ### Atomic Redis Implementation
 
-The CBF state is shared across stateless Cloud Run instances via Redis. To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
+The CBF state is shared across gateway replicas via Redis (GCP Memorystore on the GKE target, `noeviction` in every environment). To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
 
-**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`_update_state_unsafe()`, `rollback_state()`):
+**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`_update_state_unsafe()`, and `rollback_state()` when the Lua rollback is unavailable):
 
-1. `WATCH safety:current_cash` — marks the key for observation
-2. Read current balance; compute $h(S(t+1))$
-3. `MULTI` / `SET safety:current_cash <new_balance>` / `EXEC`
-4. If another process modified the key between steps 1–3, `EXEC` returns `nil`; the guard retries up to `_MAX_RETRIES = 5` times before raising `RuntimeError`
+1. `WATCH <InvariantModel.state_key>` — marks the key for observation
+2. Read the current state; compute the new value
+3. `MULTI` / `SET <state_key> <new_value>` / `INCR safety:fence_epoch` / `EXEC`
+4. If another process modified the key between steps 1–3, `EXEC` fails; the guard retries up to `_MAX_RETRIES = 5` times before raising `RuntimeError`
 
-**Layer 2 — Lua atomic check+commit** (`atomic_verify_and_commit()`):
+**Layer 2 — Lua atomic check+commit** (`atomic_verify_and_commit()`, rollback via `LUA_ROLLBACK_CBF`):
 
-The `LUA_ATOMIC_CBF` script collapses the CBF check and state commit into a **single Redis Lua hop**, eliminating the TOCTOU window entirely. The Lua script replicates the exact CBF formula atomically inside Redis:
+The `LUA_ATOMIC_CBF` script collapses the fence check, the CBF check, the state commit and the debit record into a **single Redis Lua hop**. The kernel compiles the `InvariantModel` into the script's `KEYS` (`state_key`, `audit:state_ledger`, `safety:fence_epoch`, `cbf:local_debits`, `safety:fence_epoch_hwm`) and `ARGV` (magnitude, resolved threshold, `gamma`, signature, verified ground-truth state, expected fence epoch, debit entry):
 
 ```lua
-local h_t    = current - min_cash
-local h_next = next_cash - min_cash
-local required_h_next = (1.0 - gamma) * h_t
-
-if h_next < required_h_next or h_next < 0 then
-    return {0, "UNSAFE: ...", tostring(current)}
-end
-redis.call('SET', KEYS[1], tostring(next_cash))
-return {1, "COMMITTED", tostring(next_cash)}
+if current_fence ~= expected_fence then return {0, "Fence epoch regression ..."} end
+if current_fence < hwm then return {0, "Fence epoch regression: live epoch < hwm"} end
+local h_t = current - threshold
+local h_next = (current - cost) - threshold
+if h_next < (1.0 - gamma) * h_t or h_next < 0 then return {0, "UNSAFE: ..."} end
+redis.call('SET', KEYS[1], tostring(next_state))
+local new_epoch = redis.call('INCR', KEYS[3])   -- and raise KEYS[5] HWM if exceeded
+redis.call('RPUSH', KEYS[4], debit_entry)       -- debit recorded in the same hop
+return {1, "COMMITTED", tostring(next_state), new_epoch}
 ```
 
-The Lua script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry on SHA eviction. KMS signature verification must occur in Python before calling this method — Redis Lua has no cryptographic FFI.
+**Durability (atomic debits and shared HWM).** The unreconciled debit is appended to `cbf:local_debits` inside the same Lua hop as the state commit, so a debit can never be committed without being recorded, or recorded without being committed. The fence-epoch high-water mark lives in Redis (`safety:fence_epoch_hwm`) and is shared by every replica rather than held per process. Commit and rollback both raise it, and a live epoch below the HWM is refused as a regression, both in Lua and in Python before the hop. When the reconciler accepts a signed snapshot at sequence *n*, it trims debits at or below *n* (`LUA_TRIM_DEBITS_BY_SEQUENCE`). After a commit, the engine issues Redis `WAIT` on a pinned connection (`CAGE_REDIS_WAIT_REPLICAS`, `CAGE_REDIS_WAIT_TIMEOUT_MS`). Under strict replication (`CAGE_STRICT_REPLICATION`, on by default outside dev/test/ci), an unconfirmed `WAIT` rolls the commit back and returns `REPLICATION_UNCONFIRMED` (fail closed).
 
-**Retry policy:** `_MAX_RETRIES = 5` for both WATCH/MULTI/EXEC and Lua paths. On exhaustion, `RuntimeError` is raised and the trade is blocked (fail-closed).
+**Ground truth.** The state value fed to the Lua hop comes from the `GroundTruthReconciler` ([`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py)). The reconciler polls domain `GroundTruthProvider`s ([`seams/ground_truth.py`](../../src/gateway/governance/seams/ground_truth.py)) and rejects every `FaultMode`. It signs each snapshot with the reconciler's own key (`RECONCILER_KMS_KEY`) and records the signing `kid` and algorithm. The CBF accepts a snapshot only through `verify_snapshot_signature()` ([`reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py)). That check resolves the `kid` against reconciler-only trust anchors fetched out-of-band, and fails closed on a missing signature, `kid` or algorithm, an unknown `kid`, or any version of the gateway key (`KMS_GOVERNANCE_KEY`). A compromised gateway therefore cannot mint its own ground truth. Under an enforcing posture, the `reconciler_trust_anchor` startup check refuses to start without a usable reconciler anchor. With `CAGE_CBF_STRICT_MODE` (on by default outside dev/test/ci), a missing or unverified snapshot raises `CBF_STRICT_RECONCILIATION_UNAVAILABLE` instead of falling back to self-reported state. KMS signature verification happens in Python before the Lua hop, because Redis Lua has no cryptographic FFI.
 
-**Read-only verification:** `verify_action()` uses a pipelined (non-transactional) batch GET for atomic state snapshot — it does **not** participate in the WATCH/MULTI/EXEC pipeline and does not modify Redis state.
+**Retry policy:** `_MAX_RETRIES = 5` for the WATCH/MULTI/EXEC paths; the Lua path is loaded via `SCRIPT LOAD` / `EVALSHA` with a NOSCRIPT reload-and-retry. On exhaustion or any Redis failure the commit is refused and the action is blocked (fail-closed).
+
+**Read-only verification:** `verify_action()` (the DRY_RUN `preview()` path) reads the verified state and does not modify Redis.
 
 ---
 
@@ -467,7 +484,7 @@ In production, each record is signed with the KMS key ring via [`src/gateway/gov
 
 ## Step 11: FiscalLimitGuard — Quantitative Implementation Details
 
-**Source:** [`src/gateway/governance/safety/resource_guard.py`](../../src/gateway/governance/safety/resource_guard.py)
+**Source:** [`src/cage_finance/safety/fiscal_limit_guard.py`](../../src/cage_finance/safety/fiscal_limit_guard.py)
 
 Step 5 above provides the formal race-condition proof for `FiscalLimitGuard`. This step documents the quantitative implementation parameters verified against the source.
 
@@ -561,7 +578,7 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` (run: `uv
 
 **Proof:**
 1. Serialization mechanisms capture `tier_failures`, ensuring the 5-part proof chain is maintained intact upon ingestion.
-2. Environment checks ensure that `CAGE_ENV` set to `staging` or `production` mandates KMS signing. Fallbacks (e.g. HMAC) are structurally disabled in these environments, enforcing non-repudiation as detailed in Step 6.
+2. The startup posture check `kms_signing_mode` ([`governor/posture.py`](../../src/gateway/governance/governor/posture.py)) mandates KMS signing under every enforcing posture, which is anything other than `dev`/`test`/`ci` as resolved by `env_posture`, so staging and production both qualify. Software fallbacks (Ed25519, HMAC) are refused in these postures, enforcing non-repudiation as detailed in Step 6.
 
 ---
 
@@ -575,8 +592,8 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` (run: `uv
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 44 gated reachable states (49 under the CBF ∥ OPA interleaving superset) | **PASS** |
-| 8 | CBF discrete-time invariance — $h(S(t+1)) \ge (1-\gamma) \cdot h(S(t))$, Lua atomic check+commit + replica `WAIT` barrier | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 52 gated reachable states, including NARROW via re-verified clamped params | **PASS** |
+| 8 | CBF discrete-time invariance — invariant-parametric $h(S(t+1)) \ge (1-\gamma) \cdot h(S(t))$, V1–V4 invariant validation, Lua atomic check+commit+debit, shared fence HWM, replica `WAIT` barrier, reconciler-`kid`-verified ground truth | **PASS** (only finance `CashBarrier` enforced — POAM-2026-078) |
 | 9 | Routing seal v3 integrity — asymmetric JWT signed via KMS HSM (dev fallback: 4-tuple HMAC), 30s TTL, constant-time compare | **PASS** |
 | 10 | Provenance hash chain — SHA-256, $O(n)$ tamper detection, deterministic RFC 8785 JCS serialization | **PASS** |
 | 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86,400s window, exponential backoff | **PASS** |

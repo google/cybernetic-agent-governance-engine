@@ -6,7 +6,7 @@
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 ## Architecture Pattern
 
@@ -153,7 +153,7 @@ AgentSight is a React/Vite frontend (port 5173) backed by an eBPF DaemonSet that
 
 ### eBPF DaemonSet
 
-The eBPF DaemonSet runs on every node in the `governance-stack` namespace and intercepts:
+The eBPF DaemonSet ([`deployment/k8s/agentsight-daemon.yaml`](../../deployment/k8s/agentsight-daemon.yaml)) runs on every node in the `agentsight` namespace and intercepts:
 - **Encrypted Traffic (OpenSSL):** Captures raw LLM payloads at the network boundary before encryption.
 - **System Calls (Kernel):** Monitors `execve` (process creation), `openat` (file access), `connect` (network connections).
 - **Correlation:** The Gateway injects `X-Trace-Id` into every LLM request; AgentSight links kernel events to Langfuse traces.
@@ -161,7 +161,7 @@ The eBPF DaemonSet runs on every node in the `governance-stack` namespace and in
 ### Telemetry Path (Post-2026-05-31)
 
 The OTel Collector sidecar was **deprecated 2026-05-31**. All telemetry now flows via **direct Langfuse OTLP ingestion**:
-- Endpoint: `http://langfuse-web:3000/api/public/otel/v1/traces`
+- Endpoint: `OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces` (`http/protobuf`) in the gateway manifests; without it, `src/gateway/tracing_setup.py` derives `{TELEMETRY_HOST}/api/public/otel` with Basic auth from `TELEMETRY_PUBLIC_KEY` / `TELEMETRY_SECRET_KEY`, or disables OTLP export when neither is set.
 - No intermediate collector hop — reduces latency and eliminates a failure point.
 
 ---
@@ -173,26 +173,25 @@ The DEFER queue handles confidence-starved contexts that cannot be immediately a
 ### Configuration
 - **Redis:** `db=1`, `noeviction` policy (contexts are never evicted — human review is mandatory).
 - **Trigger:** Confidence score in the DEFER zone: below `min_trade_confidence: 0.95` but at or above the hard-deny threshold of `0.70`. Three-zone model: ALLOW (≥0.95), DEFER (0.70–0.95), DENY (<0.70).
-- **Implementation:** `src/gateway/governance/defer_queue.py`.
+- **Implementation:** `src/gateway/governance/defer_queue.py`, owned by the gateway. The advisor holds no DeferQueue: its `defer_node` only checkpoints the gateway-issued `deferral_ticket_id` and fails closed when it is missing.
 
 ### Operational Flow
 ```
 Agent generates plan
         ↓
-SymbolicGovernor Tier 2 — confidence check
+Gateway SymbolicGovernor — confidence check
         ↓ (confidence < 0.95, not hard-denied)
-DEFER queue push → Redis db=1 (noeviction)
+DEFER queue push → Redis db=1 (noeviction); ticket returned to the advisor
         ↓
-Human review notification
+Operator lists parked tokens: GET /v1/defer/pending (compliance bridge)
         ↓
-Operator approves/denies via AgentSight UI
+Operator resolves: POST /v1/defer/{id}/inject or /v1/defer/{id}/escalate
         ↓
 Re-evaluation with updated context
 ```
 
 ### Monitoring
-- DEFER queue depth is exposed as an OTel metric and visible in the AgentSight `KernelDashboard`.
-- Alerts fire when queue depth exceeds configurable thresholds (prevents silent accumulation).
+- Parked tokens are listed by the compliance bridge's `GET /v1/defer/pending` (`src/compliance_bridge/main.py`). No dedicated DEFER queue-depth metric or alert is implemented at HEAD.
 
 ---
 
@@ -210,7 +209,7 @@ Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TO
 |------|---------|
 | `approval` ([`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py)) | Suspends the LangGraph StateGraph by calling the dynamic `interrupt()` primitive (`langgraph.types.interrupt`) and surfaces the trade payload to a reviewer |
 | `post_hitl_rehydrate` | Fetches a live market quote at actuation time (yfinance `fast_info["last_price"]`); computes price drift vs. stale approval price |
-| `post_hitl_revalidate` | Re-runs **Tier 3a (CBF)** and **Tier 3b (OPA)** only with fresh market data and live cash balance; checks drift against reviewer's `max_slippage_pct` |
+| `post_hitl_revalidate` | Checks drift against reviewer's `max_slippage_pct`, then calls the gateway's `POST /governance/revalidate-post-hitl` with fresh params; the gateway governor re-runs **Tier 3a (CBF)** and **Tier 3b (OPA)** only (the `POST_HITL` profile) — the advisor re-checks nothing in-process |
 | `drift_blocked` | Fail-closed terminal node reached when drift or re-validation blocks the trade |
 
 > [!IMPORTANT]
@@ -226,9 +225,9 @@ Reviewer resumes the thread: Command(resume={"approved": true, "max_slippage_pct
         ↓ (if not approved → rejection_node → END)
 post_hitl_rehydrate — fetch live price; compute drift_pct
         ↓ (if drift_pct > max_slippage_pct → drift_blocked)
-post_hitl_revalidate — re-run Tier 3a (CBF) + Tier 3b (OPA) with fresh params
+post_hitl_revalidate — gateway POST /governance/revalidate-post-hitl re-runs Tier 3a (CBF) + Tier 3b (OPA) with fresh params
         ↓ (if governance violation → drift_blocked)
-executor — execute trade
+executor — execute trade (guarded tools node → gateway /tools/execute)
 ```
 
 If `post_hitl_revalidate` fails (market conditions changed), the trade is blocked and the operator is notified.

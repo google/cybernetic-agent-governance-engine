@@ -3,14 +3,14 @@
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
 | **Document Version** | 3.0.1                                                                    |
-| **Date**             | 2026-09-09                                                               |
+| **Date**             | 2026-09-29                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Architecture Specification                                          |
-| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified; baseline: 2,553 passing core unit tests; 4,148 tests collected / 3,921 passed, 0 failed) |
+| **Status**           | ACTIVE — v3.0.1 stable; `infra/targets/gcp-gke` is the sole cloud reference deployment |
 | **Canonical Path**   | `docs/architecture/TECH_STACK.md`                                        |
 | **References**       | [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md), [`AGENT_SYSTEM_ARCHITECTURE.md`](AGENT_SYSTEM_ARCHITECTURE.md) |
 
-**Last Updated:** 2026-09-22
+**Last Updated:** 2026-09-29
 
 ---
 
@@ -47,11 +47,10 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 
 | Component               | Model                          | Quantization / Sizing                   | Role & Governance Justification                                                                |
 | ----------------------- | ------------------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **vLLM Reasoning Node** | `DeepSeek-R1-Distill-Llama-8B` | AWQ; `max_model_len=32768`; NVIDIA L4   | Deep reasoning for complex investment theses; active Risk Manager in `ConsensusEngine`         |
-| **vLLM Fast Node**      | `Meta-Llama-3.1-8B-Instruct`   | Unquantized / FP16; spot L4 instances  | Low-latency instruction decomposition and reporting; active Compliance Officer in ConsensusEngine |
-| **vLLM Governance**     | `Qwen/Qwen2.5-1.5B-Instruct`   | Reference profile (undeployed)          | Compact model profile for dedicated classification tasks (`infra/modules/vllm_inference/main.tf`) |
-| **liteLLM**             | LLM Router                     | In-memory proxy                         | Abstract routing between `MODEL_REASONING` and `MODEL_FAST` endpoints                          |
-| **vLLM Tensorizer**     | Cold-Start Streaming           | MinIO weight streaming                  | Sub-minute cold-start container initialization without baked-in model weights                  |
+| **vLLM Reasoning Node** | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | `--max-model-len 16384`; NVIDIA L4 on `g2-standard-8`, non-Spot | Deep reasoning for complex investment theses (`module.vllm_reasoning`, service `vllm-reasoning`) |
+| **vLLM Fast Node**      | `Qwen/Qwen2.5-1.5B-Instruct`   | `--enable-auto-tool-choice --tool-call-parser hermes`; NVIDIA L4, non-Spot | Low-latency tool calling, NeMo rail evaluation, and compliance-bridge remediation (`module.vllm`, service `vllm-service`) |
+| **liteLLM**             | Model registry                 | In-process library (advisor)            | Registers `MODEL_REASONING` / `MODEL_FAST` limits in [`infrastructure/llm/config.py`](../../src/governed_financial_advisor/infrastructure/llm/config.py); not declared in `pyproject.toml` |
+| **Run:ai Model Streamer** | Cold-Start Streaming         | `--load-format runai_streamer` from the GCS model bucket | Weights stream from `gs://<project>-models/` (Workload Identity, `HF_HUB_OFFLINE=1`); no HF token or weights baked into the image. GKE image streaming (`gcfs_config`) is enabled on the GPU pool |
 | **Guided JSON (FSM)**   | Structured Output Engine       | vLLM native regex/schema FSM            | Eliminates JSON syntax errors at generation time, replacing deprecated `outlines` library      |
 
 ---
@@ -132,10 +131,10 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 
 | Library               | License    | Purpose & Governance Justification                                                   |
 | --------------------- | ---------- | ------------------------------------------------------------------------------------ |
-| `google-cloud-kms`    | Apache-2.0 | **GCP** governance signing — Cloud KMS HSM-backed RSA-4096 (`GCPKMSProvider`); declared in the `gateway` extra |
-| `boto3`               | Apache-2.0 | **AWS** governance signing — AWS KMS HSM provider (`AWSKMSProvider`); declared in the `s3` extra              |
-| `azure-keyvault-keys` | MIT        | **Azure** governance signing — Azure Key Vault Managed HSM provider (`AzureKMSProvider`). **Not declared** in `pyproject.toml`: imported lazily, and `AzureKMSProvider` raises an install hint when absent |
-| `cryptography`        | Apache-2.0 / BSD | Low-level cryptographic primitives (Ed25519 CER verification, RSA verify)       |
+| `google-cloud-kms`    | Apache-2.0 | **GCP** governance signing — Cloud KMS HSM-backed asymmetric keys (`GCPKMSProvider` in [`src/integrations/gcp/kms_provider.py`](../../src/integrations/gcp/kms_provider.py)); the GKE target provisions per-workload `EC_SIGN_P256_SHA256` keys on the `cage-signing-<env>` keyring. Declared in the `gateway` extra |
+| `boto3`               | Apache-2.0 | **AWS** governance signing — AWS KMS HSM provider (`AWSKMSProvider` in [`src/integrations/aws/kms_provider.py`](../../src/integrations/aws/kms_provider.py)); declared in the `s3` extra              |
+| `azure-keyvault-keys` | MIT        | **Azure** governance signing — Azure Key Vault Managed HSM provider (`AzureKMSProvider` in [`src/integrations/azure/kms_provider.py`](../../src/integrations/azure/kms_provider.py)). **Not declared** in `pyproject.toml`: imported lazily, and `AzureKMSProvider` raises an install hint when absent |
+| `cryptography`        | Apache-2.0 / BSD | Low-level cryptographic primitives (Ed25519 CER verification, `SoftwareEd25519Provider` dev/CI signing, ECDSA/RSA verify) |
 | `hashlib` / `hmac`    | PSF        | Standard library digest implementations for SHA-256 hash chains and dev-mode HMAC    |
 
 ### 4.11 gRPC Toolchain
@@ -219,16 +218,19 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 
 | Technology                          | Role                   | Details                                                                                               |
 | ----------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Google Kubernetes Engine (GKE)**  | Runtime platform       | `governance-stack` namespace; 9 `NetworkPolicy` objects; default-deny posture                         |
-| **Cilium / GKE Dataplane V2**       | L7 network policy CNI  | `CiliumNetworkPolicy` in `deployment/k8s/cilium/`; FQDN allowlist enforcement via eBPF DNS proxy       |
-| **Terraform**                       | Infrastructure-as-code | `infra/modules/` (16 shared modules) + `infra/targets/` (`agnostic/`, `gcp-gke/`)                     |
-| **Docker**                          | Containerization       | Multi-stage builds; `Dockerfile`, `Dockerfile.vllm`, `Dockerfile.lula-*`                              |
-| **Google Cloud Build**              | CI/CD                  | Dot notation: `cloudbuild.gateway.yaml`, `cloudbuild.vllm.yaml`, `cloudbuild.lula.yaml`              |
+| **Google Kubernetes Engine (GKE)**  | Runtime platform       | `governance-stack` namespace; regional cluster in prod, zonal in dev/staging; four node pools (`general`, `general-spot`, `gpu-l4`, local-SSD `clickhouse`) |
+| **GKE Dataplane V2 + FQDNNetworkPolicy** | Network policy     | Default-deny L3/L4 `NetworkPolicy` plus `FQDNNetworkPolicy` (`networking.gke.io/v1alpha1`) egress allowlists in [`network_policy.tf`](../../infra/targets/gcp-gke/network_policy.tf); DNS egress limited to kube-dns and Cloud DNS |
+| **Linkerd + Google CAS**            | Service mesh           | mTLS workload identity for all pods in the namespace; trust anchor in Google CAS ([`service_mesh`](../../infra/modules/service_mesh)) |
+| **Terraform**                       | Infrastructure-as-code | `infra/modules/` (22 shared modules) + `infra/targets/` (`agnostic/`, `gcp-gke/`); `hashicorp/google ~> 6.43` |
+| **Perimeter**                       | Supply chain & edge    | Binary Authorization (`REQUIRE_ATTESTATION`, KMS-backed attestor), VPC Service Controls, Cloud Armor and Cloud DNS in [`perimeter.tf`](../../infra/targets/gcp-gke/perimeter.tf); images pinned by `@sha256:` via `var.image_digests` |
+| **Docker**                          | Containerization       | Multi-stage builds; root `Dockerfile`, `src/gateway/Dockerfile`, and `deployment/docker/Dockerfile.{vllm,nemo,opa,lula-*}` |
+| **Google Cloud Build**              | CI/CD                  | `deployment/docker/cloudbuild.*.yaml` (gateway, advisor, compliance, nemo, opa, ui, vllm, lula); the gateway build signs a Binary Authorization attestation for the pushed digest |
 | **uv / uv_build**                   | Build system           | Fast Python package installer, lockfile resolver, and build backend                                  |
 | **Kubernetes Secrets**              | Secret storage         | Kubernetes-native `Secret` objects provisioned via Terraform; no runtime secret manager dependency    |
-| **Google Cloud Storage (GCS)**      | Artifact storage       | Primary storage SDK (`google-cloud-storage`); OSCAL assessment results and WORM audit records         |
-| **MinIO / boto3**                   | S3-compatible storage  | S3-compatible fallback; source for vLLM Tensorizer cold-start weight streaming                        |
-| **NVIDIA L4 GPU**                   | GPU compute            | 24 GB VRAM; AWQ quantization; spot instances for cost optimization                                    |
+| **Google Cloud Storage (GCS)**      | Artifact storage       | Primary storage SDK (`google-cloud-storage`); retention-locked, CMEK-encrypted evidence WORM bucket ([`worm_bucket`](../../infra/modules/worm_bucket)) for OSCAL results and evidence archives; model-weight bucket for vLLM |
+| **Cloud KMS**                       | Keys                   | Symmetric CMEK keyring ([`kms`](../../infra/modules/kms)) kept separate from the asymmetric `cage-signing-<env>` keyring ([`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf)) |
+| **MinIO / boto3**                   | S3-compatible storage  | S3-compatible storage for the `agnostic` target ([`minio_storage`](../../infra/modules/minio_storage)); not used by the GKE target |
+| **NVIDIA L4 GPU**                   | GPU compute            | 24 GB VRAM on `g2-standard-8`; the GPU pool never uses Spot VMs                                       |
 | **Kubernetes Inference Gateway**    | LLM routing            | Nginx `GatewayClass` with load balancing and path routing                                             |
 
 ---
@@ -237,10 +239,11 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 
 | Store                   | Technology                     | Purpose & Invariants                                                       |
 | ----------------------- | ------------------------------ | -------------------------------------------------------------------------- |
-| **State / Checkpoints** | Redis (`AsyncRedisSaver`)      | LangGraph graph checkpoints; HITL interrupt state persistence              |
-| **CBF Cash Balance**    | Redis (Lua script check+commit)| Atomic Control Barrier Function enforcement (`atomic_verify_and_commit.lua`) |
+| **State / Checkpoints** | Redis (`AsyncRedisSaver`)      | LangGraph graph checkpoints; HITL interrupt state persistence. On GKE: app Memorystore for Valkey instance (`module.memorystore_app`, shared with Langfuse) |
+| **CBF Cash Balance**    | Redis (Lua script check+commit)| Atomic Control Barrier Function enforcement (`atomic_verify_and_commit.lua`). On GKE: dedicated governance Memorystore for Valkey instance (`module.memorystore_governance`, IAM auth, `noeviction`) |
 | **Compliance Cache**    | `TTLCache` (in-memory)         | 5-minute TTL per compliance control metric; reduces OPA round-trips        |
-| **Audit Logs**          | Langfuse (ClickHouse + MinIO)  | 7-year retention policy; OTLP gRPC ingestion; dual-project sovereign telemetry|
+| **Audit Logs**          | Langfuse (ClickHouse + GCS blob storage + Cloud SQL PostgreSQL) | OTLP ingestion; dual-project telemetry. On GKE, Langfuse metadata lives in Cloud SQL PostgreSQL 15 reached through the Cloud SQL Auth Proxy with IAM database auth |
+| **Evidence Query Plane** | ClickHouse ([`clickhouse_operator`](../../infra/modules/clickhouse_operator)) | Analytical mirror of evidence; the GCS WORM bucket is the system of record |
 | **OSCAL Results**       | GCS / S3 / local               | OSCAL Assessment Results artifacts; backend selected via `STORAGE_BACKEND` |
 | **Market Data**         | `yfinance` (real-time)         | 1-month price history on demand; no persistent database storage            |
 
@@ -278,7 +281,7 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 | **OpenAI-compatible REST API** | Local vLLM endpoint; `POST /v1/chat/completions` used by all model consumers      |
 | **Server-Sent Events (SSE)**   | MCP transport (`FastMCP`); compliance event streaming from `GovernanceEventBus`   |
 | **W3C Traceparent**            | Distributed trace propagation across the MCP SSE boundary via `patch_mcp_tools()` |
-| **Cloud KMS (RSA-4096-SHA256)**| **Primary** governance signing — HSM-backed asymmetric signatures for non-repudiation |
+| **Cloud KMS (asymmetric)**     | **Primary** governance signing — HSM-backed asymmetric signatures for non-repudiation (`EC_SIGN_P256_SHA256` keys in the GKE target) |
 | **HMAC-SHA256**                | **Fallback** signing for the governor's routing seal (`routing_seal.py`, keyed by `GOVERNANCE_SALT`) in dev/test environments |
 | **OTLP (gRPC / HTTP)**         | OpenTelemetry $\to$ Langfuse ingestion; all trace and span export                 |
 | **ISO-20022**                  | Banking payments standard; message format reference for transaction fields        |

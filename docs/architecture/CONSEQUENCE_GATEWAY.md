@@ -7,8 +7,10 @@ The `ConsequenceGateway` acts as the vendor-agnostic post-FRIA (Fundamental Righ
 Its primary role is to ensure that no action is executed unless it possesses a valid, unexpired, mathematically bound, and cryptographically signed `ConsequenceToken` (JWS). It enforces exactly-once execution semantics by atomizing authority consumption against a central `ConsequenceAuthorityStore`.
 
 **Trust Boundaries**:
-- **Upstream (Governance Layer)**: Trusted to mint `ConsequenceToken`s exclusively upon successful `ALLOW` classifications.
+- **Upstream (Governance Layer)**: Tokens are minted only by the kernel service [`mint_consequence_token_finding()`](../../src/gateway/governance/consequence_token_service.py), which the external normative-provider adapters call when the provider admits an action (e.g. [`provider_01`](../../src/integrations/provider_01/provider.py), [`provider_08`](../../src/integrations/provider_08/adapter.py)). A mint failure returns a blocking `CONSEQUENCE_TOKEN_MINT_FAILED` finding.
 - **Downstream (Actuators)**: Cannot execute side-effects autonomously; they rely entirely on the Gateway's final `EXECUTE` emission.
+
+**Current wiring**: `ConsequenceGateway(store, signer)` is a library primitive. The gateway server does not construct one on the `SymbolicGovernor` ALLOW path. There, the governor issues a KMS-signed routing seal inside the request's `ReservationScope` ([`governor/sealing.py`](../../src/gateway/governance/governor/sealing.py)), and governed tools dispatch through `ActuatorRegistry`. The routing seal is not ingress authentication: callers are authenticated by Linkerd mTLS workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)). Behaviour of the gateway primitive is pinned by [`tests/test_consequence_gateway.py`](../../tests/test_consequence_gateway.py).
 
 ## 2. Data & Execution Flow
 
@@ -94,11 +96,11 @@ The lifecycle revolves around the `ConsequenceToken` and its corresponding autho
 - **Fail-Closed Evaluation**: Any cryptographic failure, payload mismatch, or Redis connectivity error immediately collapses the decision to `BLOCK`. It never silently defaults to `EXECUTE`.
 - **TOCTOU Elimination**: By JCS-canonicalizing the raw runtime payload and re-deriving the SHA-256 hash immediately before consumption, the gateway completely eliminates Time-of-Check to Time-of-Use tampering vectors.
 - **Clock Skew Tolerance**: The token verifier permits an `iat` claim up to 5 seconds in the future to mitigate minor NTP drift across distributed Kubernetes nodes.
-- **Algorithm Confusion Prevention**: The token verification strictly asserts that the token's header `alg` matches the `KMSGovernanceSigner`'s hardcoded expected algorithm, entirely rejecting `alg: none` attacks.
+- **Algorithm Confusion Prevention**: Token verification asserts that the header `alg` matches the verifying `KMSGovernanceSigner`'s `jose_alg`, and rejects `alg: none` outright.
 
 ## 5. Configuration Contracts & Runtime Matrix
 
 - **Storage Backend (Redis)**: The `ConsequenceAuthorityStore` relies on a highly available Redis instance for atomic `SETNX` or LUA-based single-use consumptions.
-- **KMS Signer**: Requires an active, reachable Cloud KMS hardware security module (HSM) connection at initialization. If the signer is unreachable or the key is disabled, the service refuses to start.
+- **KMS Signer**: The token is signed and verified by the gateway governance signer (`KMS_GOVERNANCE_KEY`; cloud providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`). Under an enforcing posture the gateway's startup checks (`kms_signing_mode`, `kms_ready` in [`governor/posture.py`](../../src/gateway/governance/governor/posture.py)) refuse to start on a software/HMAC signer or an unreachable or disabled key. Only dev, test and CI may use software signers.
 - **Canonicalization Contract**: Downstream execution payloads must be strictly JSON-serializable to support stable JCS (JSON Canonicalization Scheme, RFC 8785) hashing.
 

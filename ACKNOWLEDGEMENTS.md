@@ -10,8 +10,8 @@ CAGE directly grounds its runtime governance substrate and verification boundari
 
 - **Five-Plane Taxonomy:**
   1. *Governance / Reasoning Plane:* Implemented via `SymbolicGovernor`, multi-tier validation, and `ConfabulationScorer`.
-  2. *Network Plane:* Enforced via Kubernetes NetworkPolicy L3/L4 baseline and Cilium L7 FQDN egress lockdown.
-  3. *Identity Plane:* Enforced via GCP Workload Identity and Cloud KMS asymmetric signature suites (`kms_signer.py`).
+  2. *Network Plane:* Enforced via Kubernetes NetworkPolicy L3/L4 baseline and GKE Dataplane V2 `FQDNNetworkPolicy` egress lockdown.
+  3. *Identity Plane:* Enforced via per-workload GCP Workload Identity, Linkerd mTLS caller identity (`workload_identity.py`), and Cloud KMS asymmetric signature suites (`kms_signer.py`).
   4. *Endpoint Plane:* Guarded by compiled OPA Rego policies and NeMo Colang safety rails.
   5. *Data Plane:* Enforced by discrete-time Control Barrier Functions (`cbf_engine.py`), `FiscalLimitGuard`, and `ContextAccumulator`.
 
