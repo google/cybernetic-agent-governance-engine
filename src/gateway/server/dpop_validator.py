@@ -26,8 +26,10 @@ import time
 from typing import Protocol
 
 from cryptography import x509
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 
 class TokenBindingError(ValueError):
@@ -163,7 +165,89 @@ class DPoPValidator(ProofOfPossessionValidator):
                 f"!= dpop_thumbprint={dpop_thumbprint[:16]}..."
             )
 
+        # RFC 9449 §4.3: the proof MUST carry a valid signature over
+        # header.payload made with the key it names. Verify it against the mTLS
+        # certificate key — which the thumbprint check above has already proven
+        # identical to the header jwk — so a caller cannot supply a proof it
+        # does not hold the private key for. Using an asymmetric key object here
+        # makes 'none'/HMAC algorithm confusion impossible: there is no
+        # symmetric verification path to fall into.
+        try:
+            signature_bytes = self._decode_base64url(dpop_parts[2])
+        except Exception as e:
+            raise TokenBindingError(f"Failed to decode DPoP signature: {e}")
+
+        signing_input = f"{dpop_parts[0]}.{dpop_parts[1]}".encode("ascii")
+        self._verify_proof_signature(
+            signing_input, signature_bytes, cert_public_key, dpop_header["alg"]
+        )
+
         return True
+
+    # Map JWS algorithm identifiers to their digest.
+    _ALG_HASHES: dict[str, type] = {
+        "RS256": hashes.SHA256,
+        "RS384": hashes.SHA384,
+        "RS512": hashes.SHA512,
+        "PS256": hashes.SHA256,
+        "PS384": hashes.SHA384,
+        "PS512": hashes.SHA512,
+        "ES256": hashes.SHA256,
+        "ES384": hashes.SHA384,
+        "ES512": hashes.SHA512,
+    }
+
+    def _verify_proof_signature(
+        self,
+        signing_input: bytes,
+        signature: bytes,
+        public_key: rsa.RSAPublicKey | ec.EllipticCurvePublicKey,
+        alg: str,
+    ) -> None:
+        """Verify the DPoP JWT signature (fail-closed).
+
+        Raises TokenBindingError on any unsupported algorithm, key/algorithm
+        mismatch, or cryptographic verification failure.
+        """
+        hash_cls = self._ALG_HASHES.get(alg)
+        if hash_cls is None:
+            raise TokenBindingError(f"Unsupported DPoP signing algorithm: {alg!r}")
+        hash_alg = hash_cls()
+
+        try:
+            if isinstance(public_key, rsa.RSAPublicKey):
+                if alg.startswith("PS"):
+                    pad: padding.AsymmetricPadding = padding.PSS(
+                        mgf=padding.MGF1(hash_alg),
+                        salt_length=padding.PSS.DIGEST_LENGTH,
+                    )
+                elif alg.startswith("RS"):
+                    pad = padding.PKCS1v15()
+                else:
+                    raise TokenBindingError(
+                        f"Algorithm {alg!r} does not match RSA proof key"
+                    )
+                public_key.verify(signature, signing_input, pad, hash_alg)
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                if not alg.startswith("ES"):
+                    raise TokenBindingError(
+                        f"Algorithm {alg!r} does not match EC proof key"
+                    )
+                # JWS ECDSA signatures are raw r||s; cryptography expects DER.
+                coord_size = (public_key.curve.key_size + 7) // 8
+                if len(signature) != coord_size * 2:
+                    raise TokenBindingError("Malformed ECDSA DPoP signature length")
+                r = int.from_bytes(signature[:coord_size], "big")
+                s = int.from_bytes(signature[coord_size:], "big")
+                public_key.verify(
+                    encode_dss_signature(r, s), signing_input, ec.ECDSA(hash_alg)
+                )
+            else:
+                raise TokenBindingError(
+                    f"Unsupported DPoP proof key type: {type(public_key)}"
+                )
+        except InvalidSignature:
+            raise TokenBindingError("DPoP proof signature verification failed")
 
     def _validate_required_claims(self, header: dict, claims: dict) -> None:
         """Validate presence of required RFC 9449 claims (fail-closed)."""
