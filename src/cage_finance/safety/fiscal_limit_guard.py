@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""fiscal_limit_guard.py — Atomic Pre-Reservation of OPA Fiscal Limits
+"""fiscal_limit_guard.py — Atomic Pre-Reservation of the Daily Fiscal Cap
 
 Solves the multi-agent "race to the rail" collision problem:
 
@@ -27,55 +27,61 @@ Solves the multi-agent "race to the rail" collision problem:
     OPA only sees post-reservation balances — it is never the source of truth
     for concurrency control, only for policy semantics.
 
-Architecture:
-  1. Pre-OPA: Agent calls reserve_limit(agent_id, amount, window) atomically.
-     Uses a Redis WATCH/MULTI/EXEC optimistic lock so check + increment are
-     a single atomic pipeline — no interleaving possible.
-     Returns a ReservationToken with a TTL.
+Lifecycle of a reservation (ADR-009):
 
-  2. OPA evaluation runs against the post-reservation state (OPA's job is
-     policy semantics, not concurrency control).
+  1. ``reserve()`` — during the governor's committing run (the fiscal tier's
+     ``commit()``).  Check-and-increment of the window counter and the entry
+     in the pending set happen in one Lua script, so they are atomic.
+  2. ``confirm(token)`` — after the sealed trade has executed
+     (``SymbolicGovernor.settle(seal, executed=True)``).  The reservation
+     leaves the pending set and counts for the rest of the window.
+  3. ``release(token)`` — the trade did not execute, or the committing run
+     was refused after this tier committed.  The reservation leaves the
+     pending set and the counter is decremented.
+  4. Expiry — a reservation still pending ``reservation_ttl`` seconds after
+     ``reserve()`` was never settled (the process died between seal and
+     actuation, or nothing actuated the seal).  ``reclaim_expired()`` moves
+     it to the reclaimed set and decrements the counter.  It runs lazily at
+     the start of ``reserve()``.  The read-only previews (``would_accept()``,
+     ``headroom_usd()``) never write: they subtract expired reservations
+     from the counter they read, so they agree with what ``reserve()`` will
+     see after its reclaim.
+     A ``confirm()`` that arrives after its reservation was reclaimed puts
+     the amount back (uncapped, because the trade already happened) and
+     logs a warning.
 
-  3. On trade execution success: the Saga COMPLETED entry implicitly confirms
-     the spend. The reservation is permanent until the daily window expires.
+Each transition is exactly-once: a member leaves the pending set in only one
+of confirm, release or reclaim, so a double settle or a settle racing the
+reclaimer cannot count or refund the same reservation twice.
 
-  4. On trade failure / Saga rollback: the Saga compensating node calls
-     release(token) to atomically decrement the counter.
-
-  5. Stale reservation expiry: if an agent crashes between reserve() and
-     the API call (the ghost-state scenario), the window TTL ensures the
-     reserved capacity is automatically reclaimed by Redis.
+Known gap: a crash *after* the trade but *before* ``confirm()`` lets the
+reservation expire, so that spend is under-counted for the rest of the
+window.  Closing it needs the actuation receipt to drive the confirm; see
+ADR-009.
 
 Redis key schema:
-  fiscal:daily_limit:{window_key}  → current reserved spend (int, cents)
+  fiscal:daily_limit:{YYYY-MM-DD}  → reserved + confirmed spend (int, cents)
+  fiscal:pending                   → ZSET of open reservations, score = expiry epoch
+  fiscal:reclaimed                 → ZSET of reclaimed reservations, score = reclaim epoch
 
-Atomicity & Safety Invariants:
-  Uses Redis optimistic locking via WATCH/MULTI/EXEC pipeline.
-  Requires strictly positive requested amounts (amount_usd > 0).
-  On concurrent write conflict the pipeline is retried up to _MAX_RETRIES = 5
-  times with exponential backoff before failing closed. This retry count is an
-  availability/liveness bound; safety (never exceeding the daily cap C) holds
-  unconditionally for any number of concurrent agents due to transaction aborts.
+  A member is ``"{reservation_id}|{amount_cents}|{window_key}"``.  The
+  reclaim script derives the window key from the member, so these keys must
+  live on one Redis node (standalone or a single cluster hash slot).
 
-Usage:
-  guard = FiscalLimitGuard.from_env()
-  token = guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
-  if token.rejected:
-      raise GovernanceLimitError("Daily limit pre-reservation rejected")
-  try:
-      # ... call OPA, execute trade ...
-      guard.confirm(token)
-  except Exception:
-      guard.release(token)  # Saga rollback path
+Safety invariants:
+  * Requested amounts are strictly positive and finite.
+  * ``reserve()`` fails closed: any Redis error yields a rejected token.
+  * The counter never goes below zero, and a release, reclaim or confirm
+    never recreates an expired window.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import math
 import os
-import random
 import time
 import uuid
 from dataclasses import dataclass
@@ -83,8 +89,78 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 5  # WATCH/MULTI/EXEC retry limit on concurrent write conflict
-_RETRY_BASE_MS = 5  # Base backoff in ms (exponential with jitter)
+PENDING_KEY = "fiscal:pending"
+RECLAIMED_KEY = "fiscal:reclaimed"
+_RECLAIM_BATCH = 100  # reservations reclaimed per call; the rest wait for the next call
+
+# KEYS: window, pending.  ARGV: amount_cents, cap_cents, window_seconds, member, expires_at.
+# Returns the new window total in cents, or -1 if the cap would be exceeded.
+_LUA_RESERVE = """
+local amount = tonumber(ARGV[1])
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+if current + amount > tonumber(ARGV[2]) then
+  return -1
+end
+local total = redis.call('INCRBY', KEYS[1], amount)
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+redis.call('ZADD', KEYS[2], ARGV[5], ARGV[4])
+return total
+"""
+
+# KEYS: window, pending, reclaimed.  ARGV: member, amount_cents.
+# Returns the new window total in cents, or -1 if the reservation was not
+# pending (already confirmed, released or reclaimed).
+_LUA_RELEASE = """
+if redis.call('ZREM', KEYS[2], ARGV[1]) == 0 then
+  redis.call('ZREM', KEYS[3], ARGV[1])
+  return -1
+end
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+local total = redis.call('DECRBY', KEYS[1], tonumber(ARGV[2]))
+if total < 0 then
+  redis.call('SET', KEYS[1], 0, 'KEEPTTL')
+  total = 0
+end
+return total
+"""
+
+# KEYS: window, pending, reclaimed.  ARGV: member, amount_cents.
+# Returns 1 (confirmed), 2 (was reclaimed: amount counted again), 0 (no-op).
+_LUA_CONFIRM = """
+if redis.call('ZREM', KEYS[2], ARGV[1]) == 1 then
+  return 1
+end
+if redis.call('ZREM', KEYS[3], ARGV[1]) == 1 then
+  if redis.call('EXISTS', KEYS[1]) == 1 then
+    redis.call('INCRBY', KEYS[1], tonumber(ARGV[2]))
+  end
+  return 2
+end
+return 0
+"""
+
+# KEYS: pending, reclaimed.  ARGV: now, batch, reclaimed_cutoff.
+# Returns the number of reservations reclaimed.
+_LUA_RECLAIM = """
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, tonumber(ARGV[2]))
+local reclaimed = 0
+for _, member in ipairs(expired) do
+  redis.call('ZREM', KEYS[1], member)
+  redis.call('ZADD', KEYS[2], ARGV[1], member)
+  local cents, window = string.match(member, '^[^|]+|(%d+)|(.+)$')
+  if cents and redis.call('EXISTS', window) == 1 then
+    local total = redis.call('DECRBY', window, tonumber(cents))
+    if total < 0 then
+      redis.call('SET', window, 0, 'KEEPTTL')
+    end
+  end
+  reclaimed = reclaimed + 1
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[3])
+return reclaimed
+"""
 
 
 @dataclass(frozen=True)
@@ -93,7 +169,8 @@ class ReservationToken:
 
     Returned by FiscalLimitGuard.reserve() to attest that a slice of the daily
     fiscal limit has been atomically reserved in Redis. The token must be
-    passed to confirm() or release() to finalize or cancel the reservation.
+    passed to confirm() or release() to finalize or cancel the reservation;
+    otherwise it expires after ``ttl_seconds``.
     """
 
     reservation_id: str
@@ -107,29 +184,31 @@ class ReservationToken:
     reserved_at: float
     ttl_seconds: int
 
+    @property
+    def member(self) -> str:
+        """This reservation's entry in the pending / reclaimed sets."""
+        return f"{self.reservation_id}|{self.amount_cents}|{self.window_key}"
+
 
 class GovernanceLimitError(Exception):
     """Raised when a fiscal limit pre-reservation is rejected."""
 
 
 class FiscalLimitGuard:
-    """Atomic pre-reservation guard for OPA fiscal limits.
+    """Atomic pre-reservation guard for the daily fiscal cap.
 
     Prevents multi-agent "race to the rail" by atomically reserving a slice
-    of the daily fiscal limit in Redis *before* OPA evaluation.
+    of the daily fiscal limit in Redis *before* the trade.  See the module
+    docstring for the reserve → confirm | release | expire lifecycle.
 
-    Each agent-thread must call reserve() → [OPA + API call] → confirm() or
-    release().  If the agent crashes between reserve() and confirm(), the window
-    TTL automatically reclaims the reservation.
-
-    Atomicity is implemented via Redis WATCH/MULTI/EXEC optimistic locking —
-    fully supported by both production Redis and fakeredis.aioredis in tests.
+    Works with both ``redis.asyncio.Redis`` and synchronous ``redis.Redis``
+    clients (the latter is driven from the default executor).
 
     Args:
-        redis_client:     A ``redis.asyncio.Redis`` instance (async).
+        redis_client:     A Redis client (async or sync).
         daily_cap_usd:    Hard ceiling for all agents combined (default $500k).
-        reservation_ttl:  Seconds before a stale reservation auto-expires (default 300s).
-        window_seconds:   Window duration in seconds for the rolling counter (default 86400).
+        reservation_ttl:  Seconds an unsettled reservation stays counted (default 300s).
+        window_seconds:   Lifetime of a window counter key (default 86400).
     """
 
     def __init__(
@@ -139,6 +218,8 @@ class FiscalLimitGuard:
         reservation_ttl: int = 300,
         window_seconds: int = 86_400,
     ) -> None:
+        if reservation_ttl <= 0:
+            raise ValueError("reservation_ttl must be positive")
         self._redis = redis_client
         self._daily_cap_usd = daily_cap_usd
         self._reservation_ttl = reservation_ttl
@@ -177,190 +258,22 @@ class FiscalLimitGuard:
         client_module = type(self._redis).__module__
         return "asyncio" in client_module or "aioredis" in client_module
 
-    def _sync_atomic_increment(
-        self, key: str, amount_cents: int, cap_cents: int
-    ) -> int:
-        """Sync WATCH/MULTI/EXEC increment — used when client is redis.Redis (sync)."""
-        for attempt in range(_MAX_RETRIES):
-            try:
-                pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
-                pipe.watch(key)
-                current = int(pipe.get(key) or 0)
-                if (current + amount_cents) > cap_cents:
-                    pipe.reset()
-                    return -1
-                pipe.multi()
-                pipe.incrby(key, amount_cents)
-                pipe.expire(key, self._window_seconds)
-                results = pipe.execute()
-                return int(results[0])
-            except Exception as exc:
-                err_name = type(exc).__name__
-                if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (
-                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
-                    ) / 1000.0
-                    time.sleep(backoff)
-                    continue
-                logger.error(
-                    "_atomic_increment: error on attempt %d key=%s err=%s",
-                    attempt,
-                    key,
-                    exc,
-                )
-                return -2
-        return -2
+    async def _eval(self, script: str, keys: list[str], args: list[object]) -> int:
+        """Run a Lua script atomically on either client kind; return its integer result."""
+        call = functools.partial(self._redis.eval, script, len(keys), *keys, *args)  # type: ignore[attr-defined]
+        if self._is_async_client():
+            result = await call()
+        else:
+            result = await asyncio.get_running_loop().run_in_executor(None, call)
+        return int(result)
 
-    def _sync_atomic_decrement(self, key: str, amount_cents: int) -> int:
-        """Sync WATCH/MULTI/EXEC decrement — used when client is redis.Redis (sync)."""
-        for attempt in range(_MAX_RETRIES):
-            try:
-                pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
-                pipe.watch(key)
-                current = int(pipe.get(key) or 0)
-                new_val = max(0, current - amount_cents)
-                pipe.multi()
-                pipe.set(key, new_val)
-                pipe.expire(key, self._window_seconds)
-                pipe.execute()
-                return new_val
-            except Exception as exc:
-                err_name = type(exc).__name__
-                if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (
-                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
-                    ) / 1000.0
-                    time.sleep(backoff)
-                    continue
-                logger.error(
-                    "_atomic_decrement: error on attempt %d key=%s err=%s",
-                    attempt,
-                    key,
-                    exc,
-                )
-                return -1
-        return -1
-
-    async def _atomic_increment(
-        self, key: str, amount_cents: int, cap_cents: int
-    ) -> int:
-        """Atomically increment the spend counter if it stays within cap."""
-        if not self._is_async_client():
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self._sync_atomic_increment, key, amount_cents, cap_cents
-            )
-
-        for attempt in range(_MAX_RETRIES):
-            try:
-                pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
-                await pipe.watch(key)
-                current = int(await pipe.get(key) or 0)
-                if (current + amount_cents) > cap_cents:
-                    await pipe.reset()
-                    return -1
-                pipe.multi()
-                pipe.incrby(key, amount_cents)
-                pipe.expire(key, self._window_seconds)
-                results = await pipe.execute()
-                return int(results[0])
-            except Exception as exc:
-                err_name = type(exc).__name__
-                if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (
-                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
-                    ) / 1000.0
-                    await asyncio.sleep(backoff)
-                    continue
-                logger.error(
-                    "_atomic_increment: error on attempt %d key=%s err=%s",
-                    attempt,
-                    key,
-                    exc,
-                )
-                return -2
-        return -2
-
-    async def _atomic_decrement(self, key: str, amount_cents: int) -> int:
-        """Atomically decrement the spend counter, flooring at 0."""
-        if not self._is_async_client():
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self._sync_atomic_decrement, key, amount_cents
-            )
-
-        for attempt in range(_MAX_RETRIES):
-            try:
-                pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
-                await pipe.watch(key)
-                current = int(await pipe.get(key) or 0)
-                new_val = max(0, current - amount_cents)
-                pipe.multi()
-                pipe.set(key, new_val)
-                pipe.expire(key, self._window_seconds)
-                await pipe.execute()
-                return new_val
-            except Exception as exc:
-                err_name = type(exc).__name__
-                if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (
-                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
-                    ) / 1000.0
-                    await asyncio.sleep(backoff)
-                    continue
-                logger.error(
-                    "_atomic_decrement: error on attempt %d key=%s err=%s",
-                    attempt,
-                    key,
-                    exc,
-                )
-                return -1
-        return -1
-
-    # ------------------------------------------------------------------
-    # Per-reservation key helpers
-    # ------------------------------------------------------------------
-
-    def _reservation_key(self, reservation_id: str) -> str:
-        """Return the per-reservation Redis key for a given reservation UUID."""
-        return f"fiscal:reservation:{reservation_id}"
-
-    async def _write_reservation_key(
-        self, reservation_id: str, amount_cents: int, window_key: str
-    ) -> None:
-        """Best-effort write of per-reservation sentinel key."""
-        key = self._reservation_key(reservation_id)
-        value = f"{amount_cents}:{window_key}"
+    async def _reclaim_quietly(self) -> None:
+        """Reclaim expired reservations; a failure only leaves them counted (conservative)."""
         try:
-            if self._is_async_client():
-                await self._redis.set(key, value, ex=self._reservation_ttl)  # type: ignore[attr-defined]
-            else:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._redis.set(key, value, ex=self._reservation_ttl),  # type: ignore[attr-defined]
-                )
+            await self.reclaim_expired()
         except Exception as exc:
             logger.warning(
-                "FiscalLimitGuard: failed to write per-reservation key %s: %s "
-                "(crash-leakage TTL not set — reservation will persist until window expiry)",
-                key,
-                exc,
-            )
-
-    async def _delete_reservation_key(self, reservation_id: str) -> None:
-        """Best-effort deletion of the per-reservation sentinel key."""
-        key = self._reservation_key(reservation_id)
-        try:
-            if self._is_async_client():
-                await self._redis.delete(key)  # type: ignore[attr-defined]
-            else:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._redis.delete, key)  # type: ignore[attr-defined]
-        except Exception as exc:
-            logger.warning(
-                "FiscalLimitGuard: failed to delete per-reservation key %s: %s",
-                key,
+                "FiscalLimitGuard: reclaim failed; expired reservations stay counted: %s",
                 exc,
             )
 
@@ -368,13 +281,34 @@ class FiscalLimitGuard:
     # Public API
     # ------------------------------------------------------------------
 
+    async def reclaim_expired(self, now: float | None = None) -> int:
+        """Release every reservation still pending past its TTL; return how many.
+
+        These reservations were never settled: the process stopped between
+        seal and actuation, or a sealed run was never actuated.  Raises on a
+        Redis error.
+        """
+        now = time.time() if now is None else now
+        reclaimed = await self._eval(
+            _LUA_RECLAIM,
+            [PENDING_KEY, RECLAIMED_KEY],
+            [now, _RECLAIM_BATCH, now - self._window_seconds],
+        )
+        if reclaimed:
+            logger.warning(
+                "FiscalLimitGuard: RECLAIMED %d unsettled reservation(s) past their %ds TTL",
+                reclaimed,
+                self._reservation_ttl,
+            )
+        return reclaimed
+
     async def reserve(
         self,
         agent_id: str,
         amount_usd: float | None = None,
         amount_minor: int | None = None,
     ) -> ReservationToken:
-        """Atomically reserve a slice of the daily fiscal limit."""
+        """Atomically reserve a slice of the daily fiscal limit (fails closed)."""
         if amount_usd is None and amount_minor is None:
             raise ValueError("Must provide either amount_usd or amount_minor")
 
@@ -403,12 +337,24 @@ class FiscalLimitGuard:
         cap_cents = int(round(self._daily_cap_usd * 100))
         window_key = self._window_key()
         reservation_id = str(uuid.uuid4())
+        member = f"{reservation_id}|{amount_cents}|{window_key}"
 
+        await self._reclaim_quietly()
         try:
-            result = await self._atomic_increment(window_key, amount_cents, cap_cents)
+            result = await self._eval(
+                _LUA_RESERVE,
+                [window_key, PENDING_KEY],
+                [
+                    amount_cents,
+                    cap_cents,
+                    self._window_seconds,
+                    member,
+                    time.time() + self._reservation_ttl,
+                ],
+            )
         except Exception as exc:
             logger.error(
-                "FiscalLimitGuard.reserve: unexpected error agent=%s err=%s — failing closed.",
+                "FiscalLimitGuard.reserve: Redis error agent=%s err=%s — failing closed.",
                 agent_id,
                 exc,
             )
@@ -439,7 +385,6 @@ class FiscalLimitGuard:
                 result,
             )
         else:
-            await self._write_reservation_key(reservation_id, amount_cents, window_key)
             logger.info(
                 "FiscalLimitGuard: RESERVED agent=%s amount=%.2f "
                 "running_total=%.2f/%.2f id=%s ttl=%ds",
@@ -452,129 +397,66 @@ class FiscalLimitGuard:
             )
         return token
 
-    async def rollback_state(
-        self,
-        audit_id: str,
-        *,
-        amount: float | None = None,
-        amount_minor: int | None = None,
-        window_key: str | None = None,
-        token: ReservationToken | None = None,
-    ) -> None:
-        """Compensating transaction for a failed downstream tier."""
-        if amount is None and amount_minor is None:
-            raise ValueError("Must provide either amount or amount_minor")
-
-        if amount_minor is not None:
-            if not isinstance(amount_minor, int):
-                raise ValueError(
-                    f"rollback: amount_minor must be an integer, got {type(amount_minor)}"
-                )
-            amount_cents = amount_minor
-            if amount is None:
-                amount = amount_minor / 100.0
-        else:
-            amount_cents = int(round(amount * 100))  # type: ignore[operator]
-
-        target_window_key: str
-        if window_key is not None:
-            target_window_key = window_key
-        elif token is not None:
-            target_window_key = token.window_key
-        else:
-            raise ValueError(
-                f"rollback() requires explicit window_key or token argument. "
-                f"Neither was provided for audit_id={audit_id}"
-            )
-
-        current_window_key = self._window_key()
-
-        if target_window_key != current_window_key:
-            logger.warning(
-                "[SAGA-ROLLBACK] Cross-window rollback skipped: target_window=%s != "
-                "current_window=%s audit_id=%s amount=%.2f — treating as no-op to "
-                "prevent stale window key creation.",
-                target_window_key,
-                current_window_key,
-                audit_id,
-                amount,
-            )
-            return
-
-        try:
-            exists = await self._redis.exists(target_window_key)  # type: ignore[attr-defined]
-            if not exists:
-                logger.warning(
-                    "[SAGA-ROLLBACK] Window key expired/missing: window_key=%s audit_id=%s "
-                    "amount=%.2f — treating as no-op (nothing to decrement).",
-                    target_window_key,
-                    audit_id,
-                    amount,
-                )
-                return
-        except Exception as exc:
-            logger.error(
-                "[SAGA-ROLLBACK] Redis EXISTS check failed for audit_id=%s window_key=%s: %s "
-                "— failing closed, not performing rollback.",
-                audit_id,
-                target_window_key,
-                exc,
-            )
-            return
-
-        logger.warning(
-            "[SAGA-ROLLBACK] Rolling back %s debit for audit_id=%s window_key=%s",
-            amount,
-            audit_id,
-            target_window_key,
-        )
-        try:
-            result = await self._atomic_decrement(target_window_key, amount_cents)
-            logger.info(
-                "[SAGA-ROLLBACK] Rollback complete: amount=%.2f audit_id=%s "
-                "window_key=%s new_running_total_cents=%d",
-                amount,
-                audit_id,
-                target_window_key,
-                max(0, result),
-            )
-        except Exception as exc:
-            logger.error(
-                "[SAGA-ROLLBACK] Redis rollback failed for audit_id=%s amount=%.2f: %s",
-                audit_id,
-                amount,
-                exc,
-            )
-            raise
-
     async def release(self, token: ReservationToken) -> float:
-        """Release a reservation — called by the Saga compensating node on rollback."""
+        """Release a pending reservation: the trade did not execute.
+
+        Returns the new window total in USD (``0.0`` when there was nothing
+        to release).  Idempotent: a reservation already confirmed, released
+        or reclaimed is left alone.  Raises on a Redis error; the
+        reservation then stays pending and is reclaimed after its TTL.
+        """
         if token.rejected:
             return 0.0
-
-        result = await self._atomic_decrement(token.window_key, token.amount_cents)
-        await self._delete_reservation_key(token.reservation_id)
-        new_total_usd = max(0.0, result / 100.0) if result >= 0 else 0.0
+        result = await self._eval(
+            _LUA_RELEASE,
+            [token.window_key, PENDING_KEY, RECLAIMED_KEY],
+            [token.member, token.amount_cents],
+        )
+        if result < 0:
+            logger.info(
+                "FiscalLimitGuard: release no-op (already settled or reclaimed) id=%s",
+                token.reservation_id,
+            )
+            return 0.0
         logger.info(
             "FiscalLimitGuard: RELEASED agent=%s amount=%.2f new_total=%.2f id=%s",
             token.agent_id,
             token.amount_usd,
-            new_total_usd,
+            result / 100.0,
             token.reservation_id,
         )
-        return new_total_usd
+        return result / 100.0
 
     async def confirm(self, token: ReservationToken) -> None:
-        """Confirm that a reservation became a real spend (trade executed)."""
+        """Make a reservation permanent: the trade executed.
+
+        Idempotent.  If the reservation already expired and was reclaimed,
+        its amount is counted again (uncapped: the money is spent) and a
+        warning is logged.  Raises on a Redis error; the reservation then
+        expires, under-counting this spend.
+        """
         if token.rejected:
             return
-        await self._delete_reservation_key(token.reservation_id)
-        logger.info(
-            "FiscalLimitGuard: CONFIRMED spend agent=%s amount=%.2f id=%s",
-            token.agent_id,
-            token.amount_usd,
-            token.reservation_id,
+        outcome = await self._eval(
+            _LUA_CONFIRM,
+            [token.window_key, PENDING_KEY, RECLAIMED_KEY],
+            [token.member, token.amount_cents],
         )
+        if outcome == 2:
+            logger.warning(
+                "FiscalLimitGuard: CONFIRMED after TTL reclaim; re-counted agent=%s "
+                "amount=%.2f id=%s",
+                token.agent_id,
+                token.amount_usd,
+                token.reservation_id,
+            )
+        elif outcome == 1:
+            logger.info(
+                "FiscalLimitGuard: CONFIRMED spend agent=%s amount=%.2f id=%s",
+                token.agent_id,
+                token.amount_usd,
+                token.reservation_id,
+            )
 
     async def current_spend_usd(self) -> float:
         """Return the current reserved + confirmed spend for today's window."""
@@ -590,16 +472,34 @@ class FiscalLimitGuard:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)
             return 0.0
 
+    async def _call(self, method: str, *args: object) -> object:
+        """Run one Redis command on either client kind."""
+        fn = getattr(self._redis, method)
+        if self._is_async_client():
+            return await fn(*args)
+        return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, *args))
+
     async def _read_window_cents(self) -> int | None:
-        """Today's reserved + confirmed spend in cents, or ``None`` if unreadable."""
+        """Today's spend in cents as ``reserve()`` would see it, or ``None`` if unreadable.
+
+        Read-only.  Reserved + confirmed spend, minus reservations of this
+        window that are past their TTL but not yet reclaimed: ``reserve()``
+        reclaims those before it checks the cap, so a preview that counted
+        them would refuse what the commit then admits.
+        """
         try:
             key = self._window_key()
-            if self._is_async_client():
-                raw = await self._redis.get(key)  # type: ignore[attr-defined]
-            else:
-                loop = asyncio.get_running_loop()
-                raw = await loop.run_in_executor(None, self._redis.get, key)  # type: ignore[attr-defined]
-            return int(raw) if raw else 0
+            raw = await self._call("get", key)
+            current = int(raw) if raw else 0
+            if current == 0:
+                return 0
+            expired = await self._call("zrangebyscore", PENDING_KEY, "-inf", time.time())
+            for member in expired or ():
+                text = member.decode() if isinstance(member, bytes) else str(member)
+                _, cents, window = text.split("|", 2)
+                if window == key:
+                    current -= int(cents)
+            return max(0, current)
         except Exception as exc:
             logger.error(
                 "FiscalLimitGuard: window read failed — failing closed: %s", exc

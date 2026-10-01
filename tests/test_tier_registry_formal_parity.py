@@ -28,24 +28,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.gateway.governance.contracts import CommitReceipt, MutatingTier, ReadOnlyTier
+
 pytestmark = [pytest.mark.local, pytest.mark.unit]
 
 
-class _FakeTier:
-    """Minimal GovernanceTierPlugin stub for parity testing."""
+class _FakeBehaviour:
+    """Minimal tier behaviour for parity testing, mixed into one tier kind."""
 
-    def __init__(self, tier_name: str, phase: int, order: int):
+    def __init__(self, tier_name: str, order: int):
         self._tier_name = tier_name
-        self._phase = phase
         self._order = order
 
     @property
     def tier_name(self) -> str:
         return self._tier_name
-
-    @property
-    def phase(self) -> int:
-        return self._phase
 
     @property
     def order(self) -> int:
@@ -57,11 +54,25 @@ class _FakeTier:
     async def evaluate(self, action: str, params: dict[str, Any]) -> list:
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list, Any]:
+
+class _FakeReadOnly(_FakeBehaviour, ReadOnlyTier):
+    pass
+
+
+class _FakeMutating(_FakeBehaviour, MutatingTier):
+    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list, CommitReceipt | None]:
         return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
+    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         pass
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        pass
+
+
+def _FakeTier(tier_name: str, phase: int, order: int) -> _FakeBehaviour:
+    """Build a read-only (phase 1) or mutating (phase 2) parity stub."""
+    return (_FakeReadOnly if phase == 1 else _FakeMutating)(tier_name, order)
 
 
 def _make_governor(classification_engine, **overrides):

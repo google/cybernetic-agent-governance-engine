@@ -6,7 +6,7 @@ This guide establishes the architectural standards, mandatory interfaces, and ga
 
 1. [Architectural Principles & Layer Isolation](#1-architectural-principles--layer-isolation)
 2. [Mandatory Component Structure](#2-mandatory-component-structure)
-3. [Implementing GovernanceTierPlugin](#3-implementing-governancetierplugin)
+3. [Implementing a Governance Tier](#3-implementing-a-governance-tier)
 4. [Action Ontology & FTRA Classification](#4-action-ontology--ftra-classification)
 5. [OPA Policy Integration](#5-opa-policy-integration)
 6. [NeMo Guardrails Integration](#6-nemo-guardrails-integration)
@@ -91,95 +91,110 @@ src/cage_finance/
 
 ---
 
-## 3. Implementing GovernanceTierPlugin
+## 3. Implementing a Governance Tier
 
-Every plugin must expose one or more concrete subclasses of [`GovernanceTierPlugin`](../../src/gateway/governance/contracts.py) registered with the kernel dispatch loop.
+Every plugin exposes one or more tiers. A tier subclasses exactly one of the two base classes in [`contracts.py`](../../src/gateway/governance/contracts.py) ([ADR-009](../adr/ADR-009-tier-protocol-split.md)):
 
-### Minimal Plugin Implementation
+| Base class | Phase | Implements | Use for |
+|---|---|---|---|
+| `ReadOnlyTier` | 1 (derived) | `evaluate()` | Validation that holds and changes no state |
+| `MutatingTier` | 2 (derived) | `evaluate()` (preview), `commit()`, `rollback()`, `confirm()` | Reserving a budget, a barrier margin or another shared resource |
+
+A tier never declares `phase`; it is derived from the base class. The governor refuses a tier that subclasses neither base class, and refuses a `ReadOnlyTier` that defines `commit`, `rollback` or `confirm`. A `MutatingTier` missing one of its hooks cannot be instantiated. The plugin declares `api_version = "2.0"`.
+
+### Read-Only Tier
 
 ```python
 # src/cage_{domain}/tiers/example_tier.py
 from typing import Any
 
-from src.gateway.governance.contracts import CommitReceipt, GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import ReadOnlyTier, Violation
 
 
-class ExampleTierPlugin(GovernanceTierPlugin):
-    """
-    Example domain tier plugin (phase 1, order 5).
-    
-    Implements domain-specific validation logic that executes
-    during the tier dispatch loop.
-    """
+class ExampleTierPlugin(ReadOnlyTier):
+    """Example domain tier (phase 1, order 5)."""
 
     @property
     def tier_name(self) -> str:
         return "example_domain"
 
     @property
-    def phase(self) -> int:
-        return 1  # Phase 1: Pre-execution validation
-
-    @property
     def order(self) -> int:
-        return 5  # Execution order within phase
+        return 5  # Execution order within the phase
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        """
-        Declare which actions this tier handles.
-        
-        Return True if this tier should evaluate the given action.
-        """
+        """Return True if this tier should evaluate the given action."""
         return action in {"domain_specific_action", "another_action"}
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        """
-        Pre-execution validation gate.
-        
-        Returns violations if action should be blocked.
-        Empty list means approval.
-        """
-        violations = []
-        
-        # Example: Check domain-specific constraint
+        """Return violations if the action should be blocked; empty means approval."""
         if params.get("risk_score", 0) > 0.95:
-            violations.append(
+            return [
                 Violation(
                     tier=self.tier_name,
                     code="RISK_THRESHOLD_EXCEEDED",
                     message=f"Risk score {params['risk_score']} exceeds safety boundary",
-                    recoverable=False,
                 )
-            )
-        
-        return violations
+            ]
+        return []
+```
+
+### Mutating Tier
+
+A mutating tier's `commit()` only *reserves*. The reservation becomes permanent in `confirm()`, which the kernel calls once the sealed action was actually carried out (`SymbolicGovernor.settle(seal, executed=True)`). `rollback()` releases it: a later phase-2 tier refused (LIFO), or the sealed action was not carried out. A reservation that is never settled, because the process died between seal and actuation, must expire on the tier's own clock.
+
+```python
+from typing import Any
+
+from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation
+
+
+class BudgetTierPlugin(MutatingTier):
+    """Example budget tier (phase 2, order 4)."""
+
+    def __init__(self, ledger):
+        self._ledger = ledger  # shared, TTL-backed reservation store
+
+    @property
+    def tier_name(self) -> str:
+        return "budget"
+
+    @property
+    def order(self) -> int:
+        return 4
+
+    def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+        return params.get("cost", 0) > 0
+
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        """Side-effect-free preview of commit() (DRY_RUN, or approval pending)."""
+        if await self._ledger.would_accept(params["cost"]):
+            return []
+        return [Violation(tier=self.tier_name, code="BUDGET_EXCEEDED", message="over budget")]
 
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        """
-        Phase 2 only: atomic state mutation.
-
-        Return ``(violations, receipt)``. The receipt is not None if and only
-        if state was mutated; it records exactly what to undo (``magnitude``
-        and/or an opaque ``token``). Never store it on the tier — tiers are
-        shared across concurrent requests.
-        """
-        return [], None  # Phase 1 tiers mutate nothing
+        """Reserve atomically. The receipt is not None if and only if state was mutated."""
+        token = await self._ledger.reserve(params["cost"])
+        if token is None:
+            return [Violation(tier=self.tier_name, code="BUDGET_EXCEEDED", message="over budget")], None
+        return [], CommitReceipt(tier=self.tier_name, magnitude=params["cost"], token=token)
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        """
-        Phase 2 only: undo the commit described by ``receipt``.
+        """Release the reservation. Decide from the receipt alone, never from params."""
+        await self._ledger.release(receipt.token)
 
-        Called in LIFO order if a later tier refuses. Decide what to undo from
-        the receipt alone; never re-read ``params`` for a magnitude.
-        """
-        pass  # Phase 1 tiers never issue a receipt
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """The action was carried out: make the reservation permanent."""
+        await self._ledger.confirm(receipt.token)
 ```
 
-The receipt type is [`CommitReceipt`](../../src/gateway/governance/contracts.py). A phase-2 tier backed by the CBF engine records the magnitude that `atomic_verify_and_commit()` reports it deducted, for example [`CBFTierPlugin`](../../src/cage_finance/tiers/cbf_tier.py).
+Never store the receipt on the tier: tiers are shared across concurrent requests. The receipt type is [`CommitReceipt`](../../src/gateway/governance/contracts.py). For real implementations see [`FiscalTierPlugin`](../../src/cage_finance/tiers/fiscal_tier.py) (Lua reservation with a TTL reclaimer) and [`CBFTierPlugin`](../../src/cage_finance/tiers/cbf_tier.py), which records the magnitude that `atomic_verify_and_commit()` reports it deducted and whose `confirm()` is a no-op.
 
 ### Registering Tiers with the Governor
 

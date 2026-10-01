@@ -218,6 +218,9 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
         for line in lines
     )
     assert "GovernanceTierPlugin" not in executable_added
+    assert "GovernanceTier" not in executable_added
+    assert "ReadOnlyTier" not in executable_added
+    assert "MutatingTier" not in executable_added
     assert "InvariantModel" not in executable_added
     assert "DomainToolProvider" not in executable_added
 

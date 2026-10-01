@@ -205,7 +205,6 @@ class Gateway:
             params.get("latency_ms"),
             params.get("drawdown"),
             governor=self.governor,
-            safety_filter=self.cbf,
         )
 
 

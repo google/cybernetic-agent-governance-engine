@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
 from src.gateway.governance.governor.errors import GovernanceError
@@ -36,7 +36,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_Commit = tuple["Stage", "StageContext", CommitReceipt]
+
+
+class HeldCommit(NamedTuple):
+    """One phase-2 commit: the stage, the context it ran under, its receipt."""
+
+    stage: Stage
+    ctx: StageContext
+    receipt: CommitReceipt
+
+
+SettleHook = Literal["confirm", "rollback"]
 
 
 class ReservationScope:
@@ -67,7 +77,7 @@ class ReservationScope:
     __slots__ = ("_commits", "_entered", "_exited", "_sealed")
 
     def __init__(self) -> None:
-        self._commits: list[_Commit] = []
+        self._commits: list[HeldCommit] = []
         self._entered = False
         self._exited = False
         self._sealed = False
@@ -108,15 +118,21 @@ class ReservationScope:
                 kind=ViolationKind.HARD,
             )]
         if receipt is not None:
-            self._commits.append((stage, ctx, receipt))
+            self._commits.append(HeldCommit(stage, ctx, receipt))
         return list(violations)
 
-    def seal_issued(self, seal: str) -> None:
-        """Disarm rollback: the recorded commits now back an issued seal."""
+    def seal_issued(self, seal: str) -> tuple[HeldCommit, ...]:
+        """Disarm rollback: the recorded commits now back an issued seal.
+
+        Returns those commits.  The scope no longer owns them: the caller
+        hands them to a ``SettlementLedger``, which confirms or rolls them
+        back once the sealed action has (or has not) run.
+        """
         self._require_open("seal_issued")
         if not isinstance(seal, str) or not seal:
             raise ValueError("seal_issued() requires the issued seal; rollback stays armed")
         self._sealed = True
+        return tuple(self._commits)
 
     async def rollback(self) -> list[Violation]:
         """Undo every outstanding commit, LIFO.  Idempotent.
@@ -132,7 +148,7 @@ class ReservationScope:
         pending, self._commits = self._commits, []
         if not pending:
             return []
-        return await _shielded_rollback(tuple(pending))
+        return await shielded_settle(tuple(pending), hook="rollback")
 
     async def __aexit__(
         self,
@@ -160,13 +176,16 @@ class ReservationScope:
             raise RuntimeError(f"ReservationScope.{operation}() called after seal_issued()")
 
 
-async def _shielded_rollback(pending: tuple[_Commit, ...]) -> list[Violation]:
-    """Run every rollback in a shielded task and wait for all of them.
+async def shielded_settle(
+    pending: tuple[HeldCommit, ...], *, hook: SettleHook
+) -> list[Violation]:
+    """Run ``hook`` for every commit in a shielded task and wait for all of them.
 
-    If our caller is cancelled meanwhile, the rollbacks still run to
-    completion before the ``CancelledError`` is re-raised.
+    ``rollback`` runs last in first out; ``confirm`` runs in commit order.
+    If our caller is cancelled meanwhile, the hooks still run to completion
+    before the ``CancelledError`` is re-raised.
     """
-    task = asyncio.ensure_future(_rollback_each(pending))
+    task = asyncio.ensure_future(_settle_each(pending, hook))
     interrupted: asyncio.CancelledError | None = None
     while not task.done():
         try:
@@ -183,25 +202,26 @@ async def _shielded_rollback(pending: tuple[_Commit, ...]) -> list[Violation]:
     return failures
 
 
-async def _rollback_each(
-    pending: tuple[_Commit, ...],
+async def _settle_each(
+    pending: tuple[HeldCommit, ...], hook: SettleHook
 ) -> tuple[list[Violation], BaseException | None]:
-    """Attempt every rollback (LIFO), catching ``BaseException`` per rollback.
+    """Attempt ``hook`` for every commit, catching ``BaseException`` per commit.
 
     D6: one faulty stage cannot strand reservations held by the others.
     """
     failures: list[Violation] = []
     escaped: BaseException | None = None
-    for stage, ctx, receipt in reversed(pending):
+    ordered = reversed(pending) if hook == "rollback" else iter(pending)
+    for stage, ctx, receipt in ordered:
         try:
-            await stage.rollback(ctx, receipt)
+            await getattr(stage, hook)(ctx, receipt)
         except BaseException as exc:
-            logger.exception("stage %s rollback FAILED", stage.name)
+            logger.exception("stage %s %s FAILED", stage.name, hook)
             failures.append(Violation(
                 tier=stage.name,
-                code="ROLLBACK_FAILED",
+                code=f"{hook.upper()}_FAILED",
                 message=(
-                    f"rollback of {stage.name} failed: {type(exc).__name__} — "
+                    f"{hook} of {stage.name} failed: {type(exc).__name__} — "
                     "resource state may be inconsistent; manual reconciliation required"
                 ),
                 kind=ViolationKind.HARD,

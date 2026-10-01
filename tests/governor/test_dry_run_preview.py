@@ -111,6 +111,11 @@ class _Redis:
             raise ConnectionError("redis down")
         return None if self.spent_cents is None else str(self.spent_cents).encode()
 
+    async def zrangebyscore(self, key: str, low: object, high: object) -> list[bytes]:
+        if self.fail:
+            raise ConnectionError("redis down")
+        return []  # no expired reservations
+
     def __getattr__(self, name: str):  # any write-path call is recorded
         async def _write(*args, **kwargs):
             self.writes.append(name)
@@ -371,7 +376,7 @@ async def test_preview_continues_past_a_narrowable_breach_to_a_hard_one() -> Non
     assert [v.code for v in result.preview_violations] == ["CAP", "CBF_BARRIER_VIOLATED"]
 
 
-# ── Tier contract: evaluate() never mutates (contracts.GovernanceTierPlugin) ─
+# ── Tier contract: evaluate() never mutates (contracts.GovernanceTier) ───────
 
 
 @pytest.mark.asyncio

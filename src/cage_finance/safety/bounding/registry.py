@@ -21,7 +21,7 @@ Per Section 3 (Architecture):
 - Registry is populated from governance_thresholds.json bounding.enabled_contracts
 - Each contract is evaluated independently (fail-fast on first HARD_BLOCK failure)
 - Severity aggregation: any HARD_BLOCK failure → block execution
-- B10 special handling: classification override propagates to tier result
+- B10: a closed rollback window is a HITL_ESCALATE result like any other
 """
 
 import logging
@@ -60,7 +60,7 @@ class BoundingContractRegistry:
     - Contracts are config-driven (enabled via governance_thresholds.json)
     - Evaluation order: B1, B2, B3, B4, B5, B6, B7, B8, B9, B10
     - Fail-fast: First HARD_BLOCK failure stops evaluation (optimization)
-    - B10 special case: Returns classification override when it fails
+    - B10: a closed rollback window is HITL_ESCALATE (B10_ROLLBACK_WINDOW_CLOSED)
 
     Providers (dependency injection):
     - MarketDataProvider: Required for B3, B5, B8
@@ -100,60 +100,33 @@ class BoundingContractRegistry:
 
     def evaluate_all(
         self, request: BoundedTradeRequest
-    ) -> tuple[list[ContractResult], str | None]:
-        """Evaluate all enabled bounding contracts for the given request.
+    ) -> list[ContractResult]:
+        """Evaluate every enabled contract in order (B1, B2, ..., B10).
 
-        Per Phase 5 Master Plan Section 3.2:
-        - Contracts evaluated in order: B1, B2, ..., B10
-        - Fail-fast optimization: Stop on first HARD_BLOCK failure
-        - B10 special case: Classification override propagates
+        Stops at the first HARD_BLOCK failure (fail-fast).  A closed B10
+        rollback window is an ordinary HITL_ESCALATE result.
 
         Args:
             request: Bounded trade request to validate
 
         Returns:
-            Tuple of (results, classification_override):
-            - results: List of ContractResult for each evaluated contract
-            - classification_override: "IRREVERSIBLE_TERMINAL" if B10 failed, else None
+            One ContractResult per evaluated contract.
         """
         results: list[ContractResult] = []
-        classification_override: str | None = None
-
         for contract_id in self.enabled_contracts:
             result = self._evaluate_contract(contract_id, request)
-
-            # B10 returns a tuple (ContractResult, Optional[str])
-            if isinstance(result, tuple):
-                contract_result, override = result
-                results.append(contract_result)
-                if override:
-                    classification_override = override
-                    logger.warning(
-                        "Contract %s emitted classification override: %s",
-                        contract_id,
-                        override,
-                    )
-            else:
-                results.append(result)
-
-            # Fail-fast optimization: Stop on first HARD_BLOCK failure
-            # Note: Extract ContractResult from tuple first (B10 returns tuple)
-            contract_result = results[-1]  # Use the already-extracted ContractResult
-            if (
-                not contract_result.admitted
-                and contract_result.severity == ContractSeverity.HARD_BLOCK
-            ):
+            results.append(result)
+            if not result.admitted and result.severity == ContractSeverity.HARD_BLOCK:
                 logger.info(
                     "Contract %s HARD_BLOCK failure — stopping evaluation (fail-fast)",
                     contract_id,
                 )
                 break
-
-        return results, classification_override
+        return results
 
     def _evaluate_contract(
         self, contract_id: str, request: BoundedTradeRequest
-    ) -> ContractResult | tuple[ContractResult, str | None]:
+    ) -> ContractResult:
         """Evaluate a single bounding contract.
 
         Args:
@@ -161,7 +134,7 @@ class BoundingContractRegistry:
             request: Bounded trade request to validate
 
         Returns:
-            ContractResult (for B1-B9) or tuple[ContractResult, Optional[str]] (for B10)
+            The contract's ContractResult
 
         Raises:
             ValueError: If contract_id is unknown or provider is missing

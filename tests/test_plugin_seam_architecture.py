@@ -175,7 +175,7 @@ class TestBackgroundTaskRegistry:
 class _SlotPlugin:
     """Minimal plugin contributing only engine slots (no tiers, no actions)."""
 
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
     def __init__(self, name: str, *, safety_filter=None, consensus=None) -> None:

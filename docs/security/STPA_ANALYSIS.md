@@ -146,7 +146,7 @@ Agent B: GET remaining=$200k → OPA: ALLOW → executes $200k  ✓ (but cap is 
 
 ### Solution: Pre-Reservation
 
-`FiscalLimitGuard` (`src/gateway/governance/safety/resource_guard.py`) atomically reserves a spend slice in Redis **before** OPA evaluation using `WATCH/MULTI/EXEC` optimistic locking:
+`FiscalLimitGuard` (`src/cage_finance/safety/fiscal_limit_guard.py`) atomically reserves a spend slice in Redis with a Lua script. The reservation stays pending until the trade executes (confirm), is released if the run is refused or the trade is not carried out, and is reclaimed after its TTL if never settled (ADR-009):
 
 ```
 Agent A: reserve($200k) → ATOMIC: OK, remaining=$0
@@ -162,7 +162,7 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 | Redis key | `fiscal:daily_limit:{YYYY-MM-DD}` (UTC daily window) |
 | Storage format | Cents (integer) — avoids float precision issues |
 | Default cap | $500,000 USD (env: `FISCAL_DAILY_CAP_USD`) |
-| Reservation TTL | 300 seconds (ghost-state auto-expiry) |
+| Reservation TTL | 300 seconds (unsettled reservations are reclaimed) |
 | Fail mode | **Fail-closed** — Redis error → rejected token (never fail-open) |
 
 | Method | Description |
@@ -190,7 +190,7 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 | `config/opa/generated_stpa_policy.rego` | Auto-generated OPA Rego rules (do not edit) |
 | `config/rails/generated_stpa_rails.co` | Auto-generated NeMo Colang rails (do not edit) |
 | `src/cage_finance/stpa/saga_nodes.py` | Auto-generated LangGraph Saga nodes (do not edit) |
-| `src/gateway/governance/safety/resource_guard.py` | Multi-agent pre-reservation guard (Redis WATCH/MULTI/EXEC) |
+| `src/cage_finance/safety/fiscal_limit_guard.py` | Multi-agent pre-reservation guard (Redis Lua reserve / release / confirm / reclaim) |
 | `src/governed_financial_advisor/graph/state.py` | `AgentState` with WAL ledger (`completed_transactions`) |
 | `src/governed_financial_advisor/utils/langfuse_utils.py` | `SagaCallbackHandler` OTel interceptor |
 | `src/gateway/governance/ontology.py` | Trading Knowledge Graph; `ISO_CONTROL_MAP` short-form alias |

@@ -19,15 +19,16 @@ Tests run against fakeredis (no live Redis required) and exercise:
   1. Single-agent happy-path reservation and confirmation
   2. Multi-agent race condition — second agent correctly rejected
   3. Release path (Saga rollback) — capacity restored atomically
-  4. Stale reservation TTL — capacity restored after expiry
+  4. Unsettled reservation TTL — reclaimed after expiry, never a confirmed spend
   5. Redis failure — fail-closed behaviour
-  6. Idempotent release (double-release safe)
+  6. Exactly-once settlement (double release / confirm / release-after-confirm)
   7. remaining_usd / current_spend_usd reporting
 """
 
 from __future__ import annotations
 
 import os
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,7 +39,11 @@ pytest.importorskip(
 
 import fakeredis.aioredis  # type: ignore[import]
 
-from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.cage_finance.safety.fiscal_limit_guard import (
+    PENDING_KEY,
+    RECLAIMED_KEY,
+    FiscalLimitGuard,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -83,7 +88,8 @@ async def test_confirm_is_idempotent(guard: FiscalLimitGuard) -> None:
     """confirm() should not raise and not change the spend total."""
     token = await guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
     before = await guard.current_spend_usd()
-    guard.confirm(token)
+    await guard.confirm(token)
+    await guard.confirm(token)
     assert await guard.current_spend_usd() == before
 
 
@@ -198,27 +204,25 @@ async def test_redis_failure_fails_closed(
         redis_client=redis_client,
         daily_cap_usd=500_000.0,
     )
-    # Simulate a connection error at the atomic layer
-    broken_guard._atomic_increment = AsyncMock(
-        side_effect=ConnectionError("Redis connection refused")
-    )
+    # Simulate a connection error at the script layer
+    broken_guard._eval = AsyncMock(side_effect=ConnectionError("Redis connection refused"))
     token = await broken_guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
     assert token.rejected, "Redis failure must fail CLOSED (reservation rejected)"
 
 
 @pytest.mark.asyncio
-async def test_redis_release_failure_is_logged_not_raised(
-    guard: FiscalLimitGuard,
+async def test_redis_release_failure_raises_and_leaves_reservation_reclaimable(
+    guard: FiscalLimitGuard, redis_client: fakeredis.aioredis.FakeRedis
 ) -> None:
-    """
-    If Redis fails during release(), the guard must log an error but NOT raise,
-    since the rollback path must always complete to update the Saga ledger.
-    """
+    """A failed release raises (the kernel records ROLLBACK_FAILED) and the
+    reservation stays pending, so the TTL reclaimer still frees it."""
     token = await guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
-    guard._atomic_decrement = AsyncMock(return_value=-1)
-    # Must not raise
-    result = await guard.release(token)
-    assert result == 0.0
+    with patch.object(redis_client, "eval", side_effect=ConnectionError("redis down")):
+        with pytest.raises(ConnectionError):
+            await guard.release(token)
+    assert await redis_client.zscore(PENDING_KEY, token.member) is not None
+    assert await guard.reclaim_expired(now=time.time() + 301) == 1
+    assert await guard.current_spend_usd() == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -294,54 +298,8 @@ async def test_confirm_on_rejected_token_is_noop(guard: FiscalLimitGuard) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Test 7: rollback_state() — Saga compensating transaction
+# Test 8: key schema
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_decrements_spend(guard: FiscalLimitGuard) -> None:
-    """rollback_state() decrements the aggregate spend counter."""
-    token = await guard.reserve(agent_id="agent-a", amount_usd=200_000.0)
-    assert await guard.current_spend_usd() == pytest.approx(200_000.0, abs=0.01)
-
-    await guard.rollback_state(amount=100_000.0, audit_id="audit-123", token=token)
-    assert await guard.current_spend_usd() == pytest.approx(100_000.0, abs=0.01)
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_floors_at_zero(guard: FiscalLimitGuard) -> None:
-    """rollback_state() never goes below zero (floor-at-zero)."""
-    token = await guard.reserve(agent_id="agent-a", amount_usd=50_000.0)
-    # Roll back more than spent
-    await guard.rollback_state(amount=200_000.0, audit_id="audit-456", token=token)
-    assert await guard.current_spend_usd() >= 0.0
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_redis_error_re_raises(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """rollback_state() re-raises Redis errors (Saga error handling responsibility)."""
-    guard = FiscalLimitGuard(redis_client=redis_client, daily_cap_usd=500_000.0)
-    token = await guard.reserve(agent_id="agent-a", amount_usd=100_000.0)
-
-    guard._atomic_decrement = AsyncMock(side_effect=RuntimeError("Redis gone"))
-    with pytest.raises(RuntimeError, match="Redis gone"):
-        await guard.rollback_state(amount=50_000.0, audit_id="audit-err", token=token)
-
-
-# ---------------------------------------------------------------------------
-# Test 8: _reservation_key helper
-# ---------------------------------------------------------------------------
-
-
-def test_reservation_key_format(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """_reservation_key() returns the expected key schema."""
-    guard = FiscalLimitGuard(redis_client=redis_client)
-    key = guard._reservation_key("test-uuid-1234")
-    assert key == "fiscal:reservation:test-uuid-1234"
 
 
 def test_window_key_format(
@@ -355,70 +313,6 @@ def test_window_key_format(
     import re
 
     assert re.search(r"\d{4}-\d{2}-\d{2}$", key)
-
-
-# ---------------------------------------------------------------------------
-# Test 9: _write_reservation_key and _delete_reservation_key
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_reservation_key_success(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """_write_reservation_key() stores a sentinel key with TTL."""
-    guard = FiscalLimitGuard(redis_client=redis_client, reservation_ttl=60)
-    await guard._write_reservation_key(
-        "res-uuid", 5_000_00, "fiscal:daily_limit:2026-08-09"
-    )
-
-    key = "fiscal:reservation:res-uuid"
-    val = await redis_client.get(key)
-    assert val is not None
-    assert "500000" in val  # amount_cents
-
-
-@pytest.mark.asyncio
-async def test_delete_reservation_key_removes_key(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """_delete_reservation_key() removes the sentinel key."""
-    guard = FiscalLimitGuard(redis_client=redis_client, reservation_ttl=60)
-    await guard._write_reservation_key(
-        "del-uuid", 100_00, "fiscal:daily_limit:2026-08-09"
-    )
-
-    key = "fiscal:reservation:del-uuid"
-    assert await redis_client.get(key) is not None
-
-    await guard._delete_reservation_key("del-uuid")
-    assert await redis_client.get(key) is None
-
-
-@pytest.mark.asyncio
-async def test_write_reservation_key_failure_is_logged(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """_write_reservation_key() failure is logged as warning, not raised."""
-    guard = FiscalLimitGuard(redis_client=redis_client)
-    # Patch redis.set to raise an error
-    with patch.object(redis_client, "set", side_effect=ConnectionError("no redis")):
-        # Must not raise
-        await guard._write_reservation_key(
-            "fail-uuid", 1000, "fiscal:daily_limit:2026-08-09"
-        )
-
-
-@pytest.mark.asyncio
-async def test_delete_reservation_key_failure_is_logged(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """_delete_reservation_key() failure is logged as warning, not raised."""
-    guard = FiscalLimitGuard(redis_client=redis_client)
-    # Patch redis.delete to raise an error
-    with patch.object(redis_client, "delete", side_effect=ConnectionError("no redis")):
-        # Must not raise
-        await guard._delete_reservation_key("fail-del-uuid")
 
 
 # ---------------------------------------------------------------------------
@@ -476,192 +370,158 @@ def test_fiscal_guard_from_env():
             assert g._daily_cap_usd == 250000.0
 
 
+# ---------------------------------------------------------------------------
+# Test 12: settlement lifecycle and the TTL reclaimer (ADR-009)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unsettled_reservation_is_reclaimed_after_ttl(
+    guard: FiscalLimitGuard, redis_client: fakeredis.aioredis.FakeRedis
+) -> None:
+    """Crash between seal and actuation: nobody settles, the TTL frees the cap."""
+    token = await guard.reserve(agent_id="agent", amount_usd=200_000.0)
+    assert await guard.reclaim_expired(now=time.time() + 10) == 0  # not yet expired
+    assert await guard.current_spend_usd() == pytest.approx(200_000.0)
+
+    assert await guard.reclaim_expired(now=time.time() + 301) == 1
+    assert await guard.current_spend_usd() == 0.0
+    assert await redis_client.zscore(PENDING_KEY, token.member) is None
+    assert await redis_client.zscore(RECLAIMED_KEY, token.member) is not None
+
+
+@pytest.mark.asyncio
+async def test_reserve_reclaims_expired_reservations_lazily(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """A cap held by an abandoned reservation is freed by the next reserve()."""
+    guard = FiscalLimitGuard(redis_client, daily_cap_usd=1_000.0, reservation_ttl=300)
+    stale = await guard.reserve(agent_id="crashed", amount_usd=1_000.0)
+    assert not stale.rejected
+    assert (await guard.reserve(agent_id="b", amount_usd=1.0)).rejected
+    # Age the abandoned reservation past its TTL.
+    await redis_client.zadd(PENDING_KEY, {stale.member: time.time() - 1})
+    assert await guard.would_accept(1_000.0)
+    assert not (await guard.reserve(agent_id="b", amount_usd=1_000.0)).rejected
+
+
+@pytest.mark.asyncio
+async def test_preview_discounts_expired_reservations_without_writing(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """would_accept()/headroom_usd() agree with reserve() but never reclaim."""
+    guard = FiscalLimitGuard(redis_client, daily_cap_usd=1_000.0, reservation_ttl=300)
+    stale = await guard.reserve(agent_id="crashed", amount_usd=600.0)
+    live = await guard.reserve(agent_id="live", amount_usd=300.0)
+    await redis_client.zadd(PENDING_KEY, {stale.member: time.time() - 1})
+
+    assert await guard.headroom_usd() == pytest.approx(700.0)
+    assert await guard.would_accept(700.0)
+    assert not await guard.would_accept(700.01)
+    # Nothing was reclaimed: the stale reservation is still pending and counted.
+    assert await redis_client.zscore(PENDING_KEY, stale.member) is not None
+    assert await redis_client.zscore(RECLAIMED_KEY, stale.member) is None
+    assert await guard.current_spend_usd() == pytest.approx(900.0)
+    # The live reservation is not discounted.
+    assert await redis_client.zscore(PENDING_KEY, live.member) is not None
+
+
+@pytest.mark.asyncio
+async def test_preview_fails_closed_when_pending_set_unreadable(
+    redis_client: fakeredis.aioredis.FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guard = FiscalLimitGuard(redis_client, daily_cap_usd=1_000.0, reservation_ttl=300)
+    await guard.reserve(agent_id="a", amount_usd=100.0)
+
+    async def _boom(*_a, **_k):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(redis_client, "zrangebyscore", _boom)
+    assert await guard.would_accept(1.0) is False
+    assert await guard.headroom_usd() is None
+
+
+@pytest.mark.asyncio
+async def test_confirmed_reservation_is_never_reclaimed(guard: FiscalLimitGuard) -> None:
+    token = await guard.reserve(agent_id="agent", amount_usd=100_000.0)
+    await guard.confirm(token)
+    assert await guard.reclaim_expired(now=time.time() + 10_000) == 0
+    assert await guard.current_spend_usd() == pytest.approx(100_000.0)
+
+
+@pytest.mark.asyncio
+async def test_release_after_confirm_is_a_noop(guard: FiscalLimitGuard) -> None:
+    """A confirmed spend cannot be refunded by a late or replayed release."""
+    token = await guard.reserve(agent_id="agent", amount_usd=100_000.0)
+    await guard.confirm(token)
+    assert await guard.release(token) == 0.0
+    assert await guard.current_spend_usd() == pytest.approx(100_000.0)
+
+
+@pytest.mark.asyncio
+async def test_double_release_refunds_once(guard: FiscalLimitGuard) -> None:
+    keep = await guard.reserve(agent_id="a", amount_usd=50_000.0)
+    token = await guard.reserve(agent_id="b", amount_usd=100_000.0)
+    await guard.release(token)
+    await guard.release(token)
+    assert not keep.rejected
+    assert await guard.current_spend_usd() == pytest.approx(50_000.0)
+
+
+@pytest.mark.asyncio
+async def test_confirm_after_reclaim_recounts_the_spend(guard: FiscalLimitGuard) -> None:
+    """The trade executed after its reservation expired: it still counts, once."""
+    token = await guard.reserve(agent_id="agent", amount_usd=100_000.0)
+    await guard.reclaim_expired(now=time.time() + 301)
+    assert await guard.current_spend_usd() == 0.0
+    await guard.confirm(token)
+    await guard.confirm(token)
+    assert await guard.current_spend_usd() == pytest.approx(100_000.0)
+
+
+@pytest.mark.asyncio
+async def test_release_after_reclaim_does_not_double_refund(guard: FiscalLimitGuard) -> None:
+    keep = await guard.reserve(agent_id="a", amount_usd=50_000.0)
+    token = await guard.reserve(agent_id="b", amount_usd=100_000.0)
+    # Expire only ``token``.
+    await guard._redis.zadd(PENDING_KEY, {token.member: time.time() - 1})
+    assert await guard.reclaim_expired() == 1
+    assert await guard.release(token) == 0.0
+    assert not keep.rejected
+    assert await guard.current_spend_usd() == pytest.approx(50_000.0)
+    await guard.confirm(token)  # the release closed it: no re-count either
+    assert await guard.current_spend_usd() == pytest.approx(50_000.0)
+
+
+@pytest.mark.asyncio
+async def test_reclaim_failure_keeps_reserve_fail_safe(
+    guard: FiscalLimitGuard,
+) -> None:
+    """If the reclaimer cannot run, stale reservations stay counted (never freed early)."""
+    original = guard.reclaim_expired
+    guard.reclaim_expired = AsyncMock(side_effect=ConnectionError("down"))
+    token = await guard.reserve(agent_id="a", amount_usd=10.0)
+    assert not token.rejected
+    guard.reclaim_expired = original
+
+
 @pytest.mark.local
-def test_sync_increment_and_decrement():
-    mock_pipe = MagicMock()
-    mock_pipe.get.return_value = "1000"
-    mock_pipe.execute.return_value = [2000]
+def test_sync_client_lifecycle() -> None:
+    """The guard drives a synchronous redis client through the executor too."""
+    import asyncio
 
-    mock_sync_redis = MagicMock()
-    mock_sync_redis.pipeline.return_value = mock_pipe
+    import fakeredis
 
-    guard = FiscalLimitGuard(redis_client=mock_sync_redis, daily_cap_usd=1000.0)
+    client = fakeredis.FakeRedis(decode_responses=True)
+    guard = FiscalLimitGuard(client, daily_cap_usd=1_000.0)
 
-    # Test increment success
-    res = guard._sync_atomic_increment("key", 1000, 50000)
-    assert res == 2000
+    async def run() -> None:
+        token = await guard.reserve(agent_id="a", amount_usd=600.0)
+        assert not token.rejected
+        assert (await guard.reserve(agent_id="b", amount_usd=600.0)).rejected
+        assert await guard.release(token) == 0.0
+        again = await guard.reserve(agent_id="b", amount_usd=600.0)
+        await guard.confirm(again)
+        assert await guard.current_spend_usd() == pytest.approx(600.0)
 
-    # Test increment exceed cap
-    mock_pipe.get.return_value = "60000"
-    res_exceed = guard._sync_atomic_increment("key", 1000, 50000)
-    assert res_exceed == -1
-
-    # Test decrement
-    mock_pipe.get.return_value = "3000"
-    res_dec = guard._sync_atomic_decrement("key", 1000)
-    assert res_dec == 2000
-
-
-# ---------------------------------------------------------------------------
-# Peer Review Fix Tests: Cross-window rollback handling
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_cross_window_skipped(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """Rollback to a different window (e.g., after midnight) is skipped.
-
-    This tests the cross-window expiry guard: if the target window_key
-    differs from the current window, the rollback is treated as a no-op
-    to prevent creating/modifying stale window keys.
-    """
-    guard = FiscalLimitGuard(
-        redis_client=redis_client,
-        daily_cap_usd=500_000.0,
-        reservation_ttl=300,
-    )
-
-    # Reserve in today's window
-    token = await guard.reserve(agent_id="agent-1", amount_usd=50_000.0)
-    assert not token.rejected
-
-    # Simulate rollback with a different (stale) window key
-    stale_window_key = "fiscal:daily_limit:1999-01-01"  # Obviously stale
-
-    # Call rollback_state with the stale window_key
-    # Should be a no-op (no error, no modification)
-    await guard.rollback_state(
-        amount=50_000.0,
-        audit_id="test-audit-001",
-        window_key=stale_window_key,
-    )
-
-    # Verify the current window's balance is unchanged
-    current_spend = await guard.current_spend_usd()
-    assert current_spend == 50_000.0, (
-        "Balance should be unchanged after cross-window rollback"
-    )
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_expired_window_key_skipped(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """Rollback to an expired/missing window key is skipped.
-
-    If the target window_key no longer exists in Redis (TTL expired),
-    the rollback is treated as a no-op — nothing to decrement.
-    """
-    guard = FiscalLimitGuard(
-        redis_client=redis_client,
-        daily_cap_usd=500_000.0,
-        reservation_ttl=300,
-    )
-
-    # Get the current window key
-    current_window = guard._window_key()
-
-    # Ensure the key does NOT exist (simulate expired)
-    await redis_client.delete(current_window)
-
-    # Call rollback_state — should be a no-op since key doesn't exist
-    await guard.rollback_state(
-        amount=10_000.0,
-        audit_id="test-audit-002",
-        window_key=current_window,
-    )
-
-    # Verify no key was created
-    exists = await redis_client.exists(current_window)
-    assert exists == 0, "Rollback should not create an expired/missing key"
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_with_token_uses_token_window_key(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """Rollback using ReservationToken.window_key correctly targets the token's window."""
-    guard = FiscalLimitGuard(
-        redis_client=redis_client,
-        daily_cap_usd=500_000.0,
-        reservation_ttl=300,
-    )
-
-    # Reserve and get token
-    token = await guard.reserve(agent_id="agent-1", amount_usd=75_000.0)
-    assert not token.rejected
-    assert token.window_key == guard._window_key()
-
-    # Call rollback_state using the token parameter
-    await guard.rollback_state(
-        amount=75_000.0,
-        audit_id="test-audit-003",
-        token=token,
-    )
-
-    # Verify balance was decremented
-    current_spend = await guard.current_spend_usd()
-    assert current_spend == 0.0, "Rollback with token should decrement balance"
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_without_window_key_or_token_raises_value_error(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """Rollback without window_key or token raises ValueError.
-
-    Regression guard for BC-07 remediation (POAM-2026-058 cross-window guard).
-    The removed fallback allowed cross-window rollbacks without validation.
-    """
-    guard = FiscalLimitGuard(
-        redis_client=redis_client,
-        daily_cap_usd=500_000.0,
-        reservation_ttl=300,
-    )
-
-    # Reserve
-    token = await guard.reserve(agent_id="agent-1", amount_usd=30_000.0)
-    assert not token.rejected
-
-    # Call rollback_state without window_key or token — must raise ValueError
-    with pytest.raises(
-        ValueError, match="rollback\\(\\) requires explicit window_key or token"
-    ):
-        await guard.rollback_state(
-            amount=30_000.0,
-            audit_id="test-audit-004",
-        )
-
-    # Verify balance was not modified (rollback did not execute)
-    current_spend = await guard.current_spend_usd()
-    assert current_spend == 30_000.0, (
-        "Rollback must not execute without explicit window_key/token"
-    )
-
-
-@pytest.mark.asyncio
-async def test_rollback_state_counter_floors_at_zero(
-    redis_client: fakeredis.aioredis.FakeRedis,
-) -> None:
-    """Rollback amount greater than balance floors at zero — no negative balance."""
-    guard = FiscalLimitGuard(
-        redis_client=redis_client,
-        daily_cap_usd=500_000.0,
-        reservation_ttl=300,
-    )
-
-    # Reserve a small amount
-    token = await guard.reserve(agent_id="agent-1", amount_usd=5_000.0)
-
-    # Rollback more than reserved (should floor at 0)
-    await guard.rollback_state(
-        amount=100_000.0,  # Way more than reserved
-        audit_id="test-audit-005",
-        token=token,
-    )
-
-    # Verify balance is 0, not negative
-    current_spend = await guard.current_spend_usd()
-    assert current_spend == 0.0, "Balance must floor at 0, never go negative"
+    asyncio.run(run())

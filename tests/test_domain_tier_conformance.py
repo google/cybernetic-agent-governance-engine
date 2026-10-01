@@ -14,9 +14,9 @@
 
 """Domain tier interface contract conformance tests.
 
-Validates that GovernanceTierPlugin implementations conform to the canonical
-protocol contract: tier_name, phase, order properties, claims_action() predicate,
-and evaluate() async validator.
+Validates that governance tiers (``ReadOnlyTier`` / ``MutatingTier``, ADR-009)
+conform to the canonical contract: tier_name, order properties, a phase derived
+from the tier's kind, claims_action() predicate, and evaluate() async validator.
 
 Part of: PR A - Capability-Driven Tier Dispatch (Stage 8)
 Gate: G4 (tier interface contract compliance)
@@ -27,32 +27,24 @@ from typing import Any
 import pytest
 
 from src.gateway.governance.contracts import (
-    GovernanceTierPlugin,
+    CommitReceipt,
+    MutatingTier,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
 
 
-class MinimalTier:
-    """Minimal GovernanceTierPlugin implementation for conformance testing."""
+class _MinimalBehaviour:
+    """Shared tier behaviour; mixed into one of the two tier kinds below."""
 
-    def __init__(
-        self,
-        tier_name: str = "test_tier",
-        phase: int = 1,
-        order: int = 100,
-    ) -> None:
+    def __init__(self, tier_name: str = "test_tier", order: int = 100) -> None:
         self._tier_name = tier_name
-        self._phase = phase
         self._order = order
 
     @property
     def tier_name(self) -> str:
         return self._tier_name
-
-    @property
-    def phase(self) -> int:
-        return self._phase
 
     @property
     def order(self) -> int:
@@ -63,15 +55,26 @@ class MinimalTier:
         return "test" in action.lower()
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        """Phase 1: Always pass."""
+        """Always pass."""
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], Any]:
-        """Phase 2: Always pass."""
+
+class MinimalTier(_MinimalBehaviour, ReadOnlyTier):
+    """Minimal read-only tier for conformance testing."""
+
+
+class MinimalMutatingTier(_MinimalBehaviour, MutatingTier):
+    """Minimal mutating tier: reserves nothing, settles nothing."""
+
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
-        """Phase 2: No-op rollback."""
+    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        pass
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         pass
 
 
@@ -98,12 +101,12 @@ class FailingTier(MinimalTier):
 
 
 @pytest.mark.local
-class TestGovernanceTierPluginProtocol:
+class TestGovernanceTierProtocol:
     """Tier protocol conformance tests."""
 
     def test_minimal_tier_has_required_properties(self) -> None:
         """Tier must expose tier_name, phase, and order properties."""
-        tier = MinimalTier(tier_name="example", phase=2, order=50)
+        tier = MinimalMutatingTier(tier_name="example", order=50)
         assert tier.tier_name == "example"
         assert tier.phase == 2
         assert tier.order == 50
@@ -153,9 +156,9 @@ class TestTierProtocolEdgeCases:
         assert tier.order == -10
 
     def test_tier_phase_1_or_2_only(self) -> None:
-        """Tier phase must be 1 (read-only) or 2 (mutating)."""
-        tier1 = MinimalTier(phase=1)
-        tier2 = MinimalTier(phase=2)
+        """Tier phase is derived from its kind: 1 (read-only) or 2 (mutating)."""
+        tier1 = MinimalTier()
+        tier2 = MinimalMutatingTier()
         assert tier1.phase == 1
         assert tier2.phase == 2
 

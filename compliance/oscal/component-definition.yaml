@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-10-01T15:21:58Z'
+    last-modified: '2026-10-01T16:13:05Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -607,7 +607,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-10-01T15:21:58Z'
+      value: '2026-10-01T16:13:05Z'
     - name: uca-count
       value: '11'
     control-implementations:
@@ -650,33 +650,44 @@ component-definition:
           from config/stpa_control_structure.yaml. UCAs: UCA-7.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
-  - uuid: ftra0001-4e47-bbc8-semantic-validator01
-    title: FTRA Semantic Classifier
+  - uuid: ftra0001-4e47-bbc8-irreversibility01
+    title: FTRA Irreversibility Classifier
     type: software
-    description: Formal Transition Risk Automaton (FTRA) semantic validator enforcing
-      schema totality, numerical boundary constraints, and parameter smuggling protection
-      on tool invocation payloads. Implements allow_extra_fields=False to reject undeclared
-      mutation arguments (AC-4) and validates parameter types, numerical ranges, and
-      injection vectors (SI-10).
-    purpose: Deterministic parameter boundary and semantic validation for tool execution
+    description: 'Forward-Looking Trajectory Reachability Analyzer (FTRA, Tier 0.5):
+      classifies each tool call against the active domain''s digest-covered terminal
+      registry, records the registry provenance of the classification, and lets a
+      registered terminal clear without a human only inside its signed autonomous
+      envelope. It validates no parameter values; value policy is owned by STPA UCA
+      rules and the domain OPA policy (docs/governance/FTRA_SCOPE.md).'
+    purpose: Irreversibility classification and autonomous-envelope gating for tool
+      execution
     responsible-roles:
     - role-id: provider
     props:
     - name: source-file
-      value: src/gateway/governance/ftra/schemas.py
+      value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-10-01T15:21:58Z'
+      value: '2026-10-01T16:13:05Z'
     control-implementations:
-    - uuid: ftra0001-ctrl-impl-8000-validator01
+    - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home
       description: NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA
-        Semantic Classifier
+        Irreversibility Classifier
       implemented-requirements:
-      - uuid: si100001-ftra-8000-validator00001
+      - uuid: si100001-ftra-8000-classifier00001
         control-id: si-10
-        description: FTRA semantic validator enforces schema-aware validation of tool
-          parameters against ActionSchema definitions in src/gateway/governance/ftra/schemas.py,
-          preventing malformed types, numerical limit breaches, and payload injection.
+        description: FTRA (Tier 0.5) classifies each tool call against the digest-covered
+          terminal registry (src/gateway/governance/ftra/classifier.py) and routes
+          irreversible or unregistered actions to human review; a registered terminal
+          clears autonomously only inside its signed autonomous envelope with a known,
+          finite, positive magnitude (src/gateway/governance/ftra/autonomy.py). Parameter
+          value validation (SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py)
+          and the domain OPA policy (src/cage_finance/opa/trade_governance.rego);
+          injection is mitigated by NeMo/AGP rails generated from UCA-7 (config/rails/generated_stpa_rails.co,
+          config/agp/generated_semantic_policy.txt). The registry's manifest_sha256
+          (registry_digest in src/gateway/governance/ftra/classifier.py) covers the
+          autonomous_envelope together with the terminals, so a tampered ceiling fails
+          the load-time integrity check.
         props:
         - name: implementation-status
           value: implemented
@@ -684,19 +695,6 @@ component-definition:
           value: system-specific
         links:
         - href: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10
-          rel: reference
-      - uuid: ac040001-ftra-8000-validator00001
-        control-id: ac-4
-        description: FTRA semantic classifier enforces allow_extra_fields=False on
-          mutating tool schemas, rejecting parameter smuggling and undeclared argument
-          injection.
-        props:
-        - name: implementation-status
-          value: implemented
-        - name: control-origination
-          value: system-specific
-        links:
-        - href: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4
           rel: reference
   back-matter:
     resources:

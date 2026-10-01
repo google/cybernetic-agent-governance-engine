@@ -57,7 +57,7 @@ class HealthcareCagePlugin(CagePlugin):
     """
 
     name = "healthcare"
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = DomainConfig(
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",

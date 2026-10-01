@@ -540,32 +540,41 @@ component-definition:
                   rel: reference
 
     # -----------------------------------------------------------------------
-    # Component 3: FTRA Semantic Classifier (src/gateway/governance/ftra/)
-    # Enforces: SI-10 (Input Validation), AC-4 (Information Flow Enforcement)
+    # Component 3: FTRA Irreversibility Classifier (src/gateway/governance/ftra/)
+    # Enforces: SI-10 (Input Validation, by delegation), AC-3 (Access Enforcement),
+    #           AC-6 (Least Privilege). Scope: docs/governance/FTRA_SCOPE.md
     # -----------------------------------------------------------------------
-    - uuid: "ftra0001-4e47-bbc8-semantic-validator01"
-      title: "FTRA Semantic Classifier"
+    - uuid: "ftra0001-4e47-bbc8-irreversibility01"
+      title: "FTRA Irreversibility Classifier"
       type: software
       description: >
-        Formal Transition Risk Automaton (FTRA) semantic validator enforcing
-        schema totality, numerical boundary constraints, and parameter smuggling
-        protection on tool invocation payloads. Implements allow_extra_fields=False
-        to reject undeclared mutation arguments (AC-4) and validates parameter
-        types, numerical ranges, and injection vectors (SI-10).
-      purpose: "Deterministic parameter boundary and semantic validation for tool execution"
+        Forward-Looking Trajectory Reachability Analyzer (FTRA, Tier 0.5):
+        classifies each tool call against the active domain's digest-covered
+        terminal registry, records the registry provenance of the classification,
+        and lets a registered terminal clear without a human only inside its
+        signed autonomous envelope. It validates no parameter values; value
+        policy is owned by STPA UCA rules and the domain OPA policy
+        (docs/governance/FTRA_SCOPE.md).
+      purpose: "Irreversibility classification and autonomous-envelope gating for tool execution"
       responsible-roles:
         - role-id: provider
       control-implementations:
-        - uuid: "ftra0001-ctrl-impl-8000-validator01"
+        - uuid: "ftra0001-ctrl-impl-8000-classifier01"
           source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
-          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA Semantic Classifier"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA Irreversibility Classifier"
           implemented-requirements:
-            - uuid: "si100001-ftra-8000-validator00001"
+            - uuid: "si100001-ftra-8000-classifier00001"
               control-id: si-10
               description: |
-                FTRA semantic validator enforces schema-aware validation of tool parameters
-                against ActionSchema definitions in src/gateway/governance/ftra/schemas.py,
-                preventing malformed types, numerical limit breaches, and payload injection.
+                FTRA (Tier 0.5) classifies each tool call against the digest-covered terminal
+                registry (src/gateway/governance/ftra/classifier.py) and routes irreversible or
+                unregistered actions to human review; a registered terminal clears autonomously
+                only inside its signed autonomous envelope with a known, finite, positive
+                magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation
+                (SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py) and the
+                domain OPA policy (src/cage_finance/opa/trade_governance.rego); injection is
+                mitigated by NeMo/AGP rails generated from UCA-7
+                (config/rails/generated_stpa_rails.co, config/agp/generated_semantic_policy.txt).
                 Multi-critic consensus evaluation in src/gateway/governance/consensus/engine.py
                 enforces strict critic vote parsing (_parse_critic_vote), per-critic context_keys
                 parameter allowlisting, RFC 8785 canonical JSON parameter delimiting
@@ -584,20 +593,6 @@ component-definition:
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10"
-                  rel: reference
-
-            - uuid: "ac040001-ftra-8000-validator00001"
-              control-id: ac-4
-              description: |
-                FTRA semantic classifier enforces allow_extra_fields=False on mutating tool schemas,
-                rejecting parameter smuggling and undeclared argument injection.
-              props:
-                - name: implementation-status
-                  value: implemented
-                - name: control-origination
-                  value: system-specific
-              links:
-                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4"
                   rel: reference
 
             - uuid: "ac030001-ftra-8000-envelope000001"

@@ -48,12 +48,12 @@ This discrete-time CBF condition ([`src/gateway/governance/safety/cbf_engine.py`
 | **Phase 1** | **Tier 0.5** | FTRA (`ftra`) | `FtraStage.run()` / `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — whole-graph reachability and per-request semantic & irreversibility boundary check |
 | **Phase 1** | **Tier 1** | STPA/STAMP UCA validation (`stpa`) | `StpaStage.run()` / `STPAValidator.validate()` checks Unsafe Control Actions |
 | **Phase 1** | **Tier 3b** | OPA policy engine (`opa`) | `OpaStage.run()` — declarative rule enforcement; validates structural policy prior to mutation |
-| **Phase 1** | **Tier 2** | Agent confidence & corroboration (`confidence`) | `ConfidenceStage.run()` — checks `get_agent_confidence_threshold()` (default 0.95) and POAM-TIER2-001 structural corroboration |
+| **Phase 1** | **Tier 2** | Agent confidence (`confidence`) | `ConfidenceStage.run()` — checks self-reported confidence against `get_agent_confidence_threshold()` (default 0.95) |
 | **Phase 1** | **Tier 5** | Consensus (`consensus`) | High-stakes actions (≥$10k trades in the financial deployment), 10s per-critic timeout (`CONSENSUS_CRITIC_TIMEOUT_S`), heterogeneous multi-model unanimity |
 | **Phase 1** | **Tier 6** | Causal gatekeeper (`causal`) | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2); bounded risk score $\le 0.95$ |
 | **Phase 1** | — (`EU_ECB` only) | FRIA (`fria`, jurisdiction tier) | `FriaTier.evaluate()` — EU AI Act Art. 27: current FRIA artefact + `NormativeProvider.validate_fria()` admission; fails closed |
 | **Phase 2** | **Tier 3a** | Control Barrier Function (`cbf`) | Redis-backed cash balance invariant; Lua atomic check+commit; `WAIT` replication barrier |
-| **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation (`fiscal`) | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC against daily cap with `ReservationScope` LIFO rollback |
+| **Phase 2** | **Tier 4** | Fiscal Limit Pre-Reservation (`fiscal`) | `FiscalLimitGuard.reserve()` — atomic Redis Lua reservation against daily cap, confirmed after actuation, `ReservationScope` LIFO release, TTL reclaim |
 
 > **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation stages emit zero violations. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 

@@ -61,7 +61,7 @@ class PhysicalAICagePlugin(CagePlugin):
     """
 
     name: str = "physical_ai"
-    api_version: str = "1.0"
+    api_version: str = "2.0"
     # No physical-AI FTRA registry yet: the domain refuses to start (POAM-2026-077).
     domain_config: DomainConfig | None = None
 

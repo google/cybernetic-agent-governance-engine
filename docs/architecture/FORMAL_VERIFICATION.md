@@ -125,20 +125,20 @@ Let $L$ = daily fiscal limit, $r_i$ = reservation amount for agent $i$, and $S$ 
 $$\forall i \in \{1, \dots, N\}: \text{read}(S) = S_0 \land S_0 + r_i \le L \Rightarrow \text{all } N \text{ agents proceed}$$
 $$\text{actual spend} = S_0 + \sum_{i=1}^{N} r_i \gg L \quad \text{(limit violated)}$$
 
-**With FiscalLimitGuard (Redis `WATCH`/`MULTI`/`EXEC`):**
+**With FiscalLimitGuard (Redis Lua script):**
 
-The guard implements optimistic locking:
+The guard reserves in one server-side script, which Redis runs atomically:
 
-1. `WATCH fiscal:daily_limit:<date>` — marks the key for observation
-2. Read $S_{\text{current}}$; check $S_{\text{current}} + r \le L$
-3. `MULTI` / `SET fiscal:daily_limit:<date> $(S_{\text{current}} + r)$` / `EXEC`
-4. If another agent modified the key between steps 1–3, `EXEC` returns `nil` (transaction aborted); the guard retries or returns `BLOCKED`
+1. Read $S_{\text{current}}$ from `fiscal:daily_limit:<date>`; if $S_{\text{current}} + r > L$, return rejected
+2. `INCRBY fiscal:daily_limit:<date> r` and add the reservation to the `fiscal:pending` set, scored by its expiry
 
-**Invariant:** At most one agent can atomically increment $S$ per Redis transaction. Therefore:
+No other command can run between steps 1 and 2. A pending reservation is later confirmed (the trade executed), released (it did not), or reclaimed after its TTL, each exactly once; release and reclaim decrement $S$ by $r$ (ADR-009).
+
+**Invariant:** Every reservation is checked against $L$ inside the same atomic script that increments $S$. Therefore:
 
 $$\forall t: S(t) = \sum_{i: \text{committed}(i, t)} r_i \le L$$
 
-**Fail-closed property:** If Redis is unavailable, `FiscalLimitGuard.reserve()` raises `ConnectionError` and the trade is blocked — the system never proceeds without the guard.
+**Fail-closed property:** If Redis is unavailable, `FiscalLimitGuard.reserve()` returns a rejected token and the trade is blocked — the system never proceeds without the guard.
 
 **Saga integration:** The fiscal tier's `commit()` returns a `CommitReceipt` carrying the `ReservationToken`. If a later Phase 2 commit fails, or the seal is never issued, the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)) rolls back LIFO and the tier's `rollback()` calls `FiscalLimitGuard.release(receipt.token)`. A `confirm()` that raises releases the token before re-raising, so no reservation is left without a receipt. Post-execution reversal is handled by the LangGraph compensating node `compensate_reverse_trade_node_uca_4` ([`saga_nodes.py`](../../src/cage_finance/stpa/saga_nodes.py)). `release()` validates key existence to prevent negative counter underflow across TTL boundaries.
 

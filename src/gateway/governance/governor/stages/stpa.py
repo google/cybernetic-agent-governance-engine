@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 import logging
 import os
 import time
@@ -66,10 +67,35 @@ class StpaStage(Stage):
                     )
                 ]
 
-            stpa_span.set_attribute("governance.stpa.violations", len(stpa_violations))
+            violations = [_as_hard(v) for v in stpa_violations]
+            promoted = [
+                v.code for v, raw in zip(violations, stpa_violations) if raw.kind != v.kind
+            ]
+            if promoted:
+                logger.warning(
+                    "STPA validator returned non-HARD violation(s) %s for '%s'; "
+                    "promoted to HARD (a UCA is never routable to a human).",
+                    promoted,
+                    ctx.action,
+                )
+            stpa_span.set_attribute("governance.stpa.violations", len(violations))
+            stpa_span.set_attribute("governance.stpa.promoted_to_hard", len(promoted))
             stpa_span.set_attribute(
                 "governance.stage.latency_ms",
                 round((time.perf_counter() - _t0) * 1000, 2),
             )
 
-            return list(stpa_violations)
+            return violations
+
+
+def _as_hard(violation: Violation) -> Violation:
+    """``violation`` with ``kind=HARD``.
+
+    An STPA finding is an unsafe control action: it is refused outright, never
+    deferred, narrowed or routed to a human. Promoting here makes that a
+    property of the stage rather than of each validator, and guarantees
+    ``run_pipeline`` stops before ``ConfidenceStage`` on any STPA finding.
+    """
+    if violation.kind == ViolationKind.HARD:
+        return violation
+    return dataclasses.replace(violation, kind=ViolationKind.HARD)

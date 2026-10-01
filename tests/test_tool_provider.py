@@ -32,7 +32,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 def _deps() -> dict:
     """Composition-root dependencies injected into execute_trade_action()."""
-    return {"governor": MagicMock(), "safety_filter": MagicMock()}
+    return {"governor": MagicMock(settle=AsyncMock(return_value=[]))}
 
 
 class TestExecuteTradeActionRoutingSealEnforcement:
@@ -134,6 +134,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
     async def test_execute_trade_action_accepts_valid_seal(self):
         """execute_trade_action() with valid seal proceeds to NARROW receipt check."""
 
+        deps = _deps()
         with (
             patch(
                 "src.cage_finance.tools.tool_provider.enforce_governance",
@@ -163,7 +164,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
         ):
             # Should not raise SymbolicGovernorViolation during seal validation
             result = await execute_trade_action(
-                **_deps(),
+                **deps,
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
@@ -173,6 +174,8 @@ class TestExecuteTradeActionRoutingSealEnforcement:
             # Should reach execute_trade without raising seal error
             assert "EXECUTED" in result
             assert "AAPL" in result
+            # The executed trade settles its seal: reservations become permanent.
+            deps["governor"].settle.assert_awaited_once_with("valid-seal-abc123", executed=True)
 
     @pytest.mark.asyncio
     async def test_execute_trade_action_dry_run_requires_seal(self):

@@ -17,22 +17,36 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation
 from tests.fixtures.governor import make_governor
 
 
-class MockTier:
+class MockTier(MutatingTier):
+    """Mutating tier whose ``rollback`` is an AsyncMock the tests script."""
+
+    order = 0
+
     def __init__(self, name: str):
         self._name = name
         self.rollback = AsyncMock()
-        self.phase = 2
-        self.order = 0
 
     @property
     def tier_name(self) -> str:
         return self._name
 
-    async def run_governance(self, *args, **kwargs):
+    def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+        return True
+
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        return []
+
+    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], CommitReceipt | None]:
+        return [], None
+
+    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        """Replaced per instance by an AsyncMock in ``__init__``."""
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         pass
 
 

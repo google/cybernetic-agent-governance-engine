@@ -34,13 +34,21 @@ Telemetry & Bounded Risk Formulation:
 If a Placebo Refuter detects a spurious effect (p < 0.05 or large placebo
 effect), the gatekeeper "locks" the cage — the action is blocked because
 the underlying causal assumptions cannot be trusted.
+
+Caching:
+    Only the params-independent :class:`WorldModelVerdict` (trusted, beta,
+    reason) is cached in Redis, and only for synthetic-factory telemetry. The
+    marginal risk boundary depends on the request's treatment value and is
+    evaluated on every call; it is never cached.
 """
 
 import functools
+import hashlib
 import json
 import logging
 import math
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -213,71 +221,101 @@ def _check_telemetry_freshness(  # type: ignore[no-untyped-def]
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers — Redis cache
+# World-model verdict — the only thing the Redis cache ever stores
 # ---------------------------------------------------------------------------
 
 
-async def _causal_cache_get(cache_key: str) -> dict | None:
-    """Return a cached causal result dict, or None if absent/unavailable."""
-    try:
-        from src.gateway.infrastructure.redis_client import redis_client
+@dataclass(frozen=True)
+class WorldModelVerdict:
+    """Params-independent outcome of validating the causal world-model.
 
-        if redis_client is None:
-            return None
-        raw = await redis_client.get(cache_key)
-        if raw is None:
-            return None
-        return json.loads(raw)
-    except Exception as exc:
-        logger.warning(
-            "Causal cache GET failed (key=%s): %s — proceeding without cache.",
-            cache_key,
-            exc,
-        )
-        return None
+    Computed from the telemetry and the :class:`CausalSpec` graph only (sample
+    count, causal slope ``beta``, telemetry freshness, placebo refutation). It
+    deliberately carries no per-request information: the marginal risk
+    boundary depends on the request's treatment value and is evaluated on
+    every call from ``beta`` (see :meth:`CausalGatekeeper.causal_safety_check`).
 
+    Invariant: ``trusted`` implies ``beta`` is a finite float ``> 0``.
+    """
 
-async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
-    """Write a causal result to Redis with telemetry.cache_ttl_seconds TTL."""
-    cache_ttl = get_causal_cache_ttl_seconds()
-    if cache_ttl <= 0:
-        return
-    try:
-        from src.gateway.infrastructure.redis_client import redis_client
+    trusted: bool
+    beta: float | None
+    reason: str
 
-        if redis_client is None:
-            return
-        payload = json.dumps({"result": result, "reason": reason})
-        await redis_client.setex(cache_key, cache_ttl, payload)
-    except Exception as exc:
-        logger.warning(
-            "Causal cache SET failed (key=%s): %s — proceeding without cache.",
-            cache_key,
-            exc,
+    def __post_init__(self) -> None:
+        if self.trusted and not _is_positive_finite(self.beta):
+            raise ValueError("a trusted WorldModelVerdict requires a finite beta > 0")
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {"trusted": self.trusted, "beta": self.beta, "reason": self.reason}
         )
 
+    @classmethod
+    def from_payload(cls, payload: Any) -> "WorldModelVerdict | None":
+        """Parse a cached payload; return ``None`` (cache miss) if malformed."""
+        if not isinstance(payload, dict):
+            return None
+        trusted = payload.get("trusted")
+        beta = payload.get("beta")
+        reason = payload.get("reason")
+        if not isinstance(trusted, bool) or not isinstance(reason, str):
+            return None
+        if beta is not None and (
+            isinstance(beta, bool) or not isinstance(beta, (int, float))
+        ):
+            return None
+        try:
+            return cls(
+                trusted=trusted,
+                beta=None if beta is None else float(beta),
+                reason=reason,
+            )
+        except ValueError:
+            return None
 
-def _causal_cache_get_sync(cache_key: str) -> dict | None:
-    """Return a cached causal result dict, or None if absent/unavailable."""
+
+def _is_positive_finite(value: float | None) -> bool:
+    return (
+        value is not None
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — Redis cache (world-model verdicts only)
+# ---------------------------------------------------------------------------
+
+_CACHE_KEY_PREFIX = "causal_wm"
+
+
+def _causal_cache_get_sync(cache_key: str) -> WorldModelVerdict | None:
+    """Return the cached :class:`WorldModelVerdict`, or ``None`` on a miss.
+
+    Raises ``RuntimeError`` when Redis is unavailable so the caller fails
+    closed. A malformed payload is treated as a miss (the verdict is recomputed).
+    """
     from src.gateway.infrastructure.redis_client import sync_redis_client
 
     if sync_redis_client is None:
         raise RuntimeError(
-            "Redis unavailable: cannot compute deflection rate; failing closed"
+            "Redis unavailable: cannot read causal world-model cache; failing closed"
         )
 
     try:
         raw = sync_redis_client.get(cache_key)
     except Exception as exc:
         raise RuntimeError(
-            "Redis unavailable: cannot compute deflection rate; failing closed"
+            "Redis unavailable: cannot read causal world-model cache; failing closed"
         ) from exc
 
     if raw is None:
         return None
 
     try:
-        return json.loads(raw)
+        payload = json.loads(raw)
     except Exception as exc:
         logger.warning(
             "Causal cache GET (sync): JSON decode failed (key=%s): %s — treating as cache miss.",
@@ -286,9 +324,18 @@ def _causal_cache_get_sync(cache_key: str) -> dict | None:
         )
         return None
 
+    verdict = WorldModelVerdict.from_payload(payload)
+    if verdict is None:
+        logger.warning(
+            "Causal cache GET (sync): malformed world-model verdict (key=%s) — "
+            "treating as cache miss.",
+            cache_key,
+        )
+    return verdict
 
-def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
-    """Write a causal result to Redis with telemetry.cache_ttl_seconds TTL."""
+
+def _causal_cache_set_sync(cache_key: str, verdict: WorldModelVerdict) -> None:
+    """Write a world-model verdict to Redis with telemetry.cache_ttl_seconds TTL."""
     cache_ttl = get_causal_cache_ttl_seconds()
     if cache_ttl <= 0:
         return
@@ -297,8 +344,7 @@ def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
 
         if sync_redis_client is None:
             return
-        payload = json.dumps({"result": result, "reason": reason})
-        sync_redis_client.setex(cache_key, cache_ttl, payload)
+        sync_redis_client.setex(cache_key, cache_ttl, verdict.to_json())
     except Exception as exc:
         logger.warning(
             "Causal cache SET (sync) failed (key=%s): %s — proceeding without cache.",
@@ -406,30 +452,120 @@ def _spec_from_config(causal_config: dict[str, Any]) -> CausalSpec | None:
     )
 
 
+def _spec_fingerprint(spec: CausalSpec) -> str:
+    """Return a short stable digest identifying the world-model a spec describes.
+
+    Covers the graph, treatment/outcome columns, and the synthetic telemetry
+    factory (the only telemetry source whose verdicts are cached), so two
+    domains or specs never share a cache entry. ``normalization_scale`` and the
+    extractors are deliberately excluded: they only affect the per-request risk
+    boundary, which is never cached.
+    """
+    factory = spec.synthetic_telemetry_factory
+    factory_id = (
+        ""
+        if factory is None
+        else f"{getattr(factory, '__module__', '')}."
+        f"{getattr(factory, '__qualname__', type(factory).__qualname__)}"
+    )
+    material = json.dumps(
+        [spec.graph_dot, spec.treatment_col, spec.outcome_col, factory_id]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
 class CausalGatekeeper:
-    """Domain-agnostic DoWhy causal inference and placebo refutation gatekeeper."""
+    """Domain-agnostic DoWhy causal inference and placebo refutation gatekeeper.
+
+    A check has two parts with different lifetimes:
+
+    1. **World-model validation** (:meth:`_validate_world_model`) depends only
+       on the telemetry and the spec's graph — sample count, causal slope
+       ``beta``, telemetry freshness, placebo refutation — and yields a
+       :class:`WorldModelVerdict`. This is the expensive DoWhy step and the
+       only result that is ever cached.
+    2. **Marginal risk boundary** (:meth:`_within_risk_boundary`) depends on
+       the request's treatment value and is evaluated on every call from the
+       verdict's ``beta``. It is never cached.
+
+    Caching policy: a verdict is cached only when the caller passed no
+    telemetry and the spec's ``synthetic_telemetry_factory`` produced it — the
+    telemetry identity is then fully determined by the spec and covered by the
+    spec fingerprint in the cache key. Telemetry passed explicitly by a caller
+    never reads or writes the cache, because the key carries no telemetry
+    identity and a verdict for one telemetry window must not be served for
+    another.
+    """
 
     def __init__(self, spec: CausalSpec) -> None:
         self.spec = spec
+        self._spec_fingerprint = _spec_fingerprint(spec)
 
     def causal_safety_check(
         self,
         params: dict[str, Any],
         current_telemetry: pd.DataFrame | None = None,
+        *,
+        action: str | None = None,
     ) -> bool:
-        """Validate causal world-model integrity and marginal risk boundary.
+        """Validate causal world-model integrity and the marginal risk boundary.
+
+        Args:
+            params: Action parameters; the treatment value and context are
+                read via the spec's extractors.
+            current_telemetry: Telemetry to validate the world-model against.
+                When ``None``, the spec's synthetic telemetry factory is used
+                (non-enforcing postures only) and the verdict may be cached.
+            action: Action name used to namespace the world-model cache entry.
+                Falls back to ``params["action_type"]`` / ``params["action"]``.
 
         Fails closed (returns ``False``) on:
         - Missing, non-numeric, NaN/infinite, or non-positive (<= 0) treatment value (Defect A5).
         - Missing live telemetry in enforcing postures, or when no synthetic
           telemetry factory is configured on ``self.spec``.
         - ``dowhy`` unavailable.
+        - Redis unavailable while the world-model cache is enabled.
         - Insufficient telemetry sample count or stale timestamps.
-        - Negative or zero causal slope (beta <= 0).
+        - Negative, zero, or non-finite causal slope (beta).
         - Placebo refutation failure (p < threshold or large placebo effect).
         - Predicted marginal risk exceeding ``CAUSAL_LOCK_RISK_BOUNDARY``.
+        - Any exception (never cached).
         """
-        # Defect A5 fix: fail closed when treatment value is missing or <= 0.
+        treatment_value = self._treatment_value(params)
+        if treatment_value is None:
+            return False
+
+        if current_telemetry is None and not self._synthetic_telemetry_permitted():
+            return False
+
+        if not _DOWHY_AVAILABLE:
+            logger.warning(
+                "causal_safety_check: 'dowhy' is not installed — failing closed "
+                "(causal tier unavailable). Install dowhy to enable causal inference."
+            )
+            return False
+
+        if not self.spec.graph_dot or not self.spec.treatment_col or not self.spec.outcome_col:
+            logger.warning(
+                "causal_safety_check: incomplete CausalSpec — failing closed"
+            )
+            return False
+
+        try:
+            verdict = self._resolve_world_model(params, current_telemetry, action)
+            if not verdict.trusted:
+                return False
+            return self._within_risk_boundary(verdict.beta, treatment_value)
+        except Exception as e:
+            logger.error("Causal validation failed due to error: %s", e)
+            return False
+
+    # ------------------------------------------------------------------
+    # Per-request inputs
+    # ------------------------------------------------------------------
+
+    def _treatment_value(self, params: dict[str, Any]) -> float | None:
+        """Extract a finite, positive treatment value or ``None`` (Defect A5)."""
         try:
             raw_treatment = self.spec.treatment_extractor(params)
         except Exception as exc:
@@ -438,14 +574,14 @@ class CausalGatekeeper:
                 "invalid_or_nonpositive_treatment_value (failing closed).",
                 exc,
             )
-            return False
+            return None
 
         if raw_treatment is None or isinstance(raw_treatment, bool):
             logger.warning(
                 "causal_safety_check: invalid_or_nonpositive_treatment_value "
                 "(treatment=None) — failing closed."
             )
-            return False
+            return None
 
         try:
             treatment_value = float(raw_treatment)
@@ -455,292 +591,283 @@ class CausalGatekeeper:
                 "(non-numeric treatment=%r) — failing closed.",
                 raw_treatment,
             )
-            return False
+            return None
 
-        if (
-            math.isnan(treatment_value)
-            or math.isinf(treatment_value)
-            or treatment_value <= 0
-        ):
+        if not _is_positive_finite(treatment_value):
             logger.warning(
                 "causal_safety_check: invalid_or_nonpositive_treatment_value "
                 "(treatment=%s <= 0) — failing closed.",
                 treatment_value,
             )
-            return False
+            return None
+        return treatment_value
 
-        if current_telemetry is None:
-            posture = resolve_posture()
-            if is_enforcing(posture):
-                logger.error(
-                    "causal_safety_check: no live telemetry provided in enforcing "
-                    "posture (%s) — failing closed.",
-                    posture.value,
-                )
-                return False
-            if self.spec.synthetic_telemetry_factory is None:
-                logger.warning(
-                    "causal_safety_check: no live telemetry provided and no "
-                    "synthetic_telemetry_factory configured — failing closed."
-                )
-                return False
-            logger.warning(
-                "causal_safety_check: no telemetry provided — using domain "
-                "synthetic_telemetry_factory (posture=%s).",
+    def _synthetic_telemetry_permitted(self) -> bool:
+        """Return whether the spec's synthetic telemetry may stand in for live data."""
+        posture = resolve_posture()
+        if is_enforcing(posture):
+            logger.error(
+                "causal_safety_check: no live telemetry provided in enforcing "
+                "posture (%s) — failing closed.",
                 posture.value,
             )
-            current_telemetry = self.spec.synthetic_telemetry_factory()
-
-        if not _DOWHY_AVAILABLE:
+            return False
+        if self.spec.synthetic_telemetry_factory is None:
             logger.warning(
-                "causal_safety_check: 'dowhy' is not installed — failing closed "
-                "(causal tier unavailable). Install dowhy to enable causal inference."
+                "causal_safety_check: no live telemetry provided and no "
+                "synthetic_telemetry_factory configured — failing closed."
             )
             return False
+        logger.warning(
+            "causal_safety_check: no telemetry provided — using domain "
+            "synthetic_telemetry_factory (posture=%s).",
+            posture.value,
+        )
+        return True
 
-        causal_graph = self.spec.graph_dot
-        treatment = self.spec.treatment_col
-        outcome = self.spec.outcome_col
-        if not causal_graph or not treatment or not outcome:
-            logger.warning(
-                "causal_safety_check: incomplete CausalSpec — failing closed"
-            )
-            return False
-
-        action_type = str(params.get("action_type", params.get("action", "unknown")))
+    def _cache_key(self, params: dict[str, Any], action: str | None) -> str:
+        action_name = (
+            action
+            if action is not None
+            else str(params.get("action_type", params.get("action", "unknown")))
+        )
         try:
             context_val = str(self.spec.context_extractor(params))
         except Exception:
             context_val = "unknown"
-        cache_key = f"causal_cache:{action_type}:{context_val}"
+        return (
+            f"{_CACHE_KEY_PREFIX}:{self._spec_fingerprint}:{action_name}:{context_val}"
+        )
 
-        try:
-            registry = ControlRegistry()
-            mrm_meta = registry.get_mapping(
-                GovernanceControl.TRADITIONAL_MRM_VALIDATION
-            )
-            tel_meta = registry.get_mapping(
-                GovernanceControl.TELEMETRY_LIVE_VALIDATION
-            )
-            active_region = registry.active_region
+    # ------------------------------------------------------------------
+    # World-model validation (params-independent, cacheable)
+    # ------------------------------------------------------------------
 
-            mrm_legacy = (
-                mrm_meta["primary_framework"]
-                if _NO_LEGAL_FORCE_MARKER in mrm_meta["legacy_citation"]
-                else mrm_meta["legacy_citation"]
-            )
-            tel_legacy = (
-                tel_meta["primary_framework"]
-                if _NO_LEGAL_FORCE_MARKER in tel_meta["legacy_citation"]
-                else tel_meta["legacy_citation"]
-            )
+    def _resolve_world_model(
+        self,
+        params: dict[str, Any],
+        current_telemetry: pd.DataFrame | None,
+        action: str | None,
+    ) -> WorldModelVerdict:
+        """Return the world-model verdict, from cache when the policy allows it.
 
-            # ------------------------------------------------------------------
-            # Redis cache lookup — before Phase 1
-            # ------------------------------------------------------------------
+        Exceptions propagate to the caller (fail closed) and are never cached.
+        """
+        if current_telemetry is not None:
+            return self._validate_world_model(current_telemetry)
+
+        cache_key: str | None = None
+        if get_causal_cache_ttl_seconds() > 0:
+            cache_key = self._cache_key(params, action)
             with tracer.start_as_current_span(
                 "causal_gatekeeper.cache_lookup"
             ) as cache_span:
                 cache_span.set_attribute("causal.cache_key", cache_key)
-                cached_payload = _causal_cache_get_sync(cache_key)
-
-                if cached_payload is not None:
-                    cached_result = bool(cached_payload.get("result", False))
-                    cached_reason = cached_payload.get("reason", "")
-                    logger.debug(
-                        "Causal cache HIT (key=%s) -> result=%s reason=%s",
-                        cache_key,
-                        cached_result,
-                        cached_reason,
-                    )
-                    cache_span.set_attribute("causal.cache_hit", True)
-                    return cached_result
-
-                cache_span.set_attribute("causal.cache_hit", False)
-
-            # ------------------------------------------------------------------
-            # Phase 1: Statistical Kernel (CTRL_MRM_004 scope)
-            # ------------------------------------------------------------------
-            estimate = None
-            identified_estimand = None
-            with tracer.start_as_current_span(
-                "causal_gatekeeper.statistical_kernel"
-            ) as mrm_span:
-                mrm_span.set_attribute(
-                    "governance.control_id", mrm_meta["internal_id"]
+                cached = _causal_cache_get_sync(cache_key)
+                cache_span.set_attribute("causal.cache_hit", cached is not None)
+            if cached is not None:
+                logger.debug(
+                    "Causal world-model cache HIT (key=%s) -> trusted=%s reason=%s",
+                    cache_key,
+                    cached.trusted,
+                    cached.reason,
                 )
-                mrm_span.set_attribute(
-                    "governance.framework", mrm_meta["primary_framework"]
-                )
-                mrm_span.set_attribute("governance.legacy_citation", mrm_legacy)
-                mrm_span.set_attribute("governance.scope", mrm_meta["scope"])
-                mrm_span.set_attribute(
-                    "governance.deployment_region", active_region
-                )
-                mrm_span.set_attribute("causal.graph", causal_graph.strip())
+                return cached
 
-                _MIN_CAUSAL_SAMPLES = get_causal_min_samples()
-                n_samples = len(current_telemetry)
-                if n_samples < _MIN_CAUSAL_SAMPLES:
-                    mrm_span.set_attribute("causal.samples_available", n_samples)
-                    mrm_span.set_attribute(
-                        "causal.min_samples_required", _MIN_CAUSAL_SAMPLES
-                    )
-                    mrm_span.set_attribute(
-                        "causal.result", "insufficient_data_fail_closed"
-                    )
-                    logger.warning(
-                        "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
-                        "failing closed (action BLOCKED).",
-                        n_samples,
-                        _MIN_CAUSAL_SAMPLES,
-                    )
-                    return False
+        factory = self.spec.synthetic_telemetry_factory
+        if factory is None:  # guarded by _synthetic_telemetry_permitted
+            raise RuntimeError("no synthetic_telemetry_factory configured")
+        verdict = self._validate_world_model(factory())
+        if cache_key is not None:
+            _causal_cache_set_sync(cache_key, verdict)
+        return verdict
 
-                model = _CausalModel(
-                    data=current_telemetry,
-                    treatment=treatment,
-                    outcome=outcome,
-                    graph=causal_graph,
-                )
-                identified_estimand = model.identify_effect(
-                    proceed_when_unidentifiable=True
-                )
-                estimate = model.estimate_effect(
-                    identified_estimand, method_name="backdoor.linear_regression"
-                )
-                mrm_span.set_attribute(
-                    "causal.estimated_effect", float(estimate.value)
-                )
+    def _validate_world_model(self, telemetry: pd.DataFrame) -> WorldModelVerdict:
+        """Run DoWhy estimation and placebo refutation over *telemetry*."""
+        causal_graph = self.spec.graph_dot
+        treatment = self.spec.treatment_col
+        outcome = self.spec.outcome_col
 
-                # beta <= 0 fail-closed guard (negative/zero causal slope)
-                if estimate.value <= 0:
-                    logger.warning(
-                        "[%s] CAUSAL LOCK: Estimated causal effect beta=%.4f <= 0 — "
-                        "negative or zero slope indicates untrustworthy world-model.",
-                        GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
-                        estimate.value,
-                    )
-                    mrm_span.set_attribute(
-                        "causal.lock_reason", "negative_or_zero_causal_slope"
-                    )
-                    mrm_span.set_attribute(
-                        "causal.estimated_effect_blocked", float(estimate.value)
-                    )
-                    _causal_cache_set_sync(
-                        cache_key, False, "negative_or_zero_causal_slope"
-                    )
-                    return False
+        registry = ControlRegistry()
+        mrm_meta = registry.get_mapping(GovernanceControl.TRADITIONAL_MRM_VALIDATION)
+        tel_meta = registry.get_mapping(GovernanceControl.TELEMETRY_LIVE_VALIDATION)
+        active_region = registry.active_region
 
-            # ------------------------------------------------------------------
-            # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 §A.9.4)
-            # ------------------------------------------------------------------
-            with tracer.start_as_current_span(
-                "causal_gatekeeper.placebo_refutation"
-            ) as tel_span:
-                tel_span.set_attribute(
-                    "governance.control_id", tel_meta["internal_id"]
-                )
-                tel_span.set_attribute(
-                    "governance.framework", tel_meta["primary_framework"]
-                )
-                tel_span.set_attribute("governance.legacy_citation", tel_legacy)
-                tel_span.set_attribute("governance.scope", tel_meta["scope"])
-                tel_span.set_attribute(
-                    "governance.deployment_region", active_region
-                )
-                tel_span.set_attribute("causal.num_simulations", 50)
+        mrm_legacy = (
+            mrm_meta["primary_framework"]
+            if _NO_LEGAL_FORCE_MARKER in mrm_meta["legacy_citation"]
+            else mrm_meta["legacy_citation"]
+        )
+        tel_legacy = (
+            tel_meta["primary_framework"]
+            if _NO_LEGAL_FORCE_MARKER in tel_meta["legacy_citation"]
+            else tel_meta["legacy_citation"]
+        )
 
-                freshness_ok = _check_telemetry_freshness(
-                    current_telemetry, tel_span
-                )
-                if not freshness_ok:
-                    tel_span.set_attribute("causal.lock_reason", "stale_telemetry")
-                    _causal_cache_set_sync(cache_key, False, "stale_telemetry")
-                    return False
-
-                refuter = model.refute_estimate(
-                    identified_estimand,
-                    estimate,
-                    method_name="placebo_treatment_refuter",
-                    num_simulations=50,
-                )
-
-                p_value = getattr(refuter, "refutation_result", {}).get(
-                    "p_value", 1.0
-                )
-                if isinstance(p_value, (list, tuple, np.ndarray)):
-                    p_value = p_value[0]
-
-                new_effect = refuter.new_effect
-                if isinstance(new_effect, (list, tuple, np.ndarray)):
-                    new_effect = new_effect[0]
-
-                tel_span.set_attribute(
-                    "causal.placebo_p_value",
-                    float(p_value) if p_value is not None else -1.0,
-                )
-                tel_span.set_attribute(
-                    "causal.placebo_new_effect",
-                    float(new_effect) if new_effect is not None else 0.0,
-                )
-
-                if (
-                    p_value is not None
-                    and not np.isnan(p_value)
-                    and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD
-                ):
-                    logger.warning(
-                        "[%s] CAUSAL LOCK: Placebo p-value %.4f < %.2f — world-model untrustworthy.",
-                        GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
-                        p_value,
-                        CAUSAL_LOCK_P_VALUE_THRESHOLD,
-                    )
-                    tel_span.set_attribute(
-                        "causal.lock_reason", "p_value_threshold"
-                    )
-                    tel_span.set_attribute(
-                        "causal.lock_p_value_threshold",
-                        CAUSAL_LOCK_P_VALUE_THRESHOLD,
-                    )
-                    _causal_cache_set_sync(cache_key, False, "p_value_threshold")
-                    return False
-
-                if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
-                    logger.warning(
-                        "[%s] CAUSAL LOCK: Placebo effect %.4f > %.2f — world-model untrustworthy.",
-                        GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
-                        new_effect,
-                        CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
-                    )
-                    tel_span.set_attribute(
-                        "causal.lock_reason", "placebo_effect_magnitude"
-                    )
-                    tel_span.set_attribute(
-                        "causal.lock_effect_magnitude_threshold",
-                        CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
-                    )
-                    _causal_cache_set_sync(
-                        cache_key, False, "placebo_effect_magnitude"
-                    )
-                    return False
-
-            # ------------------------------------------------------------------
-            # Phase 1 continued: marginal risk boundary check (MRM scope)
-            # ------------------------------------------------------------------
-            norm_scale = (
-                self.spec.normalization_scale
-                if self.spec.normalization_scale > 0
-                else CAUSAL_NORMALIZATION_SCALE
+        # --------------------------------------------------------------
+        # Phase 1: Statistical Kernel (CTRL_MRM_004 scope)
+        # --------------------------------------------------------------
+        with tracer.start_as_current_span(
+            "causal_gatekeeper.statistical_kernel"
+        ) as mrm_span:
+            mrm_span.set_attribute("governance.control_id", mrm_meta["internal_id"])
+            mrm_span.set_attribute(
+                "governance.framework", mrm_meta["primary_framework"]
             )
-            estimated_risk = min(
-                1.0,
-                max(
-                    0.0,
-                    0.5 + estimate.value * treatment_value / norm_scale,
-                ),
+            mrm_span.set_attribute("governance.legacy_citation", mrm_legacy)
+            mrm_span.set_attribute("governance.scope", mrm_meta["scope"])
+            mrm_span.set_attribute("governance.deployment_region", active_region)
+            mrm_span.set_attribute("causal.graph", causal_graph.strip())
+
+            min_samples = get_causal_min_samples()
+            n_samples = len(telemetry)
+            if n_samples < min_samples:
+                mrm_span.set_attribute("causal.samples_available", n_samples)
+                mrm_span.set_attribute("causal.min_samples_required", min_samples)
+                mrm_span.set_attribute(
+                    "causal.result", "insufficient_data_fail_closed"
+                )
+                logger.warning(
+                    "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
+                    "failing closed (action BLOCKED).",
+                    n_samples,
+                    min_samples,
+                )
+                return WorldModelVerdict(False, None, "insufficient_samples")
+
+            model = _CausalModel(
+                data=telemetry,
+                treatment=treatment,
+                outcome=outcome,
+                graph=causal_graph,
+            )
+            identified_estimand = model.identify_effect(
+                proceed_when_unidentifiable=True
+            )
+            estimate = model.estimate_effect(
+                identified_estimand, method_name="backdoor.linear_regression"
+            )
+            beta = float(estimate.value)
+            mrm_span.set_attribute("causal.estimated_effect", beta)
+
+            # beta <= 0 (or non-finite) fail-closed guard
+            if not _is_positive_finite(beta):
+                reason = (
+                    "negative_or_zero_causal_slope"
+                    if math.isfinite(beta)
+                    else "non_finite_causal_slope"
+                )
+                logger.warning(
+                    "[%s] CAUSAL LOCK: Estimated causal effect beta=%.4f is not a "
+                    "finite positive slope — untrustworthy world-model.",
+                    GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                    beta,
+                )
+                mrm_span.set_attribute("causal.lock_reason", reason)
+                mrm_span.set_attribute("causal.estimated_effect_blocked", beta)
+                return WorldModelVerdict(False, beta, reason)
+
+        # --------------------------------------------------------------
+        # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 §A.9.4)
+        # --------------------------------------------------------------
+        with tracer.start_as_current_span(
+            "causal_gatekeeper.placebo_refutation"
+        ) as tel_span:
+            tel_span.set_attribute("governance.control_id", tel_meta["internal_id"])
+            tel_span.set_attribute(
+                "governance.framework", tel_meta["primary_framework"]
+            )
+            tel_span.set_attribute("governance.legacy_citation", tel_legacy)
+            tel_span.set_attribute("governance.scope", tel_meta["scope"])
+            tel_span.set_attribute("governance.deployment_region", active_region)
+            tel_span.set_attribute("causal.num_simulations", 50)
+
+            if not _check_telemetry_freshness(telemetry, tel_span):
+                tel_span.set_attribute("causal.lock_reason", "stale_telemetry")
+                return WorldModelVerdict(False, beta, "stale_telemetry")
+
+            refuter = model.refute_estimate(
+                identified_estimand,
+                estimate,
+                method_name="placebo_treatment_refuter",
+                num_simulations=50,
             )
 
+            p_value = getattr(refuter, "refutation_result", {}).get("p_value", 1.0)
+            if isinstance(p_value, (list, tuple, np.ndarray)):
+                p_value = p_value[0]
+
+            new_effect = refuter.new_effect
+            if isinstance(new_effect, (list, tuple, np.ndarray)):
+                new_effect = new_effect[0]
+
+            tel_span.set_attribute(
+                "causal.placebo_p_value",
+                float(p_value) if p_value is not None else -1.0,
+            )
+            tel_span.set_attribute(
+                "causal.placebo_new_effect",
+                float(new_effect) if new_effect is not None else 0.0,
+            )
+
+            if (
+                p_value is not None
+                and not np.isnan(p_value)
+                and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD
+            ):
+                logger.warning(
+                    "[%s] CAUSAL LOCK: Placebo p-value %.4f < %.2f — world-model untrustworthy.",
+                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
+                    p_value,
+                    CAUSAL_LOCK_P_VALUE_THRESHOLD,
+                )
+                tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
+                tel_span.set_attribute(
+                    "causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD
+                )
+                return WorldModelVerdict(False, beta, "p_value_threshold")
+
+            if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
+                logger.warning(
+                    "[%s] CAUSAL LOCK: Placebo effect %.4f > %.2f — world-model untrustworthy.",
+                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
+                    new_effect,
+                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+                )
+                tel_span.set_attribute(
+                    "causal.lock_reason", "placebo_effect_magnitude"
+                )
+                tel_span.set_attribute(
+                    "causal.lock_effect_magnitude_threshold",
+                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+                )
+                return WorldModelVerdict(False, beta, "placebo_effect_magnitude")
+
+        return WorldModelVerdict(True, beta, "world_model_trusted")
+
+    # ------------------------------------------------------------------
+    # Marginal risk boundary (per request, never cached)
+    # ------------------------------------------------------------------
+
+    def _within_risk_boundary(self, beta: float | None, treatment_value: float) -> bool:
+        """Return whether this request's predicted risk stays within the boundary."""
+        if not _is_positive_finite(beta):
+            return False
+        norm_scale = (
+            self.spec.normalization_scale
+            if self.spec.normalization_scale > 0
+            else CAUSAL_NORMALIZATION_SCALE
+        )
+        estimated_risk = min(
+            1.0, max(0.0, 0.5 + beta * treatment_value / norm_scale)
+        )
+        with tracer.start_as_current_span(
+            "causal_gatekeeper.risk_boundary"
+        ) as risk_span:
+            risk_span.set_attribute("causal.estimated_risk", estimated_risk)
+            risk_span.set_attribute(
+                "causal.risk_boundary", CAUSAL_LOCK_RISK_BOUNDARY
+            )
             if estimated_risk > CAUSAL_LOCK_RISK_BOUNDARY:
                 logger.warning(
                     "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary "
@@ -749,21 +876,18 @@ class CausalGatekeeper:
                     estimated_risk,
                     CAUSAL_LOCK_RISK_BOUNDARY,
                 )
-                _causal_cache_set_sync(
-                    cache_key, False, "risk_boundary_exceeded"
+                risk_span.set_attribute(
+                    "causal.lock_reason", "risk_boundary_exceeded"
                 )
                 return False
-
-            _causal_cache_set_sync(cache_key, True, "all_checks_passed")
-            return True
-
-        except Exception as e:
-            logger.error("Causal validation failed due to error: %s", e)
-            return False
+        return True
 
 
 def causal_safety_check(
-    params: dict[str, Any], current_telemetry: pd.DataFrame | None = None
+    params: dict[str, Any],
+    current_telemetry: pd.DataFrame | None = None,
+    *,
+    action: str | None = None,
 ) -> bool:
     """Thin compatibility wrapper delegating to a :class:`CausalGatekeeper` built from ``_causal_config()``."""
     try:
@@ -780,4 +904,6 @@ def causal_safety_check(
             "causal_safety_check: active domain has no valid causal graph — failing closed"
         )
         return False
-    return CausalGatekeeper(spec).causal_safety_check(params, current_telemetry)
+    return CausalGatekeeper(spec).causal_safety_check(
+        params, current_telemetry, action=action
+    )

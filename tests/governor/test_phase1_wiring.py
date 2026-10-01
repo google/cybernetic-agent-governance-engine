@@ -29,6 +29,7 @@ from src.gateway.governance.classification_engine import ClassificationContext
 from src.gateway.governance.contracts import (
     ConsensusContribution,
     PluginContribution,
+    ReadOnlyTier,
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
@@ -95,8 +96,8 @@ def test_cost_resolver_is_injectable(make) -> None:
 # ── _is_governed_action fails closed ─────────────────────────────────────────
 
 
-class _RaisingTier:
-    tier_name, phase, order = "raiser", 2, 1
+class _RaisingTier(ReadOnlyTier):
+    tier_name, order = "raiser", 1
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         raise KeyError("boom")
@@ -155,7 +156,7 @@ def test_ftra_provenance_codes_classify_by_kind(state, decision) -> None:
 
 
 class _Plugin:
-    api_version = "1.0"
+    api_version = "2.0"
     domain_config = None
 
     def __init__(self, **contribution: Any) -> None:

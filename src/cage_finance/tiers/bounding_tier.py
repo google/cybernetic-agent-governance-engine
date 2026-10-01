@@ -28,8 +28,7 @@ from src.cage_finance.safety.bounding.models import (
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.gateway.governance.contracts import (
-    CommitReceipt,
-    GovernanceTierPlugin,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -37,7 +36,7 @@ from src.gateway.governance.contracts import (
 logger = logging.getLogger(__name__)
 
 
-class BoundingContractTierPlugin(GovernanceTierPlugin):
+class BoundingContractTierPlugin(ReadOnlyTier):
     """Bounding contract tier (phase 1, order 2).
 
     Evaluates all enabled bounding contracts (B1-B10) for execute_trade_bounded actions.
@@ -59,15 +58,10 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
             registry: BoundingContractRegistry orchestrating B1-B10
         """
         self.registry = registry
-        self._classification_override: str | None = None
 
     @property
     def tier_name(self) -> str:
         return "bounding"
-
-    @property
-    def phase(self) -> int:
-        return 1
 
     @property
     def order(self) -> int:
@@ -115,36 +109,14 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
                 )
             ]
 
-        # Evaluate all contracts via registry
-        results, classification_override = self.registry.evaluate_all(request)
-        self._classification_override = classification_override
-
-        # Convert ContractResult list to Violation list
-        violations: list[Violation] = []
-        for result in results:
-            if not result.admitted:
-                violations.append(self._contract_result_to_violation(result))
-
-        # Log classification override if present (for downstream FTRA re-classification)
-        if classification_override:
-            logger.warning(
-                "Bounding tier emitted classification override: %s (B10 rollback window failure)",
-                classification_override,
-            )
-
-        return violations
-
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> tuple[list[Violation], CommitReceipt | None]:
-        """No commit phase for bounding tier (evaluation only)."""
-        return [], None
-
-    async def rollback(
-        self, action: str, params: dict[str, Any], receipt: CommitReceipt
-    ) -> None:
-        """No rollback state to release (stateless evaluation)."""
-        pass
+        # Evaluate all contracts via registry; a closed B10 rollback window
+        # comes back as a HITL result and parks the request for approval.
+        results = self.registry.evaluate_all(request)
+        return [
+            self._contract_result_to_violation(result)
+            for result in results
+            if not result.admitted
+        ]
 
     def _contract_result_to_violation(self, result: ContractResult) -> Violation:
         """Convert ContractResult to Violation.
@@ -185,18 +157,7 @@ class BoundingContractTierPlugin(GovernanceTierPlugin):
 
         return Violation(
             tier=self.tier_name,
-            code=f"BOUNDING_{result.contract_id}_{result.severity.value}",
+            code=result.code or f"BOUNDING_{result.contract_id}_{result.severity.value}",
             message=message,
             kind=kind,
         )
-
-    def get_classification_override(self) -> str | None:
-        """Retrieve B10 classification override if emitted.
-
-        Used by FTRA boundary to re-classify execute_trade_bounded from
-        EXTERNALLY_REVERSIBLE → IRREVERSIBLE_TERMINAL when B10 fails.
-
-        Returns:
-            "IRREVERSIBLE_TERMINAL" if B10 failed, else None
-        """
-        return self._classification_override

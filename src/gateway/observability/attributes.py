@@ -286,7 +286,7 @@ SPAN_ATTR_CAGE_SEAL_ISSUED: Final[str] = "cage.seal_issued"
 """Boolean: was a routing seal issued?"""
 
 SPAN_ATTR_GOVERNANCE_STAGE: Final[str] = "governance.stage"
-"""Governance evaluation stage (e.g. 'ftra_boundary', 'tier2_corroboration')"""
+"""Governance evaluation stage (e.g. 'ftra_boundary', 'confidence')"""
 
 SPAN_ATTR_GOVERNANCE_TOOL: Final[str] = "governance.tool"
 """Tool name being governed"""

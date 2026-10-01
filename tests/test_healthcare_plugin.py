@@ -34,7 +34,7 @@ class TestHealthcarePlugin:
 
         plugin = HealthcareCagePlugin()
         assert plugin.name == "healthcare"
-        assert plugin.api_version == "1.0"
+        assert plugin.api_version == "2.0"
 
     def test_serum_concentration_barrier_declarative(self):
         """Barrier declaration carries no executable logic beyond properties."""

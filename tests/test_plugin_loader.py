@@ -34,7 +34,7 @@ _RULES = ("allow",)
 
 
 class FakePlugin:
-    def __init__(self, name, api_version="1.0", domain_config=None):
+    def __init__(self, name, api_version="2.0", domain_config=None):
         self.name = name
         self.api_version = api_version
         self.domain_config = domain_config
@@ -132,7 +132,7 @@ def test_plugin_name_mismatch_fails_closed():
 
 
 def test_incompatible_api_version_fails_closed():
-    ep = make_mock_entry_point("finance", FakePlugin("finance", api_version="2.0"))
+    ep = make_mock_entry_point("finance", FakePlugin("finance", api_version="3.0"))
     with patch("importlib.metadata.entry_points", return_value=[ep]):
         with pytest.raises(ValueError, match="incompatible with kernel"):
             load_domain_plugin("finance")

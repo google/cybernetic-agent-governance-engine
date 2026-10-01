@@ -25,8 +25,7 @@ from src.gateway.governance.causal.gatekeeper import (
 )
 from src.gateway.governance.contracts import (
     CausalSpec,
-    CommitReceipt,
-    GovernanceTierPlugin,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -74,7 +73,7 @@ def causal_safety_check(
     )
 
 
-class CausalTierPlugin(GovernanceTierPlugin):
+class CausalTierPlugin(ReadOnlyTier):
     """Causal guard tier (phase 1, order 6)."""
 
     def __init__(self, causal_gatekeeper: CausalGatekeeper | None = None) -> None:
@@ -89,10 +88,6 @@ class CausalTierPlugin(GovernanceTierPlugin):
         # The DoWhy causal gatekeeper: without it no causal world-model
         # validation happens, so enforcing postures refuse to start.
         return ("dowhy",)
-
-    @property
-    def phase(self) -> int:
-        return 1
 
     @property
     def order(self) -> int:
@@ -123,16 +118,5 @@ class CausalTierPlugin(GovernanceTierPlugin):
                 )
             ]
         return []
-
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> tuple[list[Violation], CommitReceipt | None]:
-        return [], None
-
-    async def rollback(
-        self, action: str, params: dict[str, Any], receipt: CommitReceipt
-    ) -> None:
-        pass
-
 
 _DEFAULT_TIER_CHECK = causal_safety_check

@@ -27,11 +27,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTier
-from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    MutatingTier,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
@@ -40,7 +46,6 @@ from src.gateway.governance.governor.stages.domain_tiers import (
     DomainTierStage,
     order_stages,
 )
-from src.cage_finance.safety.fiscal_limit_guard import ReservationToken
 from tests.governor.scope_helpers import rollback_pairs, run_scoped
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -80,14 +85,13 @@ def _fiscal_guard(*tokens: ReservationToken) -> MagicMock:
     return guard
 
 
-class _Tier:
+class _Tier(MutatingTier):
     """Phase-2 tier double whose commit result is fully scripted."""
 
     def __init__(self, name: str, order: int, result: tuple[list[Violation], CommitReceipt | None], log: list[str]):
         self._name, self._order, self._result, self.log = name, order, result, log
 
     tier_name = property(lambda self: self._name)
-    phase = property(lambda self: 2)
     order = property(lambda self: self._order)
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
@@ -99,6 +103,9 @@ class _Tier:
     async def commit(self, action: str, params: dict[str, Any]):
         self.log.append(f"commit:{self._name}")
         return self._result
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        self.log.append(f"confirm:{self._name}")
 
     async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         self.log.append(f"rollback:{self._name}:{receipt.magnitude}")
@@ -191,6 +198,7 @@ async def test_fiscal_rollback_without_transaction_id_releases_that_token() -> N
 
     await tier.rollback("execute_trade", {}, receipt)
     guard.release.assert_awaited_once_with(token)
+    guard.confirm.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -218,18 +226,57 @@ async def test_fiscal_rejection_issues_no_receipt() -> None:
     assert receipt is None
     assert violations[0].code == "FISCAL_LIMIT_EXCEEDED"
     guard.confirm.assert_not_awaited()
+    guard.release.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_fiscal_confirm_failure_releases_before_raising() -> None:
-    """A raising commit must leave nothing reserved: the caller gets no receipt."""
+async def test_fiscal_commit_only_reserves() -> None:
+    """commit() holds a reservation; it never confirms or releases it.
+
+    Confirming at commit time would make the spend permanent before the
+    trade executed: a later actuation failure could no longer give it back.
+    """
+    token = _token(50.0, "res-1")
+    guard = _fiscal_guard(token)
+
+    violations, receipt = await FiscalTierPlugin(guard).commit("execute_trade", {"amount": 50.0})
+
+    assert violations == []
+    assert receipt is not None and receipt.token is token
+    guard.reserve.assert_awaited_once()
+    guard.confirm.assert_not_awaited()
+    guard.release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fiscal_confirm_makes_the_receipted_reservation_permanent() -> None:
+    token = _token(50.0, "res-1")
+    guard = _fiscal_guard(token)
+    tier = FiscalTierPlugin(guard)
+    _, receipt = await tier.commit("execute_trade", {"amount": 50.0})
+
+    await tier.confirm("execute_trade", {"amount": 50.0}, receipt)
+
+    guard.confirm.assert_awaited_once_with(token)
+    guard.release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fiscal_confirm_failure_propagates_without_releasing() -> None:
+    """A failed confirm surfaces to the settler; the tier does not guess and release.
+
+    The reservation is left to expire on its TTL rather than being released
+    for a trade that did execute.
+    """
     token = _token(50.0, "res-1")
     guard = _fiscal_guard(token)
     guard.confirm = AsyncMock(side_effect=ConnectionError("redis down"))
+    tier = FiscalTierPlugin(guard)
+    _, receipt = await tier.commit("execute_trade", {"amount": 50.0})
 
     with pytest.raises(ConnectionError):
-        await FiscalTierPlugin(guard).commit("execute_trade", {"amount": 50.0})
-    guard.release.assert_awaited_once_with(token)
+        await tier.confirm("execute_trade", {"amount": 50.0}, receipt)
+    guard.release.assert_not_awaited()
 
 
 # ── B3 + pipeline: receipts drive LIFO rollback ─────────────────────────────

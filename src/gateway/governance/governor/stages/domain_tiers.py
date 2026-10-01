@@ -20,7 +20,9 @@ from opentelemetry import trace
 
 from src.gateway.governance.contracts import (
     CommitReceipt,
-    GovernanceTierPlugin,
+    GovernanceTier,
+    MutatingTier,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -36,23 +38,66 @@ ATTR_VIOLATION_COUNT = "cage.tier.violation_count"
 ATTR_EXCEPTION = "cage.tier.exception"
 
 
+#: Hooks only a MutatingTier may define (ADR-009).
+_MUTATING_HOOKS: tuple[str, ...] = ("commit", "rollback", "confirm")
+
+
+def check_tier_kind(tier: object) -> bool:
+    """Validate ``tier`` and return whether it mutates (ADR-009).
+
+    A tier is a :class:`ReadOnlyTier` or a :class:`MutatingTier`, by
+    subclassing. Anything else is refused, and so is a read-only tier that
+    defines a mutating hook: it meant to reserve state, and running it as
+    read-only would silently skip its commit.
+
+    Raises:
+        TypeError: ``tier`` is not exactly one of the two kinds, or a
+            read-only tier defines ``commit`` / ``rollback`` / ``confirm``.
+        ValueError: ``tier.phase`` contradicts its kind (a subclass overrode
+            the derived ``phase``).
+    """
+    if not isinstance(tier, GovernanceTier):
+        raise TypeError(
+            f"{type(tier).__name__} is not a governance tier; subclass ReadOnlyTier or MutatingTier"
+        )
+    mutating = isinstance(tier, MutatingTier)
+    if mutating == isinstance(tier, ReadOnlyTier):
+        raise TypeError(
+            f"tier {tier.tier_name!r} must be exactly one of ReadOnlyTier and MutatingTier"
+        )
+    if not mutating:
+        stray = [hook for hook in _MUTATING_HOOKS if hasattr(tier, hook)]
+        if stray:
+            raise TypeError(
+                f"read-only tier {tier.tier_name!r} defines {stray}; a tier that "
+                "reserves state must subclass MutatingTier"
+            )
+    expected = 2 if mutating else 1
+    if tier.phase != expected:
+        raise ValueError(
+            f"tier {tier.tier_name!r} reports phase {tier.phase}, but its kind is phase {expected}"
+        )
+    return mutating
+
+
 class DomainTierStage(Stage):
-    """Wraps a GovernanceTierPlugin as a Stage.
+    """Wraps a :class:`GovernanceTier` as a Stage.
 
     ``run()`` and ``preview()`` call the tier's read-only ``evaluate()``.
-    Phase-2 tiers are driven through ``commit()`` / ``rollback(receipt)``.
-    Every tier hook invocation (evaluate / commit / preview / rollback) runs
-    inside exactly one OTel span named ``cage.tier.<tier_name>``.
+    Mutating tiers are driven through ``commit()`` / ``rollback(receipt)``
+    and, after the sealed action, ``confirm(receipt)``. Every tier hook
+    invocation runs inside exactly one OTel span named
+    ``cage.tier.<tier_name>``.
 
     Holds no per-request state: receipts go back to the pipeline, and a
     ``claims()`` exception propagates to the pipeline, which fails the stage
     closed for that request only.
     """
 
-    def __init__(self, tier: GovernanceTierPlugin) -> None:
+    def __init__(self, tier: GovernanceTier) -> None:
+        self.mutating = check_tier_kind(tier)
         self.tier = tier
         self.name = tier.tier_name
-        self.mutating = (tier.phase == 2)
 
     def claims(self, ctx: StageContext) -> bool:
         """Delegate to the tier.  Exceptions propagate; ``run_pipeline`` fails closed."""
@@ -73,6 +118,8 @@ class DomainTierStage(Stage):
 
     async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
         """Phase 2: commit the tier.  Fail-closed: a raise mutates nothing by contract."""
+        if not isinstance(self.tier, MutatingTier):  # unreachable: the pipeline commits mutating stages only
+            raise TypeError(f"read-only tier {self.name!r} cannot commit")
         with self._span("commit") as span:
             try:
                 result = await self.tier.commit(ctx.action, ctx.params)
@@ -88,12 +135,19 @@ class DomainTierStage(Stage):
             return violations, receipt
 
     async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None:
-        # Phase-1 tiers are read-only: there is nothing to undo.
-        if not self.mutating:
-            return
-        with self._span("rollback") as span:
+        await self._settle_hook("rollback", ctx, receipt)
+
+    async def confirm(self, ctx: StageContext, receipt: CommitReceipt) -> None:
+        """The sealed action was carried out: make the reservation permanent."""
+        await self._settle_hook("confirm", ctx, receipt)
+
+    async def _settle_hook(self, hook: str, ctx: StageContext, receipt: CommitReceipt) -> None:
+        if not isinstance(self.tier, MutatingTier):  # unreachable: only commits issue receipts
+            raise TypeError(f"read-only tier {self.name!r} holds no reservation to {hook}")
+        call = self.tier.rollback if hook == "rollback" else self.tier.confirm
+        with self._span(hook) as span:
             try:
-                await self.tier.rollback(ctx.action, ctx.params, receipt)
+                await call(ctx.action, ctx.params, receipt)
             except BaseException as exc:
                 span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
                 raise
@@ -146,7 +200,7 @@ class DomainTierStage(Stage):
         )
 
 
-def order_stages(tiers: Sequence[GovernanceTierPlugin]) -> tuple[DomainTierStage, ...]:
+def order_stages(tiers: Sequence[GovernanceTier]) -> tuple[DomainTierStage, ...]:
     """Validate, sort by (phase, order, tier_name) and wrap tiers as DomainTierStages.
 
     Duplicate ``tier_name`` registrations are rejected: a later tier must never

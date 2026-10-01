@@ -20,13 +20,13 @@ from src.cage_healthcare.ground_truth import healthcare_cost_resolver
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.tiers.clinical_consensus_tier import ClinicalConsensusTier
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import GovernanceTier
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
 def create_healthcare_tiers(
     cbf: Any = None,
-) -> tuple[GovernanceTierPlugin, ...]:
+) -> tuple[GovernanceTier, ...]:
     """Create healthcare domain governance tiers for construction-time registration."""
     barrier = SerumConcentrationBarrier()
     engine = (

@@ -480,20 +480,21 @@ The CLA is checked automatically on pull requests via the CLA bot. PRs from cont
 
 CAGE provides a domain-agnostic governance kernel (Layer 1) and delegates all domain specifics to optional plugins (Layer 2). When extending the architecture, contributors must adhere to strict boundary rules.
 
-### Implementing `GovernanceTierPlugin`
+### Implementing a governance tier
 
-New domain tiers must implement the `GovernanceTierPlugin` protocol in [`contracts.py`](src/gateway/governance/contracts.py) and are handed to the kernel in `PluginContribution.tiers` from `CagePlugin.contribute()`; `assemble_governor()` fixes them into the immutable governor. Each tier declares `phase` (1 or 2) and an integer `order`, and runs in `(phase, order, tier_name)` order. Tier numbering follows `TIER_LABELS` in [`proof/model.py`](proof/model.py) (Tier 0.5 FTRA through Tier 7 FRIA). The execution model enforces a rigid 2-phase boundary to guarantee atomicity and prevent partial state mutations.
+A domain or jurisdiction tier subclasses exactly one of the two base classes in [`contracts.py`](src/gateway/governance/contracts.py): `ReadOnlyTier` or `MutatingTier` ([ADR-009](docs/adr/ADR-009-tier-protocol-split.md)). The kind is nominal: a tier never declares `phase`, it is derived from the base class. The governor refuses a tier that subclasses neither, and refuses a `ReadOnlyTier` that defines `commit`, `rollback` or `confirm`. Plugins declare `api_version = "2.0"`.
 
-#### Phase 1: Read-Only Inspection
-Phase 1 tiers (`phase == 1`, e.g. finance's consensus, causal and bounding tiers) must be **strictly read-only**. They may inspect the request, query external systems, execute causal refutations, or require human approval, but they **must not** mutate state.
-- `GovernanceTierPlugin.evaluate()` returns `list[Violation]`. An empty list represents allowance; non-empty lists contain structured `Violation` objects. The `SymbolicGovernor` evaluates violations and determines the terminal governance decision.
-- Rejections in Phase 1 halt the pipeline immediately, ensuring no Phase 2 mutations occur.
+#### Phase 1: `ReadOnlyTier`
+Phase 1 tiers must be **strictly read-only**. They may inspect the request, query external systems, execute causal refutations, or require human approval, but they **must not** mutate state.
+- `evaluate()` returns `list[Violation]`. An empty list represents allowance; non-empty lists contain structured `Violation` objects. The `SymbolicGovernor` evaluates violations and determines the terminal governance decision.
+- A HARD violation in Phase 1 halts the pipeline immediately, ensuring no Phase 2 mutations occur.
 
-#### Phase 2: Atomic Mutation
-Phase 2 tiers (`phase == 2`, e.g. finance's CBF and fiscal tiers) perform state mutations.
-- Phase 2 executes **only after** all Phase 1 tiers have passed.
-- `commit()` returns `(list[Violation], CommitReceipt | None)`; the receipt is non-`None` if and only if state was mutated.
-- `rollback(action, params, receipt)` must undo exactly what the receipt records. On any later failure (including a failed or cancelled seal), the governor's `ReservationScope` rolls back every outstanding receipt in LIFO order.
+#### Phase 2: `MutatingTier`
+Phase 2 tiers (e.g. the CBF and fiscal tiers) reserve state. They implement `evaluate()` as a side-effect-free preview plus three hooks:
+- `commit()` reserves atomically and returns `(list[Violation], CommitReceipt | None)`. The receipt is not None if and only if state was mutated.
+- `rollback(receipt)` releases the reservation. It runs LIFO if a later Phase 2 tier fails, and after a sealed action that was not carried out.
+- `confirm(receipt)` makes the reservation permanent. It runs only after the actuator accepted the action (`SymbolicGovernor.settle(seal, executed=True)`). A tier whose commit is already final implements it as a no-op.
+- A reservation that is never settled (the process died between seal and actuation) must expire on the tier's own clock.
 
 ### Seam Contracts Interface
 

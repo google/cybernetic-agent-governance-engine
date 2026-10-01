@@ -145,6 +145,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **8-tier pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs, mathematical invariants** |
 | [AGENTIC_SCOPE_STATEMENT.md](governance/AGENTIC_SCOPE_STATEMENT.md) | Agentic system scope statement |
 | [HUMAN_OVERSIGHT_SCOPE.md](governance/HUMAN_OVERSIGHT_SCOPE.md) | Human oversight scope definition |
+| [FTRA_SCOPE.md](governance/FTRA_SCOPE.md) | FTRA scope — **irreversibility classification, autonomous envelope, magnitude shape; value policy owned by STPA/OPA** |
 | [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance — **CBF condition, causal SCM, confabulation, consensus** |
 | [NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Neuro-symbolic governance layer — **formal safety properties, confidence band, regional compliance** |
 | [OPA_MIGRATION_PROCESS.md](governance/OPA_MIGRATION_PROCESS.md) | OPA policy migration process |

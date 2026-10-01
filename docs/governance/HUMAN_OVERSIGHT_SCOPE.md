@@ -30,7 +30,6 @@ CAGE automatically escalates governance decisions to human review when any of th
 | **CausalGatekeeper block** | `src/gateway/governance/causal/gatekeeper.py` `causal_safety_check()` | World-model p-value < `get_causal_lock_p_value_threshold()` (0.05) or marginal risk boundary exceeded |
 | **OPA MANUAL_REVIEW decision** | `src/cage_finance/opa/trade_governance.rego` | OPA policy (package `trade.governance`) returns `"MANUAL_REVIEW"` |
 | **Governance confidence low** | `src/gateway/governance/consensus/engine.py` `ConsensusEngine` | ConsensusEngine self-reported confidence < threshold |
-| **POAM-TIER2-001 structural flag** | `src/gateway/governance/governor/stages/confidence.py` `evaluate_confidence_stage()` Tier 2 | Structural corroboration heuristic: STPA violation count ≥ 1 AND OPA margin < threshold; overrides the model-supplied confidence signal |
 | **NeMo Policy Refinement Proposal (CR-2)** | `src/governed_financial_advisor/server.py` | `POST /v1/nemo/approve-refinement/{proposal_id}` requires human risk officer sign-off with rationale |
 
 ---
@@ -195,9 +194,12 @@ Additional causal lock conditions that trigger human escalation:
 **Telemetry freshness:** In production, `causal_safety_check()` **fails closed**
 when no live telemetry is provided — there is no mock fallback for missing
 telemetry in a production deployment (`CAGE_ENV=production`). The causal cache
-uses synchronous Redis helpers (`_causal_cache_get_sync` /
-`_causal_cache_set_sync`) that are safe to call from `asyncio.to_thread`
-worker pools. Cache TTL is `CAUSAL_CACHE_TTL_SECONDS` (60 s);
+stores only the params-independent world-model verdict (β and the placebo
+refutation outcome), never the allow/deny decision: the marginal risk boundary
+is recomputed from the request's trade amount on every call. It uses
+synchronous Redis helpers (`_causal_cache_get_sync` / `_causal_cache_set_sync`)
+that are safe to call from `asyncio.to_thread` worker pools. Cache TTL is
+`CAUSAL_CACHE_TTL_SECONDS` (60 s);
 telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
 
 ---
@@ -249,7 +251,6 @@ Human oversight is **in scope** for:
 - Governance decisions with confidence < 0.95
 - CausalGatekeeper world-model rejections
 - OPA policy MANUAL_REVIEW decisions
-- POAM-TIER2-001 structural corroboration flags (STPA violation + OPA margin below threshold)
 
 Human oversight is **out of scope** for:
 - Tier 1 keyword blocks (Aho-Corasick) — these are bright-line safety controls that are not overridable

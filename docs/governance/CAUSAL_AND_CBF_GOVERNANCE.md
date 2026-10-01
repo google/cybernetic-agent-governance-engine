@@ -93,11 +93,22 @@ Before Phase 2 placebo refutation, the most-recent observation timestamp in `cur
 
 ### Redis Cache
 
-Causal results are cached in Redis keyed on `causal_cache:{action_type}:{market_regime}` with a TTL of **60 seconds** (configurable via `CAUSAL_CACHE_TTL_SECONDS` env var; set to `0` to disable). Cache hits skip both Phase 1 and Phase 2 entirely, reducing DoWhy overhead on repeated calls. Cache misses and Redis errors are handled gracefully — the causal check always runs when the cache is unavailable.
+Only the **world-model verdict** is cached — never the final allow/deny decision. [`CausalGatekeeper`](../../src/gateway/governance/causal/gatekeeper.py) splits each check in two:
 
-Two Redis client variants are provided: `_causal_cache_get_sync` / `_causal_cache_set_sync` (synchronous, for thread-pool workers dispatched via `asyncio.to_thread`) and `_causal_cache_get` / `_causal_cache_set` (async, for callers already inside an async context).
+1. **World-model validation** (params-independent): sample count, causal slope β (> 0 and finite), telemetry freshness, and placebo refutation (p-value and effect magnitude). The result is a frozen [`WorldModelVerdict`](../../src/gateway/governance/causal/gatekeeper.py) `(trusted, beta, reason)`. This is the expensive DoWhy step and the only thing written to Redis.
+2. **Marginal risk boundary** (per request): `0.5 + β × treatment_value / normalization_scale` is compared with `CAUSAL_LOCK_RISK_BOUNDARY` on **every** call, using β from the cached or freshly computed verdict. It is never cached, so a verdict warmed by a small trade cannot admit a large one, and a denial for a large trade cannot deny a small one.
 
-> **Fail-closed behaviour:** Redis connection errors raise `RuntimeError`; absent keys return `None` (first-boot safe). The previous fail-open sentinel (returning `0.0`) has been removed.
+Treatment-value validation (missing, non-numeric, NaN/∞, or ≤ 0 → fail closed) runs before any cache lookup.
+
+**Cache key:** `causal_wm:{spec_fingerprint}:{action}:{context}`. `spec_fingerprint` is a SHA-256 digest of the spec's `graph_dot`, `treatment_col`, `outcome_col`, and synthetic telemetry factory, so two domains or specs never share an entry. `action` comes from the `action=` keyword of `causal_safety_check` and falls back to `params["action_type"]` / `params["action"]`. `context` is the spec's `context_extractor` output (e.g. `market_regime`).
+
+**Cached only for synthetic telemetry:** a verdict is cached only when the caller passes no telemetry and the spec's `synthetic_telemetry_factory` produces it (non-enforcing postures only). Telemetry passed explicitly by a caller is always validated fresh and never reads or writes the cache, because the key carries no telemetry identity.
+
+**TTL:** `telemetry.cache_ttl_seconds` (default **60 s**, env override `CAUSAL_CACHE_TTL_SECONDS`; `0` disables the cache and Redis is not consulted). Telemetry freshness is evaluated when the verdict is computed, so a cached verdict can outlive that check by at most the TTL.
+
+Only synchronous Redis helpers exist (`_causal_cache_get_sync` / `_causal_cache_set_sync`); they are safe to call from `asyncio.to_thread` workers. Untrusted verdicts are cached like trusted ones (they deny every amount until the entry expires). A verdict is never cached when its computation raised.
+
+> **Fail-closed behaviour:** with the cache enabled, a Redis connection error or missing client raises `RuntimeError` and the check returns `False`. Absent keys and malformed or legacy payloads are cache misses (first-boot safe; the verdict is recomputed). A write failure is logged and does not change the decision.
 
 ### Causal Ordering Validation
 
@@ -196,24 +207,32 @@ The script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry
 
 > **Implementation note (intra-window double-spend prevention):** `verify_action()` is a pure, side-effect-free preview (`admits(balance, cost)`); it never debits anything. Intra-window double-spend protection lives in Redis: the commit path (`atomic_verify_and_commit()`, called by `commit_barrier`) appends each debit to the `cbf:local_debits` list inside its Lua script and subtracts that list from a reconciled snapshot balance; the reconciliation daemon trims it with `trim_local_debits_through_sequence_sync()` once a signed snapshot covers those debits.
 
-In the two-phase `run_pipeline()` (`src/gateway/governance/governor/pipeline.py`), all read-only stages (including OPA at Tier 3b) execute sequentially in Phase 1 before any state mutation occurs. Only if Phase 1 produces zero violations does Phase 2 execute CBF (`Tier 3a`) and **FiscalLimitGuard** (`Tier 4`) sequentially inside a `ReservationScope`, closing the TOCTOU race between the CBF balance check and trade execution using atomic `WATCH/MULTI/EXEC` pre-reservation.
+In the two-phase `run_pipeline()` (`src/gateway/governance/governor/pipeline.py`), all read-only stages (including OPA at Tier 3b) execute sequentially in Phase 1 before any state mutation occurs. Only if Phase 1 produces zero violations does Phase 2 execute CBF (`Tier 3a`) and **FiscalLimitGuard** (`Tier 4`) sequentially inside a `ReservationScope`, closing the TOCTOU race between the CBF balance check and trade execution using an atomic Lua pre-reservation.
 
 ---
 
 ## 3. FiscalLimitGuard — Saga-Atomicity Gap Remediation
 
-`FiscalLimitGuard` (`src/gateway/governance/safety/resource_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 4** in Phase 2 of the `SymbolicGovernor` pipeline — after all Phase 1 read-only stages (`ftra` Tier 0.5, `stpa` Tier 1, `opa` Tier 3b, `confidence` Tier 2, `consensus` Tier 5, `causal` Tier 6) have passed without violations, and immediately after CBF (`Tier 3a`). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit if a Phase 2 commit failure occurs after Tier 3a commitment.
+`FiscalLimitGuard` ([`fiscal_limit_guard.py`](../../src/cage_finance/safety/fiscal_limit_guard.py), wrapped by the `MutatingTier` [`FiscalTierPlugin`](../../src/cage_finance/tiers/fiscal_tier.py)) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using an atomic Redis pre-reservation (a Lua script). It runs as **Tier 4** in Phase 2 of the `SymbolicGovernor` pipeline — after all Phase 1 read-only stages (`ftra` Tier 0.5, `stpa` Tier 1, `opa` Tier 3b, `confidence` Tier 2, `consensus` Tier 5, `causal` Tier 6) have passed without violations, and immediately after CBF (`Tier 3a`).
+
+A reservation has three possible ends ([ADR-009](../adr/ADR-009-tier-protocol-split.md)):
+
+1. **Confirm** — the sealed trade executed. `execute_trade_action` calls `SymbolicGovernor.settle(seal, executed=True)`, which runs `FiscalTierPlugin.confirm()` → `FiscalLimitGuard.confirm()`; the spend stops expiring.
+2. **Release** — a later Phase 2 tier refused (`ReservationScope` → `FiscalTierPlugin.rollback()` → `FiscalLimitGuard.release()`), or the sealed trade was not carried out (`settle(seal, executed=False)`).
+3. **Reclaim** — nothing settled it within `reservation_ttl` (the process died between seal and actuation). `reclaim_expired()` returns the amount to the window; it runs lazily on every `reserve()`. The read-only previews `would_accept()` and `headroom_usd()` never write: they subtract expired, unreclaimed reservations from the counter they read.
+
+Each end is exactly-once: confirm, release and reclaim each remove the reservation from the pending set atomically, so a double settle, or a settle racing the reclaimer, never counts or refunds twice. A crash *after* actuation but before confirm lets the reclaimer refund a spend that happened, so the cap undercounts by that trade (a known gap, recorded in ADR-009).
 
 ### Key Implementation Details
 
 | Property | Value |
 |----------|-------|
-| Redis key | `fiscal:daily_limit:{window_key}` (UTC daily window) |
+| Redis keys | `fiscal:daily_limit:{window_key}` (UTC daily window); `fiscal:pending` (ZSET of unsettled reservations, scored by expiry); `fiscal:reclaimed` (recently reclaimed, so a late confirm re-counts) |
 | Storage format | Cents (integer) — avoids float precision issues |
 | Default cap | $500,000 USD (env: `FISCAL_DAILY_CAP_USD`) |
-| Reservation TTL | 300 seconds (ghost-state auto-expiry) |
+| Reservation TTL | 300 seconds (`reservation_ttl`; unsettled reservations are reclaimed) |
 | Fail mode | **Fail-closed** — Redis error → rejected token (never fail-open) |
-| Atomicity | `WATCH/MULTI/EXEC` optimistic locking (read-write) |
+| Atomicity | Lua scripts for reserve, release, confirm and reclaim (read-write) |
 
 ### How It Closes the TOCTOU Race
 
@@ -225,7 +244,7 @@ With FiscalLimitGuard (TOCTOU closed):
   Agent A: reserve($200k) → ATOMIC: OK, remaining=$0
   Agent B: reserve($200k) → ATOMIC: REJECTED (would exceed cap)
 
-The `confirm()` method is a **semantic hook only** — the counter already reflects the spend at reservation time. `release(token)` is called by the Saga compensating node on rollback to restore fiscal capacity atomically.
+The window counter reflects the spend from reservation time, so concurrent requests see it immediately; `confirm()` only takes the reservation out of the pending set so the reclaimer no longer refunds it.
 
 Because Phase 2 (`cbf` Tier 3a → `fiscal` Tier 4) runs only after all Phase 1 read-only tiers (`consensus`, `causal`, `fria`) have passed with zero violations, read-only rejections never mutate Redis state; if a Phase 2 stage fails to commit, `ReservationScope` rolls back previously committed Phase 2 stages in reverse order.
 

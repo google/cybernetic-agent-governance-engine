@@ -24,10 +24,9 @@ from src.gateway.governance.consensus import (
     load_critic_specs,
 )
 from src.gateway.governance.contracts import (
-    CommitReceipt,
     ConsensusContribution,
     CriticSpec,
-    GovernanceTierPlugin,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -63,7 +62,7 @@ def build_physical_consensus_gate() -> ConsensusGate:
     return ConsensusGate.from_contribution(build_physical_consensus_contribution())
 
 
-class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
+class PhysicalSafetyConsensusTier(ReadOnlyTier):
     """Physical safety consensus tier (phase 1, order 5).
 
     Requires multi-critic model consensus prior to issuing clearances for high-consequence
@@ -80,10 +79,6 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "physical_safety_consensus"
-
-    @property
-    def phase(self) -> int:
-        return 1
 
     @property
     def order(self) -> int:
@@ -134,16 +129,5 @@ class PhysicalSafetyConsensusTier(GovernanceTierPlugin):
                 kind=kind,
             )
         ]
-
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> tuple[list[Violation], CommitReceipt | None]:
-        return [], None
-
-    async def rollback(
-        self, action: str, params: dict[str, Any], receipt: CommitReceipt
-    ) -> None:
-        pass  # read-only tier: commit() never issues a receipt
-
 
 PhysicalConsensusTier = PhysicalSafetyConsensusTier

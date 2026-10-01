@@ -24,7 +24,13 @@ from src.gateway.governance.classification_engine import (
     ClassificationEngine,
     ClassificationResult,
 )
-from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    MutatingTier,
+    ReadOnlyTier,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.env_posture import is_cage_narrow_enabled
 from src.gateway.governance.governor import sealing as sealing_module
@@ -47,7 +53,7 @@ REQUESTED = 5000.0
 # ── Doubles ─────────────────────────────────────────────────────────────────
 
 
-class _Budget:
+class _Budget(MutatingTier):
     """Phase-2 tier double limiting ``params["amount"]`` to ``limit``.
 
     ``evaluate()`` (the DRY_RUN preview) and ``commit()`` refuse above the
@@ -68,7 +74,6 @@ class _Budget:
         self.limit, self.kind, self.mutate_params = limit, kind, mutate_params
 
     tier_name = property(lambda self: self._name)
-    phase = property(lambda self: 2)
     order = property(lambda self: self._order)
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
@@ -103,18 +108,20 @@ class _Budget:
         self.log.append(f"commit:{self._name}:{amount:g}")
         return [], CommitReceipt(tier=self._name, magnitude=amount)
 
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        self.log.append(f"confirm:{self._name}:{receipt.magnitude:g}")
+
     async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         self.log.append(f"rollback:{self._name}:{receipt.magnitude:g}")
 
 
-class _Flag:
+class _Flag(ReadOnlyTier):
     """Phase-1 (read-only) tier double emitting fixed violations."""
 
     def __init__(self, name: str, violations: list[Violation]) -> None:
         self._name, self._violations = name, violations
 
     tier_name = property(lambda self: self._name)
-    phase = property(lambda self: 1)
     order = property(lambda self: 0)
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:

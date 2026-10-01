@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from src.gateway.governance.contracts import GovernanceTierPlugin
+from src.gateway.governance.contracts import ReadOnlyTier
 
 
 @dataclass(frozen=True)
@@ -40,25 +40,25 @@ class JurisdictionContribution:
     """The obligations one deployment region adds to every domain.
 
     ``tiers`` are merged after the domain tiers and sorted with them by
-    ``(phase, order, tier_name)``. They must be phase-1 (read-only): a
+    ``(phase, order, tier_name)``. They must be :class:`ReadOnlyTier` (phase 1): a
     jurisdiction obligation is an assessment, never a barrier that reserves
     state, so it can never change what POST_HITL re-runs (``proof/model.py``
     asserts this for every entry of ``JURISDICTION_TIERS``).
 
     Raises:
-        ValueError: A contributed tier is not phase 1.
+        TypeError: A contributed tier is not a ``ReadOnlyTier``.
     """
 
     region: str
-    tiers: tuple[GovernanceTierPlugin, ...] = ()
+    tiers: tuple[ReadOnlyTier, ...] = ()
     runtime_requirements: tuple[PostureRequirement, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tiers", tuple(self.tiers))
         object.__setattr__(self, "runtime_requirements", tuple(self.runtime_requirements))
         for tier in self.tiers:
-            if tier.phase != 1:
-                raise ValueError(
-                    f"jurisdiction {self.region!r}: tier {tier.tier_name!r} is phase "
-                    f"{tier.phase}; jurisdiction tiers must be phase 1 (read-only)"
+            if not isinstance(tier, ReadOnlyTier):
+                raise TypeError(
+                    f"jurisdiction {self.region!r}: tier {getattr(tier, 'tier_name', tier)!r} "
+                    "is not a ReadOnlyTier; jurisdiction tiers must be read-only (phase 1)"
                 )

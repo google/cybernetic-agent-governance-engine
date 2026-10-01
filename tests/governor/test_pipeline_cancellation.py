@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from src.gateway.governance.contracts import CommitReceipt, Violation
+from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation
 from src.gateway.governance.governor.pipeline import Profile, StageContext
 from src.gateway.governance.governor.stages.domain_tiers import (
     DomainTierStage,
@@ -41,7 +41,7 @@ class _Escape(BaseException):
     """A non-Exception BaseException raised by a rollback."""
 
 
-class _Tier:
+class _Tier(MutatingTier):
     """Phase-2 tier double with controllable commit/rollback timing."""
 
     def __init__(
@@ -60,7 +60,6 @@ class _Tier:
         self.commit_started = asyncio.Event()
 
     tier_name = property(lambda self: self._name)
-    phase = property(lambda self: 2)
     order = property(lambda self: self._order)
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
@@ -75,6 +74,9 @@ class _Tier:
         if self._commit_blocks is not None:
             await self._commit_blocks.wait()
         return [], CommitReceipt(tier=self._name)
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        self.log.append(f"confirm:{self._name}")
 
     async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         if self._rollback_delay:

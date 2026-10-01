@@ -32,7 +32,7 @@ from src.cage_healthcare.plugin import HealthcareCagePlugin
 from src.cage_physical_ai.plugin import PhysicalAICagePlugin
 from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTier
 from src.gateway.governance.contracts import (
-    GovernanceTierPlugin,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -51,17 +51,13 @@ from tests.fixtures.governor import allow_opa, clean_stpa, make_governor
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
-class _StubTier(GovernanceTierPlugin):
-    def __init__(self, name: str, *, phase: int = 1, deny: bool = False) -> None:
-        self._name, self._phase, self._deny = name, phase, deny
+class _StubTier(ReadOnlyTier):
+    def __init__(self, name: str, *, deny: bool = False) -> None:
+        self._name, self._deny = name, deny
 
     @property
     def tier_name(self) -> str:
         return self._name
-
-    @property
-    def phase(self) -> int:
-        return self._phase
 
     @property
     def order(self) -> int:
@@ -74,12 +70,6 @@ class _StubTier(GovernanceTierPlugin):
         if self._deny:
             return [Violation(tier=self._name, code="STUB_DENY", message="deny", kind=ViolationKind.HARD)]
         return []
-
-    async def commit(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        return await self.evaluate(action, params)
-
-    async def rollback(self, action: str, params: dict[str, Any]) -> None:
-        return None
 
 
 def _assemble(*plugins: Any) -> SymbolicGovernor:

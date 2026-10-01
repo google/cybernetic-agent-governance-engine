@@ -271,7 +271,7 @@ unsafe_control_actions:
     action: execute_trade_bounded
     uca_type: unsafe_action
     hazard_refs: [H-1, H-4]
-    description: "Agent executes bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling HITL review without confidence hard-gate per VEC-004. When B10 fails, classification override to IRREVERSIBLE_TERMINAL prevents execution."
+    description: "Agent executes bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling HITL review without confidence hard-gate per VEC-004. When B10 fails (closed rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks for human approval, as an irreversible action would."
     terminal_classification: EXTERNALLY_REVERSIBLE
     condition:
       semantic_pattern: "bounding_contract_violation_detected"

@@ -1,5 +1,5 @@
 stpa-compiler-ssp-patch:
-  generated: '2026-10-01T15:21:58Z'
+  generated: '2026-10-01T16:13:05Z'
   source: config/stpa_control_structure.yaml
   system: CAGE Financial Advisor
   version: 1.1.0
@@ -20,7 +20,7 @@ stpa-compiler-ssp-patch:
       \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
       \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded: 11\n\
       \          Hazards modelled: 7\n          Safety constraints: 3\n          Last\
-      \ compiled: 2026-10-01T15:21:58Z\n\n          UCA-to-Control mapping (NIST SP\
+      \ compiled: 2026-10-01T16:13:05Z\n\n          UCA-to-Control mapping (NIST SP\
       \ 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action): Agent\
       \ executes write operation without a signed approval token.\n  → NIST: ac-3\
       \ (Access Enforcement), sc-4 (Information in Shared System Resources / Fiscal\
@@ -29,27 +29,28 @@ stpa-compiler-ssp-patch:
       UCA-12 (unsafe_action): Agent executes bounded trade when bounding contracts\
       \ B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE\
       \ when B10 rollback window validation passes, enabling HITL review without confidence\
-      \ hard-gate per VEC-004. When B10 fails, classification override to IRREVERSIBLE_TERMINAL\
-      \ prevents execution.\n  → NIST: ac-3 (Access Enforcement), sa-11 (Developer\
-      \ Testing and Evaluation)\nUCA-2 (wrong_timing): Agent executes trade with stale\
-      \ market data (latency > threshold).\n  → NIST: cm-6 (Configuration Settings),\
-      \ sa-11 (Developer Testing and Evaluation)\nUCA-3 (unsafe_action): Agent outputs\
-      \ PII to user interface.\n  → NIST: ac-3 (Access Enforcement), sc-28 (Protection\
-      \ of Information at Rest)\nUCA-4 (stopped_too_soon): Agent debits account but\
-      \ fails to credit asset (atomic failure).\n  → NIST: si-7 (Software, Firmware,\
-      \ and Information Integrity), au-10 (Non-Repudiation)\nUCA-5 (unsafe_action):\
-      \ Agent executes buy order when daily drawdown exceeds limit.\n  → NIST: ac-3\
-      \ (Access Enforcement), sc-4 (Information in Shared System Resources / Fiscal\
-      \ Limits)\nUCA-6 (wrong_timing): Agent submits market order exceeding allowable\
-      \ fraction of daily volume.\n  → NIST: sc-4 (Information in Shared System Resources\
-      \ / Fiscal Limits), si-3 (Malicious Code Protection)\nUCA-7 (unsafe_action):\
-      \ Adversarial prompt injection score exceeds detection threshold.\n  → NIST:\
-      \ sc-4 (Information in Shared System Resources / Fiscal Limits), si-3 (Malicious\
-      \ Code Protection)\nUCA-8 (wrong_timing): Agent executes trade before risk assessment\
-      \ is complete.\n  → NIST: ac-3 (Access Enforcement), sa-11 (Developer Testing\
-      \ and Evaluation)\nUCA-9 (wrong_timing): Agent executes trade with compliance\
-      \ check bypassed.\n  → NIST: ac-3 (Access Enforcement), cm-6 (Configuration\
-      \ Settings)"
+      \ hard-gate per VEC-004. When B10 fails (closed rollback window), the bounding\
+      \ tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request\
+      \ parks for human approval, as an irreversible action would.\n  → NIST: ac-3\
+      \ (Access Enforcement), sa-11 (Developer Testing and Evaluation)\nUCA-2 (wrong_timing):\
+      \ Agent executes trade with stale market data (latency > threshold).\n  → NIST:\
+      \ cm-6 (Configuration Settings), sa-11 (Developer Testing and Evaluation)\n\
+      UCA-3 (unsafe_action): Agent outputs PII to user interface.\n  → NIST: ac-3\
+      \ (Access Enforcement), sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon):\
+      \ Agent debits account but fails to credit asset (atomic failure).\n  → NIST:\
+      \ si-7 (Software, Firmware, and Information Integrity), au-10 (Non-Repudiation)\n\
+      UCA-5 (unsafe_action): Agent executes buy order when daily drawdown exceeds\
+      \ limit.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information in Shared System\
+      \ Resources / Fiscal Limits)\nUCA-6 (wrong_timing): Agent submits market order\
+      \ exceeding allowable fraction of daily volume.\n  → NIST: sc-4 (Information\
+      \ in Shared System Resources / Fiscal Limits), si-3 (Malicious Code Protection)\n\
+      UCA-7 (unsafe_action): Adversarial prompt injection score exceeds detection\
+      \ threshold.\n  → NIST: sc-4 (Information in Shared System Resources / Fiscal\
+      \ Limits), si-3 (Malicious Code Protection)\nUCA-8 (wrong_timing): Agent executes\
+      \ trade before risk assessment is complete.\n  → NIST: ac-3 (Access Enforcement),\
+      \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing): Agent executes\
+      \ trade with compliance check bypassed.\n  → NIST: ac-3 (Access Enforcement),\
+      \ cm-6 (Configuration Settings)"
     props:
     - name: implementation-status
       value: implemented
@@ -60,7 +61,7 @@ stpa-compiler-ssp-patch:
     - name: hazard-count
       value: '7'
     - name: last-compiled
-      value: '2026-10-01T15:21:58Z'
+      value: '2026-10-01T16:13:05Z'
     - name: target-framework
       value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
     - name: artifact-opa
@@ -232,7 +233,7 @@ stpa-compiler-ssp-patch:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-10-01T15:21:58Z'
+      value: '2026-10-01T16:13:05Z'
     - name: uca-count
       value: '11'
     control-implementations:

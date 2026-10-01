@@ -201,22 +201,47 @@ def test_unknown_region_is_refused() -> None:
         resolve_jurisdiction("XX_NOWHERE")
 
 
-def test_jurisdiction_tiers_must_be_phase_one() -> None:
-    class _Phase2:
+def test_jurisdiction_tiers_must_be_read_only() -> None:
+    from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation
+
+    class _Barrier(MutatingTier):
         tier_name = "barrier"
-        phase = 2
         order = 1
 
-    with pytest.raises(ValueError, match="must be phase 1"):
-        JurisdictionContribution(region="EU_ECB", tiers=(_Phase2(),))  # type: ignore[arg-type]
+        def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+            return True
+
+        async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+            return []
+
+        async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], CommitReceipt | None]:
+            return [], None
+
+        async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+            pass
+
+        async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+            pass
+
+    with pytest.raises(TypeError, match="must be read-only"):
+        JurisdictionContribution(region="EU_ECB", tiers=(_Barrier(),))
+
+
+def test_jurisdiction_tiers_must_be_governance_tiers() -> None:
+    class _DuckTyped:
+        tier_name = "barrier"
+        phase = 1
+        order = 1
+
+    with pytest.raises(TypeError, match="not a ReadOnlyTier"):
+        JurisdictionContribution(region="EU_ECB", tiers=(_DuckTyped(),))  # type: ignore[arg-type]
 
 
 def test_fria_tier_name_collision_with_a_domain_tier_is_rejected() -> None:
-    from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+    from src.gateway.governance.contracts import ReadOnlyTier, Violation
 
-    class _DomainFria(GovernanceTierPlugin):
+    class _DomainFria(ReadOnlyTier):
         tier_name = "fria"
-        phase = 1
         order = 1
 
         def claims_action(self, action: str, params: dict[str, Any]) -> bool:

@@ -19,7 +19,7 @@ from opentelemetry import trace
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import OpaVerdict, Stage, StageContext
+from src.gateway.governance.governor.pipeline import Stage, StageContext
 
 tracer = trace.get_tracer(__name__)
 OBSERVATION_NAME = "observation.name"
@@ -31,7 +31,7 @@ from src.gateway.governance.schemas.thresholds import (
 
 
 class ConfidenceStage(Stage):
-    """Stage for agent confidence validation and structural corroboration."""
+    """Stage for agent confidence validation (Tier 2)."""
 
     name: str = "confidence"
     mutating: bool = False
@@ -143,64 +143,6 @@ class ConfidenceStage(Stage):
             conf_span.set_attribute(
                 "governance.stage.latency_ms",
                 round((time.perf_counter() - _t0_conf) * 1000, 2),
-            )
-
-        # Structural corroboration
-        with tracer.start_as_current_span(
-            "cage.tier2_structural_corroboration"
-        ) as _t2_span:
-            _t2_span.set_attribute(OBSERVATION_NAME, "tier2_structural_corroboration")
-            _t2_span.set_attribute("governance.stage", "tier2_corroboration")
-            _t2_corr_t0 = time.perf_counter()
-
-            # We don't have opa_margin easily accessible in StageContext.
-            # The instructions say: "The corroboration needs the STPA outcome and OPA verdict:
-            # read them from StageContext ... Remove the misleading span attribute tier2.confidence.independently_verified=True;
-            # replace with tier2.confidence.source='agent_self_report'."
-
-            _structural_risk_flagged: bool = (
-                ctx.stpa_violation_count > 0
-                or (ctx.opa_verdict is None)  # treat as risk if unavailable
-            )
-
-            _raw_conf = ctx.params.get("confidence", 0.0)
-            try:
-                _self_reported_confidence = (
-                    0.0 if isinstance(_raw_conf, bool) else float(_raw_conf)
-                )
-            except (TypeError, ValueError):
-                _self_reported_confidence = 0.0
-
-            if (
-                _structural_risk_flagged
-                and _self_reported_confidence >= _confidence_threshold
-            ):
-                _corroboration_source = "structural_heuristic_override"
-                violations.append(
-                    Violation(
-                        tier="governance",
-                        code="TIER2_STRUCTURAL_OVERRIDE",
-                        message=f"POAM-TIER2-001 Structural Override: HITL required — self-reported confidence contradicted by structural evidence (stpa_violations={ctx.stpa_violation_count}, opa_margin=None). Independent signal: structural_heuristic_override.",
-                        kind=ViolationKind.HITL,
-                    )
-                )
-            elif _structural_risk_flagged:
-                _corroboration_source = "structural_heuristic_low_confidence"
-            else:
-                _corroboration_source = "structural_heuristic_pass"
-
-            _t2_span.set_attribute(
-                "tier2.confidence.corroboration_source", _corroboration_source
-            )
-            _t2_span.set_attribute(
-                "tier2.confidence.stpa_violations", ctx.stpa_violation_count
-            )
-            _t2_span.set_attribute(
-                "tier2.confidence.structural_risk_flagged", _structural_risk_flagged
-            )
-            _t2_span.set_attribute(
-                "governance.stage.latency_ms",
-                round((time.perf_counter() - _t2_corr_t0) * 1000, 2),
             )
 
         return violations

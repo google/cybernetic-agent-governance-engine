@@ -108,11 +108,28 @@ _STPA_BY_COMP_UUID = "h8000099-stpa-4000-8000-compiler00001"
 _STPA_CTRL_IMPL_UUID = "c3000099-stpa-4000-8000-compiler00001"
 _STPA_REQ_UUID_PREFIX = "d4000099-stpa-4000-8000"
 
-# Stable UUIDs for the FTRA Semantic Classifier component — deterministic so the SSP diff
-# is minimal across re-runs (no UUID churn).
-_FTRA_COMPONENT_UUID = "ftra0001-4e47-bbc8-semantic-validator01"
-_FTRA_SI10_IMPL_UUID = "si100001-ftra-8000-validator00001"
-_FTRA_AC4_IMPL_UUID = "ac040001-ftra-8000-validator00001"
+# Stable UUIDs for the FTRA Irreversibility Classifier component — deterministic so the
+# SSP diff is minimal across re-runs (no UUID churn).
+_FTRA_COMPONENT_UUID = "ftra0001-4e47-bbc8-irreversibility01"
+_FTRA_CTRL_IMPL_UUID = "ftra0001-ctrl-impl-8000-classifier01"
+_FTRA_SI10_IMPL_UUID = "si100001-ftra-8000-classifier00001"
+
+#: SI-10 statement for the FTRA component. FTRA validates no parameter values
+#: (docs/governance/FTRA_SCOPE.md); it names where value validation lives.
+_FTRA_SI10_DESCRIPTION = (
+    "FTRA (Tier 0.5) classifies each tool call against the digest-covered terminal "
+    "registry (src/gateway/governance/ftra/classifier.py) and routes irreversible or "
+    "unregistered actions to human review; a registered terminal clears autonomously "
+    "only inside its signed autonomous envelope with a known, finite, positive "
+    "magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation "
+    "(SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py) and the "
+    "domain OPA policy (src/cage_finance/opa/trade_governance.rego); injection is "
+    "mitigated by NeMo/AGP rails generated from UCA-7 "
+    "(config/rails/generated_stpa_rails.co, config/agp/generated_semantic_policy.txt). "
+    "The registry's manifest_sha256 (registry_digest in "
+    "src/gateway/governance/ftra/classifier.py) covers the autonomous_envelope together "
+    "with the terminals, so a tampered ceiling fails the load-time integrity check."
+)
 
 # ---------------------------------------------------------------------------
 # Multi-jurisdiction SSP router — see docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md
@@ -847,46 +864,49 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
 
 def generate_ftra_component_entry() -> dict[str, Any]:
     """
-    Generate a new OSCAL component entry for the FTRA Semantic Classifier,
+    Generate the OSCAL component entry for the FTRA Irreversibility Classifier,
     to be merged into component-definition.yaml.
 
-    Returns a component dict with SI-10 and AC-4 control implementations.
+    Returns a component dict with its SI-10 control implementation. FTRA claims
+    no AC-4: it never rejected undeclared parameters in production (the schema
+    validator that could have was never registered and has been removed).
     """
     now = _now_iso()
 
     return {
         "uuid": _FTRA_COMPONENT_UUID,
-        "title": "FTRA Semantic Classifier",
+        "title": "FTRA Irreversibility Classifier",
         "type": "software",
         "description": (
-            "Formal Transition Risk Automaton (FTRA) semantic validator enforcing "
-            "schema totality, numerical boundary constraints, and parameter smuggling "
-            "protection on tool invocation payloads. Implements allow_extra_fields=False "
-            "to reject undeclared mutation arguments (AC-4) and validates parameter "
-            "types, numerical ranges, and injection vectors (SI-10)."
+            "Forward-Looking Trajectory Reachability Analyzer (FTRA, Tier 0.5): "
+            "classifies each tool call against the active domain's digest-covered "
+            "terminal registry, records the registry provenance of the classification, "
+            "and lets a registered terminal clear without a human only inside its "
+            "signed autonomous envelope. It validates no parameter values; value "
+            "policy is owned by STPA UCA rules and the domain OPA policy "
+            "(docs/governance/FTRA_SCOPE.md)."
         ),
         "purpose": (
-            "Deterministic parameter boundary and semantic validation for tool execution"
+            "Irreversibility classification and autonomous-envelope gating for tool execution"
         ),
         "responsible-roles": [{"role-id": "provider"}],
         "props": [
-            {"name": "source-file", "value": "src/gateway/governance/ftra/schemas.py"},
+            {
+                "name": "source-file",
+                "value": "src/gateway/governance/governor/stages/ftra.py",
+            },
             {"name": "last-compiled", "value": now},
         ],
         "control-implementations": [
             {
-                "uuid": "ftra0001-ctrl-impl-8000-validator01",
+                "uuid": _FTRA_CTRL_IMPL_UUID,
                 "source": "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home",
-                "description": "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA Semantic Classifier",
+                "description": "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by FTRA Irreversibility Classifier",
                 "implemented-requirements": [
                     {
                         "uuid": _FTRA_SI10_IMPL_UUID,
                         "control-id": "si-10",
-                        "description": (
-                            "FTRA semantic validator enforces schema-aware validation of tool parameters "
-                            "against ActionSchema definitions in src/gateway/governance/ftra/schemas.py, "
-                            "preventing malformed types, numerical limit breaches, and payload injection."
-                        ),
+                        "description": _FTRA_SI10_DESCRIPTION,
                         "props": [
                             {"name": "implementation-status", "value": "implemented"},
                             {"name": "control-origination", "value": "system-specific"},
@@ -894,24 +914,6 @@ def generate_ftra_component_entry() -> dict[str, Any]:
                         "links": [
                             {
                                 "href": "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10",
-                                "rel": "reference",
-                            }
-                        ],
-                    },
-                    {
-                        "uuid": _FTRA_AC4_IMPL_UUID,
-                        "control-id": "ac-4",
-                        "description": (
-                            "FTRA semantic classifier enforces allow_extra_fields=False on mutating tool schemas, "
-                            "rejecting parameter smuggling and undeclared argument injection."
-                        ),
-                        "props": [
-                            {"name": "implementation-status", "value": "implemented"},
-                            {"name": "control-origination", "value": "system-specific"},
-                        ],
-                        "links": [
-                            {
-                                "href": "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-4",
                                 "rel": "reference",
                             }
                         ],
@@ -982,7 +984,7 @@ def _apply_ssp_patch(
     now = _now_iso()
     ssp["system-security-plan"]["metadata"]["last-modified"] = now
     old_version = ssp["system-security-plan"]["metadata"].get("version", "1.0.0-draft")
-    if not old_version.endswith("-stpa"):
+    if not old_version.endswith("+stpa"):
         ssp["system-security-plan"]["metadata"]["version"] = f"{old_version}+stpa"
 
     # Inject AssurancePosture (v3.1.5 Phase 1.2)

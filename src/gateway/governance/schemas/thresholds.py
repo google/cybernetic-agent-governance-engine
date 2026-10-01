@@ -241,8 +241,9 @@ class TelemetryThresholds(BaseModel):
         default=60,
         ge=0,
         description=(
-            "[EV-6] TTL for Redis-backed causal result cache keyed on "
-            "(action_type, context_regime). Set to 0 to disable caching. "
+            "[EV-6] TTL for the Redis-backed causal world-model verdict cache "
+            "(params-independent; the risk boundary is evaluated per request). "
+            "Set to 0 to disable caching (Redis is then not consulted). "
             "Default: 60s. Env override: CAUSAL_CACHE_TTL_SECONDS"
         ),
     )

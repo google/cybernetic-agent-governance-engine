@@ -20,7 +20,7 @@ from typing import Any
 from src.cage_physical_ai.constants import PHYSICAL_AI_GOVERNED_ACTIONS
 from src.gateway.governance.contracts import (
     CommitReceipt,
-    GovernanceTierPlugin,
+    MutatingTier,
     Violation,
     ViolationKind,
 )
@@ -35,7 +35,7 @@ _CLAIMED_PHYSICAL_ACTIONS = PHYSICAL_AI_GOVERNED_ACTIONS | frozenset(
 )
 
 
-class KinematicBarrierTier(GovernanceTierPlugin):
+class KinematicBarrierTier(MutatingTier):
     """Kinematic barrier tier for physical AI (phase 2, order 3).
 
     Delegates state-space evaluation to the kernel's ControlBarrierFunction engine.
@@ -54,10 +54,6 @@ class KinematicBarrierTier(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "kinematic_barrier"
-
-    @property
-    def phase(self) -> int:
-        return 2
 
     @property
     def order(self) -> int:
@@ -146,3 +142,8 @@ class KinematicBarrierTier(GovernanceTierPlugin):
             return
         if self._cbfs:
             await rollback_barrier(self._cbfs[0], receipt)
+
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """The debit is final at commit; nothing expires, so nothing to confirm."""

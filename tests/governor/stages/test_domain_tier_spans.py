@@ -34,7 +34,8 @@ from opentelemetry.trace import StatusCode
 
 from src.gateway.governance.contracts import (
     CommitReceipt,
-    GovernanceTierPlugin,
+    MutatingTier,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -92,14 +93,17 @@ def ctx() -> StageContext:
 
 
 def _tier(name: str, phase: int) -> MagicMock:
-    tier = MagicMock(spec=GovernanceTierPlugin)
+    """Spec mock of a ReadOnlyTier (phase 1) or a MutatingTier (phase 2)."""
+    tier = MagicMock(spec=ReadOnlyTier if phase == 1 else MutatingTier)
     tier.tier_name = name
     tier.phase = phase
     tier.order = 10
     tier.claims_action.return_value = True
     tier.evaluate = AsyncMock(return_value=[])
-    tier.commit = AsyncMock(return_value=([], CommitReceipt(tier=name, magnitude=100.0)))
-    tier.rollback = AsyncMock()
+    if phase == 2:
+        tier.commit = AsyncMock(return_value=([], CommitReceipt(tier=name, magnitude=100.0)))
+        tier.rollback = AsyncMock()
+        tier.confirm = AsyncMock()
     return tier
 
 
@@ -186,13 +190,27 @@ async def test_rollback_emits_tier_span(exporter, ctx):
 
 
 @pytest.mark.asyncio
-async def test_phase1_rollback_emits_no_span(exporter, ctx):
+async def test_confirm_emits_tier_span(exporter, ctx):
+    tier = _tier("beta", phase=2)
+    receipt = CommitReceipt(tier="beta", magnitude=100.0)
+
+    await DomainTierStage(tier).confirm(ctx, receipt)
+
+    tier.confirm.assert_awaited_once_with("execute_trade", {"amount": 100}, receipt)
+    span = _only_span(exporter, "cage.tier.beta")
+    assert span.attributes["cage.tier.hook"] == "confirm"
+    assert span.attributes["cage.tier.violation_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hook", ["rollback", "confirm"])
+async def test_read_only_settle_refuses_and_emits_no_span(exporter, ctx, hook):
     tier = _tier("alpha", phase=1)
     receipt = CommitReceipt(tier="alpha", magnitude=100.0)
 
-    await DomainTierStage(tier).rollback(ctx, receipt)
+    with pytest.raises(TypeError, match="holds no reservation"):
+        await getattr(DomainTierStage(tier), hook)(ctx, receipt)
 
-    tier.rollback.assert_not_awaited()
     assert exporter.get_finished_spans() == ()
 
 

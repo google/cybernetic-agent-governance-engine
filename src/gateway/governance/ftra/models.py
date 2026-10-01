@@ -446,63 +446,6 @@ class FtraBoundaryResult:
             clear_reason=clear_reason,
         )
 
-    @classmethod
-    def from_semantic_breach(
-        cls,
-        semantic_result: Any,
-        action_name: str,
-        classification: TerminalClassification,
-        *,
-        registry_state: RegistryState,
-    ) -> FtraBoundaryResult:
-        """Factory method to create FtraBoundaryResult for a semantic validation breach.
-
-        Version 2.1: Semantic validation failures always trigger HITL requirement,
-        regardless of the name-based classification. This ensures that malformed
-        or out-of-bound inputs are blocked at the boundary. A breach is never
-        auto-cleared, whatever the autonomous envelope says.
-
-        Args:
-            semantic_result: The SemanticValidationResult from semantic validator.
-            action_name: The action name being validated.
-            classification: The name-based TerminalClassification (for reference).
-            registry_state: Provenance of ``classification``.
-
-        Returns:
-            FtraBoundaryResult with HITL required and semantic violations.
-        """
-        # Semantic breach always requires HITL (fail-closed)
-        violations: list[Violation] = [
-            Violation(
-                tier="ftra",
-                code="FTRA_SEMANTIC_BREACH",
-                message=f"FTRA Semantic Boundary Breach: Action '{action_name}' failed semantic validation. Failure code: {semantic_result.failure_code}.",
-                kind=ViolationKind.HARD
-            )
-        ]
-        violations.extend(semantic_result.violations)
-
-        # Add diagnostic information if available
-        if semantic_result.diagnostic_message:
-            violations.append(
-                Violation(
-                    tier="ftra",
-                    code="FTRA_ERROR",
-                    message=f"Diagnostic: {semantic_result.diagnostic_message}",
-                    kind=ViolationKind.HARD
-                )
-            )
-
-        return cls(
-            requires_hitl=True,  # Always require HITL on semantic breach
-            irreversibility_score=1.0,  # Maximum score (fail-closed)
-            classification=f"{classification.value}_SEMANTIC_BREACH",
-            terminal_match=action_name if registry_state is RegistryState.REGISTERED else None,
-            violations=violations,
-            bypassed_ftra_node=False,  # Not a bypass, but a validation failure
-            registry_state=registry_state,
-        )
-
 
 def _provenance_violation(
     classification: TerminalClassification,

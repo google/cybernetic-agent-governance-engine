@@ -23,10 +23,9 @@ from src.gateway.governance.consensus.engine import (
     load_critic_specs,
 )
 from src.gateway.governance.contracts import (
-    CommitReceipt,
     ConsensusContribution,
     CriticSpec,
-    GovernanceTierPlugin,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -78,7 +77,7 @@ def build_finance_consensus_gate(
     )
 
 
-class ConsensusTierPlugin(GovernanceTierPlugin):
+class ConsensusTierPlugin(ReadOnlyTier):
     """Consensus guard tier (phase 1, order 5)."""
 
     def __init__(self, consensus: Any = None):
@@ -91,10 +90,6 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "consensus"
-
-    @property
-    def phase(self) -> int:
-        return 1
 
     @property
     def order(self) -> int:
@@ -176,14 +171,3 @@ class ConsensusTierPlugin(GovernanceTierPlugin):
                 kind=ViolationKind.HARD,
             )
         ]
-
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> tuple[list[Violation], CommitReceipt | None]:
-        return [], None
-
-    async def rollback(
-        self, action: str, params: dict[str, Any], receipt: CommitReceipt
-    ) -> None:
-        pass
-

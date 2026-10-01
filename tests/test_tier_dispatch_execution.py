@@ -28,7 +28,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.contracts import (
-    GovernanceTierPlugin,
+    CommitReceipt,
+    MutatingTier,
+    ReadOnlyTier,
     Violation,
     ViolationKind,
 )
@@ -54,20 +56,22 @@ def make_governor(*tiers: Any, classification_engine) -> SymbolicGovernor:
 
 
 class OrderTrackingTier:
-    """Tier that records when it was invoked for ordering verification."""
+    """Tier behaviour that records when it was invoked, for ordering verification.
+
+    Mixed into one of the two tier kinds below; build one with
+    :func:`tracking_tier`.
+    """
 
     execution_log: list[tuple[str, str]] = []
 
     def __init__(
         self,
         tier_name: str,
-        phase: int,
         order: int,
         claims_all: bool = True,
         violation_rule: str | None = None,
     ) -> None:
         self._tier_name = tier_name
-        self._phase = phase
         self._order = order
         self._claims_all = claims_all
         self._violation_rule = violation_rule
@@ -77,18 +81,13 @@ class OrderTrackingTier:
         return self._tier_name
 
     @property
-    def phase(self) -> int:
-        return self._phase
-
-    @property
     def order(self) -> int:
         return self._order
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         return self._claims_all
 
-    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
-        # Phase 1 evaluation - log execution and check for violations
+    def _record(self, action: str) -> list[Violation]:
         OrderTrackingTier.execution_log.append((self._tier_name, action))
         if self._violation_rule:
             return [
@@ -101,22 +100,33 @@ class OrderTrackingTier:
             ]
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], Any]:
-        # Phase 2 commit - log execution and check for violations
-        OrderTrackingTier.execution_log.append((self._tier_name, action))
-        if self._violation_rule:
-            return [
-                Violation(
-                    tier=self._tier_name,
-                    code=self._violation_rule,
-                    message=f"Violation from {self._tier_name}",
-                    kind=ViolationKind.HARD,
-                )
-            ], None
-        return [], None
+    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        # Phase 1 evaluation - log execution and check for violations
+        return self._record(action)
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: Any) -> None:
+
+class _ReadOnlyTracking(OrderTrackingTier, ReadOnlyTier):
+    pass
+
+
+class _MutatingTracking(OrderTrackingTier, MutatingTier):
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        # Phase 2 commit - log execution and check for violations
+        return self._record(action), None
+
+    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
         pass
+
+    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        pass
+
+
+def tracking_tier(tier_name: str, phase: int, order: int, **kwargs: Any) -> OrderTrackingTier:
+    """Build a read-only (phase 1) or mutating (phase 2) order-tracking tier."""
+    kind = _ReadOnlyTracking if phase == 1 else _MutatingTracking
+    return kind(tier_name, order, **kwargs)
 
 
 @pytest.mark.local
@@ -133,9 +143,9 @@ class TestTierDispatchOrdering:
         """Tiers with lower order values execute first."""
         # Create governor with tiers in arbitrary order
         gov = make_governor(
-            OrderTrackingTier("tier_c", phase=1, order=300),
-            OrderTrackingTier("tier_a", phase=1, order=100),
-            OrderTrackingTier("tier_b", phase=1, order=200),
+            tracking_tier("tier_c", phase=1, order=300),
+            tracking_tier("tier_a", phase=1, order=100),
+            tracking_tier("tier_b", phase=1, order=200),
             classification_engine=classification_engine,
         )
 
@@ -152,8 +162,8 @@ class TestTierDispatchOrdering:
     async def test_phase_filter_only_executes_matching_phase(self, classification_engine) -> None:
         """Only tiers matching the requested phase execute."""
         gov = make_governor(
-            OrderTrackingTier("phase1_tier", phase=1, order=100),
-            OrderTrackingTier("phase2_tier", phase=2, order=100),
+            tracking_tier("phase1_tier", phase=1, order=100),
+            tracking_tier("phase2_tier", phase=2, order=100),
             classification_engine=classification_engine,
         )
 
@@ -167,8 +177,8 @@ class TestTierDispatchOrdering:
     async def test_unclaimed_tiers_do_not_execute(self, classification_engine) -> None:
         """Tiers that do not claim the action are skipped."""
         gov = make_governor(
-            OrderTrackingTier("claiming_tier", phase=1, order=100, claims_all=True),
-            OrderTrackingTier("unclaimed_tier", phase=1, order=200, claims_all=False),
+            tracking_tier("claiming_tier", phase=1, order=100, claims_all=True),
+            tracking_tier("unclaimed_tier", phase=1, order=200, claims_all=False),
             classification_engine=classification_engine,
         )
 
@@ -186,8 +196,8 @@ class TestTierDispatchOrdering:
         to enforce fail-fast semantics. This test verifies that behavior.
         """
         gov = make_governor(
-            OrderTrackingTier("tier1", phase=1, order=100, violation_rule="RULE_A"),
-            OrderTrackingTier("tier2", phase=1, order=200, violation_rule="RULE_B"),
+            tracking_tier("tier1", phase=1, order=100, violation_rule="RULE_A"),
+            tracking_tier("tier2", phase=1, order=200, violation_rule="RULE_B"),
             classification_engine=classification_engine,
         )
 
@@ -220,8 +230,8 @@ class TestTierDispatchPhaseIsolation:
     async def test_phase1_and_phase2_execute_independently(self, classification_engine) -> None:
         """Phase 1 and phase 2 tiers execute in separate calls."""
         gov = make_governor(
-            OrderTrackingTier("p1_tier", phase=1, order=100),
-            OrderTrackingTier("p2_tier", phase=2, order=100),
+            tracking_tier("p1_tier", phase=1, order=100),
+            tracking_tier("p2_tier", phase=2, order=100),
             classification_engine=classification_engine,
         )
 
@@ -239,9 +249,9 @@ class TestTierDispatchPhaseIsolation:
     async def test_multiple_phase1_tiers_sorted_by_order(self, classification_engine) -> None:
         """Multiple phase 1 tiers execute in ascending order priority."""
         gov = make_governor(
-            OrderTrackingTier("p1_c", phase=1, order=300),
-            OrderTrackingTier("p1_a", phase=1, order=100),
-            OrderTrackingTier("p1_b", phase=1, order=200),
+            tracking_tier("p1_c", phase=1, order=300),
+            tracking_tier("p1_a", phase=1, order=100),
+            tracking_tier("p1_b", phase=1, order=200),
             classification_engine=classification_engine,
         )
 

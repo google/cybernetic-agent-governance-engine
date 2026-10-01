@@ -16,7 +16,8 @@
 
 B7 is a capability check for KMS signer availability.
 B10 is the critical contract that justifies EXTERNALLY_REVERSIBLE classification.
-When B10 fails, it must emit a classification override to IRREVERSIBLE_TERMINAL.
+A closed rollback window is a HITL violation (B10_ROLLBACK_WINDOW_CLOSED): the
+request parks for approval, as an irreversible action would.
 """
 
 from unittest.mock import MagicMock, patch
@@ -99,7 +100,7 @@ class TestContractB10RollbackWindow:
     """Tests for contract_b10_rollback_window() — HARD_BLOCK severity.
 
     CRITICAL: B10 is the contract that justifies EXTERNALLY_REVERSIBLE classification.
-    When B10 fails, it MUST emit a classification override to IRREVERSIBLE_TERMINAL.
+    A closed rollback window MUST park the request for approval (HITL).
     """
 
     def test_b10_sufficient_rollback_window_admits(self):
@@ -126,7 +127,7 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
@@ -134,10 +135,10 @@ class TestContractB10RollbackWindow:
         assert result.contract_id == "B10"
         assert result.severity == ContractSeverity.HARD_BLOCK
         assert len(result.findings) == 0
-        assert classification_override is None  # Remains EXTERNALLY_REVERSIBLE
+        assert result.code is None
 
-    def test_b10_venue_no_rollback_support_rejects_and_reclassifies(self):
-        """B10 rejects when venue doesn't support rollback, emits IRREVERSIBLE_TERMINAL override."""
+    def test_b10_venue_no_rollback_support_escalates_to_hitl(self):
+        """B10 rejects when venue doesn't support rollback, parks for human approval (HITL)."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -160,23 +161,23 @@ class TestContractB10RollbackWindow:
             "api_available": False,
         }
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.HITL_ESCALATE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"]
             == "Venue does not support rollback/cancellation"
         )
-        assert "IRREVERSIBLE_TERMINAL" in result.findings[0]["note"]
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert "human approval required" in result.findings[0]["note"]
+        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
 
-    def test_b10_rollback_api_unavailable_rejects_and_reclassifies(self):
-        """B10 rejects when rollback API is not operational, emits IRREVERSIBLE_TERMINAL override."""
+    def test_b10_rollback_api_unavailable_escalates_to_hitl(self):
+        """B10 rejects when rollback API is not operational, parks for human approval (HITL)."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -199,25 +200,25 @@ class TestContractB10RollbackWindow:
             "api_available": False,  # API down
         }
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.HITL_ESCALATE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"]
             == "Venue rollback API is not currently operational"
         )
-        assert "Cannot guarantee reversibility" in result.findings[0]["note"]
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert "human approval required" in result.findings[0]["note"]
+        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
 
-    def test_b10_requested_window_exceeds_venue_capability_rejects_and_reclassifies(
+    def test_b10_requested_window_exceeds_venue_capability_escalates_to_hitl(
         self,
     ):
-        """B10 rejects when requested window > venue max, emits IRREVERSIBLE_TERMINAL override."""
+        """B10 rejects when requested window > venue max, parks for human approval (HITL)."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -240,13 +241,13 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.HITL_ESCALATE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"]
@@ -254,13 +255,13 @@ class TestContractB10RollbackWindow:
         )
         assert result.findings[0]["requested_window_seconds"] == 600
         assert result.findings[0]["max_window_seconds"] == 300
-        assert "Rollback window too long" in result.findings[0]["note"]
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert "human approval required" in result.findings[0]["note"]
+        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
 
-    def test_b10_requested_window_below_minimum_threshold_rejects_and_reclassifies(
+    def test_b10_requested_window_below_minimum_threshold_escalates_to_hitl(
         self,
     ):
-        """B10 rejects when requested window < min threshold, emits IRREVERSIBLE_TERMINAL override."""
+        """B10 rejects when requested window < min threshold, parks for human approval (HITL)."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -283,13 +284,13 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.HITL_ESCALATE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"]
@@ -297,11 +298,11 @@ class TestContractB10RollbackWindow:
         )
         assert result.findings[0]["requested_window_seconds"] == 30
         assert result.findings[0]["min_threshold_seconds"] == 60
-        assert "Insufficient rollback window" in result.findings[0]["note"]
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert "human approval required" in result.findings[0]["note"]
+        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
 
-    def test_b10_provider_unavailable_rejects_and_reclassifies(self):
-        """B10 rejects when provider raises RuntimeError, emits IRREVERSIBLE_TERMINAL override."""
+    def test_b10_provider_unavailable_escalates_to_hitl(self):
+        """B10 rejects when provider raises RuntimeError, parks for human approval (HITL)."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -322,23 +323,23 @@ class TestContractB10RollbackWindow:
             "Settlement provider unavailable"
         )
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.HITL_ESCALATE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"] == "Rollback capability provider unavailable"
         )
         assert "Settlement provider unavailable" in result.findings[0]["error"]
-        assert "Cannot verify reversibility" in result.findings[0]["note"]
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert "human approval required" in result.findings[0]["note"]
+        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
 
-    def test_b10_missing_threshold_rejects_and_reclassifies(self):
-        """B10 rejects when threshold is missing, emits IRREVERSIBLE_TERMINAL override."""
+    def test_b10_missing_threshold_hard_blocks(self):
+        """B10 rejects when threshold is missing, a configuration error stays HARD_BLOCK."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -354,7 +355,7 @@ class TestContractB10RollbackWindow:
 
         mock_provider = MagicMock()
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
@@ -366,10 +367,10 @@ class TestContractB10RollbackWindow:
             "Missing threshold: bounding.b10_min_rollback_window_seconds"
             in result.findings[0]["reason"]
         )
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert result.code is None  # configuration error: HARD_BLOCK
 
-    def test_b10_invalid_threshold_rejects_and_reclassifies(self):
-        """B10 rejects when threshold is invalid (negative), emits IRREVERSIBLE_TERMINAL override."""
+    def test_b10_invalid_threshold_hard_blocks(self):
+        """B10 rejects when threshold is invalid (negative), a configuration error stays HARD_BLOCK."""
         request = BoundedTradeRequest(
             symbol="AAPL",
             amount=1000.0,
@@ -387,7 +388,7 @@ class TestContractB10RollbackWindow:
 
         mock_provider = MagicMock()
 
-        result, classification_override = contract_b10_rollback_window(
+        result = contract_b10_rollback_window(
             request, thresholds, mock_provider
         )
 
@@ -400,7 +401,7 @@ class TestContractB10RollbackWindow:
             in result.findings[0]["reason"]
         )
         assert result.findings[0]["threshold_value"] == -100
-        assert classification_override == "IRREVERSIBLE_TERMINAL"  # Critical
+        assert result.code is None  # configuration error: HARD_BLOCK
 
     def test_b10_boundary_conditions_inclusive(self):
         """B10 validates inclusive boundary semantics (≥ for min threshold, ≤ for max capability)."""
@@ -427,12 +428,12 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result_at_min, override_at_min = contract_b10_rollback_window(
+        result_at_min = contract_b10_rollback_window(
             request_at_min, thresholds, mock_provider
         )
 
         assert result_at_min.admitted is True  # Inclusive boundary
-        assert override_at_min is None
+        assert result_at_min.code is None
 
         # Test 2: Exactly at maximum capability — should admit
         request_at_max = BoundedTradeRequest(
@@ -450,9 +451,9 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result_at_max, override_at_max = contract_b10_rollback_window(
+        result_at_max = contract_b10_rollback_window(
             request_at_max, thresholds, mock_provider
         )
 
         assert result_at_max.admitted is True  # Inclusive boundary
-        assert override_at_max is None
+        assert result_at_max.code is None

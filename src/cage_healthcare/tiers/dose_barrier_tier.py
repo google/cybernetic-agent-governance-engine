@@ -19,7 +19,7 @@ from typing import Any
 from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
 from src.gateway.governance.contracts import (
     CommitReceipt,
-    GovernanceTierPlugin,
+    MutatingTier,
     Violation,
 )
 from src.gateway.governance.safety.barrier_tier import (
@@ -29,7 +29,7 @@ from src.gateway.governance.safety.barrier_tier import (
 )
 
 
-class DoseBarrierTier(GovernanceTierPlugin):
+class DoseBarrierTier(MutatingTier):
     """Serum-concentration barrier tier (phase 2, order 3).
 
     Note what is absent: no Lua script, no fence-epoch logic, no KMS call,
@@ -43,10 +43,6 @@ class DoseBarrierTier(GovernanceTierPlugin):
     @property
     def tier_name(self) -> str:
         return "dose_barrier"
-
-    @property
-    def phase(self) -> int:
-        return 2
 
     @property
     def order(self) -> int:
@@ -90,3 +86,8 @@ class DoseBarrierTier(GovernanceTierPlugin):
     ) -> None:
         if self.cbf is not None:
             await rollback_barrier(self.cbf, receipt)
+
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        """The debit is final at commit; nothing expires, so nothing to confirm."""

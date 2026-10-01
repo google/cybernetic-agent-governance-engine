@@ -119,11 +119,10 @@ class RollbackCapabilityProvider(Protocol):
     within the specified rollback_window_seconds. This justifies the
     EXTERNALLY_REVERSIBLE classification for execute_trade_bounded.
 
-    Fail-closed semantics:
-    - Provider unavailable → contract returns admitted=False, severity=HARD_BLOCK
-    - Venue does not support rollback → contract returns admitted=False, severity=HARD_BLOCK
-    - Rollback window exceeds venue capability → emit classification override
-      to IRREVERSIBLE_TERMINAL (per Ratified Decision 2)
+    Fail-closed semantics: if the provider is unavailable, the venue does not
+    support rollback, or the window exceeds the venue's capability, B10 returns
+    admitted=False with severity HITL_ESCALATE and code
+    ``B10_ROLLBACK_WINDOW_CLOSED`` — the request parks for human approval.
     """
 
     def verify_rollback_window(

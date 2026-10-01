@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-from src.gateway.governance.contracts import GovernanceTierPlugin, Violation
+from src.gateway.governance.contracts import ReadOnlyTier, Violation
 from src.gateway.governance.env_posture import DeploymentPosture, is_enforcing
 from src.gateway.governance.governor import posture as posture_mod
 from src.gateway.governance.governor.posture import (
@@ -73,9 +73,8 @@ class _Redis:
             raise ConnectionError("Redis PING failed")
 
 
-class _NeedsTier(GovernanceTierPlugin):
+class _NeedsTier(ReadOnlyTier):
     tier_name = "needs_missing_module"
-    phase = 1
     order = 1
     runtime_requirements = ("cage_module_that_does_not_exist",)
 

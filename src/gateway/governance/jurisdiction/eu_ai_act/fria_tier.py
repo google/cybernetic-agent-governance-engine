@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.gateway.governance.constants import GovernanceControl
-from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
+from src.gateway.governance.contracts import ReadOnlyTier, Violation, ViolationKind
 from src.gateway.governance.seams.normative import NormativeProvider
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,8 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class FriaTier:
-    """Phase-1, read-only ``GovernanceTierPlugin`` for ``CTRL_FRIA_006``.
+class FriaTier(ReadOnlyTier):
+    """Read-only (phase-1) tier for ``CTRL_FRIA_006``.
 
     Args:
         provider: The deployment's ``NormativeProvider``.
@@ -92,7 +92,6 @@ class FriaTier:
         ValueError: The interval or timeout is not a positive finite number.
     """
 
-    phase = 1
     order = FRIA_TIER_ORDER
     tier_name = FRIA_TIER_NAME
     runtime_requirements: tuple[str, ...] = ()
@@ -159,14 +158,6 @@ class FriaTier:
                 f"FRIA refused the action; findings={list(result.findings)!r}",
             )
         ]
-
-    async def commit(
-        self, action: str, params: dict[str, Any]
-    ) -> tuple[list[Violation], CommitReceipt | None]:
-        return [], None  # phase 1: never called with effect
-
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
-        return None
 
     # ------------------------------------------------------------------
 

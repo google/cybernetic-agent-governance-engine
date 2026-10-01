@@ -21,7 +21,13 @@ from typing import Any
 
 import pytest
 
-from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    MutatingTier,
+    ReadOnlyTier,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
@@ -36,21 +42,20 @@ from tests.governor.scope_helpers import rollback_pairs, run_scoped
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
-class _Tier:
-    """Minimal GovernanceTierPlugin with call recording."""
+class _TierBehaviour:
+    """Shared call-recording behaviour, mixed into one of the two tier kinds."""
 
     def __init__(
         self,
         name: str,
         *,
-        phase: int = 1,
         order: int = 0,
         deny: bool = False,
         rollback_raises: bool = False,
         claims_raises: bool = False,
         log: list[str] | None = None,
     ) -> None:
-        self._name, self._phase, self._order = name, phase, order
+        self._name, self._order = name, order
         self._deny, self._rollback_raises = deny, rollback_raises
         self.claims_raises = claims_raises
         self.log = log if log is not None else []
@@ -58,10 +63,6 @@ class _Tier:
     @property
     def tier_name(self) -> str:
         return self._name
-
-    @property
-    def phase(self) -> int:
-        return self._phase
 
     @property
     def order(self) -> int:
@@ -81,6 +82,12 @@ class _Tier:
         self.log.append(f"evaluate:{self._name}")
         return self._verdict()
 
+
+class _ReadOnly(_TierBehaviour, ReadOnlyTier):
+    pass
+
+
+class _Mutating(_TierBehaviour, MutatingTier):
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
@@ -95,6 +102,17 @@ class _Tier:
         self.log.append(f"rollback:{self._name}")
         if self._rollback_raises:
             raise RuntimeError("rollback exploded")
+
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
+        assert receipt.tier == self._name
+        self.log.append(f"confirm:{self._name}")
+
+
+def _Tier(name: str, *, phase: int = 1, **kwargs: Any) -> _TierBehaviour:
+    """Build a read-only (phase 1) or mutating (phase 2) recording tier."""
+    return (_ReadOnly if phase == 1 else _Mutating)(name, **kwargs)
 
 
 def _ctx(profile: Profile = Profile.FULL) -> StageContext:
