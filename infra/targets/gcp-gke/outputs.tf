@@ -209,3 +209,8 @@ output "benchmark_signing_key_version" {
   description = "benchmark-signing key version (KMS_GOVERNANCE_KEY for the benchmark job only; not a trust anchor)"
   value       = local.benchmark_signing_key_version
 }
+
+output "cloudbuild_service_account_email" {
+  description = "Dedicated Cloud Build service account email for building and attesting container images (POAM-2026-083)"
+  value       = google_service_account.cloudbuild.email
+}

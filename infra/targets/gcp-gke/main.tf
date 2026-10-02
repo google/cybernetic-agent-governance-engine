@@ -51,8 +51,7 @@ terraform {
 
 data "google_client_config" "default" {}
 
-# Resolve project number — required to construct the Cloud Build default SA
-# member string: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
+# Resolve project number — required for VPC Service Controls perimeter resource naming in perimeter.tf.
 data "google_project" "current" {
   project_id = var.project_id
 }
@@ -305,24 +304,10 @@ resource "google_storage_hmac_key" "langfuse_key" {
 
 # ─── Cloud Build IAM — Artifact Registry push permission ─────────────────────
 #
-# GCP projects created after May 2023 route gcr.io pushes through Artifact
-# Registry. Two SAs need roles/artifactregistry.writer:
-#
-#   1. The Cloud Build default SA ([PROJECT_NUMBER]@cloudbuild.gserviceaccount.com)
-#      — used by gcloud builds submit and any trigger without a custom SA.
-#
-#   2. The compliance-bridge trigger custom SA
-#      (compliance-bridge-sa@<your-project-id>.iam.gserviceaccount.com)
-#      — the compliance-bridge-main GitHub trigger is configured to run as
-#        this SA, so it is the identity that actually performs the docker push.
-#
-# Reference: https://cloud.google.com/build/docs/securing-builds/configure-access-for-cloud-build-service-account
-
-resource "google_project_iam_member" "cloudbuild_artifactregistry_writer" {
-  project = var.project_id
-  role    = "roles/artifactregistry.writer"
-  member  = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
-}
+# Dedicated Cloud Build identity (google_service_account.cloudbuild) and its
+# Artifact Registry / Cloud Logging / staging-bucket bindings are declared in
+# iam.tf (POAM-2026-083). The compliance-bridge-sa binding below is retained
+# for legacy console triggers that still reference compliance-bridge-sa.
 
 resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writer" {
   project = var.project_id

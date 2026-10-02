@@ -154,7 +154,7 @@ locals {
   reconciler_member        = "serviceAccount:${google_service_account.reconciler.email}"
   compliance_bridge_member = "serviceAccount:${google_service_account.compliance_bridge.email}"
   benchmark_member         = "serviceAccount:${google_service_account.benchmark.email}"
-  cloudbuild_member        = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
+  cloudbuild_member        = "serviceAccount:${google_service_account.cloudbuild.email}"
 
   signing_key_access = {
     gateway_seal = {

@@ -13,10 +13,12 @@
 # limitations under the License.
 
 substitutions:
-  _SHORT_SHA: "v1"   # Override via --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
+  _IMAGE_NAME: "vllm-streamer"
   _ENVIRONMENT: "staging"
   _KMS_LOCATION: "us-central1"
   _KMS_KEY_VERSION: "1"
+
+serviceAccount: "projects/$PROJECT_ID/serviceAccounts/cage-cloudbuild-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com"
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
@@ -25,32 +27,27 @@ steps:
       - 'build'
       - '--file=deployment/docker/Dockerfile.vllm'
       - '--no-cache'
-      - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
+      - '--tag=gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$_SHORT_SHA'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     id: push-vllm-streamer
-    args: ['push', 'gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$_SHORT_SHA']
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
     id: attest-vllm-streamer
     entrypoint: 'bash'
+    env:
+      - 'PROJECT_ID=${PROJECT_ID}'
     args:
-      - '-ceu'
-      - |
-        DIGEST=$$(gcloud container images describe "gcr.io/${PROJECT_ID}/vllm-streamer:${_SHORT_SHA}" --format='get(image_summary.digest)')
-        gcloud container binauthz attestations sign-and-create \
-          --project="${PROJECT_ID}" \
-          --artifact-url="gcr.io/${PROJECT_ID}/vllm-streamer@$${DIGEST}" \
-          --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
-          --keyversion-project="${PROJECT_ID}" \
-          --keyversion-location="${_KMS_LOCATION}" \
-          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
-          --keyversion-key="binauthz-attestor" \
-          --keyversion="${_KMS_KEY_VERSION}"
+      - 'scripts/attest_image.sh'
+      - 'gcr.io/${PROJECT_ID}/${_IMAGE_NAME}:${_SHORT_SHA}'
+      - '${_ENVIRONMENT}'
+      - '${_KMS_LOCATION}'
+      - '${_KMS_KEY_VERSION}'
 
 images:
-  - 'gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:$_SHORT_SHA'
 
 # vLLM base image is large (~10 GB); allow up to 40 minutes.
 timeout: '2400s'
@@ -59,3 +56,4 @@ options:
   # E2_HIGHCPU_32 provides enough RAM to pull and layer the vLLM base image.
   machineType: 'E2_HIGHCPU_32'
   logging: CLOUD_LOGGING_ONLY
+  substitutionOption: MUST_MATCH

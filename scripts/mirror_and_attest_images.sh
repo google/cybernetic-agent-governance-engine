@@ -15,7 +15,8 @@
 
 # Mirror third-party container images by immutable @sha256: digest into the
 # project's Artifact Registry (gcr.io/${PROJECT_ID}/...) via Cloud Build and
-# attest each mirrored digest with Binary Authorization (CM-7, SI-7, POAM-2026-083).
+# attest each mirrored digest with Binary Authorization via scripts/attest_image.sh
+# (CM-7, SI-7, POAM-2026-083).
 # No admission_whitelist_patterns are added for third-party registries.
 
 set -euo pipefail
@@ -29,30 +30,40 @@ ENVIRONMENT="${ENVIRONMENT:-staging}"
 KMS_LOCATION="${KMS_LOCATION:-us-central1}"
 KMS_KEY_VERSION="${KMS_KEY_VERSION:-1}"
 REGISTRY="gcr.io/${PROJECT_ID}"
+CLOUDBUILD_SA="projects/${PROJECT_ID}/serviceAccounts/cage-cloudbuild-${ENVIRONMENT}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Canonical digest-pinned upstream images mirrored into Artifact Registry.
 THIRD_PARTY_IMAGES=(
-  "presidio-analyzer|mcr.microsoft.com/presidio-analyzer@sha256:7d3c6513bc188a92c67ca068346bf2ef042d3726c243217ce9fb3a57960d3234|2.2.357"
-  "presidio-anonymizer|mcr.microsoft.com/presidio-anonymizer@sha256:562be3cb2e5c15f17c10935721459ef0d10cc2f28209f1f925b86dc7d40a2146|2.2.357"
-  "vllm-openai|vllm/vllm-openai@sha256:9bd4d87aa1e1650d5f5b9e0ca2bb070a32404f8b92f3b85e8d8ca30fc04ab6a3|v0.7.3"
-  "opa|openpolicyagent/opa@sha256:cc4efcabce6d6ebfa2dc8efdb2edaf4dbdeaa4e11f2be5a4a01a6661c82fc1b8|1.2.0-static"
-  "redis|redis@sha256:1f885a1088573222b2b34614878726658c71ff7f68db3b8ef07bd0ca57a2909e|7.4-alpine"
-  "clickhouse-server|docker.io/clickhouse/clickhouse-server@sha256:93f94e0c86d78c1ef8be33339d7dc8dc8c8e27c1b30d828ffab3893bf950d895|24.3-alpine"
-  "clickhouse-keeper|docker.io/clickhouse/clickhouse-keeper@sha256:77026fa37cc6922d10a25a8cd827cf3682e3fb0942dc162e490fa991bdbf0224|24.3-alpine"
-  "langfuse|langfuse/langfuse@sha256:6b21a5086a07d9df332f7ecfc46778b3eb098b34df602ab80a0cd32a5f6c1134|3"
-  "langfuse-worker|langfuse/langfuse-worker@sha256:41f5785e862bf7e114cdbd8342be524c78dc8c88f6df5bd2c7debb3de98ec43b|3"
-  "cloud-sql-proxy|gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:a77c72c56747cf2f431a4ed5e4a45e62003ca0fb94dc9f0c9cd390e84be2fa0e|2.14.2"
+  "presidio-analyzer|mcr.microsoft.com/presidio-analyzer@sha256:8e09d9f0a928e86b6c634eec9a8e668738508154cb7e683d7c7c62867ce4a514|2.2.357"
+  "presidio-anonymizer|mcr.microsoft.com/presidio-anonymizer@sha256:e39a7671f51c40aa493201f0d3f71ad74efc98bbd34ccd417a4cfd3ffaa59ae4|2.2.357"
+  "opa|openpolicyagent/opa@sha256:2636af0937bf7c5ab7f79271399c53c45d4b4d2af8a2b9cc43f65c6598b49064|1.2.0-static"
+  "redis|redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499|7.4-alpine"
+  "clickhouse-server|docker.io/clickhouse/clickhouse-server@sha256:c3f166f4a80098480463d897a63f6867d24e3a7661fc1fe72e889788115a25f1|24.3-alpine"
+  "clickhouse-keeper|docker.io/clickhouse/clickhouse-keeper@sha256:32686ea04febc134113d1b61109d1e0d0d7dc02a2b3dc098c1f035daeec4ba57|24.3-alpine"
+  "langfuse|langfuse/langfuse@sha256:a343f64e035eb01aeea358703a0428945d909d01e19452509a5a830862dda878|3"
+  "langfuse-worker|langfuse/langfuse-worker@sha256:8a28c946bb5401eef488153fa294db5a79bd99dd5c90db8e4d39559374c9ebd3|3"
+  "cloud-sql-proxy|gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:d3f195cb893f2abb2ce8f28a4d3eee9b5589750711b4fbf67c78ce215c520e96|2.14.2"
 )
 
-cb_file=$(mktemp -t cloudbuild_mirror.XXXXXX)
-trap 'rm -f "$cb_file"' EXIT
+cb_dir=$(mktemp -d -t cloudbuild_mirror.XXXXXX)
+trap 'rm -rf "$cb_dir"' EXIT
 
-{
-  echo "steps:"
-  for entry in "${THIRD_PARTY_IMAGES[@]}"; do
-    IFS='|' read -r name upstream_ref version_tag <<< "$entry"
-    target_tag="${REGISTRY}/${name}:${version_tag}"
-    cat <<EOF
+mkdir -p "${cb_dir}/scripts"
+cp "scripts/attest_image.sh" "${cb_dir}/scripts/attest_image.sh"
+chmod +x "${cb_dir}/scripts/attest_image.sh"
+
+wait_for_pids=()
+mirror_names=()
+
+for entry in "${THIRD_PARTY_IMAGES[@]}"; do
+  IFS='|' read -r name upstream_ref version_tag <<< "$entry"
+  target_tag="${REGISTRY}/${name}:${version_tag}"
+  cb_file="${cb_dir}/cloudbuild.${name}.yaml"
+  cat > "$cb_file" <<EOF
+substitutions:
+  _IMAGE_NAME: '${name}'
+serviceAccount: '${CLOUDBUILD_SA}'
+steps:
 - name: 'gcr.io/cloud-builders/docker'
   id: pull-${name}
   args: ['pull', '${upstream_ref}']
@@ -65,34 +76,57 @@ trap 'rm -f "$cb_file"' EXIT
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
   id: attest-${name}
   entrypoint: 'bash'
+  env:
+    - 'PROJECT_ID=${PROJECT_ID}'
+    - 'IMAGE_NAME=\${_IMAGE_NAME}'
   args:
-    - '-ceu'
-    - |
-      DIGEST=\$\$(gcloud container images describe "${target_tag}" --format='get(image_summary.digest)')
-      gcloud container binauthz attestations sign-and-create \\
-        --project="${PROJECT_ID}" \\
-        --artifact-url="${REGISTRY}/${name}@\$\${DIGEST}" \\
-        --attestor="projects/${PROJECT_ID}/attestors/cage-build-attestor-${ENVIRONMENT}" \\
-        --keyversion-project="${PROJECT_ID}" \\
-        --keyversion-location="${KMS_LOCATION}" \\
-        --keyversion-keyring="cage-signing-${ENVIRONMENT}" \\
-        --keyversion-key="binauthz-attestor" \\
-        --keyversion="${KMS_KEY_VERSION}"
-EOF
-  done
-  cat <<EOF
-timeout: '2400s'
+    - 'scripts/attest_image.sh'
+    - '${target_tag}'
+    - '${ENVIRONMENT}'
+    - '${KMS_LOCATION}'
+    - '${KMS_KEY_VERSION}'
+timeout: '1200s'
 options:
   machineType: 'E2_HIGHCPU_8'
   logging: CLOUD_LOGGING_ONLY
 EOF
-} > "$cb_file"
+
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    cat "$cb_file"
+    continue
+  fi
+
+  echo "🪞 Starting Cloud Build mirror & attestation for ${name} (${version_tag})..."
+  gcloud builds submit \
+    --config "$cb_file" \
+    --project "$PROJECT_ID" \
+    --service-account "$CLOUDBUILD_SA" \
+    --substitutions="_IMAGE_NAME=${name}" \
+    "$cb_dir" > "/tmp/mirror_${name}.log" 2>&1 &
+  wait_for_pids+=("$!")
+  mirror_names+=("${name}")
+done
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
-  cat "$cb_file"
   exit 0
 fi
 
-echo "🪞 Submitting Cloud Build job to mirror and attest ${#THIRD_PARTY_IMAGES[@]} third-party images..."
-gcloud builds submit --no-source --config "$cb_file" --project "$PROJECT_ID"
-echo "✅ Mirrored and attested all third-party images into ${REGISTRY}."
+echo "⏳ Waiting for ${#wait_for_pids[@]} mirror Cloud Build job(s) to finish..."
+fail=0
+for idx in "${!wait_for_pids[@]}"; do
+  pid="${wait_for_pids[$idx]}"
+  name="${mirror_names[$idx]}"
+  if ! wait "${pid}"; then
+    echo "❌ Mirror Cloud Build job failed for ${name} (see /tmp/mirror_${name}.log)" >&2
+    fail=1
+  else
+    echo "✅ Mirror Cloud Build job succeeded for ${name}"
+  fi
+done
+
+if [[ "${fail}" -eq 1 ]]; then
+  echo "❌ One or more third-party image mirror jobs failed." >&2
+  exit 1
+fi
+
+echo "✅ Mirrored and attested all ${#THIRD_PARTY_IMAGES[@]} third-party images into ${REGISTRY}."
