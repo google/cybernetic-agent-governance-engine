@@ -53,9 +53,17 @@ RUN uv sync --frozen --no-dev --no-install-project --no-build --extra compliance
 
 # Copy application source — all directories needed by the compliance-bridge.
 # Placed AFTER uv sync to maximise Docker layer cache reuse.
+# src/__init__.py and src/integrations/ are required because
+# src/gateway/governance/evidence/factory.py, src/gateway/governance/signer_factory.py,
+# and src/compliance_bridge/main.py lazy-import G3-allowlisted seams under
+# src.integrations.*, and since #325 EvidenceCustodian.from_env() runs at startup.
+# Keep the whole-package copy: a curated sub-list is a hidden coupling that drifts
+# each time a provider is added.
+COPY src/__init__.py        /app/src/__init__.py
 COPY src/compliance_bridge /app/compliance_bridge/
 COPY src/compliance_bridge /app/src/compliance_bridge/
 COPY src/gateway            /app/src/gateway/
+COPY src/integrations       /app/src/integrations/
 COPY config                 /app/config/
 COPY compliance             /app/compliance/
 COPY README.md              /app/README.md
