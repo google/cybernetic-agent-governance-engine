@@ -250,6 +250,68 @@ class TelemetryThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# EV-7: Reconciliation Thresholds (discrepancy guard + settlement window)
+# ---------------------------------------------------------------------------
+
+
+class ReconciliationThresholds(BaseModel):
+    """Ground-truth reconciliation thresholds (POAM-2026-087, ADR-010).
+
+    The discrepancy guard rejects a custodian snapshot whose delta from the
+    self-reported baseline exceeds ``max(discrepancy_ratio * |baseline|,
+    discrepancy_abs_floor)``. The ratio alone refuses legitimate movements on
+    small balances and cannot see a double-spend on large ones; the absolute
+    floor fixes the first, the settlement-aware ledger (WS-A) the second.
+
+    Env overrides: RECONCILIATION_DISCREPANCY_RATIO,
+                   RECONCILIATION_DISCREPANCY_ABS_FLOOR,
+                   RECONCILIATION_SETTLEMENT_LAG_SECONDS,
+                   RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS
+    """
+
+    discrepancy_ratio: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "[EV-7] Relative discrepancy guard: a snapshot that moves more than "
+            "this fraction of the self-reported baseline is rejected and the "
+            "fence epoch is incremented. Env override: "
+            "RECONCILIATION_DISCREPANCY_RATIO"
+        ),
+    )
+    discrepancy_abs_floor: float = Field(
+        default=100.0,
+        ge=0.0,
+        description=(
+            "[EV-7] Absolute floor (in invariant units) below which a delta is "
+            "never treated as a discrepancy, so small balances are not refused "
+            "for ordinary movements. Env override: "
+            "RECONCILIATION_DISCREPANCY_ABS_FLOOR"
+        ),
+    )
+    settlement_lag_seconds: float = Field(
+        default=120.0,
+        ge=0.0,
+        description=(
+            "[EV-7] Fallback settlement window used when the custodian does "
+            "not attest `settled_through`: local debits submitted later than "
+            "`verified_at - settlement_lag_seconds` are kept outstanding. "
+            "Env override: RECONCILIATION_SETTLEMENT_LAG_SECONDS"
+        ),
+    )
+    settlement_clock_skew_seconds: float = Field(
+        default=5.0,
+        ge=0.0,
+        description=(
+            "[EV-7] Clock-skew margin subtracted from every settlement cutoff "
+            "(attested or lag-derived) before local debits are settled. "
+            "Env override: RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Root model
 # ---------------------------------------------------------------------------
 
@@ -274,6 +336,11 @@ class GovernanceThresholds(BaseModel):
 
     # EV-6: Telemetry thresholds (max_staleness_seconds, cache_ttl_seconds)
     telemetry: TelemetryThresholds = Field(default_factory=TelemetryThresholds)
+
+    # EV-7: Reconciliation thresholds (discrepancy guard, settlement window)
+    reconciliation: ReconciliationThresholds = Field(
+        default_factory=ReconciliationThresholds
+    )
 
     # Open domain threshold namespaces (e.g. domains.finance, domains.healthcare,
     # domains.physical_ai), validated at assembly time by domain plugins.
@@ -380,6 +447,20 @@ _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     # EV-6: Telemetry thresholds
     "TELEMETRY_MAX_STALENESS_SECONDS": ("telemetry.max_staleness_seconds", int),
     "CAUSAL_CACHE_TTL_SECONDS": ("telemetry.cache_ttl_seconds", int),
+    # EV-7: Reconciliation thresholds (discrepancy guard + settlement window)
+    "RECONCILIATION_DISCREPANCY_RATIO": ("reconciliation.discrepancy_ratio", float),
+    "RECONCILIATION_DISCREPANCY_ABS_FLOOR": (
+        "reconciliation.discrepancy_abs_floor",
+        float,
+    ),
+    "RECONCILIATION_SETTLEMENT_LAG_SECONDS": (
+        "reconciliation.settlement_lag_seconds",
+        float,
+    ),
+    "RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS": (
+        "reconciliation.settlement_clock_skew_seconds",
+        float,
+    ),
 }
 
 
@@ -600,6 +681,26 @@ def get_causal_cache_ttl_seconds() -> int:
         TTL for Redis-backed causal result cache. Set to 0 to disable caching.
     """
     return THRESHOLDS.telemetry.cache_ttl_seconds
+
+
+def get_reconciliation_discrepancy_ratio() -> float:
+    """Relative discrepancy guard (config default with env override)."""
+    return THRESHOLDS.reconciliation.discrepancy_ratio
+
+
+def get_reconciliation_discrepancy_abs_floor() -> float:
+    """Absolute discrepancy floor (config default with env override)."""
+    return THRESHOLDS.reconciliation.discrepancy_abs_floor
+
+
+def get_reconciliation_settlement_lag_seconds() -> float:
+    """Fallback settlement window when `settled_through` is not attested."""
+    return THRESHOLDS.reconciliation.settlement_lag_seconds
+
+
+def get_reconciliation_settlement_clock_skew_seconds() -> float:
+    """Clock-skew margin subtracted from every settlement cutoff."""
+    return THRESHOLDS.reconciliation.settlement_clock_skew_seconds
 
 
 # ---------------------------------------------------------------------------

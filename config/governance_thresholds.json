@@ -32,6 +32,16 @@
     "enabled": false,
     "_comment_enabled": "[EV-5] KMS batch signing disabled by default for safety. Enable explicitly in production. Env override: KMS_BATCH_ENABLED."
   },
+  "reconciliation": {
+    "discrepancy_ratio": 0.5,
+    "_comment_ratio": "[EV-7] Relative discrepancy guard for the ground-truth reconciler: a custodian snapshot whose delta from the self-reported baseline exceeds max(ratio * |baseline|, abs_floor) is rejected, the fence epoch is incremented and the verified state is invalidated. Env override: RECONCILIATION_DISCREPANCY_RATIO.",
+    "discrepancy_abs_floor": 100.0,
+    "_comment_abs_floor": "[EV-7] Absolute floor (invariant units) under which a delta is never a discrepancy, so small balances are not refused for ordinary movements. POAM-2026-087 / ADR-010. Env override: RECONCILIATION_DISCREPANCY_ABS_FLOOR.",
+    "settlement_lag_seconds": 120.0,
+    "_comment_lag": "[EV-7] Fallback settlement window when the custodian does not attest settled_through: local debits newer than verified_at - lag stay outstanding. Env override: RECONCILIATION_SETTLEMENT_LAG_SECONDS.",
+    "settlement_clock_skew_seconds": 5.0,
+    "_comment_skew": "[EV-7] Clock-skew margin subtracted from every settlement cutoff before local debits are settled. Env override: RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS."
+  },
   "domains": {
     "finance": {
       "cbf": {
