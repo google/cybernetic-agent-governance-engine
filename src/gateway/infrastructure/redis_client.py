@@ -20,14 +20,18 @@ This is the canonical Redis client for all gateway-internal modules
 convenience helpers used by ControlBarrierFunction.
 
 Environment variables:
-    REDIS_HOST     — default "localhost"
-    REDIS_PORT     — default 6379
-    REDIS_DB       — default 0
-    REDIS_PASSWORD — optional
-    REDIS_TLS      — set to "true" to use rediss:// (TLS). Also auto-enabled
-                     when REDIS_URL starts with "rediss://". In production
-                     (GKE/Cloud Memorystore) always set REDIS_TLS=true.
-                     ssl_cert_reqs=None is used to allow self-signed certs in dev.
+    REDIS_HOST         — default "localhost"
+    REDIS_PORT         — default 6379
+    REDIS_DB           — default 0
+    REDIS_PASSWORD     — optional
+    REDIS_TLS          — set to "true" to use rediss:// (TLS). Also auto-enabled
+                         when REDIS_URL starts with "rediss://". Server
+                         certificates are verified (ssl.CERT_REQUIRED) under
+                         every enforcing posture (is_enforcing()) or whenever a
+                         readable REDIS_CA_CERT_PATH exists; ssl.CERT_NONE is
+                         used only in dev/test/ci without a readable CA file.
+    REDIS_CA_CERT_PATH — optional path to the pinned server CA PEM bundle
+                         (e.g. /etc/cage/tls/redis/ca.pem for Memorystore).
 """
 
 import asyncio
@@ -37,7 +41,43 @@ import os
 import ssl
 from typing import Any
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
 logger = logging.getLogger("Gateway.Infrastructure.Redis")
+
+_DEBIAN_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+
+
+def _default_ca_bundle() -> str:
+    """Return an existing system CA bundle path (Debian path first, then OpenSSL default)."""
+    if os.path.exists(_DEBIAN_CA_BUNDLE):
+        return _DEBIAN_CA_BUNDLE
+    default_cafile = ssl.get_default_verify_paths().cafile
+    if default_cafile and os.path.exists(default_cafile):
+        return default_cafile
+    return _DEBIAN_CA_BUNDLE
+
+
+def resolve_redis_tls(use_tls: bool) -> tuple[ssl.VerifyMode, str | None]:
+    """Resolve ``(ssl_cert_reqs, ssl_ca_certs)`` for a Redis connection.
+
+    Certificates are verified (``ssl.CERT_REQUIRED``) under every enforcing
+    posture (:func:`is_enforcing`) or whenever a readable ``REDIS_CA_CERT_PATH``
+    exists; ``ssl.CERT_NONE`` is used only for ``dev``/``test``/``ci`` without
+    a readable CA file.
+    """
+    if not use_tls:
+        return ssl.CERT_NONE, None
+
+    ca_path = os.environ.get("REDIS_CA_CERT_PATH")
+    posture = resolve_posture()
+    if is_enforcing(posture) or (ca_path and os.path.exists(ca_path)):
+        ca_certs = ca_path or _default_ca_bundle()
+        logger.info("🔒 Redis TLS: cert_reqs=REQUIRED ca=%s", ca_certs)
+        return ssl.CERT_REQUIRED, ca_certs
+
+    logger.warning("⚠️ Redis TLS: cert_reqs=NONE (posture=%s)", posture.value)
+    return ssl.CERT_NONE, None
 
 
 class TransactionAbortedError(Exception):
@@ -104,37 +144,7 @@ try:
         "1",
         "yes",
     ) or _REDIS_URL.startswith("rediss://")
-    if _REDIS_TLS:
-        logger.info("🔒 Gateway Redis TLS enabled (rediss://)")
-
-    # HIGH-1 fix: determine TLS cert verification mode based on environment.
-    # The previous code used ssl.CERT_NONE unconditionally, making the TLS
-    # connection vulnerable to MITM attacks even in production.
-    _CAGE_ENV_REDIS: str = os.environ.get("CAGE_ENV", "prod").lower()
-    if _REDIS_TLS:
-        _custom_ca_path = os.environ.get("REDIS_CA_CERT_PATH")
-        if _CAGE_ENV_REDIS in ("dev", "development", "test", "ci", "staging") and (
-            not _custom_ca_path or not os.path.exists(_custom_ca_path)
-        ):
-            _REDIS_SSL_CERT_REQS = ssl.CERT_NONE
-            _REDIS_CA_CERT_PATH: str | None = None
-            logger.warning(
-                "⚠️ Gateway Redis TLS: ssl_cert_reqs=NONE in %s mode (no custom CA configured). "
-                "Set CAGE_ENV=prod and REDIS_CA_CERT_PATH to enforce certificate verification.",
-                _CAGE_ENV_REDIS,
-            )
-        else:
-            _REDIS_SSL_CERT_REQS = ssl.CERT_REQUIRED
-            _REDIS_CA_CERT_PATH = (
-                _custom_ca_path or "/etc/ssl/certs/ca-certificates.crt"
-            )
-            logger.info(
-                "🔒 Gateway Redis TLS: ssl_cert_reqs=REQUIRED, ca_certs=%s",
-                _REDIS_CA_CERT_PATH,
-            )
-    else:
-        _REDIS_SSL_CERT_REQS = ssl.CERT_NONE
-        _REDIS_CA_CERT_PATH = None
+    _REDIS_SSL_CERT_REQS, _REDIS_CA_CERT_PATH = resolve_redis_tls(_REDIS_TLS)
 
     class _AsyncRedisClient:
         """Thin async Redis wrapper matching the interface expected by safety.py."""
@@ -511,7 +521,6 @@ def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any
 
     import redis.asyncio as aioredis_mod
 
-    from src.gateway.governance.env_posture import is_enforcing
     from src.gateway.infrastructure.redis_credential_factory import (
         get_redis_credential_provider,
     )
@@ -525,13 +534,7 @@ def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any
         "1",
         "yes",
     )
-    cert_reqs = ssl.CERT_NONE
-    ca_certs: str | None = None
-    if use_tls:
-        ca_path = os.environ.get("REDIS_CA_CERT_PATH")
-        if is_enforcing() or (ca_path and os.path.exists(ca_path)):
-            cert_reqs = ssl.CERT_REQUIRED
-            ca_certs = ca_path or "/etc/ssl/certs/ca-certificates.crt"
+    cert_reqs, ca_certs = resolve_redis_tls(use_tls)
 
     cred_provider = get_redis_credential_provider()
     password = None
