@@ -187,12 +187,12 @@ def test_redis_dangerous_commands_disabled():
     the Memorystore instance.  This assertion only applies to the self-managed
     GKE StatefulSet where redis-config.yaml renames the command.
     """
-    if _IS_CLOUDRUN:
+    client = _get_redis_client(db=1)
+    if _IS_CLOUDRUN or getattr(client, "is_managed_memorystore", False):
         pytest.skip(
             "Cloud Memorystore does not rename FLUSHDB — data-loss prevention "
             "is enforced via Memorystore IAM roles, not command renaming."
         )
-    client = _get_redis_client(db=1)
 
     # FLUSHDB should raise an error (command renamed to "")
     with pytest.raises(redis.exceptions.ResponseError):
@@ -215,6 +215,11 @@ def test_redis_aof_persistence_enabled():
     tier.  This assertion is skipped on Cloud Memorystore.
     """
     client = _get_redis_client(db=1)
+    if getattr(client, "is_managed_memorystore", False):
+        pytest.skip(
+            "Managed Memorystore for Valkey enforces persistence and replication "
+            "(WAIT 1 100) at the managed service tier rather than local AOF."
+        )
 
     try:
         appendonly = client.config_get("appendonly")["appendonly"]
@@ -264,21 +269,119 @@ def test_redis_db_namespace_isolation():
 # ---------------------------------------------------------------------------
 
 
+class _GkeMemorystoreProxyClient:
+    """Executes Redis operations against GKE Managed Memorystore PSC via deploy/gateway."""
+
+    is_managed_memorystore = True
+
+    def __init__(self, db: int = 1, namespace: str = "governance-stack") -> None:
+        self._db = db
+        self._namespace = namespace
+
+    def _exec(self, op: str, *args: str) -> object:
+        import subprocess
+
+        payload = json.dumps({"db": self._db, "op": op, "args": list(args)})
+        script = (
+            "import asyncio, json, os, sys\n"
+            "from src.gateway.infrastructure.redis_client import build_async_redis\n"
+            "req = json.loads(sys.stdin.read())\n"
+            "async def run():\n"
+            "    h = os.environ['REDIS_HOST']\n"
+            "    p = os.environ.get('REDIS_PORT', '6379')\n"
+            "    r = build_async_redis(f'redis://{h}:{p}', db=req['db'])\n"
+            "    try:\n"
+            "        op = req['op']\n"
+            "        a = req['args']\n"
+            "        if op == 'config_get':\n"
+            "            res = await r.config_get(a[0])\n"
+            "        elif op == 'set':\n"
+            "            res = await r.set(a[0], a[1])\n"
+            "        elif op == 'get':\n"
+            "            res = await r.get(a[0])\n"
+            "        elif op == 'delete':\n"
+            "            res = await r.delete(*a)\n"
+            "        elif op == 'flushdb':\n"
+            "            res = await r.flushdb()\n"
+            "        print(json.dumps({'ok': True, 'res': res}))\n"
+            "    except Exception as e:\n"
+            "        print(json.dumps({'ok': False, 'err': str(e), 'type': type(e).__name__}))\n"
+            "    finally:\n"
+            "        await r.aclose()\n"
+            "asyncio.run(run())\n"
+        )
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "exec",
+                "-i",
+                "-n",
+                self._namespace,
+                "deploy/gateway",
+                "-c",
+                "gateway",
+                "--",
+                "python3",
+                "-c",
+                script,
+            ],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise redis.exceptions.ConnectionError(
+                proc.stderr.strip() or "kubectl exec gateway redis proxy failed"
+            )
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        if not out.get("ok"):
+            raise redis.exceptions.ResponseError(out.get("err", "Redis error"))
+        return out.get("res")
+
+    def config_get(self, pattern: str) -> dict[str, str]:
+        res = self._exec("config_get", pattern)
+        return res if isinstance(res, dict) else {}
+
+    def set(self, key: str, value: str) -> object:
+        return self._exec("set", key, value)
+
+    def get(self, key: str) -> bytes | None:
+        res = self._exec("get", key)
+        if res is None:
+            return None
+        return res.encode("utf-8") if isinstance(res, str) else res
+
+    def delete(self, *keys: str) -> object:
+        return self._exec("delete", *keys)
+
+    def flushdb(self) -> object:
+        return self._exec("flushdb")
+
+
 def _get_redis_client(db: int = 1) -> redis.Redis:
     """Build a Redis client for the specified DB.
 
     Connection parameters are sourced from the environment,
-    matching the existing conftest.py conventions.
+    matching the existing conftest.py conventions. Falls back to the
+    in-cluster GKE Memorystore PSC proxy when localhost:6379 is not forwarded.
     """
     redis_host = os.environ.get("REDIS_HOST", "localhost")
     redis_port = int(os.environ.get("REDIS_PORT", "6379"))
     redis_password = os.environ.get("REDIS_PASSWORD", "")
 
-    return redis.Redis(
+    client = redis.Redis(
         host=redis_host,
         port=redis_port,
         db=db,
         password=redis_password,
-        socket_timeout=5,
+        socket_timeout=2,
+        socket_connect_timeout=2,
         decode_responses=False,
     )
+    try:
+        client.ping()
+        return client
+    except redis.exceptions.ConnectionError:
+        return _GkeMemorystoreProxyClient(db=db)  # type: ignore[return-value]

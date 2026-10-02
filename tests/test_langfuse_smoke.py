@@ -190,9 +190,11 @@ def test_langfuse_trace_ingestion():
     headers["Authorization"] = f"Basic {basic_auth}"
     
     # Send multiple events in a row to force ClickHouse to flush the buffer.
-    # A 0.5s inter-request delay prevents Langfuse worker queue saturation
-    # (which causes HTTP 500 on back-to-back test runs).
+    # Each ingestion event uses a distinct outer event ID so WORM retention-locked
+    # GCS buckets (roles/storage.objectCreator, no overwrite) never reject a
+    # duplicate S3 object key.
     for i in range(1, 11):
+        payload["batch"][0]["id"] = f"{unique_trace_id}-event-{i}"
         logger.info(f"Ingesting trace {i}/10: {unique_trace_id}")
         try:
             resp = requests.post(

@@ -59,7 +59,53 @@ for entry in "${THIRD_PARTY_IMAGES[@]}"; do
   IFS='|' read -r name upstream_ref version_tag <<< "$entry"
   target_tag="${REGISTRY}/${name}:${version_tag}"
   cb_file="${cb_dir}/cloudbuild.${name}.yaml"
-  cat > "$cb_file" <<EOF
+
+  if [[ "${name}" == "presidio-analyzer" || "${name}" == "presidio-anonymizer" ]]; then
+    # Upstream Presidio images place the Poetry virtualenv under /root (0700).
+    # Make /root world-readable and set POETRY_VIRTUALENVS_PATH + USER 1000 so
+    # containers start cleanly under Pod Security Standards "restricted".
+    venv_dir="presidio-analyzer-QRDmRfzT-py3.9"
+    if [[ "${name}" == "presidio-anonymizer" ]]; then
+      venv_dir="presidio-anonymizer-MJsbXgPE-py3.9"
+    fi
+    cat > "${cb_dir}/Dockerfile.${name}" <<DOCKERFILE
+FROM ${upstream_ref}
+USER root
+RUN chmod -R a+rX /root
+ENV POETRY_VIRTUALENVS_PATH=/root/.cache/pypoetry/virtualenvs
+ENV PATH="/root/.cache/pypoetry/virtualenvs/${venv_dir}/bin:\$PATH"
+USER 1000
+DOCKERFILE
+    cat > "$cb_file" <<EOF
+substitutions:
+  _IMAGE_NAME: '${name}'
+serviceAccount: '${CLOUDBUILD_SA}'
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  id: build-${name}
+  args: ['build', '-t', '${target_tag}', '-f', 'Dockerfile.${name}', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  id: push-${name}
+  args: ['push', '${target_tag}']
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+  id: attest-${name}
+  entrypoint: 'bash'
+  env:
+    - 'PROJECT_ID=${PROJECT_ID}'
+    - 'IMAGE_NAME=\${_IMAGE_NAME}'
+  args:
+    - 'scripts/attest_image.sh'
+    - '${target_tag}'
+    - '${ENVIRONMENT}'
+    - '${KMS_LOCATION}'
+    - '${KMS_KEY_VERSION}'
+timeout: '1200s'
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+EOF
+  else
+    cat > "$cb_file" <<EOF
 substitutions:
   _IMAGE_NAME: '${name}'
 serviceAccount: '${CLOUDBUILD_SA}'
@@ -90,6 +136,7 @@ options:
   machineType: 'E2_HIGHCPU_8'
   logging: CLOUD_LOGGING_ONLY
 EOF
+  fi
 
   if [[ "${DRY_RUN:-false}" == "true" ]]; then
     cat "$cb_file"
