@@ -228,17 +228,11 @@ resource "google_project_iam_member" "vllm_storage_viewer" {
   }
 }
 
-resource "google_project_iam_member" "vllm_bucket_reader" {
-  count   = var.enable_vllm ? 1 : 0
-  project = var.project_id
-  role    = "roles/storage.legacyBucketReader"
-  member  = "serviceAccount:${google_service_account.vllm.email}"
-
-  condition {
-    title       = "cage-vllm-model-bucket-metadata-only"
-    description = "Grant storage.buckets.get required by runai_model_streamer_gcs on the CAGE model bucket only"
-    expression  = "resource.name.startsWith(\"projects/_/buckets/${local.model_bucket_name}\")"
-  }
+resource "google_storage_bucket_iam_member" "vllm_bucket_reader" {
+  count  = var.enable_vllm ? 1 : 0
+  bucket = local.model_bucket_name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.vllm.email}"
 }
 
 # ---------------------------------------------------------------------------
