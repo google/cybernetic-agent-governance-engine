@@ -23,6 +23,7 @@ locals {
   sa_benchmark         = "cage-benchmark"
   sa_langfuse          = "langfuse"
   sa_clickhouse        = "cage-clickhouse"
+  sa_cloudbuild        = "cage-cloudbuild-${var.environment}"
 
   # Kubernetes ServiceAccount names (KSAs), one per workload (POAM-2026-079).
   # The "-sa" suffix matches the Linkerd mesh identities in
@@ -110,6 +111,13 @@ resource "google_service_account" "langfuse" {
   account_id   = local.sa_langfuse
   display_name = "CAGE Langfuse Service Account"
   description  = "Least-privilege SA for Langfuse observability. Connects to Cloud SQL via IAM authentication and Memorystore app cache. (POAM-002 / POAM-2026-079 / AC-6)"
+  project      = var.project_id
+}
+
+resource "google_service_account" "cloudbuild" {
+  account_id   = "cage-cloudbuild-${var.environment}"
+  display_name = "CAGE Cloud Build Service Account (${var.environment})"
+  description  = "Dedicated least-privilege Cloud Build identity for building, pushing, and attesting container images with the binauthz-attestor KMS key (SI-7 / CM-7 / AC-6 / POAM-2026-083)."
   project      = var.project_id
 }
 
@@ -275,6 +283,33 @@ resource "google_project_iam_member" "langfuse_memorystore_user" {
   project = var.project_id
   role    = "roles/memorystore.dbConnectionUser"
   member  = "serviceAccount:${google_service_account.langfuse.email}"
+}
+
+# ---------------------------------------------------------------------------
+# IAM Role Bindings — Cloud Build
+# Roles: Log Writer (CLOUD_LOGGING_ONLY), Artifact Registry Writer (push +
+#        images describe on AR-backed gcr.io), Storage Object Viewer on the
+#        ${var.project_id}_cloudbuild staging bucket (gcloud builds submit).
+#        KMS signing and Binary Authorization attestor/note roles are bound in
+#        kms_signing.tf and perimeter.tf via local.cloudbuild_member.
+# ---------------------------------------------------------------------------
+
+resource "google_project_iam_member" "cloudbuild_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.cloudbuild.email}"
+}
+
+resource "google_project_iam_member" "cloudbuild_artifactregistry_writer" {
+  project = var.project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${google_service_account.cloudbuild.email}"
+}
+
+resource "google_storage_bucket_iam_member" "cloudbuild_source_viewer" {
+  bucket = "${var.project_id}_cloudbuild"
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.cloudbuild.email}"
 }
 
 # ---------------------------------------------------------------------------

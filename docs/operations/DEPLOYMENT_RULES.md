@@ -53,10 +53,11 @@ for end-to-end deployment.
 # Full deployment to GKE dev (background — survives terminal closure)
 make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
 
-# Direct Cloud Build submit (single service)
+# Direct Cloud Build submit (single service via generic template + dedicated SA)
 gcloud builds submit \
-  --config deployment/docker/cloudbuild.gateway.yaml \
-  --substitutions=_GCP_PROJECT_ID=<PROJECT_ID>
+  --config deployment/docker/cloudbuild.image.yaml \
+  --service-account="projects/<PROJECT_ID>/serviceAccounts/cage-cloudbuild-staging@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
 ```
 
 ### ✅ Approved Methods for Local / Agnostic
@@ -164,33 +165,28 @@ for automated validation workflow.
 
 ---
 
-## Cloud Build Configuration Files
+## Cloud Build Configuration Files & Attestation Contract
 
-All Cloud Build configs live under ``deployment/docker/``.
-`scripts/build_images.sh` generates ephemeral Cloud Build configs for most
-services and submits them in parallel; the pre-built configs below are used for
-direct `gcloud builds submit` invocations.
+All Cloud Build configs live under `deployment/docker/`.
+[`scripts/build_images.sh`](../../scripts/build_images.sh) submits [`deployment/docker/cloudbuild.image.yaml`](../../deployment/docker/cloudbuild.image.yaml) in parallel across `name|dockerfile` pairs (`governed-financial-advisor`, `gateway`, `agentsight-ui`, `compliance-bridge`, `nemo-guardrails`) plus [`deployment/docker/cloudbuild.vllm.yaml`](../../deployment/docker/cloudbuild.vllm.yaml) (`E2_HIGHCPU_32`, 40-minute timeout) under the dedicated least-privilege service account `cage-cloudbuild-<env>@<PROJECT_ID>.iam.gserviceaccount.com` ([`infra/targets/gcp-gke/iam.tf`](../../infra/targets/gcp-gke/iam.tf)).
 
-| Service | Config file | Substitutions |
+| Config / Script | Scope | Required Substitutions / Args |
 |---------|------------|---------------|
-| Gateway | `deployment/docker/cloudbuild.gateway.yaml` | `_GCP_PROJECT_ID`, `_SHORT_SHA` |
-| Governed Financial Advisor | `deployment/docker/cloudbuild.advisor.yaml` | — |
-| vLLM streamer | `deployment/docker/cloudbuild.vllm.yaml` | `_SHORT_SHA`, `_HF_TOKEN` (optional) |
-| Compliance bridge | `deployment/docker/cloudbuild.compliance.yaml` | — |
-| Lula validation | `deployment/docker/cloudbuild.lula.yaml` | — |
-| NeMo Guardrails | `deployment/docker/cloudbuild.nemo.yaml` | — |
-| AgentSight UI | `deployment/docker/cloudbuild.ui.yaml` | — |
+| [`deployment/docker/cloudbuild.image.yaml`](../../deployment/docker/cloudbuild.image.yaml) | Generic build → push → attest template (`gateway`, `governed-financial-advisor`, `compliance-bridge`, `nemo-guardrails`, `agentsight-ui`, `cage-opa`) | `_IMAGE_NAME`, `_DOCKERFILE`, `_SHORT_SHA` (optional: `_ENVIRONMENT=staging`, `_KMS_LOCATION=us-central1`, `_KMS_KEY_VERSION=1`) |
+| [`deployment/docker/cloudbuild.vllm.yaml`](../../deployment/docker/cloudbuild.vllm.yaml) | vLLM streamer (`E2_HIGHCPU_32`, `2400s` timeout) | `_SHORT_SHA` (optional: `_ENVIRONMENT`, `_KMS_LOCATION`, `_KMS_KEY_VERSION`) |
+| [`deployment/docker/cloudbuild.lula.yaml`](../../deployment/docker/cloudbuild.lula.yaml) | Lula validation runner (`0.9.5`) | Optional: `_ENVIRONMENT`, `_KMS_LOCATION`, `_KMS_KEY_VERSION` |
+| [`scripts/attest_image.sh`](../../scripts/attest_image.sh) | Canonical Binary Authorization attestation step | `<image:tag> [environment] [kms_location] [kms_key_version]` (`PROJECT_ID` env); runs `gcloud beta container binauthz attestations sign-and-create` and fails closed if `binauthz attestations list` returns no occurrence |
+| [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh) | Emits HCL `image_digests = { ... }` block for a built git SHA | `[short_sha]` (`PROJECT_ID` env) |
 
-`scripts/build_images.sh` builds the following images in parallel via Cloud Build:
-1. `governed-financial-advisor` / `financial-advisor` (root `Dockerfile`)
+`scripts/build_images.sh` builds and attests the following images in parallel via Cloud Build:
+1. `governed-financial-advisor` (root `Dockerfile`)
 2. `gateway` (`src/gateway/Dockerfile`)
 3. `agentsight-ui` (`src/agentsight-ui/Dockerfile`)
 4. `compliance-bridge` (`src/compliance_bridge/Dockerfile`)
 5. `nemo-guardrails` (`deployment/docker/Dockerfile.nemo`)
-6. vLLM streamer (`deployment/docker/cloudbuild.vllm.yaml`)
+6. `vllm-streamer` (`deployment/docker/cloudbuild.vllm.yaml`)
 
-All images are tagged `:latest` and `:<short-sha>` and pushed to
-`gcr.io/<PROJECT_ID>/<image-name>`.
+All images are tagged strictly with immutable `:<short-sha>` tags (never `:latest` or fallback `"v1"`), pushed to `gcr.io/<PROJECT_ID>/<image-name>`, attested via [`scripts/attest_image.sh`](../../scripts/attest_image.sh), and rendered as an `image_digests` HCL map by [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh).
 
 ---
 
@@ -255,7 +251,7 @@ kubectl create namespace terraform-state
       `scripts/gen_tfvars.py` (gcp-gke target only — do not commit this file)
 - [ ] GCP credentials available: `gcloud auth application-default login`
 - [ ] `kubectl` context correct: `kubectl config current-context`
-- [ ] For GKE: Cloud Build API enabled, service account has `roles/container.developer`
+- [ ] For GKE: Cloud Build API enabled, `google_service_account.cloudbuild` (`cage-cloudbuild-<env>`) provisioned by Terraform
 
 ---
 
@@ -319,10 +315,10 @@ If Cloud Build is unavailable:
 
 ### Cloud Build: "Permission denied"
 
+Verify Terraform has provisioned `google_service_account.cloudbuild` (`cage-cloudbuild-<env>@<PROJECT_ID>.iam.gserviceaccount.com`) and its bindings in [`infra/targets/gcp-gke/iam.tf`](../../infra/targets/gcp-gke/iam.tf), [`infra/targets/gcp-gke/kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf), and [`infra/targets/gcp-gke/perimeter.tf`](../../infra/targets/gcp-gke/perimeter.tf):
+
 ```bash
-gcloud projects add-iam-policy-binding <PROJECT_ID> \
-  --member=serviceAccount:<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com \
-  --role=roles/container.developer
+cd infra/targets/gcp-gke && terraform plan -var-file=staging.tfvars
 ```
 
 ### Cloud Build: "Quota exceeded"

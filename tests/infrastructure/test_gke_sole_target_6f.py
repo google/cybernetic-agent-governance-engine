@@ -1169,25 +1169,35 @@ class TestImageSupplyChainAndAttestation:
     def test_cloudbuild_configs_and_scripts_sign_digests(self) -> None:
         docker_dir = REPO_ROOT / "deployment" / "docker"
         cloudbuild_files = sorted(docker_dir.glob("cloudbuild.*.yaml"))
-        assert len(cloudbuild_files) == 8
+        assert [p.name for p in cloudbuild_files] == [
+            "cloudbuild.image.yaml",
+            "cloudbuild.lula.yaml",
+            "cloudbuild.vllm.yaml",
+        ]
 
         for cb_path in cloudbuild_files:
             text = cb_path.read_text(encoding="utf-8")
-            assert "gcloud container binauthz attestations sign-and-create" in text, (
-                f"{cb_path.name} must sign and create a Binary Authorization attestation"
-            )
-            assert "@$${DIGEST}" in text, (
-                f"{cb_path.name} must attest the pushed @sha256 digest"
+            assert "scripts/attest_image.sh" in text, (
+                f"{cb_path.name} must invoke scripts/attest_image.sh to sign and verify the pushed digest"
             )
 
+        attest_script = (REPO_ROOT / "scripts" / "attest_image.sh").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            "gcloud beta container binauthz attestations sign-and-create"
+            in attest_script
+        )
+        assert "${IMAGE_REPO}@${DIGEST}" in attest_script
+
         build_script = (REPO_ROOT / "scripts" / "build_images.sh").read_text(encoding="utf-8")
-        assert "gcloud container binauthz attestations sign-and-create" in build_script
+        assert "deployment/docker/cloudbuild.image.yaml" in build_script
         assert ":latest" not in build_script
 
         mirror_script = (REPO_ROOT / "scripts" / "mirror_and_attest_images.sh").read_text(
             encoding="utf-8"
         )
-        assert "gcloud container binauthz attestations sign-and-create" in mirror_script
+        assert "scripts/attest_image.sh" in mirror_script
         assert "THIRD_PARTY_IMAGES=(" in mirror_script
 
     def test_lula_si2_validates_actual_terraform_deployments_and_digests(self) -> None:

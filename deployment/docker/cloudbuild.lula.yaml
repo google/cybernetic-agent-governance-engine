@@ -13,18 +13,20 @@
 # limitations under the License.
 
 substitutions:
-  _GCP_PROJECT_ID: ""  # Set via --substitutions or GCP trigger substitution variable
   _ENVIRONMENT: "staging"
   _KMS_LOCATION: "us-central1"
   _KMS_KEY_VERSION: "1"
+
+serviceAccount: "projects/$PROJECT_ID/serviceAccounts/cage-cloudbuild-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com"
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     id: build-lula
     args:
       - build
+      - --no-cache
       - -t
-      - us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5
+      - us-central1-docker.pkg.dev/${PROJECT_ID}/governance-stack/lula:0.9.5
       - -f
       - deployment/docker/Dockerfile.lula
       - .
@@ -33,25 +35,24 @@ steps:
     id: push-lula
     args:
       - push
-      - us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5
+      - us-central1-docker.pkg.dev/${PROJECT_ID}/governance-stack/lula:0.9.5
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
     id: attest-lula
     entrypoint: bash
+    env:
+      - PROJECT_ID=${PROJECT_ID}
     args:
-      - -ceu
-      - |
-        DIGEST=$$(gcloud artifacts docker images describe "us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5" --format='get(image_summary.digest)')
-        gcloud container binauthz attestations sign-and-create \
-          --project="${_GCP_PROJECT_ID}" \
-          --artifact-url="us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula@$${DIGEST}" \
-          --attestor="projects/${_GCP_PROJECT_ID}/attestors/cage-build-attestor-${_ENVIRONMENT}" \
-          --keyversion-project="${_GCP_PROJECT_ID}" \
-          --keyversion-location="${_KMS_LOCATION}" \
-          --keyversion-keyring="cage-signing-${_ENVIRONMENT}" \
-          --keyversion-key="binauthz-attestor" \
-          --keyversion="${_KMS_KEY_VERSION}"
+      - scripts/attest_image.sh
+      - us-central1-docker.pkg.dev/${PROJECT_ID}/governance-stack/lula:0.9.5
+      - ${_ENVIRONMENT}
+      - ${_KMS_LOCATION}
+      - ${_KMS_KEY_VERSION}
 
 images:
-  - us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5
+  - us-central1-docker.pkg.dev/${PROJECT_ID}/governance-stack/lula:0.9.5
 timeout: 1200s
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: MUST_MATCH

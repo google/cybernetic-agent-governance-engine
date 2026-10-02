@@ -91,6 +91,21 @@ resource "google_container_analysis_note_iam_member" "cloudbuild_note_attacher" 
   member  = local.cloudbuild_member
 }
 
+resource "google_container_analysis_note_iam_member" "cloudbuild_note_occurrences_viewer" {
+  count   = var.enable_binary_authorization ? 1 : 0
+  project = var.project_id
+  note    = google_container_analysis_note.build_attestor_note[0].name
+  role    = "roles/containeranalysis.notes.occurrences.viewer"
+  member  = local.cloudbuild_member
+}
+
+resource "google_project_iam_member" "cloudbuild_occurrences_editor" {
+  count   = var.enable_binary_authorization ? 1 : 0
+  project = var.project_id
+  role    = "roles/containeranalysis.occurrences.editor"
+  member  = local.cloudbuild_member
+}
+
 resource "google_binary_authorization_policy" "cluster_policy" {
   count   = var.enable_binary_authorization ? 1 : 0
   project = var.project_id

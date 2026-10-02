@@ -1788,5 +1788,5 @@ class TestDeferQueueEndpoints:
         assert (major, minor) >= (0, 1), (
             f"Expected compliance-bridge version >= 0.1.0 (AARM primitives), "
             f"got {version}. The pre-v0.1.0 image may still be deployed. "
-            "Re-run: gcloud builds submit --config=cloudbuild.compliance.yaml ."
+            "Re-run: ONLY_IMAGE=compliance-bridge bash scripts/build_images.sh"
         )

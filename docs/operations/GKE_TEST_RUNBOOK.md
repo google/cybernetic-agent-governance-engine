@@ -156,6 +156,7 @@ The legacy shared service account is retired. Every workload in `governance-stac
 | **Langfuse Web & Worker** | `langfuse-sa` | `langfuse@<project>` | Cloud SQL IAM login (`roles/cloudsql.instanceUser`), `memorystore_app` IAM user |
 | **Benchmark Job** | `cage-benchmark-sa` | `cage-benchmark@<project>` | Signs `benchmark-signing` only (untrusted by runtime verifiers) |
 | **Lula Runner** | `cage-lula-sa` | `cage-lula@<project>` | Read-only compliance verification |
+| **Cloud Build (build plane)** | — *(Cloud Build worker)* | `cage-cloudbuild-<env>@<project>` | Signs `binauthz-attestor`; pushes to Artifact Registry (`gcr.io/<project>`); reads `<project>_cloudbuild` staging bucket; attaches & lists Binary Authorization attestations |
 
 > [!IMPORTANT]
 > **Zero-Identity Advisor Boot Guard**: The `governed-financial-advisor` pod refuses to start if `KMS_GOVERNANCE_KEY`, `RECONCILER_KMS_KEY`, `EVIDENCE_KMS_KEY`, or `GOVERNANCE_SALT` are present in its environment or `advisor-secrets`. Never inject KMS key resource IDs into advisor manifests or secrets.
@@ -167,7 +168,7 @@ Asymmetric signing keys (`EC_SIGN_P256_SHA256`) live in keyring `cage-signing-<e
 - **`reconciler-snapshot`** (`RECONCILER_KMS_KEY` on `reconciler` and `gateway`): Signs reconciliation snapshots; `gateway` verifies signatures out-of-band by `kid` via [`src/gateway/governance/reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py).
 - **`compliance-evidence`** (`EVIDENCE_KMS_KEY` on `compliance-bridge`): Signs tamper-evident compliance receipts.
 - **`benchmark-signing`**: Used exclusively by in-cluster benchmark jobs.
-- **`binauthz-attestor`**: Used by Cloud Build ([`scripts/build_images.sh`](../../scripts/build_images.sh), [`scripts/mirror_and_attest_images.sh`](../../scripts/mirror_and_attest_images.sh)) to create Binary Authorization attestations for all 15 container image digests in `var.image_digests`.
+- **`binauthz-attestor`**: Used exclusively by the dedicated Cloud Build service account (`cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com`) via [`deployment/docker/cloudbuild.image.yaml`](../../deployment/docker/cloudbuild.image.yaml), [`scripts/build_images.sh`](../../scripts/build_images.sh), [`scripts/mirror_and_attest_images.sh`](../../scripts/mirror_and_attest_images.sh), and [`scripts/attest_image.sh`](../../scripts/attest_image.sh) (`gcloud beta container binauthz attestations sign-and-create` + fail-closed `binauthz attestations list` verification) to sign Binary Authorization attestations for all 15 container image digests in `var.image_digests` (rendered via [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh)).
 
 **Local Workstation KMS Verification:**
 - In [`tests/conftest.py`](../../tests/conftest.py), running client test commands with `CAGE_ENV=test` allows the test harness to use software-backed signing for local assertions while directing HTTP traffic to live cluster endpoints (`BACKEND_URL=http://localhost:8081`, `GATEWAY_URL=http://localhost:8080`, `OPA_URL=http://localhost:8181`).

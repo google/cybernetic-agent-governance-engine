@@ -242,41 +242,39 @@ code-enforcement → GitHub UI mapping.
 
 ## Container Image Builds
 
-This repo uses **two complementary build paths**. Understanding which to use prevents accidental cache poisoning, missing SHA tags, or broken GCP Console triggers.
+This repo uses a single generic Cloud Build template ([`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml)) and a single canonical attestation script ([`scripts/attest_image.sh`](scripts/attest_image.sh)) executed under the dedicated least-privilege Cloud Build identity `cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com` ([`infra/targets/gcp-gke/iam.tf`](infra/targets/gcp-gke/iam.tf)).
 
-### Path A — Per-service `cloudbuild.*.yaml` (GCP Console triggers, event-driven)
+### Path A — Single-service build via [`cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml)
 
-| File | Service | GCP trigger |
+| File | Scope | Required Substitutions |
 |---|---|---|
-| [`cloudbuild.compliance.yaml`](deployment/docker/cloudbuild.compliance.yaml) | `compliance-bridge` | `compliance-bridge-main` — fires on every push to `main` |
-| [`cloudbuild.gateway.yaml`](deployment/docker/cloudbuild.gateway.yaml) | `gateway` | Create a trigger pointing at this file if needed |
-| [`cloudbuild.ui.yaml`](deployment/docker/cloudbuild.ui.yaml) | `agentsight-ui` | Create a trigger pointing at this file if needed |
+| [`cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) | `gateway`, `governed-financial-advisor`, `compliance-bridge`, `nemo-guardrails`, `agentsight-ui`, `cage-opa` | `_IMAGE_NAME`, `_DOCKERFILE`, `_SHORT_SHA` |
+| [`cloudbuild.vllm.yaml`](deployment/docker/cloudbuild.vllm.yaml) | `vllm-streamer` (`E2_HIGHCPU_32`, 40-minute timeout) | `_SHORT_SHA` |
+| [`cloudbuild.lula.yaml`](deployment/docker/cloudbuild.lula.yaml) | `lula` (`0.9.5`) | — |
 
-These files are the **canonical build specification** for their service. They are designed to be attached to GCP Cloud Build triggers and run under a dedicated least-privilege service account (e.g. `compliance-bridge-sa@<project>.iam.gserviceaccount.com`).
-
-Every per-service file enforces:
+Every Cloud Build config enforces:
+- `serviceAccount: projects/$PROJECT_ID/serviceAccounts/cage-cloudbuild-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com` — dedicated build identity (POAM-2026-083)
 - `--no-cache` — prevents stale Docker layer cache from masking dependency changes
 - A single immutable `:<_SHORT_SHA>` tag — no mutable `:latest` tag; the SHA tag is the audit-traceable reference required by NIST RMF and ISO 42001
-- A Binary Authorization attestation step — the pushed digest is signed with the `binauthz-attestor` key in the `cage-signing-<env>` keyring for the `cage-build-attestor-<env>` attestor
-- `machineType: E2_HIGHCPU_8` — consistent build performance
-- `timeout: 1200s` — 20-minute ceiling prevents runaway builds
-- `logging: CLOUD_LOGGING_ONLY` — structured log routing to Cloud Logging
+- [`scripts/attest_image.sh`](scripts/attest_image.sh) — resolves the pushed `@sha256` digest, signs it with `gcloud beta container binauthz attestations sign-and-create` using the `binauthz-attestor` key in `cage-signing-<env>`, and fails closed by verifying the attestation via `gcloud beta container binauthz attestations list`
+- `logging: CLOUD_LOGGING_ONLY` — structured log routing to Cloud Logging (mandatory with a custom Cloud Build SA)
 
 **When to use:** Rebuilding a single service after a targeted change, or when a GCP trigger fires automatically on `main` push.
 
 ```bash
-# Rebuild compliance-bridge manually (uses the live GCP trigger config):
-gcloud builds submit --config=deployment/docker/cloudbuild.compliance.yaml \
-  --project=<PROJECT_ID> .
+# Rebuild compliance-bridge manually:
+ONLY_IMAGE=compliance-bridge PROJECT_ID=<PROJECT_ID> bash scripts/build_images.sh
 
-# Rebuild agentsight-ui manually:
-gcloud builds submit --config=deployment/docker/cloudbuild.ui.yaml \
-  --project=<PROJECT_ID> .
+# Or invoke the template directly:
+gcloud builds submit --config=deployment/docker/cloudbuild.image.yaml \
+  --project=<PROJECT_ID> \
+  --service-account="projects/<PROJECT_ID>/serviceAccounts/cage-cloudbuild-staging@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --substitutions="_IMAGE_NAME=compliance-bridge,_DOCKERFILE=src/compliance_bridge/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
 ```
 
 ### Path B — `scripts/build_images.sh` (full-stack fan-out, pre-deploy)
 
-[`scripts/build_images.sh`](scripts/build_images.sh) builds **all first-party services in parallel** (advisor, vLLM streamer, gateway, AgentSight UI, compliance bridge, NeMo Guardrails) using ephemeral inline Cloud Build configs that mirror the same standards as Path A (`--no-cache`, a single SHA tag, Binary Authorization attestation, `E2_HIGHCPU_8`, 20-minute timeout). It captures the short git SHA from `git rev-parse --short HEAD` and passes it as the immutable tag. Set `MIRROR_THIRD_PARTY_IMAGES=true` to also mirror and attest third-party images via `scripts/mirror_and_attest_images.sh`.
+[`scripts/build_images.sh`](scripts/build_images.sh) builds **all first-party services in parallel** (advisor, vLLM streamer, gateway, AgentSight UI, compliance bridge, NeMo Guardrails) by submitting [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) (and [`deployment/docker/cloudbuild.vllm.yaml`](deployment/docker/cloudbuild.vllm.yaml)) across `name|dockerfile` pairs. It captures the short git SHA from `git rev-parse --short HEAD` (refusing to run outside a git checkout) and on completion invokes [`scripts/render_image_digests.sh`](scripts/render_image_digests.sh) to print the `image_digests = { ... }` HCL map. Set `MIRROR_THIRD_PARTY_IMAGES=true` to also mirror and attest third-party images via [`scripts/mirror_and_attest_images.sh`](scripts/mirror_and_attest_images.sh).
 
 [`deploy_all.sh`](deploy_all.sh) calls this script automatically as a pre-build step before every `gcp-gke` Terraform apply, ensuring images exist before Kubernetes deployments reference them.
 
@@ -289,21 +287,21 @@ bash scripts/build_images.sh
 
 ### Which path takes precedence?
 
-They are **not in conflict** — they serve different scopes:
+They are **not in conflict** — both submit [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml):
 
-| Concern | Path A (per-service yaml) | Path B (build_images.sh) |
+| Concern | Path A (single service) | Path B (`build_images.sh`) |
 |---|---|---|
-| Trigger | GCP Console push trigger | Developer / `deploy_all.sh` |
-| Scope | One service | All services |
-| Service account | Dedicated least-privilege SA | Caller's identity / Cloud Build default SA |
-| SHA source | `_SHORT_SHA` substitution (defaults to `v1`; set it from the trigger) | `git rev-parse --short HEAD` |
-| Use case | Automated CD on `main` push | Full-stack pre-deploy fan-out |
+| Trigger | `ONLY_IMAGE=<name>` or GCP Console trigger | Developer / `deploy_all.sh` |
+| Scope | One service | All services in parallel |
+| Service account | `cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com` | `cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com` |
+| SHA source | `_SHORT_SHA` substitution (required, no default) | `git rev-parse --short HEAD` (required) |
+| Use case | Targeted single-service rebuild | Full-stack pre-deploy fan-out |
 
 ### Adding a new service
 
 1. Create `src/<service>/Dockerfile` with the repo root as build context.
-2. Add a `build_image "<service>" "src/<service>/Dockerfile" "."` call in [`scripts/build_images.sh`](scripts/build_images.sh).
-3. If the service needs an independent GCP Console trigger, create `cloudbuild.<service>.yaml` following the pattern in [`cloudbuild.compliance.yaml`](deployment/docker/cloudbuild.compliance.yaml) and register the trigger in GCP Console.
+2. Add `"<service>|src/<service>/Dockerfile"` to `FIRST_PARTY_IMAGES` in [`scripts/build_images.sh`](scripts/build_images.sh) and `<service>` to [`scripts/render_image_digests.sh`](scripts/render_image_digests.sh).
+3. If the service needs an independent GCP Console trigger, point the trigger at [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) with `_IMAGE_NAME` and `_DOCKERFILE` substitutions.
 
 ---
 
