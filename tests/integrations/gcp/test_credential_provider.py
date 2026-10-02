@@ -21,10 +21,10 @@ Test Coverage:
     3. Audience scoping (different URLs = different tokens)
     4. Cache expiry (expired token triggers fresh mint)
     5. Metadata server unreachable (raises RuntimeError, fail-closed)
-    6. Manual integration test docstring (wrong-audience returns 403)
 """
 
 from datetime import datetime, timedelta, timezone
+
 import httpx
 import pytest
 import respx
@@ -219,68 +219,6 @@ async def test_metadata_server_empty_response(provider: GcpOidcCredentialProvide
         # Verify that get_token raises RuntimeError
         with pytest.raises(RuntimeError, match="returned empty token"):
             await provider.get_token(target_url)
-
-
-def test_manual_integration_test_docstring() -> None:
-    """
-    Test 6: Manual integration test instructions (wrong-audience verification).
-
-    This test documents the manual verification procedure for OIDC audience
-    claim validation. It is not an automated test, but a runbook for engineers.
-
-    Manual Test Procedure (requires GCP Cloud Run environment):
-    ==============================================================
-
-    1. Deploy two Cloud Run services in the same project:
-       - Service A (invoker): Makes HTTP requests with OIDC tokens
-       - Service B (receiver): Validates incoming OIDC tokens
-
-    2. Configure Service B to require authentication:
-       ```bash
-       gcloud run services add-iam-policy-binding service-b \\
-         --member="serviceAccount:service-a@PROJECT.iam.gserviceaccount.com" \\
-         --role="roles/run.invoker"
-       ```
-
-    3. From Service A, attempt to call Service B with wrong-audience token:
-       ```python
-       from src.integrations.gcp.credential_provider import GcpOidcCredentialProvider
-
-       provider = GcpOidcCredentialProvider.from_env()
-       
-       # Mint token for WRONG audience
-       token = await provider.get_token(target_url="https://wrong-service.run.app")
-       
-       # Attempt to call Service B with wrong token
-       response = await httpx.get(
-           "https://service-b.run.app/endpoint",
-           headers={"Authorization": token.authorization_header}
-       )
-       ```
-
-    4. Expected result: HTTP 403 Forbidden
-       - Service B's IAM layer should reject the token because the audience
-         claim does not match Service B's URL.
-
-    5. Repeat with correct audience:
-       ```python
-       token = await provider.get_token(target_url="https://service-b.run.app")
-       response = await httpx.get(
-           "https://service-b.run.app/endpoint",
-           headers={"Authorization": token.authorization_header}
-       )
-       ```
-
-    6. Expected result: HTTP 200 OK (or 2xx, depending on endpoint logic)
-       - Service B accepts the token because audience matches.
-
-    This verifies that:
-        - GCP Cloud Run enforces audience claim validation.
-        - Wrong-audience tokens are rejected (fail-closed security boundary).
-        - The credential provider correctly scopes tokens to target URLs.
-    """
-    # This is a documentation-only test; no assertions needed.
-    pass
 
 
 @pytest.mark.asyncio

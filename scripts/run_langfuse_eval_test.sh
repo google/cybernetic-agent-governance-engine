@@ -41,6 +41,10 @@ hr()    { echo "─────────────────────�
 if [[ -f .env ]]; then
   info "Loading .env …"
   set -a; source .env; set +a
+  if [[ "${LANGFUSE_HOST:-}" == *".svc.cluster.local"* ]]; then
+    info "Overriding in-cluster LANGFUSE_HOST (${LANGFUSE_HOST}) → http://localhost:3000 for local port-forward"
+    export LANGFUSE_HOST="http://localhost:3000"
+  fi
 else
   warn ".env not found — using defaults. LANGFUSE credentials may be missing."
 fi

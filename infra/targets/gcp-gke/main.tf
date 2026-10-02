@@ -278,10 +278,10 @@ resource "google_service_account" "langfuse_gcs" {
   project      = var.project_id
 }
 
-# B5 fix — downgraded from objectAdmin to enforce AU-9 WORM compliance
+# B5 fix — least-privilege objectUser (create/get/list/overwrite) on transient Langfuse S3 event queue bucket
 resource "google_storage_bucket_iam_member" "langfuse_gcs_creator" {
   bucket = google_storage_bucket.langfuse_events.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
 }
 

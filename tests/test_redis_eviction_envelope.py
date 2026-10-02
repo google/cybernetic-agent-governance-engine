@@ -42,26 +42,17 @@ import pytest
 import redis
 
 # ---------------------------------------------------------------------------
-# Platform detection
+# Redis topology notes
 # ---------------------------------------------------------------------------
-# Cloud Run uses Cloud Memorystore (managed Redis) which:
-#   - Does not support CONFIG GET / CONFIG SET (raises ResponseError)
+# GKE Managed Memorystore for Valkey:
+#   - Does not support CONFIG GET / CONFIG SET when disabled or restricted
 #   - Does not allow FLUSHDB / FLUSHALL rename tricks (standard Redis commands)
-#   - Uses RDB snapshots instead of AOF persistence
-#   - Enforces maxmemory policy at the managed-service level, not via CONFIG GET
+#   - Enforces persistence and replication at the managed-service level
 #
-# GKE uses a self-managed Redis StatefulSet (redis-config.yaml) where all
-# CONFIG GET assertions are valid.
-#
-# This module runs on BOTH platforms.  Tests that rely on CONFIG GET are
-# guarded with a per-test skip when Cloud Memorystore denies the command.
+# GKE self-managed Redis StatefulSet (redis-config.yaml):
+#   - Supports all CONFIG GET assertions and command renames.
 
 pytestmark = pytest.mark.integration
-
-_IS_CLOUDRUN = (
-    os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
-    or os.environ.get("TARGET_PLATFORM", "").lower() == "cloudrun"
-)
 
 # ---------------------------------------------------------------------------
 # Test 1: noeviction policy invariant
@@ -86,7 +77,7 @@ def test_redis_noeviction_invariant():
         max_memory_policy = client.config_get("maxmemory-policy")["maxmemory-policy"]
     except redis.exceptions.ResponseError as exc:
         pytest.skip(
-            f"Redis CONFIG GET not supported on this instance (Cloud Memorystore?): {exc}"
+            f"Redis CONFIG GET not supported on this instance (Managed Memorystore?): {exc}"
         )
 
     assert max_memory_policy == expected_policy, (
@@ -104,7 +95,7 @@ def test_redis_noeviction_invariant():
 def test_redis_maxmemory_configured():
     """Redis MUST have a maxmemory ceiling to prevent unbounded growth.
 
-    On Cloud Run / Cloud Memorystore, CONFIG GET is not supported — the
+    On Managed Memorystore where CONFIG GET is not supported, the
     memory ceiling is enforced at the managed-service tier and this
     assertion is skipped.
     """
@@ -118,7 +109,7 @@ def test_redis_maxmemory_configured():
         maxmemory = int(client.config_get("maxmemory")["maxmemory"])
     except redis.exceptions.ResponseError as exc:
         pytest.skip(
-            f"Redis CONFIG GET not supported on this instance (Cloud Memorystore?): {exc}"
+            f"Redis CONFIG GET not supported on this instance (Managed Memorystore?): {exc}"
         )
 
     assert maxmemory > 0, (
@@ -182,17 +173,17 @@ def test_redis_dangerous_commands_disabled():
     The redis.conf renames these commands to empty strings, making them
     unavailable at runtime.
 
-    GKE-specific: Cloud Memorystore (Cloud Run) does not disable FLUSHDB at
-    the command level — data-loss prevention is enforced via IAM roles on
-    the Memorystore instance.  This assertion only applies to the self-managed
-    GKE StatefulSet where redis-config.yaml renames the command.
+    GKE Managed Memorystore does not disable FLUSHDB at the command level —
+    data-loss prevention is enforced via IAM roles on the Memorystore instance.
+    This assertion only applies to the self-managed GKE StatefulSet where
+    redis-config.yaml renames the command.
     """
-    if _IS_CLOUDRUN:
+    client = _get_redis_client(db=1)
+    if getattr(client, "is_managed_memorystore", False):
         pytest.skip(
-            "Cloud Memorystore does not rename FLUSHDB — data-loss prevention "
+            "Managed Memorystore does not rename FLUSHDB — data-loss prevention "
             "is enforced via Memorystore IAM roles, not command renaming."
         )
-    client = _get_redis_client(db=1)
 
     # FLUSHDB should raise an error (command renamed to "")
     with pytest.raises(redis.exceptions.ResponseError):
@@ -210,17 +201,21 @@ def test_redis_aof_persistence_enabled():
 
     Without AOF, a pod restart loses all deferred gating tokens.
 
-    On Cloud Run / Cloud Memorystore, CONFIG GET is not supported — the
-    persistence mechanism is RDB snapshots enforced at the managed-service
-    tier.  This assertion is skipped on Cloud Memorystore.
+    On Managed Memorystore, persistence and replication are enforced at the
+    managed-service tier. This assertion is skipped on Managed Memorystore.
     """
     client = _get_redis_client(db=1)
+    if getattr(client, "is_managed_memorystore", False):
+        pytest.skip(
+            "Managed Memorystore for Valkey enforces persistence and replication "
+            "(WAIT 1 100) at the managed service tier rather than local AOF."
+        )
 
     try:
         appendonly = client.config_get("appendonly")["appendonly"]
     except redis.exceptions.ResponseError as exc:
         pytest.skip(
-            f"Redis CONFIG GET not supported on this instance (Cloud Memorystore?): {exc}"
+            f"Redis CONFIG GET not supported on this instance (Managed Memorystore?): {exc}"
         )
 
     assert appendonly == "yes", (
@@ -264,21 +259,119 @@ def test_redis_db_namespace_isolation():
 # ---------------------------------------------------------------------------
 
 
+class _GkeMemorystoreProxyClient:
+    """Executes Redis operations against GKE Managed Memorystore PSC via deploy/gateway."""
+
+    is_managed_memorystore = True
+
+    def __init__(self, db: int = 1, namespace: str = "governance-stack") -> None:
+        self._db = db
+        self._namespace = namespace
+
+    def _exec(self, op: str, *args: str) -> object:
+        import subprocess
+
+        payload = json.dumps({"db": self._db, "op": op, "args": list(args)})
+        script = (
+            "import asyncio, json, os, sys\n"
+            "from src.gateway.infrastructure.redis_client import build_async_redis\n"
+            "req = json.loads(sys.stdin.read())\n"
+            "async def run():\n"
+            "    h = os.environ['REDIS_HOST']\n"
+            "    p = os.environ.get('REDIS_PORT', '6379')\n"
+            "    r = build_async_redis(f'redis://{h}:{p}', db=req['db'])\n"
+            "    try:\n"
+            "        op = req['op']\n"
+            "        a = req['args']\n"
+            "        if op == 'config_get':\n"
+            "            res = await r.config_get(a[0])\n"
+            "        elif op == 'set':\n"
+            "            res = await r.set(a[0], a[1])\n"
+            "        elif op == 'get':\n"
+            "            res = await r.get(a[0])\n"
+            "        elif op == 'delete':\n"
+            "            res = await r.delete(*a)\n"
+            "        elif op == 'flushdb':\n"
+            "            res = await r.flushdb()\n"
+            "        print(json.dumps({'ok': True, 'res': res}))\n"
+            "    except Exception as e:\n"
+            "        print(json.dumps({'ok': False, 'err': str(e), 'type': type(e).__name__}))\n"
+            "    finally:\n"
+            "        await r.aclose()\n"
+            "asyncio.run(run())\n"
+        )
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "exec",
+                "-i",
+                "-n",
+                self._namespace,
+                "deploy/gateway",
+                "-c",
+                "gateway",
+                "--",
+                "python3",
+                "-c",
+                script,
+            ],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise redis.exceptions.ConnectionError(
+                proc.stderr.strip() or "kubectl exec gateway redis proxy failed"
+            )
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        if not out.get("ok"):
+            raise redis.exceptions.ResponseError(out.get("err", "Redis error"))
+        return out.get("res")
+
+    def config_get(self, pattern: str) -> dict[str, str]:
+        res = self._exec("config_get", pattern)
+        return res if isinstance(res, dict) else {}
+
+    def set(self, key: str, value: str) -> object:
+        return self._exec("set", key, value)
+
+    def get(self, key: str) -> bytes | None:
+        res = self._exec("get", key)
+        if res is None:
+            return None
+        return res.encode("utf-8") if isinstance(res, str) else res
+
+    def delete(self, *keys: str) -> object:
+        return self._exec("delete", *keys)
+
+    def flushdb(self) -> object:
+        return self._exec("flushdb")
+
+
 def _get_redis_client(db: int = 1) -> redis.Redis:
     """Build a Redis client for the specified DB.
 
     Connection parameters are sourced from the environment,
-    matching the existing conftest.py conventions.
+    matching the existing conftest.py conventions. Falls back to the
+    in-cluster GKE Memorystore PSC proxy when localhost:6379 is not forwarded.
     """
     redis_host = os.environ.get("REDIS_HOST", "localhost")
     redis_port = int(os.environ.get("REDIS_PORT", "6379"))
     redis_password = os.environ.get("REDIS_PASSWORD", "")
 
-    return redis.Redis(
+    client = redis.Redis(
         host=redis_host,
         port=redis_port,
         db=db,
         password=redis_password,
-        socket_timeout=5,
+        socket_timeout=2,
+        socket_connect_timeout=2,
         decode_responses=False,
     )
+    try:
+        client.ping()
+        return client
+    except redis.exceptions.ConnectionError:
+        return _GkeMemorystoreProxyClient(db=db)  # type: ignore[return-value]

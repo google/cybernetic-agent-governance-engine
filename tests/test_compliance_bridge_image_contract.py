@@ -184,3 +184,28 @@ def test_contract_check_fails_when_copied_package_is_missing() -> None:
     assert _missing_dockerfile_src_packages(broken_no_init, required_packages) == {
         "__init__.py"
     }
+
+
+def test_compliance_extra_includes_google_cloud_kms_for_evidence_signer() -> None:
+    """``EvidenceCustodian.from_env()`` initializes ``GCPKMSProvider`` at startup,
+    which requires ``google-cloud-kms``. Since ``src/compliance_bridge/Dockerfile``
+    installs ``--extra compliance --extra langfuse``, the ``compliance`` extra in
+    ``pyproject.toml`` must include ``google-cloud-kms``.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    pyproject = tomllib.loads(
+        (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    compliance_deps: list[str] = pyproject["project"]["optional-dependencies"][
+        "compliance"
+    ]
+    assert any(
+        dep.startswith("google-cloud-kms") for dep in compliance_deps
+    ), (
+        "pyproject.toml [project.optional-dependencies].compliance must include "
+        f"google-cloud-kms for compliance-bridge KMS signing; got: {compliance_deps}"
+    )
