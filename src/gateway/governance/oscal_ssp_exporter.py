@@ -268,21 +268,24 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "OPA and NeMo Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only "
                 "the gateway (and the compliance bridge for OPA). Managed data-plane connections "
                 "enforce in-transit TLS: dual Memorystore for Valkey instances (governance and app) "
-                "enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private Service Connect "
-                "with server CA pinning via REDIS_CA_CERT_PATH (infra/modules/memorystore_valkey/main.tf, "
+                "enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private Service Connect, "
+                "verified under every enforcing posture (is_enforcing()), CA from REDIS_CA_CERT_PATH "
+                "(infra/modules/memorystore_valkey/main.tf, "
                 "src/gateway/infrastructure/redis_client.py), and Cloud SQL PostgreSQL enforces "
                 "ssl_mode=ENCRYPTED_ONLY via the Cloud SQL Auth Proxy sidecar "
                 "(infra/modules/cloudsql_postgres/main.tf). Verified by automated Linkerd mesh "
-                "conformance tests (tests/integration/test_linkerd_mesh_conformance.py) and live CAS "
-                "issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080)."
+                "conformance tests (tests/integration/test_linkerd_mesh_conformance.py), Redis TLS "
+                "verification tests (tests/test_redis_async_builder.py), and live CAS "
+                "issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080, POAM-2026-086)."
             ),
             "evidence": (
                 "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy, "
                 "infra/modules/memorystore_valkey/main.tf, infra/modules/cloudsql_postgres/main.tf, "
                 "deployment/k8s/linkerd-mtls-policy.yaml, "
-                "tests/integration/test_linkerd_mesh_conformance.py"
+                "tests/integration/test_linkerd_mesh_conformance.py, "
+                "tests/test_redis_async_builder.py"
             ),
-            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9)",
+            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-086 (SC-8)",
         },
         "sc-39": {
             "uuid": _PLATFORM_SC39_IMPL_UUID,

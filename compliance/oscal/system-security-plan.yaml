@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-01T19:27:33Z'
+    last-modified: '2026-10-02T13:32:05Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1274,7 +1274,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 11\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-01T19:27:32Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-02T13:32:05Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1315,7 +1315,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-01T19:27:32Z'
+        value: '2026-10-02T13:32:05Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
@@ -1515,11 +1515,14 @@ system-security-plan:
         only the gateway (and the compliance bridge for OPA). Managed data-plane connections
         enforce in-transit TLS: dual Memorystore for Valkey instances (governance
         and app) enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private
-        Service Connect with server CA pinning via REDIS_CA_CERT_PATH (infra/modules/memorystore_valkey/main.tf,
-        src/gateway/infrastructure/redis_client.py), and Cloud SQL PostgreSQL enforces
-        ssl_mode=ENCRYPTED_ONLY via the Cloud SQL Auth Proxy sidecar (infra/modules/cloudsql_postgres/main.tf).
-        Verified by automated Linkerd mesh conformance tests (tests/integration/test_linkerd_mesh_conformance.py)
-        and live CAS issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080).'
+        Service Connect, verified under every enforcing posture (is_enforcing()),
+        CA from REDIS_CA_CERT_PATH (infra/modules/memorystore_valkey/main.tf, src/gateway/infrastructure/redis_client.py),
+        and Cloud SQL PostgreSQL enforces ssl_mode=ENCRYPTED_ONLY via the Cloud SQL
+        Auth Proxy sidecar (infra/modules/cloudsql_postgres/main.tf). Verified by
+        automated Linkerd mesh conformance tests (tests/integration/test_linkerd_mesh_conformance.py),
+        Redis TLS verification tests (tests/test_redis_async_builder.py), and live
+        CAS issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080,
+        POAM-2026-086).'
       props:
       - name: implementation-status
         value: implemented
@@ -1528,9 +1531,11 @@ system-security-plan:
       - name: evidence-file
         value: infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy,
           infra/modules/memorystore_valkey/main.tf, infra/modules/cloudsql_postgres/main.tf,
-          deployment/k8s/linkerd-mtls-policy.yaml, tests/integration/test_linkerd_mesh_conformance.py
+          deployment/k8s/linkerd-mtls-policy.yaml, tests/integration/test_linkerd_mesh_conformance.py,
+          tests/test_redis_async_builder.py
       - name: poam-refs
-        value: POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9)
+        value: POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-086
+          (SC-8)
       responsible-roles:
       - role-id: system-administrator
     - uuid: p9000001-plat-sc39-8000-platform001
