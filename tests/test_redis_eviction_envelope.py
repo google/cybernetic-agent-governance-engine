@@ -42,26 +42,17 @@ import pytest
 import redis
 
 # ---------------------------------------------------------------------------
-# Platform detection
+# Redis topology notes
 # ---------------------------------------------------------------------------
-# Cloud Run uses Cloud Memorystore (managed Redis) which:
-#   - Does not support CONFIG GET / CONFIG SET (raises ResponseError)
+# GKE Managed Memorystore for Valkey:
+#   - Does not support CONFIG GET / CONFIG SET when disabled or restricted
 #   - Does not allow FLUSHDB / FLUSHALL rename tricks (standard Redis commands)
-#   - Uses RDB snapshots instead of AOF persistence
-#   - Enforces maxmemory policy at the managed-service level, not via CONFIG GET
+#   - Enforces persistence and replication at the managed-service level
 #
-# GKE uses a self-managed Redis StatefulSet (redis-config.yaml) where all
-# CONFIG GET assertions are valid.
-#
-# This module runs on BOTH platforms.  Tests that rely on CONFIG GET are
-# guarded with a per-test skip when Cloud Memorystore denies the command.
+# GKE self-managed Redis StatefulSet (redis-config.yaml):
+#   - Supports all CONFIG GET assertions and command renames.
 
 pytestmark = pytest.mark.integration
-
-_IS_CLOUDRUN = (
-    os.environ.get("CAGE_TEST_TARGET", "").lower() == "cloudrun"
-    or os.environ.get("TARGET_PLATFORM", "").lower() == "cloudrun"
-)
 
 # ---------------------------------------------------------------------------
 # Test 1: noeviction policy invariant
@@ -86,7 +77,7 @@ def test_redis_noeviction_invariant():
         max_memory_policy = client.config_get("maxmemory-policy")["maxmemory-policy"]
     except redis.exceptions.ResponseError as exc:
         pytest.skip(
-            f"Redis CONFIG GET not supported on this instance (Cloud Memorystore?): {exc}"
+            f"Redis CONFIG GET not supported on this instance (Managed Memorystore?): {exc}"
         )
 
     assert max_memory_policy == expected_policy, (
@@ -104,7 +95,7 @@ def test_redis_noeviction_invariant():
 def test_redis_maxmemory_configured():
     """Redis MUST have a maxmemory ceiling to prevent unbounded growth.
 
-    On Cloud Run / Cloud Memorystore, CONFIG GET is not supported — the
+    On Managed Memorystore where CONFIG GET is not supported, the
     memory ceiling is enforced at the managed-service tier and this
     assertion is skipped.
     """
@@ -118,7 +109,7 @@ def test_redis_maxmemory_configured():
         maxmemory = int(client.config_get("maxmemory")["maxmemory"])
     except redis.exceptions.ResponseError as exc:
         pytest.skip(
-            f"Redis CONFIG GET not supported on this instance (Cloud Memorystore?): {exc}"
+            f"Redis CONFIG GET not supported on this instance (Managed Memorystore?): {exc}"
         )
 
     assert maxmemory > 0, (
@@ -182,15 +173,15 @@ def test_redis_dangerous_commands_disabled():
     The redis.conf renames these commands to empty strings, making them
     unavailable at runtime.
 
-    GKE-specific: Cloud Memorystore (Cloud Run) does not disable FLUSHDB at
-    the command level — data-loss prevention is enforced via IAM roles on
-    the Memorystore instance.  This assertion only applies to the self-managed
-    GKE StatefulSet where redis-config.yaml renames the command.
+    GKE Managed Memorystore does not disable FLUSHDB at the command level —
+    data-loss prevention is enforced via IAM roles on the Memorystore instance.
+    This assertion only applies to the self-managed GKE StatefulSet where
+    redis-config.yaml renames the command.
     """
     client = _get_redis_client(db=1)
-    if _IS_CLOUDRUN or getattr(client, "is_managed_memorystore", False):
+    if getattr(client, "is_managed_memorystore", False):
         pytest.skip(
-            "Cloud Memorystore does not rename FLUSHDB — data-loss prevention "
+            "Managed Memorystore does not rename FLUSHDB — data-loss prevention "
             "is enforced via Memorystore IAM roles, not command renaming."
         )
 
@@ -210,9 +201,8 @@ def test_redis_aof_persistence_enabled():
 
     Without AOF, a pod restart loses all deferred gating tokens.
 
-    On Cloud Run / Cloud Memorystore, CONFIG GET is not supported — the
-    persistence mechanism is RDB snapshots enforced at the managed-service
-    tier.  This assertion is skipped on Cloud Memorystore.
+    On Managed Memorystore, persistence and replication are enforced at the
+    managed-service tier. This assertion is skipped on Managed Memorystore.
     """
     client = _get_redis_client(db=1)
     if getattr(client, "is_managed_memorystore", False):
@@ -225,7 +215,7 @@ def test_redis_aof_persistence_enabled():
         appendonly = client.config_get("appendonly")["appendonly"]
     except redis.exceptions.ResponseError as exc:
         pytest.skip(
-            f"Redis CONFIG GET not supported on this instance (Cloud Memorystore?): {exc}"
+            f"Redis CONFIG GET not supported on this instance (Managed Memorystore?): {exc}"
         )
 
     assert appendonly == "yes", (

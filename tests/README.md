@@ -144,6 +144,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `financial` | Finance domain plugin (`tests/cage_finance/`). |
 | `healthcare` | Healthcare domain plugin (`tests/cage_healthcare/`). |
 | `us_fed`, `eu_ecb`, `apac_mas` | Regional compliance posture. |
+| `gke` | GKE target-specific tests requiring Kubernetes primitives or cluster port-forward tunnels. |
 
 A facet marker **does not** make a test selectable by any CI gate. A test marked only
 `financial` or only `regression` will be rejected by the collection guard.

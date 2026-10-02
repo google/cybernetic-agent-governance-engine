@@ -748,12 +748,12 @@ class TestConsequenceTokenMinting:
 
 
 # ---------------------------------------------------------------------------
-# Cloud Run DRS Dual-Header Authentication Tests
+# GCP OIDC Dual-Header Authentication Tests
 # ---------------------------------------------------------------------------
 
 
 class TestDualHeaderAuthentication:
-    """Tests for Cloud Run DRS dual-header authentication (X-Serverless-Authorization)."""
+    """Tests for GCP OIDC dual-header authentication (X-Serverless-Authorization)."""
 
     def test_headers_standard_bearer_only(self) -> None:
         """Adapter sets standard Authorization header when only API key is provided."""
@@ -769,10 +769,10 @@ class TestDualHeaderAuthentication:
         }
         assert "X-Serverless-Authorization" not in headers
 
-    def test_headers_dual_header_cloud_run_drs(self) -> None:
+    def test_headers_dual_header_gcp_oidc(self) -> None:
         """Adapter sets both X-Serverless-Authorization and Authorization when gcp_id_token is set."""
         provider = FlowSignalNormativeProvider(
-            endpoint="https://flowsignal-staging.a.run.app",
+            endpoint="https://flowsignal-staging.example.com",
             api_key="flowsignal-app-key-123",
             gcp_id_token="google-oidc-identity-token-xyz",
         )
@@ -792,7 +792,7 @@ class TestDualHeaderAuthentication:
         monkeypatch.setattr(prov_mod, "_GCP_ID_TOKEN", "env-google-oidc-token")
 
         provider = FlowSignalNormativeProvider(
-            endpoint="https://flowsignal-staging.a.run.app",
+            endpoint="https://flowsignal-staging.example.com",
             api_key="flowsignal-app-key-123",
         )
         headers = provider._headers()

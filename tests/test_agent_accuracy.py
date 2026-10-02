@@ -44,11 +44,7 @@ def _resolve_backend_url() -> str:
             continue
         seen.add(url)
         try:
-            from tests.conftest import get_cloudrun_auth_headers
-
-            headers = get_cloudrun_auth_headers(url)
-            timeout = 15 if ".run.app" in url else 2
-            resp = requests.get(f"{url}/health", headers=headers, timeout=timeout)
+            resp = requests.get(f"{url}/health", timeout=2)
             if resp.status_code == 200:
                 return url
         except Exception:
@@ -60,11 +56,7 @@ def _backend_reachable() -> bool:
     """Return True if the backend HTTP server is reachable."""
     url = _resolve_backend_url()
     try:
-        from tests.conftest import get_cloudrun_auth_headers
-
-        headers = get_cloudrun_auth_headers(url)
-        timeout = 15 if ".run.app" in url else 2
-        resp = requests.get(f"{url}/health", headers=headers, timeout=timeout)
+        resp = requests.get(f"{url}/health", timeout=2)
         if resp.status_code == 200:
             return True
     except Exception:
@@ -74,7 +66,6 @@ def _backend_reachable() -> bool:
         return True
     except Exception:
         return False
-
 
 
 # Test Data Pools
@@ -201,28 +192,14 @@ def query_agent(prompt: str):
     require_api_key() dependency (auth.py) does not reject the request
     with HTTP 401.  When CAGE_API_KEY is unset the header is omitted and
     the dev-mode bypass in auth.py applies (CAGE_ENV=dev + no key).
-    
-    For Cloud Run deployments, seeds Cloud Run ID token in X-Serverless-Authorization
-    before adding the application-layer CAGE_API_KEY to Authorization.
     """
-    from tests.conftest import get_cloudrun_auth_headers
-
     backend_url = _resolve_backend_url()
     user_id = str(uuid.uuid4())
     url = f"{backend_url}/agent/query"
     payload = {"prompt": prompt, "user_id": user_id, "thread_id": user_id}
 
-    # Dual-layer auth for Cloud Run:
-    # - X-Serverless-Authorization: Cloud Run ID token (IAM layer)
-    # - Authorization: CAGE_API_KEY (application layer)
     cage_api_key = os.environ.get("CAGE_API_KEY", "")
-    if cage_api_key:
-        # Signal dual-layer mode by passing app_auth
-        headers = get_cloudrun_auth_headers(backend_url, app_auth=("ignored", "ignored"))
-        headers["Authorization"] = f"Bearer {cage_api_key}"
-    else:
-        # Single-layer mode: ID token in Authorization (dev mode bypass)
-        headers = get_cloudrun_auth_headers(backend_url)
+    headers = {"Authorization": f"Bearer {cage_api_key}"} if cage_api_key else {}
 
 
     max_retries = 3
