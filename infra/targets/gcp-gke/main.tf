@@ -821,6 +821,7 @@ module "compliance_bridge" {
   evidence_custody_interval_s = 60
   evidence_verify_interval_s  = 300
   enable_redis_tls            = var.enable_memorystore_tls
+  redis_ca_pem                = var.enable_memorystore_tls ? join("\n", module.memorystore_governance.managed_server_ca) : ""
   redis_auth_mode             = local.governance_redis_auth
 
   # POAM-2026-079 / §5.2: own identity and own signing key. KMSBatchSigner reads
@@ -867,6 +868,7 @@ module "gateway" {
   redis_password                 = ""
   governance_redis_replica_count = module.memorystore_governance.replica_count
   enable_redis_tls               = var.enable_memorystore_tls
+  redis_ca_pem                   = var.enable_memorystore_tls ? join("\n", module.memorystore_governance.managed_server_ca) : ""
   redis_auth_mode                = local.governance_redis_auth
 
   # Evidence stream producer — identical contract to the compliance bridge.
@@ -1017,6 +1019,10 @@ module "app_secrets" {
 # the POAM item and remediation path.
 resource "terraform_data" "poam_019_compliance_key_guard" {
   lifecycle {
+    precondition {
+      condition     = !var.enable_memorystore_tls || length(module.memorystore_governance.managed_server_ca) > 0
+      error_message = "[POAM-2026-086] SC-8 Memorystore CA pinning invariant violated: when enable_memorystore_tls=true, module.memorystore_governance.managed_server_ca must be non-empty so gateway and compliance-bridge pods can pin the server CA."
+    }
     precondition {
       condition = !(var.enable_nist_compliance && (
         var.langfuse_compliance_public_key == "" ||

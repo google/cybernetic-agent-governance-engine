@@ -21,7 +21,30 @@ terraform {
   }
 }
 
+resource "kubernetes_config_map_v1" "redis_ca" {
+  count = var.redis_ca_pem != "" ? 1 : 0
+
+  metadata {
+    name      = "compliance-bridge-redis-ca"
+    namespace = var.namespace
+    labels = {
+      app = "compliance-bridge"
+    }
+  }
+
+  data = {
+    "ca.pem" = var.redis_ca_pem
+  }
+}
+
 resource "kubernetes_deployment" "compliance_bridge" {
+  lifecycle {
+    precondition {
+      condition     = !var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""
+      error_message = "CAGE Invariant (SC-8 / POAM-2026-086): when enable_redis_tls=true, redis_ca_pem must be non-empty so the pod mounts /etc/cage/tls/redis/ca.pem and sets REDIS_CA_CERT_PATH."
+    }
+  }
+
   metadata {
     name      = "compliance-bridge"
     namespace = var.namespace
@@ -35,7 +58,8 @@ resource "kubernetes_deployment" "compliance_bridge" {
   wait_for_rollout = false
 
   spec {
-    replicas = var.replicas
+    replicas               = var.replicas
+    revision_history_limit = 3
 
     selector {
       match_labels = {
@@ -48,6 +72,9 @@ resource "kubernetes_deployment" "compliance_bridge" {
         labels = {
           app = "compliance-bridge"
         }
+        annotations = var.redis_ca_pem != "" ? {
+          "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
+        } : {}
       }
 
       spec {
@@ -287,10 +314,10 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           dynamic "env" {
-            for_each = var.redis_ca_cert_path != "" ? [1] : []
+            for_each = var.redis_ca_pem != "" ? [1] : []
             content {
               name  = "REDIS_CA_CERT_PATH"
-              value = var.redis_ca_cert_path
+              value = "/etc/cage/tls/redis/ca.pem"
             }
           }
 
@@ -366,6 +393,15 @@ resource "kubernetes_deployment" "compliance_bridge" {
             }
           }
 
+          dynamic "volume_mount" {
+            for_each = var.redis_ca_pem != "" ? [1] : []
+            content {
+              name       = "redis-ca"
+              mount_path = "/etc/cage/tls/redis"
+              read_only  = true
+            }
+          }
+
           security_context {
             allow_privilege_escalation = false
             run_as_non_root            = true
@@ -409,6 +445,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
             period_seconds        = 10
             timeout_seconds       = 5
             failure_threshold     = 3
+          }
+        }
+
+        dynamic "volume" {
+          for_each = var.redis_ca_pem != "" ? [1] : []
+          content {
+            name = "redis-ca"
+            config_map {
+              name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name
+            }
           }
         }
       }

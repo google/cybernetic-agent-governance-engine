@@ -35,6 +35,22 @@ locals {
   reconciliation_replay_defense = var.reconciliation_replay_defense
 }
 
+resource "kubernetes_config_map_v1" "redis_ca" {
+  count = var.redis_ca_pem != "" ? 1 : 0
+
+  metadata {
+    name      = "gateway-redis-ca"
+    namespace = var.namespace
+    labels = {
+      app = "gateway"
+    }
+  }
+
+  data = {
+    "ca.pem" = var.redis_ca_pem
+  }
+}
+
 resource "kubernetes_deployment" "gateway" {
   lifecycle {
     precondition {
@@ -43,6 +59,10 @@ resource "kubernetes_deployment" "gateway" {
         (local.redis_wait_replicas <= var.governance_redis_replica_count)
       )
       error_message = "CAGE Invariant (§1.2): in staging and prod, CAGE_REDIS_WAIT_REPLICAS must be <= the governance instance's replica count."
+    }
+    precondition {
+      condition     = !var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""
+      error_message = "CAGE Invariant (SC-8 / POAM-2026-086): when enable_redis_tls=true, redis_ca_pem must be non-empty so the pod mounts /etc/cage/tls/redis/ca.pem and sets REDIS_CA_CERT_PATH."
     }
   }
 
@@ -57,7 +77,8 @@ resource "kubernetes_deployment" "gateway" {
   wait_for_rollout = false
 
   spec {
-    replicas = var.replicas
+    replicas               = var.replicas
+    revision_history_limit = 3
 
     selector {
       match_labels = {
@@ -70,9 +91,14 @@ resource "kubernetes_deployment" "gateway" {
         labels = {
           app = "gateway"
         }
-        annotations = var.network_policy_hash != "" ? {
-          "cage.io/network-policy-hash" = var.network_policy_hash
-        } : {}
+        annotations = merge(
+          var.network_policy_hash != "" ? {
+            "cage.io/network-policy-hash" = var.network_policy_hash
+          } : {},
+          var.redis_ca_pem != "" ? {
+            "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
+          } : {}
+        )
       }
 
       spec {
@@ -306,10 +332,10 @@ resource "kubernetes_deployment" "gateway" {
             value = tostring(var.enable_redis_tls)
           }
           dynamic "env" {
-            for_each = var.redis_ca_cert_path != "" ? [1] : []
+            for_each = var.redis_ca_pem != "" ? [1] : []
             content {
               name  = "REDIS_CA_CERT_PATH"
-              value = var.redis_ca_cert_path
+              value = "/etc/cage/tls/redis/ca.pem"
             }
           }
           dynamic "env" {
@@ -343,6 +369,14 @@ resource "kubernetes_deployment" "gateway" {
             name  = "EVIDENCE_STREAM_KEY"
             value = var.evidence_stream_key
           }
+          dynamic "volume_mount" {
+            for_each = var.redis_ca_pem != "" ? [1] : []
+            content {
+              name       = "redis-ca"
+              mount_path = "/etc/cage/tls/redis"
+              read_only  = true
+            }
+          }
           resources {
             requests = {
               cpu    = "1000m"
@@ -351,6 +385,16 @@ resource "kubernetes_deployment" "gateway" {
             limits = {
               cpu    = "2000m"
               memory = "4Gi"
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = var.redis_ca_pem != "" ? [1] : []
+          content {
+            name = "redis-ca"
+            config_map {
+              name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name
             }
           }
         }

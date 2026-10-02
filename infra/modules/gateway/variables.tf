@@ -216,8 +216,8 @@ variable "enable_redis_tls" {
   default     = false
 }
 
-variable "redis_ca_cert_path" {
-  description = "CA certificate path for Redis TLS server certificate pinning"
+variable "redis_ca_pem" {
+  description = "PEM-encoded CA certificate bundle for Redis TLS server certificate pinning. When non-empty, mounted into the pod via a module-owned ConfigMap at /etc/cage/tls/redis/ca.pem and exported as REDIS_CA_CERT_PATH (public trust material, not a secret)."
   type        = string
   default     = ""
 }

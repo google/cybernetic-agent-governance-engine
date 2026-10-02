@@ -49,8 +49,10 @@ _GKE_MAIN = _GKE / "main.tf"
 _GKE_IAM = _GKE / "iam.tf"
 _GKE_NETPOL = _GKE / "network_policy.tf"
 _GATEWAY_MOD = _REPO / "infra/modules/gateway/main.tf"
+_GATEWAY_VARS = _REPO / "infra/modules/gateway/variables.tf"
 _BRIDGE_MOD = _REPO / "infra/modules/compliance_bridge/main.tf"
 _BRIDGE_VARS = _REPO / "infra/modules/compliance_bridge/variables.tf"
+_LULA_SC8 = _REPO / "compliance/lula/lula-validation-sc8.yaml"
 _CH_SINK = _REPO / "src/compliance_bridge/clickhouse_sink.py"
 _CH_SCHEMA = _REPO / "deployment/clickhouse/evidence_stream_schema.sql"
 _K8S = _REPO / "deployment/k8s"
@@ -145,6 +147,10 @@ def test_gateway_and_bridge_receive_identical_stream_contract(module_name: str) 
     assert _tf_attr(block, "evidence_stream_redis_db") == "local.evidence_stream_redis_db"
     assert _tf_attr(block, "evidence_stream_key") == "local.evidence_stream_key"
     assert _tf_attr(block, "enable_redis_tls") == "var.enable_memorystore_tls"
+    assert (
+        _tf_attr(block, "redis_ca_pem")
+        == 'var.enable_memorystore_tls ? join("\\n", module.memorystore_governance.managed_server_ca) : ""'
+    )
     assert _tf_attr(block, "redis_auth_mode") == "local.governance_redis_auth"
 
 
@@ -156,7 +162,95 @@ def test_modules_export_stream_contract_env(module_file: Path) -> None:
     assert env.get("EVIDENCE_STREAM_REDIS_DB") == "tostring(var.evidence_stream_redis_db)"
     assert env.get("EVIDENCE_STREAM_KEY") == "var.evidence_stream_key"
     assert env.get("REDIS_TLS") == "tostring(var.enable_redis_tls)"
+    assert env.get("REDIS_CA_CERT_PATH") == '"/etc/cage/tls/redis/ca.pem"'
     assert env.get("REDIS_AUTH_MODE") == "var.redis_auth_mode"
+
+
+@pytest.mark.parametrize("vars_file", [_GATEWAY_VARS, _BRIDGE_VARS])
+def test_modules_declare_redis_ca_pem_and_retire_redis_ca_cert_path(vars_file: Path) -> None:
+    text = vars_file.read_text()
+    block = _block(text, 'variable "redis_ca_pem"')
+    assert "type        = string" in block
+    assert 'default     = ""' in block
+    assert "redis_ca_cert_path" not in text
+
+
+def test_no_terraform_file_references_dangling_redis_ca_cert_path() -> None:
+    offenders = [
+        str(p.relative_to(_REPO))
+        for p in (_REPO / "infra").rglob("*.tf")
+        if "redis_ca_cert_path" in p.read_text()
+    ]
+    assert offenders == [], f"Dangling redis_ca_cert_path still referenced in: {offenders}"
+
+
+@pytest.mark.parametrize(
+    "module_file,app_name",
+    [
+        (_GATEWAY_MOD, "gateway"),
+        (_BRIDGE_MOD, "compliance-bridge"),
+    ],
+)
+def test_modules_own_redis_ca_configmap_mount_annotation_and_revision_limit(
+    module_file: Path, app_name: str
+) -> None:
+    text = module_file.read_text()
+    cm_block = _block(text, 'resource "kubernetes_config_map_v1" "redis_ca"')
+    assert 'count = var.redis_ca_pem != "" ? 1 : 0' in cm_block
+    assert f'name      = "{app_name}-redis-ca"' in cm_block
+    assert '"ca.pem" = var.redis_ca_pem' in cm_block
+
+    assert "revision_history_limit = 3" in text
+    assert '"cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)' in text
+    assert '!var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""' in text
+
+    vm_match = re.search(
+        r'dynamic "volume_mount" \{\s*for_each = var\.redis_ca_pem != "" \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
+        text,
+        re.S,
+    )
+    assert vm_match, f"{module_file}: missing redis-ca dynamic volume_mount"
+    assert 'name       = "redis-ca"' in vm_match.group(1)
+    assert 'mount_path = "/etc/cage/tls/redis"' in vm_match.group(1)
+    assert "read_only  = true" in vm_match.group(1)
+
+    vol_match = re.search(
+        r'dynamic "volume" \{\s*for_each = var\.redis_ca_pem != "" \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
+        text,
+        re.S,
+    )
+    assert vol_match, f"{module_file}: missing redis-ca dynamic volume"
+    assert 'name = "redis-ca"' in vol_match.group(1)
+    assert "name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name" in vol_match.group(1)
+
+
+def test_gke_target_guards_non_empty_managed_server_ca_when_tls_enabled() -> None:
+    main_tf = _GKE_MAIN.read_text()
+    assert "!var.enable_memorystore_tls || length(module.memorystore_governance.managed_server_ca) > 0" in main_tf
+
+
+def test_lula_sc8_asserts_redis_ca_pinning() -> None:
+    doc = yaml.safe_load(_LULA_SC8.read_text(encoding="utf-8"))
+    lula_desc = doc["component-definition"]["back-matter"]["resources"][0]["description"]
+    lula_spec = yaml.safe_load(lula_desc)
+    rego = lula_spec["provider"]["opa-spec"]["rego"]
+
+    for expected in (
+        "redis_tls_deployments := {",
+        '"gateway",',
+        '"compliance-bridge"',
+        "deployment_pins_redis_ca(deploy) if {",
+        'endswith(vol.configMap.name, "-redis-ca")',
+        'vm.mountPath == "/etc/cage/tls/redis"',
+        "vm.readOnly == true",
+        'env.name == "REDIS_CA_CERT_PATH"',
+        'env.value == "/etc/cage/tls/redis/ca.pem"',
+        'deploy.spec.template.metadata.annotations["cage.io/redis-ca-sha256"] != ""',
+    ):
+        assert expected in rego, f"lula-validation-sc8.yaml missing {expected}"
+
+    validate_block = _block(rego, "validate if")
+    assert "redis_ca_pinned" in validate_block
 
 
 # ---------------------------------------------------------------------------
