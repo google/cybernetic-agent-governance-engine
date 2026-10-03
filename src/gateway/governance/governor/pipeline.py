@@ -148,11 +148,36 @@ class PipelineResult:
     # claimed the action.  The committing run compares it with the snapshot
     # an approval was given against (APPROVAL_CONTEXT_DRIFT).
     barrier_outcome: BarrierPreview | None = None
+    # The stages selected for this run, in execution order, as
+    # ``(name, phase)`` with phase 1 = read-only and 2 = mutating.
+    plan: tuple[tuple[str, int], ...] = ()
+    # ``(name, StageOutcome)`` for every stage that ran (previewed or
+    # committed), in execution order.  A planned stage that never ran is
+    # absent: proof/model.py's ``PENDING``.
+    stage_outcomes: tuple[tuple[str, str], ...] = ()
+    # False when no domain tier claimed the action, so only
+    # UNGOVERNED_STAGES ran.
+    governed: bool = True
+
+
+class StageOutcome(StrEnum):
+    """What one stage reported in one run (proof/model.py tier results)."""
+
+    PASS = "PASS"  # no violation
+    FAIL = "FAIL"  # at least one violation, of any kind
+
+
+def _outcome(stage_violations: Sequence[Violation]) -> str:
+    return StageOutcome.FAIL.value if stage_violations else StageOutcome.PASS.value
 
 
 #: Read-only stages re-run after human approval (TOCTOU): policy may have
 #: changed while the request waited. Must be members of proof/model.py TIERS.
 POST_HITL_READ_ONLY_STAGES: frozenset[str] = frozenset({"opa"})
+
+#: The only stages an action no domain tier claims runs through.  Mirrors
+#: ``proof/model.py::UNGOVERNED_TIERS`` (``tests/test_governance_trace_conformance.py``).
+UNGOVERNED_STAGES: frozenset[str] = frozenset({"ftra", "stpa", "opa"})
 
 
 def stage_runs_under(profile: Profile, *, name: str, mutating: bool) -> bool:
@@ -259,8 +284,8 @@ async def run_pipeline(
     
     if not is_governed:
         span.set_attribute("governance.governed", False)
-        # f. Ungoverned actions: run ftra, stpa, opa only
-        profile_stages = [s for s in profile_stages if s.name in {"ftra", "stpa", "opa"}]
+        # f. Ungoverned actions: run UNGOVERNED_STAGES only
+        profile_stages = [s for s in profile_stages if s.name in UNGOVERNED_STAGES]
     else:
         span.set_attribute("governance.governed", True)
         profile_stages.extend(claimed_domains)
@@ -276,8 +301,10 @@ async def run_pipeline(
     read_only.sort(key=read_only_sort_key)
     
     mutating = [s for s in profile_stages if getattr(s, "mutating", False)]
-    
+    plan = tuple((s.name, 1) for s in read_only) + tuple((s.name, 2) for s in mutating)
+
     violations: list[Violation] = []
+    outcomes: list[tuple[str, str]] = []
     tier_failures: list[GovernanceTierFailure] = []
     committed_stages: list[str] = []
     current_ctx = ctx
@@ -307,7 +334,8 @@ async def run_pipeline(
             current_ctx = dataclasses.replace(current_ctx, opa_verdict=opa_verdict)
         if output.ftra is not None:
             ftra_result = output.ftra
-        
+        outcomes.append((stage.name, _outcome(stage_violations)))
+
         if stage_violations:
             violations.extend(stage_violations)
             
@@ -327,9 +355,10 @@ async def run_pipeline(
         # Nothing is committed (DRY_RUN, or a request that cannot be sealed
         # now), so nothing to roll back.  ``scope`` stays untouched: a run_sealed
         # caller sees no commits and refuses the seal on the violations.
-        preview_violations, preview_failures = await _preview_mutating(
+        preview_violations, preview_failures, preview_outcomes = await _preview_mutating(
             mutating, current_ctx, claim_failures
         )
+        outcomes.extend(preview_outcomes)
         violations.extend(preview_violations)
         tier_failures.extend(preview_failures)
         if mutating:
@@ -346,6 +375,7 @@ async def run_pipeline(
             barrier_outcome = BarrierPreview.PASS
         for stage in mutating:
             stage_violations = await commit_stage(scope, stage, current_ctx)
+            outcomes.append((stage.name, _outcome(stage_violations)))
             if stage_violations:
                 barrier_outcome = BarrierPreview.FAIL
                 violations.extend(stage_violations)
@@ -365,6 +395,9 @@ async def run_pipeline(
         barrier_preview=barrier_preview,
         preview_violations=tuple(preview_violations),
         barrier_outcome=barrier_outcome,
+        plan=plan,
+        stage_outcomes=tuple(outcomes),
+        governed=is_governed,
     )
 
 
@@ -380,7 +413,7 @@ async def _preview_mutating(
     mutating: Sequence[Stage],
     ctx: StageContext,
     claim_failures: Mapping[int, Violation],
-) -> tuple[list[Violation], list[GovernanceTierFailure]]:
+) -> tuple[list[Violation], list[GovernanceTierFailure], list[tuple[str, str]]]:
     """Ask every mutating stage what its ``commit()`` would say; change nothing.
 
     Never calls ``commit()``.  A stage that cannot be previewed is a HARD
@@ -388,10 +421,12 @@ async def _preview_mutating(
     Previewing stops at the first HARD finding (the request is refused) but
     continues past non-HARD ones, so a later barrier that would refuse
     outright still denies before a human is asked, and the reviewer sees
-    every breach the approved request would hit.
+    every breach the approved request would hit.  Also returns each previewed
+    stage's :class:`StageOutcome`.
     """
     violations: list[Violation] = []
     failures: list[GovernanceTierFailure] = []
+    outcomes: list[tuple[str, str]] = []
     for stage in mutating:
         preview = getattr(stage, "preview", None)
         if id(stage) in claim_failures:
@@ -405,10 +440,11 @@ async def _preview_mutating(
             )]
         else:
             stage_violations = await preview(ctx)
+        outcomes.append((stage.name, _outcome(stage_violations)))
         if not stage_violations:
             continue
         violations.extend(stage_violations)
         failures.append(_tier_failure(stage, stage_violations))
         if any(v.kind == ViolationKind.HARD for v in stage_violations):
             break
-    return violations, failures
+    return violations, failures, outcomes

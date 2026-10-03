@@ -870,6 +870,11 @@ component-definition:
                 assertions (lula-validation-au12.yaml, lula-validation-ac3.yaml,
                 lula-validation-ra5.yaml, lula-validation-cm6.yaml, lula-validation-ir6.yaml).
                 Monitoring status is streamed in real-time via src/compliance_bridge/sse_events.py.
+                Formal-model conformance: every governor decision and actuation emits a
+                GOVERNANCE_TRACE evidence event (src/gateway/governance/governor/trace.py), and
+                scripts/check_trace_conformance.py checks an exported stream against
+                proof/model.py (reachability, seal-before-execution, single-use seals). The
+                check runs on demand over exports; it is not yet scheduled.
               props:
                 - name: implementation-status
                   value: implemented
