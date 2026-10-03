@@ -21,7 +21,6 @@ Queries Langfuse for recent traces tagged with governance spans
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 import pandas as pd
@@ -64,49 +63,38 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
         self._fallback = fallback or NullTelemetryProvider()
 
     @classmethod
-    def from_env(cls) -> LangfuseTelemetryProvider:
-        """Construct from LANGFUSE_* environment variables.
+    def from_credentials(
+        cls, *, host: str, public_key: str, secret_key: str
+    ) -> LangfuseTelemetryProvider:
+        """Construct a client from credentials resolved by the kernel factory.
 
-        Required env vars:
-            LANGFUSE_PUBLIC_KEY
-            LANGFUSE_SECRET_KEY
-            LANGFUSE_HOST  (default: https://cloud.langfuse.com)
+        The adapter reads no environment variables: ``get_telemetry_provider()``
+        resolves ``TELEMETRY_HOST`` / ``TELEMETRY_PUBLIC_KEY`` /
+        ``TELEMETRY_SECRET_KEY`` and passes them here.
 
         Raises:
-            ConfigurationError: If LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY are
-                missing, or if the langfuse package is not installed.
-                Silent fallback to mock data is strictly eliminated (AW-8).
+            ConfigurationError: If any credential is empty, or if the langfuse
+                package is not installed. Silent fallback to mock data is
+                strictly eliminated (AW-8).
         """
-        public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
-        secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
-        host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com").strip()
-
-        if not (public_key and secret_key):
+        if not (host and public_key and secret_key):
             raise ConfigurationError(
-                "[CTRL_TEL_003] LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set "
-                "when using LangfuseTelemetryProvider. Set CAGE_TELEMETRY_PROVIDER=null "
-                "or explicit CAGE_TELEMETRY_PROVIDER=mock for offline/testing environments."
+                "[CTRL_TEL_003] LangfuseTelemetryProvider requires host, public_key "
+                "and secret_key."
             )
 
         try:
             from langfuse import Langfuse  # type: ignore[import]
-
-            client = Langfuse(
-                public_key=public_key,
-                secret_key=secret_key,
-                host=host,
-            )
-            logger.info(
-                "[CTRL_TEL_003] LangfuseTelemetryProvider initialised (host=%s).", host
-            )
-            return cls(langfuse_client=client)
-
         except ImportError as err:
             raise ConfigurationError(
                 "[CTRL_TEL_003] The 'langfuse' package is required when using "
                 "LangfuseTelemetryProvider. Install dependencies or set "
                 "CAGE_TELEMETRY_PROVIDER=null."
             ) from err
+
+        client = Langfuse(public_key=public_key, secret_key=secret_key, host=host)
+        logger.info("[CTRL_TEL_003] LangfuseTelemetryProvider initialised (host=%s).", host)
+        return cls(langfuse_client=client)
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
         """Fetch live trade governance telemetry from Langfuse.

@@ -314,7 +314,17 @@ def test_create_finance_tiers_remote_without_credentials_fails_at_assembly(monke
     import src.cage_finance as finance
 
     monkeypatch.setenv("CAGE_TELEMETRY_PROVIDER", "remote")
-    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-    with pytest.raises(ConfigurationError):
+    monkeypatch.delenv("TELEMETRY_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("TELEMETRY_SECRET_KEY", raising=False)
+    with pytest.raises(ConfigurationError, match="TELEMETRY_PUBLIC_KEY"):
+        finance.create_finance_tiers(MagicMock(), MagicMock(), MagicMock())
+
+
+def test_create_finance_tiers_enforcing_posture_requires_explicit_provider(monkeypatch):
+    """Staging/prod never fall back to the null provider silently."""
+    import src.cage_finance as finance
+
+    monkeypatch.setenv("CAGE_ENV", "staging")
+    monkeypatch.delenv("CAGE_TELEMETRY_PROVIDER", raising=False)
+    with pytest.raises(ConfigurationError, match="CAGE_TELEMETRY_PROVIDER must be set"):
         finance.create_finance_tiers(MagicMock(), MagicMock(), MagicMock())

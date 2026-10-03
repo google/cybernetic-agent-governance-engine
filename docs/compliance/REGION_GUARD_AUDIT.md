@@ -517,7 +517,7 @@ Apply to:
 - `src/gateway/tracing_setup.py` `_resolve_otlp_endpoint_and_headers()` (GAP-01)
 - `src/compliance_bridge/audit_workflow.py` `_make_compliance_langfuse()` (GAP-06)
 - `src/compliance_bridge/metrics.py` `_make_app_langfuse()` (GAP-09)
-- `src/gateway/governance/telemetry_provider.py` `LangfuseTelemetryProvider.from_env()` (GAP-11)
+- `src/gateway/governance/telemetry_provider.py` `get_telemetry_provider()` (GAP-11)
 
 ### 6.2 Pattern B: Regional Redis URL Dispatch (Fixes GAP-03, GAP-04, GAP-08, GAP-12)
 
@@ -762,6 +762,8 @@ def from_env(cls) -> "LangfuseTelemetryProvider":
 The causal gatekeeper reads live governance telemetry from Langfuse to perform DoWhy placebo refutation. This is a read operation, but it reads from a single `LANGFUSE_HOST` without region dispatch. After GAP-01 is fixed and governance spans are stored in regional Langfuse instances, this function would read from the wrong instance for EU_ECB and APAC_MAS deployments, causing the causal gatekeeper to evaluate against incorrect telemetry data.
 
 **Required fix:** `from_env()` must read `CAGE_DEPLOYMENT_REGION` and select the correct regional Langfuse host.
+
+**Update (2026-10-03):** `LangfuseTelemetryProvider.from_env()` no longer exists. `get_telemetry_provider()` reads `TELEMETRY_HOST` and passes it to `LangfuseTelemetryProvider.from_credentials()`, and the gateway manifests set `TELEMETRY_HOST` to the in-cluster `langfuse-web` Service, so each regional cluster reads its own instance. No code-level region assertion has been added; the gap stays open.
 
 ---
 

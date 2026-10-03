@@ -96,6 +96,24 @@ spec:
               value: "hybrid-gateway"
             # DEP-04: CAGE_ENV is substituted at deploy time from the --env flag
             # passed to deploy_all.sh (dev → "dev", prod → "production").
+            # Causal-tier telemetry (CTRL_TEL_003). The kernel reads only the
+            # vendor-neutral TELEMETRY_* names; they map the Langfuse project keys
+            # already held in advisor-secrets. Enforcing postures require
+            # CAGE_TELEMETRY_PROVIDER to be set explicitly.
+            - name: CAGE_TELEMETRY_PROVIDER
+              value: "remote"
+            - name: TELEMETRY_HOST
+              value: "http://langfuse-web.governance-stack.svc.cluster.local:3000"
+            - name: TELEMETRY_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+            - name: TELEMETRY_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: LANGFUSE_SECRET_KEY
             - name: CAGE_DOMAIN  # exactly one domain per process
               value: "${CAGE_DOMAIN:-finance}"
             - name: CAGE_ENV

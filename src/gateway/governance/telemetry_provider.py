@@ -35,6 +35,13 @@ Explicit Provider Selection (AW-8):
     - 'remote': Pulls live telemetry. Hard failure (ConfigurationError) if credentials missing.
     - 'null': Returns NullTelemetryProvider. Safe for offline / bare-kernel mode.
     - 'mock': Explicitly runs MockTelemetryProvider. Forbidden if CAGE_ENV=prod.
+  Under an enforcing posture (``env_posture.is_enforcing()``) the variable must
+  be set: the kernel never picks a provider silently there.
+
+Credentials (one name per value, vendor-neutral):
+    TELEMETRY_HOST, TELEMETRY_PUBLIC_KEY, TELEMETRY_SECRET_KEY
+  The kernel reads them and passes them to the remote adapter, which reads no
+  environment variables itself.
 """
 
 from __future__ import annotations
@@ -222,6 +229,21 @@ def __getattr__(name: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+TELEMETRY_CREDENTIAL_VARS: tuple[str, str, str] = (
+    "TELEMETRY_HOST",
+    "TELEMETRY_PUBLIC_KEY",
+    "TELEMETRY_SECRET_KEY",
+)
+
+
+def _telemetry_credentials() -> tuple[str, str, str]:
+    """Return ``(host, public_key, secret_key)`` from ``TELEMETRY_*`` (stripped)."""
+    host, public_key, secret_key = (
+        os.environ.get(name, "").strip() for name in TELEMETRY_CREDENTIAL_VARS
+    )
+    return host.rstrip("/"), public_key, secret_key
+
+
 def get_telemetry_provider(
     provider_type: str | None = None,
 ) -> BaseTelemetryProvider:
@@ -230,26 +252,30 @@ def get_telemetry_provider(
     Resolution order:
       1. Explicit ``provider_type`` argument if provided.
       2. ``CAGE_TELEMETRY_PROVIDER`` environment variable ('remote', 'null', 'mock').
-      3. If unset: defaults to 'remote' if TELEMETRY_PUBLIC_KEY and TELEMETRY_SECRET_KEY
-         are configured, otherwise defaults to 'null'.
+      3. If unset under an enforcing posture: ConfigurationError. Otherwise
+         'remote' if all ``TELEMETRY_*`` credentials are set, else 'null'.
 
     Rules:
       - 'mock': forbidden when CAGE_ENV=prod (raises ConfigurationError).
-      - 'remote': raises ConfigurationError if credentials or SDK are missing.
+      - 'remote': raises ConfigurationError if a ``TELEMETRY_*`` credential or
+        the adapter's SDK is missing.
       - 'null': returns NullTelemetryProvider().
     """
+    from src.gateway.governance.env_posture import is_enforcing
+
     if provider_type is None:
         provider_type = os.environ.get("CAGE_TELEMETRY_PROVIDER", "").strip().lower()
 
+    host, public_key, secret_key = _telemetry_credentials()
+
     if not provider_type:
-        has_keys = bool(
-            os.environ.get("TELEMETRY_PUBLIC_KEY")
-            and os.environ.get("TELEMETRY_SECRET_KEY")
-        )
-        if has_keys:
-            provider_type = "remote"
-        else:
-            provider_type = "null"
+        if is_enforcing():
+            raise ConfigurationError(
+                "CAGE_TELEMETRY_PROVIDER must be set under an enforcing posture "
+                "('remote', or 'null' to run the causal tier without telemetry). "
+                "The provider is never selected implicitly outside dev/test/ci."
+            )
+        provider_type = "remote" if (host and public_key and secret_key) else "null"
 
     provider_type = provider_type.lower()
 
@@ -270,11 +296,26 @@ def get_telemetry_provider(
         return MockTelemetryProvider()
 
     if provider_type == "remote":
+        missing = [
+            name
+            for name, value in zip(
+                TELEMETRY_CREDENTIAL_VARS, (host, public_key, secret_key), strict=True
+            )
+            if not value
+        ]
+        if missing:
+            raise ConfigurationError(
+                "[CTRL_TEL_003] CAGE_TELEMETRY_PROVIDER=remote requires "
+                + ", ".join(missing)
+                + ". Set CAGE_TELEMETRY_PROVIDER=null to run without telemetry."
+            )
         from src.integrations.telemetry_langfuse.provider import (
             LangfuseTelemetryProvider as RemoteTelemetryProvider,
         )
 
-        return RemoteTelemetryProvider.from_env()
+        return RemoteTelemetryProvider.from_credentials(
+            host=host, public_key=public_key, secret_key=secret_key
+        )
 
     raise ConfigurationError(
         f"Unknown telemetry provider '{provider_type}'. "
@@ -284,6 +325,7 @@ def get_telemetry_provider(
 
 __all__ = [
     "MIN_SAMPLES",
+    "TELEMETRY_CREDENTIAL_VARS",
     "BaseTelemetryProvider",
     "ConfigurationError",
     "MockTelemetryProvider",
