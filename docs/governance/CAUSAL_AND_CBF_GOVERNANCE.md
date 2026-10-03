@@ -177,6 +177,25 @@ In production, `RECONCILIATION_PROVIDER=stub` raises `RuntimeError` at startup (
 
 Every `verify_action()` decision is stamped with a `safety.balance.source` OTel span attribute (`"reconciled"` | `"reconciled_unsigned"` | `"self_reported"`) to make the balance provenance auditable.
 
+### Discrepancy Guard (reconciler, `reconciliation.*` thresholds)
+
+Before signing a snapshot, `GroundTruthReconciler.reconcile()` ([`daemon.py`](../../src/gateway/governance/reconciliation/daemon.py)) compares the custodian scalar with the self-reported baseline read from the invariant's `state_key` (falling back to the simulated source's `initial_scalar`). The snapshot is **rejected** — the fence epoch is incremented and the verified state is deleted, so a strict CBF refuses with `CBF_STRICT_RECONCILIATION_UNAVAILABLE` — when
+
+```text
+|scalar − baseline| > max(discrepancy_ratio × |baseline|, discrepancy_abs_floor)
+```
+
+or when the provider flags `discrepancy_spike` in its raw response (fault injection). Both terms live in [`config/governance_thresholds.json`](../../config/governance_thresholds.json) under `reconciliation` and are modelled by `ReconciliationThresholds` in [`thresholds.py`](../../src/gateway/governance/schemas/thresholds.py):
+
+| Key | Default | Env override |
+|---|---|---|
+| `discrepancy_ratio` | `0.5` | `RECONCILIATION_DISCREPANCY_RATIO` |
+| `discrepancy_abs_floor` | `100.0` | `RECONCILIATION_DISCREPANCY_ABS_FLOOR` |
+| `settlement_lag_seconds` | `120.0` | `RECONCILIATION_SETTLEMENT_LAG_SECONDS` |
+| `settlement_clock_skew_seconds` | `5.0` | `RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS` |
+
+An explicit `discrepancy_threshold` passed to the reconciler constructor is an absolute override and wins over both terms. The guard is a sanity bound on custodian data, not a velocity limit on trading: it is deliberately coarse, and it is **not** the mechanism that prevents intra-window double-spend — that is the local-debit ledger described under `atomic_verify_and_commit` below and redesigned in ADR-010 (settlement-aware debit ledger, POAM-2026-087). The two settlement keys are consumed by that ledger.
+
 ### Lua Atomic Script (`atomic_verify_and_commit`)
 
 For the highest-assurance path, [`src/gateway/governance/safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) provides `atomic_verify_and_commit()`, which collapses the CBF check and state commit into a **single Redis Lua hop** (`LUA_ATOMIC_CBF`), eliminating the TOCTOU window between `verify_action()` (read-only governance check) and `update_state()` (write, MCP tool handler):

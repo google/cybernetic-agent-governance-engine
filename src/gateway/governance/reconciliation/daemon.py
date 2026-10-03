@@ -35,6 +35,10 @@ import time
 from typing import Any, Protocol
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.schemas.thresholds import (
+    get_reconciliation_discrepancy_abs_floor,
+    get_reconciliation_discrepancy_ratio,
+)
 from src.gateway.governance.seams.ground_truth import (
     FaultMode,
     GroundTruthProvider,
@@ -231,6 +235,8 @@ class GroundTruthReconciler:
         max_staleness_s: float | None = None,
         max_clock_skew_s: float = 5.0,
         discrepancy_threshold: float | None = None,
+        discrepancy_ratio: float | None = None,
+        discrepancy_abs_floor: float | None = None,
     ) -> None:
         self._providers: dict[str, Any] = {}
         if providers is not None:
@@ -261,7 +267,22 @@ class GroundTruthReconciler:
             float(max_staleness_s) if max_staleness_s is not None else float(ttl)
         )
         self._max_clock_skew_s = float(max_clock_skew_s)
+        # Discrepancy guard (POAM-2026-087 / ADR-010 §6). An explicit absolute
+        # ``discrepancy_threshold`` wins; otherwise the effective threshold is
+        # ``max(ratio * |baseline|, abs_floor)`` with both terms taken from
+        # ``config/governance_thresholds.json`` (``reconciliation.*``) unless
+        # pinned by the constructor.
         self._discrepancy_threshold = discrepancy_threshold
+        self._discrepancy_ratio = (
+            float(discrepancy_ratio)
+            if discrepancy_ratio is not None
+            else get_reconciliation_discrepancy_ratio()
+        )
+        self._discrepancy_abs_floor = (
+            float(discrepancy_abs_floor)
+            if discrepancy_abs_floor is not None
+            else get_reconciliation_discrepancy_abs_floor()
+        )
         self._failure_count: int = 0
         self._last_sequence_by_invariant: dict[str, int] = {}
 
@@ -723,10 +744,15 @@ class GroundTruthReconciler:
                         if baseline is not None
                         else abs(scalar)
                     )
+                    ratio_term = (
+                        self._discrepancy_ratio * abs(baseline)
+                        if baseline is not None
+                        else 0.0
+                    )
                     eff_threshold = (
                         float(self._discrepancy_threshold)
                         if self._discrepancy_threshold is not None
-                        else (0.5 * abs(baseline) if baseline else 100.0)
+                        else max(ratio_term, self._discrepancy_abs_floor)
                     )
                     if is_flagged_spike or delta > eff_threshold:
                         self._failure_count += 1
