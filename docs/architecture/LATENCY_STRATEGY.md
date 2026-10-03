@@ -178,7 +178,7 @@ The `/inference/v1/chat/completions` endpoint applies governance checks in this 
 2. **Caller identity** — `extract_client_identity()` reads the Linkerd `l5d-client-id`; failure returns HTTP 401
 3. **Token/step quota** — `check_and_increment()` on the token quota proxy; exceeding it returns HTTP 429
 4. **NeMo Guardrails input verification** (`verify_input()`) — semantic input rail; ~150–300ms; any downstream failure rolls back the quota step
-5. **Forward to vLLM backend** — pooled `httpx.AsyncClient`; supports streaming SSE (`stream=True`) with per-chunk TTFT capture on OTel spans (`gen_ai.ttft_ms`)
+5. **Forward to vLLM backend** — pooled `httpx.AsyncClient`. With `stream=True` the proxy reads the whole upstream SSE stream before step 6 and only then replays it, so the client's time to first token equals the full generation time; `gen_ai.ttft_ms` on the OTel span measures the *upstream* first token, not what the client sees (see [GATEWAY_ARCHITECTURE.md §5.5](GATEWAY_ARCHITECTURE.md#55-content-rails-and-streaming-egress))
 6. **NeMo output verification + PII masking** (`verify_and_mask_output()`) — Presidio-backed; applied to message content and tool-call arguments in every environment (NeMo rails always fail closed)
 
 Backend routing is model-aware: requests with `"deepseek"` or `"reasoning"` in the model ID route to `VLLM_REASONING_API_BASE`; all others route to `VLLM_FAST_API_BASE` (see `_resolve_backend_url()`).

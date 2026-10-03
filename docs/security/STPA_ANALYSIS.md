@@ -30,7 +30,7 @@ This document defines the **STPA Design-Time Configuration** (the hazard analysi
 | **UCA-2** | Wrong Timing | Agent executes trade with stale market data (>200ms latency). | `[opa, nemo, python]` | `GeneratedSTPAValidator._check_uca_2()` + OPA Rego rule. |
 | **UCA-3** | Unsafe Action | Agent outputs PII to user interface. | `[nemo]` | NeMo Guardrails `verify_content_safety` + Presidio PII egress filter. |
 | **UCA-4** | Stopped Too Soon | Agent debits account but fails to credit asset (atomic failure). | `[nemo, langgraph]` | **Saga WAL Pattern** — see §4 below. |
-| **UCA-5** | Unsafe Action | Agent executes buy when drawdown > 4.5%. | `[opa, nemo, python]` | `GeneratedSTPAValidator._check_uca_5()` (threshold: `THRESHOLDS.stpa.uca5_drawdown_threshold_pct`) + `ControlBarrierFunction` in `cbf.py` + OPA Rego rule. |
+| **UCA-5** | Unsafe Action | Agent executes buy when drawdown > 4.5%. | `[opa, nemo, python]` | `GeneratedSTPAValidator._check_uca_5()` (threshold: `THRESHOLDS.stpa.uca5_drawdown_threshold_pct`) + `ControlBarrierFunction` in [`safety/cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) + OPA Rego rule. |
 | **UCA-6** | Unsafe Action | Agent order volume fraction exceeds maximum (`uca6_max_order_volume_fraction=0.01`, i.e., 1% of portfolio). | `[opa, python]` | `GeneratedSTPAValidator._check_uca_6()`. |
 | **UCA-7** | Unsafe Action | High prompt injection semantic score detected. | `[opa]` | OPA Rego rule. Semantic score threshold: 0.85. |
 | **UCA-8** | Unsafe Action | Trade attempted before risk assessment completed. | `[opa, python]` | `GeneratedSTPAValidator._check_uca_8()`. |
@@ -49,6 +49,14 @@ The compiler (`python -m src.gateway.governance.stpa_compiler compile --targets 
 | `python` | `src/cage_finance/stpa/uca_rules.py` | `GeneratedSTPAValidator` & `UCA_RULES`; invoked by `STPAValidator` (`src/gateway/governance/stpa_validator.py`) |
 | `langgraph` | `src/cage_finance/stpa/saga_nodes.py` | LangGraph WAL forward + compensating nodes + centralized router |
 | `all` | `opa` + `nemo` + `python` | Note: `langgraph` is **not** included in `all`; must be explicit |
+
+### 3.1 Compiler Mechanism
+
+- **Schema.** Each source YAML (`config/stpa/` plus each domain's `config/stpa/`, e.g. [`trade_hazards.yaml`](../../src/cage_finance/config/stpa/trade_hazards.yaml)) is parsed into the Pydantic model `ControlStructureModel` in [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py). A schema error stops compilation with exit code 1; nothing is written.
+- **Closed condition grammar.** A UCA condition (`ConditionModel`) is a `param` with one operator from a fixed set (`is_null`, `is_false`, `is_true`, `greater_than`, `less_than`, `equals`) against a literal `threshold` or a `threshold_ref` into `governance_thresholds.json`. Identifier fields must match identifier grammars, and free-text fields may not contain quotes, backslashes, braces or newlines. Both rules are enforced at parse time because every field is interpolated into generated Rego, Colang or Python source.
+- **Templates, not inference.** The generators (`generate_opa`, `generate_nemo`, `generate_python`, `generate_langgraph`, plus the AGP and FTRA registry targets) are deterministic string templates: the same YAML always yields the same artifact. No model is involved, and the generated Python is `ruff`-formatted. Generated Python validators return a `HARD` violation on a non-finite parameter or an evaluation error, and on a missing parameter for `threshold_ref` conditions (a literal-`threshold` condition skips a missing parameter).
+- **Freshness gate.** [`scripts/check_stpa_freshness.py`](../../scripts/check_stpa_freshness.py) (CI job `stpa-freshness-check`) regenerates every artifact in memory and compares it by SHA-256 with the committed file, masking timestamps. A source edit that changes the compiled output fails CI until the artifacts are regenerated and committed.
+- **`composite` caveat.** `composite` is a free-text escape hatch. Only one form is compiled into enforcement code: `<param> > threshold_ref(<path>) * <param>` (`_COMPOSITE_SCALED_THRESHOLD_RE`; UCA-6 uses it). Any other composite expression compiles to a comment and a `pass` in the Python validator and to a comment in Rego, so it is **not enforced**. Every composite in the shipped sources matches the compiled form; a new composite UCA must too, or carry its own enforcement.
 
 ---
 

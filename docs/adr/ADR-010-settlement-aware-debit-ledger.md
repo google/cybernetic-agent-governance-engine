@@ -1,6 +1,6 @@
 # ADR-010: Settlement-Aware, O(1) Local-Debit Ledger for the Reconciled CBF
 
-**Status:** Accepted (design approved 2026-10-02; implemented on `fix/recon-discrepancy-floor` and `fix/cbf-settlement-ledger`)  
+**Status:** Accepted (design approved 2026-10-02; implemented in `ea92089e` (#345, discrepancy floor) and `980e1ace` (#346, ledger); amended by `42ee97a5` (#359, only confirmed debits settle) and `e1a9687f` (#361, an unledgered rollback restores nothing))  
 **Date:** 2026-10-02  
 **Decision Makers:** CAGE Core Architecture Team  
 **Supersedes:** sequence-tagged pruning of the former `cbf:local_debits` list  

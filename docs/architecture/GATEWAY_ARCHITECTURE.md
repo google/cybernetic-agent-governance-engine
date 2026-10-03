@@ -387,6 +387,17 @@ Agent identity is a **transport-layer fact**, not an application-layer claim. Th
 
 **Proof-of-possession (available, not yet on the hot path):** [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) provides the vendor-neutral `ProofOfPossessionValidator` protocol and an RFC 9449 `DPoPValidator` that binds a DPoP proof to the mTLS client certificate, raising `TokenBindingError` on failure. It is unit-tested in [`tests/test_dpop_validator.py`](../../tests/test_dpop_validator.py) but is not yet invoked by gateway middleware; see §5 of the identity spec for the remaining rollout items.
 
+### 5.5 Content Rails and Streaming Egress
+
+**NeMo Guardrails is a content layer, not part of the admissibility decision.** The STERA pipeline (§2.2) decides whether an *action* may bind; NeMo rails ([`src/integrations/nemo/manager.py`](../../src/integrations/nemo/manager.py)) decide what *text* may pass. `verify_input()` screens prompts, `verify_and_mask_output()` screens and PII-masks model output and tool-call arguments, and the STPA compiler emits Colang flows for UCAs that target `nemo` ([`docs/security/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md) §3). The rails are LLM-backed and fail closed, but a rail verdict never authorizes an action: a tool call that passes NeMo still needs a routing seal from the governor (§5.3). In the advisor graph the input and output rails also run as defense-in-depth LangGraph nodes through the kernel `langgraph_harness`.
+
+**Streaming responses are fully buffered (decision D5).** Emitted tokens cannot be recalled, so output filtering has to see the whole response before the client sees any of it. For `stream=True`, [`inference_proxy.py`](../../src/gateway/server/inference_proxy.py) collects every upstream SSE chunk from `_stream_vllm()`, reassembles the `delta.content` text and runs `verify_and_mask_output()` on it (this closed GHSA-hfqj-24cj-693g, where streamed output bypassed the output rail). Then:
+
+- **Unchanged by the rail:** the collected chunks are replayed as `text/event-stream`. The client receives a valid SSE stream, but only after generation has finished.
+- **Changed by the rail:** the proxy returns a single non-streaming `chat.completion` JSON body with the masked content and zeroed `usage`. A client that requested SSE must accept a JSON response.
+
+The cost is latency: client-perceived time to first token equals full generation time. A windowed sanitizer that releases text once a sliding window has cleared the rail (WS-I) is parked; until it lands, the buffer is the honest statement of the trade-off.
+
 ---
 
 ## 6. NIST AI 600-1 Governance Modules
