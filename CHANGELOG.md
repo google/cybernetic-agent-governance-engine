@@ -481,6 +481,7 @@ response = requests.post(
 
 ### Fixed
 
+- **The in-cluster paper benchmark runs against a throwaway Redis and harvests its artifacts** (`deployment/k8s/benchmark-redis.yaml`, `deployment/k8s/benchmark-job.yaml`, `scripts/run_gke_benchmark_job.sh`). The job pointed at the shared `redis-master`, which `measure_reconciliation_metrics.py` now refuses without `--force`; `measure_paper_metrics.py` also needs `REDIS_URL`, which the job did not set. `run_gke_benchmark_job.sh` now starts a throwaway primary and replica (`benchmark-redis`, no persistence, pinned image, NetworkPolicy limited to benchmark pods) and deletes it on exit. The job sets `REDIS_URL` and `CAGE_REDIS_WAIT_REPLICAS=1` and drops the shared Redis password. The runner substitutes only `REGISTRY_URL` and `GOOGLE_CLOUD_PROJECT` into the job (previously no substitution ran). It copies artifacts while the container is still up: the job writes a completion marker and waits `HARVEST_WINDOW_S`, because earlier runs copied from an exited pod and kept only `PROVENANCE.md`. Output goes to `docs/paper/measurements/<date>-<sha>/`, and `PROVENANCE.md` records the git SHA, image digest, Redis topology and latency mode.
 - POAM-2026-038 closure — Reconciliation worker secrets populated, CronJob operational — 2026-08-16 (`fix(compliance)`)
 - `KMS_BATCH_ENABLED` default-value discrepancy resolved: confirmed default is `"false"` (disabled), matching `KmsBatchThresholds.enabled` in `src/gateway/governance/schemas/thresholds.py` and `config/governance_thresholds.json`.
 

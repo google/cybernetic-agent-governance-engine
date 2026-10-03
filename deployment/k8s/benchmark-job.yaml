@@ -38,6 +38,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: benchmark-runner
+          # REGISTRY_URL and GOOGLE_CLOUD_PROJECT are substituted by
+          # scripts/run_gke_benchmark_job.sh (envsubst, those two only).
           image: ${REGISTRY_URL}/governed-financial-advisor:latest
           imagePullPolicy: Always
           command: ["/bin/bash", "-c"]
@@ -83,6 +85,12 @@ spec:
               echo ""
               echo "--- Reconciliation Summary ---"
               cat /tmp/cage_reconciliation_metrics.txt || true
+
+              # kubectl cp needs a running container. Signal completion and
+              # stay up until run_gke_benchmark_job.sh has copied /tmp/*
+              # and deleted the Job (or the harvest window expires).
+              touch /tmp/cage_benchmark_done
+              sleep "${HARVEST_WINDOW_S:-900}"
           env:
             - name: CAGE_DOMAIN  # exactly one domain per process
               value: "finance"
@@ -92,14 +100,24 @@ spec:
               value: "http://governed-financial-advisor.governance-stack.svc.cluster.local:80"
             - name: GATEWAY_URL
               value: "http://gateway.governance-stack.svc.cluster.local:8080"
+            # Throwaway primary+replica from benchmark-redis.yaml. Never the
+            # shared redis-master: both scripts write CBF, fence and snapshot
+            # keys, and measure_reconciliation_metrics.py refuses a Redis that
+            # already holds state unless --force is passed.
             - name: REDIS_HOST
-              value: "redis-master"
+              value: "benchmark-redis"
             - name: REDIS_PORT
               value: "6379"
+            - name: REDIS_URL
+              value: "redis://benchmark-redis.governance-stack.svc.cluster.local:6379/0"
+            - name: CAGE_REDIS_WAIT_REPLICAS
+              value: "1"
             - name: LATENCY_RUNS
               value: "200"
             - name: REQUEST_TIMEOUT_S
               value: "180"
+            - name: HARVEST_WINDOW_S
+              value: "900"
             # Benchmark-only key (terraform output benchmark_signing_key_version).
             # No verifier trusts it, so benchmark signatures carry no authority
             # (POAM-2026-079). Keyring name is cage-signing-<environment>.
@@ -114,12 +132,6 @@ spec:
               value: "/app/tests/red_team/adversarial_dataset.json"
             - name: BENIGN_JSON
               value: "/app/tests/red_team/benign_dataset.json"
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: redis-credentials
-                  key: REDIS_PASSWORD
-                  optional: true
           resources:
             requests:
               cpu: "1000m"

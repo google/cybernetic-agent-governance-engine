@@ -544,7 +544,9 @@ BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=te
   uv run pytest tests/test_agent_accuracy.py --run-integration -n0 -v -s
 
 # Step 12 (Optional): In-cluster VPC-native benchmark or Locust HPA load test
-# bash scripts/run_gke_benchmark_job.sh
+# The benchmark creates and deletes its own throwaway Redis (benchmark-redis.yaml);
+# it never writes to the shared redis-master. Output: docs/paper/measurements/<date>-<sha>/
+# REGISTRY_URL=... GOOGLE_CLOUD_PROJECT=... bash scripts/run_gke_benchmark_job.sh
 # bash scripts/run_gke_load_test.sh
 
 # Step 13: Teardown port-forward daemon after testing
