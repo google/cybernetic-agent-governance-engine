@@ -349,7 +349,7 @@ def _build_governor(
         flags=DecisionFlags(defer=False, narrow=False),
     )
     # Mirror bootstrap_governor(): register the domain's compliance overlays so
-    # ControlRegistry resolves its controls (e.g. the causal tier's CTRL_MRM_004).
+    # ControlRegistry resolves the domain's own controls.
     from src.gateway.governance.constants import register_overlay_dir  # noqa: PLC0415
 
     for contribution in governor.components.contributions:

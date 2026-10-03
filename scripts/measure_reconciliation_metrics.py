@@ -234,15 +234,8 @@ def _cbf_trusts(identity: SigningIdentity) -> Iterator[None]:
 
 
 def _build_cbf() -> Any:
-    import src.cage_finance as cage_finance
     from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-    from src.gateway.governance.constants import register_overlay_dir
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-
-    # Mirror bootstrap_governor(): register the finance compliance overlay so
-    # ControlRegistry resolves CTRL_MRM_004, which the CBF cites when it rejects
-    # (the §6.5 violation pass). Without it the rejection raises KeyError.
-    register_overlay_dir(Path(cage_finance.__file__).parent / "config" / "compliance")
 
     cbf = ControlBarrierFunction(
         invariant=CashBarrier(),
