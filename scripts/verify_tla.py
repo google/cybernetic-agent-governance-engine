@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run TLC on every proof/DistributedCBF*.cfg and compare with the Python BFS.
+"""Run TLC on every pinned proof/*.cfg and compare with the recorded results.
 
-Each cfg must reproduce ``EXPECTED_STATE_COUNTS[(name, 2)]`` from
-``proof/distributed_cbf_model.py``: the same number of distinct states (TLC
-runs with ``-continue`` so violated configurations are explored fully) and
-the same SP-1 / SP-2 verdicts.
+``DistributedCBF*.cfg`` must reproduce ``EXPECTED_STATE_COUNTS[(name, 2)]``
+from ``proof/distributed_cbf_model.py``: the same number of distinct states
+(TLC runs with ``-continue`` so violated configurations are explored fully)
+and the same SP-1 / SP-2 verdicts.
+
+``FtraBoundary*.cfg`` and ``LangGraphHarness*.cfg`` (POAM-2026-091) must
+reproduce ``TLC_PINS`` from ``proof/tla_pins.py``: the exact distinct-state
+count and the exact set of violated invariants. A violated temporal property
+or a TLC exception fails the run.
 
 Usage:
     TLA_TOOLS_JAR=/path/to/tla2tools.jar uv run python scripts/verify_tla.py
@@ -40,9 +45,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from proof.distributed_cbf_model import CONFIGS, EXPECTED_STATE_COUNTS  # noqa: E402
+from proof.tla_pins import TLC_PINS  # noqa: E402
 
 _DISTINCT = re.compile(r"(\d+) distinct states found")
 _VIOLATED = re.compile(r"Invariant (\w+) is violated")
+_FAILURES = ("Temporal properties were violated", "unexpected exception", "Error: Deadlock")
 
 
 def _tools() -> tuple[str, str] | None:
@@ -96,6 +103,18 @@ def main() -> int:
             f"{'OK ' if match else 'BAD'} {cfg.name}: TLC (states, SP-1, SP-2) = {got}; "
             f"BFS = {expected}"
             + (f"; other violations: {sorted(unexpected)}" if unexpected else "")
+        )
+    for name, pin in TLC_PINS.items():
+        cfg = ROOT / "proof" / f"{name}.cfg"
+        states, violated, out = run_tlc(java, jar, cfg, ROOT / "proof" / f"{pin.spec}.tla")
+        failures = [f for f in _FAILURES if f in out]
+        match = states == pin.distinct_states and violated == pin.violated and not failures
+        ok &= match
+        print(
+            f"{'OK ' if match else 'BAD'} {cfg.name}: TLC states={states}, "
+            f"violated={sorted(violated)}; pinned states={pin.distinct_states}, "
+            f"violated={sorted(pin.violated)}"
+            + (f"; failures: {failures}" if failures else "")
         )
     return 0 if ok else 1
 

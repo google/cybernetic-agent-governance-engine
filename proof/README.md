@@ -112,8 +112,8 @@ PROVED:
 | Spec File | Scope | Invariants |
 |-----------|-------|------------|
 | `DistributedCBF.tla` | Multi-process CBF admission under a lagging Redis replica: read → CAS write, stale failover, process restart, rollback; twin of `distributed_cbf_model.py` | `SP1_NoDoubleSpend`, `SP2_NoOvercommit`, `SP4_FenceEpochMonotonic` (action property) |
-| `FtraBoundary.tla` | FTRA action classification, controller boundary coverage, fail-closed semantics — **not model-checked: its initial state violates `ControllerBoundaryCoversInGraphBypass` (POAM-2026-091)** | `ControllerBoundaryCoversInGraphBypass`, `FailClosedOnUnknownAction`, `NetworkPolicyEnforced` |
-| `LangGraphHarness.tla` | LangGraph state machine, evidence chain, seal issuance, HITL timeout safety, client SDK session lifecycle — **not model-checked: most actions leave `consecutive_denials` / `deferral_resolved` unassigned (POAM-2026-091)** | `NoDirectBind`, `EvidenceChainIntegrity`, `SealGateIntegrity`, `HITLTimeoutSafety`, `OutputRailCoverage`, `SingleUseDeferralTicket`, `BudgetNeverExceededWithoutPause` |
+| `FtraBoundary.tla` | One request through the network policy, the in-graph `ftra_node` and the unconditional controller `FtraStage`: finance registry, fail-closed classification, conditional auto-clear, HITL propagation (POAM-2026-091) | `ControllerBoundaryCoversInGraphBypass`, `ControllerBoundaryUnconditional`, `NoUnreviewedIrreversibleExecution`, `FailClosedOnUnknownAction`, `RegistryUnavailableFailsClosed`, `AutoClearOnlyInsideEnvelope`, `NetworkPolicyEnforced`, `ConsistentClassification`, `HITLRequiredPropagates`, `ParseErrorsPreventClear`; liveness `EveryRequestTerminates` |
+| `LangGraphHarness.tla` | One advisor thread over several turns (`graph.py`, `safety_node.py`, governed-trader subgraph) and the DeferQueue tickets it parks (POAM-2026-091, POAM-2026-093) | `NoDirectBind`, `SealGateIntegrity`, `EvidenceChainIntegrity`, `HITLTimeoutSafety`, `OutputRailCoverage`, `SingleUseDeferralTicket`, `BudgetNeverExceededWithoutPause`, `RefusedTurnNeverTrades`, `FtraHoldNeverTradesThisTurn` |
 
 ### Distributed CBF: Results
 
@@ -164,64 +164,40 @@ PROPERTIES
 CHECK_DEADLOCK FALSE
 ```
 
-### LangGraph Harness Model Checker Parameters
+### FtraBoundary and LangGraphHarness: Results
 
-The `LangGraphHarness.tla` specification extends the governance pipeline model to include client SDK session lifecycle and budget enforcement:
+Neither spec has a Python twin, so TLC's distinct-state count (`-continue`) and the exact set of violated invariants are pinned in [`tla_pins.py`](tla_pins.py). Each spec has one negative-control cfg that removes the defence it depends on; it lists the demonstrated invariant first because TLC reports only the first violated invariant per state.
 
-**Constants:**
-- `MaxLoopCount = 3` — Safety breaker cap for re-planning loops
-- `HITLTimeoutTicks = 5` — HITL TTL expiration countdown (abstract time units)
-- `MaxConsecutiveDenials = 2` — Budget cap for consecutive DENY verdicts before pausing session
+| cfg | Posture | Distinct states | Result |
+|-----|---------|-----------------|--------|
+| `FtraBoundary.cfg` | Shipped: `FtraStage` in every governor run, NetworkPolicy applied; `FairSpec` | 8272 | ✅ all invariants; `EveryRequestTerminates` holds |
+| `FtraBoundary_nonetpol.cfg` | No NetworkPolicy (e.g. agnostic target) | 8756 | ✅ all invariants |
+| `FtraBoundary_noboundary.cfg` | Governor without `FtraStage` (negative control) | 13792 | ❌ `NoUnreviewedIrreversibleExecution`, `ControllerBoundaryCoversInGraphBypass`, `ControllerBoundaryUnconditional` |
+| `LangGraphHarness.cfg` | HEAD: status-guarded `DeferQueue._resolve`; 3 turns | 82652 | ✅ all invariants |
+| `LangGraphHarness_unguarded.cfg` | `_resolve` without the status guard (pre-POAM-2026-093; negative control); 1 turn | 906 | ❌ `SingleUseDeferralTicket` |
 
-**Invariants:**
-- `TypeOK` — Type safety for all state variables
-- `NoDirectBind` — Core safety: `(phase = "RESPONSE") => resolved_allow`
-- `EvidenceChainIntegrity` — Audit trail committed before response
-- `SealGateIntegrity` — Routing seal issued and valid for ALLOW responses
-- `HITLTimeoutSafety` — HITL timeout leads to ERROR, not RESPONSE
-- `OutputRailCoverage` — All non-error paths pass through output rail
-- `SingleUseDeferralTicket` — Deferral tickets cannot be resolved more than once
-- `BudgetNeverExceededWithoutPause` — `consecutive_denials > MaxConsecutiveDenials` implies `phase = "PausedBudgetExceeded"`
+**LangGraphHarness constants:** `MaxLoopCount = 3` (`route_after_evaluator`), `HITLTimeoutTicks = 1`, `MaxConsecutiveDenials = 2` (`safety_node.MAX_CONSECUTIVE_DENIALS`), `MaxTurns = 3`, `ResolveGuarded = TRUE`.
 
-**Client SDK State Transitions:**
-- `TriggerDenial: Active → ParkedForReview` — Session parked after DENY verdict
-- `TriggerDeferral: Active → DEFER_PENDING` — Session deferred for data hydration
-- `ResumeApproval: ParkedForReview → Active` — Session resumes after manual approval
-- `ExceedBudget: Active → PausedBudgetExceeded` — Budget exhausted after MaxConsecutiveDenials
-
-**Model Configuration** ([`LangGraphHarness.cfg`](LangGraphHarness.cfg); `SingleUseDeferralTicket` and `BudgetNeverExceededWithoutPause` are defined but not yet checked — POAM-2026-091):
-```
-SPECIFICATION Spec
-
-CONSTANTS
-    MaxLoopCount = 3
-    HITLTimeoutTicks = 5
-    MaxConsecutiveDenials = 2
-
-INVARIANTS
-    TypeOK
-    NoDirectBind
-    EvidenceChainIntegrity
-    SealGateIntegrity
-    HITLTimeoutSafety
-    OutputRailCoverage
-
-CHECK_DEADLOCK FALSE
-```
+**What the harness invariants say:**
+- `NoDirectBind`, `SealGateIntegrity`, `EvidenceChainIntegrity`: a trade executes only after a gateway ALLOW (or a consumed approval plus POST_HITL re-validation), with a seal and committed evidence.
+- `HITLTimeoutSafety`: an expired interrupt never trades. `OutputRailCoverage`: every response past the input rail passes the output rail.
+- `SingleUseDeferralTicket`: each DeferQueue ticket is resolved at most once and consumed at most once.
+- `BudgetNeverExceededWithoutPause`: a refused `safety_check` reports `HARD_PAUSE_BUDGET_EXCEEDED` exactly when the new `consecutive_denials` is at least 2. The pause ends that turn; it does not lock the thread, and the counter persists in the thread checkpoint.
+- `RefusedTurnNeverTrades`, `FtraHoldNeverTradesThisTurn`: a refused or paused turn, and a turn the FTRA node parked, never reach the trader (an FTRA HITL resume goes to the explainer).
 
 ### Running TLC Model Checker
 
 TLC needs Java 11+ and `tla2tools.jar` (https://github.com/tlaplus/tlaplus/releases; CI pins v1.7.4 by sha256).
 
 ```bash
-# Python BFS, then TLC on every DistributedCBF*.cfg, compared with the BFS pins
+# Python BFS, then TLC on every pinned cfg (DistributedCBF vs the BFS; the others vs tla_pins.py)
 TLA_TOOLS_JAR=/path/to/tla2tools.jar make verify-tla
 
 # A single cfg
 java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla
 ```
 
-`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails only on a count or verdict that differs from the BFS. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
+`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails only on a count or verdict that differs from the BFS. `FtraBoundary*.cfg` and `LangGraphHarness*.cfg` must match `tla_pins.py` exactly; a violated temporal property or a TLC exception also fails the run. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
 
 ## Architectural Notes
 
@@ -252,13 +228,15 @@ Prior to ARCH-1, the Python BFS model **excluded FTRA** (Tier 0.5) because it th
 
 ### FTRA-Specific Invariants
 
-From `FtraBoundary.tla`:
+From `FtraBoundary.tla` (TLC-checked, POAM-2026-091):
 
-- **ControllerBoundaryCoversInGraphBypass**: Every action reachable via `in_graph` bypass must be covered by the FTRA controller boundary (no untracked capability escalation)
-- **FailClosedOnUnknownAction**: Any action not in the registry must be blocked (no default-allow)
-- **NetworkPolicyEnforced**: Irreversible terminal actions require routing seal verification before network egress
+- **ControllerBoundaryCoversInGraphBypass**: every request that reaches the governor without the in-graph node gets a controller FTRA verdict, and an uncleared irreversible terminal is not sealed without a human
+- **ControllerBoundaryUnconditional**: `FtraStage` runs in every FULL / DRY_RUN governor run
+- **NoUnreviewedIrreversibleExecution**: a truly irreversible action executes only with a human approval (in-graph or governor) or a conditional auto-clear inside its envelope
+- **FailClosedOnUnknownAction** / **RegistryUnavailableFailsClosed**: unregistered actions and unloadable registries classify `IRREVERSIBLE_TERMINAL` and never auto-clear; an unavailable registry is a HARD deny at the controller
+- **NetworkPolicyEnforced**: with the NetworkPolicy applied, only admitted callers reach the gateway (an interim compensating control; `FtraBoundary_nonetpol.cfg` shows the controller check alone suffices)
 
-These are **not provable in the Python BFS model** (which abstracts FTRA as a binary PASS/FAIL tier) but are critical for FTRA's defense-in-depth boundary. The TLA+ spec models the full action registry, reachability analysis, and network policy enforcement.
+These are **not provable in the Python BFS model** (which abstracts FTRA as a binary PASS/FAIL tier). The in-graph node has no magnitude extractor, so nothing auto-clears in-graph, and `bypassed_ftra_node` is a telemetry label: the controller cannot know whether the in-graph node ran.
 
 ## Integration with CI
 
@@ -277,16 +255,16 @@ Regression tests pin the governance model counts — gated 38 / ungated 19 / DoW
 
 ### TLA+ (TLC)
 
-TLC runs in the manually dispatched [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow and locally via `make verify-tla`; it is not a per-PR gate because it needs Java and the jar. The PR gate still catches drift: `tests/test_distributed_cbf_proof.py` fails if a cfg names a constant or invariant the spec does not define, and runs TLC itself when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
+TLC runs in the manually dispatched [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow and locally via `make verify-tla`; it is not a per-PR gate because it needs Java and the jar. The PR gate still catches drift: `tests/test_distributed_cbf_proof.py` and `tests/test_tla_specs_proof.py` fail if a cfg names a constant or invariant the spec does not define or a `proof/*.cfg` is not pinned, and run TLC themselves when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
 
 ## References
 
 - **Python BFS Model**: `proof/model.py`
 - **TLA+ Specs**: `proof/*.tla`
 - **TLC Configs**: `proof/*.cfg`
-- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`, `tests/test_governance_trace_conformance.py`
+- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`, `tests/test_tla_specs_proof.py`, `tests/test_governance_trace_conformance.py`
 - **Trace checker**: `proof/trace_conformance.py`, `scripts/check_trace_conformance.py`
-- **TLC runner**: `scripts/verify_tla.py`
+- **TLC runner**: `scripts/verify_tla.py` (pins: `proof/distributed_cbf_model.py`, `proof/tla_pins.py`)
 - **Paper Citation**: CAGE_ARXIV.MD §4.4 "Formal Verification", Appendix A
 - **Revision Tracker**: `docs/paper/REVISION_TRACKER.md` (published state counts)
 

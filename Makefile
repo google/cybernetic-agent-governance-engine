@@ -231,15 +231,15 @@ test-property:
 # TLA+ model checking (formal verification)
 # ---------------------------------------------------------------------------
 
-## Model-check proof/DistributedCBF*.cfg with TLC and cross-check the Python BFS.
+## Model-check every pinned proof/*.cfg with TLC (DistributedCBF vs the Python BFS; FtraBoundary, LangGraphHarness vs proof/tla_pins.py).
 ## Needs TLA_TOOLS_JAR=/path/to/tla2tools.jar (JAVA=... if java is not on PATH);
-## without it, runs the Python BFS only. FtraBoundary/LangGraphHarness: POAM-2026-091.
+## without it, runs the Python BFS only (POAM-2026-090, POAM-2026-091).
 verify-tla:
 	@uv run python proof/distributed_cbf_model.py
 	@if [ -n "$$TLA_TOOLS_JAR" ]; then \
 		uv run python scripts/verify_tla.py; \
 	else \
-		echo "TLA_TOOLS_JAR not set: TLC skipped (Python BFS only)."; \
+		echo "TLA_TOOLS_JAR not set: TLC skipped (Python BFS only; FtraBoundary and LangGraphHarness need TLC)."; \
 		echo "Download tla2tools.jar from https://github.com/tlaplus/tlaplus/releases"; \
 	fi
 
