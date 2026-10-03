@@ -186,7 +186,8 @@ elapsed=0
 # Through sh: the image's venv ships a `test` console script that shadows
 # /usr/bin/test on PATH, so a bare `test -f` never succeeds.
 until kubectl exec "${POD_NAME}" -c benchmark-runner -n "${NAMESPACE}" -- sh -c 'test -f /tmp/cage_benchmark_done' 2>/dev/null; do
-  phase=$(kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" -o jsonpath='{.status.phase}')
+  # A transient API-server timeout must not abort the run (set -e).
+  phase=$(kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || echo Unknown)
   if [ "${phase}" = "Failed" ] || [ "${phase}" = "Succeeded" ]; then
     kill "${LOGS_PID}" 2>/dev/null || true
     echo -e "${RED}❌ Benchmark container exited (${phase}) before writing its completion marker.${NC}"

@@ -403,6 +403,17 @@ def _build_unmocked_governor() -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _fresh_trade(params: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``params`` with a new ``trader_id``.
+
+    The OPA client caches decisions for 10 s keyed on the canonical input
+    (``src/gateway/core/policy.py``). Identical inputs on every iteration make
+    every call after the first a cache hit, so the OPA tier would contribute a
+    single span. A fresh id per call times the over-the-wire decision each time.
+    """
+    return {**params, "trader_id": f"benchmark-{uuid.uuid4().hex[:12]}"}
+
+
 def _percentiles(samples: list[float]) -> dict[str, float]:
     """Return P50, P95, P99 using linear interpolation (statistics.quantiles).
 
@@ -412,12 +423,13 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
     at n=200 and was off-by-one at P50.
     """
     if not samples:
-        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "mean": 0.0}
+        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "mean": 0.0, "n": 0}
     s = sorted(samples)
     n = len(s)
     if n == 1:
         v = s[0]
         return {
+            "n": n,
             "p50": round(v, 2),
             "p95": round(v, 2),
             "p99": round(v, 2),
@@ -429,6 +441,7 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
     qs = statistics.quantiles(s, n=100, method="inclusive")
     # qs[i] is the (i+1)th percentile, so qs[49]=P50, qs[94]=P95, qs[98]=P99
     return {
+        "n": n,
         "p50": round(qs[49], 2),
         "p95": round(qs[94], 2),
         "p99": round(qs[98], 2),
@@ -582,15 +595,16 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
 
     async def _approval_path() -> tuple[float, float | None]:
         """Run one approval; return (full_ms, post_hitl_ms or None). Abort on any other outcome."""
+        call = _fresh_trade(params)
         if path["allow"]:
             t0 = time.perf_counter()
-            seal = await gov.govern("execute_trade", dict(params))
+            seal = await gov.govern("execute_trade", call)
             t1 = time.perf_counter()
             if not seal:
                 raise RuntimeError("latency benchmark: govern() returned no seal")
             return (t1 - t0) * 1000, None
         t0 = time.perf_counter()
-        verdict = await gov.validate_action("execute_trade", dict(params))
+        verdict = await gov.validate_action("execute_trade", call)
         t1 = time.perf_counter()
         if verdict.get("verdict") != GovernanceDecision.REQUIRE_APPROVAL:
             raise RuntimeError(
@@ -599,7 +613,7 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
             )
         seal = await gov.revalidate_post_hitl(
             "execute_trade",
-            dict(params),
+            call,
             approved_barrier_preview=(verdict.get("classification_meta") or {}).get(
                 "barrier_preview"
             ),
@@ -668,9 +682,10 @@ async def _measure_approval_latency(
     total_rejected_samples: list[float] = []
     exporter.clear()
     for _ in range(LATENCY_RUNS):
+        call = _fresh_trade(rejected_params)
         t0 = time.perf_counter()
         try:
-            await gov.govern("execute_trade", rejected_params)
+            await gov.govern("execute_trade", call)
         except GovernanceError:
             pass
         else:
@@ -1537,8 +1552,8 @@ def _fmt_latency_table(latency: dict[str, dict[str, float]], *, unmocked: bool =
         _latency_table_title(unmocked),
         "## Methodology: OTel span harvest — per-tier and total from same govern() call",
         "",
-        f"{'Tier':<28} {'P50 (ms)':>10} {'P95 (ms)':>10} {'P99 (ms)':>10} {'Mean (ms)':>10}",
-        f"{'-' * 28} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 10}",
+        f"{'Tier':<28} {'P50 (ms)':>10} {'P95 (ms)':>10} {'P99 (ms)':>10} {'Mean (ms)':>10} {'n':>5}",
+        f"{'-' * 28} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 5}",
     ]
     for tier, stats in latency.items():
         note = stats.get("note", "")
@@ -1549,7 +1564,7 @@ def _fmt_latency_table(latency: dict[str, dict[str, float]], *, unmocked: bool =
         else:
             lines.append(
                 f"{tier:<28} {stats['p50']:>10.3f} {stats['p95']:>10.3f} "
-                f"{stats['p99']:>10.3f} {stats['mean']:>10.3f}"
+                f"{stats['p99']:>10.3f} {stats['mean']:>10.3f} {stats.get('n', ''):>5}"
             )
     lines.append(
         f"\nBudget: {GOVERNANCE_BUDGET_MS:.0f} ms (FedNow/SEPA Instant 10 s clearing window)"
