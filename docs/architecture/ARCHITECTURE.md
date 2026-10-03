@@ -94,7 +94,7 @@ graph TB
             P1 -->|All Pass| P2
         end
 
-        CQG["Routing Seal / ConsequenceGateway<br/>Actuation Clearance"]
+        CQG["Routing Seal verify-then-consume<br/>Actuation Clearance"]
         EVID["Evidence Stream<br/>Redis Streams db=1, SHA-256 hash chain"]
     end
 
@@ -126,7 +126,7 @@ graph TB
 3. **SymbolicGovernor Two-Phase Dispatch** ([`pipeline.py`](../../src/gateway/governance/governor/pipeline.py)):
    - **Phase 1 (Read-Only Inspection)**: Runs the non-mutating stages sequentially — FTRA, STPA, OPA, confidence, then the domain's read-only tiers by `(phase, order)` (e.g. bounding, consensus, causal) — and stops at the first `HARD` violation.
    - **Phase 2 (Atomic Mutation)**: Only if Phase 1 produced zero violations do the mutating tiers commit (e.g. discrete-time Control Barrier Functions via Redis Lua scripts and fiscal reservations). Each commit returns a `CommitReceipt` held by the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)); any Phase 2 failure rolls back exactly the recorded receipts in LIFO order.
-4. **Seal & Actuation Clearance**: On a clean run the governor issues a routing seal inside the same `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)). Commits stay in force only once the seal is issued; a failing or cancelled seal rolls them all back. The seal is a KMS-signed JWT bound to a durable evidence record ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)). When an external normative provider admits an action, a short-lived KMS-signed ConsequenceToken (JWS) is also minted ([`consequence_token_service.py`](../../src/gateway/governance/consequence_token_service.py)) for single-use verification by the [`ConsequenceGateway`](CONSEQUENCE_GATEWAY.md).
+4. **Seal & Actuation Clearance**: On a clean run the governor issues a routing seal inside the same `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)). Commits stay in force only once the seal is issued; a failing or cancelled seal rolls them all back. The seal is a KMS-signed JWT bound to a durable evidence record ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)). Before dispatch, [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) verifies the seal and only then atomically consumes its nonce, so exactly one verified caller executes. A short-lived KMS-signed ConsequenceToken (JWS, [`consequence_token_service.py`](../../src/gateway/governance/consequence_token_service.py)) is the separate single-use credential for normative-provider admissions, verified by the [`ConsequenceGateway`](CONSEQUENCE_GATEWAY.md) only for callers that present one; it is not on the governor ALLOW path.
 5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, `CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`, and `ACTUATION_RECEIPT` / `ACTUATION_REFUSAL_RECEIPT` via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1), asynchronously drained to durable cold storage by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py), and verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py).
 
 ---

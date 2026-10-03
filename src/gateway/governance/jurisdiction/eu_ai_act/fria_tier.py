@@ -146,6 +146,11 @@ class FriaTier(ReadOnlyTier):
         if result.error:
             return [self._unavailable(f"provider reported an error: {result.error}")]
         if result.admitted:
+            # An admission contributes no violation, so its findings -- including
+            # any ConsequenceToken the provider minted -- are dropped here and do
+            # not reach the routing seal. ConsequenceGateway verifies such tokens
+            # only for callers that present one; it is not on the governor's
+            # ALLOW path (decision D2, POAM-2026-089).
             return []
         hold = next((f for f in result.findings if f.get("needs_human_review") is True), None)
         if hold is not None:

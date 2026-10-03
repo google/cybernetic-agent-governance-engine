@@ -38,6 +38,9 @@ The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) eval
 4. **Output**: If ALLOW, generates a signed **ConsequenceToken** (compact JWS with `act` = SHA-256 digest of JCS-canonicalized action payload, `rec` = evidence record hash, `iat`/`exp` timestamps). If DEFER, parks the decision in DeferQueue and returns `defer_id`.
 
 ### Phase 2: Consequence Authorization (ConsequenceGateway)
+
+> **Correction (2026-10-02, POAM-2026-089, decision D2):** `ConsequenceGateway` is the single-use boundary for normative-provider `ConsequenceToken`s and is **not** on the governor ALLOW path; no production caller constructs it (see [CONSEQUENCE_GATEWAY.md](../architecture/CONSEQUENCE_GATEWAY.md)). On the ALLOW path the execution boundary is the routing seal: [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) verifies the seal and only then atomically consumes its nonce, followed by `ActuatorRegistry` dispatch. The sequence below describes the gateway primitive itself.
+
 The [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py) verifies the consequence authority before execution:
 
 1. **Input**: ConsequenceToken (compact JWS), current action payload
@@ -160,7 +163,7 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 
 **Fully Implemented** (as of 2026-09-14):
 
-- ✅ [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py:82) — 6-step verification sequence
+- ✅ [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py:82) — 6-step verification sequence (library primitive for normative-provider tokens; not on the governor ALLOW path)
 - ✅ [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:253) — RFC 8785 JCS envelope builder
 - ✅ [`DeferQueue`](../../src/gateway/governance/defer_queue.py:298) — Redis-backed defer state machine
 - ✅ [`ConsequenceToken`](../../src/gateway/governance/consequence_token.py) — JWS compact serialization with KMS signing
@@ -171,7 +174,7 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 - ✅ [`GET /v1/defer/pending`](../../src/compliance_bridge/main.py:1262) — batch listing endpoint
 - ✅ FTRA integration: [`_park_in_defer_queue()`](../../src/gateway/governance/ftra/node_factory.py:814) — parks HITL_REQUIRED verdicts
 - ✅ LangGraph defer node: [`defer_node()`](../../src/governed_financial_advisor/graph/nodes/defer_node.py:39) — parks ambiguous transactions in DeferQueue
-- ✅ Tool execution integration: [`BoundedToolExecutor`](../../src/cage_finance/tools/tool_provider.py:114) — ConsequenceGateway evaluation (ADR-008 Phase 2)
+- ✅ Tool execution integration: [`execute_trade_action()`](../../src/cage_finance/tools/tool_provider.py) — `verify_and_consume_seal()` (verify, then consume the nonce) followed by `ActuatorRegistry` dispatch. *(Corrected 2026-10-02: this line previously claimed a `BoundedToolExecutor` performing ConsequenceGateway evaluation; neither exists on this path.)*
 
 **Test Coverage**:
 - Unit tests: `tests/test_consequence_gateway.py`, `tests/test_defer_queue.py`, `tests/test_governance_envelope.py`

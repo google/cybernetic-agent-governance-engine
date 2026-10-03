@@ -178,12 +178,6 @@ async def execute_trade_action(
     # actuation error).
     executed = False
     try:
-        # Step 2: ConsequenceGateway evaluation (ADR-008 Phase 2)
-        # Check if governance_result contains a consequence_token (minted by a
-        # normative provider's validation)
-        # For now, consequence_token would be passed separately if present
-        # This is a placeholder for future integration
-
         # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
         # A narrowed committing run (SymbolicGovernor._sealed_narrow) seals the
         # clamped params and issues a single-use receipt naming them.
@@ -240,7 +234,8 @@ async def execute_trade_action(
                 )
 
         # Step 4: Seal verification and consumption (Gap 2 fix / CAGE-SEC-008)
-        # verify_and_consume_seal() burns the single-use nonce in Redis, preventing replay attacks.
+        # verify_and_consume_seal() verifies the seal, then atomically consumes its
+        # single-use nonce in Redis (POAM-2026-089: verify -> burn -> execute).
         # Phase 3.2: Verify seal against the params that will actually be executed (narrowed or original)
         try:
             await verify_and_consume_seal(seal, "execute_trade", action_params)
