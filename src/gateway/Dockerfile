@@ -41,7 +41,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 # --no-install-project installs only deps before the source tree is copied.
 # Install both gateway AND advisor extras (gateway imports from governed_financial_advisor)
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
-RUN uv sync --frozen --no-dev --extra gateway --extra advisor --extra compliance --no-install-project
+# --extra langfuse: every gateway manifest selects CAGE_TELEMETRY_PROVIDER=remote,
+#   whose adapter (src/integrations/telemetry_langfuse) imports langfuse at startup.
+RUN uv sync --frozen --no-dev --extra gateway --extra advisor --extra compliance --extra langfuse --no-install-project
 
 # Download spaCy large model via direct wheel URL (avoids CDN redirect failures).
 # Use uv pip install so the package lands in the uv-managed venv — never bypass
