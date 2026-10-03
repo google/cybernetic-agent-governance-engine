@@ -34,16 +34,18 @@ Models the 8-tier CAGE governance pipeline (`TIERS` in `proof/model.py`; ARCH-1 
 |------|------|------|
 | 0.5 | FTRA | Action classification & reachability analysis |
 | 1 | STPA | STAMP/STPA unsafe control action check |
-| 2 | Confidence | Agent confidence threshold |
-| 3a | CBF | Control Barrier Function (Redis cash barrier) |
 | 3b | OPA | OPA Rego policy evaluation |
-| 4 | Fiscal | Fiscal limit pre-reservation |
+| 2 | Confidence | Agent confidence threshold |
 | 5 | Consensus | Multi-agent consensus gate |
 | 6 | Causal | DoWhy causal gatekeeper |
+| 3a | CBF | Control Barrier Function (Redis cash barrier) — phase 2 |
+| 4 | Fiscal | Fiscal limit pre-reservation — phase 2 |
+
+The rows are in `run_pipeline()` execution order: the read-only kernel stages (`KERNEL_TIERS`), the phase-1 domain tiers, then the phase-2 (mutating) tiers. Tier numbers follow the paper.
 
 Plugin tiers (finance's `bounding`, healthcare's `dose_barrier`) add no proof states; `PLUGIN_TIER_PHASE` keeps the POST_HITL predicate from skipping a plugin-named phase-2 tier. No pipeline stage named `fria` exists, so the model has none.
 
-**Note**: Tier 3 is split into `cbf` and `opa` because each can block the action on its own. The model evaluates tiers in a fixed order; it does not enumerate CBF/OPA interleavings (at runtime OPA is a phase-1 read-only stage and CBF a phase-2 mutating stage, so they no longer run concurrently).
+**Note**: Tier 3 is split into `opa` and `cbf` because each can block the action on its own. The model evaluates tiers in the pipeline's fixed order; it does not enumerate CBF/OPA interleavings (OPA is a phase-1 read-only stage and CBF a phase-2 mutating stage, so they never run concurrently).
 
 ### State Counts (post refactor/gateway-surface-cleanup)
 
@@ -71,6 +73,16 @@ The model proves four concrete CAGE gaps:
 
 - **NARROW**: Soft threshold exceeded → seal issued on clamped parameters (ALLOW variant, `resolvedAllow=TRUE`)
 - There is no PAUSE state. The verdict lattice is `ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENY`; a transient infrastructure fault is a DENIED terminal with a refusal receipt. `main()` asserts every reachable phase is in `PHASES`.
+
+### Trace Conformance (`trace_conformance.py`)
+
+The gateway publishes one `GOVERNANCE_TRACE` event per governor decision and one per actuation ([`governor/trace.py`](../src/gateway/governance/governor/trace.py)); `PipelineResult` carries the run's `plan` and per-stage `stage_outcomes`. [`trace_conformance.py`](trace_conformance.py) projects each decision onto a `State` and checks it against `reachable_over(plan, profile)`, the gated model instantiated over that run's own tiers. It also joins each `EXECUTED` event to its seal's issuance (`no_direct_bind`) and allows one execution per seal (`single_use`). The projection keeps the first `FAIL` and treats later tiers as `PENDING`, matching the model's fail-closed step. Unsealed REQUIRE_APPROVAL, DEFER and NARROW-candidate decisions with findings are outside the model's alphabet; for them the checker only enforces "no seal, phase `CHECKING`".
+
+```bash
+uv run python scripts/check_trace_conformance.py events.jsonl   # exit 1 on findings
+```
+
+`tests/test_governance_trace_conformance.py` drives the real `SymbolicGovernor` through `govern`, `validate_action` and `revalidate_post_hitl` over 265 single- and double-fault configurations (795 decisions plus a simulated actuation per seal), checks every trace, and includes a mutation control (a governor that seals over findings is caught) and one negative control per rule.
 
 ### Running the Proof
 
@@ -273,7 +285,8 @@ TLC runs in the manually dispatched [`tlc-model-check`](../.github/workflows/tlc
 - **Python BFS Model**: `proof/model.py`
 - **TLA+ Specs**: `proof/*.tla`
 - **TLC Configs**: `proof/*.cfg`
-- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`
+- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`, `tests/test_governance_trace_conformance.py`
+- **Trace checker**: `proof/trace_conformance.py`, `scripts/check_trace_conformance.py`
 - **TLC runner**: `scripts/verify_tla.py`
 - **Paper Citation**: CAGE_ARXIV.MD §4.4 "Formal Verification", Appendix A
 - **Revision Tracker**: `docs/paper/REVISION_TRACKER.md` (published state counts)

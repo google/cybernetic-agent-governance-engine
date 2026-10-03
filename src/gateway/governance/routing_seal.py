@@ -1124,6 +1124,14 @@ async def verify_and_consume_seal(
         _verify_elapsed_us,
         _burn_elapsed_us,
     )
+    # This caller owns the seal: the model's SEAL_ISSUED -> EXECUTED step.
+    # Best effort; the trace never changes the authorisation decided above.
+    from src.gateway.governance.governor.trace import (
+        executed_trace_event,
+        publish_trace,
+    )
+
+    await publish_trace(executed_trace_event(seal, action=action))
     return True
 
 

@@ -58,8 +58,9 @@ This file:
   4. Defines an ungated (direct-bind) variant and proves it VIOLATES the
      invariant, producing an explicit counterexample — confirming the gate is
      load-bearing, not decorative.
-  5. Proves the invariant is insensitive to the CBF/OPA evaluation order,
-     which the runtime executes concurrently via ``asyncio.gather()``.
+  5. Instantiates the same transition relation over any runtime plan
+     (``reachable_over()``), so a governance trace can be checked for
+     membership in the model (``proof/trace_conformance.py``).
 
 Usage (no dependencies beyond the Python standard library):
     python proof/model.py
@@ -79,8 +80,8 @@ Scope of the model
 The tuple models the kernel stages that ``run_pipeline()``
 (``src/gateway/governance/governor/pipeline.py``) runs for every governed
 call made through ``SymbolicGovernor.govern()`` / ``verify()``: Tier 0.5
-(FTRA) and Tiers 1 through 6, with Tier 3 split into its concurrent ``cbf``
-and ``opa`` components.  Plugin-contributed tiers (e.g. finance's
+(FTRA) and Tiers 1 through 6, with Tier 3 split into its ``opa`` (phase 1)
+and ``cbf`` (phase 2) components.  Plugin-contributed tiers (e.g. finance's
 ``bounding`` or healthcare's ``dose_barrier``) add no proof states of their
 own; they are covered structurally by ``PLUGIN_TIER_PHASE`` so the POST_HITL
 predicate cannot skip a plugin-named phase-2 tier.  Jurisdiction tiers
@@ -93,8 +94,6 @@ Gaps closed by this proof:
   Gap 2: Proves govern() path satisfies the invariant when seal is issued
   Gap 3: Proves CBF_FAIL_OPEN shortcut removes the CBF tier from the gate
   Gap 4: Proves DoWhy-absent shortcut removes the causal tier from the gate
-  Concurrency: Proves the invariant is order-independent across the
-         concurrently-evaluated CBF and OPA tiers
 """
 
 from __future__ import annotations
@@ -107,24 +106,34 @@ from itertools import product
 # State definition
 # ---------------------------------------------------------------------------
 
-# Governance tiers in execution order, mirroring the kernel stages composed
-# by ``run_pipeline()``.  Each tier can be PENDING, PASS or FAIL.
+# Governance tiers in execution order, mirroring ``run_pipeline()``: the
+# read-only (phase 1) stages first, in the pipeline's order (FTRA, STPA, OPA,
+# confidence, then domain tiers), then the mutating (phase 2) stages.  Each
+# tier can be PENDING, PASS or FAIL.
 #
 # Tier numbering follows the paper (§4.2).  Tier 3 is split into its two
-# components (``cbf`` and ``opa``) because each can independently block the
-# action.  They are evaluated sequentially (OPA in phase 1, CBF in phase 2 of
-# ``run_pipeline()``), so no interleaving sub-proof is needed.
+# components (``opa`` and ``cbf``) because each can independently block the
+# action.  They are evaluated sequentially (OPA in phase 1, CBF in phase 2),
+# so no interleaving sub-proof is needed.
 # FTRA (Tier 0.5) added to close proof/implementation divergence (ARCH-1).
 TIERS = (
     "ftra",  # Tier 0.5: FTRA action classification & reachability analysis
     "stpa",  # Tier 1:  STAMP/STPA unsafe control action check
-    "confidence",  # Tier 2:  agent confidence threshold
-    "cbf",  # Tier 3a: Control Barrier Function (Redis cash barrier)
     "opa",  # Tier 3b: OPA Rego policy evaluation
-    "fiscal",  # Tier 4:  fiscal limit pre-reservation
+    "confidence",  # Tier 2:  agent confidence threshold
     "consensus",  # Tier 5:  multi-agent consensus gate
     "causal",  # Tier 6:  DoWhy causal gatekeeper
+    "cbf",  # Tier 3a: Control Barrier Function (Redis cash barrier)
+    "fiscal",  # Tier 4:  fiscal limit pre-reservation
 )
+
+# The domain-agnostic kernel stages every governor runs
+# (``governor/assembly.py::kernel_stages``).
+KERNEL_TIERS: tuple[str, ...] = ("ftra", "stpa", "opa", "confidence")
+
+# The only tiers an action that no domain tier claims runs through.
+# Mirrors ``pipeline.py::UNGOVERNED_STAGES``.
+UNGOVERNED_TIERS: frozenset[str] = frozenset({"ftra", "stpa", "opa"})
 
 TIER_LABELS: dict[str, str] = {
     "ftra": "Tier 0.5",
@@ -212,8 +221,14 @@ JURISDICTION_TIER_PHASE: dict[str, int] = {"fria": 1}
 
 
 def region_tiers(region: str) -> tuple[str, ...]:
-    """The tiers a governed call runs through in ``region``."""
-    return TIERS + JURISDICTION_TIERS[region]
+    """The tiers a governed call runs through in ``region``, in pipeline order.
+
+    Jurisdiction tiers are phase 1, so they run after the phase-1 tiers and
+    before any phase-2 tier.
+    """
+    phase1 = tuple(t for t in TIERS if TIER_PHASE[t] == 1)
+    phase2 = tuple(t for t in TIERS if TIER_PHASE[t] == 2)
+    return phase1 + JURISDICTION_TIERS[region] + phase2
 
 
 def region_tier_phase(region: str) -> dict[str, int]:
@@ -921,6 +936,42 @@ def enumerate_region(region: str, transition_fn=None) -> set[State]:
         return enumerate_reachable(transition_fn or gated_transitions)
     finally:
         TIERS, TIER_PHASE, PROFILE_STAGES = saved
+
+
+_REACHABLE_OVER_CACHE: dict[tuple[tuple[tuple[str, int], ...], str], frozenset[State]] = {}
+
+
+def reachable_over(plan: tuple[tuple[str, int], ...], profile: str) -> frozenset[State]:
+    """The gated model instantiated over a runtime ``plan``, from ``profile``.
+
+    ``plan`` is the ``(tier, phase)`` sequence a run selected, in execution
+    order (``PipelineResult.plan``). Every planned tier is required, so a
+    seal needs every one of them to pass. Like :func:`enumerate_region`, the
+    module-level model is rebound for the enumeration and restored after.
+    """
+    key = (plan, profile)
+    cached = _REACHABLE_OVER_CACHE.get(key)
+    if cached is not None:
+        return cached
+    global TIERS, TIER_PHASE, PROFILE_STAGES
+    saved = (TIERS, TIER_PHASE, PROFILE_STAGES)
+    names = tuple(name for name, _ in plan)
+    try:
+        TIERS = names
+        TIER_PHASE = dict(plan)
+        PROFILE_STAGES = {p: frozenset(names) for p in PROFILES}
+        start = State(
+            phase="PENDING",
+            tier_results=tuple((t, "PENDING") for t in names),
+            seal_present=False,
+            resolved_allow=False,
+            profile=profile,
+        )
+        states = frozenset(enumerate_reachable(gated_transitions, start))
+    finally:
+        TIERS, TIER_PHASE, PROFILE_STAGES = saved
+    _REACHABLE_OVER_CACHE[key] = states
+    return states
 
 
 def region_seal_requires_obligations(region: str, states: set[State]) -> bool:

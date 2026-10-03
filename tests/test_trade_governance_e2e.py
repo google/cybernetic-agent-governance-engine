@@ -962,8 +962,8 @@ async def test_mutation_without_the_consumption_cas_replay_executes_twice(
 async def test_mutation_skipping_the_pending_approval_preview_hides_the_breach(
     gw: Gateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _no_preview(*_: Any, **__: Any) -> tuple[list[Any], list[Any]]:
-        return [], []
+    async def _no_preview(*_: Any, **__: Any) -> tuple[list[Any], list[Any], list[Any]]:
+        return [], [], []
 
     monkeypatch.setattr(pipeline_mod, "_preview_mutating", _no_preview)
     with pytest.raises(AssertionError):

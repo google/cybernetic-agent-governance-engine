@@ -169,12 +169,12 @@ class TestFormalModelParity:
         expected = (
             "ftra",
             "stpa",
-            "confidence",
-            "cbf",
             "opa",
-            "fiscal",
+            "confidence",
             "consensus",
             "causal",
+            "cbf",
+            "fiscal",
         )
         assert formal_model.TIERS == expected, (
             f"proof/model.py TIERS changed! Expected {expected}, got {formal_model.TIERS}"

@@ -109,23 +109,28 @@ EXPECTED_SKIPPED_TIER_STATES = 35  # Gap 3 and Gap 4 variants
 
 
 def test_tier_tuple_matches_pipeline() -> None:
-    """The modelled tiers mirror the kernel stages of ``run_pipeline()``.
+    """The modelled tiers mirror ``run_pipeline()``'s execution order.
 
     ARCH-1: FTRA (Tier 0.5) is included to close proof/implementation
-    divergence. There is no ``fria`` tier: no pipeline stage of that name
-    exists (refactor/gateway-surface-cleanup). Plugin tiers such as finance's
-    ``bounding`` are covered structurally via ``PLUGIN_TIER_PHASE``.
+    divergence. The order is the pipeline's: the read-only kernel stages
+    (FTRA, STPA, OPA, confidence), the phase-1 domain tiers, then the phase-2
+    tiers. There is no ``fria`` tier in the universal tuple: it is an
+    ``EU_ECB`` jurisdiction tier. Plugin tiers such as finance's ``bounding``
+    are covered structurally via ``PLUGIN_TIER_PHASE``.
     """
     assert model.TIERS == (
         "ftra",
         "stpa",
-        "confidence",
-        "cbf",
         "opa",
-        "fiscal",
+        "confidence",
         "consensus",
         "causal",
+        "cbf",
+        "fiscal",
     )
+    assert model.TIERS[: len(model.KERNEL_TIERS)] == model.KERNEL_TIERS
+    phases = [model.TIER_PHASE[t] for t in model.TIERS]
+    assert phases == sorted(phases), "a phase-1 tier is modelled after a phase-2 tier"
     assert "ftra" in model.TIERS
 
 

@@ -41,7 +41,6 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
-from src.gateway.governance.narrow_receipt import issue_narrow_receipt
 from src.gateway.governance.governor.pipeline import (
     BarrierPreview,
     PipelineResult,
@@ -53,6 +52,7 @@ from src.gateway.governance.governor.pipeline import (
 from src.gateway.governance.governor.sealing import run_sealed
 from src.gateway.governance.governor.settlement import SettlementLedger, settle
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
+from src.gateway.governance.governor.trace import decision_trace_event, publish_trace
 from src.gateway.governance.governor.verdicts import (
     handle_defer,
     handle_deny,
@@ -60,6 +60,7 @@ from src.gateway.governance.governor.verdicts import (
     handle_require_approval,
     reported_confidence,
 )
+from src.gateway.governance.narrow_receipt import issue_narrow_receipt
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
@@ -156,6 +157,7 @@ class SymbolicGovernor:
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
             if not result.violations:
+                await _trace(result, action, Profile.DRY_RUN, "validate_action", GovernanceDecision.ALLOW)
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
@@ -196,6 +198,15 @@ class SymbolicGovernor:
 
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
+            await _trace(
+                result,
+                action,
+                Profile.DRY_RUN,
+                "validate_action",
+                classification.decision
+                if classification.decision in _PENDING_DECISIONS
+                else GovernanceDecision.DENY,
+            )
             verdict = handler(
                 action, params, violations, list(result.tier_failures), meta, latency_ms
             )
@@ -249,6 +260,7 @@ class SymbolicGovernor:
         """
         proposal = meta.get("narrowed_params")
         if not isinstance(proposal, dict):
+            await _trace(result, action, Profile.DRY_RUN, "validate_action", GovernanceDecision.DENY)
             await _deny(action, params, result)
         verified = copy.deepcopy(proposal)  # the exact params the response names
         ctx = StageContext(
@@ -257,6 +269,15 @@ class SymbolicGovernor:
         rerun = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
         latency_ms = round((time.perf_counter() - t0) * 1000, 2)
         reverified = not rerun.violations
+        await _trace(
+            result,
+            action,
+            Profile.DRY_RUN,
+            "validate_action",
+            GovernanceDecision.NARROW if reverified else GovernanceDecision.DENY,
+            narrower_present=True,
+            clamped_params_valid=reverified,
+        )
         trace.get_current_span().set_attribute(
             "cage.governance.narrow_reverified", reverified
         )
@@ -307,6 +328,10 @@ class SymbolicGovernor:
             )
             if seal is None:
                 seal = await self._sealed_narrow(tool_name, params, result)
+            else:
+                await _trace(
+                    result, tool_name, Profile.FULL, "govern", GovernanceDecision.ALLOW, seal=seal
+                )
             span.set_attribute("cage.seal_issued", True)
             span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
             return seal
@@ -335,6 +360,7 @@ class SymbolicGovernor:
         )
         proposal = classification.metadata.get("narrowed_params")
         if classification.decision != GovernanceDecision.NARROW or not isinstance(proposal, dict):
+            await _trace(result, action, Profile.FULL, "govern", GovernanceDecision.DENY)
             await _deny(action, params, result)
         narrowed = copy.deepcopy(proposal)  # the exact params the seal and receipt name
 
@@ -357,6 +383,17 @@ class SymbolicGovernor:
         )
         span = trace.get_current_span()
         span.set_attribute("cage.governance.narrow_reverified", seal is not None)
+        # The model's NARROW state records where the *original* run failed.
+        await _trace(
+            result,
+            action,
+            Profile.FULL,
+            "govern_narrow",
+            GovernanceDecision.NARROW if seal is not None else GovernanceDecision.DENY,
+            seal=seal,
+            narrower_present=True,
+            clamped_params_valid=seal is not None,
+        )
         if seal is None:
             await handle_deny(
                 action,
@@ -436,6 +473,14 @@ class SymbolicGovernor:
             )
             if result.barrier_outcome is not None:
                 span.set_attribute("toctou.barrier_outcome", result.barrier_outcome.value)
+            await _trace(
+                result,
+                action,
+                Profile.POST_HITL,
+                "revalidate_post_hitl",
+                GovernanceDecision.ALLOW if seal is not None else GovernanceDecision.DENY,
+                seal=seal,
+            )
             if seal is None:
                 if (
                     approved == BarrierPreview.PASS
@@ -607,6 +652,36 @@ async def _deny_drift(
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
     )  # fail closed
+
+
+#: Decisions that park the request instead of refusing it (model phase CHECKING).
+_PENDING_DECISIONS = frozenset({GovernanceDecision.REQUIRE_APPROVAL, GovernanceDecision.DEFER})
+
+
+async def _trace(
+    result: PipelineResult,
+    action: str,
+    profile: Profile,
+    path: str,
+    verdict: GovernanceDecision,
+    *,
+    seal: str | None = None,
+    narrower_present: bool = False,
+    clamped_params_valid: bool = False,
+) -> None:
+    """Publish this decision's ``GOVERNANCE_TRACE`` event (best effort)."""
+    await publish_trace(
+        decision_trace_event(
+            result,
+            action=action,
+            profile=profile,
+            path=path,
+            verdict=verdict.value,
+            seal=seal,
+            narrower_present=narrower_present,
+            clamped_params_valid=clamped_params_valid,
+        )
+    )
 
 
 _VERDICT_HANDLERS = {
