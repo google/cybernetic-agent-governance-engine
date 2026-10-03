@@ -14,11 +14,12 @@
 
 """Unit and chaos tests for CBF durability (Track 6b.0 / G4).
 
-Verifies the 5 durability fixes specified in plans/gke_managed_services_blueprint.md §2.3:
+Verifies the 5 durability fixes specified in plans/gke_managed_services_blueprint.md §2.3,
+as carried forward by ADR-010 (settlement-aware debit ledger):
 1. Shared Epoch High-Water Mark (`safety:fence_epoch_hwm`) across pods/replicas and restarts.
-2. Atomic debit execution inside `LUA_ATOMIC_CBF` as `KEYS[4]` (no crash window).
-3. Sequence-based debit trimming (no count-based `LTRIM -1000` drop).
-4. `rollback_state()` removes the debit to prevent phantom spend.
+2. Atomic debit ledgering inside `LUA_ATOMIC_CBF` (`cbf:debits` HASH, no crash window).
+3. Settlement-based debit pruning (no count-based `LTRIM -1000` drop, no O(L) read).
+4. `rollback_state()` retires exactly its own debit to prevent phantom spend.
 5. `EVALSHA` and `WAIT` execute on a single pinned connection.
 """
 
@@ -32,14 +33,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-from src.gateway.governance.reconciliation.daemon import ReconciliationResult
+from src.gateway.governance.reconciliation.daemon import (
+    ReconciliationResult,
+    reconciled_state_key,
+)
 from src.gateway.governance.safety.cbf_engine import (
     _REDIS_KEY_FENCE_EPOCH,
     _REDIS_KEY_FENCE_EPOCH_HWM,
-    _REDIS_KEY_LOCAL_DEBITS,
     ControlBarrierFunction,
-    trim_local_debits_through_sequence,
-    trim_local_debits_through_sequence_sync,
+)
+from src.gateway.governance.safety.debit_ledger import (
+    DEBITS_BY_TIME_KEY,
+    DEBITS_KEY,
+    DEBITS_ROLLED_BACK_KEY,
+    DEBITS_TOTAL_KEY,
+    settle_debits,
+    settle_debits_sync,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -132,32 +141,36 @@ class TestFenceEpochHighWaterMark:
 
 
 # ---------------------------------------------------------------------------
-# Item 2: Atomic Debit in Lua (KEYS[4])
+# Item 2: Atomic Debit Ledgering in Lua (KEYS[4] / KEYS[6] / KEYS[7])
 # ---------------------------------------------------------------------------
 
 
+async def _seed_debit(r, debit_id: str, amount: float, submitted_at: float) -> None:
+    await r.hset(DEBITS_KEY, debit_id, json.dumps({"amount": amount, "submitted_at": submitted_at}))
+    await r.zadd(DEBITS_BY_TIME_KEY, {debit_id: submitted_at})
+    await r.incrbyfloat(DEBITS_TOTAL_KEY, amount)
+
+
+async def _ledger(r) -> dict[str, dict]:
+    return {k: json.loads(v) for k, v in (await r.hgetall(DEBITS_KEY)).items()}
+
+
+async def _total(r) -> float:
+    raw = await r.get(DEBITS_TOTAL_KEY)
+    return float(raw) if raw is not None else 0.0
+
+
 class TestAtomicDebitInLua:
-    """Verifies that debits are committed atomically in Lua, closing crash windows."""
+    """Verifies that debits are ledgered atomically in Lua, closing crash windows."""
 
     @pytest.mark.asyncio
-    async def test_atomic_commit_pushes_debit_in_lua_script(
+    async def test_atomic_commit_ledgers_debit_in_lua_script(
         self, fake_redis_async, cbf_finance
     ):
-        """Debit is pushed inside LUA_ATOMIC_CBF without separate Python rpush."""
+        """The debit entry, time index and running total are written by LUA_ATOMIC_CBF itself."""
         await fake_redis_async.set(cbf_finance.redis_key, "100000.0")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH_HWM, "1")
-
-        mock_result = ReconciliationResult(
-            source="reconciliation",
-            state_scalar=100000.0,
-            verified_at=time.time(),
-            signature="valid_sig",
-            kms_key_id="reconciler-kid",
-            signing_algorithm="gcp_kms",
-            ttl_seconds=300,
-            sequence=7,
-        )
 
         with (
             patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
@@ -168,26 +181,34 @@ class TestAtomicDebitInLua:
                 {"source": "reconciliation", "sequence": 7, "fence_epoch": 1},
             ))),
         ):
-            committed, msg, cost = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0}, governance_signature="sig-item2"
+            committed, _msg, cost = await cbf_finance.atomic_verify_and_commit(
+                "execute_trade",
+                {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0},
+                governance_signature="sig-item2",
+                debit_id="debit-item2",
             )
 
         assert committed is True
         assert cost == 1000.0
 
-        # Verify debit was written to Redis list
-        raw_debits = await fake_redis_async.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(raw_debits) == 1
-        entry = json.loads(raw_debits[0])
+        ledger = await _ledger(fake_redis_async)
+        assert set(ledger) == {"debit-item2"}
+        entry = ledger["debit-item2"]
         assert entry["amount"] == 1000.0
-        assert entry["reconciliation_sequence"] == 7
-        assert entry["action_signature"] == "sig-item2"
+        assert entry["snapshot_sequence"] == 7
+        assert entry["submitted_at"] == pytest.approx(time.time(), abs=5.0)
+        assert await fake_redis_async.zscore(DEBITS_BY_TIME_KEY, "debit-item2") == pytest.approx(entry["submitted_at"])
+        assert await _total(fake_redis_async) == pytest.approx(1000.0)
+        # Governance signature still lands in the audit ledger.
+        (audit_entry,) = await fake_redis_async.lrange("audit:state_ledger", 0, -1)
+        sig, _, new_state = audit_entry.partition(":")
+        assert sig == "sig-item2" and float(new_state) == pytest.approx(99000.0)
 
     @pytest.mark.asyncio
-    async def test_unsafe_transaction_does_not_push_debit(
+    async def test_unsafe_transaction_does_not_ledger_debit(
         self, fake_redis_async, cbf_finance
     ):
-        """Unsafe transactions must never push a debit entry to Redis."""
+        """Unsafe transactions must never leave a ledger entry or move the total."""
         await fake_redis_async.set(cbf_finance.redis_key, "50000.0")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
@@ -201,149 +222,150 @@ class TestAtomicDebitInLua:
             ))),
         ):
             # Cost of $60,000 breaches the $50,000 threshold
-            committed, msg, cost = await cbf_finance.atomic_verify_and_commit(
+            committed, msg, _cost = await cbf_finance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 600, "price": 100.0, "amount": 60000.0}
             )
 
         assert committed is False
         assert "UNSAFE" in msg
-        raw_debits = await fake_redis_async.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(raw_debits) == 0
+        assert await _ledger(fake_redis_async) == {}
+        assert await fake_redis_async.zcard(DEBITS_BY_TIME_KEY) == 0
+        assert await fake_redis_async.get(DEBITS_TOTAL_KEY) is None
 
 
 # ---------------------------------------------------------------------------
-# Item 3: Sequence-based debit trimming (no count-based LTRIM -1000 drop)
+# Item 3: Settlement-based debit pruning (no count-based LTRIM -1000 drop)
 # ---------------------------------------------------------------------------
 
 
-class TestSequenceBasedDebitTrimming:
-    """Verifies that debits are pruned by reconciliation sequence, preserving high volumes."""
+class TestSettlementBasedDebitPruning:
+    """Debits are pruned by settlement cutoff, never by count or snapshot sequence."""
 
     @pytest.mark.asyncio
-    async def test_trim_local_debits_through_sequence_prunes_older(
-        self, fake_redis_async
-    ):
-        """Debits <= signed sequence are pruned; debits > signed sequence are kept."""
-        debits = [
-            {"amount": 100.0, "reconciliation_sequence": 1},
-            {"amount": 200.0, "reconciliation_sequence": 2},
-            {"amount": 300.0, "reconciliation_sequence": 3},
-            {"amount": 400.0, "reconciliation_sequence": 4},
-        ]
-        for d in debits:
-            await fake_redis_async.rpush(_REDIS_KEY_LOCAL_DEBITS, json.dumps(d))
+    async def test_settle_prunes_only_debits_at_or_before_cutoff(self, fake_redis_async):
+        """Debits submitted <= cutoff are settled; later ones survive and the total is re-derived."""
+        for i, amount in enumerate((100.0, 200.0, 300.0, 400.0), start=1):
+            await _seed_debit(fake_redis_async, f"d{i}", amount, submitted_at=float(i))
 
-        # Trim up to sequence 2
-        pruned = await trim_local_debits_through_sequence(fake_redis_async, signed_sequence=2)
-        assert pruned == 2
+        settled = await settle_debits(fake_redis_async, cutoff=2.0)
+        assert settled == 2
 
-        remaining_raw = await fake_redis_async.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(remaining_raw) == 2
-        remaining = [json.loads(r) for r in remaining_raw]
-        assert remaining[0]["reconciliation_sequence"] == 3
-        assert remaining[1]["reconciliation_sequence"] == 4
+        ledger = await _ledger(fake_redis_async)
+        assert set(ledger) == {"d3", "d4"}
+        assert await fake_redis_async.zrange(DEBITS_BY_TIME_KEY, 0, -1) == ["d3", "d4"]
+        assert await _total(fake_redis_async) == pytest.approx(700.0)
 
-    def test_sync_version_works_with_sync_client(self, fake_redis_async):
-        """trim_local_debits_through_sequence_sync correctly prunes via sync client."""
+    def test_sync_version_works_with_sync_client(self):
+        """settle_debits_sync (the daemon's path) prunes via a sync client."""
         fakeredis = pytest.importorskip("fakeredis")
         sync_redis = fakeredis.FakeRedis(decode_responses=True)
+        for debit_id, amount, ts in (("a", 50.0, 10.0), ("b", 75.0, 11.0)):
+            sync_redis.hset(DEBITS_KEY, debit_id, json.dumps({"amount": amount, "submitted_at": ts}))
+            sync_redis.zadd(DEBITS_BY_TIME_KEY, {debit_id: ts})
+        sync_redis.set(DEBITS_TOTAL_KEY, "125.0")
 
-        sync_redis.rpush(_REDIS_KEY_LOCAL_DEBITS, json.dumps({"amount": 50.0, "reconciliation_sequence": 10}))
-        sync_redis.rpush(_REDIS_KEY_LOCAL_DEBITS, json.dumps({"amount": 75.0, "reconciliation_sequence": 11}))
-
-        pruned = trim_local_debits_through_sequence_sync(sync_redis, signed_sequence=10)
-        assert pruned == 1
-        rem = sync_redis.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(rem) == 1
-        assert json.loads(rem[0])["reconciliation_sequence"] == 11
+        assert settle_debits_sync(sync_redis, cutoff=10.0) == 1
+        assert sync_redis.hkeys(DEBITS_KEY) == ["b"]
+        assert float(sync_redis.get(DEBITS_TOTAL_KEY)) == pytest.approx(75.0)
 
     @pytest.mark.asyncio
-    async def test_more_than_1000_debits_in_sequence_not_dropped(
+    async def test_more_than_1000_outstanding_debits_all_count(
         self, fake_redis_async, cbf_finance
     ):
-        """Over 1000 debits in the current sequence are never dropped (replaces LTRIM -1000)."""
-        # Push 1050 debits in sequence 10
+        """Over 1000 outstanding debits are never dropped (replaces LTRIM -1000) and all net the scalar."""
+        now = time.time()
         pipe = fake_redis_async.pipeline()
         for i in range(1050):
-            pipe.rpush(
-                _REDIS_KEY_LOCAL_DEBITS,
-                json.dumps({"amount": 1.0, "reconciliation_sequence": 10}),
-            )
+            debit_id = f"d{i}"
+            pipe.hset(DEBITS_KEY, debit_id, json.dumps({"amount": 1.0, "submitted_at": now}))
+            pipe.zadd(DEBITS_BY_TIME_KEY, {debit_id: now})
+        pipe.set(DEBITS_TOTAL_KEY, "1050.0")
         await pipe.execute()
+        assert await fake_redis_async.hlen(DEBITS_KEY) == 1050
 
-        raw_count = await fake_redis_async.llen(_REDIS_KEY_LOCAL_DEBITS)
-        assert raw_count == 1050
-
-        # Now test that atomic_verify_and_commit sums all 1050 debits without truncation
         await fake_redis_async.set(cbf_finance.redis_key, "100000.0")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
+        snapshot_key = reconciled_state_key(cbf_finance.invariant.invariant_id)
+
+        # Publish the snapshot the metadata claims to have verified so the
+        # script's generation check (ADR-010) sees matching bytes.
+        snapshot = ReconciliationResult(
+            source="reconciliation", state_scalar=100000.0, verified_at=now,
+            signature="valid_sig", kms_key_id="reconciler-kid",
+            signing_algorithm="gcp_kms", ttl_seconds=300, sequence=10,
+        )
+        payload = snapshot.to_redis_payload()
+        await fake_redis_async.set(snapshot_key, payload)
+        metadata = {
+            "source": "reconciled", "mode": "reconciled", "state_scalar": 100000.0,
+            "raw_payload": payload, "sequence": 10, "verified_at": now, "fence_epoch": 1,
+        }
 
         with (
             patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
             patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                100000.0,
-                {"source": "reconciliation", "sequence": 10, "fence_epoch": 1},
-            ))),
+            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(100000.0 - 1050.0, metadata))),
         ):
-            # Effective balance should be 100000 - 1050 = 98950.0
-            # Let's verify by committing a 50.0 trade
-            committed, _, _ = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"shares": 1, "price": 50.0, "amount": 50.0}
+            # Effective balance is 100000 - 1050 = 98950 (floor 1000, gamma 0.5):
+            # the largest admissible cost is 48975, so 49000 must be refused ...
+            denied, reason, _ = await cbf_finance.atomic_verify_and_commit(
+                "execute_trade", {"amount": 49000.0}
             )
-            assert committed is True
+            assert denied is False and "UNSAFE" in reason, reason
+            # ... while a small trade still clears.
+            committed, reason, _ = await cbf_finance.atomic_verify_and_commit(
+                "execute_trade", {"shares": 1, "price": 50.0, "amount": 50.0}, debit_id="fresh"
+            )
+            assert committed is True, reason
 
-            # Debits count is now 1051 (NOT truncated to 1000 by LTRIM!)
-            new_count = await fake_redis_async.llen(_REDIS_KEY_LOCAL_DEBITS)
-            assert new_count == 1051
+        # 1051 outstanding debits: nothing was truncated, the total tracks them all.
+        assert await fake_redis_async.hlen(DEBITS_KEY) == 1051
+        assert await _total(fake_redis_async) == pytest.approx(1100.0)
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(98900.0)
 
 
 # ---------------------------------------------------------------------------
-# Item 4: Rollback State Removes Debit (Phantom Spend Prevention)
+# Item 4: Rollback State Retires Its Debit (Phantom Spend Prevention)
 # ---------------------------------------------------------------------------
 
 
 class TestRollbackDebitRemoval:
-    """Verifies that rollback_state prunes the matching debit entry."""
+    """Verifies that rollback_state retires exactly the matching debit entry."""
 
     @pytest.mark.asyncio
     async def test_rollback_state_removes_matching_debit(
         self, fake_redis_async, cbf_finance
     ):
-        """rollback_state restores balance AND clears the local debit in the same script."""
+        """rollback_state restores balance AND retires the ledgered debit in the same script."""
         await fake_redis_async.set(cbf_finance.redis_key, "99000.0")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "2")
-        await fake_redis_async.rpush(
-            _REDIS_KEY_LOCAL_DEBITS,
-            json.dumps({
-                "amount": 1000.0,
-                "reconciliation_sequence": 5,
-                "action_signature": "sig-rb",
-            }),
-        )
+        await _seed_debit(fake_redis_async, "other", 250.0, submitted_at=1.0)
+        await _seed_debit(fake_redis_async, "sig-rb-debit", 1000.0, submitted_at=2.0)
 
         with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
             with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
                 await cbf_finance.rollback_state(
                     1000.0,
                     governance_signature="sig-rb",
-                    reconciliation_sequence=5,
+                    debit_id="sig-rb-debit",
                 )
 
         # Balance restored
-        restored_balance = await fake_redis_async.get(cbf_finance.redis_key)
-        assert float(restored_balance) == 100000.0
-
-        # Debit removed from cbf:local_debits (preventing phantom spend)
-        rem_debits = await fake_redis_async.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(rem_debits) == 0
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 100000.0
+        # Exactly that debit is gone; the other one is untouched (no phantom spend either way)
+        assert set(await _ledger(fake_redis_async)) == {"other"}
+        assert await fake_redis_async.zrange(DEBITS_BY_TIME_KEY, 0, -1) == ["other"]
+        assert await _total(fake_redis_async) == pytest.approx(250.0)
+        # A tombstone makes a second rollback of the same debit a no-op
+        assert await fake_redis_async.hexists(DEBITS_ROLLED_BACK_KEY, "sig-rb-debit")
+        assert int(await fake_redis_async.get(_REDIS_KEY_FENCE_EPOCH)) == 3
 
     @pytest.mark.asyncio
     async def test_wait_timeout_rollback_removes_debit_and_fails_closed(
         self, fake_redis_async, cbf_finance
     ):
-        """Strict replication failure triggers rollback that deletes the unconfirmed debit."""
+        """Strict replication failure triggers rollback that retires the unconfirmed debit."""
         await fake_redis_async.set(cbf_finance.redis_key, "100000.0")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
@@ -366,9 +388,11 @@ class TestRollbackDebitRemoval:
         assert committed is False
         assert "REPLICATION_UNCONFIRMED" in msg
 
-        # Ensure debit was pruned by the rollback
-        debits = await fake_redis_async.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(debits) == 0
+        # The rollback retired its own debit: entry, index and total are all restored.
+        assert await _ledger(fake_redis_async) == {}
+        assert await fake_redis_async.zcard(DEBITS_BY_TIME_KEY) == 0
+        assert await _total(fake_redis_async) == pytest.approx(0.0)
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(100000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +427,7 @@ class TestPinnedConnection:
                 {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
             ))),
         ):
-            committed, msg, _ = await cbf_finance.atomic_verify_and_commit(
+            committed, _msg, _ = await cbf_finance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0}
             )
 

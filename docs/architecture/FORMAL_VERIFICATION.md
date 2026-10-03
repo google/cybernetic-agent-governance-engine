@@ -343,7 +343,7 @@ where $\gamma$ is the decay rate declared by `InvariantModel.gamma` (finance: `C
 
 ```python
 # evaluate_barrier(x) = x - THRESHOLDS.resolve(invariant.threshold_key)
-effective = current_state - local_debits            # ground truth minus unreconciled debits
+effective = verified_scalar - outstanding_debits    # ground truth minus debits the custodian has not settled yet
 h_t       = evaluate_barrier(effective)             # h(S(t))
 h_next    = evaluate_barrier(effective - cost)      # h(S(t+1)); cost from the domain cost_resolver
 required  = (1.0 - gamma) * h_t                     # CBF threshold
@@ -365,27 +365,33 @@ The CBF state is shared across gateway replicas via Redis (GCP Memorystore on th
 
 **Layer 2 — Lua atomic check+commit** (`atomic_verify_and_commit()`, rollback via `LUA_ROLLBACK_CBF`):
 
-The `LUA_ATOMIC_CBF` script collapses the fence check, the CBF check, the state commit and the debit record into a **single Redis Lua hop**. The kernel compiles the `InvariantModel` into the script's `KEYS` (`state_key`, `audit:state_ledger`, `safety:fence_epoch`, `cbf:local_debits`, `safety:fence_epoch_hwm`) and `ARGV` (magnitude, resolved threshold, `gamma`, signature, verified ground-truth state, expected fence epoch, debit entry):
+The `LUA_ATOMIC_CBF` script collapses the fence check, the snapshot-generation check, the debit netting, the CBF check, the state commit and the debit record into a **single Redis Lua hop** ([ADR-010](../adr/ADR-010-settlement-aware-debit-ledger.md)). The kernel compiles the `InvariantModel` into the script's `KEYS` (`state_key`, `audit:state_ledger`, `safety:fence_epoch`, `cbf:debits`, `safety:fence_epoch_hwm`, `cbf:debits:by_time`, `cbf:debits:total`, the verified-snapshot key) and `ARGV` (magnitude, resolved threshold, `gamma`, signature, **raw** verified scalar, expected fence epoch, mode, `debit_id`, `submitted_at`, debit entry, the snapshot payload bytes Python verified):
 
 ```lua
 if current_fence ~= expected_fence then return {0, "Fence epoch regression ..."} end
 if current_fence < hwm then return {0, "Fence epoch regression: live epoch < hwm"} end
+if mode == "reconciled" then
+    if redis.call('GET', KEYS[8]) ~= expected_payload then return {0, "SNAPSHOT_CHANGED ..."} end
+    current = current - tonumber(redis.call('GET', KEYS[7]) or 0)   -- net outstanding debits
+end
 local h_t = current - threshold
 local h_next = (current - cost) - threshold
 if h_next < (1.0 - gamma) * h_t or h_next < 0 then return {0, "UNSAFE: ..."} end
 redis.call('SET', KEYS[1], tostring(next_state))
 local new_epoch = redis.call('INCR', KEYS[3])   -- and raise KEYS[5] HWM if exceeded
-redis.call('RPUSH', KEYS[4], debit_entry)       -- debit recorded in the same hop
+redis.call('HSET', KEYS[4], debit_id, debit_entry)         -- debit ledgered in the same hop
+redis.call('ZADD', KEYS[6], submitted_at, debit_id)
+redis.call('INCRBYFLOAT', KEYS[7], cost)
 return {1, "COMMITTED", tostring(next_state), new_epoch}
 ```
 
-**Durability (atomic debits and shared HWM).** The unreconciled debit is appended to `cbf:local_debits` inside the same Lua hop as the state commit, so a debit can never be committed without being recorded, or recorded without being committed. The fence-epoch high-water mark lives in Redis (`safety:fence_epoch_hwm`) and is shared by every replica rather than held per process. Commit and rollback both raise it, and a live epoch below the HWM is refused as a regression, both in Lua and in Python before the hop. When the reconciler accepts a signed snapshot at sequence *n*, it trims debits at or below *n* (`LUA_TRIM_DEBITS_BY_SEQUENCE`). After a commit, the engine issues Redis `WAIT` on a pinned connection (`CAGE_REDIS_WAIT_REPLICAS`, `CAGE_REDIS_WAIT_TIMEOUT_MS`). Under strict replication (`CAGE_STRICT_REPLICATION`, on by default outside dev/test/ci), an unconfirmed `WAIT` rolls the commit back and returns `REPLICATION_UNCONFIRMED` (fail closed).
+**Durability (atomic debits and shared HWM).** The debit is ledgered under its `debit_id` (`cbf:debits` HASH, `cbf:debits:by_time` ZSET, `cbf:debits:total`; [`debit_ledger.py`](../../src/gateway/governance/safety/debit_ledger.py)) inside the same Lua hop as the state commit, so a debit can never be committed without being recorded, or recorded without being committed, and the hop costs the same with 10 or 10 000 debits outstanding. `LUA_ROLLBACK_CBF` retires exactly that id and is idempotent (a tombstone in `cbf:debits:rolled_back` makes a repeated rollback a no-op). The fence-epoch high-water mark lives in Redis (`safety:fence_epoch_hwm`) and is shared by every replica rather than held per process. Commit and rollback both raise it, and a live epoch below the HWM is refused as a regression, both in Lua and in Python before the hop. Debits leave the ledger only when the reconciler, after publishing a signed snapshot, settles those submitted at or before `min(settled_through, verified_at) − clock_skew` (`LUA_SETTLE_DEBITS`; `settled_through` is part of the signed payload, so it cannot be advanced by editing Redis). After a commit, the engine issues Redis `WAIT` on a pinned connection (`CAGE_REDIS_WAIT_REPLICAS`, `CAGE_REDIS_WAIT_TIMEOUT_MS`). Under strict replication (`CAGE_STRICT_REPLICATION`, on by default outside dev/test/ci), an unconfirmed `WAIT` rolls the commit back — retiring its own debit — and returns `REPLICATION_UNCONFIRMED` (fail closed).
 
 **Ground truth.** The state value fed to the Lua hop comes from the `GroundTruthReconciler` ([`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py)). The reconciler polls domain `GroundTruthProvider`s ([`seams/ground_truth.py`](../../src/gateway/governance/seams/ground_truth.py)) and rejects every `FaultMode`. It signs each snapshot with the reconciler's own key (`RECONCILER_KMS_KEY`) and records the signing `kid` and algorithm. The CBF accepts a snapshot only through `verify_snapshot_signature()` ([`reconciliation/trust.py`](../../src/gateway/governance/reconciliation/trust.py)). That check resolves the `kid` against reconciler-only trust anchors fetched out-of-band, and fails closed on a missing signature, `kid` or algorithm, an unknown `kid`, or any version of the gateway key (`KMS_GOVERNANCE_KEY`). A compromised gateway therefore cannot mint its own ground truth. Under an enforcing posture, the `reconciler_trust_anchor` startup check refuses to start without a usable reconciler anchor. With `CAGE_CBF_STRICT_MODE` (on by default outside dev/test/ci), a missing or unverified snapshot raises `CBF_STRICT_RECONCILIATION_UNAVAILABLE` instead of falling back to self-reported state. KMS signature verification happens in Python before the Lua hop, because Redis Lua has no cryptographic FFI.
 
 **Retry policy:** `_MAX_RETRIES = 5` for the WATCH/MULTI/EXEC paths; the Lua path is loaded via `SCRIPT LOAD` / `EVALSHA` with a NOSCRIPT reload-and-retry. On exhaustion or any Redis failure the commit is refused and the action is blocked (fail-closed).
 
-**Read-only verification:** `verify_action()` (the DRY_RUN `preview()` path) reads the verified state and does not modify Redis.
+**Read-only verification:** `verify_action()` (the DRY_RUN `preview()` path) reads the verified state net of `cbf:debits:total` — the same quantity the commit hop nets — and does not modify Redis.
 
 ---
 

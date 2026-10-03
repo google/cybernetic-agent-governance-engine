@@ -85,6 +85,13 @@ spec:
                 # The value tags reconciliation spans and failure records.
                 - name: RECONCILIATION_PROVIDER
                   value: "simulated"
+                # ADR-010: read the fills the gateway's BrokerActuator journals
+                # into Redis (sim:ledger:<invariant>) and attest settled_through
+                # = now - lag on every signed snapshot. Must match gateway.yaml.
+                - name: CAGE_SIM_LEDGER_BACKEND
+                  value: "redis"
+                - name: CAGE_SIM_SETTLEMENT_LAG_SECONDS
+                  value: "90"
 
                 # --- KMS signing (G8) ---
                 # The reconciler signs ground-truth snapshots with its own key,

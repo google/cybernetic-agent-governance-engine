@@ -53,7 +53,12 @@ class NullSafetyFilter:
         return "UNSAFE: no domain safety filter registered (bare-kernel mode)"
 
     async def atomic_verify_and_commit(
-        self, action_name: str, payload: dict, governance_signature: str = ""
+        self,
+        action_name: str,
+        payload: dict,
+        governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
     ) -> tuple[bool, str, float]:
         """Always denies. Returns (False, reason, 0.0) — nothing is committed.
 
@@ -68,7 +73,11 @@ class NullSafetyFilter:
         )
 
     async def rollback_state(
-        self, magnitude: float, governance_signature: str | None = None
+        self,
+        magnitude: float,
+        governance_signature: str | None = None,
+        *,
+        debit_id: str | None = None,
     ) -> None:
         """No-op rollback — there was no state to commit in the first place."""
         return None

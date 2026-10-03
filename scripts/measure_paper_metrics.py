@@ -191,7 +191,13 @@ def _make_mock_cbf(result: str = "SAFE") -> MagicMock:
     """
     safe = result == "SAFE"
 
-    async def _commit(action_name: str, payload: dict[str, Any], governance_signature: str = "") -> tuple[bool, str, float]:
+    async def _commit(
+        action_name: str,
+        payload: dict[str, Any],
+        governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
+    ) -> tuple[bool, str, float]:
         return safe, result, float(payload.get("amount", 0.0)) if safe else 0.0
 
     cbf = MagicMock()

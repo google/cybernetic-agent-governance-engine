@@ -859,7 +859,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         # Track whether CBF atomic_verify_and_commit was called
         cbf_commit_called = False
 
-        async def track_cbf_commit(action_name, payload):
+        async def track_cbf_commit(action_name, payload, *, debit_id=None):
             nonlocal cbf_commit_called
             cbf_commit_called = True
             return (True, "SAFE")
@@ -919,7 +919,7 @@ class TestPipelineReorderZeroBudgetLeakage:
 
         cbf_commit_count = 0
 
-        async def track_cbf_commit(action_name, payload):
+        async def track_cbf_commit(action_name, payload, *, debit_id=None):
             nonlocal cbf_commit_count
             cbf_commit_count += 1
             return (True, "SAFE")
@@ -965,7 +965,7 @@ class TestPipelineReorderZeroBudgetLeakage:
 
         cbf_called = False
 
-        async def track_cbf_commit(action_name, payload):
+        async def track_cbf_commit(action_name, payload, *, debit_id=None):
             nonlocal cbf_called
             cbf_called = True
             return (True, "SAFE")
@@ -1008,11 +1008,11 @@ class TestPipelineReorderZeroBudgetLeakage:
         cbf_rollback_called = False
         rolled_back_magnitude = None
 
-        async def mock_cbf_commit(action_name, payload):
+        async def mock_cbf_commit(action_name, payload, *, debit_id=None):
             return (True, "SAFE", 100.0)
 
         async def mock_cbf_rollback(
-            magnitude=None, cost=None, governance_signature=None
+            magnitude=None, cost=None, governance_signature=None, *, debit_id=None
         ):
             nonlocal cbf_rollback_called, rolled_back_magnitude
             cbf_rollback_called = True

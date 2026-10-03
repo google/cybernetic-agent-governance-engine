@@ -134,12 +134,15 @@ async def test_barrier_rollback_restores_committed_magnitude_not_params(tier_cls
 
     violations, receipt = await tier.commit(action, params)
     assert violations == []
-    assert receipt == CommitReceipt(tier=tier.tier_name, magnitude=100.0)
+    # The receipt carries the ledger debit_id the commit was recorded under
+    # (ADR-010), so rollback can retire exactly that entry.
+    debit_id = engine.atomic_verify_and_commit.await_args.kwargs["debit_id"]
+    assert receipt == CommitReceipt(tier=tier.tier_name, magnitude=100.0, token=debit_id)
 
     params[key] = 5.0  # params drift after commit; rollback must not follow them
     await tier.rollback(action, params, receipt)
 
-    engine.rollback_state.assert_awaited_once_with(magnitude=100.0)
+    engine.rollback_state.assert_awaited_once_with(magnitude=100.0, debit_id=debit_id)
 
 
 @pytest.mark.asyncio
@@ -292,7 +295,7 @@ async def test_kinematic_rollback_has_no_rollback_failed() -> None:
     failures = await rollback_pairs([(stage, receipt)], ctx)
 
     assert failures == []
-    engine.rollback_state.assert_awaited_once_with(magnitude=3.5)
+    engine.rollback_state.assert_awaited_once_with(magnitude=3.5, debit_id=receipt.token)
 
 
 @pytest.mark.asyncio

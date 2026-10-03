@@ -711,6 +711,8 @@ class SafetyFilter(Protocol):
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
     ) -> tuple[bool, str, float]:
         """Collapse CBF check and state commit into one atomic Redis Lua hop.
 
@@ -722,17 +724,24 @@ class SafetyFilter(Protocol):
             action_name:          Name of the action being evaluated.
             payload:              Action parameters dict.
             governance_signature: Optional KMS governance signature string.
+            debit_id:             Ledger id the commit is recorded under
+                (``CommitReceipt.token``). ``commit_barrier`` mints one per
+                attempt; ``rollback_state`` retires exactly that entry.
 
         Returns:
             ``(True, "COMMITTED", magnitude)`` on success, where ``magnitude``
-            is exactly what the commit deducted; pass it to
-            ``rollback_state()`` to undo the commit.
+            is exactly what the commit deducted; pass it, with the
+            ``debit_id``, to ``rollback_state()`` to undo the commit.
             ``(False, reason_string, 0.0)`` when nothing was committed.
         """
         ...
 
     async def rollback_state(
-        self, magnitude: float, governance_signature: str | None = None
+        self,
+        magnitude: float,
+        governance_signature: str | None = None,
+        *,
+        debit_id: str | None = None,
     ) -> None:
         """
         Rolls back the safety state (e.g. restores cash) after a failure.
@@ -741,6 +750,9 @@ class SafetyFilter(Protocol):
             magnitude: The magnitude of the state change to reverse (formerly
                 ``cost`` — renamed for domain-agnostic semantics in v4.0).
             governance_signature: Optional KMS governance signature string.
+            debit_id: Ledger id from the matching commit. When given, the
+                engine restores the amount it ledgered under that id and
+                treats a repeated rollback as a no-op.
         """
         ...
 

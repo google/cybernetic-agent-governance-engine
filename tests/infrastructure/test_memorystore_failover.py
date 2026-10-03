@@ -35,8 +35,12 @@ from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.gateway.governance.safety.cbf_engine import (
     _REDIS_KEY_FENCE_EPOCH,
     _REDIS_KEY_FENCE_EPOCH_HWM,
-    _REDIS_KEY_LOCAL_DEBITS,
     ControlBarrierFunction,
+)
+from src.gateway.governance.safety.debit_ledger import (
+    DEBITS_BY_TIME_KEY,
+    DEBITS_KEY,
+    DEBITS_TOTAL_KEY,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -155,9 +159,12 @@ class TestStagingTierWaitAndRollback:
         assert committed is False
         assert "REPLICATION_UNCONFIRMED" in msg
 
-        # Ensure debit was pruned by the rollback (no phantom spend)
-        debits = await fake_redis_async.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-        assert len(debits) == 0
+        # Ensure the rollback retired its own debit (no phantom spend): the
+        # ledger entry, its time index and the running total are all restored.
+        assert await fake_redis_async.hgetall(DEBITS_KEY) == {}
+        assert await fake_redis_async.zcard(DEBITS_BY_TIME_KEY) == 0
+        assert float(await fake_redis_async.get(DEBITS_TOTAL_KEY) or 0.0) == pytest.approx(0.0)
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(100000.0)
 
 
 # ---------------------------------------------------------------------------

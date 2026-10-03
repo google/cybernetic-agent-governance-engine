@@ -19,16 +19,29 @@ from __future__ import annotations
 import os
 
 from src.cage_finance.invariants import CashBarrier
+from src.gateway.governance.reconciliation.daemon import (
+    simulated_journal_from_env,
+    simulated_settlement_lag_from_env,
+)
 from src.gateway.governance.seams.ground_truth import (
     FaultMode,
     GroundTruthProvider,
     GroundTruthSnapshot,
+    LedgerJournal,
     SimulatedSource,
 )
 
 
 class SimulatedCashLedgerProvider(GroundTruthProvider):
-    """Deterministic simulated custody cash ledger for ``finance.cash_balance``."""
+    """Deterministic simulated custody cash ledger for ``finance.cash_balance``.
+
+    A Tier-2 reference backend: it *settles* like a custodian. Debits the
+    :class:`~src.cage_finance.actuators.broker_actuator.BrokerActuator` journals
+    appear in the reported balance only ``settlement_lag_s`` later, and every
+    snapshot attests ``settled_through`` (ADR-010 §6). With
+    ``CAGE_SIM_LEDGER_BACKEND=redis`` the journal is shared with the
+    reconciliation worker through the kernel's Redis client.
+    """
 
     def __init__(
         self,
@@ -39,6 +52,8 @@ class SimulatedCashLedgerProvider(GroundTruthProvider):
         barrier_floor: float = 10_000.0,
         account_id: str = "default",
         seed: int | None = None,
+        journal: LedgerJournal | None = None,
+        settlement_lag_s: float | None = None,
     ) -> None:
         if initial_scalar is None:
             env_val = os.environ.get("RECONCILIATION_STUB_BALANCE_USD")
@@ -48,6 +63,8 @@ class SimulatedCashLedgerProvider(GroundTruthProvider):
         self.account_id = account_id
         self.barrier_floor = float(barrier_floor)
         self.source_id = "simulated:finance_cash_ledger"
+        if journal is None:
+            journal = simulated_journal_from_env(_kernel_sync_redis(), invariant_id)
         self._source = SimulatedSource(
             invariant_id=invariant_id,
             state_key=state_key,
@@ -55,6 +72,12 @@ class SimulatedCashLedgerProvider(GroundTruthProvider):
             barrier_floor=float(barrier_floor),
             source_id=self.source_id,
             seed=seed,
+            journal=journal,
+            settlement_lag_s=(
+                settlement_lag_s
+                if settlement_lag_s is not None
+                else simulated_settlement_lag_from_env()
+            ),
         )
         self.source = self._source
 
@@ -71,9 +94,17 @@ class SimulatedCashLedgerProvider(GroundTruthProvider):
         """Reset fault injection to :attr:`FaultMode.NONE`."""
         self._source.clear_fault()
 
-    def record_debit(self, amount_usd: float) -> None:
-        """Record an executed trade debit against the simulated ledger."""
-        self._source.record_debit(amount_usd)
+    def record_debit(
+        self,
+        amount_usd: float,
+        *,
+        submitted_at: float | None = None,
+        debit_id: str | None = None,
+    ) -> str:
+        """Journal an executed trade debit; it settles after the configured lag."""
+        return self._source.record_debit(
+            amount_usd, submitted_at=submitted_at, debit_id=debit_id
+        )
 
     def reset(self, *, scalar: float | None = None) -> None:
         """Reset simulated ledger state and fault mode."""
@@ -88,6 +119,13 @@ class SimulatedCashLedgerProvider(GroundTruthProvider):
     async def fetch_snapshot(self) -> GroundTruthSnapshot:
         """Fetch the latest simulated cash-ledger snapshot."""
         return self.fetch_snapshot_sync()
+
+
+def _kernel_sync_redis() -> object | None:
+    """The gateway's configured synchronous Redis client (TLS/credentials applied)."""
+    from src.gateway.infrastructure.redis_client import sync_redis_client
+
+    return sync_redis_client
 
 
 __all__ = ["SimulatedCashLedgerProvider"]
