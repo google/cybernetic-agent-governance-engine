@@ -48,7 +48,8 @@ The compiler (`python -m src.gateway.governance.stpa_compiler compile --targets 
 | `nemo` | `config/rails/generated_stpa_rails.co` | NeMo Colang 2.x flow; enforced by `nemo/manager.py` |
 | `python` | `src/cage_finance/stpa/uca_rules.py` | `GeneratedSTPAValidator` & `UCA_RULES`; invoked by `STPAValidator` (`src/gateway/governance/stpa_validator.py`) |
 | `langgraph` | `src/cage_finance/stpa/saga_nodes.py` | LangGraph WAL forward + compensating nodes + centralized router |
-| `all` | `opa` + `nemo` + `python` | Note: `langgraph` is **not** included in `all`; must be explicit |
+| `ftra` | `config/ftra/terminal_registry.json` | FTRA terminal registry consumed by the action-reachability check (`src/gateway/governance/ftra/`) |
+| `all` | `opa` + `nemo` + `python` + `langgraph` + `ftra` | Expanded in `compile_control_structure()` ([`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)) |
 
 ### 3.1 Compiler Mechanism
 
