@@ -21,7 +21,9 @@
 # on exit. It never touches the shared redis-master.
 #
 # Required env: REGISTRY_URL, GOOGLE_CLOUD_PROJECT (substituted into the Job).
-# Optional env: IMAGE_TAG (default: short SHA of HEAD; build it first with
+# Optional env: CAGE_ENVIRONMENT (default: dev) selects the KMS keyring
+#               cage-signing-<environment> that holds benchmark-signing.
+#               IMAGE_TAG (default: short SHA of HEAD; build it first with
 # deployment/docker/cloudbuild.image.yaml, _IMAGE_NAME=gateway,
 # _DOCKERFILE=src/gateway/Dockerfile).
 #               BENCHMARK_REDIS_IMAGE (default: the Docker Hub redis pin; set an
@@ -61,7 +63,8 @@ if [ -z "${BENCHMARK_IMAGE}" ]; then
   exit 1
 fi
 BENCHMARK_REDIS_IMAGE="${BENCHMARK_REDIS_IMAGE:-redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0}"
-export BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE
+CAGE_ENVIRONMENT="${CAGE_ENVIRONMENT:-dev}"
+export BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE CAGE_ENVIRONMENT
 
 # Render a manifest, substituting only the named variables (python3, so the
 # runner does not depend on gettext's envsubst; the Job's own ${BACKEND_URL}-
@@ -139,7 +142,7 @@ kubectl create configmap benchmark-scripts \
   --from-file=scripts/measure_reconciliation_metrics.py \
   -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-render "${JOB_MANIFEST}" BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT \
+render "${JOB_MANIFEST}" BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT CAGE_ENVIRONMENT \
   | kubectl apply -n "${NAMESPACE}" -f -
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
@@ -215,6 +218,7 @@ cat <<EOF > "${OUTPUT_DIR}/PROVENANCE.md"
 |---|---|
 | Generated | $(date -u +%Y-%m-%dT%H:%M:%SZ) |
 | Git SHA | ${GIT_SHA} |
+| Environment | ${CAGE_ENVIRONMENT} (keyring cage-signing-${CAGE_ENVIRONMENT}) |
 | Image tag | ${IMAGE_TAG} |
 | Benchmark image | ${JOB_IMAGE} |
 | Pod | ${POD_NAME} |
