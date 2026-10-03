@@ -31,16 +31,18 @@ Model action        Runtime
                     below the in-process ``_last_seen_epoch``; otherwise raise
                     ``_last_seen_epoch`` and keep the read scalar + epoch.
 ``write``           ``LUA_ATOMIC_CBF``: CAS on ``safety:fence_epoch``, barrier
-                    on the *read* scalar (ARGV[5]), ``SET`` the new state,
-                    ``INCR`` the epoch, ledger the debit. Python then assigns
+                    on the *live* primary state (reconciled: snapshot net of
+                    ``cbf:debits:total``; self-reported: ``GET`` of the state
+                    key), ``SET`` the new state, ``INCR`` the epoch, ledger
+                    the debit. Python then assigns
                     ``_last_seen_epoch = new_epoch``.
 ``write_reject``    CAS mismatch (``Fence epoch regression``) — no effect.
 ``commit``          Actuation. Not fenced again. Under strict replication it
                     runs only after ``WAIT N`` acknowledged the debit.
-``rollback``        ``LUA_ROLLBACK`` by ``debit_id``: reconciled mode removes
-                    the ledger entry if the primary holds it; a missing entry
-                    takes ``ROLLED_BACK_SETTLED`` and restores the magnitude to
-                    the state key, which only the self-reported barrier reads.
+``rollback``        ``LUA_ROLLBACK`` by ``debit_id``: restores the ledgered
+                    amount if the primary holds the entry; a missing entry
+                    (lost in a failover, or settled) takes
+                    ``ROLLED_BACK_UNLEDGERED`` and restores nothing.
                     ``INCR``\\ s the epoch; Python assigns ``_last_seen_epoch``.
 ``replicate``       Asynchronous primary → replica copy.
 ``stale_failover``  Replica promoted: balance, epoch, HWM and ledger regress.
@@ -53,6 +55,10 @@ Model action        Runtime
 
 ``safety:fence_epoch_hwm`` lives in the same Redis instance as the epoch and
 regresses with it, so it adds nothing beyond ``fence_epoch`` here.
+
+Reconciled and self-reported mode run the same protocol at this level of
+abstraction: both scripts evaluate the barrier on live primary state and
+both rollbacks restore only the ledgered amount, so one model covers both.
 
 Safety property:
     SP-1  spent + actuatable in-flight debits ≤ InitialPool (no double
@@ -90,7 +96,6 @@ class Config:
 
     n_agents: int
     sync_replication: bool = True
-    reconciled: bool = True
     fenced: bool = True
     allow_restart: bool = True
     max_stale_failovers: int = MAX_STALE_FAILOVERS
@@ -107,7 +112,6 @@ class State(NamedTuple):
     ledger: tuple[int, ...]
     rep_ledger: tuple[int, ...]
     agent_epochs: tuple[int, ...]
-    read_balance: tuple[int, ...]
     read_epoch: tuple[int, ...]
     spent: int
     stale_failovers: int
@@ -124,7 +128,6 @@ def initial_state(cfg: Config) -> State:
         ledger=zeros,
         rep_ledger=zeros,
         agent_epochs=(1,) * cfg.n_agents,  # seeded from Redis at startup
-        read_balance=zeros,
         read_epoch=zeros,
         spent=0,
         stale_failovers=0,
@@ -149,7 +152,6 @@ def read(s: State, a: int, cfg: Config) -> State | None:
         return None  # CBF_EPOCH_REGRESSION_DETECTED
     return s._replace(
         agent_epochs=_set(s.agent_epochs, a, max(s.agent_epochs[a], s.fence_epoch)),
-        read_balance=_set(s.read_balance, a, s.available_balance),
         read_epoch=_set(s.read_epoch, a, s.fence_epoch),
     )
 
@@ -159,20 +161,17 @@ def write(s: State, a: int, cfg: Config) -> State | None:
         return None
     if cfg.fenced and s.fence_epoch != s.read_epoch[a]:
         return None
-    # Reconciled mode nets the live outstanding total inside the script and
-    # refuses a replaced snapshot, so the barrier sees the live balance.
-    # Self-reported mode evaluates the scalar Python read (ARGV[5]).
-    basis = s.available_balance if cfg.reconciled else s.read_balance[a]
-    if basis < RESERVE_AMOUNT:
+    # The script evaluates the barrier on the live primary state, never on
+    # the scalar Python read before it.
+    if s.available_balance < RESERVE_AMOUNT:
         return None
     new_epoch = s.fence_epoch + 1
     return s._replace(
-        available_balance=basis - RESERVE_AMOUNT,
+        available_balance=s.available_balance - RESERVE_AMOUNT,
         fence_epoch=new_epoch,
         agent_reserves=_set(s.agent_reserves, a, s.agent_reserves[a] + RESERVE_AMOUNT),
         ledger=_set(s.ledger, a, s.ledger[a] + RESERVE_AMOUNT),
         agent_epochs=_set(s.agent_epochs, a, new_epoch),
-        read_balance=_set(s.read_balance, a, 0),
         read_epoch=_set(s.read_epoch, a, 0),
     )
 
@@ -181,13 +180,9 @@ def write_reject(s: State, a: int, cfg: Config) -> State | None:
     if s.read_epoch[a] == 0:
         return None
     cas_ok = (not cfg.fenced) or s.fence_epoch == s.read_epoch[a]
-    basis = s.available_balance if cfg.reconciled else s.read_balance[a]
-    if cas_ok and s.fence_epoch < MAX_FENCE_EPOCH and basis >= RESERVE_AMOUNT:
+    if cas_ok and s.fence_epoch < MAX_FENCE_EPOCH and s.available_balance >= RESERVE_AMOUNT:
         return None
-    return s._replace(
-        read_balance=_set(s.read_balance, a, 0),
-        read_epoch=_set(s.read_epoch, a, 0),
-    )
+    return s._replace(read_epoch=_set(s.read_epoch, a, 0))
 
 
 def commit(s: State, a: int, cfg: Config) -> State | None:
@@ -208,14 +203,12 @@ def rollback(s: State, a: int, cfg: Config) -> State | None:
         return None
     if s.fence_epoch >= MAX_FENCE_EPOCH:
         return None
-    # LUA_ROLLBACK: a ledgered debit is removed from cbf:debits:total; a
-    # debit the primary lacks (lost in a failover) takes the
-    # ROLLED_BACK_SETTLED branch and restores the magnitude to the state key.
-    # The reconciled barrier nets the total, not the state key.
-    restore = s.ledger[a] if cfg.reconciled else s.agent_reserves[a]
+    # LUA_ROLLBACK restores only what the primary's ledger holds; a debit
+    # the primary lacks (lost in a failover) takes ROLLED_BACK_UNLEDGERED
+    # and restores nothing (under-credit is the safe direction).
     new_epoch = s.fence_epoch + 1
     return s._replace(
-        available_balance=s.available_balance + restore,
+        available_balance=s.available_balance + s.ledger[a],
         fence_epoch=new_epoch,
         agent_reserves=_set(s.agent_reserves, a, 0),
         ledger=_set(s.ledger, a, 0),
@@ -355,11 +348,8 @@ CONFIGS: dict[str, Config] = {
     # Negative control: no WAIT N. Neither the fence epoch nor the
     # in-process _last_seen_epoch prevents the double spend.
     "DistributedCBF_nosync": Config(2, sync_replication=False),
-    # Residual: self-reported scalar (non-strict, dev only; dev runs no
-    # replica). Fence-epoch ABA across a stale failover.
-    "DistributedCBF_selfreported": Config(2, reconciled=False),
-    # In reconciled mode SP-1 does not depend on the fence-epoch CAS: the
-    # script evaluates the barrier on the live netted balance.
+    # SP-1 does not depend on the fence-epoch CAS: the script evaluates the
+    # barrier on live primary state.
     "DistributedCBF_unfenced": Config(2, fenced=False),
 }
 
@@ -367,17 +357,14 @@ CONFIGS: dict[str, Config] = {
 #: matching cfg (N = 2, ``-continue``) reports the same count and verdicts.
 EXPECTED_STATE_COUNTS: dict[tuple[str, int], tuple[int, bool, bool]] = {
     ("DistributedCBF", 1): (107, True, True),
-    ("DistributedCBF", 2): (1945, True, True),
-    ("DistributedCBF", 3): (27809, True, True),
+    ("DistributedCBF", 2): (1811, True, True),
+    ("DistributedCBF", 3): (23723, True, True),
     ("DistributedCBF_nosync", 1): (244, False, False),
-    ("DistributedCBF_nosync", 2): (4232, False, False),
-    ("DistributedCBF_nosync", 3): (56435, False, False),
-    ("DistributedCBF_selfreported", 1): (98, True, False),
-    ("DistributedCBF_selfreported", 2): (1933, False, False),
-    ("DistributedCBF_selfreported", 3): (28924, False, False),
+    ("DistributedCBF_nosync", 2): (3972, False, False),
+    ("DistributedCBF_nosync", 3): (49325, False, False),
     ("DistributedCBF_unfenced", 1): (110, True, True),
-    ("DistributedCBF_unfenced", 2): (2536, True, True),
-    ("DistributedCBF_unfenced", 3): (51302, True, True),
+    ("DistributedCBF_unfenced", 2): (2388, True, True),
+    ("DistributedCBF_unfenced", 3): (44261, True, True),
 }
 
 
@@ -386,7 +373,6 @@ def config_for(name: str, n: int) -> Config:
     return Config(
         n,
         sync_replication=base.sync_replication,
-        reconciled=base.reconciled,
         fenced=base.fenced,
         allow_restart=base.allow_restart,
         max_stale_failovers=base.max_stale_failovers,

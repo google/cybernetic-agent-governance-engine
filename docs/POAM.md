@@ -593,7 +593,7 @@ In reconciled mode the CBF nets the KMS-verified custodian balance against a Red
 **Findings recorded by the remediation:**
 - The plan's hypothesis that, without synchronous replication, "SP-1 holds iff no `AgentRestart` precedes `Replicate`" is **false**: a second process, or a rollback re-assigning `_last_seen_epoch` to the regressed epoch, re-admits the lost debit. `WAIT N` with strict rollback is the load-bearing defence.
 - In reconciled mode the fence CAS is not needed for SP-1.
-- Self-reported mode (refused by `CAGE_CBF_STRICT_MODE` under every enforcing posture) has a fence-epoch ABA and a rollback over-credit through `ROLLED_BACK_SETTLED`. This is a dev-only residual; no fix is in scope here.
+- Self-reported mode (refused by `CAGE_CBF_STRICT_MODE` under every enforcing posture) has a fence-epoch ABA and a rollback over-credit through `ROLLED_BACK_SETTLED`. This is a dev-only residual; no fix is in scope here. **Update 2026-10-03:** fixed on branch `fix/cbf-selfreported-live-read`: the self-reported script reads the live state key, a rollback without a ledger entry credits nothing (`ROLLED_BACK_UNLEDGERED`), and the `_selfreported` cfg was retired as identical to `DistributedCBF` (re-pinned counts: 1,811 / 3,972 / 2,388 at $N = 2$).
 - Fixing the other cfgs so their constants load exposed POAM-2026-091.
 
 **Closure Verification (2026-10-02):**

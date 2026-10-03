@@ -236,6 +236,94 @@ class TestAtomicDebitInLua:
         assert await fake_redis_async.get(DEBITS_TOTAL_KEY) is None
 
 
+class TestSelfReportedLiveRead:
+    """Self-reported mode (dev only): the script trusts live Redis, never Python's read.
+
+    Closes the two defects the distributed CBF model found: a stale scalar
+    passing the epoch CAS after the epoch climbs back (ABA), and a rollback
+    crediting a debit the primary has no ledger entry for.
+    """
+
+    _TRADE = {"symbol": "AAPL", "shares": 300, "price": 100.0, "amount": 30000.0}
+
+    async def _commit(self, r, cbf, python_read: float):
+        with (
+            patch("src.gateway.governance.safety.cbf_engine.redis_client", r),
+            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=r)),
+            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
+            patch.object(cbf, "_resolve_ground_truth_balance", AsyncMock(return_value=(
+                python_read,
+                {"source": "self_reported", "mode": "self_reported", "fence_epoch": 1},
+            ))),
+        ):
+            return await cbf.atomic_verify_and_commit("execute_trade", dict(self._TRADE))
+
+    @pytest.mark.asyncio
+    async def test_stale_python_read_is_ignored(self, fake_redis_async, cbf_finance):
+        """Python read 100k, but live state is 20k: the 30k debit must be refused."""
+        await fake_redis_async.set(cbf_finance.redis_key, "20000.0")
+        await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
+
+        committed, msg, _ = await self._commit(fake_redis_async, cbf_finance, python_read=100000.0)
+
+        assert committed is False and "UNSAFE" in msg, msg
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 20000.0
+        assert await _ledger(fake_redis_async) == {}
+
+    @pytest.mark.asyncio
+    async def test_unset_state_key_uses_the_seed(self, fake_redis_async, cbf_finance):
+        await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
+
+        committed, msg, _ = await self._commit(fake_redis_async, cbf_finance, python_read=100000.0)
+
+        assert committed is True, msg
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(70000.0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lua", [True, False], ids=["lua", "watch_fallback"])
+    async def test_rollback_without_ledger_entry_restores_nothing(
+        self, fake_redis_async, cbf_finance, lua
+    ):
+        """A debit the primary never ledgered (lost in a failover, or settled)
+        is tombstoned and bumps the epoch, but credits nothing."""
+        await fake_redis_async.set(cbf_finance.redis_key, "5000.0")
+        await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "3")
+
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._is_mock",
+            (lambda _obj: False) if lua else (lambda _obj: True),
+        ):
+            await cbf_finance.rollback_state(1000.0, debit_id="lost", client=fake_redis_async)
+            assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 5000.0
+            assert int(await fake_redis_async.get(_REDIS_KEY_FENCE_EPOCH)) == 4
+            assert await fake_redis_async.hexists(DEBITS_ROLLED_BACK_KEY, "lost")
+            assert await fake_redis_async.get(DEBITS_TOTAL_KEY) is None
+
+            await cbf_finance.rollback_state(1000.0, debit_id="lost", client=fake_redis_async)
+            assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 5000.0
+            assert int(await fake_redis_async.get(_REDIS_KEY_FENCE_EPOCH)) == 4
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lua", [True, False], ids=["lua", "watch_fallback"])
+    async def test_rollback_restores_the_ledgered_amount(
+        self, fake_redis_async, cbf_finance, lua
+    ):
+        await fake_redis_async.set(cbf_finance.redis_key, "5000.0")
+        await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "3")
+        await _seed_debit(fake_redis_async, "d1", 750.0, submitted_at=1.0)
+
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._is_mock",
+            (lambda _obj: False) if lua else (lambda _obj: True),
+        ):
+            # The caller's magnitude is ignored; the ledger is authoritative.
+            await cbf_finance.rollback_state(1000.0, debit_id="d1", client=fake_redis_async)
+
+        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(5750.0)
+        assert await _ledger(fake_redis_async) == {}
+        assert await _total(fake_redis_async) == pytest.approx(0.0)
+
+
 # ---------------------------------------------------------------------------
 # Item 3: Settlement-based debit pruning (no count-based LTRIM -1000 drop)
 # ---------------------------------------------------------------------------

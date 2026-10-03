@@ -95,28 +95,8 @@ def test_single_process_without_sync_last_seen_is_reseeded() -> None:
     assert "agent_restart(a0)" in r.counterexample
 
 
-def test_self_reported_mode_has_fence_epoch_aba() -> None:
-    """Residual (dev posture only): a read in flight across a stale failover
-    passes the epoch CAS once the epoch climbs back to the value it read."""
-    r = dcbf.check(dcbf.config_for("DistributedCBF_selfreported", 2))
-    assert not r.sp1_holds
-    failover = r.counterexample.index("stale_failover")
-    last = r.counterexample[-1]
-    agent = last[last.index("(") + 1 : -1]
-    assert last == f"write({agent})"
-    assert f"read({agent})" in r.counterexample[:failover]
-    assert f"read({agent})" not in r.counterexample[failover:]
-
-
-def test_self_reported_rollback_of_a_lost_debit_over_credits() -> None:
-    """Residual (dev posture only): LUA_ROLLBACK's ROLLED_BACK_SETTLED branch
-    restores the magnitude of a debit the promoted primary never deducted."""
-    r = dcbf.check(dcbf.config_for("DistributedCBF_selfreported", 1))
-    assert r.sp1_holds and not r.sp2_holds
-    assert dcbf.check(dcbf.config_for("DistributedCBF", 1)).sp2_holds
-
-
-def test_reconciled_mode_does_not_rely_on_the_fence_cas() -> None:
+def test_sp1_does_not_rely_on_the_fence_cas() -> None:
+    """The script checks the barrier on live primary state in both modes."""
     assert dcbf.check(dcbf.config_for("DistributedCBF_unfenced", 2)).sp1_holds
 
 
@@ -167,7 +147,6 @@ def test_cfg_matches_spec_and_python_config(name: str) -> None:
     assert int(consts["MaxFenceEpoch"]) == dcbf.MAX_FENCE_EPOCH
     assert int(consts["MaxStaleFailovers"]) == cfg.max_stale_failovers
     assert tla_bool[consts["SyncReplication"]] is cfg.sync_replication
-    assert tla_bool[consts["Reconciled"]] is cfg.reconciled
     assert tla_bool[consts["Fenced"]] is cfg.fenced
     assert tla_bool[consts["AllowRestart"]] is cfg.allow_restart
 

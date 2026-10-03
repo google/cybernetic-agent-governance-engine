@@ -587,9 +587,12 @@ async def test_rollback_by_debit_id_is_exact_and_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_rollback_after_settlement_restores_fallback_state_exactly_once(
+async def test_rollback_after_settlement_credits_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A settled debit has no ledger entry: rollback takes
+    ROLLED_BACK_UNLEDGERED and leaves the state key alone (under-credit is
+    the safe direction; the custodian snapshot already reflects the trade)."""
     world = _build_world(monkeypatch, custodian_lag_s=0.0)
     with world.live():
         assert world.reconcile() is not None
@@ -600,10 +603,12 @@ async def test_rollback_after_settlement_restores_fallback_state_exactly_once(
         settled_state = world.state()
 
         await world.rollback(10_000.0, debit_id)
-        assert world.state() == pytest.approx(settled_state + 10_000.0)
+        assert world.state() == pytest.approx(settled_state)
         assert world.total() == 0.0
-        await world.rollback(10_000.0, debit_id)
-        assert world.state() == pytest.approx(settled_state + 10_000.0)
+        epoch = world.epoch()
+        await world.rollback(10_000.0, debit_id)  # tombstoned: NOOP
+        assert world.state() == pytest.approx(settled_state)
+        assert world.epoch() == epoch
 
 
 @pytest.mark.asyncio

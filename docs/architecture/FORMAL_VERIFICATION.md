@@ -538,13 +538,13 @@ Step 8 proves discrete-time invariance for one barrier evaluation. This step ask
 |---|---|
 | `available_balance`, `fence_epoch`, `ledger` (primary) and `rep_*` (replica) | Redis state key, `safety:fence_epoch`, `cbf:debits:*` on primary and replica |
 | `agent_epochs[a]` | the per-process `_last_seen_epoch` checked by `_check_fence_epoch()` |
-| `write` | `LUA_ATOMIC_CBF`: epoch CAS, barrier, SET, epoch `INCR`, debit-ledger write |
+| `write` | `LUA_ATOMIC_CBF`: epoch CAS, barrier on live primary state (both modes), SET, epoch `INCR`, debit-ledger write |
 | `commit` | actuation; under strict replication it requires the `WAIT` ack first |
-| `rollback` | `LUA_ROLLBACK`, including the `ROLLED_BACK_SETTLED` fallback, always `INCR`s the epoch |
+| `rollback` | `LUA_ROLLBACK`: restores the ledgered amount, or nothing (`ROLLED_BACK_UNLEDGERED`) when the primary has no entry; always `INCR`s the epoch |
 | `agent_restart` | a fresh process re-seeding `_last_seen_epoch` from the primary |
 | `stale_failover` | replica promotion: balance, epoch and ledger regress; `spent` (the broker side effect) does not |
 
-`Config` toggles `sync_replication` (`CAGE_STRICT_REPLICATION` + `WAIT ≥ 1`), `reconciled` (`CAGE_CBF_STRICT_MODE`, live debit netting), `fenced` and `allow_restart`. Bounds: pool 2, reserve 1, fence epoch ≤ 4, at most one stale failover.
+`Config` toggles `sync_replication` (`CAGE_STRICT_REPLICATION` + `WAIT ≥ 1`), `fenced` and `allow_restart`. Reconciled and self-reported mode share one model: both scripts read live primary state and both rollbacks restore only the ledgered amount. Bounds: pool 2, reserve 1, fence epoch ≤ 4, at most one stale failover.
 
 ### Properties
 
@@ -558,16 +558,15 @@ Step 8 proves discrete-time invariance for one barrier evaluation. This step ask
 
 | Config | $N=1$ | $N=2$ | $N=3$ | Verdict |
 |---|---|---|---|---|
-| `DistributedCBF` (reconciled + sync — **shipped posture**) | 107 | 1,945 | 27,809 | SP-1 ✅ SP-2 ✅ |
-| `DistributedCBF_nosync` (no `WAIT`) | 244 | 4,232 | 56,435 | SP-1 ❌ SP-2 ❌ |
-| `DistributedCBF_selfreported` (scalar barrier) | 98 | 1,933 | 28,924 | $N=1$: SP-2 ❌; $N \ge 2$: SP-1 ❌ SP-2 ❌ |
-| `DistributedCBF_unfenced` (reconciled + sync, no fence CAS) | 110 | 2,536 | 51,302 | SP-1 ✅ SP-2 ✅ |
+| `DistributedCBF` (sync — **shipped posture**, either mode) | 107 | 1,811 | 23,723 | SP-1 ✅ SP-2 ✅ |
+| `DistributedCBF_nosync` (no `WAIT`) | 244 | 3,972 | 49,325 | SP-1 ❌ SP-2 ❌ |
+| `DistributedCBF_unfenced` (sync, no fence CAS) | 110 | 2,388 | 44,261 | SP-1 ✅ SP-2 ✅ |
 
 ### Findings
 
 - **`WAIT` is load-bearing.** Without synchronous replication, neither the fence epoch nor `_last_seen_epoch` prevents a double spend after failover: a second process, or a rollback that re-assigns `_last_seen_epoch` to the regressed epoch, re-admits the lost debit. The earlier claim that SP-1 holds without sync "iff no restart precedes replication" is false.
-- **The fence CAS is not needed for SP-1 in reconciled mode.** Live debit netting plus `WAIT` carries the property; the fence remains defense in depth.
-- **Self-reported mode has two defects:** a fence-epoch ABA (a rollback's `INCR` restores an epoch value the stale writer expects) and rollback over-credit through `ROLLED_BACK_SETTLED`. The mode is refused by `CAGE_CBF_STRICT_MODE` under every enforcing posture, so it is a dev-only residual.
+- **The fence CAS is not needed for SP-1.** A barrier on live state plus `WAIT` carries the property; the fence remains defense in depth.
+- **Self-reported mode no longer has its two defects.** The model found a fence-epoch ABA (a stale scalar passing the CAS once the epoch climbed back) and rollback over-credit through the former `ROLLED_BACK_SETTLED` branch. The self-reported script now reads the state key itself, and a rollback with no ledger entry (`ROLLED_BACK_UNLEDGERED`) credits nothing, so the separate `_selfreported` configuration was retired: it is now identical to `DistributedCBF`. Under-credit after a rollback of a settled debit is the safe direction; the next reconciled snapshot corrects it.
 
 ### Scope
 
