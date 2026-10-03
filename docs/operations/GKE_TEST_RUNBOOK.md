@@ -551,7 +551,10 @@ BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=te
 # gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
 #   --substitutions="_IMAGE_NAME=governed-financial-advisor,_DOCKERFILE=Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=1
-# REGISTRY_URL=gcr.io/<project> GOOGLE_CLOUD_PROJECT=<project> bash scripts/run_gke_benchmark_job.sh
+# Binary Authorization admits only attested images: point BENCHMARK_REDIS_IMAGE at
+# the attested Redis mirror (gcr.io/<project>/redis@sha256:...).
+# REGISTRY_URL=gcr.io/<project> GOOGLE_CLOUD_PROJECT=<project> \
+#   BENCHMARK_REDIS_IMAGE=gcr.io/<project>/redis@sha256:<digest> bash scripts/run_gke_benchmark_job.sh
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=0
 # bash scripts/run_gke_load_test.sh
 

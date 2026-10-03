@@ -23,6 +23,9 @@
 # Required env: REGISTRY_URL, GOOGLE_CLOUD_PROJECT (substituted into the Job).
 # Optional env: IMAGE_TAG (default: short SHA of HEAD; build it first with
 # deployment/docker/cloudbuild.image.yaml, _IMAGE_NAME=governed-financial-advisor).
+#               BENCHMARK_REDIS_IMAGE (default: the Docker Hub redis pin; set an
+#               attested mirror, e.g. gcr.io/<project>/redis@sha256:..., when the
+#               cluster enforces Binary Authorization).
 #
 # The paper metrics run --unmocked, so OPA and vllm-reasoning must be serving.
 # Scale vllm-reasoning up before the run and back to 0 afterwards:
@@ -47,7 +50,21 @@ REDIS_MANIFEST="deployment/k8s/benchmark-redis.yaml"
 JOB_MANIFEST="deployment/k8s/benchmark-job.yaml"
 GIT_SHA=$(git rev-parse --short HEAD)
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}}"
-export IMAGE_TAG
+BENCHMARK_REDIS_IMAGE="${BENCHMARK_REDIS_IMAGE:-redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0}"
+export IMAGE_TAG BENCHMARK_REDIS_IMAGE
+
+# Render a manifest, substituting only the named variables (python3, so the
+# runner does not depend on gettext's envsubst; the Job's own ${BACKEND_URL}-
+# style shell references survive).
+render() {
+  python3 - "$@" <<'PY'
+import os, sys
+text = open(sys.argv[1]).read()
+for name in sys.argv[2:]:
+    text = text.replace("${" + name + "}", os.environ[name])
+sys.stdout.write(text)
+PY
+}
 OUTPUT_DIR="docs/paper/measurements/$(date -u +%Y-%m-%d)-${GIT_SHA}"
 DONE_TIMEOUT_S="${DONE_TIMEOUT_S:-1800}"
 
@@ -59,7 +76,7 @@ fi
 cleanup() {
   echo -e "${CYAN}🧹 Deleting Job ${JOB_NAME} and the throwaway benchmark Redis...${NC}"
   kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true --wait=false || true
-  kubectl delete -f "${REDIS_MANIFEST}" -n "${NAMESPACE}" --ignore-not-found=true --wait=false || true
+  render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl delete -f - -n "${NAMESPACE}" --ignore-not-found=true --wait=false || true
 }
 trap cleanup EXIT
 
@@ -86,18 +103,17 @@ echo ""
 #    CBF state from the last run and make the reconciliation step refuse).
 echo -e "${CYAN}🧹 [Step 1/6] Removing any previous benchmark Job and Redis...${NC}"
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true --wait=true
-kubectl delete -f "${REDIS_MANIFEST}" -n "${NAMESPACE}" --ignore-not-found=true --wait=true
+render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl delete -f - -n "${NAMESPACE}" --ignore-not-found=true --wait=true
 
 # 2. Throwaway Redis primary + replica
 echo -e "${CYAN}🧱 [Step 2/6] Starting throwaway Redis (${REDIS_MANIFEST})...${NC}"
-kubectl apply -f "${REDIS_MANIFEST}" -n "${NAMESPACE}"
+render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl apply -n "${NAMESPACE}" -f -
 kubectl rollout status deployment/benchmark-redis-primary -n "${NAMESPACE}" --timeout=180s
 kubectl rollout status deployment/benchmark-redis-replica -n "${NAMESPACE}" --timeout=180s
 REDIS_IMAGE=$(kubectl get deployment benchmark-redis-primary -n "${NAMESPACE}" \
   -o jsonpath='{.spec.template.spec.containers[0].image}')
 
-# 3. ConfigMaps and the Job (substitution limited to the three deployment variables
-#    so the Job's own ${BACKEND_URL}-style shell references survive).
+# 3. ConfigMaps and the Job.
 echo -e "${CYAN}📦 [Step 3/6] Refreshing ConfigMaps and applying ${JOB_MANIFEST}...${NC}"
 kubectl create configmap red-team-datasets \
   --from-file=tests/red_team/adversarial_dataset.json \
@@ -109,15 +125,8 @@ kubectl create configmap benchmark-scripts \
   --from-file=scripts/measure_reconciliation_metrics.py \
   -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-# Substitute only the three deployment variables (python3, so the runner does
-# not depend on gettext's envsubst being installed).
-python3 - "${JOB_MANIFEST}" <<'PY' | kubectl apply -n "${NAMESPACE}" -f -
-import os, sys
-text = open(sys.argv[1]).read()
-for name in ("REGISTRY_URL", "IMAGE_TAG", "GOOGLE_CLOUD_PROJECT"):
-    text = text.replace("${" + name + "}", os.environ[name])
-sys.stdout.write(text)
-PY
+render "${JOB_MANIFEST}" REGISTRY_URL IMAGE_TAG GOOGLE_CLOUD_PROJECT \
+  | kubectl apply -n "${NAMESPACE}" -f -
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
 kubectl wait --for=condition=Ready pod -l app=cage-paper-benchmark -n "${NAMESPACE}" --timeout=300s
