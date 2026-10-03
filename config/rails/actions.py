@@ -106,6 +106,32 @@ def _judge_allows(result: Any) -> bool:
     return getattr(result, "return_value", None) is True
 
 
+def _judge_context(
+    context: dict[str, Any] | None, key: str, text: str
+) -> dict[str, Any]:
+    """Return the context NeMo's built-in self-check reads, with ``text`` under ``key``.
+
+    The Colang v2 flows pass the screened text as the ``content`` action
+    argument, and the runtime context carries no ``user_message`` or
+    ``bot_message``. NeMo's ``self_check_input`` and ``self_check_output`` read
+    only those keys. When the key is empty they return ``None`` without calling
+    the LLM, so every judged input was refused. The judge must see exactly the
+    text the deterministic stages screened.
+    """
+    return {**(context or {}), key: text}
+
+
+class JudgeDidNotRunError(RuntimeError):
+    """NeMo's self-check returned no verdict, so the LLM judge never ran."""
+
+
+def _require_verdict(result: Any) -> Any:
+    """Raise when the judge produced no verdict, so the refusal is logged as a failure."""
+    if result is None:
+        raise JudgeDidNotRunError("NeMo self-check returned no verdict")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # RetrieveKnowledgeAction (pre-existing)
 # ---------------------------------------------------------------------------
@@ -373,7 +399,8 @@ async def custom_self_check_input(
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         ctx = context or {}
-        text = str(ctx.get("last_user_message") or kwargs.get("content") or "").lower()
+        raw_text = str(ctx.get("last_user_message") or kwargs.get("content") or "")
+        text = raw_text.lower()
 
         if not text:
             span.set_attribute("nemo.action.stage", "EMPTY")
@@ -671,11 +698,11 @@ async def custom_self_check_input(
             # Invoke with LLM (NeMo will use the configured vLLM model)
             result = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                 llm_task_manager=llm_task_manager,
-                context=context,
+                context=_judge_context(context, "user_message", raw_text),
                 llm=llm,
                 config=config,
             )
-            is_safe = _judge_allows(result)
+            is_safe = _judge_allows(_require_verdict(result))
             logger.info("HybridSelfCheckInput: LLM judge result = %s", is_safe)
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
             return is_safe
@@ -725,12 +752,13 @@ async def custom_self_check_output(
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         ctx = context or {}
-        text = str(
+        raw_text = str(
             ctx.get("bot_message")
             or ctx.get("last_bot_message")
             or kwargs.get("content")
             or ""
-        ).lower()
+        )
+        text = raw_text.lower()
 
         if not text:
             span.set_attribute("nemo.action.stage", "EMPTY")
@@ -811,11 +839,11 @@ async def custom_self_check_output(
 
             result = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                 llm_task_manager=llm_task_manager,
-                context=context,
+                context=_judge_context(context, "bot_message", raw_text),
                 llm=llm,
                 config=config,
             )
-            is_safe = _judge_allows(result)
+            is_safe = _judge_allows(_require_verdict(result))
             logger.info("HybridSelfCheckOutput: LLM judge result = %s", is_safe)
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
             return is_safe

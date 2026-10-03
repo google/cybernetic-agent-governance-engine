@@ -237,9 +237,10 @@ class LangfuseTraceSource(TraceSource):
         )
 
         try:
-            traces_response = self._langfuse.fetch_traces(
+            # Langfuse SDK v3+ public API; the page cap is 100 rows.
+            traces_response = self._langfuse.api.trace.list(
                 from_timestamp=window_start,
-                limit=500,
+                limit=100,
             )
         except Exception as exc:
             logger.warning(
@@ -253,8 +254,8 @@ class LangfuseTraceSource(TraceSource):
         result: list[dict] = []
         for trace in traces_response.data:
             try:
-                full_trace = self._langfuse.fetch_trace(trace.id)
-                observations = getattr(full_trace.data, "observations", []) or []
+                full_trace = self._langfuse.api.trace.get(trace.id)
+                observations = getattr(full_trace, "observations", []) or []
             except Exception as exc:
                 logger.warning(
                     "LangfuseTraceSource: could not fetch observations for trace %s — %s",
