@@ -1225,7 +1225,7 @@ def assert_formal_tier_ordering_matches():
         stpa_validator=clean_stpa(),
     )
     # Production registers the domain's compliance overlays in bootstrap_governor();
-    # do the same once per session so domain controls (e.g. CTRL_MRM_004) resolve.
+    # do the same once per session so the domain's own controls resolve.
     from src.gateway.governance.constants import register_overlay_dir
 
     for contribution in governor.components.contributions:
