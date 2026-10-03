@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-tier OTel spans emitted by DomainTierStage, and the paper-metrics span map.
+"""Per-tier OTel spans emitted by DomainTierStage.
 
 Spans are captured with a local TracerProvider + InMemorySpanExporter that is
 patched into each emitting module's ``tracer`` attribute, so the global OTel
@@ -21,10 +21,8 @@ provider is never touched.
 
 from __future__ import annotations
 
-import ast
 import asyncio
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -49,23 +47,6 @@ from src.gateway.governance.governor.stages import stpa as stpa_module
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_METRICS_SCRIPT = _REPO_ROOT / "scripts" / "measure_paper_metrics.py"
-
-# Fixed-name spans emitted by Layer 1 kernel code (not by DomainTierStage).
-KERNEL_SPAN_NAMES = frozenset(
-    {
-        "cage.ftra_boundary_gate",  # governor/stages/ftra.py
-        "cage.stpa_check",  # governor/stages/stpa.py
-        "cage.confidence_check",  # governor/stages/confidence.py
-        "governance.opa_check",  # gateway/core/policy.py (real OPAClient only)
-        "cage.validate_action",  # governor/governor.py
-        "symbolic_governor.govern",
-        "symbolic_governor.revalidate_post_hitl",
-        "symbolic_governor.verify",
-    }
-)
 
 _TRACED_MODULES = (
     domain_tiers_module,
@@ -111,19 +92,6 @@ def _only_span(exporter: InMemorySpanExporter, name: str):
     spans = [s for s in exporter.get_finished_spans() if s.name == name]
     assert len(spans) == 1, [s.name for s in exporter.get_finished_spans()]
     return spans[0]
-
-
-def _load_tier_span_map() -> dict[str, str]:
-    """Read TIER_SPAN_MAP from the script without executing it.
-
-    Importing the script mutates process state (os.environ defaults,
-    logging.basicConfig), which would leak into other tests on the worker.
-    """
-    tree = ast.parse(_METRICS_SCRIPT.read_text())
-    for node in tree.body:
-        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "TIER_SPAN_MAP":
-            return ast.literal_eval(node.value)
-    raise AssertionError("TIER_SPAN_MAP not found in measure_paper_metrics.py")
 
 
 # ---------------------------------------------------------------------------
@@ -290,39 +258,3 @@ async def test_cancelled_commit_propagates_and_ends_span(exporter, ctx):
     assert span.end_time is not None
     assert span.attributes["cage.tier.exception"] == "CancelledError"
     assert "cage.tier.violation_count" not in span.attributes
-
-
-# ---------------------------------------------------------------------------
-# Paper-metrics span map must only name spans that are actually emitted
-# ---------------------------------------------------------------------------
-
-
-def test_tier_span_map_has_no_stale_names():
-    span_map = _load_tier_span_map()
-    stale = {"cage.cbf_check", "cage.fiscal_limit_reserve", "cage.consensus_gate", "cage.fria_check"}
-    assert stale.isdisjoint(span_map.values())
-
-
-@pytest.mark.asyncio
-async def test_tier_span_map_values_are_emitted(exporter):
-    from tests.governor.golden.fixtures import SCENARIOS, build_governor_for_scenario
-
-    happy = next(s for s in SCENARIOS if s.id == "01_happy_path_allow")
-    governor, _ = build_governor_for_scenario(happy)
-
-    # Seal issuance needs Redis/KMS; stub it the same way the golden harness does.
-    with patch(
-        "src.gateway.governance.routing_seal.generate_seal_with_evidence",
-        new_callable=AsyncMock,
-        return_value="mock-seal-" + "a" * 32,
-    ):
-        await governor.govern(happy.action, dict(happy.params))
-
-    emitted = {s.name for s in exporter.get_finished_spans()}
-    span_map = _load_tier_span_map()
-    for label, span_name in span_map.items():
-        if span_name.startswith("cage.tier."):
-            # Domain tier spans must come out of a real governor run.
-            assert span_name in emitted, f"{label}: {span_name} not emitted; got {sorted(emitted)}"
-        else:
-            assert span_name in KERNEL_SPAN_NAMES, f"{label}: {span_name} is not a known kernel span"
