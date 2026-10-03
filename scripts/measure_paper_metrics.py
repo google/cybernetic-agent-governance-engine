@@ -559,6 +559,17 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
         "trade_value": amount,
         "amount": amount,
         "agent_id": "test-agent",
+        # Inputs the shipped finance rules require; the unmocked governor
+        # evaluates them for real (mocked mode ignores them). trade_governance.rego
+        # RBAC: a junior USD trade <= $5k is ALLOW. STPA: UCA-2 latency_ms,
+        # UCA-5 drawdown, UCA-8 risk_assessed, UCA-9 compliance_checked.
+        "currency": "USD",
+        "trader_id": f"benchmark-{uuid.uuid4().hex[:12]}",
+        "trader_role": "junior",
+        "latency_ms": 10.0,
+        "drawdown": 0.0,
+        "risk_assessed": True,
+        "compliance_checked": True,
     }
 
     async def _approval_path() -> tuple[float, float]:
