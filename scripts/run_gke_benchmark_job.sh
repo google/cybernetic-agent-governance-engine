@@ -21,6 +21,12 @@
 # on exit. It never touches the shared redis-master.
 #
 # Required env: REGISTRY_URL, GOOGLE_CLOUD_PROJECT (substituted into the Job).
+# Optional env: IMAGE_TAG (default: short SHA of HEAD; build it first with
+# deployment/docker/cloudbuild.image.yaml, _IMAGE_NAME=governed-financial-advisor).
+#
+# The paper metrics run --unmocked, so OPA and vllm-reasoning must be serving.
+# Scale vllm-reasoning up before the run and back to 0 afterwards:
+#   kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=1
 
 set -eo pipefail
 
@@ -40,6 +46,8 @@ JOB_NAME="cage-paper-benchmark"
 REDIS_MANIFEST="deployment/k8s/benchmark-redis.yaml"
 JOB_MANIFEST="deployment/k8s/benchmark-job.yaml"
 GIT_SHA=$(git rev-parse --short HEAD)
+IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}}"
+export IMAGE_TAG
 OUTPUT_DIR="docs/paper/measurements/$(date -u +%Y-%m-%d)-${GIT_SHA}"
 DONE_TIMEOUT_S="${DONE_TIMEOUT_S:-1800}"
 
@@ -55,12 +63,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+for dep in opa-service vllm-reasoning; do
+  ready=$(kubectl get deployment "${dep}" -n "${NAMESPACE}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+  if [ -z "${ready}" ] || [ "${ready}" = "0" ]; then
+    echo -e "${RED}❌ ${dep} has no ready replicas; --unmocked needs it serving.${NC}"
+    echo -e "   kubectl scale deployment/${dep} -n ${NAMESPACE} --replicas=1"
+    exit 1
+  fi
+done
+
 echo -e "${CYAN}=================================================================${NC}"
 echo -e "${CYAN}🚀 [CAGE In-Cluster GKE Benchmark Runner] Starting execution...${NC}"
 echo -e "${CYAN}=================================================================${NC}"
 echo -e "Namespace:   ${YELLOW}${NAMESPACE}${NC}"
 echo -e "Job Name:    ${YELLOW}${JOB_NAME}${NC}"
 echo -e "Git SHA:     ${YELLOW}${GIT_SHA}${NC}"
+echo -e "Image tag:   ${YELLOW}${IMAGE_TAG}${NC}"
 echo -e "Target Dir:  ${YELLOW}${OUTPUT_DIR}${NC}"
 echo ""
 
@@ -78,7 +96,7 @@ kubectl rollout status deployment/benchmark-redis-replica -n "${NAMESPACE}" --ti
 REDIS_IMAGE=$(kubectl get deployment benchmark-redis-primary -n "${NAMESPACE}" \
   -o jsonpath='{.spec.template.spec.containers[0].image}')
 
-# 3. ConfigMaps and the Job (envsubst limited to the two deployment variables
+# 3. ConfigMaps and the Job (substitution limited to the three deployment variables
 #    so the Job's own ${BACKEND_URL}-style shell references survive).
 echo -e "${CYAN}📦 [Step 3/6] Refreshing ConfigMaps and applying ${JOB_MANIFEST}...${NC}"
 kubectl create configmap red-team-datasets \
@@ -91,9 +109,15 @@ kubectl create configmap benchmark-scripts \
   --from-file=scripts/measure_reconciliation_metrics.py \
   -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-# shellcheck disable=SC2016  # literal variable names for envsubst
-envsubst '${REGISTRY_URL} ${GOOGLE_CLOUD_PROJECT}' < "${JOB_MANIFEST}" \
-  | kubectl apply -n "${NAMESPACE}" -f -
+# Substitute only the three deployment variables (python3, so the runner does
+# not depend on gettext's envsubst being installed).
+python3 - "${JOB_MANIFEST}" <<'PY' | kubectl apply -n "${NAMESPACE}" -f -
+import os, sys
+text = open(sys.argv[1]).read()
+for name in ("REGISTRY_URL", "IMAGE_TAG", "GOOGLE_CLOUD_PROJECT"):
+    text = text.replace("${" + name + "}", os.environ[name])
+sys.stdout.write(text)
+PY
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
 kubectl wait --for=condition=Ready pod -l app=cage-paper-benchmark -n "${NAMESPACE}" --timeout=300s
@@ -139,6 +163,13 @@ for artifact in cage_paper_metrics.json cage_paper_metrics.txt \
   fi
 done
 
+OPA_IMAGE=$(kubectl get pods -l app=opa -n "${NAMESPACE}" \
+  -o jsonpath='{.items[0].status.containerStatuses[?(@.name=="opa")].imageID}' 2>/dev/null || echo unknown)
+VLLM_IMAGE=$(kubectl get pods -l app=vllm-reasoning -n "${NAMESPACE}" \
+  -o jsonpath='{.items[0].status.containerStatuses[?(@.name=="vllm")].imageID}' 2>/dev/null || echo unknown)
+VLLM_MODEL=$(kubectl get deployment vllm-reasoning -n "${NAMESPACE}" \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SERVED_MODEL_NAME")].value}' 2>/dev/null || echo unknown)
+
 LATENCY_MODE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("latency_mode","unknown"))' \
   "${OUTPUT_DIR}/cage_paper_metrics.json" 2>/dev/null || echo "unknown (cage_paper_metrics.json missing)")
 
@@ -155,6 +186,8 @@ cat <<EOF > "${OUTPUT_DIR}/PROVENANCE.md"
 | Job | ${JOB_NAME} |
 | Redis | Throwaway \`benchmark-redis\` (${REDIS_MANIFEST}): 1 primary + 1 replica, no persistence, \`${REDIS_IMAGE}\` |
 | Replication wait | \`CAGE_REDIS_WAIT_REPLICAS=1\` |
+| OPA | ${OPA_IMAGE} |
+| Consensus backend | vllm-reasoning \`${VLLM_MODEL}\` (${VLLM_IMAGE}) |
 | Latency mode | ${LATENCY_MODE} |
 | Output Directory | ${OUTPUT_DIR} |
 

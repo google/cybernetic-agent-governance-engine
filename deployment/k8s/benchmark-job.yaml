@@ -38,9 +38,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: benchmark-runner
-          # REGISTRY_URL and GOOGLE_CLOUD_PROJECT are substituted by
-          # scripts/run_gke_benchmark_job.sh (envsubst, those two only).
-          image: ${REGISTRY_URL}/governed-financial-advisor:latest
+          # REGISTRY_URL, IMAGE_TAG and GOOGLE_CLOUD_PROJECT are substituted
+          # by scripts/run_gke_benchmark_job.sh (those three only).
+          # IMAGE_TAG is the commit SHA Cloud Build tagged the image with;
+          # cloudbuild.image.yaml never pushes a floating :latest tag.
+          image: ${REGISTRY_URL}/governed-financial-advisor:${IMAGE_TAG}
           imagePullPolicy: Always
           command: ["/bin/bash", "-c"]
           args:
@@ -61,10 +63,12 @@ spec:
               echo "   Warm-up completed."
               echo ""
 
-              # 2. Run Paper Metrics Collection (§6.2, §6.6)
-              echo "📊 [Step 2/3] Running scripts/measure_paper_metrics.py..."
+              # 2. Run Paper Metrics Collection (§6.2, §6.6). --unmocked builds
+              #    the governor over the real Redis CBF, OPA and consensus
+              #    backends below ("Table 2b: over-the-wire, in-cluster").
+              echo "📊 [Step 2/3] Running scripts/measure_paper_metrics.py --unmocked..."
               cd /app || cd /
-              python3 scripts/measure_paper_metrics.py
+              python3 scripts/measure_paper_metrics.py --unmocked
               echo ""
 
               # 3. Run Reconciliation Metrics Collection (§6.3, §6.4, §6.5)
@@ -112,6 +116,18 @@ spec:
               value: "redis://benchmark-redis.governance-stack.svc.cluster.local:6379/0"
             - name: CAGE_REDIS_WAIT_REPLICAS
               value: "1"
+            # Real backends for --unmocked. Both consensus fallbacks point at
+            # vllm-reasoning, the only vLLM deployment the runner scales up.
+            - name: OPA_URL
+              value: "http://opa.governance-stack.svc.cluster.local:8181"
+            - name: VLLM_REASONING_API_BASE
+              value: "http://vllm-reasoning.governance-stack.svc.cluster.local:8000/v1"
+            - name: VLLM_FAST_API_BASE
+              value: "http://vllm-reasoning.governance-stack.svc.cluster.local:8000/v1"
+            - name: MODEL_REASONING
+              value: "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+            - name: MODEL_FAST
+              value: "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
             - name: LATENCY_RUNS
               value: "200"
             - name: REQUEST_TIMEOUT_S
