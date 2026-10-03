@@ -115,6 +115,13 @@ _ACTION_RE = re.compile(r"^(?:\*|[A-Za-z_][A-Za-z0-9_.-]*)$")
 _DOTTED_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _TEXT_FORBIDDEN = ('"', "\\", "{", "}", "\n", "\r")
 
+# The only ``composite`` form: ``<lhs> > threshold_ref(<path>) * <rhs>``. Every
+# generator compiles it into an enforcing rule. Any other expression is
+# refused at parse time; it used to compile to a comment, i.e. no enforcement.
+_COMPOSITE_SCALED_THRESHOLD_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\s*>\s*threshold_ref\(([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\)\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)$"
+)
+
 
 def _require_pattern(value: str, pattern: re.Pattern[str], field: str) -> str:
     if not pattern.match(value):
@@ -160,7 +167,8 @@ class ConditionModel(BaseModel):
     threshold_ref: str | None = None  # e.g. "stpa.max_latency_ms"
     threshold: float | None = None  # literal value
     semantic_pattern: str | None = None
-    composite: str | None = None  # free-form expression for complex conditions
+    # ``<lhs> > threshold_ref(<path>) * <rhs>`` only (see _COMPOSITE_SCALED_THRESHOLD_RE)
+    composite: str | None = None
 
     @field_validator("param")
     @classmethod
@@ -181,7 +189,7 @@ class ConditionModel(BaseModel):
             else _require_pattern(v, _DOTTED_IDENT_RE, "condition.threshold_ref")
         )
 
-    @field_validator("semantic_pattern", "composite")
+    @field_validator("semantic_pattern")
     @classmethod
     def _v_free_text(cls, v: str | None, info: ValidationInfo) -> str | None:
         return (
@@ -189,6 +197,22 @@ class ConditionModel(BaseModel):
             if v is None
             else _reject_source_breaking(v, f"condition.{info.field_name}")
         )
+
+    @field_validator("composite")
+    @classmethod
+    def _v_composite(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not _COMPOSITE_SCALED_THRESHOLD_RE.match(v):
+            raise ValueError(
+                "condition.composite must have the form "
+                "'<param> > threshold_ref(<path>) * <param>'; got "
+                f"{v!r}. No other composite expression can be compiled into "
+                "enforcement code, so it is refused rather than silently "
+                "unenforced"
+            )
+        return v
 
 
 class OpaRuleModel(BaseModel):
@@ -632,11 +656,12 @@ def generate_opa(cs: ControlStructureModel) -> str:
                             f"    input.{param} < input._thresholds.{cond.threshold_ref.replace('.', '_')}"
                         )
             elif cond.composite:
+                lhs, ref, rhs = _composite_parts(cond.composite)
                 lines.append(f"    # composite: {cond.composite}")
+                lines.append(f"    input.{rhs} > 0")
                 lines.append(
-                    "    # NOTE: complex composite condition — enforce via Python validator."
+                    f"    input.{lhs} > input._thresholds.{ref.replace('.', '_')} * input.{rhs}"
                 )
-                lines.append("    false  # placeholder: evaluated in STPAValidator")
 
             lines.append(f'    msg := "{uca.opa_rule.message}"')
             lines.append("}")
@@ -817,16 +842,20 @@ def _pascal(snake: str) -> str:
 # Python validator generator
 # ---------------------------------------------------------------------------
 
-_COMPOSITE_SCALED_THRESHOLD_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_]*)\s*>\s*threshold_ref\(([A-Za-z0-9_.]+)\)\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)$"
-)
-
 
 def _qualify_threshold_ref(ref: str, domain: str) -> str:
     """Prefix domain-scoped threshold_ref with 'domains.<domain>.' when applicable."""
     if not ref or ref.startswith("domains.") or not domain or domain == "core":
         return ref
     return f"domains.{domain}.{ref}"
+
+
+def _composite_parts(composite: str) -> tuple[str, str, str]:
+    """Split a validated composite into ``(lhs_param, threshold_ref, rhs_param)``."""
+    m = _COMPOSITE_SCALED_THRESHOLD_RE.match(composite.strip())
+    if m is None:  # unreachable: ConditionModel refuses any other form
+        raise ValueError(f"composite condition outside the compiled grammar: {composite!r}")
+    return m.group(1), m.group(2), m.group(3)
 
 
 def generate_python(cs: ControlStructureModel) -> str:
@@ -1047,30 +1076,23 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                    )",
             ]
         elif cond.composite:
-            m = _COMPOSITE_SCALED_THRESHOLD_RE.match(cond.composite.strip())
-            if m:
-                lhs_param, raw_thresh_ref, rhs_param = m.group(1), m.group(2), m.group(3)
-                thresh_ref = _qualify_threshold_ref(raw_thresh_ref, cs.system.domain)
-                body_lines += [
-                    f"            # Composite condition: {cond.composite}",
-                    f'            lhs_val = params.get("{lhs_param}")',
-                    f'            rhs_val = params.get("{rhs_param}")',
-                    "            if lhs_val is not None and rhs_val is not None:",
-                    "                f_lhs = float(lhs_val)",
-                    "                f_rhs = float(rhs_val)",
-                    f'                if f_rhs > 0 and f_lhs > _resolve_threshold("{thresh_ref}") * f_rhs:',
-                    "                    return Violation(",
-                    '                        tier="stpa",',
-                    f'                        code="{uca_code}",',
-                    f'                        message="{uca.description}",',
-                    "                        kind=ViolationKind.HARD,",
-                    "                    )",
-                ]
-            else:
-                body_lines += [
-                    f"            # Composite condition: {cond.composite}",
-                    "            pass",
-                ]
+            lhs_param, raw_thresh_ref, rhs_param = _composite_parts(cond.composite)
+            thresh_ref = _qualify_threshold_ref(raw_thresh_ref, cs.system.domain)
+            body_lines += [
+                f"            # Composite condition: {cond.composite}",
+                f'            lhs_val = params.get("{lhs_param}")',
+                f'            rhs_val = params.get("{rhs_param}")',
+                "            if lhs_val is not None and rhs_val is not None:",
+                "                f_lhs = float(lhs_val)",
+                "                f_rhs = float(rhs_val)",
+                f'                if f_rhs > 0 and f_lhs > _resolve_threshold("{thresh_ref}") * f_rhs:',
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="{uca.description}",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
+            ]
 
         body_lines += [
             "            return None",

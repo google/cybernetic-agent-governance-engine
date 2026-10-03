@@ -165,12 +165,14 @@ class TestGenerateAGPOperatorMapping:
 
     def test_composite_condition_produces_general_constraint(self):
         uca = _make_uca(
-            "UCA-006", "execute_trade", composite="amount > 0 AND approved == True"
+            "UCA-006",
+            "execute_trade",
+            composite="order_size > threshold_ref(stpa.max_fraction) * daily_vol",
         )
         cs = _make_cs([uca])
         output = generate_agp(cs)
         assert 'Do not execute "execute_trade" when:' in output
-        assert "amount > 0 AND approved == True" in output
+        assert "order_size > threshold_ref(stpa.max_fraction) * daily_vol" in output
 
     def test_nemo_rail_message_produces_block_sentence(self):
         nemo_rail = NemoRailModel(
@@ -179,7 +181,8 @@ class TestGenerateAGPOperatorMapping:
         uca = _make_uca(
             "UCA-007",
             "generate_response",
-            composite="cbrn_detected",
+            operator="is_true",
+            param="cbrn_detected",
             enforcement=["nemo"],
             nemo_rail=nemo_rail,
         )
@@ -235,8 +238,11 @@ class TestGenerateAGPBudget:
             _make_uca(
                 f"UCA-{i:03d}",
                 f"action_{i}",
-                composite="very long composite condition that takes up space in the output "
-                * 3,
+                composite=(
+                    "order_size_in_units > "
+                    "threshold_ref(stpa.a_rather_long_threshold_path_for_budget_tests) "
+                    "* average_daily_volume_in_units"
+                ),
             )
             for i in range(50)
         ]

@@ -184,6 +184,34 @@ class TestTranslatePolicy:
         # Empty behaviors → no UCAs → warnings but not errors
         assert bundle.format_detected == "acs"
 
+    def test_uncompilable_composite_condition_fails_the_bundle(self):
+        """A free-form composite used to compile to a UCA that enforced nothing."""
+        spec = {
+            "system": {
+                "name": "T",
+                "version": "1",
+                "description": "d",
+                "controller": "c",
+                "controlled_process": "p",
+            },
+            "hazards": [{"id": "H-1", "description": "h", "severity": "high"}],
+            "unsafe_control_actions": [
+                {
+                    "id": "UCA-1",
+                    "action": "do_thing",
+                    "uca_type": "unsafe_action",
+                    "hazard_refs": ["H-1"],
+                    "description": "x",
+                    "condition": {"composite": "amount > 100 AND region == EU"},
+                    "enforcement": ["python"],
+                }
+            ],
+        }
+        bundle = translate_policy(spec)
+        assert not bundle.success
+        assert any("Unenforceable condition" in e for e in bundle.errors)
+        assert bundle.python_content == ""
+
     def test_cage_yaml_with_no_system_key_produces_warning(self):
         spec = {"unsafe_control_actions": []}
         bundle = translate_policy(spec)
