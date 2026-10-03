@@ -190,6 +190,10 @@ spec:
         - podSelector:
             matchLabels:
               app: benchmark-redis
+      # governance-stack is Linkerd-meshed: meshed clients reach the pod on
+      # the proxy's inbound port 4143, not on 6379.
       ports:
         - port: 6379
+          protocol: TCP
+        - port: 4143
           protocol: TCP
