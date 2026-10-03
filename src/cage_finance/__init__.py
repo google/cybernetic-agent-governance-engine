@@ -61,6 +61,7 @@ REGISTERED_ACTIONS: frozenset[str] = frozenset(
         "execute_trade_bounded",  # EXTERNALLY_REVERSIBLE — bounding, cbf, fiscal (claim-by-cost)
         "check_balance",  # READ_ONLY — balance query
         "market_analysis",  # READ_ONLY — market-data lookups by the data analyst
+        "check_market_status",  # READ_ONLY — planner's market-open check
         "prompt_injection_check",  # READ_ONLY — safety pre-screen
     }
 )

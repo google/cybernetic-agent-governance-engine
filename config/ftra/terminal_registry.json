@@ -1,7 +1,7 @@
 {
   "version": "3.0",
   "domain": "finance",
-  "serial": 4,
+  "serial": 5,
   "generated_at": "2026-10-03T00:00:00+00:00",
   "issued_at": "2026-10-03T00:00:00+00:00",
   "expires_at": "2027-09-30T00:00:00+00:00",
@@ -12,6 +12,7 @@
   "terminals": {
     "check_balance": "READ_ONLY",
     "execute_trade": "IRREVERSIBLE_TERMINAL",
+    "check_market_status": "READ_ONLY",
     "market_analysis": "READ_ONLY",
     "prompt_injection_check": "READ_ONLY",
     "execute_trade_bounded": "EXTERNALLY_REVERSIBLE"
@@ -24,5 +25,5 @@
       "max_magnitude": 10000.0
     }
   },
-  "manifest_sha256": "5d628920471c19985e0127f25270788e1ce6874f0904bbcef5a8c6656631d6e5"
+  "manifest_sha256": "3c45c22fed34dc0c2a2705abc180f3ccb5a9b66990d3c023f1e522704bd385c5"
 }

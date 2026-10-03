@@ -92,6 +92,20 @@ logger = logging.getLogger(__name__)
 _tracer = _otel_trace.get_tracer("config.rails.actions")
 
 
+def _judge_allows(result: Any) -> bool:
+    """Read a NeMo self-check verdict, failing closed on anything unexpected.
+
+    ``self_check_input`` returns ``True`` when the input is safe. When it is
+    not, it returns an ``ActionResult(return_value=False, ...)``, which is a
+    plain object and therefore truthy. ``bool(result)`` would turn every
+    judge refusal into an ALLOW. Only a literal ``True`` (bare or as
+    ``return_value``) allows.
+    """
+    if isinstance(result, bool):
+        return result
+    return getattr(result, "return_value", None) is True
+
+
 # ---------------------------------------------------------------------------
 # RetrieveKnowledgeAction (pre-existing)
 # ---------------------------------------------------------------------------
@@ -272,6 +286,8 @@ async def mask_pii_action(
 async def custom_self_check_input(
     context: dict[str, Any] | None = None,
     llm: Any | None = None,
+    llm_task_manager: Any | None = None,
+    config: Any | None = None,
     **kwargs: Any,
 ) -> bool:
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
@@ -313,6 +329,12 @@ async def custom_self_check_input(
         → ALLOW (0ms) [~70% of queries]
     3.  LLM judge — semantic analysis for ambiguous cases.
         → EVALUATE (2-5s) [~25% of queries]
+
+    ``llm_task_manager`` and ``config`` must be named parameters: the NeMo
+    runtime injects them only into actions whose signature names them, and
+    never into ``**kwargs``. Without them the Stage 3 judge raised on every
+    call and the fail-closed handler refused every input that reached it
+    (6 of 20 benign prompts in the 2026-10-03 benchmark).
 
     SECURITY NOTE (2026-08-02): The blocklist MUST run before the allowlist.
     Running the allowlist first (as this function originally did) allows any
@@ -647,12 +669,16 @@ async def custom_self_check_input(
             )
 
             # Invoke with LLM (NeMo will use the configured vLLM model)
-            is_safe = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-                context=context, llm=llm
+            result = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                llm_task_manager=llm_task_manager,
+                context=context,
+                llm=llm,
+                config=config,
             )
+            is_safe = _judge_allows(result)
             logger.info("HybridSelfCheckInput: LLM judge result = %s", is_safe)
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
-            return bool(is_safe)
+            return is_safe
         except Exception as e:
             # On LLM failure, fail CLOSED (block input) — an attacker inducing
             # timeouts or errors must not receive an automatic ALLOW. The OPA
@@ -672,6 +698,8 @@ async def custom_self_check_input(
 async def custom_self_check_output(
     context: dict[str, Any] | None = None,
     llm: Any | None = None,
+    llm_task_manager: Any | None = None,
+    config: Any | None = None,
     **kwargs: Any,
 ) -> bool:
     """Hybrid self-check for financial domain outputs - PHASE 2 UPGRADE.
@@ -781,12 +809,16 @@ async def custom_self_check_output(
                 self_check_output as nemo_self_check,
             )
 
-            is_safe = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-                context=context, llm=llm
+            result = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                llm_task_manager=llm_task_manager,
+                context=context,
+                llm=llm,
+                config=config,
             )
+            is_safe = _judge_allows(result)
             logger.info("HybridSelfCheckOutput: LLM judge result = %s", is_safe)
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
-            return bool(is_safe)
+            return is_safe
         except Exception as e:
             # On LLM failure, fail CLOSED (block output to be safe)
             logger.error(
