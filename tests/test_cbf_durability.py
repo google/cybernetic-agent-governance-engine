@@ -45,6 +45,7 @@ from src.gateway.governance.safety.cbf_engine import (
 from src.gateway.governance.safety.debit_ledger import (
     DEBITS_BY_TIME_KEY,
     DEBITS_KEY,
+    DEBITS_PENDING_KEY,
     DEBITS_ROLLED_BACK_KEY,
     DEBITS_TOTAL_KEY,
     settle_debits,
@@ -197,7 +198,9 @@ class TestAtomicDebitInLua:
         assert entry["amount"] == 1000.0
         assert entry["snapshot_sequence"] == 7
         assert entry["submitted_at"] == pytest.approx(time.time(), abs=5.0)
-        assert await fake_redis_async.zscore(DEBITS_BY_TIME_KEY, "debit-item2") == pytest.approx(entry["submitted_at"])
+        # A commit enters the pending set; only confirm() makes it settleable.
+        assert await fake_redis_async.zscore(DEBITS_PENDING_KEY, "debit-item2") == pytest.approx(entry["submitted_at"])
+        assert await fake_redis_async.zscore(DEBITS_BY_TIME_KEY, "debit-item2") is None
         assert await _total(fake_redis_async) == pytest.approx(1000.0)
         # Governance signature still lands in the audit ledger.
         (audit_entry,) = await fake_redis_async.lrange("audit:state_ledger", 0, -1)

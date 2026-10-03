@@ -43,6 +43,7 @@ from src.gateway.governance.safety.debit_ledger import (
 from src.gateway.governance.schemas.thresholds import (
     get_reconciliation_discrepancy_abs_floor,
     get_reconciliation_discrepancy_ratio,
+    get_reconciliation_pending_debit_max_age_seconds,
     get_reconciliation_settlement_clock_skew_seconds,
     get_reconciliation_settlement_lag_seconds,
 )
@@ -316,6 +317,7 @@ class GroundTruthReconciler:
         discrepancy_abs_floor: float | None = None,
         settlement_lag_seconds: float | None = None,
         settlement_clock_skew_seconds: float | None = None,
+        pending_debit_max_age_seconds: float | None = None,
     ) -> None:
         self._providers: dict[str, Any] = {}
         if providers is not None:
@@ -375,6 +377,14 @@ class GroundTruthReconciler:
             float(settlement_clock_skew_seconds)
             if settlement_clock_skew_seconds is not None
             else get_reconciliation_settlement_clock_skew_seconds()
+        )
+        # Unconfirmed debits are never settled; one whose confirm never came
+        # (the governor's settlement hold expired) is promoted to confirmed,
+        # stamped at promotion, once it is older than this.
+        self._pending_debit_max_age_s = (
+            float(pending_debit_max_age_seconds)
+            if pending_debit_max_age_seconds is not None
+            else get_reconciliation_pending_debit_max_age_seconds()
         )
         self._failure_count: int = 0
         self._last_sequence_by_invariant: dict[str, int] = {}
@@ -596,7 +606,13 @@ class GroundTruthReconciler:
             # ledger against whichever snapshot it reads, so pruning first
             # would let a stale snapshot over-promise (ADR-010 §3).
             cutoff = self.settlement_cutoff_for(result)
-            settled = settle_debits_sync(self._redis, cutoff)
+            now = time.time()
+            settled = settle_debits_sync(
+                self._redis,
+                cutoff,
+                orphan_before=now - self._pending_debit_max_age_s,
+                now=now,
+            )
             _attr("reconciliation.settlement_cutoff", cutoff)
             _attr("reconciliation.debits_settled", settled)
         except Exception as redis_exc:

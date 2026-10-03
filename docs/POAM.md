@@ -81,6 +81,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-085 | SI-10 / `CTRL_MRM_004` | Causal gatekeeper cache bypassed the per-request risk boundary: a cached ALLOW for a small trade was replayed for any amount, and a cached DENY denied small ones (Redis with `cache_ttl_seconds > 0`, within one TTL window). Remediated in `refactor/ftra-scope` by caching only the params-independent world-model verdict; closes at merge | High | 2026-10-15 |
 | POAM-2026-086 | SC-8 / SC-23 | Memorystore server CA not delivered to gateway/compliance-bridge pods; evidence-stream fail-closed check exposed it on 2026-10-01. Remediated in IaC (PR-3, `fix/memorystore-ca-pinning`) by mounting `module.memorystore_governance.managed_server_ca` via `<app>-redis-ca` ConfigMaps at `/etc/cage/tls/redis/ca.pem` (`REDIS_CA_CERT_PATH`, `cage.io/redis-ca-sha256` rollout annotation, and `lula-validation-sc8.yaml` Check 5); remains Open pending PR-4 (`fix/redis-tls-one-rule`) unification of synchronous/module-level Redis TLS verification across all enforcing postures | High | 2026-10-15 |
 | POAM-2026-091 | CA-7 / SA-11 | [`proof/FtraBoundary.tla`](../proof/FtraBoundary.tla) and [`proof/LangGraphHarness.tla`](../proof/LangGraphHarness.tla) have never been model-checked: with constants that load, TLC finds `FtraBoundary`'s initial state violates `ControllerBoundaryCoversInGraphBypass`, and `LangGraphHarness` actions leave `consecutive_denials` / `deferral_resolved` unassigned. Their invariants (including `SingleUseDeferralTicket` and `BudgetNeverExceededWithoutPause`) are unverified claims | Moderate | 2026-11-13 |
+| POAM-2026-092 | SI-10 / `CTRL_MRM_004` | Reconciled CBF settled a debit before the custodian carried it whenever commit-to-custodian latency exceeded `settlement_clock_skew_seconds` (5 s): the ledger stamped `submitted_at` at CBF commit, before actuation, so the headroom was overstated by that debit (residual carried from POAM-2026-087). Remediated in `fix/settle-confirmed-debits`: only debits confirmed after execution settle, stamped at confirm; unconfirmed ones are promoted after `pending_debit_max_age_seconds`. Closes at merge | High | 2026-10-17 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -515,7 +516,7 @@ In reconciled mode the CBF nets the KMS-verified custodian balance against a Red
 1. Both workstreams squash-merged to `main` in the same release: `ea92089e` (#345) then `980e1ace` (#346).
 2. `make test-fast` on `main` at `980e1ace`: 5988 passed, 99 skipped.
 3. `uv run python -m src.gateway.governance.oscal_ssp_exporter export` succeeded and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) passed (50 tests).
-4. Residual limitation carried forward (not a closure blocker): the ledger stamps `submitted_at` at CBF commit, so `settlement_clock_skew_seconds` must exceed commit-to-custodian latency (ADR-010 §4, pinned by `test_skew_margin_covers_commit_to_custodian_latency`).
+4. Residual limitation carried forward (not a closure blocker): the ledger stamps `submitted_at` at CBF commit, so `settlement_clock_skew_seconds` must exceed commit-to-custodian latency (ADR-010 §4). Tracked and remediated as POAM-2026-092: only debits confirmed after execution settle.
 
 ### POAM-2026-088: Causal Gatekeeper Inoperative in Enforcing Posture
 
@@ -623,3 +624,22 @@ Neither specification had been model-checked before, so their stated invariants,
 **Remaining Closure Criteria:**
 1. Both specifications pass TLC under `make verify-tla`; record the merge SHA, the TLC output and the actual verification date here.
 
+### POAM-2026-092: Reconciled CBF Settles Debits the Custodian Does Not Yet Carry
+
+**Control:** NIST SI-10 (Information Input Validation), `CTRL_MRM_004`
+**Risk Level:** High
+**Status:** Open — remediated in `fix/settle-confirmed-debits`; closes at merge
+**Date Opened:** 2026-10-03
+**Target Closure:** 2026-10-17
+
+**Description:**
+The settlement-aware ledger (POAM-2026-087, ADR-010) stamped each debit's `submitted_at` when the CBF committed it, which is before the actuator tells the custodian about the fill. The reconciler settles debits stamped at or before `min(settled_through, verified_at) − settlement_clock_skew_seconds`. If the commit-to-custodian latency exceeded the 5 s margin, a debit could be settled while the snapshot did not yet carry it, and the admissible headroom was overstated by that debit until the custodian caught up. The discrepancy guard only catches trades that are large relative to the balance. POAM-2026-087 recorded this as a residual limitation.
+
+**Remediation (implemented):**
+1. [`debit_ledger.py`](../src/gateway/governance/safety/debit_ledger.py): a commit enters `cbf:debits:pending`. `LUA_CONFIRM_DEBIT` moves it to `cbf:debits:by_time` stamped with the confirm time. `LUA_SETTLE_DEBITS` settles only `by_time` and promotes pending entries older than `reconciliation.pending_debit_max_age_seconds` (default 600 s, at least the governor's settlement hold) stamped at promotion. `LUA_UNSETTLED_TOTAL` counts every pending debit.
+2. [`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py): the commit script writes the pending set; rollback clears both sets; new `ControlBarrierFunction.confirm_debit()`.
+3. [`barrier_tier.py`](../src/gateway/governance/safety/barrier_tier.py): `confirm_barrier()`; the finance, healthcare and physical-AI barrier tiers call it from ADR-009 `confirm()`, which the governor runs only after the action executed. The multi-engine kinematic tier now keeps each engine's receipt, so rollback and confirm address each engine's own `debit_id` (rollback previously restored by magnitude only and left the ledger entries in place).
+4. Tests: `test_unconfirmed_debit_is_never_settled_however_late_the_actuator_runs`, `test_unconfirmed_debit_is_promoted_after_the_max_age`, `test_settle_never_prunes_pending_debits`, `test_pending_max_age_outlasts_the_governor_settlement_hold` ([`tests/test_cbf_settlement_ledger.py`](../tests/test_cbf_settlement_ledger.py)); tier wiring in [`tests/governor/test_commit_receipts.py`](../tests/governor/test_commit_receipts.py).
+
+**Remaining Closure Criteria:**
+1. Record the merge SHA, the `make test-fast` result on `main`, a successful OSCAL SSP export, and the actual verification date here.

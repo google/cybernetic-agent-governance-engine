@@ -40,7 +40,9 @@
     "settlement_lag_seconds": 120.0,
     "_comment_lag": "[EV-7] Fallback settlement window when the custodian does not attest settled_through: local debits newer than verified_at - lag stay outstanding. Env override: RECONCILIATION_SETTLEMENT_LAG_SECONDS.",
     "settlement_clock_skew_seconds": 5.0,
-    "_comment_skew": "[EV-7] Clock-skew margin subtracted from every settlement cutoff before local debits are settled. Env override: RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS."
+    "_comment_skew": "[EV-7] Clock-skew margin subtracted from every settlement cutoff before local debits are settled. Confirmed debits are stamped after execution, so it covers clock skew only. Env override: RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS.",
+    "pending_debit_max_age_seconds": 600.0,
+    "_comment_pending": "[EV-7] Unconfirmed debits older than this are promoted to confirmed (stamped at promotion) because they may have executed. Must be >= the governor settlement hold (DEFAULT_HOLD_SECONDS). Env override: RECONCILIATION_PENDING_DEBIT_MAX_AGE_SECONDS."
   },
   "domains": {
     "finance": {

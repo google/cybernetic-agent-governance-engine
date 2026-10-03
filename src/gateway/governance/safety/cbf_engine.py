@@ -38,8 +38,10 @@ from src.gateway.governance.contracts import InvariantModel
 from src.gateway.governance.safety.debit_ledger import (
     DEBITS_BY_TIME_KEY,
     DEBITS_KEY,
+    DEBITS_PENDING_KEY,
     DEBITS_ROLLED_BACK_KEY,
     DEBITS_TOTAL_KEY,
+    confirm_debit,
     outstanding_debits_total,
 )
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
@@ -214,7 +216,7 @@ class ControlBarrierFunction:
 -- KEYS[3]: safety:fence_epoch (R-05)
 -- KEYS[4]: cbf:debits (HASH debit_id -> JSON entry)
 -- KEYS[5]: safety:fence_epoch_hwm
--- KEYS[6]: cbf:debits:by_time (ZSET submitted_at -> debit_id)
+-- KEYS[6]: cbf:debits:pending (ZSET commit time -> debit_id; confirm moves it to by_time)
 -- KEYS[7]: cbf:debits:total (running sum of outstanding debits)
 -- KEYS[8]: verified ground-truth snapshot key (generation check)
 -- ARGV[1]: magnitude (float string) — deduction amount
@@ -225,7 +227,7 @@ class ControlBarrierFunction:
 -- ARGV[6]: expected_fence (int string) — Expected fence epoch for CAS validation
 -- ARGV[7]: mode — "reconciled" | "self_reported"
 -- ARGV[8]: debit_id (string, may be empty → nothing is ledgered)
--- ARGV[9]: submitted_at (float string)
+-- ARGV[9]: submitted_at (float string; commit time)
 -- ARGV[10]: debit_entry (JSON string stored under debit_id)
 -- ARGV[11]: expected snapshot payload (exact bytes Python verified; reconciled mode only)
 -- Returns: array {status_code, message, new_state_str, new_epoch}
@@ -296,7 +298,8 @@ local debit_id = ARGV[8] or ""
 if debit_id ~= "" and cost > 0 then
     -- Ledger every admitted debit regardless of mode: a debit admitted
     -- against self-reported state must still be netted once a reconciled
-    -- snapshot that predates it appears.
+    -- snapshot that predates it appears. It enters as pending: settle never
+    -- prunes it until confirm() reports the action executed.
     redis.call('HSET', KEYS[4], debit_id, ARGV[10])
     redis.call('ZADD', KEYS[6], ARGV[9], debit_id)
     redis.call('INCRBYFLOAT', KEYS[7], ARGV[1])
@@ -313,9 +316,10 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
 -- KEYS[3]: safety:fence_epoch (R-05)
 -- KEYS[4]: cbf:debits (HASH)
 -- KEYS[5]: safety:fence_epoch_hwm
--- KEYS[6]: cbf:debits:by_time (ZSET)
+-- KEYS[6]: cbf:debits:by_time (ZSET, confirmed)
 -- KEYS[7]: cbf:debits:total
 -- KEYS[8]: cbf:debits:rolled_back (HASH debit_id -> rolled_back_at)
+-- KEYS[9]: cbf:debits:pending (ZSET, unconfirmed)
 -- ARGV[1]: magnitude (float string) — fallback restore amount when no ledger entry exists
 -- ARGV[2]: governance_signature (string, may be empty)
 -- ARGV[3]: debit_id (string; empty → legacy restore by ARGV[1])
@@ -343,6 +347,7 @@ if debit_id ~= "" then
         end
         redis.call('HDEL', KEYS[4], debit_id)
         redis.call('ZREM', KEYS[6], debit_id)
+        redis.call('ZREM', KEYS[9], debit_id)
         redis.call('INCRBYFLOAT', KEYS[7], -restore)
     else
         -- Already settled: the ledger no longer carries it, but the
@@ -1368,6 +1373,7 @@ return {1, status, tostring(restored), new_epoch}
                 DEBITS_BY_TIME_KEY,
                 DEBITS_TOTAL_KEY,
                 DEBITS_ROLLED_BACK_KEY,
+                DEBITS_PENDING_KEY,
             ]
             argv = [
                 repr(float(magnitude)),
@@ -1422,6 +1428,7 @@ return {1, status, tostring(restored), new_epoch}
                         # Best-effort ledger retirement on the non-Lua path.
                         pipe.hdel(DEBITS_KEY, debit_id)
                         pipe.zrem(DEBITS_BY_TIME_KEY, debit_id)
+                        pipe.zrem(DEBITS_PENDING_KEY, debit_id)
                         pipe.incrbyfloat(DEBITS_TOTAL_KEY, -float(magnitude))
                     if governance_signature:
                         ledger_entry = json.dumps(
@@ -1455,6 +1462,25 @@ return {1, status, tostring(restored), new_epoch}
         raise RuntimeError(
             f"CBF rollback_state failed after {self._MAX_RETRIES} retries due to concurrent writes."
         )
+
+    async def confirm_debit(self, debit_id: str, *, client: Any = None) -> bool:
+        """ADR-009 ``confirm``: the action behind ``debit_id`` executed.
+
+        Moves the ledger entry from pending to confirmed, stamped now. The
+        stamp is taken after actuation, so it is at or after the custodian's
+        own receipt time and the settlement cutoff compares like with like
+        (only clock skew remains). Returns ``False`` if the debit is not
+        pending. Redis errors propagate (``CONFIRM_FAILED``); the entry then
+        stays pending, which only withholds headroom.
+        """
+        target_client = client
+        if target_client is None:
+            if redis_client is None:
+                raise RuntimeError("Redis client unavailable — cannot confirm CBF debit.")
+            target_client = await _get_raw_redis(redis_client)
+        if target_client is None:
+            raise RuntimeError("Redis client unavailable — cannot confirm CBF debit.")
+        return await confirm_debit(target_client, debit_id)
 
     async def atomic_verify_and_commit(
         self,
@@ -1566,7 +1592,7 @@ return {1, status, tostring(restored), new_epoch}
             _REDIS_KEY_FENCE_EPOCH,
             DEBITS_KEY,
             _REDIS_KEY_FENCE_EPOCH_HWM,
-            DEBITS_BY_TIME_KEY,
+            DEBITS_PENDING_KEY,
             DEBITS_TOTAL_KEY,
             reconciled_state_key(self._invariant.invariant_id),
         ]

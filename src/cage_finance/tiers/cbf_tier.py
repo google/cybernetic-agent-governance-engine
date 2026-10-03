@@ -23,6 +23,7 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.safety.barrier_tier import (
     commit_barrier,
+    confirm_barrier,
     preview_barrier,
     rollback_barrier,
 )
@@ -81,4 +82,5 @@ class CBFTierPlugin(MutatingTier):
     async def confirm(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        """The debit is final at commit; nothing expires, so nothing to confirm."""
+        """The trade executed: the debit becomes settleable (ADR-010)."""
+        await confirm_barrier(self.cbf, receipt)
