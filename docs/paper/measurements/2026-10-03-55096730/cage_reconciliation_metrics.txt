@@ -1,0 +1,34 @@
+CAGE §6.3/6.4/6.5 Reconciliation Measurements
+===============================================
+Generated: 2026-10-03T22:05:16Z
+Signer: kms
+
+## Table 3: Reconciliation Write-Path Latency (ms)
+(signer: kms; evidence_grade: True; 20/20 ticks succeeded)
+
+Component                           P50      P95      P99     Mean
+------------------------------ -------- -------- -------- --------
+Custodian fetch (fetch_ms)        0.100    0.400    0.400    0.115
+Snapshot sign (kms_sign_ms)      70.600  738.600  738.600  105.800
+Redis publish (redis_write_ms)    3.600    7.100    7.100    3.785
+reconcile() wall clock           79.059  744.996  744.996  115.633
+
+## Table 4: CBF Read-Path Overhead (ms)
+(200 reads per path)
+
+Path                                P50      P95      P99     Mean
+------------------------------ -------- -------- -------- --------
+Self-reported state               6.252   13.613   17.037    7.442
+Signed snapshot + verify          5.014    9.539   12.744    5.528
+
+Delta P50/P95: -1.238 / -4.074 ms (signer: kms)
+
+## Section 6.5: Safety Violation Detection
+
+Barrier floor $1,000.00, gamma 0.5; trade $10,000.00
+
+(a) Self-reported $500,000.00, no snapshot (source=self_reported): SAFE
+(b) Reconciler vs inflated state: published=False discrepancy_detected=True fence_epoch 0 -> 1
+(c) Signed $8,000.00 snapshot, state inflated afterwards (source=reconciled, signer=kms): [CTRL_MRM_004] SR 26-2 §IV – Model Risk Management Violation: Safety Violation (RBC/CBF). h(next)=-3000.00 < threshold=3500.00
+
+POAM-023 threat model validated: True
