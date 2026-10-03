@@ -26,14 +26,16 @@
    asynchronously to one replica; StaleFailover promotes the replica.
 
    Results (N = 2, see the cfg files):
-   - DistributedCBF.cfg              Reconciled, SyncReplication: SP-1 holds.
+   - DistributedCBF.cfg              SyncReplication: SP-1, SP-2 hold.
    - DistributedCBF_nosync.cfg       no WAIT N: SP-1 violated. The fence
      epoch and the in-process _last_seen_epoch do not prevent it: another
      process whose last_seen is at or below the regressed epoch spends the
      restored balance.
-   - DistributedCBF_selfreported.cfg self-reported scalar (non-strict, dev
-     only): SP-1 violated through a fence-epoch ABA — a read in flight
-     across the failover passes the CAS once the epoch climbs back.
+   - DistributedCBF_unfenced.cfg     no fence CAS: SP-1, SP-2 hold.
+
+   Reconciled and self-reported mode share this model: both scripts check
+   the barrier against live primary state, and both rollbacks restore only
+   the ledgered amount (ROLLED_BACK_UNLEDGERED restores nothing).
 *)
 
 EXTENDS Naturals, FiniteSets
@@ -46,7 +48,6 @@ CONSTANTS
     MaxFenceEpoch,      \* epoch bound (state bound)
     MaxStaleFailovers,  \* failover bound (state bound)
     SyncReplication,    \* WAIT N + strict rollback before actuation
-    Reconciled,         \* script nets the live ledger (strict mode)
     Fenced,             \* fence-epoch CAS and last_seen regression check
     AllowRestart        \* processes may restart and re-seed last_seen
 
@@ -59,14 +60,13 @@ VARIABLES
     ledger,             \* primary: cbf:debits (rollback-able amount)
     rep_ledger,         \* replica copy of ledger
     agent_epochs,       \* per process: _last_seen_epoch (in memory)
-    read_balance,       \* per process: scalar read before the script
     read_epoch,         \* per process: epoch read (0 = no read in flight)
     spent,              \* actuated at the broker; never regresses
     stale_failovers
 
 vars == <<available_balance, fence_epoch, rep_balance, rep_epoch,
           agent_reserves, ledger, rep_ledger, agent_epochs,
-          read_balance, read_epoch, spent, stale_failovers>>
+          read_epoch, spent, stale_failovers>>
 
 RECURSIVE SumOver(_, _)
 SumOver(f, S) == IF S = {} THEN 0
@@ -86,12 +86,9 @@ Init ==
     /\ ledger = [a \in AgentIDs |-> 0]
     /\ rep_ledger = [a \in AgentIDs |-> 0]
     /\ agent_epochs = [a \in AgentIDs |-> 1]     \* seeded at startup
-    /\ read_balance = [a \in AgentIDs |-> 0]
     /\ read_epoch = [a \in AgentIDs |-> 0]
     /\ spent = 0
     /\ stale_failovers = 0
-
-Basis(a) == IF Reconciled THEN available_balance ELSE read_balance[a]
 
 (* _check_fence_epoch + state read. *)
 Read(a) ==
@@ -100,23 +97,22 @@ Read(a) ==
     /\ available_balance >= ReserveAmount
     /\ ~(Fenced /\ agent_epochs[a] > fence_epoch)
     /\ agent_epochs' = [agent_epochs EXCEPT ![a] = Max(@, fence_epoch)]
-    /\ read_balance' = [read_balance EXCEPT ![a] = available_balance]
     /\ read_epoch' = [read_epoch EXCEPT ![a] = fence_epoch]
     /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
                    agent_reserves, ledger, rep_ledger, spent, stale_failovers>>
 
-(* LUA_ATOMIC_CBF success: CAS, barrier, SET, INCR, ledger the debit. *)
+(* LUA_ATOMIC_CBF success: CAS, barrier on live primary state, SET, INCR,
+   ledger the debit. *)
 Write(a) ==
     /\ read_epoch[a] # 0
     /\ fence_epoch < MaxFenceEpoch
     /\ ~(Fenced /\ fence_epoch # read_epoch[a])
-    /\ Basis(a) >= ReserveAmount
-    /\ available_balance' = Basis(a) - ReserveAmount
+    /\ available_balance >= ReserveAmount
+    /\ available_balance' = available_balance - ReserveAmount
     /\ fence_epoch' = fence_epoch + 1
     /\ agent_reserves' = [agent_reserves EXCEPT ![a] = @ + ReserveAmount]
     /\ ledger' = [ledger EXCEPT ![a] = @ + ReserveAmount]
     /\ agent_epochs' = [agent_epochs EXCEPT ![a] = fence_epoch + 1]
-    /\ read_balance' = [read_balance EXCEPT ![a] = 0]
     /\ read_epoch' = [read_epoch EXCEPT ![a] = 0]
     /\ UNCHANGED <<rep_balance, rep_epoch, rep_ledger, spent, stale_failovers>>
 
@@ -125,8 +121,7 @@ WriteReject(a) ==
     /\ read_epoch[a] # 0
     /\ ~( /\ (~Fenced \/ fence_epoch = read_epoch[a])
           /\ fence_epoch < MaxFenceEpoch
-          /\ Basis(a) >= ReserveAmount )
-    /\ read_balance' = [read_balance EXCEPT ![a] = 0]
+          /\ available_balance >= ReserveAmount )
     /\ read_epoch' = [read_epoch EXCEPT ![a] = 0]
     /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
                    agent_reserves, ledger, rep_ledger, agent_epochs,
@@ -141,24 +136,22 @@ Commit(a) ==
     /\ ledger' = [ledger EXCEPT ![a] = 0]
     /\ rep_ledger' = [rep_ledger EXCEPT ![a] = 0]
     /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
-                   agent_epochs, read_balance, read_epoch, stale_failovers>>
+                   agent_epochs, read_epoch, stale_failovers>>
 
-(* LUA_ROLLBACK by debit_id. Reconciled: removes the ledger entry if the
-   primary holds it. A missing entry takes ROLLED_BACK_SETTLED and restores
-   the magnitude to the state key, which only the self-reported barrier
-   reads. *)
+(* LUA_ROLLBACK by debit_id: restores the ledgered amount if the primary
+   holds the entry. A missing entry takes ROLLED_BACK_UNLEDGERED and
+   restores nothing. *)
 Rollback(a) ==
     /\ agent_reserves[a] > 0
     /\ read_epoch[a] = 0
     /\ fence_epoch < MaxFenceEpoch
-    /\ available_balance' = available_balance
-                            + (IF Reconciled THEN ledger[a] ELSE agent_reserves[a])
+    /\ available_balance' = available_balance + ledger[a]
     /\ fence_epoch' = fence_epoch + 1
     /\ agent_reserves' = [agent_reserves EXCEPT ![a] = 0]
     /\ ledger' = [ledger EXCEPT ![a] = 0]
     /\ rep_ledger' = [rep_ledger EXCEPT ![a] = 0]
     /\ agent_epochs' = [agent_epochs EXCEPT ![a] = fence_epoch + 1]
-    /\ UNCHANGED <<rep_balance, rep_epoch, read_balance, read_epoch,
+    /\ UNCHANGED <<rep_balance, rep_epoch, read_epoch,
                    spent, stale_failovers>>
 
 (* Process restart: _last_seen_epoch re-seeded from the primary. *)
@@ -169,7 +162,7 @@ AgentRestart(a) ==
     /\ agent_epochs[a] # fence_epoch
     /\ agent_epochs' = [agent_epochs EXCEPT ![a] = fence_epoch]
     /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
-                   agent_reserves, ledger, rep_ledger, read_balance,
+                   agent_reserves, ledger, rep_ledger,
                    read_epoch, spent, stale_failovers>>
 
 ReplicaCurrent ==
@@ -183,8 +176,7 @@ Replicate ==
     /\ rep_epoch' = fence_epoch
     /\ rep_ledger' = ledger
     /\ UNCHANGED <<available_balance, fence_epoch, agent_reserves, ledger,
-                   agent_epochs, read_balance, read_epoch, spent,
-                   stale_failovers>>
+                   agent_epochs, read_epoch, spent, stale_failovers>>
 
 (* Replica promoted: balance, epoch, HWM and ledger regress; last_seen does
    not. Under SyncReplication a debit the replica lacks cannot be actuated
@@ -197,7 +189,7 @@ StaleFailover ==
     /\ ledger' = rep_ledger
     /\ stale_failovers' = stale_failovers + 1
     /\ UNCHANGED <<rep_balance, rep_epoch, rep_ledger, agent_reserves,
-                   agent_epochs, read_balance, read_epoch, spent>>
+                   agent_epochs, read_epoch, spent>>
 
 Next ==
     \/ \E a \in AgentIDs :

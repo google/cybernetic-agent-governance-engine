@@ -121,15 +121,14 @@ One agent is one gateway process; Redis is one primary replicating asynchronousl
 
 | cfg | Posture | States (N=1 / 2 / 3) | SP-1 | SP-2 |
 |-----|---------|----------------------|------|------|
-| `DistributedCBF.cfg` | Shipped staging/prod: reconciled (`CAGE_CBF_STRICT_MODE`) + `WAIT 1` with strict rollback | 107 / 1945 / 27809 | ✅ | ✅ |
-| `DistributedCBF_nosync.cfg` | No `WAIT N` (negative control) | 244 / 4232 / 56435 | ❌ | ❌ |
-| `DistributedCBF_selfreported.cfg` | Self-reported scalar (non-strict; dev only, and dev runs no replica) | 98 / 1933 / 28924 | ❌ (N ≥ 2) | ❌ |
-| `DistributedCBF_unfenced.cfg` | Shipped posture without the fence-epoch CAS | 110 / 2536 / 51302 | ✅ | ✅ |
+| `DistributedCBF.cfg` | `WAIT 1` with strict rollback; reconciled (shipped staging/prod) and self-reported mode alike | 107 / 1811 / 23723 | ✅ | ✅ |
+| `DistributedCBF_nosync.cfg` | No `WAIT N` (negative control) | 244 / 3972 / 49325 | ❌ | ❌ |
+| `DistributedCBF_unfenced.cfg` | Shipped posture without the fence-epoch CAS | 110 / 2388 / 44261 | ✅ | ✅ |
 
 What the counterexamples show:
 - **`WAIT N` is load-bearing.** Without it a committed debit is lost at failover and another process — or the same one after a rollback or restart re-seeds `_last_seen_epoch` — spends the restored balance. The fence epoch and `_last_seen_epoch` do not prevent this; `safety:fence_epoch_hwm` regresses with the replica.
-- **Self-reported mode (residual, dev only):** a read in flight across the failover passes the epoch CAS once the epoch climbs back to the value it read (ABA), and `LUA_ROLLBACK`'s `ROLLED_BACK_SETTLED` branch restores the magnitude of a debit the promoted primary never deducted (SP-2).
-- **Reconciled mode does not rely on the fence CAS for SP-1:** the script nets the live ledger total and refuses a replaced snapshot.
+- **One model covers both modes.** `LUA_ATOMIC_CBF` checks the barrier against live primary state in reconciled mode (snapshot net of the live total, snapshot generation checked) and in self-reported mode (`GET` of the state key; Python's earlier read is only a seed for an unset key). `LUA_ROLLBACK_CBF` restores only a ledgered amount; a debit with no entry takes `ROLLED_BACK_UNLEDGERED` and credits nothing. This closed the self-reported fence-epoch ABA and rollback over-credit that the former `DistributedCBF_selfreported.cfg` demonstrated.
+- **SP-1 does not rely on the fence CAS:** the script evaluates the barrier on live state.
 
 ### TLA+ Config Files
 
@@ -222,7 +221,7 @@ TLA_TOOLS_JAR=/path/to/tla2tools.jar make verify-tla
 java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla
 ```
 
-`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1945 distinct states. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails only on a count or verdict that differs from the BFS. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
+`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails only on a count or verdict that differs from the BFS. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
 
 ## Architectural Notes
 

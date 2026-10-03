@@ -122,12 +122,15 @@ preserved.
   means the debit was already rolled back: return `NOOP`, touch nothing, do
   not bump the epoch. A live HASH entry: remove it and its ZSET member,
   decrement the total by the *recorded* amount, restore the state scalar
-  (`ROLLED_BACK`). Neither: the debit has already settled, so the ledger no
-  longer carries it but the state key still does — restore by the caller's
-  magnitude and leave the total alone (`ROLLED_BACK_SETTLED`). Every path that
-  changes state writes the tombstone. Without the tombstone a late rollback
-  after settlement would leave the self-reported key too low, trip the
-  settlement-aware guard below, and deadlock strict mode.
+  (`ROLLED_BACK`). Neither: restore nothing and leave the total alone
+  (`ROLLED_BACK_UNLEDGERED`, amended 2026-10-03). A missing entry means the
+  debit settled (only confirmed debits settle, so the action executed and
+  the custodian reflects it) or was lost when a lagging replica was
+  promoted (this primary never deducted it). Restoring by the caller's
+  magnitude, as the original `ROLLED_BACK_SETTLED` branch did, over-credits
+  in both cases; the distributed CBF model showed the over-credit
+  (`proof/README.md`). Every path that changes state writes the tombstone,
+  so a retried rollback is a `NOOP`.
 - The WAIT-timeout rollback inside `atomic_verify_and_commit` passes the same
   `debit_id`; it was the second caller the original plan missed.
 
@@ -305,9 +308,11 @@ Every failure mode over-restricts.
   ledger.
 - **Float total.** `INCRBYFLOAT` drift is bounded by the per-poll recompute;
   between polls the drift is at most one `INCRBYFLOAT` rounding per commit.
-- **The development-only `reconciled_unsigned` branch** nets in Python and
-  flows as `mode="self_reported"`; it has neither the in-script netting nor the
-  generation check and is never admitted in an enforcing posture.
+- **The development-only `reconciled_unsigned` branch** takes the same
+  script path as a signed snapshot (`mode="reconciled"`: in-script netting
+  and the generation check); only the signature check is skipped. It is
+  never admitted in an enforcing posture. Plain self-reported mode reads
+  the state key inside the script (amended 2026-10-03).
 - **A debit is counted twice for one skew window after confirm.** The
   custodian may reflect a fill before the cutoff passes its confirm stamp;
   until then the snapshot and the ledger both carry it. This errs toward less

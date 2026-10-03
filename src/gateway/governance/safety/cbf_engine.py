@@ -202,6 +202,20 @@ async def _get_pinned_connection(client: Any) -> tuple[Any, bool]:
     return client, False
 
 
+def _ledgered_amount(entry: Any) -> float:
+    """Amount recorded in a ``cbf:debits`` entry; 0.0 when absent or unreadable.
+
+    Mirrors ``LUA_ROLLBACK_CBF``: with no readable entry nothing is restored.
+    """
+    if entry is None:
+        return 0.0
+    try:
+        amount = json.loads(entry).get("amount")
+        return float(amount) if amount is not None else 0.0
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
 class ControlBarrierFunction:
     """Discrete-time invariant-parametric Control Barrier Function (CBF)."""
 
@@ -223,7 +237,8 @@ class ControlBarrierFunction:
 -- ARGV[2]: threshold (float string) — <InvariantModel.threshold_key> resolved floor
 -- ARGV[3]: gamma (float string) — <InvariantModel.gamma>
 -- ARGV[4]: governance_signature (string, may be empty)
--- ARGV[5]: state scalar (float string) — RAW reconciled scalar or self-reported state
+-- ARGV[5]: state scalar (float string) — reconciled: RAW attested scalar;
+--          self_reported: initial seed, used only while KEYS[1] is unset
 -- ARGV[6]: expected_fence (int string) — Expected fence epoch for CAS validation
 -- ARGV[7]: mode — "reconciled" | "self_reported"
 -- ARGV[8]: debit_id (string, may be empty → nothing is ledgered)
@@ -247,11 +262,21 @@ if KEYS[5] then
     end
 end
 
+local mode = ARGV[7] or "self_reported"
 local current = tonumber(ARGV[5])
+if mode ~= "reconciled" then
+    -- Self-reported: the barrier reads the live state key in this hop, never
+    -- the scalar Python read earlier. A stale read could otherwise pass the
+    -- epoch CAS once the epoch climbs back to the value it saw (ABA across a
+    -- failover). An unset key means nothing was ever committed: use the seed.
+    local live_raw = redis.call('GET', KEYS[1])
+    if live_raw then
+        current = tonumber(live_raw)
+    end
+end
 if not current then
     return {0, "Ground truth balance unavailable", "0", current_fence}
 end
-local mode = ARGV[7] or "self_reported"
 if mode == "reconciled" then
     -- The scalar in ARGV[5] is only meaningful for the snapshot generation
     -- Python verified. If the reconciler has published a newer snapshot
@@ -320,12 +345,12 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
 -- KEYS[7]: cbf:debits:total
 -- KEYS[8]: cbf:debits:rolled_back (HASH debit_id -> rolled_back_at)
 -- KEYS[9]: cbf:debits:pending (ZSET, unconfirmed)
--- ARGV[1]: magnitude (float string) — fallback restore amount when no ledger entry exists
+-- ARGV[1]: magnitude (float string) — restore amount for the legacy path only
 -- ARGV[2]: governance_signature (string, may be empty)
 -- ARGV[3]: debit_id (string; empty → legacy restore by ARGV[1])
 -- ARGV[4]: timestamp (float string)
 -- Returns: array {status_code, message, new_state_str, new_epoch}
---   message: ROLLED_BACK | ROLLED_BACK_SETTLED | NOOP
+--   message: ROLLED_BACK | ROLLED_BACK_UNLEDGERED | NOOP
 local restore = tonumber(ARGV[1]) or 0.0
 local sig = ARGV[2] or ""
 local debit_id = ARGV[3] or ""
@@ -350,9 +375,12 @@ if debit_id ~= "" then
         redis.call('ZREM', KEYS[9], debit_id)
         redis.call('INCRBYFLOAT', KEYS[7], -restore)
     else
-        -- Already settled: the ledger no longer carries it, but the
-        -- fallback state key still does, so restore that by magnitude.
-        status = "ROLLED_BACK_SETTLED"
+        -- No ledger entry: settled, or lost when a lagging replica was
+        -- promoted. This primary cannot show it ever deducted the amount,
+        -- so restore nothing. Under-credit is the safe direction; the next
+        -- reconciled snapshot corrects it.
+        restore = 0.0
+        status = "ROLLED_BACK_UNLEDGERED"
     end
     redis.call('HSET', KEYS[8], debit_id, ARGV[4] or "0")
 end
@@ -1080,15 +1108,22 @@ return {1, status, tostring(restored), new_epoch}
     async def _resolve_ground_truth_balance(self) -> tuple[float, dict[str, Any]]:
         state = await self._read_cbf_state_atomic()
 
-        if (
-            state.get("current_cash") is not None
-            and state.get("source") == "reconciled"
+        # ``reconciled_unsigned`` (dev only) takes the same script path as a
+        # signed snapshot: the script nets the live outstanding total and
+        # checks the snapshot generation. Only the signature check differs.
+        if state.get("current_cash") is not None and state.get("source") in (
+            "reconciled",
+            "reconciled_unsigned",
         ):
             sequence = state.get("sequence", 0)
             return (
                 float(state["current_cash"]),
                 {
-                    "source": "reconciliation",
+                    "source": (
+                        "reconciliation"
+                        if state["source"] == "reconciled"
+                        else "reconciled_unsigned"
+                    ),
                     "mode": "reconciled",
                     "sequence": sequence,
                     "fence_epoch": state.get("fence_epoch", 0),
@@ -1128,8 +1163,8 @@ return {1, status, tostring(restored), new_epoch}
             balance,
             {
                 "source": "self_reported",
-                # ``reconciled_unsigned`` (dev only) is netted in Python above;
-                # the script must not net it a second time.
+                # The script reads the live state key itself; ``balance`` is
+                # only the seed used while the key is unset.
                 "mode": "self_reported",
                 "fence_epoch": fence_epoch,
                 "strict_mode": False,
@@ -1350,8 +1385,10 @@ return {1, status, tostring(restored), new_epoch}
         With ``debit_id`` (the ``CommitReceipt.token`` minted by
         ``commit_barrier``) the restore is exact — the ledgered amount, not the
         caller-supplied ``magnitude`` — and idempotent: a second rollback of
-        the same id is a no-op. Without it the legacy restore-by-magnitude
-        path runs and the ledger is left untouched.
+        the same id is a no-op. A debit with no ledger entry (settled, or lost
+        in a failover) restores nothing (``ROLLED_BACK_UNLEDGERED``). Without
+        ``debit_id`` the legacy restore-by-magnitude path runs and the ledger
+        is left untouched.
         """
         target_client = client
         if target_client is None:
@@ -1413,28 +1450,42 @@ return {1, status, tostring(restored), new_epoch}
                 if inspect.isawaitable(pipe_ctx):
                     pipe_ctx = await pipe_ctx
                 async with pipe_ctx as pipe:
-                    await pipe.watch(self.redis_key)
+                    ledgered = bool(debit_id) and hasattr(pipe, "hget")
+                    if ledgered:
+                        await pipe.watch(self.redis_key, DEBITS_KEY, DEBITS_ROLLED_BACK_KEY)
+                    else:
+                        await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
                     current = (
                         float(raw)
                         if raw is not None
                         else self._initial_state_scalar()
                     )
-                    restored = current + magnitude
+                    restore = float(magnitude)
+                    if ledgered:
+                        # Same rules as LUA_ROLLBACK_CBF: a tombstoned id is a
+                        # no-op; only a ledgered amount is restored.
+                        if await pipe.hexists(DEBITS_ROLLED_BACK_KEY, debit_id):
+                            await pipe.reset()
+                            return
+                        entry = await pipe.hget(DEBITS_KEY, debit_id)
+                        restore = _ledgered_amount(entry)
+                    restored = current + restore
                     pipe.multi()
                     pipe.set(self.redis_key, str(restored))
                     pipe.incr(_REDIS_KEY_FENCE_EPOCH)
-                    if debit_id and hasattr(pipe, "hdel"):
-                        # Best-effort ledger retirement on the non-Lua path.
+                    if ledgered:
                         pipe.hdel(DEBITS_KEY, debit_id)
                         pipe.zrem(DEBITS_BY_TIME_KEY, debit_id)
                         pipe.zrem(DEBITS_PENDING_KEY, debit_id)
-                        pipe.incrbyfloat(DEBITS_TOTAL_KEY, -float(magnitude))
+                        if restore:
+                            pipe.incrbyfloat(DEBITS_TOTAL_KEY, -restore)
+                        pipe.hset(DEBITS_ROLLED_BACK_KEY, debit_id, repr(time.time()))
                     if governance_signature:
                         ledger_entry = json.dumps(
                             {
                                 "ts": time.time(),
-                                "cost": magnitude,
+                                "cost": restore,
                                 "new_balance": restored,
                                 "governance_signature": governance_signature,
                                 "rollback": True,
