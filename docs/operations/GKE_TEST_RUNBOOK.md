@@ -553,6 +553,9 @@ BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=te
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=1
 # Binary Authorization admits only attested images: point BENCHMARK_REDIS_IMAGE at
 # the attested Redis mirror (gcr.io/<project>/redis@sha256:...).
+# BENCHMARK_SCOPE=full (default) also measures adversarial deflection and benign FPR against
+# the deployed advisor, so it needs vllm-inference serving and an advisor at HEAD;
+# BENCHMARK_SCOPE=latency records those sections as not measured.
 # CAGE_ENVIRONMENT=<dev|staging|prod> REGISTRY_URL=gcr.io/<project> GOOGLE_CLOUD_PROJECT=<project> \
 #   BENCHMARK_REDIS_IMAGE=gcr.io/<project>/redis@sha256:<digest> bash scripts/run_gke_benchmark_job.sh
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=0
