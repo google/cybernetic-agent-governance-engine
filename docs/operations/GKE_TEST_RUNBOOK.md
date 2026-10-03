@@ -546,10 +546,10 @@ BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=te
 # Step 12 (Optional): In-cluster VPC-native benchmark or Locust HPA load test
 # The benchmark creates and deletes its own throwaway Redis (benchmark-redis.yaml);
 # it never writes to the shared redis-master. Output: docs/paper/measurements/<date>-<sha>/
-# The paper metrics run --unmocked (Table 2b), so build the advisor image at HEAD
+# The paper metrics run --unmocked (Table 2b), so build the gateway image at HEAD
 # and scale vllm-reasoning up first; the runner refuses to start otherwise.
 # gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
-#   --substitutions="_IMAGE_NAME=governed-financial-advisor,_DOCKERFILE=Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
+#   --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=1
 # Binary Authorization admits only attested images: point BENCHMARK_REDIS_IMAGE at
 # the attested Redis mirror (gcr.io/<project>/redis@sha256:...).

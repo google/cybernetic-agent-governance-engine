@@ -22,7 +22,8 @@
 #
 # Required env: REGISTRY_URL, GOOGLE_CLOUD_PROJECT (substituted into the Job).
 # Optional env: IMAGE_TAG (default: short SHA of HEAD; build it first with
-# deployment/docker/cloudbuild.image.yaml, _IMAGE_NAME=governed-financial-advisor).
+# deployment/docker/cloudbuild.image.yaml, _IMAGE_NAME=gateway,
+# _DOCKERFILE=src/gateway/Dockerfile).
 #               BENCHMARK_REDIS_IMAGE (default: the Docker Hub redis pin; set an
 #               attested mirror, e.g. gcr.io/<project>/redis@sha256:..., when the
 #               cluster enforces Binary Authorization).
@@ -40,7 +41,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-: "${REGISTRY_URL:?REGISTRY_URL must be set (Artifact Registry path of the advisor image)}"
+: "${REGISTRY_URL:?REGISTRY_URL must be set (registry path of the gateway image)}"
 : "${GOOGLE_CLOUD_PROJECT:?GOOGLE_CLOUD_PROJECT must be set}"
 export REGISTRY_URL GOOGLE_CLOUD_PROJECT
 
@@ -52,10 +53,10 @@ GIT_SHA=$(git rev-parse --short HEAD)
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}}"
 # Binary Authorization admits digest references only, so resolve the tag.
 BENCHMARK_IMAGE=$(gcloud container images describe \
-  "${REGISTRY_URL}/governed-financial-advisor:${IMAGE_TAG}" \
+  "${REGISTRY_URL}/gateway:${IMAGE_TAG}" \
   --format='value(image_summary.fully_qualified_digest)' 2>/dev/null || true)
 if [ -z "${BENCHMARK_IMAGE}" ]; then
-  echo -e "${RED}❌ ${REGISTRY_URL}/governed-financial-advisor:${IMAGE_TAG} not found; build it with deployment/docker/cloudbuild.image.yaml.${NC}"
+  echo -e "${RED}❌ ${REGISTRY_URL}/gateway:${IMAGE_TAG} not found; build it with deployment/docker/cloudbuild.image.yaml.${NC}"
   exit 1
 fi
 BENCHMARK_REDIS_IMAGE="${BENCHMARK_REDIS_IMAGE:-redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0}"

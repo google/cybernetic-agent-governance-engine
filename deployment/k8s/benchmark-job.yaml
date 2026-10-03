@@ -40,9 +40,12 @@ spec:
         - name: benchmark-runner
           # BENCHMARK_IMAGE and GOOGLE_CLOUD_PROJECT are substituted by
           # scripts/run_gke_benchmark_job.sh (those two only). BENCHMARK_IMAGE
-          # is <registry>/governed-financial-advisor@sha256:<digest>, resolved
+          # is <registry>/gateway@sha256:<digest>, resolved
           # from the commit-SHA tag Cloud Build pushed: Binary Authorization
-          # admits digest references only.
+          # admits digest references only. The gateway image, because the
+          # benchmark builds the governor in-process: it is the image that
+          # installs the project (cage.plugins entry points) and the only one
+          # meant to hold governance state.
           image: ${BENCHMARK_IMAGE}
           imagePullPolicy: Always
           command: ["/bin/bash", "-c"]
