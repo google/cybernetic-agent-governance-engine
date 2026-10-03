@@ -562,7 +562,7 @@ filled with the squash-merge SHA by WS-H.
 
 | ID | Review points | Finding | Workstream | POAM | Status | Evidence |
 |---|---|---|---|---|---|---|
-| S11 | 1, 2, 5 | Settlement-lag double-spend window: debits pruned per poll through a local sequence; netting by sequence equality; rollback by amount; previews ignore debits; `record_debit()` has no caller; O(L) Lua | WS-A (`fix/cbf-settlement-ledger`) | 087 | **OPEN** | — |
+| S11 | 1, 2, 5 | Settlement-lag double-spend window: debits pruned per poll through a local sequence; netting by sequence equality; rollback by amount; previews ignore debits; `record_debit()` has no caller; O(L) Lua | WS-A (`fix/cbf-settlement-ledger`) | 087 | **OPEN** (implemented on branch 2026-10-02; closes on merge) | — |
 | S12 | 7 | Discrepancy guard is `0.5·abs(baseline)` with a floor only when the baseline is falsy; not in `governance_thresholds.json`; manuscript calls it a "velocity circuit breaker" | WS-B (`fix/recon-discrepancy-floor`) | 087 | **OPEN** | — |
 | S13 | 6 | Causal gatekeeper inoperative in enforcing posture: tier passes no telemetry; `get_telemetry_provider()` unused; manuscript says `n ≥ 100`, code says `min_samples = 50` | WS-C (`fix/causal-tier-telemetry`) | 088 | **OPEN** | — |
 | S14 | 4 | Nonce burned before signature verification; `ConsequenceGateway` described as the mandatory boundary although unwired | WS-D (`fix/seal-verify-then-burn`) | 089 | **OPEN** | — |

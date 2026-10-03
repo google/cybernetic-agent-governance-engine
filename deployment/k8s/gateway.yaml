@@ -174,6 +174,16 @@ spec:
             # value names that provider; it is a label, not a selector.
             - name: RECONCILIATION_PROVIDER
               value: "simulated"
+            # ADR-010: the simulated custodian's journal is shared between this
+            # pod (BrokerActuator journals each fill) and the reconciliation
+            # worker (SimulatedSource settles them), so it must live in Redis.
+            # The settlement lag is the delay the simulated custodian exhibits
+            # before a fill is reflected in its balance; the reconciler attests
+            # it as settled_through and the CBF keeps younger debits outstanding.
+            - name: CAGE_SIM_LEDGER_BACKEND
+              value: "redis"
+            - name: CAGE_SIM_SETTLEMENT_LAG_SECONDS
+              value: "90"
             # Signing-key references come from gateway-secrets, never from the
             # shared advisor-secrets: the advisor loads advisor-secrets via
             # envFrom and refuses to start if either key is present

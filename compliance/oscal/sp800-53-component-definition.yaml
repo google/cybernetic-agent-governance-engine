@@ -1083,7 +1083,8 @@ component-definition:
         Barrier Function (CBF) real-time monitoring. Performs continuous risk
         assessment of AI inference outputs and enforces safety envelopes on
         all governance decisions. Implemented in src/gateway/governance/stpa_validator.py
-        and src/gateway/governance/safety.py.
+        and src/gateway/governance/safety/cbf_engine.py (settlement-aware debit
+        ledger in src/gateway/governance/safety/debit_ledger.py, ADR-010).
       purpose: >
         Provides formal safety analysis (STPA) and real-time safety monitoring
         (CBF) to identify and mitigate unsafe control actions from the AI
@@ -1104,11 +1105,20 @@ component-definition:
                 unsafe control actions (UCAs) using the STPA methodology: for each
                 control action, it evaluates four UCA types (provided, not-provided,
                 too-early/too-late, stopped-too-soon/applied-too-long). Control Barrier
-                Functions (CBF) in src/gateway/governance/safety.py define formal safety
-                constraints with Lyapunov stability guarantees. Safety parameters
-                (thresholds, envelope bounds) are defined in
-                src/gateway/governance/safety_params.json. Risk findings are documented
-                in docs/STPA_ANALYSIS.md and tracked in docs/POAM.md.
+                Functions (CBF) in src/gateway/governance/safety/cbf_engine.py define
+                formal discrete-time safety constraints (h(S(t+1)) >= (1 - gamma) h(S(t)))
+                and commit them in one Redis Lua hop with the fence-epoch check. In
+                reconciled mode the hop nets the custodian-attested scalar against the
+                settlement-aware local-debit ledger (cbf:debits, cbf:debits:total in
+                src/gateway/governance/safety/debit_ledger.py): debits are ledgered by
+                debit_id when admitted, retired exactly and idempotently on rollback, and
+                settled by the reconciler (src/gateway/governance/reconciliation/daemon.py)
+                only up to the custodian's signed settled_through minus a clock-skew
+                margin, so the settlement-lag double-spend window is closed (ADR-010,
+                POAM-2026-087). Safety parameters (thresholds, envelope bounds) are
+                defined in config/governance_thresholds.json and config/safety_params.json.
+                Risk findings are documented in docs/security/STPA_ANALYSIS.md and tracked
+                in docs/POAM.md.
               props:
                 - name: implementation-status
                   value: implemented
@@ -1125,7 +1135,12 @@ component-definition:
               description: |
                 System monitoring is implemented via CBF real-time monitoring of all
                 inference outputs against safety envelopes defined in
-                src/gateway/governance/safety.py. The symbolic governor tracks violations
+                src/gateway/governance/safety/cbf_engine.py, and by the reconciliation
+                daemon's discrepancy guard (src/gateway/governance/reconciliation/daemon.py),
+                which refuses and fences any custodian snapshot that moves outside the
+                band of the gateway's own state plus its unsettled debits by more than
+                max(reconciliation.discrepancy_ratio x |baseline|,
+                reconciliation.discrepancy_abs_floor). The symbolic governor tracks violations
                 of fiscal limits, content safety thresholds, and STPA-derived constraints
                 on a per-request basis. Safety envelope violations are logged as OTel spans
                 with severity=WARNING or CRITICAL and trigger the compliance bridge alerting

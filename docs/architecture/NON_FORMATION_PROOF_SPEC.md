@@ -211,7 +211,7 @@ the evidence stream is itself the "no-bind" evidence (§6.5, §4 proof element
 
 [`atomic_verify_and_commit()`](../../src/gateway/governance/safety/cbf_engine.py:1414)
 collapses the fence-epoch check, the CBF safety check, the Redis state debit
-and the `cbf:local_debits` record into a single Lua script — eliminating the
+and the `cbf:debits` ledger record into a single Lua script — eliminating the
 TOCTOU window between "checked safe" and "committed". The state it checks
 against is reconciler-signed ground truth, accepted only after
 `verify_snapshot_signature()`

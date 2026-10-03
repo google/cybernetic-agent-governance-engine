@@ -22,18 +22,26 @@ Parameterized by a domain-contributed ``InvariantModel`` and ``cost_resolver``.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
 import inspect
 import json
 import logging
 import math
 import os
 import time
+import uuid
+from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import InvariantModel
+from src.gateway.governance.safety.debit_ledger import (
+    DEBITS_BY_TIME_KEY,
+    DEBITS_KEY,
+    DEBITS_ROLLED_BACK_KEY,
+    DEBITS_TOTAL_KEY,
+    outstanding_debits_total,
+)
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.infrastructure.redis_client import redis_client, sync_redis_client
 from src.gateway.infrastructure.telemetry import get_tracer
@@ -61,7 +69,6 @@ _FENCE_EPOCH_ENABLED: bool = os.environ.get(
 
 _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
 _REDIS_KEY_FENCE_EPOCH_HWM = "safety:fence_epoch_hwm"
-_REDIS_KEY_LOCAL_DEBITS = "cbf:local_debits"
 
 _WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "1"))
 _WAIT_TIMEOUT_MS: int = int(os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS", "1000"))
@@ -154,76 +161,6 @@ async def _get_raw_redis(r: Any) -> Any:
     return r
 
 
-LUA_TRIM_DEBITS_BY_SEQUENCE: str = """
--- Prune local debits at or below the signed reconciliation sequence.
--- KEYS[1]: cbf:local_debits
--- ARGV[1]: cutoff_sequence (number)
-local cutoff_seq = tonumber(ARGV[1])
-if not cutoff_seq then
-    return 0
-end
-local debits = redis.call('LRANGE', KEYS[1], 0, -1)
-local kept = {}
-local pruned = 0
-for _, entry in ipairs(debits) do
-    local ok, data = pcall(cjson.decode, entry)
-    if ok and data and data.reconciliation_sequence and tonumber(data.reconciliation_sequence) > cutoff_seq then
-        table.insert(kept, entry)
-    else
-        pruned = pruned + 1
-    end
-end
-redis.call('DEL', KEYS[1])
-for _, entry in ipairs(kept) do
-    redis.call('RPUSH', KEYS[1], entry)
-end
-return pruned
-"""
-
-
-async def trim_local_debits_through_sequence(client: Any, signed_sequence: int) -> int:
-    """Prune debits from cbf:local_debits at or below signed_sequence."""
-    if client is None or signed_sequence is None:
-        return 0
-    raw_client = await _get_raw_redis(client)
-    if raw_client is None:
-        return 0
-    try:
-        res = raw_client.eval(
-            LUA_TRIM_DEBITS_BY_SEQUENCE,
-            1,
-            _REDIS_KEY_LOCAL_DEBITS,
-            str(signed_sequence),
-        )
-        return int(await res if inspect.isawaitable(res) else res)
-    except Exception as exc:
-        logger.warning(
-            "Failed to trim debits through sequence %s: %s", signed_sequence, exc
-        )
-        return 0
-
-
-def trim_local_debits_through_sequence_sync(client: Any, signed_sequence: int) -> int:
-    """Synchronous version of trim_local_debits_through_sequence for the reconciler daemon."""
-    if client is None or signed_sequence is None:
-        return 0
-    raw = getattr(client, "_get", None)
-    raw_client = raw() if callable(raw) else client
-    try:
-        res = raw_client.eval(
-            LUA_TRIM_DEBITS_BY_SEQUENCE,
-            1,
-            _REDIS_KEY_LOCAL_DEBITS,
-            str(signed_sequence),
-        )
-        return int(res) if res is not None else 0
-    except Exception as exc:
-        logger.warning(
-            "Failed to trim debits through sequence %s: %s", signed_sequence, exc
-        )
-        return 0
-
-
 def _is_mock(obj: Any) -> bool:
     """Helper to detect unittest.mock objects safely without breaking normal runtime."""
     try:
@@ -269,23 +206,30 @@ class ControlBarrierFunction:
     _MAX_RETRIES: int = 5
 
     LUA_ATOMIC_CBF: str = """
--- Parameterized affine barrier script.
+-- Parameterized affine barrier script (ADR-010: settlement-aware, O(1)).
 -- Driven by InvariantModel: h(x) = state[state_key] - thresholds[threshold_key]
 --
 -- KEYS[1]: <InvariantModel.state_key> — barrier state variable
 -- KEYS[2]: audit:state_ledger
 -- KEYS[3]: safety:fence_epoch (R-05)
--- KEYS[4]: cbf:local_debits
+-- KEYS[4]: cbf:debits (HASH debit_id -> JSON entry)
 -- KEYS[5]: safety:fence_epoch_hwm
+-- KEYS[6]: cbf:debits:by_time (ZSET submitted_at -> debit_id)
+-- KEYS[7]: cbf:debits:total (running sum of outstanding debits)
+-- KEYS[8]: verified ground-truth snapshot key (generation check)
 -- ARGV[1]: magnitude (float string) — deduction amount
 -- ARGV[2]: threshold (float string) — <InvariantModel.threshold_key> resolved floor
 -- ARGV[3]: gamma (float string) — <InvariantModel.gamma>
 -- ARGV[4]: governance_signature (string, may be empty)
--- ARGV[5]: ground_truth_state (float string) -- KMS-verified state from Python
--- ARGV[6]: expected_fence (int string) -- Expected fence epoch for CAS validation
--- ARGV[7]: debit_entry (string, JSON representation of local debit, may be empty)
+-- ARGV[5]: state scalar (float string) — RAW reconciled scalar or self-reported state
+-- ARGV[6]: expected_fence (int string) — Expected fence epoch for CAS validation
+-- ARGV[7]: mode — "reconciled" | "self_reported"
+-- ARGV[8]: debit_id (string, may be empty → nothing is ledgered)
+-- ARGV[9]: submitted_at (float string)
+-- ARGV[10]: debit_entry (JSON string stored under debit_id)
+-- ARGV[11]: expected snapshot payload (exact bytes Python verified; reconciled mode only)
 -- Returns: array {status_code, message, new_state_str, new_epoch}
---   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation)
+--   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation or stale read)
 local expected_fence = tonumber(ARGV[6])
 local current_fence_raw = redis.call('GET', KEYS[3])
 local current_fence = current_fence_raw and tonumber(current_fence_raw) or 0
@@ -304,6 +248,23 @@ end
 local current = tonumber(ARGV[5])
 if not current then
     return {0, "Ground truth balance unavailable", "0", current_fence}
+end
+local mode = ARGV[7] or "self_reported"
+if mode == "reconciled" then
+    -- The scalar in ARGV[5] is only meaningful for the snapshot generation
+    -- Python verified. If the reconciler has published a newer snapshot
+    -- since, the outstanding total may already have been settled against
+    -- it; netting a stale scalar with a settled total would over-promise.
+    local live_snapshot = redis.call('GET', KEYS[8])
+    if not live_snapshot or live_snapshot ~= ARGV[11] then
+        return {0, "SNAPSHOT_CHANGED: verified snapshot replaced since it was read", tostring(current), current_fence}
+    end
+    local total_raw = redis.call('GET', KEYS[7])
+    local total = total_raw and tonumber(total_raw) or 0
+    if total < 0 then
+        total = 0
+    end
+    current = current - total
 end
 local cost = tonumber(ARGV[1]) or 0.0
 local threshold = tonumber(ARGV[2])
@@ -331,35 +292,69 @@ end
 if sig ~= "" then
     redis.call('RPUSH', KEYS[2], sig .. ":" .. tostring(next_state))
 end
-local debit_entry = ARGV[7]
-if debit_entry and debit_entry ~= "" and KEYS[4] then
-    redis.call('RPUSH', KEYS[4], debit_entry)
+local debit_id = ARGV[8] or ""
+if debit_id ~= "" and cost > 0 then
+    -- Ledger every admitted debit regardless of mode: a debit admitted
+    -- against self-reported state must still be netted once a reconciled
+    -- snapshot that predates it appears.
+    redis.call('HSET', KEYS[4], debit_id, ARGV[10])
+    redis.call('ZADD', KEYS[6], ARGV[9], debit_id)
+    redis.call('INCRBYFLOAT', KEYS[7], ARGV[1])
 end
 return {1, "COMMITTED", tostring(next_state), new_epoch}
 """
 
     LUA_ROLLBACK_CBF: str = """
--- Parameterized rollback script.
--- Restores balance, increments fence epoch, updates HWM, removes matching debit, and logs rollback.
+-- Parameterized rollback script (ADR-010: exact by debit_id, idempotent).
+-- Restores the ledgered amount, increments fence epoch, updates HWM, and logs rollback.
 --
 -- KEYS[1]: <InvariantModel.state_key> — barrier state variable
 -- KEYS[2]: audit:state_ledger
 -- KEYS[3]: safety:fence_epoch (R-05)
--- KEYS[4]: cbf:local_debits
+-- KEYS[4]: cbf:debits (HASH)
 -- KEYS[5]: safety:fence_epoch_hwm
--- ARGV[1]: magnitude (float string) — deduction amount to restore
+-- KEYS[6]: cbf:debits:by_time (ZSET)
+-- KEYS[7]: cbf:debits:total
+-- KEYS[8]: cbf:debits:rolled_back (HASH debit_id -> rolled_back_at)
+-- ARGV[1]: magnitude (float string) — fallback restore amount when no ledger entry exists
 -- ARGV[2]: governance_signature (string, may be empty)
--- ARGV[3]: reconciliation_sequence (string, may be empty or "-1")
+-- ARGV[3]: debit_id (string; empty → legacy restore by ARGV[1])
 -- ARGV[4]: timestamp (float string)
 -- Returns: array {status_code, message, new_state_str, new_epoch}
-local cost = tonumber(ARGV[1]) or 0.0
+--   message: ROLLED_BACK | ROLLED_BACK_SETTLED | NOOP
+local restore = tonumber(ARGV[1]) or 0.0
 local sig = ARGV[2] or ""
-local target_seq = tonumber(ARGV[3] or "-1")
+local debit_id = ARGV[3] or ""
 local ts = tonumber(ARGV[4] or "0")
+local status = "ROLLED_BACK"
+
+if debit_id ~= "" then
+    if redis.call('HEXISTS', KEYS[8], debit_id) == 1 then
+        -- Second rollback of the same debit: nothing to undo, nothing changes.
+        local cur_raw = redis.call('GET', KEYS[1])
+        local epoch_raw = redis.call('GET', KEYS[3])
+        return {1, "NOOP", tostring(cur_raw and tonumber(cur_raw) or 0.0), epoch_raw and tonumber(epoch_raw) or 0}
+    end
+    local entry = redis.call('HGET', KEYS[4], debit_id)
+    if entry then
+        local ok, data = pcall(cjson.decode, entry)
+        if ok and data and tonumber(data.amount) then
+            restore = tonumber(data.amount)
+        end
+        redis.call('HDEL', KEYS[4], debit_id)
+        redis.call('ZREM', KEYS[6], debit_id)
+        redis.call('INCRBYFLOAT', KEYS[7], -restore)
+    else
+        -- Already settled: the ledger no longer carries it, but the
+        -- fallback state key still does, so restore that by magnitude.
+        status = "ROLLED_BACK_SETTLED"
+    end
+    redis.call('HSET', KEYS[8], debit_id, ARGV[4] or "0")
+end
 
 local current_raw = redis.call('GET', KEYS[1])
 local current = current_raw and tonumber(current_raw) or 0.0
-local restored = current + cost
+local restored = current + restore
 redis.call('SET', KEYS[1], tostring(restored))
 
 local new_epoch = redis.call('INCR', KEYS[3])
@@ -374,7 +369,7 @@ end
 if sig ~= "" then
     local ledger_entry = cjson.encode({
         ts = ts,
-        cost = cost,
+        cost = restore,
         new_balance = restored,
         governance_signature = sig,
         rollback = true
@@ -382,42 +377,7 @@ if sig ~= "" then
     redis.call('RPUSH', KEYS[2], ledger_entry)
 end
 
--- Prune matching debit from KEYS[4] (scan backwards from newest)
-if KEYS[4] then
-    local debits = redis.call('LRANGE', KEYS[4], 0, -1)
-    local removed = false
-    for i = #debits, 1, -1 do
-        local entry = debits[i]
-        local ok, data = pcall(cjson.decode, entry)
-        if ok and data then
-            local match = true
-            if sig ~= "" and data.action_signature ~= sig then
-                match = false
-            end
-            if match and cost > 0 and math.abs(tonumber(data.amount or 0) - cost) > 0.0001 then
-                match = false
-            end
-            if match and target_seq and target_seq >= 0 then
-                if tonumber(data.reconciliation_sequence or -1) ~= target_seq then
-                    match = false
-                end
-            end
-            if match then
-                table.remove(debits, i)
-                removed = true
-                break
-            end
-        end
-    end
-    if removed then
-        redis.call('DEL', KEYS[4])
-        for _, entry in ipairs(debits) do
-            redis.call('RPUSH', KEYS[4], entry)
-        end
-    end
-end
-
-return {1, "ROLLED_BACK", tostring(restored), new_epoch}
+return {1, status, tostring(restored), new_epoch}
 """
 
     def __init__(
@@ -864,6 +824,41 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
             )
             return (True, f"validation error (fail-open): {exc}")
 
+    @staticmethod
+    def _reconciled_state(
+        verified: Any,
+        outstanding: float,
+        fence_epoch: int | None,
+        *,
+        source: str = "reconciled",
+    ) -> dict[str, Any]:
+        """Shape a verified snapshot into the CBF state dict, netting outstanding debits.
+
+        ``state_scalar`` stays raw (what the reconciler attested);
+        ``current_cash`` is the headroom the barrier may actually use. The
+        exact payload bytes are carried so the commit script can confirm the
+        snapshot generation has not changed underneath it (ADR-010 §3).
+        """
+        scalar_val = float(verified.state_scalar)
+        raw_payload = getattr(verified, "raw_payload", None)
+        if not raw_payload and hasattr(verified, "to_redis_payload"):
+            try:
+                raw_payload = verified.to_redis_payload()
+            except Exception:
+                raw_payload = None
+        state: dict[str, Any] = {
+            "state_scalar": scalar_val,
+            "outstanding_debits": float(outstanding),
+            "current_cash": scalar_val - float(outstanding),
+            "source": source,
+            "sequence": getattr(verified, "sequence", 0),
+            "verified_at": getattr(verified, "verified_at", None),
+            "raw_payload": raw_payload,
+        }
+        if fence_epoch is not None:
+            state["fence_epoch"] = fence_epoch
+        return state
+
     async def _read_cbf_state_atomic(self) -> dict[str, Any]:
         """Read the CBF state scalar, preferring externally reconciled ground truth."""
         if redis_client is None:
@@ -874,6 +869,13 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                 read_verified_snapshot,
             )
 
+            # Read the outstanding-debit total *before* the snapshot: if the
+            # reconciler publishes and settles in between, we net a fresh
+            # scalar with a pre-settle (larger) total — conservative. The
+            # opposite order could net a stale scalar with a settled total.
+            outstanding = await outstanding_debits_total(
+                await _get_raw_redis(redis_client)
+            )
             verified = await asyncio.to_thread(
                 read_verified_snapshot,
                 sync_redis_client,
@@ -938,13 +940,9 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                                                 "fence_epoch": fence_epoch,
                                                 "epoch_reason": epoch_reason,
                                             }
-                                    return {
-                                        "state_scalar": scalar_val,
-                                        "current_cash": scalar_val,
-                                        "source": "reconciled",
-                                        "sequence": verified.sequence,
-                                        "fence_epoch": fence_epoch,
-                                    }
+                                    return self._reconciled_state(
+                                        verified, outstanding, fence_epoch
+                                    )
                             else:
                                 fence_epoch = await self._get_fence_epoch()
                                 if _FENCE_EPOCH_ENABLED:
@@ -959,13 +957,9 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                                             "fence_epoch": fence_epoch,
                                             "epoch_reason": epoch_reason,
                                         }
-                                return {
-                                    "state_scalar": scalar_val,
-                                    "current_cash": scalar_val,
-                                    "source": "reconciled",
-                                    "sequence": verified.sequence,
-                                    "fence_epoch": fence_epoch,
-                                }
+                                return self._reconciled_state(
+                                    verified, outstanding, fence_epoch
+                                )
                         else:
                             logger.critical(
                                 json.dumps(
@@ -1007,11 +1001,12 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                             )
                         )
                     else:
-                        return {
-                            "state_scalar": scalar_val,
-                            "current_cash": scalar_val,
-                            "source": "reconciled_unsigned",
-                        }
+                        return self._reconciled_state(
+                            verified,
+                            outstanding,
+                            None,
+                            source="reconciled_unsigned",
+                        )
         except GroundTruthUnavailableError:
             raise
         except Exception as recon_exc:
@@ -1089,10 +1084,15 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                 float(state["current_cash"]),
                 {
                     "source": "reconciliation",
+                    "mode": "reconciled",
                     "sequence": sequence,
                     "fence_epoch": state.get("fence_epoch", 0),
                     "strict_mode": _CBF_STRICT_MODE,
                     "reconciliation_age_ms": 0,
+                    "state_scalar": float(state["state_scalar"]),
+                    "outstanding_debits": float(state.get("outstanding_debits", 0.0)),
+                    "verified_at": state.get("verified_at"),
+                    "raw_payload": state.get("raw_payload"),
                 },
             )
         if _CBF_STRICT_MODE and state.get("source") in (
@@ -1123,6 +1123,9 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
             balance,
             {
                 "source": "self_reported",
+                # ``reconciled_unsigned`` (dev only) is netted in Python above;
+                # the script must not net it a second time.
+                "mode": "self_reported",
                 "fence_epoch": fence_epoch,
                 "strict_mode": False,
                 "reconciliation_age_ms": None,
@@ -1333,9 +1336,18 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
         self,
         magnitude: float,
         governance_signature: str | None = None,
-        reconciliation_sequence: int | None = None,
+        *,
+        debit_id: str | None = None,
         client: Any = None,
     ) -> None:
+        """Undo a commit: restore the barrier state and retire its ledger entry.
+
+        With ``debit_id`` (the ``CommitReceipt.token`` minted by
+        ``commit_barrier``) the restore is exact — the ledgered amount, not the
+        caller-supplied ``magnitude`` — and idempotent: a second rollback of
+        the same id is a no-op. Without it the legacy restore-by-magnitude
+        path runs and the ledger is left untouched.
+        """
         target_client = client
         if target_client is None:
             if redis_client is None:
@@ -1351,14 +1363,17 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                 self.redis_key,
                 "audit:state_ledger",
                 _REDIS_KEY_FENCE_EPOCH,
-                _REDIS_KEY_LOCAL_DEBITS,
+                DEBITS_KEY,
                 _REDIS_KEY_FENCE_EPOCH_HWM,
+                DEBITS_BY_TIME_KEY,
+                DEBITS_TOTAL_KEY,
+                DEBITS_ROLLED_BACK_KEY,
             ]
             argv = [
-                str(magnitude),
+                repr(float(magnitude)),
                 governance_signature or "",
-                str(reconciliation_sequence) if reconciliation_sequence is not None else "-1",
-                str(time.time()),
+                debit_id or "",
+                repr(time.time()),
             ]
             try:
                 res = target_client.eval(self.LUA_ROLLBACK_CBF, len(keys), *keys, *argv)
@@ -1403,6 +1418,11 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                     pipe.multi()
                     pipe.set(self.redis_key, str(restored))
                     pipe.incr(_REDIS_KEY_FENCE_EPOCH)
+                    if debit_id and hasattr(pipe, "hdel"):
+                        # Best-effort ledger retirement on the non-Lua path.
+                        pipe.hdel(DEBITS_KEY, debit_id)
+                        pipe.zrem(DEBITS_BY_TIME_KEY, debit_id)
+                        pipe.incrbyfloat(DEBITS_TOTAL_KEY, -float(magnitude))
                     if governance_signature:
                         ledger_entry = json.dumps(
                             {
@@ -1441,9 +1461,21 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
     ) -> tuple[bool, str, float]:
+        """Check and debit in one Redis Lua hop; ledger the debit under ``debit_id``.
+
+        ``debit_id`` is minted by ``commit_barrier`` and returned to the
+        caller as ``CommitReceipt.token`` so ``rollback_state`` can retire
+        exactly this entry. Direct callers that pass none still get a
+        ledgered debit under a fresh id; nothing admitted goes unrecorded.
+        Returns ``(committed, reason, magnitude)``.
+        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot run atomic CBF.")
+        if not debit_id:
+            debit_id = uuid.uuid4().hex
 
         try:
             cost = self._resolve_action_cost(action_name, payload)
@@ -1462,30 +1494,7 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
             logger.error("CBF atomic check rejected: %s", reason)
             return (False, reason, 0.0)
 
-        local_debit_total = 0.0
         client = await _get_raw_redis(redis_client)
-        if balance_metadata["source"] == "reconciliation" and client is not None:
-            if hasattr(client, "lrange"):
-                local_debits_res = client.lrange(_REDIS_KEY_LOCAL_DEBITS, 0, -1)
-                local_debits_raw = (
-                    await local_debits_res
-                    if inspect.isawaitable(local_debits_res)
-                    else local_debits_res
-                )
-                if local_debits_raw:
-                    for debit_entry in local_debits_raw:
-                        if isinstance(debit_entry, (bytes, bytearray)):
-                            debit_entry = debit_entry.decode("utf-8")
-                        try:
-                            debit_data = json.loads(debit_entry)
-                            if debit_data.get(
-                                "reconciliation_sequence"
-                            ) == balance_metadata.get("sequence"):
-                                local_debit_total += debit_data.get("amount", 0.0)
-                        except Exception:
-                            pass
-
-        effective_balance = ground_truth_balance - local_debit_total
 
         current_fence_epoch = balance_metadata["fence_epoch"]
         effective_verified_epoch = self._last_verified_fence_epoch
@@ -1529,34 +1538,52 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                     0.0,
                 )
 
-        debit_entry = ""
-        if balance_metadata["source"] == "reconciliation" and cost > 0:
-            debit_entry = json.dumps(
-                {
-                    "amount": cost,
-                    "reconciliation_sequence": balance_metadata.get("sequence"),
-                    "timestamp": time.time(),
-                    "action_signature": governance_signature,
-                }
-            )
+        mode = balance_metadata.get("mode", "self_reported")
+        submitted_at = time.time()
+        if mode == "reconciled":
+            # Raw attested scalar: the script nets the live outstanding total
+            # itself, in the same hop as the fence CAS (ADR-010 §3).
+            script_scalar = float(balance_metadata["state_scalar"])
+            expected_payload = balance_metadata.get("raw_payload") or ""
+        else:
+            script_scalar = float(ground_truth_balance)
+            expected_payload = ""
+        debit_entry = json.dumps(
+            {
+                "amount": cost,
+                "submitted_at": submitted_at,
+                "mode": mode,
+                "snapshot_sequence": balance_metadata.get("sequence"),
+                "snapshot_verified_at": balance_metadata.get("verified_at"),
+            }
+        )
+
+        from src.gateway.governance.reconciliation.daemon import reconciled_state_key
 
         keys = [
             self._invariant.state_key,
             "audit:state_ledger",
             _REDIS_KEY_FENCE_EPOCH,
-            _REDIS_KEY_LOCAL_DEBITS,
+            DEBITS_KEY,
             _REDIS_KEY_FENCE_EPOCH_HWM,
+            DEBITS_BY_TIME_KEY,
+            DEBITS_TOTAL_KEY,
+            reconciled_state_key(self._invariant.invariant_id),
         ]
         resolved_threshold = self._resolve_threshold()
 
         argv = [
-            str(cost),
+            repr(float(cost)),
             str(resolved_threshold),
             str(self.gamma),
             governance_signature,
-            str(effective_balance),
+            repr(script_scalar),
             str(current_fence_epoch),
+            mode,
+            debit_id,
+            repr(submitted_at),
             debit_entry,
+            expected_payload,
         ]
 
         pinned_client, should_close = await _get_pinned_connection(client)
@@ -1614,7 +1641,7 @@ return {1, "ROLLED_BACK", tostring(restored), new_epoch}
                             await self.rollback_state(
                                 cost,
                                 governance_signature=governance_signature,
-                                reconciliation_sequence=balance_metadata.get("sequence"),
+                                debit_id=debit_id,
                                 client=active_client,
                             )
                             if span:

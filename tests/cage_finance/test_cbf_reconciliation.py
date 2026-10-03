@@ -45,7 +45,9 @@ from src.gateway.governance.reconciliation.daemon import (
     TTL_SECONDS,
     ReconciliationResult,
     read_verified_balance,
+    reconciled_state_key,
 )
+from src.gateway.governance.safety.debit_ledger import DEBITS_KEY, DEBITS_TOTAL_KEY
 
 # Hermetic: tests CBF reconciliation using fakeredis, no live Redis.
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -295,31 +297,23 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
     )
     cbf.tracer = None
 
-    # Seed self-reported balance and fence epoch
+    # Seed self-reported balance, fence epoch, and the published snapshot the
+    # commit script pins its generation check to (ADR-010).
     asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
+    asyncio.run(
+        fake_redis_async.set(
+            reconciled_state_key(cbf.invariant.invariant_id), fresh_result.to_redis_payload()
+        )
+    )
 
     mock_signer = MagicMock()
     mock_signer.verify_decision.return_value = True
 
-    async def mock_lrange(*args):
-        return []
-
-    async def mock_rpush(*args):
-        return 1
-
-    async def mock_ltrim(*args):
-        return True
-
     with (
         patch(
             "src.gateway.governance.safety.cbf_engine.redis_client",
-            new=MagicMock(
-                get_raw_client=MagicMock(return_value=fake_redis_async),
-                lrange=MagicMock(side_effect=mock_lrange),
-                rpush=MagicMock(side_effect=mock_rpush),
-                ltrim=MagicMock(side_effect=mock_ltrim),
-            ),
+            new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.gateway.governance.reconciliation.daemon.read_verified_balance",
@@ -339,6 +333,10 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
 
     assert committed is True, f"Expected commit to succeed, got message: {message}"
     assert message == "COMMITTED", f"Expected COMMITTED, got {message}"
+    # The barrier debited the *reconciled* scalar, not the self-reported key.
+    assert float(asyncio.run(fake_redis_async.get(cbf.redis_key))) == pytest.approx(
+        _RECON_BALANCE - 100.0
+    )
 
 
 @pytest.mark.local
@@ -432,16 +430,10 @@ def test_fence_epoch_regression_rejected() -> None:
     mock_signer = MagicMock()
     mock_signer.verify_decision.return_value = True
 
-    async def mock_lrange(*args):
-        return []
-
     with (
         patch(
             "src.gateway.governance.safety.cbf_engine.redis_client",
-            new=MagicMock(
-                get_raw_client=MagicMock(return_value=fake_redis_async),
-                lrange=MagicMock(side_effect=mock_lrange),
-            ),
+            new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.gateway.governance.reconciliation.daemon.read_verified_balance",
@@ -465,8 +457,8 @@ def test_fence_epoch_regression_rejected() -> None:
 
 
 @pytest.mark.local
-def test_local_debits_accumulated_within_cycle() -> None:
-    """POAM-023: Multiple trades accumulate debits correctly before next reconciliation."""
+def test_debits_accumulate_in_ledger_within_cycle() -> None:
+    """POAM-023 / ADR-010: trades within one reconciliation cycle accumulate in the debit ledger."""
     import asyncio
 
     fake_redis_async = pytest.importorskip(
@@ -496,24 +488,19 @@ def test_local_debits_accumulated_within_cycle() -> None:
 
     asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
+    asyncio.run(
+        fake_redis_async.set(
+            reconciled_state_key(cbf.invariant.invariant_id), fresh_result.to_redis_payload()
+        )
+    )
 
     mock_signer = MagicMock()
     mock_signer.verify_decision.return_value = True
 
-    async def mock_lrange(*args):
-        return []
-
-    async def mock_ltrim(*args):
-        return True
-
     with (
         patch(
             "src.gateway.governance.safety.cbf_engine.redis_client",
-            new=MagicMock(
-                get_raw_client=MagicMock(return_value=fake_redis_async),
-                lrange=MagicMock(side_effect=mock_lrange),
-                ltrim=MagicMock(side_effect=mock_ltrim),
-            ),
+            new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.gateway.governance.reconciliation.daemon.read_verified_balance",
@@ -524,34 +511,35 @@ def test_local_debits_accumulated_within_cycle() -> None:
             return_value=mock_signer,
         ),
     ):
-        # Execute two trades
-        asyncio.run(
+        # Execute two trades against the same (unchanged) snapshot
+        ok1, msg1, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
-                "execute_trade", {"amount": 100.0}, governance_signature="sig1"
+                "execute_trade", {"amount": 100.0}, governance_signature="sig1", debit_id="d1"
             )
         )
-        asyncio.run(
+        ok2, msg2, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
-                "execute_trade", {"amount": 200.0}, governance_signature="sig2"
+                "execute_trade", {"amount": 200.0}, governance_signature="sig2", debit_id="d2"
             )
         )
+    assert ok1 and ok2, (msg1, msg2)
 
-    # Read local debits directly from fakeredis (Lua script writes them natively)
-    local_debits_raw = asyncio.run(fake_redis_async.lrange("cbf:local_debits", 0, -1))
-    local_debits = [d.decode() if isinstance(d, bytes) else d for d in local_debits_raw]
-
-    # Verify local debits were recorded
-    assert len(local_debits) == 2, f"Expected 2 local debits, got {len(local_debits)}"
-    debit1 = json.loads(local_debits[0])
-    debit2 = json.loads(local_debits[1])
-    assert debit1["amount"] == 100.0, (
-        f"Expected first debit 100.0, got {debit1['amount']}"
+    # The Lua script ledgers each debit under its id (ADR-010) and keeps a
+    # running total that the next commit nets against the reconciled scalar.
+    ledger = {
+        k: json.loads(v)
+        for k, v in asyncio.run(fake_redis_async.hgetall(DEBITS_KEY)).items()
+    }
+    assert set(ledger) == {"d1", "d2"}, f"Expected debits d1/d2, got {sorted(ledger)}"
+    assert ledger["d1"]["amount"] == 100.0
+    assert ledger["d2"]["amount"] == 200.0
+    assert ledger["d1"]["snapshot_sequence"] == 1
+    assert ledger["d2"]["snapshot_sequence"] == 1
+    assert float(asyncio.run(fake_redis_async.get(DEBITS_TOTAL_KEY))) == pytest.approx(300.0)
+    # Both commits were netted against the same reconciled scalar.
+    assert float(asyncio.run(fake_redis_async.get(cbf.redis_key))) == pytest.approx(
+        _RECON_BALANCE - 300.0
     )
-    assert debit2["amount"] == 200.0, (
-        f"Expected second debit 200.0, got {debit2['amount']}"
-    )
-    assert debit1["reconciliation_sequence"] == 1
-    assert debit2["reconciliation_sequence"] == 1
 
 
 @pytest.mark.local

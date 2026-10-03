@@ -137,12 +137,23 @@ class DoseLimitEngine:
         return "SAFE" if float(payload.get("dose_mg", 0)) <= 500 else "UNSAFE: dose > 500 mg"
 
     async def atomic_verify_and_commit(
-        self, action_name: str, payload: dict[str, Any]
+        self,
+        action_name: str,
+        payload: dict[str, Any],
+        governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
     ) -> tuple[bool, str, float]:
         dose = float(payload.get("dose_mg", 0))
         return (True, "COMMITTED", dose) if dose <= 500 else (False, "UNSAFE: dose > 500 mg", 0.0)
 
-    async def rollback_state(self, magnitude: float, governance_signature: str | None = None) -> None:
+    async def rollback_state(
+        self,
+        magnitude: float,
+        governance_signature: str | None = None,
+        *,
+        debit_id: str | None = None,
+    ) -> None:
         return None
 
 

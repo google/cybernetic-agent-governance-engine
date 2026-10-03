@@ -91,10 +91,23 @@ class _Engine:
     async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
         return self.verdict
 
-    async def atomic_verify_and_commit(self, action_name: str, payload: dict[str, Any], governance_signature: str = "") -> tuple[bool, str, float]:
+    async def atomic_verify_and_commit(
+        self,
+        action_name: str,
+        payload: dict[str, Any],
+        governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
+    ) -> tuple[bool, str, float]:
         return False, self.verdict, 0.0
 
-    async def rollback_state(self, magnitude: float, governance_signature: str | None = None) -> None:
+    async def rollback_state(
+        self,
+        magnitude: float,
+        governance_signature: str | None = None,
+        *,
+        debit_id: str | None = None,
+    ) -> None:
         return None
 
     async def admissible_cost(self) -> Any:

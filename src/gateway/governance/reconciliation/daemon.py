@@ -23,26 +23,35 @@ by ``invariant_id``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field
 import inspect
 import json
 import logging
 import math
 import os
 import time
+from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.safety.debit_ledger import (
+    settle_debits_sync,
+    settlement_cutoff,
+    unsettled_total_sync,
+)
 from src.gateway.governance.schemas.thresholds import (
     get_reconciliation_discrepancy_abs_floor,
     get_reconciliation_discrepancy_ratio,
+    get_reconciliation_settlement_clock_skew_seconds,
+    get_reconciliation_settlement_lag_seconds,
 )
 from src.gateway.governance.seams.ground_truth import (
     FaultMode,
     GroundTruthProvider,
     GroundTruthSnapshot,
+    LedgerJournal,
+    RedisLedgerJournal,
     SimulatedSource,
 )
 
@@ -69,7 +78,7 @@ FENCE_EPOCH_KEY = "safety:fence_epoch"
 _CBF_FENCE_EPOCH_KEY = "safety:cbf_fence_epoch"
 
 _DEFAULT_STATE_KEYS: dict[str, str] = {
-    "finance.cash_balance": "safety:cash_balance",
+    "finance.cash_balance": "safety:current_cash",
     "healthcare.serum_concentration": "safety:serum_concentration",
     "physical_ai.spatial_separation": "safety:separation_distance_mm",
     "physical_ai.kinematic_velocity": "safety:end_effector_velocity_mm_s",
@@ -104,9 +113,21 @@ class ReconciliationResult:
     signing_algorithm: str = ""
     discrepancy_detected: bool = False
     discrepancy_delta: float = 0.0
+    #: Provider attestation: debits submitted at or before this instant are
+    #: reflected in ``state_scalar`` (ADR-010 §4). Signed; ``None`` → lag fallback.
+    settled_through: float | None = None
+    #: Exact bytes read from Redis, so the CBF commit script can confirm the
+    #: snapshot generation it nets against is still the published one.
+    raw_payload: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.state_scalar = float(self.state_scalar)
+        if self.settled_through is not None:
+            try:
+                st = float(self.settled_through)
+            except (TypeError, ValueError):
+                st = float("nan")
+            self.settled_through = st if math.isfinite(st) else None
 
     @property
     def kms_signature(self) -> str:
@@ -140,6 +161,7 @@ class ReconciliationResult:
             "sequence": self.sequence,
             "kms_key_id": self.kms_key_id,
             "signing_algorithm": self.signing_algorithm,
+            "settled_through": self.settled_through,
         }
         return jcs_canonicalize_plan(payload_dict).decode("utf-8")
 
@@ -159,6 +181,8 @@ class ReconciliationResult:
             sequence=int(data.get("sequence", 0)),
             kms_key_id=data.get("kms_key_id", ""),
             signing_algorithm=data.get("signing_algorithm", ""),
+            settled_through=data.get("settled_through"),
+            raw_payload=payload,
         )
 
 
@@ -169,13 +193,52 @@ class LedgerProvider(Protocol):
         ...  # pragma: no cover
 
 
+SIM_LEDGER_BACKEND_ENV = "CAGE_SIM_LEDGER_BACKEND"
+SIM_SETTLEMENT_LAG_ENV = "CAGE_SIM_SETTLEMENT_LAG_SECONDS"
+
+
+def simulated_settlement_lag_from_env() -> float:
+    """Settlement lag (seconds) the simulated custodian should exhibit."""
+    raw = os.environ.get(SIM_SETTLEMENT_LAG_ENV, "").strip()
+    if not raw:
+        return 0.0
+    lag = float(raw)
+    if not math.isfinite(lag) or lag < 0.0:
+        raise ValueError(f"{SIM_SETTLEMENT_LAG_ENV} must be finite and non-negative")
+    return lag
+
+
+def simulated_journal_from_env(client: Any, invariant_id: str) -> LedgerJournal | None:
+    """Shared Redis journal when ``CAGE_SIM_LEDGER_BACKEND=redis``, else ``None``.
+
+    The gateway (actuator) and the reconciliation worker are different
+    processes, so the simulated custodian's journal must live in Redis for
+    settlement to be observable end to end. Hermetic tests keep the default
+    in-memory journal.
+    """
+    backend = os.environ.get(SIM_LEDGER_BACKEND_ENV, "memory").strip().lower()
+    if backend == "memory":
+        return None
+    if backend != "redis":
+        raise ValueError(f"{SIM_LEDGER_BACKEND_ENV} must be 'memory' or 'redis', got {backend!r}")
+    if client is None:
+        raise RuntimeError(f"{SIM_LEDGER_BACKEND_ENV}=redis requires a Redis client")
+    return RedisLedgerJournal(client, invariant_id)
+
+
 class _DefaultSimulatedProvider(GroundTruthProvider):
     """Default kernel-level simulated provider used when none is injected."""
 
     invariant_id: str = "finance.cash_balance"
-    state_key: str = "safety:cash_balance"
+    state_key: str = "safety:current_cash"
 
-    def __init__(self, initial_scalar: float | None = None) -> None:
+    def __init__(
+        self,
+        initial_scalar: float | None = None,
+        *,
+        journal: LedgerJournal | None = None,
+        settlement_lag_s: float | None = None,
+    ) -> None:
         default_scalar = (
             initial_scalar
             if initial_scalar is not None
@@ -186,6 +249,12 @@ class _DefaultSimulatedProvider(GroundTruthProvider):
             state_key=self.state_key,
             initial_scalar=default_scalar,
             barrier_floor=20_000.0,
+            journal=journal,
+            settlement_lag_s=(
+                settlement_lag_s
+                if settlement_lag_s is not None
+                else simulated_settlement_lag_from_env()
+            ),
         )
         self.source = self._source
 
@@ -195,8 +264,16 @@ class _DefaultSimulatedProvider(GroundTruthProvider):
     def clear_fault(self) -> None:
         self._source.clear_fault()
 
-    def record_debit(self, magnitude: float) -> None:
-        self._source.record_debit(magnitude)
+    def record_debit(
+        self,
+        magnitude: float,
+        *,
+        submitted_at: float | None = None,
+        debit_id: str | None = None,
+    ) -> str:
+        return self._source.record_debit(
+            magnitude, submitted_at=submitted_at, debit_id=debit_id
+        )
 
     def reset(self, *, scalar: float | None = None) -> None:
         self._source.reset(scalar=scalar)
@@ -237,6 +314,8 @@ class GroundTruthReconciler:
         discrepancy_threshold: float | None = None,
         discrepancy_ratio: float | None = None,
         discrepancy_abs_floor: float | None = None,
+        settlement_lag_seconds: float | None = None,
+        settlement_clock_skew_seconds: float | None = None,
     ) -> None:
         self._providers: dict[str, Any] = {}
         if providers is not None:
@@ -283,6 +362,20 @@ class GroundTruthReconciler:
             if discrepancy_abs_floor is not None
             else get_reconciliation_discrepancy_abs_floor()
         )
+        # Settlement cutoff (ADR-010 §4): a provider that attests
+        # ``settled_through`` is trusted that far; one that does not is
+        # assumed to lag by ``settlement_lag_seconds``. ``clock_skew`` is
+        # always subtracted because debits are stamped by the gateway clock.
+        self._settlement_lag_s = (
+            float(settlement_lag_seconds)
+            if settlement_lag_seconds is not None
+            else get_reconciliation_settlement_lag_seconds()
+        )
+        self._settlement_clock_skew_s = (
+            float(settlement_clock_skew_seconds)
+            if settlement_clock_skew_seconds is not None
+            else get_reconciliation_settlement_clock_skew_seconds()
+        )
         self._failure_count: int = 0
         self._last_sequence_by_invariant: dict[str, int] = {}
 
@@ -290,6 +383,15 @@ class GroundTruthReconciler:
     def failure_count(self) -> int:
         """Total number of failed reconciliation or KMS signing ticks."""
         return self._failure_count
+
+    def settlement_cutoff_for(self, result: ReconciliationResult) -> float:
+        """Latest ``submitted_at`` this snapshot is trusted to have absorbed."""
+        return settlement_cutoff(
+            result.verified_at,
+            result.settled_through,
+            lag_seconds=self._settlement_lag_s,
+            skew_seconds=self._settlement_clock_skew_s,
+        )
 
     def _get_source(self, provider: Any) -> Any:
         return getattr(provider, "source", getattr(provider, "_source", None))
@@ -490,21 +592,13 @@ class GroundTruthReconciler:
                         result.signature,
                     )
             pipe.execute()
-            if result.sequence is not None and isinstance(result.sequence, int):
-                try:
-                    from src.gateway.governance.safety.cbf_engine import (
-                        trim_local_debits_through_sequence_sync,
-                    )
-
-                    trim_local_debits_through_sequence_sync(
-                        self._redis, result.sequence
-                    )
-                except Exception as trim_exc:
-                    logger.warning(
-                        "Failed to trim debits through sequence %s: %s",
-                        result.sequence,
-                        trim_exc,
-                    )
+            # Settle only *after* the snapshot is published: the CBF nets the
+            # ledger against whichever snapshot it reads, so pruning first
+            # would let a stale snapshot over-promise (ADR-010 §3).
+            cutoff = self.settlement_cutoff_for(result)
+            settled = settle_debits_sync(self._redis, cutoff)
+            _attr("reconciliation.settlement_cutoff", cutoff)
+            _attr("reconciliation.debits_settled", settled)
         except Exception as redis_exc:
             self._failure_count += 1
             logger.error(
@@ -590,6 +684,7 @@ class GroundTruthReconciler:
                 verified_at=snap.verified_at,
                 sequence=snap.sequence,
                 raw_response=dict(snap.metadata) if snap.metadata else None,
+                settled_through=getattr(snap, "settled_through", None),
             ),
             True,
         )
@@ -739,8 +834,21 @@ class GroundTruthReconciler:
                     and result.raw_response.get("discrepancy_spike")
                 )
                 if baseline is not None or is_flagged_spike:
+                    # Settlement-aware (ADR-010 §6): the self-reported state
+                    # already carries every admitted debit, the custodian only
+                    # those settled by this snapshot's cutoff. So the custodian
+                    # may legitimately sit anywhere in
+                    # ``[baseline, baseline + unsettled]``; the delta is the
+                    # distance to that band, not to the baseline point.
+                    unsettled = (
+                        unsettled_total_sync(
+                            self._redis, self.settlement_cutoff_for(result)
+                        )
+                        if self._redis is not None
+                        else 0.0
+                    )
                     delta = (
-                        abs(scalar - baseline)
+                        max(baseline - scalar, scalar - (baseline + unsettled), 0.0)
                         if baseline is not None
                         else abs(scalar)
                     )
@@ -844,8 +952,13 @@ class GroundTruthReconciler:
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         account_id = os.environ.get("RECONCILIATION_ACCOUNT_ID", "default")
         client = redis.from_url(redis_url, decode_responses=True)
+        provider = _DefaultSimulatedProvider(
+            journal=simulated_journal_from_env(
+                client, _DefaultSimulatedProvider.invariant_id
+            ),
+        )
         return cls(
-            provider=_DefaultSimulatedProvider(),
+            provider=provider,
             redis_client=client,
             account_id=account_id,
         )
@@ -960,26 +1073,28 @@ ExternalLedgerReconciler = GroundTruthReconciler
 LedgerReconciliationDaemon = GroundTruthReconciler
 
 __all__ = [
-    "ExternalLedgerReconciler",
     "FENCE_EPOCH_KEY",
+    "POLL_INTERVAL_SECONDS",
+    "PROVIDER",
+    "RECONCILED_STATE_KEY_PREFIX",
+    "REPLAY_DEFENSE_ENABLED",
+    "TTL_SECONDS",
+    "ExternalLedgerReconciler",
     "FaultMode",
     "GroundTruthProvider",
     "GroundTruthReconciler",
     "GroundTruthSnapshot",
     "LedgerProvider",
     "LedgerReconciliationDaemon",
-    "POLL_INTERVAL_SECONDS",
-    "PROVIDER",
-    "RECONCILED_STATE_KEY_PREFIX",
-    "REPLAY_DEFENSE_ENABLED",
     "ReconciliationResult",
     "SimulatedSource",
-    "TTL_SECONDS",
     "main",
     "read_verified_balance",
     "read_verified_snapshot",
     "read_verified_state",
     "reconciled_state_key",
+    "simulated_journal_from_env",
+    "simulated_settlement_lag_from_env",
 ]
 
 

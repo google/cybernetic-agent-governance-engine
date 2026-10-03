@@ -133,10 +133,16 @@ def _make_ed25519_signer(monkeypatch: pytest.MonkeyPatch) -> KMSGovernanceSigner
 
 
 def test_all_ten_fault_modes_enumerated() -> None:
-    """FaultMode defines FaultMode.NONE plus all 10 required failure modes."""
+    """FaultMode defines NONE, the 10 reconciler-rejected modes, and SETTLEMENT_STALL.
+
+    SETTLEMENT_STALL is deliberately *not* in ``ALL_TEN_FAULT_MODES``: a
+    stalled custodian still emits a well-formed, signed snapshot, so the
+    reconciler accepts it and the CBF fails closed instead as outstanding
+    debits stop settling (see tests/test_cbf_settlement_ledger.py).
+    """
     non_none = [m for m in FaultMode if m != FaultMode.NONE]
-    assert len(non_none) == 10
-    assert set(non_none) == set(ALL_TEN_FAULT_MODES)
+    assert len(non_none) == 11
+    assert set(non_none) == set(ALL_TEN_FAULT_MODES) | {FaultMode.SETTLEMENT_STALL}
 
 
 def test_simulated_source_deterministic_seeding() -> None:

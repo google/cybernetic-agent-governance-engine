@@ -163,12 +163,18 @@ def reset_reconciler_trust() -> None:
 
 
 def snapshot_signing_payload(snapshot: Any) -> dict[str, Any]:
-    """Return the canonical payload covered by a snapshot signature."""
+    """Return the canonical payload covered by a snapshot signature.
+
+    ``settled_through`` is covered because the reconciler prunes the CBF's
+    local-debit ledger up to it (ADR-010 §4): an attacker who could edit it
+    in Redis unsigned could settle debits the custodian has not absorbed.
+    """
     return {
         "source": snapshot.source,
         "state_scalar": float(snapshot.state_scalar),
         "verified_at": snapshot.verified_at,
         "sequence": snapshot.sequence,
+        "settled_through": getattr(snapshot, "settled_through", None),
     }
 
 

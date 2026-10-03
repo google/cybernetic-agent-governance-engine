@@ -34,6 +34,7 @@ for every domain.
 
 import logging
 from typing import Any, Protocol, runtime_checkable
+from uuid import uuid4
 
 from src.gateway.governance.contracts import (
     CommitReceipt,
@@ -53,10 +54,21 @@ class BarrierReader(Protocol):
 
 class BarrierEngine(BarrierReader, Protocol):
     async def atomic_verify_and_commit(
-        self, action_name: str, payload: dict[str, Any], governance_signature: str = ""
+        self,
+        action_name: str,
+        payload: dict[str, Any],
+        governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
     ) -> tuple[bool, str, float]: ...
 
-    async def rollback_state(self, magnitude: float, governance_signature: str | None = None) -> None: ...
+    async def rollback_state(
+        self,
+        magnitude: float,
+        governance_signature: str | None = None,
+        *,
+        debit_id: str | None = None,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -120,12 +132,20 @@ async def commit_barrier(
     nothing).  Exceptions propagate so the calling stage records
     ``TIER_EXCEPTION``.
     """
-    committed, reason, magnitude = await cbf.atomic_verify_and_commit(action, params)
+    debit_id = uuid4().hex
+    committed, reason, magnitude = await cbf.atomic_verify_and_commit(
+        action, params, debit_id=debit_id
+    )
     if not committed:
         return [await _refusal(cbf, tier=tier, code=code, message=reason)], None
-    return [], CommitReceipt(tier=tier, magnitude=magnitude)
+    return [], CommitReceipt(tier=tier, magnitude=magnitude, token=debit_id)
 
 
 async def rollback_barrier(cbf: BarrierEngine, receipt: CommitReceipt) -> None:
-    """Restore exactly the magnitude recorded by ``commit_barrier``."""
-    await cbf.rollback_state(magnitude=receipt.magnitude)
+    """Retire exactly the debit recorded by ``commit_barrier``.
+
+    The receipt's ``token`` is the ledger ``debit_id``; the engine restores
+    the amount it ledgered under that id (falling back to ``magnitude`` only
+    if the entry has already settled) and ignores a repeated rollback.
+    """
+    await cbf.rollback_state(magnitude=receipt.magnitude, debit_id=receipt.token)

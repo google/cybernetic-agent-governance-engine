@@ -21,10 +21,14 @@ governance kernel's ExecutionClearance to the domain-specific trade_executor.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import time
 from datetime import datetime, timezone
+from typing import Protocol
 
+from src.cage_finance.invariants import finance_cost_resolver
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.trade_executor import execute_trade
 from src.gateway.governance.seams.actuation import (
@@ -37,12 +41,31 @@ from src.gateway.infrastructure.config_manager import config_manager
 logger = logging.getLogger(__name__)
 
 
+class CustodianLedger(Protocol):
+    """Where an executed fill is journaled so ground truth can settle it."""
+
+    def record_debit(
+        self,
+        amount_usd: float,
+        *,
+        submitted_at: float | None = None,
+        debit_id: str | None = None,
+    ) -> str: ...
+
+
 class BrokerActuator:
     """
     Finance domain actuator for trade execution.
 
     Implements ExecutionActuator protocol to receive governance clearances
     and dispatch them to the broker execution layer.
+
+    A fill is only *accepted* once it is journaled with the custodian ledger
+    (ADR-010 §6): in the reference deployment that is the simulated custody
+    cash ledger the reconciliation worker reads, so the debit surfaces in a
+    reconciled snapshot after the settlement lag. ``accepted=True`` therefore
+    means "the money moved", which is the event the CBF's local-debit ledger
+    is waiting to see settle.
 
     Capabilities:
         - REPLAY_PROTECTED: Nonce-based replay prevention via routing seal
@@ -56,6 +79,16 @@ class BrokerActuator:
     def actuator_id(self) -> str:
         """Unique identifier for this actuator."""
         return "cage_finance_broker"
+
+    def __init__(self, ledger: CustodianLedger | None = None) -> None:
+        self._ledger = ledger
+
+    def _custodian_ledger(self) -> CustodianLedger:
+        if self._ledger is None:
+            from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
+
+            self._ledger = SimulatedCashLedgerProvider()
+        return self._ledger
 
     async def health_check(self) -> bool:
         """
@@ -276,6 +309,39 @@ class BrokerActuator:
                 jcs_canonicalize_plan(envelope_dict)
             ).hexdigest()
 
+            # Step 6: Journal the fill with the custodian so ground truth
+            # settles it. The debit equals the CBF cost by construction
+            # (same resolver), and the clearance nonce keys the entry.
+            fill_amount = finance_cost_resolver(clearance.action, dict(clearance.params))
+            if fill_amount > 0.0:
+                try:
+                    await asyncio.to_thread(
+                        self._custodian_ledger().record_debit,
+                        fill_amount,
+                        submitted_at=time.time(),
+                        debit_id=clearance.nonce,
+                    )
+                except Exception as journal_exc:
+                    logger.error(
+                        "BrokerActuator: custodian journal write failed: %s",
+                        journal_exc,
+                    )
+                    findings.append(
+                        {
+                            "code": "CUSTODIAN_JOURNAL_FAILED",
+                            "detail": str(journal_exc),
+                        }
+                    )
+                    return ActuationReceipt(
+                        accepted=False,
+                        receipt_id=None,
+                        session_uuid=clearance.thread_id,
+                        raw_receipt=None,
+                        findings=findings,
+                        retryable=True,
+                        timestamp_utc=timestamp_utc,
+                    )
+
             return ActuationReceipt(
                 accepted=True,
                 receipt_id=receipt_id,
@@ -284,6 +350,7 @@ class BrokerActuator:
                     "clearance_nonce": clearance.nonce,
                     "governance_digest": clearance.governance_decision_digest,
                     "execution_result": result_msg,
+                    "custodian_debit_usd": fill_amount,
                 },
                 findings=[],
                 retryable=False,
