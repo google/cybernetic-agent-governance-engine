@@ -80,6 +80,10 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-084 | AU-9 / AU-9(3) / AU-10 / AU-11 | Evidence pipeline integrity: the gateway `EvidenceStreamSink` was never started by the server lifespan (no evidence recorded), gateway replicas could fork the hash chain, the gateway held its own signer and cold-store flush (signatures never persisted; failed flushes silently skipped), and async Redis clients ignored TLS/IAM. Remediated in code on `fix/evidence-pipeline-integrity` and `feat/evidence-custody-verifier`: lifespan starts the sink via `start_evidence_sink()` (fail closed when enforcing); Lua compare-and-append keeps one linear chain; [`ConsequenceGateway`](../src/gateway/governance/consequence_gateway.py) and [`ingest_actuation_receipt()`](../src/gateway/governance/execution_actuator.py) emit post-evaluation decisions and actuation refusals into `EvidenceStreamSink`; custody moved to the compliance-bridge [`EvidenceCustodian`](../src/compliance_bridge/evidence_custodian.py) (re-verify, KMS-signed batch attestation with `EVIDENCE_KMS_KEY`, WORM `put_if_absent`, durable cursor); `build_async_redis()` enforces TLS/IAM. See [`EVIDENCE_CHAIN.md`](architecture/EVIDENCE_CHAIN.md). OSCAL AU-9 / AU-9(3) / AU-10 / AC-6 statements updated in [`sp800-53-component-definition.yaml`](../compliance/oscal/sp800-53-component-definition.yaml) (status `partial`); ClickHouse sink moved to the INSERT-only `cage_evidence_sink` user; unsigned (dev/test/ci) attestations marked non-evidentiary and rejected by `assert_citable()`; read-back [`CustodyVerifier`](../src/compliance_bridge/evidence_verifier.py) added (kid-resolved signature, object binding, record re-verification, chain continuity, scheduled `run_forever()` loop, Prometheus metrics, `GET /v1/evidence/verify`, fail-closed OSCAL citation gating in [`oscal_exporter.py`](../src/compliance_bridge/oscal_exporter.py), and Terraform/Kubernetes manifest wiring for `EVIDENCE_VERIFY_INTERVAL_S`, `OSCAL_REQUIRE_VERIFIED_CUSTODY`, and `EVIDENCE_TRUST_ANCHORS_FILE`). Remains Open pending merge SHAs and live staging verification of signed attestations in the WORM bucket | High | 2026-10-15 |
 | POAM-2026-085 | SI-10 / `CTRL_MRM_004` | Causal gatekeeper cache bypassed the per-request risk boundary: a cached ALLOW for a small trade was replayed for any amount, and a cached DENY denied small ones (Redis with `cache_ttl_seconds > 0`, within one TTL window). Remediated in `refactor/ftra-scope` by caching only the params-independent world-model verdict; closes at merge | High | 2026-10-15 |
 | POAM-2026-086 | SC-8 / SC-23 | Memorystore server CA not delivered to gateway/compliance-bridge pods; evidence-stream fail-closed check exposed it on 2026-10-01. Remediated in IaC (PR-3, `fix/memorystore-ca-pinning`) by mounting `module.memorystore_governance.managed_server_ca` via `<app>-redis-ca` ConfigMaps at `/etc/cage/tls/redis/ca.pem` (`REDIS_CA_CERT_PATH`, `cage.io/redis-ca-sha256` rollout annotation, and `lula-validation-sc8.yaml` Check 5); remains Open pending PR-4 (`fix/redis-tls-one-rule`) unification of synchronous/module-level Redis TLS verification across all enforcing postures | High | 2026-10-15 |
+| POAM-2026-087 | SI-10 / `CTRL_MRM_004` | Settlement-lag double-spend window in the reconciled CBF: [`daemon.py`](../src/gateway/governance/reconciliation/daemon.py) prunes every local debit on each poll through a sequence that is a local `INCR` (or `0`) with no causal link to custodian settlement; [`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) nets debits by sequence **equality**, so they vanish from the effective balance as soon as the next snapshot is readable; rollback removes the newest amount-equal entry rather than the committed debit; previews (`verify_action`, `admissible_cost`) ignore outstanding debits; the simulated ledger's `record_debit()` has no caller; the discrepancy guard (`0.5·abs(baseline)`, no absolute floor) is the only backstop. Remediation: WS-A settlement-aware O(1) ledger ([ADR-010](adr/ADR-010-settlement-aware-debit-ledger.md)) and WS-B discrepancy floor, merged in the same release | High | 2026-10-16 |
+| POAM-2026-088 | SI-10 / `CTRL_MRM_004` | Causal gatekeeper inoperative in enforcing posture: [`causal_tier.py`](../src/cage_finance/tiers/causal_tier.py) never passes telemetry and `get_telemetry_provider()` has no caller in `src/`, so [`gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py) fails closed on every `execute_trade` before counting samples; no bootstrap path exists; OSCAL SI-10 attests an operating control. Remediation: wire the live provider into the tier and deny with distinct codes (`CAUSAL_INSUFFICIENT_SAMPLES`, `CAUSAL_TELEMETRY_UNAVAILABLE`) | High | 2026-10-16 |
+| POAM-2026-089 | AC-3 / IA-5 | [`verify_and_consume_seal()`](../src/gateway/governance/routing_seal.py) burns the seal nonce (`SET NX EX`) before `verify_seal()` runs, from claims decoded with `verify_signature=False`; an in-mesh caller presenting a forged JWT that carries a known nonce can burn a legitimate seal (griefing). Bounded: the seal is minted and consumed inside the gateway and never returned to the advisor. Remediation: verify → burn → execute; the TOCTOU guarantee (atomic consume, execute only after winning it) is unchanged | Low | 2026-10-16 |
+| POAM-2026-090 | CA-7 / SA-11 | Formal-model drift: [`proof/DistributedCBF.cfg`](../proof/DistributedCBF.cfg) names constants (`Agents`, `InitialAvailable`, `MaxAmount`) and invariants (`SP2_ReserveNonNegative`, `SP3_AvailableNonNegative`) that do not exist in [`proof/DistributedCBF.tla`](../proof/DistributedCBF.tla), so TLC cannot run; the spec's `Failover` is benevolent (epoch increment and reservation release) and does not model a stale-replica regression; published state counts in [`proof/README.md`](../proof/README.md) (42/21/49/39) and [`REVISION_TRACKER.md`](paper/REVISION_TRACKER.md) (42/21/39/40) disagree with `proof/model.py` (38/19/35; EU_ECB 42). Remediation: repair the cfg, add replica state and `StaleFailover`, pin regenerated counts | Moderate | 2026-10-23 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -486,4 +490,89 @@ The causal gatekeeper cached its whole verdict per `(action, context)`. The verd
 
 **Remaining Closure Criteria:**
 1. Apply Terraform on `cage-staging`, verify `deploy/gateway` reaches `1/1 Ready` with `cert_reqs=REQUIRED` and `EvidenceStream` connected, and record the commit SHA, live `lula validate -f compliance/lula/lula-validation-sc8.yaml` result, and closure date.
+
+### POAM-2026-087: Settlement-Lag Double-Spend Window in the Reconciled CBF Ledger
+
+**Control:** NIST SI-10, `CTRL_MRM_004` (model risk management)
+**Risk Level:** High
+**Status:** Open (remediation planned on `fix/recon-discrepancy-floor` and `fix/cbf-settlement-ledger`; see [ADR-010](adr/ADR-010-settlement-aware-debit-ledger.md))
+**Date Opened:** 2026-10-02
+**Target Closure:** 2026-10-16
+
+**Description:**
+In reconciled mode the CBF nets the KMS-verified custodian balance against a Redis list of local debits (`cbf:local_debits`). The list is pruned by the reconciler on every poll ([`daemon.py`](../src/gateway/governance/reconciliation/daemon.py), `_write_verified_balance`) through a "sequence" that is a local Redis `INCR` when replay defence is on, or `0` when it is off (the default). Nothing ties that number to whether the custodian has settled the trade. The commit path in [`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) (`atomic_verify_and_commit`) sums only the debits whose sequence **equals** the current snapshot's, so a committed debit disappears from the effective balance the moment the next snapshot is readable, whether or not that snapshot reflects it. A trade can therefore be counted against the balance twice: once in the custodian's eventual snapshot and never in between. The window is up to one poll interval (`RECONCILIATION_POLL_INTERVAL_SECONDS`, default 60 s) per trade. Aggravating facts: the rollback script removes the newest amount-equal entry rather than the committed debit (`commit_barrier` passes no identifier); `verify_action` and `admissible_cost` read the raw scalar and ignore outstanding debits, so NARROW bounds and HITL previews can over-promise; the only backstop is the discrepancy guard, an inline `0.5·|baseline|` with no absolute floor and no entry in `config/governance_thresholds.json`; and `SimulatedSource.record_debit()` has no caller, so the shipped simulation cannot exhibit the defect. The effective-balance sum is O(L) in Python over one `LRANGE`, and rollback/trim are O(L) blocking Lua scripts.
+
+**Remediation (approved design):**
+1. **Discrepancy guard** (`fix/recon-discrepancy-floor`): `ReconciliationThresholds` in [`thresholds.py`](../src/gateway/governance/schemas/thresholds.py) (`discrepancy_ratio`, `discrepancy_abs_floor`, `settlement_lag_seconds`, `settlement_clock_skew_seconds`) with env overrides; the daemon uses `max(ratio·|baseline|, floor)`.
+2. **Settlement-aware ledger** (`fix/cbf-settlement-ledger`): replace the list with `cbf:debits` (HASH by `debit_id`), `cbf:debits:by_time` (ZSET by `submitted_at`) and `cbf:debits:total`; the commit Lua nets `scalar − total` inside the same script as the fence CAS; `debit_id` is minted in `commit_barrier`, carried in `CommitReceipt.token`, and used by an idempotent O(1) rollback (including the `WAIT`-timeout rollback); debits are settled only when the custodian attests `settled_through` (new, signed field in `GroundTruthSnapshot` / `ReconciliationResult` / `snapshot_signing_payload`) or, failing attestation, after a conservative lag window, minus a clock-skew margin; `cbf:debits:total` is recomputed from the HASH on every settle.
+3. **Previews become debit-aware:** `_read_cbf_state_atomic` returns the netted `current_cash`, so `verify_action`, `admissible_cost` and the barrier preview agree with the commit.
+4. **Simulated custodian that settles:** Redis-backed `sim:ledger:{invariant_id}` journal shared by the finance broker actuator (writer) and the reconciler's `SimulatedSource` (reader), with `settlement_lag_s` and `FaultMode.SETTLEMENT_STALL`.
+5. Fail-closed tests that must observe the defect blocked: lagging-ledger double spend denied; no settlement before attestation; skew margin delays settlement; rollback exact and idempotent; `WAIT`-timeout rollback removes its own debit; drift corrected on settle; constant round-trips on commit; preview headroom equals commit headroom; tampered `settled_through` fails signature verification; settlement stall fails closed.
+
+**Remaining Closure Criteria:**
+1. Merge both branches in the same release (D6); record merge SHAs and the actual verification date here.
+2. `rg -n 'local_debits|trim_local_debits|reconciliation_sequence' src/` returns nothing; `make test-fast` and Gate G3 green.
+3. OSCAL SI-10 CBF statement refreshed in [`sp800-53-component-definition.yaml`](../compliance/oscal/sp800-53-component-definition.yaml) (including the three stale references to the removed single-file safety module, which must point at `src/gateway/governance/safety/cbf_engine.py`) and `uv run python -m src.gateway.governance.oscal_ssp_exporter export` passes [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py).
+
+### POAM-2026-088: Causal Gatekeeper Inoperative in Enforcing Posture
+
+**Control:** NIST SI-10, `CTRL_MRM_004` (model risk management)
+**Risk Level:** High
+**Status:** Open (remediation planned on `fix/causal-tier-telemetry`)
+**Date Opened:** 2026-10-02
+**Target Closure:** 2026-10-16
+
+**Description:**
+[`CausalTierPlugin.evaluate()`](../src/cage_finance/tiers/causal_tier.py) calls the gatekeeper with no telemetry, and `get_telemetry_provider()` in [`telemetry_provider.py`](../src/gateway/governance/telemetry_provider.py) has no caller anywhere in `src/`. In enforcing postures [`CausalGatekeeper.causal_safety_check()`](../src/gateway/governance/causal/gatekeeper.py) refuses synthetic substitution and fails closed before it counts samples, so every `execute_trade` under `CAGE_DOMAIN=finance` is denied with the generic `CAUSAL_CHECK_FAILED`. The sample-adequacy gate (`causal.min_samples`, default 50) is never reached, there is no bootstrap behaviour, and the condition is indistinguishable in evidence from a genuine refutation failure. In `dev`/`test`/`ci` the gatekeeper substitutes 1 000 synthetic rows and always passes, which is why no test observed the production deadlock. The fixture in [`tests/test_causal_gatekeeper.py`](../tests/test_causal_gatekeeper.py) (`_create_mock_governor`) builds a telemetry provider and never passes it. The OSCAL SI-10 statement describes the causal gatekeeper as an operating control.
+
+**Remediation (approved design — decision D3: deny, do not defer):**
+1. Kernel: treat an empty telemetry frame like `None` for synthetic substitution (`NullTelemetryProvider` returns an empty `DataFrame`); add a structured `CausalDecision(safe, reason)` so the tier can see *why* the check failed. Enforcing posture still fails closed.
+2. Tier: `CausalTierPlugin(telemetry_provider=…)` fetches `get_latest_data(min_samples)` per request and maps reasons to distinct HARD codes: `CAUSAL_INSUFFICIENT_SAMPLES` (below `causal.min_samples`), `CAUSAL_TELEMETRY_UNAVAILABLE` (no live telemetry in enforcing posture), else `CAUSAL_CHECK_FAILED`. `create_finance_tiers` constructs the tier with `get_telemetry_provider()`.
+3. Provider: the Langfuse provider returns the rows it has below `MIN_SAMPLES` instead of silently substituting the fallback, so the gatekeeper is the single observable decision point.
+4. A DEFER-based bootstrap is explicitly **not** implemented: `ClassificationEngine` only emits DEFER together with low confidence, no re-evaluation path exists in `DeferQueue`, and `proof/model.py` does not model DEFER. It is tracked as follow-up WS-C2 with those three prerequisites.
+5. Fail-closed tests: enforcing posture with the null provider is denied with `CAUSAL_TELEMETRY_UNAVAILABLE`; 30 live rows are denied with `CAUSAL_INSUFFICIENT_SAMPLES`; 60 live rows reach the refuter; dev posture with an empty frame still uses synthetic telemetry; a non-empty frame is never overridden.
+
+**Remaining Closure Criteria:**
+1. Merge `fix/causal-tier-telemetry`; record the merge SHA and the actual verification date here.
+2. OSCAL SI-10 causal statement updated to describe the bootstrap deny and the distinct codes; exporter and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) green.
+
+### POAM-2026-089: Routing-Seal Nonce Burned Before Signature Verification
+
+**Control:** NIST AC-3 (Access Enforcement), IA-5 (Authenticator Management)
+**Risk Level:** Low
+**Status:** Open (remediation planned on `fix/seal-verify-then-burn`)
+**Date Opened:** 2026-10-02
+**Target Closure:** 2026-10-16
+
+**Description:**
+[`verify_and_consume_seal()`](../src/gateway/governance/routing_seal.py) decodes the seal with `verify_signature=False`, burns the nonce with the atomic `SET NX EX` script, and only then calls `verify_seal()`. The TOCTOU property this ordering was written for comes from the atomic consume plus the rule "execute only after winning the consume", and holds under either order. Burning an unverified nonce, however, lets any caller who can reach the function and knows a nonce burn a legitimate seal with a forged JWT; the legitimate request then fails as a replay. The exposure is narrow: the seal is `governance_result`, minted and consumed inside the gateway process ([`tool_provider.py`](../src/cage_finance/tools/tool_provider.py)), and the advisor only ever submits a `deferred_id` (POAM-2026-079), so the nonce never leaves the gateway. Separately, `AGENTS.md`, [ADR-008](adr/ADR-008-wire-phantom-gates-into-production-call-paths.md) and the OSCAL component definition describe `ConsequenceGateway` as the mandatory execution boundary, while it has no call site on the governor ALLOW path; the live boundary is `verify_and_consume_seal()` plus `ActuatorRegistry`.
+
+**Remediation (approved design — decisions D1, D2):**
+1. Reorder to verify → burn → execute. `verify_seal()` is stateless (the JWKS set is cached after a one-time KMS fetch), so no steady-state I/O moves ahead of the burn.
+2. Rewrite the docstring and the "nonce remains burned" comments to state the real invariant.
+3. Prose: `AGENTS.md` and ADR-008 name `verify_and_consume_seal()` + `ActuatorRegistry` as the execution boundary and `ConsequenceGateway` as the single-use boundary for normative-provider `ConsequenceToken`s; delete the placeholder comment in `tool_provider.py`; correct `compliance/oscal/component-definition.yaml`; note in the FRIA tier that findings on an admitted result (including a token) are dropped.
+4. Fail-closed tests: a forged JWT carrying a victim's nonce raises and leaves `dbsize() == 0`, after which the genuine seal consumes successfully; twenty concurrent presentations of one valid seal yield exactly one success.
+
+**Remaining Closure Criteria:**
+1. Merge `fix/seal-verify-then-burn`; record the merge SHA and the actual verification date here.
+2. OSCAL AC-3 seal-consumption wording updated; exporter and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) green.
+
+### POAM-2026-090: Distributed-CBF Formal Model Cannot Be Checked and Omits the Stale-Replica Regression
+
+**Control:** NIST CA-7 (Continuous Monitoring), SA-11 (Developer Testing and Evaluation)
+**Risk Level:** Moderate
+**Status:** Open (remediation planned on `fix/proof-replica-regression`)
+**Date Opened:** 2026-10-02
+**Target Closure:** 2026-10-23
+
+**Description:**
+[`proof/DistributedCBF.cfg`](../proof/DistributedCBF.cfg) declares constants `Agents`, `InitialAvailable`, `MaxAmount` and invariants `SP2_ReserveNonNegative`, `SP3_AvailableNonNegative`; [`proof/DistributedCBF.tla`](../proof/DistributedCBF.tla) defines `AgentIDs`, `InitialPool`, `MaxFenceEpoch`, `MaxAgentReserve`, `ReserveAmount` and `SP2_NonNegativeReserves`, `SP3_NonNegativeAvailable`. TLC therefore cannot load the model, `make verify-tla` only prints instructions, and TLC is not in CI. The spec's `Failover` action increments the epoch and releases reservations — a benevolent failover — so the failure mode the runtime actually defends against (a replica promoted with a lower balance and a lower fence epoch) is unmodelled; the runtime's defences for it are `WAIT N` synchronous replication with strict rollback and the in-process `_last_seen_epoch` / Redis HWM pair. The Python BFS pins in `proof/distributed_cbf_model.py` run only under `__main__`. Published state counts for `proof/model.py` are stale in two places and disagree with each other ([`proof/README.md`](../proof/README.md): 42/21/49/39; [`REVISION_TRACKER.md`](paper/REVISION_TRACKER.md): 42/21/39/40); `uv run python proof/model.py` at HEAD yields gated 38 / ungated 19 / DoWhy-absent 35 / EU_ECB 42.
+
+**Remediation (approved design):**
+1. Rewrite the cfg to the spec's names; make `make verify-tla` execute TLC when `tla2tools.jar` is available; add a `workflow_dispatch` CI job that caches the jar.
+2. Add `rep_balance` / `rep_epoch`, a `SyncReplication` constant, `Replicate`, `StaleFailover` (balance and epoch regress, `agent_epochs` unchanged) and `AgentRestart`; guard reserve/commit on `agent_epochs[a] > fence_epoch`; under `SyncReplication` require `rep_epoch = fence_epoch`. Keep today's benevolent `Failover` as the negative control.
+3. Pin the regenerated `EXPECTED_STATE_COUNTS` in a new pytest module `test_distributed_cbf_proof`; add `verdict_of()` and a parity test against `ClassificationEngine` to `proof/model.py`; correct the published counts.
+
+**Remaining Closure Criteria:**
+1. Merge `fix/proof-replica-regression`; record the merge SHA, a TLC run on both cfgs, and the actual verification date here.
 

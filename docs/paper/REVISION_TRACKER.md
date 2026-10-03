@@ -62,7 +62,7 @@ response to the reviewer is grounded in code rather than in the analysis:
 
 | ID | Finding | Phase | Status | Evidence |
 |---|---|---|---|---|
-| S1 | SLA claims rest on mocked-I/O benchmarks | 2, 4 | **FIXED** | §6.2 scope caveat added; `UNMOCKED=1` mode added to `measure_paper_metrics.py` |
+| S1 | SLA claims rest on mocked-I/O benchmarks | 2, 4 | **REOPENED** (2026-10-02) | §6.2 scope caveat stands. The `UNMOCKED=1` claim was wrong at HEAD `d99b718b`: `--unmocked` appears only in the docstring of `scripts/measure_paper_metrics.py` and the env switch was removed in `94f920bc`. Tracked as S18 below (WS-G) |
 | S2 | No un-governed baseline; no benign-prompt false-positive rate | 2, 4 | **FIXED** | §6.6 evaluation limitations added; `tests/red_team/benign_dataset.json` (20 prompts) + `measure_benign_fpr()` added |
 | S3 | §6.5 arithmetic uses undisclosed γ and `min_cash_balance` | 4 | **FIXED** | §6.5 explicit parameter disclosure added (γ=0.5, min_cash=1000) |
 | S4 | STPA compiler mechanism undefined | 4 | **FIXED** | §4.5 compiler mechanism paragraph added (template-based, Pydantic, generate_opa/nemo/python/langgraph) |
@@ -534,3 +534,48 @@ mirrored in:
 
 **Status:** Verification pending — `proof/model.py` state-count impact assessment not
 yet completed for Phase 1 changes.
+
+## Review round 2 (2026-10-02) — remediation decisions and tracking
+
+A second external review raised fifteen points against the manuscript and the
+code. Every point was re-verified line-by-line against HEAD `d99b718b`; all
+fifteen hold. The remediation is organised as nine workstreams (WS-A … WS-H
+plus a Phase 0 prep branch). Compliance tracking lives in
+[`docs/POAM.md`](../POAM.md) (POAM-2026-087 … 090); the ledger redesign is
+[ADR-010](../adr/ADR-010-settlement-aware-debit-ledger.md).
+
+### Decisions
+
+| ID | Decision | Outcome | Why |
+|---|---|---|---|
+| D1 | Routing-seal consume order | **verify → burn → execute** | Nothing pins burn-first; `verify_seal()` is stateless after the one-time JWKS fetch. The TOCTOU guarantee (atomic consume, execute only after winning it) is unchanged |
+| D2 | Fate of `ConsequenceGateway` | **Keep** as the single-use boundary for normative-provider `ConsequenceToken`s; it is **not** on the governor ALLOW path. Prose that calls it "mandatory" is corrected | Deleting it breaks the Tier-1 partner contract; the live execution boundary is `verify_and_consume_seal()` + `ActuatorRegistry` |
+| D3 | Causal tier below `min_samples` in enforcing posture | **HARD deny** with distinct codes `CAUSAL_INSUFFICIENT_SAMPLES` / `CAUSAL_TELEMETRY_UNAVAILABLE` — **not** DEFER | `ClassificationEngine` emits DEFER only for a DEFERRABLE violation **and** low confidence, with a hard-coded reason, and `DeferQueue` has no re-evaluation worker. DEFER-bootstrap is parked as WS-C2 with three named prerequisites |
+| D4 | Settlement cutoff | Provider-attested `settled_through` (signed) with a `settlement_lag_seconds` fallback; both minus `settlement_clock_skew_seconds` | A local `INCR` sequence has no causal link to custodian settlement |
+| D5 | Streaming egress | Document the full-buffer trade-off now; windowed sanitizer (WS-I) later | Emitted tokens cannot be recalled; the honest statement is the buffer |
+| D6 | Release coupling of the discrepancy floor | WS-B (floor) and WS-A (ledger) merge in the **same release**; POAM-2026-087 stays Open until WS-A merges | The floor loosens the only backstop that exists before the new ledger lands |
+
+### Findings S11–S20 (review round 2)
+
+Status is **OPEN** until the named workstream merges; the evidence column is
+filled with the squash-merge SHA by WS-H.
+
+| ID | Review points | Finding | Workstream | POAM | Status | Evidence |
+|---|---|---|---|---|---|---|
+| S11 | 1, 2, 5 | Settlement-lag double-spend window: debits pruned per poll through a local sequence; netting by sequence equality; rollback by amount; previews ignore debits; `record_debit()` has no caller; O(L) Lua | WS-A (`fix/cbf-settlement-ledger`) | 087 | **OPEN** | — |
+| S12 | 7 | Discrepancy guard is `0.5·abs(baseline)` with a floor only when the baseline is falsy; not in `governance_thresholds.json`; manuscript calls it a "velocity circuit breaker" | WS-B (`fix/recon-discrepancy-floor`) | 087 | **OPEN** | — |
+| S13 | 6 | Causal gatekeeper inoperative in enforcing posture: tier passes no telemetry; `get_telemetry_provider()` unused; manuscript says `n ≥ 100`, code says `min_samples = 50` | WS-C (`fix/causal-tier-telemetry`) | 088 | **OPEN** | — |
+| S14 | 4 | Nonce burned before signature verification; `ConsequenceGateway` described as the mandatory boundary although unwired | WS-D (`fix/seal-verify-then-burn`) | 089 | **OPEN** | — |
+| S15 | 9 | `DistributedCBF.cfg` cannot drive TLC (constant and invariant names absent from the spec); `Failover` is benevolent; no replica state, no `StaleFailover`; manuscript A.2 names `(S_rep, e_rep)` and an `SP-2` that do not exist | WS-E (`fix/proof-replica-regression`) | 090 | **OPEN** | — |
+| S16 | 10, 11 | Manuscript alphabet includes `PAUSE`; REQUIRE_APPROVAL is proven by the `pending_approval_outcome` side-lemma, DEFER only in `LangGraphHarness.tla`; I-6 `EXECUTED_unmodified` exists nowhere in `proof/` — restate as `narrow_valid` | WS-E (E3) + manuscript | 090 | **OPEN** | — |
+| S17 | 8 | No per-stage outcomes in `PipelineResult`; no trace-conformance check against `proof/model.py` | WS-F (`feat/governance-trace-conform`) | — | **OPEN** | — |
+| S18 | 14, 15 | Table 7 confound (sides reversed in the review); `measure_reconciliation_metrics.py` imports two deleted modules; `--unmocked` is docstring-only; Locust job `if: false` | WS-G (`fix/benchmarks-unmocked`, `ci/locust-nightly`) | — | **OPEN** | — |
+| S19 | 3 | SSE egress fully buffered; NeMo edit downgrades to JSON | D5 — document now; WS-I parked | — | **OPEN** (docs) | — |
+| S20 | 12, 13 | STPA compiler paragraph too thin (schema, closed grammar, templates, freshness gate, `composite` placeholder caveat); NeMo Guardrails absent from related work although it is a runtime dependency | WS-H (branch docs/review-response-sync) + manuscript | — | **OPEN** | — |
+
+### Pinned numbers (to be applied by WS-E)
+
+`uv run python proof/model.py` at `d99b718b` enumerates **gated 38 / ungated
+19 / DoWhy-absent 35 / EU_ECB 42**. The figures in the "Phase 1 Consistency
+Blast Radius" table above (42 / 21 / 39 / 40) and in `proof/README.md` are
+stale and are corrected in WS-E, which also pins them with a test.
