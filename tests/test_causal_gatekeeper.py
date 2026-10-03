@@ -701,7 +701,7 @@ class TestCausalGatekeeperIntegration:
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
-                CausalTierPlugin(),
+                CausalTierPlugin(telemetry_provider=telemetry_provider),
             ),
         )
 

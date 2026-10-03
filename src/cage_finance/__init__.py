@@ -16,6 +16,10 @@
 
 from typing import Any
 
+from src.cage_finance.safety.bounding.contract import (
+    BoundingContractConfig,
+    BoundingContractEnforcer,
+)
 from src.cage_finance.safety.bounding.providers import (
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
@@ -27,11 +31,11 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.gateway.governance.contracts import GovernanceTier
-from src.cage_finance.safety.bounding.contract import (
-    BoundingContractConfig,
-    BoundingContractEnforcer,
-)
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
+from src.gateway.governance.telemetry_provider import (
+    BaseTelemetryProvider,
+    get_telemetry_provider,
+)
 
 # ---------------------------------------------------------------------------
 # Canonical action surface (domain plugin's single source of truth)
@@ -66,6 +70,7 @@ def create_finance_tiers(
     fiscal_guard: Any,
     consensus_gate: Any,
     bounding_registry: BoundingContractRegistry | None = None,
+    telemetry_provider: BaseTelemetryProvider | None = None,
 ) -> tuple[GovernanceTier, ...]:
     """Create finance domain governance tiers for construction-time registration.
 
@@ -79,6 +84,11 @@ def create_finance_tiers(
         consensus_gate: ConsensusGate instance for multi-model consensus
         bounding_registry: Optional BoundingContractRegistry for Phase 5 bounding tier.
                           If None, bounding tier is created with default stub providers.
+        telemetry_provider: Live telemetry source for the causal tier. If None,
+                          resolved by ``get_telemetry_provider()`` from
+                          ``CAGE_TELEMETRY_PROVIDER`` (``remote`` without
+                          credentials raises ``ConfigurationError`` here, at
+                          assembly, rather than on the first trade).
 
     Returns:
         Tuple of finance domain tiers in (phase, order, tier_name) order.
@@ -114,5 +124,7 @@ def create_finance_tiers(
         CBFTierPlugin(cbf),
         FiscalTierPlugin(fiscal_guard),
         ConsensusTierPlugin(consensus_gate),
-        CausalTierPlugin(),
+        CausalTierPlugin(
+            telemetry_provider=telemetry_provider or get_telemetry_provider()
+        ),
     )

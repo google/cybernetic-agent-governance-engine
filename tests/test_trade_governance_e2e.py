@@ -65,6 +65,7 @@ from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
+from src.gateway.governance.causal.gatekeeper import CausalDecision
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.consensus import extract_field_magnitude
 from src.gateway.governance.contracts import NarrowingResult
@@ -126,8 +127,12 @@ class RegoMirrorPolicy:
 class RiskGatekeeper:
     """Causal gatekeeper double: predicted risk above 0.9 is unsafe."""
 
-    def causal_safety_check(self, params: dict[str, Any], *_: Any) -> bool:
-        return float(params.get("risk_score", 0.0)) <= 0.9
+    def evaluate(self, params: dict[str, Any], *_: Any, **__: Any) -> CausalDecision:
+        safe = float(params.get("risk_score", 0.0)) <= 0.9
+        return CausalDecision(safe, "world_model_trusted" if safe else "risk_boundary")
+
+    def causal_safety_check(self, params: dict[str, Any], *_: Any, **__: Any) -> bool:
+        return self.evaluate(params).safe
 
 
 class DoseLimitEngine:

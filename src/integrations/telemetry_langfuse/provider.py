@@ -112,8 +112,11 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
         """Fetch live trade governance telemetry from Langfuse.
 
         Queries traces with governance metadata and builds the causal model
-        DataFrame. Falls back to configured fallback provider (NullTelemetryProvider
-        by default) when live records are below MIN_SAMPLES or client is unavailable.
+        DataFrame (with a ``timestamp`` column for the freshness check). Below
+        MIN_SAMPLES the real rows are returned so the gatekeeper reports
+        ``insufficient_samples``. Falls back to the configured fallback provider
+        (NullTelemetryProvider by default) only when the client is unavailable or
+        the fetch fails.
         """
         if self._client is None:
             logger.warning(
@@ -143,30 +146,40 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
                 market_vol = meta.get("market_volatility")
                 trade_amount = (input_data or {}).get("amount")
                 risk_score = scores.get("risk_score") or meta.get("risk_score")
+                observed_at = getattr(trace, "timestamp", None)
 
-                # Only include rows where all three variables are present.
+                # Only include rows where all three variables and the trace
+                # timestamp are present; the gatekeeper's freshness check
+                # needs the timestamp and fails closed without it.
                 if (
                     market_vol is not None
                     and trade_amount is not None
                     and risk_score is not None
+                    and observed_at is not None
                 ):
                     rows.append(
                         {
                             "market_volatility": float(market_vol),
                             "trade_amount": float(trade_amount),
                             "risk_score": float(risk_score),
+                            "timestamp": observed_at,
                         }
                     )
 
             if len(rows) < MIN_SAMPLES:
+                # Return the real rows: the gatekeeper is the single decision
+                # point and reports insufficient_samples (CAUSAL_INSUFFICIENT_SAMPLES)
+                # instead of seeing an empty fallback frame.
                 logger.warning(
                     "[CTRL_TEL_003] Only %d live Langfuse samples available "
-                    "(minimum %d required). Falling back to %s.",
+                    "(minimum %d required); the causal gatekeeper will fail closed.",
                     len(rows),
                     MIN_SAMPLES,
-                    type(self._fallback).__name__,
                 )
-                return self._fallback.get_latest_data(n_samples)
+                return pd.DataFrame(
+                    rows,
+                    columns=["market_volatility", "trade_amount", "risk_score", "timestamp"],
+                )
 
             logger.info(
                 "[CTRL_TEL_003] LangfuseTelemetryProvider returning %d live samples "
