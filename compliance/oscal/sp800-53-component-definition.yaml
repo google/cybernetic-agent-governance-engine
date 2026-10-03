@@ -1115,8 +1115,14 @@ component-definition:
                 settled by the reconciler (src/gateway/governance/reconciliation/daemon.py)
                 only up to the custodian's signed settled_through minus a clock-skew
                 margin, so the settlement-lag double-spend window is closed (ADR-010,
-                POAM-2026-087). Safety parameters (thresholds, envelope bounds) are
-                defined in config/governance_thresholds.json and config/safety_params.json.
+                POAM-2026-087). Model risk for execute_trade is assessed by the DoWhy causal
+                gatekeeper (src/gateway/governance/causal/gatekeeper.py) on live telemetry
+                supplied to src/cage_finance/tiers/causal_tier.py by get_telemetry_provider();
+                in enforcing postures every failure is a HARD deny, with distinct codes for
+                a missing feed (CAUSAL_TELEMETRY_UNAVAILABLE) and the bootstrap window below
+                causal.min_samples (CAUSAL_INSUFFICIENT_SAMPLES), and synthetic telemetry is
+                never substituted (POAM-2026-088). Safety parameters (thresholds, envelope
+                bounds) are defined in config/governance_thresholds.json and config/safety_params.json.
                 Risk findings are documented in docs/security/STPA_ANALYSIS.md and tracked
                 in docs/POAM.md.
               props:

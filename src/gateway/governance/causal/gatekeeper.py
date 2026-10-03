@@ -275,6 +275,33 @@ class WorldModelVerdict:
             return None
 
 
+# Reasons a causal check can produce besides the WorldModelVerdict reasons
+# (``insufficient_samples``, ``stale_telemetry``, ``p_value_threshold``, ...),
+# which are passed through unchanged.
+REASON_TRUSTED = "world_model_trusted"
+REASON_INVALID_TREATMENT = "invalid_treatment"
+REASON_NO_LIVE_TELEMETRY = "no_live_telemetry"
+REASON_DOWHY_UNAVAILABLE = "dowhy_unavailable"
+REASON_INCOMPLETE_SPEC = "incomplete_spec"
+REASON_RISK_BOUNDARY = "risk_boundary"
+REASON_CHECK_ERROR = "check_error"
+REASON_INSUFFICIENT_SAMPLES = "insufficient_samples"
+
+
+@dataclass(frozen=True)
+class CausalDecision:
+    """Outcome of one causal check: whether the action is safe, and why.
+
+    ``reason`` is :data:`REASON_TRUSTED` when ``safe`` is True; otherwise it
+    names the first fail-closed condition hit, so callers can emit a distinct
+    violation code (e.g. bootstrap ``insufficient_samples`` versus a missing
+    telemetry feed) instead of one generic failure.
+    """
+
+    safe: bool
+    reason: str
+
+
 def _is_positive_finite(value: float | None) -> bool:
     return (
         value is not None
@@ -508,57 +535,79 @@ class CausalGatekeeper:
         *,
         action: str | None = None,
     ) -> bool:
+        """Boolean form of :meth:`evaluate` (``evaluate(...).safe``)."""
+        return self.evaluate(params, current_telemetry, action=action).safe
+
+    def evaluate(
+        self,
+        params: dict[str, Any],
+        current_telemetry: pd.DataFrame | None = None,
+        *,
+        action: str | None = None,
+    ) -> CausalDecision:
         """Validate causal world-model integrity and the marginal risk boundary.
 
         Args:
             params: Action parameters; the treatment value and context are
                 read via the spec's extractors.
-            current_telemetry: Telemetry to validate the world-model against.
-                When ``None``, the spec's synthetic telemetry factory is used
-                (non-enforcing postures only) and the verdict may be cached.
+            current_telemetry: Live telemetry to validate the world-model
+                against. ``None`` **or an empty frame** means "no live
+                telemetry": in enforcing postures that fails closed with
+                :data:`REASON_NO_LIVE_TELEMETRY`; in non-enforcing postures the
+                spec's synthetic telemetry factory stands in and the verdict
+                may be cached. A non-empty frame is always validated as given
+                (never replaced by synthetic data), so a frame with fewer than
+                ``min_samples`` rows yields ``insufficient_samples``.
             action: Action name used to namespace the world-model cache entry.
                 Falls back to ``params["action_type"]`` / ``params["action"]``.
 
-        Fails closed (returns ``False``) on:
-        - Missing, non-numeric, NaN/infinite, or non-positive (<= 0) treatment value (Defect A5).
-        - Missing live telemetry in enforcing postures, or when no synthetic
-          telemetry factory is configured on ``self.spec``.
-        - ``dowhy`` unavailable.
-        - Redis unavailable while the world-model cache is enabled.
-        - Insufficient telemetry sample count or stale timestamps.
-        - Negative, zero, or non-finite causal slope (beta).
-        - Placebo refutation failure (p < threshold or large placebo effect).
-        - Predicted marginal risk exceeding ``CAUSAL_LOCK_RISK_BOUNDARY``.
-        - Any exception (never cached).
+        Fails closed (``safe=False``) on:
+        - Missing, non-numeric, NaN/infinite, or non-positive (<= 0) treatment
+          value (Defect A5) -> ``invalid_treatment``.
+        - No live telemetry in enforcing postures, or when no synthetic
+          telemetry factory is configured -> ``no_live_telemetry``.
+        - ``dowhy`` unavailable -> ``dowhy_unavailable``.
+        - Incomplete spec -> ``incomplete_spec``.
+        - Untrusted world-model -> the verdict's reason (``insufficient_samples``,
+          ``stale_telemetry``, slope or placebo reasons).
+        - Predicted marginal risk exceeding ``CAUSAL_LOCK_RISK_BOUNDARY`` ->
+          ``risk_boundary``.
+        - Any exception, including Redis unavailable while the world-model
+          cache is enabled -> ``check_error`` (never cached).
         """
         treatment_value = self._treatment_value(params)
         if treatment_value is None:
-            return False
+            return CausalDecision(False, REASON_INVALID_TREATMENT)
 
-        if current_telemetry is None and not self._synthetic_telemetry_permitted():
-            return False
+        no_live = current_telemetry is None or len(current_telemetry) == 0
+        if no_live:
+            if not self._synthetic_telemetry_permitted():
+                return CausalDecision(False, REASON_NO_LIVE_TELEMETRY)
+            current_telemetry = None
 
         if not _DOWHY_AVAILABLE:
             logger.warning(
                 "causal_safety_check: 'dowhy' is not installed — failing closed "
                 "(causal tier unavailable). Install dowhy to enable causal inference."
             )
-            return False
+            return CausalDecision(False, REASON_DOWHY_UNAVAILABLE)
 
         if not self.spec.graph_dot or not self.spec.treatment_col or not self.spec.outcome_col:
             logger.warning(
                 "causal_safety_check: incomplete CausalSpec — failing closed"
             )
-            return False
+            return CausalDecision(False, REASON_INCOMPLETE_SPEC)
 
         try:
             verdict = self._resolve_world_model(params, current_telemetry, action)
             if not verdict.trusted:
-                return False
-            return self._within_risk_boundary(verdict.beta, treatment_value)
+                return CausalDecision(False, verdict.reason)
+            if not self._within_risk_boundary(verdict.beta, treatment_value):
+                return CausalDecision(False, REASON_RISK_BOUNDARY)
+            return CausalDecision(True, REASON_TRUSTED)
         except Exception as e:
             logger.error("Causal validation failed due to error: %s", e)
-            return False
+            return CausalDecision(False, REASON_CHECK_ERROR)
 
     # ------------------------------------------------------------------
     # Per-request inputs
@@ -733,7 +782,7 @@ class CausalGatekeeper:
                     n_samples,
                     min_samples,
                 )
-                return WorldModelVerdict(False, None, "insufficient_samples")
+                return WorldModelVerdict(False, None, REASON_INSUFFICIENT_SAMPLES)
 
             model = _CausalModel(
                 data=telemetry,
@@ -843,7 +892,7 @@ class CausalGatekeeper:
                 )
                 return WorldModelVerdict(False, beta, "placebo_effect_magnitude")
 
-        return WorldModelVerdict(True, beta, "world_model_trusted")
+        return WorldModelVerdict(True, beta, REASON_TRUSTED)
 
     # ------------------------------------------------------------------
     # Marginal risk boundary (per request, never cached)

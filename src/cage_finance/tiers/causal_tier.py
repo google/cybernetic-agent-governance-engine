@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,9 @@ from src.cage_finance.causal.synthetic_telemetry import generate_mock_telemetry
 from src.gateway.governance.causal import gatekeeper
 from src.gateway.governance.causal.gatekeeper import (
     CAUSAL_NORMALIZATION_SCALE,
+    REASON_INSUFFICIENT_SAMPLES,
+    REASON_NO_LIVE_TELEMETRY,
+    CausalDecision,
     CausalGatekeeper,
 )
 from src.gateway.governance.contracts import (
@@ -29,6 +34,39 @@ from src.gateway.governance.contracts import (
     Violation,
     ViolationKind,
 )
+from src.gateway.governance.schemas.thresholds import get_causal_min_samples
+from src.gateway.governance.telemetry_provider import BaseTelemetryProvider
+
+logger = logging.getLogger(__name__)
+
+# Violation codes (decision D3): every causal failure is HARD. The bootstrap
+# window (fewer than ``min_samples`` live rows) and a missing telemetry feed get
+# their own codes so operators can tell "not enough history yet" from "feed
+# down" from "world model refuted / risk too high".
+CODE_INSUFFICIENT_SAMPLES = "CAUSAL_INSUFFICIENT_SAMPLES"
+CODE_TELEMETRY_UNAVAILABLE = "CAUSAL_TELEMETRY_UNAVAILABLE"
+CODE_CHECK_FAILED = "CAUSAL_CHECK_FAILED"
+
+_REASON_CODES: dict[str, tuple[str, str]] = {
+    REASON_INSUFFICIENT_SAMPLES: (
+        CODE_INSUFFICIENT_SAMPLES,
+        "Causal tier is in its bootstrap window: fewer live telemetry samples "
+        "than causal.min_samples, so the world model cannot be validated.",
+    ),
+    REASON_NO_LIVE_TELEMETRY: (
+        CODE_TELEMETRY_UNAVAILABLE,
+        "No live telemetry is available to validate the causal world model "
+        "(enforcing posture does not substitute synthetic data).",
+    ),
+}
+_CHECK_FAILED_MESSAGE = (
+    "World-model is untrustworthy or predicted risk exceeds safety boundary "
+    "(DoWhy refutation failed)."
+)
+
+# Telemetry window requested from the provider: never fewer rows than the
+# gatekeeper needs, and the provider's conventional default otherwise.
+_DEFAULT_TELEMETRY_WINDOW = 500
 
 _CAUSAL_GRAPH_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "causal_graph.yaml"
@@ -74,10 +112,22 @@ def causal_safety_check(
 
 
 class CausalTierPlugin(ReadOnlyTier):
-    """Causal guard tier (phase 1, order 6)."""
+    """Causal guard tier (phase 1, order 6).
 
-    def __init__(self, causal_gatekeeper: CausalGatekeeper | None = None) -> None:
+    With a ``telemetry_provider`` the tier fetches live telemetry on every
+    evaluation and hands it to the gatekeeper; without one it passes none, and
+    the gatekeeper decides by posture (synthetic data in dev/test/ci, deny in
+    enforcing postures). Production wiring always supplies a provider via
+    :func:`src.cage_finance.create_finance_tiers`.
+    """
+
+    def __init__(
+        self,
+        causal_gatekeeper: CausalGatekeeper | None = None,
+        telemetry_provider: BaseTelemetryProvider | None = None,
+    ) -> None:
         self._gatekeeper = causal_gatekeeper
+        self._telemetry_provider = telemetry_provider
 
     @property
     def tier_name(self) -> str:
@@ -97,26 +147,46 @@ class CausalTierPlugin(ReadOnlyTier):
         return action == "execute_trade"
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        try:
+            telemetry = await self._fetch_telemetry()
+        except Exception as exc:
+            logger.error("Causal tier: telemetry provider failed (%s) — failing closed.", exc)
+            return [self._violation(CODE_TELEMETRY_UNAVAILABLE, f"Telemetry provider failed: {exc}")]
+
         # Calling the module-level causal_safety_check function allows patching at either
         # src.cage_finance.tiers.causal_tier.causal_safety_check or
-        # src.gateway.governance.causal.gatekeeper.causal_safety_check.
+        # src.gateway.governance.causal.gatekeeper.causal_safety_check. A patched
+        # check returns a bare bool, which maps to CAUSAL_CHECK_FAILED.
         if (
-            self._gatekeeper is not None
-            and gatekeeper.causal_safety_check is _DEFAULT_GATEKEEPER_CHECK
+            gatekeeper.causal_safety_check is _DEFAULT_GATEKEEPER_CHECK
             and causal_safety_check is _DEFAULT_TIER_CHECK
         ):
-            is_safe = self._gatekeeper.causal_safety_check(params)
+            gk = self._gatekeeper or build_finance_causal_gatekeeper()
+            decision = gk.evaluate(params, telemetry, action=action)
         else:
-            is_safe = causal_safety_check(params)
-        if not is_safe:
-            return [
-                Violation(
-                    tier=self.tier_name,
-                    code="CAUSAL_CHECK_FAILED",
-                    message="World-model is untrustworthy or predicted risk exceeds safety boundary (DoWhy refutation failed).",
-                    kind=ViolationKind.HARD,
-                )
-            ]
-        return []
+            decision = CausalDecision(bool(causal_safety_check(params, telemetry)), "")
+
+        if decision.safe:
+            return []
+        code, message = _REASON_CODES.get(
+            decision.reason, (CODE_CHECK_FAILED, _CHECK_FAILED_MESSAGE)
+        )
+        return [self._violation(code, message)]
+
+    async def _fetch_telemetry(self) -> Any:
+        """Fetch live telemetry off the event loop, or ``None`` without a provider."""
+        if self._telemetry_provider is None:
+            return None
+        window = max(get_causal_min_samples(), _DEFAULT_TELEMETRY_WINDOW)
+        return await asyncio.to_thread(self._telemetry_provider.get_latest_data, window)
+
+    def _violation(self, code: str, message: str) -> Violation:
+        return Violation(
+            tier=self.tier_name,
+            code=code,
+            message=message,
+            kind=ViolationKind.HARD,
+        )
+
 
 _DEFAULT_TIER_CHECK = causal_safety_check

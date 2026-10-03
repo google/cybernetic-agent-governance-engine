@@ -73,9 +73,9 @@ Additional configuration constants:
 
 ### Mechanism
 1. **Phase 1 — Statistical Kernel (`CTRL_MRM_004` / SR 26-2 MRM):** A DoWhy `CausalModel` is instantiated using recent telemetry data from the configured `BaseTelemetryProvider`. The causal effect is identified via the **backdoor criterion** and estimated via `backdoor.linear_regression`. The causal graph structure and regression coefficients are the SR 26-2 MRM-governed artefacts; this phase emits a `causal_gatekeeper.statistical_kernel` OTel span tagged with `CTRL_MRM_004`.
-   - **Minimum sample guard:** Before fitting `backdoor.linear_regression`, the gatekeeper checks `len(current_telemetry) >= _MIN_CAUSAL_SAMPLES` (default `30`, overridable via `CAUSAL_MIN_SAMPLES` env var). Telemetry below this floor fails closed (`insufficient_data_fail_closed`) rather than fitting a degenerate regression on sparse data.
-   - **Production:** `LangfuseTelemetryProvider` (`src/gateway/governance/telemetry_provider.py`) fetches live `{market_volatility, trade_amount, risk_score}` triples from Langfuse governance spans, ensuring world-model beliefs are validated against actual runtime conditions rather than synthetic data. **In production (`CAGE_ENV != development/test`), missing live telemetry is a fail-closed condition — the function returns `False` immediately.**
-   - **Fallback:** `MockTelemetryProvider` (deterministic seed=42) activates only in dev/test environments when live telemetry is unavailable, and emits a warning.
+   - **Minimum sample guard:** Before fitting `backdoor.linear_regression`, the gatekeeper checks `len(telemetry) >= causal.min_samples` ([`get_causal_min_samples()`](../../src/gateway/governance/schemas/thresholds.py), default **50** from `config/governance_thresholds.json`, overridable via `CAUSAL_MIN_SAMPLES`). Telemetry below this floor fails closed with reason `insufficient_samples` rather than fitting a degenerate regression on sparse data.
+   - **Production:** the Langfuse adapter ([`provider.py`](../../src/integrations/telemetry_langfuse/provider.py), selected by `CAGE_TELEMETRY_PROVIDER=remote`) fetches live `{market_volatility, trade_amount, risk_score, timestamp}` rows from Langfuse governance traces, so world-model beliefs are validated against actual runtime conditions rather than synthetic data. Below `min_samples` it returns the real rows (it no longer substitutes its fallback), so the gatekeeper is the single decision point. See [Telemetry Wiring and Violation Codes](#telemetry-wiring-and-violation-codes).
+   - **Non-enforcing fallback:** in `dev`/`test`/`ci` postures only, when there is no live telemetry (no provider, or an empty frame), the spec's `synthetic_telemetry_factory` stands in and a warning is logged. A non-empty live frame is never replaced.
 2. **Phase 2 — Placebo Refutation (`CTRL_TEL_003` / ISO 42001 §A.9.4):** The model is subjected to a **PlaceboTreatmentRefuter** with `num_simulations=50` per trade call, which replaces the real treatment with a random variable. This is the agentic operational check — non-deterministic, live-sourced, high-frequency — and emits a `causal_gatekeeper.placebo_refutation` OTel span tagged with `CTRL_TEL_003`.
    - If the refuter detects a statistically significant effect (`p_value < CAUSAL_LOCK_P_VALUE_THRESHOLD` = `0.05`), the null hypothesis (no spurious effect) is rejected at the 5% significance level — the world-model's causal assumptions cannot be trusted.
    - If the absolute placebo effect magnitude exceeds `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` = `0.2` (Cohen's d ≈ 0.2 in the normalised `risk_score` space [0, 1]), the action is blocked regardless of p-value. This catches cases where the refuter finds a large spurious effect that is not statistically significant due to high variance.
@@ -86,6 +86,20 @@ Additional configuration constants:
    ```
 
    The 0.95 boundary leaves a 5% safety margin below the maximum risk score of 1.0, consistent with the CBF γ=0.5 decay factor.
+
+### Telemetry Wiring and Violation Codes
+
+[`create_finance_tiers()`](../../src/cage_finance/__init__.py) constructs [`CausalTierPlugin`](../../src/cage_finance/tiers/causal_tier.py) with `telemetry_provider=get_telemetry_provider()` ([`telemetry_provider.py`](../../src/gateway/governance/telemetry_provider.py); `CAGE_TELEMETRY_PROVIDER` = `remote` \| `null` \| `mock`). `remote` without Langfuse credentials raises `ConfigurationError` at governor assembly, not on the first trade. On every evaluation the tier fetches `max(min_samples, 500)` rows off the event loop and passes them to [`CausalGatekeeper.evaluate()`](../../src/gateway/governance/causal/gatekeeper.py), which returns a `CausalDecision(safe, reason)`; `causal_safety_check()` is `evaluate(...).safe`.
+
+Every causal failure is `ViolationKind.HARD` (decision D3 — the bootstrap window is a deny, not a DEFER). The reason selects the code:
+
+| Gatekeeper reason | Violation code | Meaning |
+|---|---|---|
+| `no_live_telemetry` (enforcing posture, no provider or empty frame), or the provider raised | `CAUSAL_TELEMETRY_UNAVAILABLE` | Feed down or not configured; synthetic data is never substituted in enforcing postures |
+| `insufficient_samples` | `CAUSAL_INSUFFICIENT_SAMPLES` | Bootstrap window: fewer live rows than `causal.min_samples` |
+| anything else (`stale_telemetry`, slope, placebo, `risk_boundary`, `dowhy_unavailable`, `check_error`, …) | `CAUSAL_CHECK_FAILED` | World model refuted, risk too high, or the check could not run |
+
+With the default `null` provider an enforcing deployment therefore denies every `execute_trade` with `CAUSAL_TELEMETRY_UNAVAILABLE` until live telemetry is configured, and with `CAUSAL_INSUFFICIENT_SAMPLES` until at least `min_samples` timestamped rows exist. Pinned by [`tests/test_causal_tier_telemetry.py`](../../tests/test_causal_tier_telemetry.py).
 
 ### Telemetry Freshness Check
 

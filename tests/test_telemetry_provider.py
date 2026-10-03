@@ -27,6 +27,7 @@ Covers:
   - MIN_SAMPLES default value
 """
 
+import datetime
 import os
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -39,9 +40,9 @@ from src.gateway.governance.telemetry_provider import (
     MIN_SAMPLES,
     BaseTelemetryProvider,
     ConfigurationError,
-    RemoteTelemetryProvider,
     MockTelemetryProvider,
     NullTelemetryProvider,
+    RemoteTelemetryProvider,
     get_telemetry_provider,
 )
 
@@ -50,11 +51,15 @@ from src.gateway.governance.telemetry_provider import (
 # ---------------------------------------------------------------------------
 
 _REQUIRED_COLUMNS = {"market_volatility", "trade_amount", "risk_score"}
+_TRACE_TS = datetime.datetime(2026, 10, 2, 12, 0, tzinfo=datetime.timezone.utc)
 
 
-def _make_trace(market_vol=0.5, amount=5000.0, risk=0.4, include_all=True):
+def _make_trace(
+    market_vol=0.5, amount=5000.0, risk=0.4, include_all=True, timestamp=_TRACE_TS
+):
     """Build a minimal mock Langfuse trace object."""
     trace = MagicMock()
+    trace.timestamp = timestamp
     trace.metadata = {"market_volatility": market_vol} if include_all else {}
     trace.input = {"amount": amount} if include_all else {}
     score = MagicMock()
@@ -362,19 +367,33 @@ class TestRemoteTelemetryProviderGetLatestData:
         assert all(abs(v - 3000.0) < 1e-9 for v in df["trade_amount"])
         assert all(abs(v - 0.25) < 1e-9 for v in df["risk_score"])
 
-    def test_insufficient_live_samples_falls_back_to_mock(self):
-        """Fewer than MIN_SAMPLES traces → fall back to MockTelemetryProvider."""
+    def test_insufficient_live_samples_returns_real_rows(self):
+        """Fewer than MIN_SAMPLES traces → the real rows, never the fallback.
+
+        The causal gatekeeper is the single decision point: it must see the
+        short frame and report insufficient_samples (WS-C, POAM-2026-088).
+        """
         traces = [_make_trace() for _ in range(MIN_SAMPLES - 1)]
         provider = self._make_provider_with_traces(traces)
         df = provider.get_latest_data(n_samples=500)
-        # Mock returns exactly 500 rows by default
-        assert len(df) == 500
+        assert len(df) == MIN_SAMPLES - 1
+        assert (df["timestamp"] == _TRACE_TS).all()
 
-    def test_zero_live_samples_falls_back_to_mock(self):
+    def test_zero_live_samples_returns_empty_typed_frame(self):
         provider = self._make_provider_with_traces([])
         df = provider.get_latest_data(n_samples=100)
         assert isinstance(df, pd.DataFrame)
-        assert _REQUIRED_COLUMNS.issubset(set(df.columns))
+        assert len(df) == 0
+        assert _REQUIRED_COLUMNS | {"timestamp"} <= set(df.columns)
+
+    def test_traces_without_timestamp_are_excluded(self):
+        """A row the freshness check cannot date is dropped, not passed through."""
+        good = [_make_trace() for _ in range(MIN_SAMPLES)]
+        undated = _make_trace(timestamp=None)
+        provider = self._make_provider_with_traces([undated, *good])
+        df = provider.get_latest_data(n_samples=len(good) + 1)
+        assert len(df) == len(good)
+        assert df["timestamp"].notna().all()
 
     def test_traces_with_missing_fields_are_excluded(self):
         """Traces missing any of the three fields must be dropped."""
