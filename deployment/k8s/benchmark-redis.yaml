@@ -24,6 +24,10 @@
 # the shipped posture. Separate pods (not a sidecar) keep the network hop in
 # the measured latency. Only benchmark pods may connect (NetworkPolicy); the
 # data is synthetic, so no password is configured.
+#
+# ${BENCHMARK_REDIS_IMAGE} is substituted by the runner. It defaults to the
+# Docker Hub pin used by .github/workflows/locust-nightly.yml; a cluster that
+# enforces Binary Authorization needs an attested mirror instead.
 apiVersion: v1
 kind: Service
 metadata:
@@ -71,8 +75,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redis
-          # Same pinned image as .github/workflows/locust-nightly.yml.
-          image: redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0
+          image: ${BENCHMARK_REDIS_IMAGE}
           args: ["--save", "", "--appendonly", "no", "--protected-mode", "no"]
           ports:
             - containerPort: 6379
@@ -128,7 +131,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redis
-          image: redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0
+          image: ${BENCHMARK_REDIS_IMAGE}
           args:
             - "--save"
             - ""
