@@ -19,8 +19,8 @@ Covers:
   - BaseTelemetryProvider abstract interface
   - MockTelemetryProvider deterministic data generation
   - RemoteTelemetryProvider with None client (fallback path)
-  - RemoteTelemetryProvider.from_env() credential-missing path
-  - RemoteTelemetryProvider.from_env() ImportError path
+  - RemoteTelemetryProvider.from_credentials() credential-missing and ImportError paths
+  - get_telemetry_provider(): TELEMETRY_* resolution and the enforcing-posture rule
   - RemoteTelemetryProvider.get_latest_data() with live data (sufficient samples)
   - RemoteTelemetryProvider.get_latest_data() with too few samples (fallback)
   - RemoteTelemetryProvider.get_latest_data() exception fallback
@@ -215,58 +215,50 @@ class TestRemoteTelemetryProviderNoneClient:
 
 
 # ---------------------------------------------------------------------------
-# RemoteTelemetryProvider.from_env() — credential / import-error paths (AW-8)
+# RemoteTelemetryProvider.from_credentials() — credential / import-error paths (AW-8)
 # ---------------------------------------------------------------------------
 
+_CREDS = {
+    "host": "https://telemetry.test.example",
+    "public_key": "pub-test-1234",
+    "secret_key": "sec-test-5678",
+}
+_CRED_ENV = {
+    "TELEMETRY_HOST": _CREDS["host"],
+    "TELEMETRY_PUBLIC_KEY": _CREDS["public_key"],
+    "TELEMETRY_SECRET_KEY": _CREDS["secret_key"],
+}
 
-class TestRemoteTelemetryProviderFromEnv:
-    """from_env() constructor enforces explicit configuration (no silent fallback)."""
 
-    def test_from_env_without_credentials_raises_configuration_error(self):
-        """Missing credentials must raise ConfigurationError (AW-8)."""
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
-        }
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(
-                ConfigurationError, match="LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"
-            ):
-                RemoteTelemetryProvider.from_env()
+def _env_without(*names: str) -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in names}
 
-    def test_from_env_import_error_raises_configuration_error(self):
-        """If langfuse SDK is not installed, from_env() must raise ConfigurationError (AW-8)."""
-        with patch.dict(
-            os.environ,
-            {"LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test"},
-        ):
-            with patch(
-                "builtins.__import__", side_effect=_selective_import_error("langfuse")
-            ):
-                with pytest.raises(ConfigurationError, match="package is required"):
-                    RemoteTelemetryProvider.from_env()
 
-    def test_from_env_with_credentials_creates_langfuse_client(self):
-        """When credentials are set and langfuse is importable, client should be non-None."""
-        mock_langfuse_cls = MagicMock()
-        mock_client = MagicMock()
-        mock_langfuse_cls.return_value = mock_client
+class TestRemoteTelemetryProviderFromCredentials:
+    """The adapter takes explicit credentials and reads no environment."""
 
-        with patch.dict(
-            os.environ,
-            {
-                "LANGFUSE_PUBLIC_KEY": "pk-test-1234",
-                "LANGFUSE_SECRET_KEY": "sk-test-5678",
-                "LANGFUSE_HOST": "https://test.langfuse.example",
-            },
-        ):
-            with patch.dict(
-                "sys.modules", {"remote": MagicMock(Langfuse=mock_langfuse_cls)}
-            ):
-                provider = RemoteTelemetryProvider.from_env()
+    @pytest.mark.parametrize("empty", ["host", "public_key", "secret_key"])
+    def test_empty_credential_raises_configuration_error(self, empty):
+        creds = {**_CREDS, empty: ""}
+        with pytest.raises(ConfigurationError, match="requires host, public_key"):
+            RemoteTelemetryProvider.from_credentials(**creds)
 
-        assert provider._client is not None
+    def test_import_error_raises_configuration_error(self):
+        """If the SDK is not installed, construction must fail closed (AW-8)."""
+        with patch("builtins.__import__", side_effect=_selective_import_error("langfuse")):
+            with pytest.raises(ConfigurationError, match="package is required"):
+                RemoteTelemetryProvider.from_credentials(**_CREDS)
+
+    def test_credentials_are_passed_to_the_client(self):
+        client_cls = MagicMock()
+        with patch.dict("sys.modules", {"langfuse": MagicMock(Langfuse=client_cls)}):
+            provider = RemoteTelemetryProvider.from_credentials(**_CREDS)
+        client_cls.assert_called_once_with(**_CREDS)
+        assert provider._client is client_cls.return_value
+
+    def test_adapter_ignores_vendor_named_env(self):
+        """Vendor-named variables are not a second source of the same credential."""
+        assert not hasattr(RemoteTelemetryProvider, "from_env")
 
 
 # ---------------------------------------------------------------------------
@@ -305,27 +297,48 @@ class TestGetTelemetryProviderFactory:
             with pytest.raises(ConfigurationError, match="Unknown telemetry provider"):
                 get_telemetry_provider()
 
-    def test_factory_remote_delegates_to_from_env(self):
-        mock_langfuse_cls = MagicMock()
-        mock_client = MagicMock()
-        mock_langfuse_cls.return_value = mock_client
-
-        with patch.dict(
-            os.environ,
-            {
-                "CAGE_TELEMETRY_PROVIDER": "remote",
-                "LANGFUSE_PUBLIC_KEY": "pk-test-1234",
-                "LANGFUSE_SECRET_KEY": "sk-test-5678",
-                "LANGFUSE_HOST": "https://test.langfuse.example",
-            },
-        ):
-            with patch.dict(
-                "sys.modules", {"remote": MagicMock(Langfuse=mock_langfuse_cls)}
-            ):
+    def test_factory_remote_passes_telemetry_credentials(self):
+        env = {**_env_without("CAGE_TELEMETRY_PROVIDER"), "CAGE_TELEMETRY_PROVIDER": "remote"}
+        env.update({**_CRED_ENV, "TELEMETRY_HOST": _CREDS["host"] + "/"})
+        client_cls = MagicMock()
+        with patch.dict(os.environ, env, clear=True):
+            with patch.dict("sys.modules", {"langfuse": MagicMock(Langfuse=client_cls)}):
                 provider = get_telemetry_provider()
-
         assert isinstance(provider, RemoteTelemetryProvider)
-        assert provider._client is not None
+        client_cls.assert_called_once_with(**_CREDS)  # trailing slash stripped
+
+    @pytest.mark.parametrize("missing", list(_CRED_ENV))
+    def test_factory_remote_names_each_missing_credential(self, missing):
+        env = {**_env_without(*_CRED_ENV), "CAGE_TELEMETRY_PROVIDER": "remote"}
+        env.update({k: v for k, v in _CRED_ENV.items() if k != missing})
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ConfigurationError, match=missing):
+                get_telemetry_provider()
+
+    def test_factory_remote_ignores_vendor_named_credentials(self):
+        env = {**_env_without(*_CRED_ENV), "CAGE_TELEMETRY_PROVIDER": "remote"}
+        env.update({"LANGFUSE_PUBLIC_KEY": "x", "LANGFUSE_SECRET_KEY": "y"})
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ConfigurationError, match="TELEMETRY_PUBLIC_KEY"):
+                get_telemetry_provider()
+
+    @pytest.mark.parametrize("cage_env", ["staging", "production", "local"])
+    def test_factory_unset_under_enforcing_posture_raises(self, cage_env):
+        env = {**_env_without("CAGE_TELEMETRY_PROVIDER"), "CAGE_ENV": cage_env, **_CRED_ENV}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ConfigurationError, match="CAGE_TELEMETRY_PROVIDER must be set"):
+                get_telemetry_provider()
+
+    def test_factory_unset_permissive_without_credentials_is_null(self):
+        env = {**_env_without("CAGE_TELEMETRY_PROVIDER", *_CRED_ENV), "CAGE_ENV": "test"}
+        with patch.dict(os.environ, env, clear=True):
+            assert isinstance(get_telemetry_provider(), NullTelemetryProvider)
+
+    def test_factory_unset_permissive_with_credentials_is_remote(self):
+        env = {**_env_without("CAGE_TELEMETRY_PROVIDER"), "CAGE_ENV": "dev", **_CRED_ENV}
+        with patch.dict(os.environ, env, clear=True):
+            with patch.dict("sys.modules", {"langfuse": MagicMock()}):
+                assert isinstance(get_telemetry_provider(), RemoteTelemetryProvider)
 
 
 # ---------------------------------------------------------------------------

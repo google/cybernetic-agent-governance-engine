@@ -264,6 +264,36 @@ resource "kubernetes_deployment" "gateway" {
             name  = "SERVICE_NAME"
             value = "hybrid-gateway"
           }
+          # Causal-tier telemetry (CTRL_TEL_003). The kernel reads only the
+          # vendor-neutral TELEMETRY_* names; they map the Langfuse project keys
+          # already held in advisor-secrets. Enforcing postures require
+          # CAGE_TELEMETRY_PROVIDER to be set explicitly.
+          env {
+            name  = "CAGE_TELEMETRY_PROVIDER"
+            value = "remote"
+          }
+          env {
+            name  = "TELEMETRY_HOST"
+            value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000"
+          }
+          env {
+            name = "TELEMETRY_PUBLIC_KEY"
+            value_from {
+              secret_key_ref {
+                name = "advisor-secrets"
+                key  = "LANGFUSE_PUBLIC_KEY"
+              }
+            }
+          }
+          env {
+            name = "TELEMETRY_SECRET_KEY"
+            value_from {
+              secret_key_ref {
+                name = "advisor-secrets"
+                key  = "LANGFUSE_SECRET_KEY"
+              }
+            }
+          }
           env {
             name  = "CAGE_DOMAIN"
             value = var.cage_domain
