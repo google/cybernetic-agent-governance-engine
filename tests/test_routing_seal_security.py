@@ -27,6 +27,9 @@ Test cases:
   5. Seal round-trip: generate + verify with custom salt
   6. verify_seal() rejects expired seal
   7. verify_seal() rejects wrong action
+  8. verify_and_consume_seal() verifies before consuming the nonce
+     (POAM-2026-089): failed verification never burns a nonce; concurrent
+     valid presentations admit exactly one; Redis failure fails closed
 """
 
 import datetime
@@ -467,3 +470,142 @@ def test_gateway_rejects_hmac_in_production():
             gw_seal.verify_seal(seal, "execute_trade", params)
 
         assert "HMAC seals are not accepted" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# POAM-2026-089: verify -> burn ordering (D1)
+# ---------------------------------------------------------------------------
+
+
+def _es256_keypair():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pub_pem = key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return key, pub_pem
+
+
+def _jwt_seal(private_key, kid: str, action: str, params: dict, nonce: str) -> str:
+    import hashlib
+
+    import jwt as pyjwt
+
+    from src.gateway.governance.routing_seal import jcs_canonicalize_plan
+
+    canon = jcs_canonicalize_plan({"action": action, **params})
+    claims = {
+        "action_hash": hashlib.sha256(canon).hexdigest(),
+        "record_hash": "a" * 64,
+        "nonce": nonce,
+        "exp": int(time.time()) + 300,
+    }
+    return pyjwt.encode(claims, private_key, algorithm="ES256", headers={"kid": kid})
+
+
+@pytest.fixture
+def trusted_jwks(monkeypatch):
+    """One trusted ES256 key under kid ``trusted``; every other kid is unknown."""
+    import src.gateway.governance.jwks as jwks_mod
+
+    key, pub_pem = _es256_keypair()
+
+    def _lookup(token: str):
+        return pub_pem if jwks_mod.extract_kid_from_jwt(token) == "trusted" else None
+
+    monkeypatch.setattr(jwks_mod, "get_verification_key_for_jwt", _lookup)
+    return key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forgery", ["unknown_kid", "bad_signature", "wrong_action"])
+async def test_failed_verification_does_not_burn_nonce(trusted_jwks, forgery):
+    """A seal that fails verification never touches the nonce store.
+
+    Before the fix the nonce was burned from unverified claims first, so a
+    forged JWT carrying a victim's nonce made the victim's genuine seal fail
+    as a replay.
+    """
+    import fakeredis.aioredis as fakeredis
+
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        verify_and_consume_seal,
+    )
+
+    redis = fakeredis.FakeRedis()
+    action, params = "execute_trade", {"symbol": "AAPL", "amount": 100.0}
+    victim_nonce = "victim-nonce-0001"
+    genuine = _jwt_seal(trusted_jwks, "trusted", action, params, victim_nonce)
+
+    if forgery == "unknown_kid":
+        attacker_key, _ = _es256_keypair()
+        forged = _jwt_seal(attacker_key, "attacker", action, params, victim_nonce)
+    elif forgery == "bad_signature":
+        attacker_key, _ = _es256_keypair()
+        forged = _jwt_seal(attacker_key, "trusted", action, params, victim_nonce)
+    else:
+        forged = _jwt_seal(trusted_jwks, "trusted", "cancel_trade", params, victim_nonce)
+
+    with pytest.raises(SymbolicGovernorViolation):
+        await verify_and_consume_seal(forged, action, params, redis_client=redis)
+
+    assert await redis.dbsize() == 0, "a failed verification must not burn a nonce"
+    assert (
+        await verify_and_consume_seal(genuine, action, params, redis_client=redis)
+        is True
+    )
+    assert await redis.dbsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_valid_replays_exactly_one_wins(trusted_jwks):
+    """Twenty concurrent presentations of one valid seal: exactly one consumes it."""
+    import asyncio
+
+    import fakeredis.aioredis as fakeredis
+
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        verify_and_consume_seal,
+    )
+
+    redis = fakeredis.FakeRedis()
+    action, params = "execute_trade", {"symbol": "AAPL", "amount": 100.0}
+    seal = _jwt_seal(trusted_jwks, "trusted", action, params, "race-nonce-0001")
+
+    results = await asyncio.gather(
+        *(
+            verify_and_consume_seal(seal, action, params, redis_client=redis)
+            for _ in range(20)
+        ),
+        return_exceptions=True,
+    )
+
+    assert sum(1 for r in results if r is True) == 1
+    losers = [r for r in results if r is not True]
+    assert len(losers) == 19
+    assert all(isinstance(r, SymbolicGovernorViolation) for r in losers)
+    assert all("already consumed" in str(r) for r in losers)
+
+
+@pytest.mark.asyncio
+async def test_redis_failure_after_valid_verification_fails_closed(trusted_jwks):
+    """A valid seal is still refused when the nonce store cannot record the burn."""
+    from unittest.mock import AsyncMock
+
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        verify_and_consume_seal,
+    )
+
+    broken = AsyncMock()
+    broken.evalsha.side_effect = ConnectionError("redis down")
+    broken.eval.side_effect = ConnectionError("redis down")
+    action, params = "execute_trade", {"symbol": "AAPL", "amount": 100.0}
+    seal = _jwt_seal(trusted_jwks, "trusted", action, params, "down-nonce-0001")
+
+    with pytest.raises(SymbolicGovernorViolation, match="replay protection failed"):
+        await verify_and_consume_seal(seal, action, params, redis_client=broken)

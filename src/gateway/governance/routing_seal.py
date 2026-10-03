@@ -245,23 +245,24 @@ _USING_DEFAULT_SALT: bool = _GOVERNANCE_SALT == _DEFAULT_SALT
 _HMAC_KEY = hashlib.sha256(_GOVERNANCE_SALT.encode()).digest()
 
 # ---------------------------------------------------------------------------
-# TOCTOU-safe atomic nonce burning via Redis Lua script
+# Atomic single-use nonce consumption via Redis Lua script
 # ---------------------------------------------------------------------------
-# This Lua script eliminates the TOCTOU race condition between seal verification
-# and nonce burning by making the check-and-burn operation atomic. The script:
+# This Lua script makes the check-and-consume of a seal nonce atomic. The script:
 #   1. Attempts to SET the nonce key with NX (only if not exists) and EX (TTL)
-#   2. Returns 0 if successfully burned (first use), 1 if already burned (replay)
+#   2. Returns 0 if successfully consumed (first use), 1 if already consumed
 #
-# By burning the nonce BEFORE verification, we ensure that only one thread can
-# proceed to verify and execute, even if multiple threads race with the same seal.
+# verify_and_consume_seal() runs it only AFTER verify_seal() has succeeded
+# (POAM-2026-089, verify -> burn -> execute). Verification is stateless, so
+# racing callers holding the same valid seal may all verify; this script then
+# admits exactly one of them, and an unverified seal can never consume a nonce.
 #
 # KEYS[1]: nonce_key (e.g., "cage:seal:nonce:{nonce}")
 # ARGV[1]: ttl_seconds (integer)
 # ARGV[2]: metadata (JSON string with action, timestamp for audit trail)
 #
 # Returns:
-#   0 = Successfully burned (proceed with verification)
-#   1 = Already burned (replay attack - reject immediately)
+#   0 = Successfully consumed (caller owns the seal and may execute)
+#   1 = Already consumed (replay or concurrent loser - reject)
 _ATOMIC_BURN_NONCE_LUA = """
 local nonce_key = KEYS[1]
 local ttl_s = tonumber(ARGV[1])
@@ -271,7 +272,7 @@ local metadata = ARGV[2]
 -- SET returns OK if successful, nil if NX condition fails (key exists)
 local result = redis.call('SET', nonce_key, metadata, 'NX', 'EX', ttl_s)
 if result then
-    return 0  -- Success: nonce burned, caller should proceed with verification
+    return 0  -- Success: nonce consumed, caller owns the seal
 else
     return 1  -- Replay: nonce was already burned by another request
 end
@@ -945,26 +946,34 @@ async def verify_and_consume_seal(
     redis_client: Any = None,
     expected_record_hash: str | None = None,
 ) -> bool:
-    """Verify a routing seal and burn its nonce atomically (TOCTOU-safe).
+    """Verify a routing seal, then consume its nonce exactly once.
 
-    Implements replay protection per the Cryptographic Governance Evolution spec.
-    This function eliminates the TOCTOU race condition by burning the nonce
-    BEFORE verification using a Redis Lua script for atomicity.
+    Implements replay protection per the Cryptographic Governance Evolution spec
+    (POAM-2026-089, decision D1: verify -> burn -> execute).
 
-    Security invariant: Only one thread can successfully burn any given nonce.
-    If burning succeeds, that thread "owns" the seal and proceeds to verify.
-    If verification fails after burning, the nonce remains burned (safe: invalid
-    seals should never execute anyway).
+    Security invariant: a seal authorizes execution only for the single caller
+    that wins the atomic nonce consume, and only a seal that has already passed
+    cryptographic verification can consume a nonce. Verification is stateless
+    (signature, ``kid`` trust anchor, expiry, ``action_hash``, evidence binding),
+    so any number of concurrent callers may verify the same seal; the Redis
+    ``SET NX EX`` Lua script then admits exactly one of them. A forged or
+    mismatched seal is rejected before Redis is touched, so it cannot burn the
+    nonce of a genuine seal (pre-fix, the nonce was burned from unverified
+    claims first, which let a forgery carrying a victim's nonce make the
+    victim's genuine seal fail as a replay).
 
-    Sequence (TOCTOU-safe):
-        1. Extract nonce from seal (parse only, no signature verification)
-        2. Atomically burn nonce via Redis Lua script
-        3. If burn fails (replay), reject immediately
-        4. If burn succeeds, verify seal signature/claims
-        5. If verification fails, nonce stays burned (safe)
-        6. If verification succeeds, return True (authorized)
+    Sequence:
+        1. Extract nonce and expiry from the seal (parse only; the values are
+           trusted only after step 2 verifies the same token).
+        2. ``verify_seal()`` -- stateless; any failure raises and nothing is
+           written.
+        3. Atomically consume the nonce via the Redis Lua script.
+        4. If the nonce was already consumed (replay or concurrent loser),
+           reject.
+        5. Return True: the caller owns this seal and may execute.
 
-    Fail-closed: If Redis is unavailable, verification fails.
+    Fail-closed: if Redis is unavailable or the script errors, a seal that
+    verified is still refused.
 
     Args:
         seal: The routing seal string (JWT or HMAC format).
@@ -974,7 +983,7 @@ async def verify_and_consume_seal(
         expected_record_hash: Optional expected evidence record hash.
 
     Returns:
-        True if seal is valid and nonce was successfully burned.
+        True if the seal verified and this caller consumed its nonce.
 
     Raises:
         SymbolicGovernorViolation: On any failure (invalid seal, replay, Redis error).
@@ -984,19 +993,17 @@ async def verify_and_consume_seal(
     _start_ns = _time_module.time_ns()
 
     # ---------------------------------------------------------------------------
-    # Step 1: Extract nonce FIRST (parse only, no verification yet)
-    # This is critical for TOCTOU safety: we must burn the nonce before verifying
-    # so that racing threads cannot both pass verification before either burns.
+    # Step 1: Extract nonce and expiry (parse only).
+    # These values are used only after verify_seal() has verified this same
+    # token, at which point the claims they came from are authenticated.
     # ---------------------------------------------------------------------------
     is_jwt = _is_jwt_seal(seal)
     if is_jwt:
-        # JWT format: extract nonce and expiry from claims (unverified)
         try:
-            # SECURITY NOTE: Signature verification is intentionally disabled here because
-            # this function only extracts metadata from the seal. Cryptographic verification
-            # happens in verify_seal() via KMS public key validation. This pattern prevents
-            # double-verification overhead while maintaining security boundaries.
-            # See: verify_seal() for signature verification logic.
+            # SECURITY NOTE: Signature verification is intentionally skipped for
+            # this parse. The nonce is not acted on until verify_seal() below
+            # has verified the signature of the same token via the kid-resolved
+            # JWKS key.
             claims = pyjwt.decode(seal, options={"verify_signature": False})
             nonce = claims.get("nonce")
             ttl = claims.get("exp", 0) - int(time.time())
@@ -1019,7 +1026,30 @@ async def verify_and_consume_seal(
         )
 
     # ---------------------------------------------------------------------------
-    # Step 2: Obtain Redis client (fail-closed if unavailable)
+    # Step 2: Verify the seal BEFORE touching the nonce store.
+    # Stateless, so concurrent presentations of one seal may all reach here;
+    # Step 4 admits exactly one. A failure here leaves the nonce unconsumed.
+    # ---------------------------------------------------------------------------
+    _verify_start_ns = _time_module.time_ns()
+    try:
+        verify_seal(
+            seal=seal,
+            action=action,
+            params=params,
+            expected_record_hash=expected_record_hash,
+        )
+    except SymbolicGovernorViolation:
+        logger.warning(
+            "🔒 [SEAL_INVALID] Seal verification failed; nonce not consumed: "
+            "action=%s nonce=%s",
+            action,
+            nonce[:16] + "...",
+        )
+        raise
+    _verify_elapsed_us = (_time_module.time_ns() - _verify_start_ns) // 1000
+
+    # ---------------------------------------------------------------------------
+    # Step 3: Obtain Redis client (fail-closed if unavailable)
     # ---------------------------------------------------------------------------
     redis = redis_client
     if redis is None:
@@ -1038,8 +1068,8 @@ async def verify_and_consume_seal(
             ) from exc
 
     # ---------------------------------------------------------------------------
-    # Step 3: Atomically burn nonce via Lua script (TOCTOU fix)
-    # This is the critical section: only one thread can win the burn.
+    # Step 4: Atomically consume the nonce via Lua (SET NX EX).
+    # This is the single-winner section: only one verified caller proceeds.
     # ---------------------------------------------------------------------------
     nonce_key = f"cage:seal:nonce:{nonce}"
     ttl_s = max(ttl + 60, 60)  # Add 60s buffer, minimum 60s
@@ -1058,11 +1088,10 @@ async def verify_and_consume_seal(
     try:
         burn_result = await _atomic_burn_nonce(redis, nonce_key, ttl_s, burn_metadata)
 
-        _burn_end_ns = _time_module.time_ns()
-        _burn_elapsed_us = (_burn_end_ns - _burn_start_ns) // 1000
+        _burn_elapsed_us = (_time_module.time_ns() - _burn_start_ns) // 1000
 
         if burn_result == 1:
-            # Nonce was already burned — replay attack detected
+            # Nonce was already consumed — replay or concurrent loser
             logger.warning(
                 "🔒 [REPLAY_ATTACK] Seal nonce already consumed (atomic check): "
                 "action=%s nonce=%s burn_elapsed_us=%d",
@@ -1074,13 +1103,6 @@ async def verify_and_consume_seal(
                 "replay attack detected — seal already consumed", action
             )
 
-        logger.debug(
-            "[TOCTOU-SAFE] Nonce burned atomically: action=%s nonce=%s burn_elapsed_us=%d",
-            action,
-            nonce[:16] + "...",
-            _burn_elapsed_us,
-        )
-
     except SymbolicGovernorViolation:
         raise
     except Exception as exc:
@@ -1091,43 +1113,16 @@ async def verify_and_consume_seal(
             f"replay protection failed (Redis error): {exc}", action
         ) from exc
 
-    # ---------------------------------------------------------------------------
-    # Step 4: Now verify the seal (AFTER successfully burning the nonce)
-    # At this point, we "own" the nonce — no other thread can proceed.
-    # If verification fails, the nonce stays burned (safe: invalid seals rejected).
-    # ---------------------------------------------------------------------------
-    _verify_start_ns = _time_module.time_ns()
-
-    try:
-        verify_seal(
-            seal=seal,
-            action=action,
-            params=params,
-            expected_record_hash=expected_record_hash,
-        )
-    except SymbolicGovernorViolation:
-        # Verification failed AFTER burning — nonce stays burned (safe)
-        # Log for audit trail but re-raise the original exception
-        _verify_end_ns = _time_module.time_ns()
-        logger.warning(
-            "🔒 [SEAL_INVALID] Seal verification failed after nonce burn "
-            "(nonce remains burned for safety): action=%s nonce=%s",
-            action,
-            nonce[:16] + "...",
-        )
-        raise
-
-    _verify_end_ns = _time_module.time_ns()
-    _total_elapsed_us = (_verify_end_ns - _start_ns) // 1000
-    _verify_elapsed_us = (_verify_end_ns - _verify_start_ns) // 1000
+    _total_elapsed_us = (_time_module.time_ns() - _start_ns) // 1000
 
     logger.debug(
-        "✅ [TOCTOU-SAFE] Seal verified and consumed atomically: "
-        "action=%s nonce=%s total_us=%d verify_us=%d",
+        "✅ [SEAL_CONSUMED] Seal verified, then nonce consumed atomically: "
+        "action=%s nonce=%s total_us=%d verify_us=%d burn_us=%d",
         action,
         nonce[:16] + "...",
         _total_elapsed_us,
         _verify_elapsed_us,
+        _burn_elapsed_us,
     )
     return True
 

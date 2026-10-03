@@ -194,10 +194,13 @@ and the verification code path unchanged.
 
 ### 2.9 `routing_seal.py` — the affirmative counterpart (No-Bind evidence)
 
-[`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py:941)
-and [`verify_seal()`](../../src/gateway/governance/routing_seal.py:620) prove
+[`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py:942)
+and [`verify_seal()`](../../src/gateway/governance/routing_seal.py:621) prove
 the **positive** claim ("this seal was issued, is unexpired, matches this
-action_hash, and has not been replayed"). The non-formation receipt needs the
+action_hash, and has not been replayed"). The order is verify, then consume:
+`verify_seal()` is stateless, and only a seal that passed it can consume its
+nonce through the atomic `SET NX EX` script, so a forged seal can never burn a
+genuine seal's nonce (POAM-2026-089). The non-formation receipt needs the
 **negative mirror**: cryptographic proof that **no seal was ever issued** for
 the attempted action/params combination. Because seal issuance
 (`issue_seal()` → `routing_seal.generate_seal_with_evidence()`) only happens
@@ -430,7 +433,7 @@ here for readability is, in the actual wire format, the envelope's own
   `jcs_canonicalize_plan({"action": action, **safe_params})` recipe already
   used by
   [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:291)
-  and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:687) —
+  and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:688) —
   reusing the identical hash lets a verifier confirm the receipt's `intent`
   matches what a *would-be* seal's `action_hash` claim would have been, had
   one been issued.
@@ -599,15 +602,15 @@ here for readability is, in the actual wire format, the envelope's own
 ```
 
 - **Design rationale (§5 decision 4):** `verify_seal()`
-  ([`routing_seal.py:620`](../../src/gateway/governance/routing_seal.py:620))
+  ([`routing_seal.py:621`](../../src/gateway/governance/routing_seal.py:621))
   and `verify_and_consume_seal()`
-  ([`routing_seal.py:941`](../../src/gateway/governance/routing_seal.py:941))
+  ([`routing_seal.py:942`](../../src/gateway/governance/routing_seal.py:942))
   prove a seal **exists and is valid**. There is no existing negative-proof
   mechanism. The new `no_bind_proof` is built by querying the same
   hash-chained evidence stream
   ([`evidence_stream.py`](../../src/gateway/governance/evidence/stream.py))
   that `routing_seal.py`'s
-  [evidence-binding call](../../src/gateway/governance/routing_seal.py:544)
+  [evidence-binding call](../../src/gateway/governance/routing_seal.py:545)
   writes to on **successful** seal issuance — for a refusal, the equivalent
   write **never happens**, so a range-scan between the last known-good
   `prev_hash` immediately before the refused request and the next

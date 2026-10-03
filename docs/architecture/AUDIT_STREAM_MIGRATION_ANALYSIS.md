@@ -153,7 +153,7 @@ field. See [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2.
 **Integration Points:**
 - [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py:320) — SSE `/v1/events/stream` endpoint and `GET /v1/evidence/verify` read-back verification endpoint
 - [`src/compliance_bridge/audit_workflow.py`](../../src/compliance_bridge/audit_workflow.py) — Publishes `AUDIT_FINDING`, `GOVERNANCE_VIOLATION`, `REMEDIATION_GENERATED` events (lines 869, 927, 635)
-- [`src/gateway/governance/routing_seal.py:generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py:456) — Commits evidence before seal issuance (blocking mode)
+- [`src/gateway/governance/routing_seal.py:generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py:457) — Commits evidence before seal issuance (blocking mode)
 
 **Storage:** 
 - **Hot tier:** Redis Streams (`cage:evidence:stream` key, db=1, noeviction)

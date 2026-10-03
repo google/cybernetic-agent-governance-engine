@@ -71,8 +71,8 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
         raise SymbolicGovernorViolation(
             (
                 "CRITICAL: Direct execution attempt rejected. execute_trade "
-                "requires a governor routing seal and must be dispatched through "
-                "ConsequenceGateway / ActuatorRegistry."
+                "requires a governor routing seal, consumed via "
+                "verify_and_consume_seal() and dispatched through ActuatorRegistry."
             ),
             action="execute_trade",
         )

@@ -316,13 +316,13 @@ class TestFenceEpochDisabledByDefault:
 
     def test_fence_epoch_flag_disabled_when_set_to_false(self):
         """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION=false disables epoch validation."""
+        import importlib
+
+        import src.gateway.governance.safety.cbf_engine as cbf_module
+
         original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
         try:
             os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = "false"
-
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
 
             importlib.reload(cbf_module)
 
@@ -332,6 +332,9 @@ class TestFenceEpochDisabledByDefault:
                 os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
             elif "CAGE_REDIS_SYNCHRONOUS_REPLICATION" in os.environ:
                 del os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"]
+            # Restore the module flags for later tests in this worker; without
+            # this reload _FENCE_EPOCH_ENABLED stays False process-wide.
+            importlib.reload(cbf_module)
 
     @pytest.mark.asyncio
     async def test_epoch_tracked_but_not_validated_when_disabled(

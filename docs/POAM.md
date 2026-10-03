@@ -542,22 +542,22 @@ In reconciled mode the CBF nets the KMS-verified custodian balance against a Red
 
 **Control:** NIST AC-3 (Access Enforcement), IA-5 (Authenticator Management)
 **Risk Level:** Low
-**Status:** Open (remediation planned on `fix/seal-verify-then-burn`)
+**Status:** Open — remediation implemented on `fix/seal-verify-then-burn` (verified 2026-10-02); closes on merge.
 **Date Opened:** 2026-10-02
 **Target Closure:** 2026-10-16
 
 **Description:**
 [`verify_and_consume_seal()`](../src/gateway/governance/routing_seal.py) decodes the seal with `verify_signature=False`, burns the nonce with the atomic `SET NX EX` script, and only then calls `verify_seal()`. The TOCTOU property this ordering was written for comes from the atomic consume plus the rule "execute only after winning the consume", and holds under either order. Burning an unverified nonce, however, lets any caller who can reach the function and knows a nonce burn a legitimate seal with a forged JWT; the legitimate request then fails as a replay. The exposure is narrow: the seal is `governance_result`, minted and consumed inside the gateway process ([`tool_provider.py`](../src/cage_finance/tools/tool_provider.py)), and the advisor only ever submits a `deferred_id` (POAM-2026-079), so the nonce never leaves the gateway. Separately, `AGENTS.md`, [ADR-008](adr/ADR-008-wire-phantom-gates-into-production-call-paths.md) and the OSCAL component definition describe `ConsequenceGateway` as the mandatory execution boundary, while it has no call site on the governor ALLOW path; the live boundary is `verify_and_consume_seal()` plus `ActuatorRegistry`.
 
-**Remediation (approved design — decisions D1, D2):**
+**Remediation (implemented 2026-10-02 — decisions D1, D2):**
 1. Reorder to verify → burn → execute. `verify_seal()` is stateless (the JWKS set is cached after a one-time KMS fetch), so no steady-state I/O moves ahead of the burn.
 2. Rewrite the docstring and the "nonce remains burned" comments to state the real invariant.
 3. Prose: `AGENTS.md` and ADR-008 name `verify_and_consume_seal()` + `ActuatorRegistry` as the execution boundary and `ConsequenceGateway` as the single-use boundary for normative-provider `ConsequenceToken`s; delete the placeholder comment in `tool_provider.py`; correct `compliance/oscal/component-definition.yaml`; note in the FRIA tier that findings on an admitted result (including a token) are dropped.
-4. Fail-closed tests: a forged JWT carrying a victim's nonce raises and leaves `dbsize() == 0`, after which the genuine seal consumes successfully; twenty concurrent presentations of one valid seal yield exactly one success.
+4. Fail-closed tests in [`tests/test_routing_seal_security.py`](../tests/test_routing_seal_security.py): `test_failed_verification_does_not_burn_nonce` (three forgeries carrying a victim's nonce — unknown `kid`, valid `kid` with a foreign signature, genuine key with a mismatched action — each raises and leaves `dbsize() == 0`, after which the genuine seal consumes; all three failed against the old order); `test_concurrent_valid_replays_exactly_one_wins` (20 concurrent presentations → exactly one `True`, 19 `already consumed`); `test_redis_failure_after_valid_verification_fails_closed`.
+5. Prose corrected in `AGENTS.md`, ADR-008 (correction note, implementation-status lines), `GATEWAY_ARCHITECTURE.md`, `ARCHITECTURE.md`, `SYMBOLIC_GOVERNOR_RUNTIME.md`, `NON_FORMATION_PROOF_SPEC.md` (order stated; line anchors refreshed) and `compliance/oscal/component-definition.yaml` (three ConsequenceGateway statements); the placeholder in `tool_provider.py` is deleted, the `trade_executor.py` refusal message names the real boundary, and [`fria_tier.py`](../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py) documents that admission findings (including a token) are dropped.
 
 **Remaining Closure Criteria:**
-1. Merge `fix/seal-verify-then-burn`; record the merge SHA and the actual verification date here.
-2. OSCAL AC-3 seal-consumption wording updated; exporter and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) green.
+1. Merge `fix/seal-verify-then-burn`; record the merge SHA and the actual verification date here, then mark CLOSED. (The OSCAL wording is updated on the branch; no AC-3 statement elsewhere describes the consumption order. Exporter and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) are re-run at closure.)
 
 ### POAM-2026-090: Distributed-CBF Formal Model Cannot Be Checked and Omits the Stale-Replica Regression
 

@@ -145,6 +145,9 @@ class TestStagingTierWaitAndRollback:
             patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
+            # Pinned: tests/test_fence_epoch.py reloads cbf_engine with the flag
+            # off, and the strict rollback only runs when fence epochs are on.
+            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
             patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
                 100000.0,
                 {"source": "reconciliation", "sequence": 3, "fence_epoch": 1},

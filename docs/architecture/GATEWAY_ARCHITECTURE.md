@@ -28,7 +28,7 @@ Both model pools are deployed on a dedicated GPU node pool (NVIDIA L4, `gpu-l4` 
 ### Trust Boundaries
 
 - **Upstream (Untrusted Ingress)**: The Gateway is the primary ingress point and treats all incoming client and agent traffic as untrusted. Trace context (`traceparent`) is extracted to stitch distributed Langfuse spans, scanner noise is dropped, and payloads must undergo cryptographic and policy verification. **Caller identity is taken from the mTLS transport only** — the Linkerd-verified `l5d-client-id` workload identity — never from caller-asserted request headers or the request body (see [§5.4](#54-transport-layer-agent-identity-linkerd-mtls-workload-identity)). The governed financial advisor is a client behind this boundary: it hosts no `SymbolicGovernor`, `DeferQueue` or signing key and reaches governance only through gateway endpoints.
-- **Downstream (Kernel & Actuators)**: Bridges external requests to the Layer 1 Kernel (`SymbolicGovernor`, `ConsequenceGateway`) and execution actuators via `ActuatorRegistry`. No action or side-effect occurs without traversing the complete governance pipeline and receiving a cryptographically signed routing seal or `ConsequenceToken`.
+- **Downstream (Kernel & Actuators)**: Bridges external requests to the Layer 1 Kernel (`SymbolicGovernor`) and execution actuators via `ActuatorRegistry`. No action or side-effect occurs without traversing the complete governance pipeline and presenting a cryptographically signed routing seal, which [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) verifies and then consumes exactly once. `ConsequenceGateway` is the single-use boundary for normative-provider `ConsequenceToken`s and is not on the governor ALLOW path (§2.3).
 
 ### Three-Layer Architecture Boundary
 
@@ -68,7 +68,7 @@ stateDiagram-v2
     DENY --> [*]: Abort Workflow
     NARROW --> ALLOW: FULL re-run on clamped params passes, seal issued
     NARROW --> DENY: Re-run has violations
-    ALLOW --> [*]: Proceed to ConsequenceGateway
+    ALLOW --> [*]: Seal issued; verify_and_consume_seal then ActuatorRegistry
 ```
 
 - **Priority Precedence** ([`ClassificationEngine.classify()`](../../src/gateway/governance/classification_engine.py)):
@@ -129,7 +129,7 @@ See [`tests/test_violation_kinds.py`](../../tests/test_violation_kinds.py) for c
 
 ### 2.3 ConsequenceGateway & Token Authority
 
-The `ConsequenceGateway` ([`src/gateway/governance/consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)) enforces a fail-closed post-governance execution boundary. It ensures that downstream `ExecutionActuator`s cannot execute side-effects without a valid, unexpired, mathematically bound, and cryptographically signed `ConsequenceToken` (JWS).
+The `ConsequenceGateway` ([`src/gateway/governance/consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)) is the fail-closed, single-use verification boundary for `ConsequenceToken`s (JWS) minted by normative providers. It is a library primitive: the governor ALLOW path does not construct it, and `FriaTier` drops admission findings (including any token), so tokens do not travel on the routing seal. On the ALLOW path the boundary is the routing seal: [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) verifies it (signature, `kid` trust anchor, expiry, `action_hash`, evidence binding) and only then atomically consumes its nonce, before `ActuatorRegistry` dispatch. See [CONSEQUENCE_GATEWAY.md](CONSEQUENCE_GATEWAY.md) for current wiring.
 
 ```mermaid
 sequenceDiagram
@@ -227,8 +227,8 @@ flowchart TD
 3. **Model Pool Routing**: The request routes to the Reasoning Model Pool or Governance Model Pool.
 4. **Tool Call Interception**: When a model initiates an action via MCP, the execution request is intercepted by the Gateway.
 5. **Symbolic Governor Evaluation**: The action traverses the full 8-Tier STERA pipeline.
-6. **Seal Clearance**: Approved actions receive a KMS-signed routing seal issued inside the request's `ReservationScope`; where a normative provider admits the action, a `ConsequenceToken` is also minted for single-use verification by the `ConsequenceGateway`.
-7. **Actuator Execution**: The registered `ExecutionActuator` fires the side-effect.
+6. **Seal Clearance**: Approved actions receive a KMS-signed routing seal issued inside the request's `ReservationScope`. (A normative provider may also mint a `ConsequenceToken`; it is not carried on the seal, and `ConsequenceGateway` verifies it only for callers that present one.)
+7. **Actuator Execution**: The tool verifies the seal and then consumes its nonce exactly once (`verify_and_consume_seal()`); only the winner dispatches through `ActuatorRegistry`, and the registered `ExecutionActuator` fires the side-effect.
 8. **Evidence & Telemetry**: Records are chained into the `EvidenceStreamSink` and traces are exported over OTLP.
 
 ### Component Interaction & Post-HITL Feedback Loop

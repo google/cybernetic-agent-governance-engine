@@ -6,7 +6,7 @@
 
 The [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) is the primary neuro-symbolic governance layer in the CAGE architecture, implementing the Governance/Reasoning Plane from Tallam's Five-Plane Reference Architecture. It sits below the request ingress and above the execution actuators.
 
-Its role is to evaluate requested actions against multiple domain-agnostic invariant tiers (e.g., STPA safety bounds, Control Barrier Functions, OPA policies, Causal models). Crucially, the Governor does not directly execute actions; it classifies aggregate validation results into discrete, actionable execution states (ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL) that the downstream `ConsequenceGateway` and `ExecutionActuator` enforce.
+Its role is to evaluate requested actions against multiple domain-agnostic invariant tiers (e.g., STPA safety bounds, Control Barrier Functions, OPA policies, Causal models). Crucially, the Governor does not directly execute actions; it classifies aggregate validation results into discrete, actionable execution states (ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL) that the downstream routing-seal consumption (`verify_and_consume_seal()`) and `ExecutionActuator` dispatch enforce. (`ConsequenceGateway` verifies normative-provider `ConsequenceToken`s and is not on the ALLOW path.)
 
 **Trust Boundaries**:
 - **Upstream (Client/Agents)**: Provides actions and self-assessed confidence scores. The Governor treats these inputs as untrusted and requires cryptographic or systemic verification. The governor runs only in the gateway process; the governed advisor reaches it through gateway endpoints (`/governance/validate-action`, `/governance/revalidate-post-hitl`, `/tools/execute`) and hosts no governor of its own.
@@ -45,7 +45,7 @@ stateDiagram-v2
     DENY --> [*]: Abort Workflow
     NARROW --> ALLOW: FULL re-run on clamped params passes, seal issued
     NARROW --> DENY: Re-run has violations
-    ALLOW --> [*]: Proceed to ConsequenceGateway
+    ALLOW --> [*]: Seal issued; verify_and_consume_seal then ActuatorRegistry
 ```
 
 ## 3. State Machine & Lifecycle
