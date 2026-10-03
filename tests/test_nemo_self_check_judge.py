@@ -35,6 +35,11 @@ text only as ``content=``, while NeMo's built-in self-checks read
 without calling the LLM when those are absent. The tests below therefore call
 the actions the way the runtime does, and one test drives NeMo's real
 ``self_check_input`` so the LLM call itself is observed.
+
+The next rerun (``docs/paper/measurements/2026-10-03-3902db4b/``) still refused:
+NeMo 0.23's ``llm_call()`` rejects the unwrapped LangChain model the runtime
+injects ("Expected an LLMModel instance, got VLLMLLM"). The real-judge tests
+therefore pass a raw LangChain chat model through NeMo's real ``llm_call``.
 """
 
 from __future__ import annotations
@@ -137,7 +142,10 @@ async def test_injected_parameters_reach_the_judge(monkeypatch, run) -> None:
     _, seen = await run(monkeypatch, True)
     assert seen["llm_task_manager"] is _TASK_MANAGER
     assert seen["config"] is _CONFIG
-    assert seen["llm"] is _LLM
+    # NeMo's llm_call() accepts only an LLMModel; the raw model is wrapped.
+    from nemoguardrails.types import LLMModel
+
+    assert isinstance(seen["llm"], LLMModel)
 
 
 @pytest.mark.asyncio
@@ -158,7 +166,7 @@ class _TaskManager:
 
     def render_task_prompt(self, task: Any, context: dict[str, Any]) -> str:
         self.rendered.append(context)
-        return f"judge: {context['user_input']}"
+        return f"judge: {context}"
 
     def get_stop_tokens(self, task: Any) -> None:
         return None
@@ -177,32 +185,41 @@ class _Config:
     lowest_temperature = 0.0
 
 
-class _Response:
-    def __init__(self, content: str) -> None:
-        self.content = content
+def _raw_langchain_llm(says: str) -> Any:
+    # The runtime injects the main model unwrapped (our ``VLLMLLM`` is a
+    # LangChain ``BaseChatModel``); NeMo's real ``llm_call`` must accept it.
+    fake = pytest.importorskip("langchain_core.language_models.fake_chat_models")
+    return fake.FakeListChatModel(responses=[says])
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("llm_says", "allowed"), [("safe", True), ("unsafe", False)])
-async def test_real_nemo_self_check_calls_the_llm(monkeypatch, llm_says, allowed) -> None:
-    calls: list[str] = []
-
-    async def fake_llm_call(llm: Any, prompt: str, **_: Any) -> _Response:
-        calls.append(prompt)
-        return _Response(llm_says)
-
-    monkeypatch.setattr(nemo_input, "llm_call", fake_llm_call)
-    monkeypatch.setattr(nemo_input, "warn_if_truncated", lambda *a, **k: None)
+async def test_real_nemo_input_judge_calls_the_llm(llm_says, allowed) -> None:
     manager = _TaskManager()
     got = await actions.custom_self_check_input(
         content=_JUDGED_INPUT,
         context={},
-        llm=_LLM,
+        llm=_raw_langchain_llm(llm_says),
         llm_task_manager=manager,
         config=_Config(),
     )
-    assert calls == [f"judge: {_JUDGED_INPUT}"]
     assert manager.rendered == [{"user_input": _JUDGED_INPUT}]
+    assert got is allowed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("llm_says", "allowed"), [("safe", True), ("unsafe", False)])
+async def test_real_nemo_output_judge_calls_the_llm(llm_says, allowed) -> None:
+    manager = _TaskManager()
+    got = await actions.custom_self_check_output(
+        content=_JUDGED_OUTPUT,
+        context={},
+        llm=_raw_langchain_llm(llm_says),
+        llm_task_manager=manager,
+        config=_Config(),
+    )
+    assert len(manager.rendered) == 1
+    assert manager.rendered[0]["bot_response"] == _JUDGED_OUTPUT
     assert got is allowed
 
 
