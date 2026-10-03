@@ -20,6 +20,7 @@ Queries Langfuse for recent traces tagged with governance spans
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -36,6 +37,24 @@ logger = logging.getLogger("cage.integrations.telemetry_langfuse")
 
 # The Langfuse public API caps ``GET /api/public/traces`` at 100 rows a page.
 _PAGE_LIMIT = 100
+
+
+def _as_mapping(value: Any) -> dict[str, Any]:
+    """Return a trace ``input`` / ``metadata`` value as a dict, or ``{}``.
+
+    Langfuse stores whatever the instrumented code recorded: a dict, a JSON
+    string, or plain text (an LLM prompt). Only mappings can carry the causal
+    columns; anything else contributes no row.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _list_recent_traces(client: Any, n_samples: int) -> list[Any]:
@@ -143,8 +162,8 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
 
             rows: list[dict] = []
             for trace in traces:
-                meta = getattr(trace, "metadata", {}) or {}
-                input_data = getattr(trace, "input", {}) or {}
+                meta = _as_mapping(getattr(trace, "metadata", None))
+                input_data = _as_mapping(getattr(trace, "input", None))
                 scores_list = getattr(trace, "scores", []) or []
 
                 # Build score lookup: {name -> value}. The trace list endpoint
@@ -158,7 +177,7 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
                 }
 
                 market_vol = meta.get("market_volatility")
-                trade_amount = (input_data or {}).get("amount")
+                trade_amount = input_data.get("amount")
                 risk_score = scores.get("risk_score") or meta.get("risk_score")
                 observed_at = getattr(trace, "timestamp", None)
 

@@ -551,3 +551,47 @@ def test_provider_uses_the_installed_langfuse_sdk_api(monkeypatch) -> None:
     api = api_client.LangfuseAPI(base_url="http://127.0.0.1:9")
     params = inspect.signature(api.trace.list).parameters
     assert {"page", "limit", "order_by"} <= set(params)
+
+
+def test_real_langfuse_trace_shapes_do_not_abort_the_fetch() -> None:
+    """Traces from ordinary instrumentation never abort the fetch.
+
+    On staging (2026-10-03, gateway 55096730) the first trace's ``input`` was a
+    string, ``.get`` raised, and the whole fetch fell back to the null provider.
+    Real traces carry plain-text prompts, JSON strings and score ids (strings).
+    Unusable traces contribute no row; JSON-string payloads are parsed.
+    """
+    import json
+
+    def trace(input_value, metadata, scores=()):
+        t = MagicMock()
+        t.timestamp = _TRACE_TS
+        t.input = input_value
+        t.metadata = metadata
+        t.scores = list(scores)
+        return t
+
+    usable = [
+        trace(
+            json.dumps({"amount": 1000.0}),
+            json.dumps({"market_volatility": 0.2, "risk_score": 0.3}),
+            scores=["score-id-1"],
+        )
+        for _ in range(MIN_SAMPLES)
+    ]
+    noise = [
+        trace("When is TSLA's next earnings report?", None),
+        trace(["a", "list"], "not json"),
+        trace(None, {"market_volatility": 0.2}),
+    ]
+    mock_client = MagicMock(spec=["api"])
+    response = MagicMock()
+    response.data = [*noise, *usable]
+    mock_client.api.trace.list.return_value = response
+    provider = RemoteTelemetryProvider(
+        langfuse_client=mock_client, fallback=MockTelemetryProvider()
+    )
+    df = provider.get_latest_data(n_samples=len(response.data))
+    assert len(df) == MIN_SAMPLES
+    assert (df["trade_amount"] == 1000.0).all()
+    assert (df["risk_score"] == 0.3).all()
