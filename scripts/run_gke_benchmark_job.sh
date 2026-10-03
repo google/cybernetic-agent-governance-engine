@@ -130,7 +130,13 @@ render "${JOB_MANIFEST}" REGISTRY_URL IMAGE_TAG GOOGLE_CLOUD_PROJECT \
   | kubectl apply -n "${NAMESPACE}" -f -
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
-kubectl wait --for=condition=Ready pod -l app=cage-paper-benchmark -n "${NAMESPACE}" --timeout=300s
+# kubectl wait fails at once if no pod matches yet, so first wait for the Job
+# controller to create one.
+for _ in $(seq 1 60); do
+  [ -n "$(kubectl get pods -l app=cage-paper-benchmark -n "${NAMESPACE}" -o name 2>/dev/null)" ] && break
+  sleep 2
+done
+kubectl wait --for=condition=Ready pod -l app=cage-paper-benchmark -n "${NAMESPACE}" --timeout=600s
 POD_NAME=$(kubectl get pods -l app=cage-paper-benchmark -n "${NAMESPACE}" -o jsonpath='{.items[0].metadata.name}')
 JOB_IMAGE=$(kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" \
   -o jsonpath='{.status.containerStatuses[?(@.name=="benchmark-runner")].imageID}')
