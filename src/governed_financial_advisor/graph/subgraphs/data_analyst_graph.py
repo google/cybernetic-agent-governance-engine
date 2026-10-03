@@ -389,9 +389,12 @@ from src.governed_financial_advisor.graph.governance.tool_guard import (
 
 # Every tool call is validated by the gateway (POST /governance/validate-action)
 # before execution; any non-APPROVED outcome refuses the batch (fail closed).
-guarded_tool_executor_node = gateway_tool_guard("fetch_market_data")(
-    tool_executor_node
-)
+# The action must be one the finance domain registers: ``market_analysis`` is
+# READ_ONLY in the FTRA registry and allowed by trade_governance.rego. An
+# unregistered name is denied by OPA and treated as irreversible by FTRA.
+GOVERNED_ACTION = "market_analysis"
+
+guarded_tool_executor_node = gateway_tool_guard(GOVERNED_ACTION)(tool_executor_node)
 
 builder = StateGraph(DataAnalystState)
 

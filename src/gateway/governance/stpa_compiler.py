@@ -56,7 +56,7 @@ import sys
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import yaml
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
@@ -428,6 +428,24 @@ class ControlStructureModel(BaseModel):
     unsafe_control_actions: list[UCAModel]
     safety_constraints: list[ConstraintModel]
     rbac_rules: RbacRulesModel | None = None
+
+    @field_validator("control_actions")
+    @classmethod
+    def _v_control_action_classification(
+        cls, actions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        # A control action may declare its FTRA classification directly. This
+        # is how a read-only action is registered without inventing an unsafe
+        # control action for it.
+        allowed = get_args(TerminalClassification)
+        for action in actions:
+            classification = action.get("terminal_classification")
+            if classification is not None and classification not in allowed:
+                raise ValueError(
+                    f"control action {action.get('name')!r}: terminal_classification "
+                    f"{classification!r} is not one of {allowed}"
+                )
+        return actions
 
     @field_validator("unsafe_control_actions")
     @classmethod
@@ -1760,8 +1778,11 @@ def generate_agp(cs: ControlStructureModel) -> str:
 def generate_terminal_registry(cs: ControlStructureModel) -> str:
     """Generate the FTRA terminal classification registry as JSON.
 
-    Emits a JSON object mapping each unique action name found in
-    ``unsafe_control_actions`` to its ``terminal_classification`` value.
+    Emits a JSON object mapping each classified action name to its
+    ``terminal_classification``. An action is classified when a
+    ``control_actions`` entry declares ``terminal_classification`` or when it
+    appears in ``unsafe_control_actions``. A UCA without one counts as
+    ``IRREVERSIBLE_TERMINAL``.
 
     Fail-closed contract (enforced at runtime by IrreversibilityClassifier):
       Any action name absent from this registry is treated as
@@ -1771,9 +1792,9 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
       reaches that action — the safe default.
 
     Actions with multiple UCAs:
-      If the same action appears in multiple UCAs with *different*
-      ``terminal_classification`` values, the most restrictive classification
-      wins (IRREVERSIBLE_TERMINAL > EXTERNALLY_REVERSIBLE > REVERSIBLE >
+      If the same action is classified more than once (by its control
+      action and/or several UCAs) with *different* values, the most
+      restrictive classification wins (IRREVERSIBLE_TERMINAL > EXTERNALLY_REVERSIBLE > REVERSIBLE >
       READ_ONLY).  A warning is logged for each conflict.
 
     Args:
@@ -1797,9 +1818,16 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     action_map: dict[str, str] = {}
     conflicts: list[str] = []
 
-    for uca in cs.unsafe_control_actions:
-        action = uca.action
-        classification = uca.terminal_classification or "IRREVERSIBLE_TERMINAL"
+    declared = [
+        (str(ca["name"]), str(ca["terminal_classification"]))
+        for ca in cs.control_actions
+        if ca.get("terminal_classification") is not None
+    ]
+    from_ucas = [
+        (uca.action, uca.terminal_classification or "IRREVERSIBLE_TERMINAL")
+        for uca in cs.unsafe_control_actions
+    ]
+    for action, classification in declared + from_ucas:
 
         if action in action_map:
             existing = action_map[action]

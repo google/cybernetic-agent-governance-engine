@@ -60,6 +60,7 @@ REGISTERED_ACTIONS: frozenset[str] = frozenset(
         "execute_trade",  # IRREVERSIBLE_TERMINAL — consensus, causal, cbf, fiscal
         "execute_trade_bounded",  # EXTERNALLY_REVERSIBLE — bounding, cbf, fiscal (claim-by-cost)
         "check_balance",  # READ_ONLY — balance query
+        "market_analysis",  # READ_ONLY — market-data lookups by the data analyst
         "prompt_injection_check",  # READ_ONLY — safety pre-screen
     }
 )
