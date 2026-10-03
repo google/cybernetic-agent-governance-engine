@@ -16,6 +16,9 @@
 measure_reconciliation_metrics.py — CAGE §6.3/6.4/6.5 data collector
 =====================================================================
 
+Manual report tool: run by hand to produce numbers for the paper. It is not
+part of the CI test suite.
+
 Measures the ground-truth reconciliation path end to end, using the
 production modules unmodified:
 

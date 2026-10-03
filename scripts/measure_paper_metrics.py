@@ -15,6 +15,9 @@
 """
 measure_paper_metrics.py — CAGE §6 Evaluation Data Collector
 
+Manual report tool: run by hand to produce numbers for the paper. It is not
+part of the CI test suite.
+
 Produces measurement artefacts used to fill the §6 tables in CAGE_ARXIV.MD:
 
   1. LATENCY  — per-tier P50/P95/P99 of the eight-tier symbolic governor.
