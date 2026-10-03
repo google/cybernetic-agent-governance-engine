@@ -1,0 +1,85 @@
+{
+  "generated_at": "2026-10-03T17:44:35Z",
+  "redis_target": "redis://benchmark-redis.governance-stack.svc.cluster.local:6379/1",
+  "signer": "kms",
+  "evidence_grade": true,
+  "write_path": {
+    "signer": "kms",
+    "evidence_grade": true,
+    "iterations_requested": 20,
+    "iterations_succeeded": 20,
+    "failures": [],
+    "total_ms": {
+      "p50": 53.682,
+      "p95": 91.773,
+      "p99": 91.773,
+      "mean": 53.11
+    },
+    "fetch_ms": {
+      "p50": 0.1,
+      "p95": 0.5,
+      "p99": 0.5,
+      "mean": 0.12
+    },
+    "kms_sign_ms": {
+      "p50": 47.6,
+      "p95": 86.1,
+      "p99": 86.1,
+      "mean": 45.615
+    },
+    "redis_write_ms": {
+      "p50": 3.1,
+      "p95": 3.6,
+      "p99": 3.6,
+      "mean": 3.04
+    }
+  },
+  "read_overhead": {
+    "iterations": 200,
+    "self_reported_ms": {
+      "p50": 4.84,
+      "p95": 6.374,
+      "p99": 10.171,
+      "mean": 5.0
+    },
+    "signer": "kms",
+    "evidence_grade": true,
+    "reconciled_ms": {
+      "p50": 4.481,
+      "p95": 5.972,
+      "p99": 8.399,
+      "mean": 4.586
+    },
+    "delta_p50_ms": -0.359,
+    "delta_p95_ms": -0.402
+  },
+  "safety_violation": {
+    "barrier_floor_usd": 1000.0,
+    "gamma": 0.5,
+    "inflated_self_reported_balance_usd": 500000.0,
+    "true_custodian_balance_usd": 8000.0,
+    "trade_amount_usd": 10000.0,
+    "a_self_reported": {
+      "balance_source": "self_reported",
+      "verdict": "SAFE",
+      "admitted": true
+    },
+    "b_reconciler_vs_inflated_state": {
+      "published": false,
+      "discrepancy_detected": true,
+      "discrepancy_delta_usd": 492000.0,
+      "fence_epoch_before": 0,
+      "fence_epoch_after": 1,
+      "error": "Discrepancy spike detected: delta=492000.00 > threshold=250000.00; fence epoch incremented"
+    },
+    "c_reconciled_after_inflation": {
+      "signer": "kms",
+      "evidence_grade": true,
+      "snapshot_published": true,
+      "balance_source": "reconciled",
+      "verdict": "[CTRL_MRM_004] SR 26-2 \u00a7IV \u2013 Model Risk Management Violation: Safety Violation (RBC/CBF). h(next)=-3000.00 < threshold=3500.00",
+      "refused": true
+    },
+    "poam_023_validated": true
+  }
+}

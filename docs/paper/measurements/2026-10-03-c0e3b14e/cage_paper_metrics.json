@@ -1,0 +1,86 @@
+{
+  "generated_at": "2026-10-03T17:44:20Z",
+  "latency_runs": 200,
+  "backend_url": "http://governed-financial-advisor.governance-stack.svc.cluster.local:80",
+  "methodology": "otel_span_harvest",
+  "latency_mode": "over_the_wire_in_cluster",
+  "error_type_counts": {},
+  "latency": {
+    "STPA (Tier 1)": {
+      "p50": 0.28,
+      "p95": 0.44,
+      "p99": 0.55,
+      "mean": 0.31
+    },
+    "Confidence (Tier 2)": {
+      "p50": 0.08,
+      "p95": 0.13,
+      "p99": 0.21,
+      "mean": 0.09
+    },
+    "CBF (Tier 3a)": {
+      "p50": 10.71,
+      "p95": 13.1,
+      "p99": 17.32,
+      "mean": 10.98
+    },
+    "OPA (Tier 3b)": {
+      "p50": 22.92,
+      "p95": 24.21,
+      "p99": 24.33,
+      "mean": 22.92
+    },
+    "Fiscal (Tier 4)": {
+      "p50": 2.21,
+      "p95": 3.0,
+      "p99": 3.6,
+      "mean": 2.26
+    },
+    "Consensus (Tier 5)": {
+      "p50": 0.03,
+      "p95": 0.07,
+      "p99": 0.17,
+      "mean": 0.04
+    },
+    "Causal (Tier 6)": {
+      "p50": 6.2,
+      "p95": 8.21,
+      "p99": 9.05,
+      "mean": 6.42
+    },
+    "govern (FULL, sealed)": {
+      "p50": 87.22,
+      "p95": 108.15,
+      "p99": 321.37,
+      "mean": 89.68
+    },
+    "revalidate_post_hitl": {
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "mean": 0.0,
+      "note": "not applicable: trade ALLOWed without HITL",
+      "display": "(n/a)"
+    },
+    "Total (APPROVED)": {
+      "p50": 87.22,
+      "p95": 108.15,
+      "p99": 321.37,
+      "mean": 89.68
+    },
+    "Total (REJECTED)": {
+      "p50": 23.2,
+      "p95": 28.13,
+      "p99": 31.17,
+      "mean": 23.86
+    }
+  },
+  "deflection": {
+    "status": "not_measured",
+    "reason": "--latency-only"
+  },
+  "benign_fpr": {
+    "status": "not_measured",
+    "reason": "--latency-only"
+  }
+}
