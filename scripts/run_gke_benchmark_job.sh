@@ -108,8 +108,9 @@ render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl delete -f - -n "${NAM
 # 2. Throwaway Redis primary + replica
 echo -e "${CYAN}🧱 [Step 2/6] Starting throwaway Redis (${REDIS_MANIFEST})...${NC}"
 render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl apply -n "${NAMESPACE}" -f -
-kubectl rollout status deployment/benchmark-redis-primary -n "${NAMESPACE}" --timeout=180s
-kubectl rollout status deployment/benchmark-redis-replica -n "${NAMESPACE}" --timeout=180s
+# 600 s: the pods may wait for the cluster autoscaler to add a node.
+kubectl rollout status deployment/benchmark-redis-primary -n "${NAMESPACE}" --timeout=600s
+kubectl rollout status deployment/benchmark-redis-replica -n "${NAMESPACE}" --timeout=600s
 REDIS_IMAGE=$(kubectl get deployment benchmark-redis-primary -n "${NAMESPACE}" \
   -o jsonpath='{.spec.template.spec.containers[0].image}')
 
