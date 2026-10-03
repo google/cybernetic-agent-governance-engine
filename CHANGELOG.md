@@ -10,6 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Documentation
+- **paper:** recorded the 2026-10-03 benign-FPR reruns under `docs/paper/measurements/` (`2026-10-03-5aa1a65f`, `-3902db4b`, `-55096730`). Reference run `55096730`: deflection 26/26 (100 %), benign FPR 4/20 (20 %, down from 11/20), Table 2b `govern` P50/P95/P99 = 94.1 / 114.7 / 168.5 ms. The 4 remaining false positives are trade prompts denied by the causal tier for lack of a live world-model feed (POAM-2026-094). REVISION_TRACKER S2 updated.
 
 - Recorded the full-scope in-cluster benchmark `docs/paper/measurements/2026-10-03-57556228/` (Table 2b n = 200 per row, adversarial deflection 26/26, benign FPR 11/20 = 55 %), with a root-cause breakdown of the false positives in its `PROVENANCE.md`.
 
