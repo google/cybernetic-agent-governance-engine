@@ -81,6 +81,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-085 | SI-10 / `CTRL_MRM_004` | Causal gatekeeper cache bypassed the per-request risk boundary: a cached ALLOW for a small trade was replayed for any amount, and a cached DENY denied small ones (Redis with `cache_ttl_seconds > 0`, within one TTL window). Remediated in `refactor/ftra-scope` by caching only the params-independent world-model verdict; closes at merge | High | 2026-10-15 |
 | POAM-2026-086 | SC-8 / SC-23 | Memorystore server CA not delivered to gateway/compliance-bridge pods; evidence-stream fail-closed check exposed it on 2026-10-01. Remediated in IaC (PR-3, `fix/memorystore-ca-pinning`) by mounting `module.memorystore_governance.managed_server_ca` via `<app>-redis-ca` ConfigMaps at `/etc/cage/tls/redis/ca.pem` (`REDIS_CA_CERT_PATH`, `cage.io/redis-ca-sha256` rollout annotation, and `lula-validation-sc8.yaml` Check 5); remains Open pending PR-4 (`fix/redis-tls-one-rule`) unification of synchronous/module-level Redis TLS verification across all enforcing postures | High | 2026-10-15 |
 | POAM-2026-090 | CA-7 / SA-11 | Formal-model drift: [`proof/DistributedCBF.cfg`](../proof/DistributedCBF.cfg) names constants (`Agents`, `InitialAvailable`, `MaxAmount`) and invariants (`SP2_ReserveNonNegative`, `SP3_AvailableNonNegative`) that do not exist in [`proof/DistributedCBF.tla`](../proof/DistributedCBF.tla), so TLC cannot run; the spec's `Failover` is benevolent (epoch increment and reservation release) and does not model a stale-replica regression; published state counts in [`proof/README.md`](../proof/README.md) (42/21/49/39) and [`REVISION_TRACKER.md`](paper/REVISION_TRACKER.md) (42/21/39/40) disagree with `proof/model.py` (38/19/35; EU_ECB 42). Remediation: repair the cfg, add replica state and `StaleFailover`, pin regenerated counts | Moderate | 2026-10-23 |
+| POAM-2026-091 | CA-7 / SA-11 | [`proof/FtraBoundary.tla`](../proof/FtraBoundary.tla) and [`proof/LangGraphHarness.tla`](../proof/LangGraphHarness.tla) have never been model-checked: with constants that load, TLC finds `FtraBoundary`'s initial state violates `ControllerBoundaryCoversInGraphBypass`, and `LangGraphHarness` actions leave `consecutive_denials` / `deferral_resolved` unassigned. Their invariants (including `SingleUseDeferralTicket` and `BudgetNeverExceededWithoutPause`) are unverified claims | Moderate | 2026-11-13 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -568,7 +569,7 @@ In reconciled mode the CBF nets the KMS-verified custodian balance against a Red
 
 **Control:** NIST CA-7 (Continuous Monitoring), SA-11 (Developer Testing and Evaluation)
 **Risk Level:** Moderate
-**Status:** Open (remediation planned on `fix/proof-replica-regression`)
+**Status:** Open (implemented on `fix/proof-replica-regression`; closes on merge)
 **Date Opened:** 2026-10-02
 **Target Closure:** 2026-10-23
 
@@ -580,6 +581,43 @@ In reconciled mode the CBF nets the KMS-verified custodian balance against a Red
 2. Add `rep_balance` / `rep_epoch`, a `SyncReplication` constant, `Replicate`, `StaleFailover` (balance and epoch regress, `agent_epochs` unchanged) and `AgentRestart`; guard reserve/commit on `agent_epochs[a] > fence_epoch`; under `SyncReplication` require `rep_epoch = fence_epoch`. Keep today's benevolent `Failover` as the negative control.
 3. Pin the regenerated `EXPECTED_STATE_COUNTS` in a new pytest module `test_distributed_cbf_proof`; add `verdict_of()` and a parity test against `ClassificationEngine` to `proof/model.py`; correct the published counts.
 
+**Remediation (as implemented):**
+1. [`proof/distributed_cbf_model.py`](../proof/distributed_cbf_model.py) and [`proof/DistributedCBF.tla`](../proof/DistributedCBF.tla) were rewritten as a line-for-line pair modelling the runtime protocol of [`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py): epoch CAS + barrier + ledger write (`LUA_ATOMIC_CBF`), `WAIT`-gated actuation, `LUA_ROLLBACK` including `ROLLED_BACK_SETTLED`, the per-process `_last_seen_epoch`, `Replicate`, `AgentRestart` and `StaleFailover` (balance, epoch and ledger regress; the broker side effect does not). The approved design's benevolent-`Failover` negative control was replaced by three negative-control configurations (`_nosync`, `_selfreported`, `_unfenced`), which isolate each defence.
+2. Four cfgs load and run under TLC; [`scripts/verify_tla.py`](../scripts/verify_tla.py) compares TLC output to the Python pins, `make verify-tla` runs it when `TLA_TOOLS_JAR` is set, and [`.github/workflows/tlc-model-check.yml`](../.github/workflows/tlc-model-check.yml) runs it on `workflow_dispatch` against a SHA-256-pinned `tla2tools.jar` v1.7.4.
+3. [`tests/test_distributed_cbf_proof.py`](../tests/test_distributed_cbf_proof.py) pins `EXPECTED_STATE_COUNTS` for $N \in \{1,2,3\}$, the counterexamples, cfg/spec/Python constant parity, the `proof/model.py` counts (38/19/42), I-6 as `narrow_valid`, the verdict lattice, and `verdict_of()` parity against `ClassificationEngine`.
+4. Published counts corrected in `proof/README.md`, `FORMAL_VERIFICATION.md`, `NON_FORMATION_PROOF_SPEC.md` and `REVISION_TRACKER.md`.
+
+**Results (TLC v1.7.4 and BFS agree at $N = 2$, 2026-10-02):** the shipped posture (reconciled + `WAIT 1`) reaches 1,945 states with SP-1, SP-2 and SP-4 holding; `_nosync` (4,232) and `_selfreported` (1,933) violate SP-1 and SP-2; `_unfenced` (2,536) holds.
+
+**Findings recorded by the remediation:**
+- The plan's hypothesis that, without synchronous replication, "SP-1 holds iff no `AgentRestart` precedes `Replicate`" is **false**: a second process, or a rollback re-assigning `_last_seen_epoch` to the regressed epoch, re-admits the lost debit. `WAIT N` with strict rollback is the load-bearing defence.
+- In reconciled mode the fence CAS is not needed for SP-1.
+- Self-reported mode (refused by `CAGE_CBF_STRICT_MODE` under every enforcing posture) has a fence-epoch ABA and a rollback over-credit through `ROLLED_BACK_SETTLED`. This is a dev-only residual; no fix is in scope here.
+- Fixing the other cfgs so their constants load exposed POAM-2026-091.
+
 **Remaining Closure Criteria:**
-1. Merge `fix/proof-replica-regression`; record the merge SHA, a TLC run on both cfgs, and the actual verification date here.
+1. Merge `fix/proof-replica-regression`; record the merge SHA, a TLC run on the shipped cfg, and the actual verification date here.
+
+### POAM-2026-091: FtraBoundary and LangGraphHarness TLA+ Specifications Have Never Been Model-Checked
+
+**Control:** NIST CA-7 (Continuous Monitoring), SA-11 (Developer Testing and Evaluation)
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-10-02
+**Target Closure:** 2026-11-13
+
+**Description:**
+While remediating POAM-2026-090, [`proof/FtraBoundary.cfg`](../proof/FtraBoundary.cfg) and [`proof/LangGraphHarness.cfg`](../proof/LangGraphHarness.cfg) were rewritten so their constants load. TLC then fails both specifications:
+- [`proof/FtraBoundary.tla`](../proof/FtraBoundary.tla): the initial state violates `ControllerBoundaryCoversInGraphBypass`.
+- [`proof/LangGraphHarness.tla`](../proof/LangGraphHarness.tla): several actions leave `consecutive_denials` and `deferral_resolved` unassigned, so successor states are undefined.
+
+Neither specification had been model-checked before, so their stated invariants, including `SingleUseDeferralTicket` and `BudgetNeverExceededWithoutPause`, are unverified. `proof/README.md` marks both as "not model-checked".
+
+**Remediation:**
+1. Fix the `FtraBoundary` initial predicate or the invariant so that it states the intended property.
+2. Assign every variable in every `LangGraphHarness` action (`UNCHANGED` where appropriate).
+3. Add both cfgs to `scripts/verify_tla.py` with pinned state counts and negative controls.
+
+**Remaining Closure Criteria:**
+1. Both specifications pass TLC under `make verify-tla`; record the merge SHA, the TLC output and the actual verification date here.
 

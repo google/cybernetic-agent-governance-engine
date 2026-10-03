@@ -14,328 +14,230 @@
    limitations under the License.
 
    --------------------------------------------------------------------------
-   Distributed Control Barrier Function — TLA+ Formal Specification
+   Distributed CBF admission under a lagging Redis replica
    --------------------------------------------------------------------------
 
-   This specification is a direct transliteration of proof/distributed_cbf_model.py.
-   It formalizes the safety properties of the CAGE CBF fence epoch mechanism
-   under N concurrent agents performing simultaneous balance operations.
+   Line-for-line transliteration of proof/distributed_cbf_model.py, which
+   documents the correspondence to src/gateway/governance/safety/cbf_engine.py
+   action by action. TLC on the DistributedCBF*.cfg files must report the
+   distinct-state counts pinned in tests/test_distributed_cbf_proof.py.
 
-   PR C (Stage 2): This model abstracts over the specific barrier formula.
-   The barrier evaluation h(x) = state[state_key] - thresholds[threshold_key]
-   is implemented in the atomic Lua script (src/gateway/governance/safety/cbf_engine.py:253).
-   This TLA+ spec models the *distributed TOCTOU-prevention mechanism* (fence epochs)
-   that ensures atomicity across concurrent agents, independent of the barrier formula.
-   The model applies to any affine barrier h(x) = x - threshold, parameterized by
-   InvariantModel (invariant_id, state_key, threshold_key, gamma).
+   One agent = one gateway process. Redis is one primary that replicates
+   asynchronously to one replica; StaleFailover promotes the replica.
 
-   Safety Properties Verified:
-   - SP-1: Total balance never exceeds initial pool (no double-spend)
-   - SP-2: Individual agent balances always non-negative
-   - SP-3: Concurrent reserves don't exceed available balance
-   - SP-4: Fence epoch prevents stale-read exploitation
-
-   Python Model Cross-Reference:
-   - DistributedCBFState dataclass → TLA+ state variables below
-   - fenced_reserve()            → FencedReserve action
-   - fenced_commit()             → FencedCommit action
-   - fenced_rollback()           → FencedRollback action
-   - failover()                  → Failover action
-   - unfenced_reserve()          → UnfencedReserve (negative control)
-   - unfenced_commit()           → UnfencedCommit (negative control)
-   - check_safety_invariants()   → SP1, SP2, SP3, SP4 predicates
-
-   Verification Status:
-   - Python BFS (proof/distributed_cbf_model.py): Exhaustively verified for N∈{2,3,4}
-     - N=2: 357 reachable states, all safe
-     - N=3: 2246 reachable states, all safe
-     - N=4: 12184 reachable states, all safe
-   - TLC Model Checking: Use configuration below for cross-validation
-
-   TLC Configuration (place in DistributedCBF.cfg or TLC GUI):
-   ---------------------------------------------------------------------------
-   CONSTANTS
-       AgentIDs = {"agent_0", "agent_1"}  \* For N=2; extend for N=3,4
-       InitialPool = 4
-       MaxFenceEpoch = 3
-       MaxAgentReserve = 2
-       ReserveAmount = 1
-   INIT Init
-   NEXT Next
-   INVARIANT TypeOK
-   INVARIANT SP1_NoDoubleSpend
-   INVARIANT SP2_NonNegativeReserves
-   INVARIANT SP3_NonNegativeAvailable
-   INVARIANT SP4_FenceEpochMonotonic
-   ---------------------------------------------------------------------------
+   Results (N = 2, see the cfg files):
+   - DistributedCBF.cfg              Reconciled, SyncReplication: SP-1 holds.
+   - DistributedCBF_nosync.cfg       no WAIT N: SP-1 violated. The fence
+     epoch and the in-process _last_seen_epoch do not prevent it: another
+     process whose last_seen is at or below the regressed epoch spends the
+     restored balance.
+   - DistributedCBF_selfreported.cfg self-reported scalar (non-strict, dev
+     only): SP-1 violated through a fence-epoch ABA — a read in flight
+     across the failover passes the CAS once the epoch climbs back.
 *)
 
-EXTENDS Naturals, FiniteSets, Sequences
-
------------------------------------------------------------------------------
-(* CONSTANTS — Match proof/distributed_cbf_model.py bounds *)
------------------------------------------------------------------------------
+EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-    AgentIDs,          \* Set of agent identifiers, e.g. {"agent_0", "agent_1"}
-    InitialPool,       \* Initial balance pool (default: 4)
-    MaxFenceEpoch,     \* Maximum fence epoch to bound state space (default: 3)
-    MaxAgentReserve,   \* Maximum reserve per agent (default: 2)
-    ReserveAmount      \* Reserve increment per operation (default: 1)
-
------------------------------------------------------------------------------
-(* VARIABLES — Direct mapping from DistributedCBFState dataclass *)
------------------------------------------------------------------------------
+    AgentIDs,           \* gateway processes
+    InitialPool,        \* initial balance
+    ReserveAmount,      \* cost of one admitted action
+    MaxAgentReserve,    \* in-flight debits per process (state bound)
+    MaxFenceEpoch,      \* epoch bound (state bound)
+    MaxStaleFailovers,  \* failover bound (state bound)
+    SyncReplication,    \* WAIT N + strict rollback before actuation
+    Reconciled,         \* script nets the live ledger (strict mode)
+    Fenced,             \* fence-epoch CAS and last_seen regression check
+    AllowRestart        \* processes may restart and re-seed last_seen
 
 VARIABLES
-    available_balance,  \* Nat: Balance available for new reservations
-    agent_reserves,     \* [AgentIDs -> Nat]: Reserved amount per agent
-    fence_epoch,        \* Nat: Current fence epoch (monotonically increasing)
-    agent_epochs        \* [AgentIDs -> Nat]: Last seen epoch per agent
+    available_balance,  \* primary: barrier scalar net of in-flight debits
+    fence_epoch,        \* primary: safety:fence_epoch (HWM regresses with it)
+    rep_balance,        \* replica copy of available_balance
+    rep_epoch,          \* replica copy of fence_epoch
+    agent_reserves,     \* per process: admitted, not yet actuated
+    ledger,             \* primary: cbf:debits (rollback-able amount)
+    rep_ledger,         \* replica copy of ledger
+    agent_epochs,       \* per process: _last_seen_epoch (in memory)
+    read_balance,       \* per process: scalar read before the script
+    read_epoch,         \* per process: epoch read (0 = no read in flight)
+    spent,              \* actuated at the broker; never regresses
+    stale_failovers
 
-\* Tuple of all variables for unchanged expressions
-vars == <<available_balance, agent_reserves, fence_epoch, agent_epochs>>
+vars == <<available_balance, fence_epoch, rep_balance, rep_epoch,
+          agent_reserves, ledger, rep_ledger, agent_epochs,
+          read_balance, read_epoch, spent, stale_failovers>>
 
------------------------------------------------------------------------------
-(* TYPE INVARIANT — TypeOK *)
------------------------------------------------------------------------------
+RECURSIVE SumOver(_, _)
+SumOver(f, S) == IF S = {} THEN 0
+                 ELSE LET a == CHOOSE x \in S : TRUE
+                      IN f[a] + SumOver(f, S \ {a})
 
-TypeOK ==
-    /\ available_balance \in 0..InitialPool
-    /\ agent_reserves \in [AgentIDs -> 0..MaxAgentReserve]
-    /\ fence_epoch \in 1..MaxFenceEpoch
-    /\ agent_epochs \in [AgentIDs -> 0..MaxFenceEpoch]
+Max(x, y) == IF x >= y THEN x ELSE y
 
------------------------------------------------------------------------------
-(* DERIVED STATE FUNCTIONS — Match Python helper methods *)
------------------------------------------------------------------------------
-
-\* Sum of all agent reservations (matches DistributedCBFState.total_reserved())
-TotalReserved == 
-    LET Sum[S \in SUBSET AgentIDs] ==
-        IF S = {} THEN 0
-        ELSE LET a == CHOOSE x \in S : TRUE
-             IN agent_reserves[a] + Sum[S \ {a}]
-    IN Sum[AgentIDs]
-
-\* Total balance = available + reserved (matches DistributedCBFState.total_balance())
-TotalBalance == available_balance + TotalReserved
-
------------------------------------------------------------------------------
-(* SAFETY PROPERTIES — SP-1 through SP-4 as TLA+ invariants *)
------------------------------------------------------------------------------
-
-(* SP-1: Total balance never exceeds initial pool (no double-spend)
-   Python: check_safety_invariants() line 507-511
-   Verified by: Python BFS for N∈{2,3,4}; TLC for cross-validation *)
-SP1_NoDoubleSpend == TotalBalance <= InitialPool
-
-(* SP-2: Individual agent balances always non-negative
-   Python: check_safety_invariants() line 514-518
-   Verified by: Python BFS exhaustively; type invariant in TLA+ *)
-SP2_NonNegativeReserves == \A a \in AgentIDs : agent_reserves[a] >= 0
-
-(* SP-3: Available balance always non-negative (concurrent reserves bounded)
-   Python: check_safety_invariants() line 520-523
-   Verified by: Python BFS exhaustively *)
-SP3_NonNegativeAvailable == available_balance >= 0
-
-(* SP-4: Fence epoch is monotonically non-decreasing
-   Python: Enforced structurally by transition functions (fence_epoch only increases)
-   Note: This is a transition property in Python, expressed here as state invariant
-   that fence_epoch is within valid bounds. The monotonicity is enforced by the
-   action definitions below (rollback and failover only increment). *)
-SP4_FenceEpochMonotonic == fence_epoch >= 1
-
-\* Combined safety invariant
-Safety == SP1_NoDoubleSpend /\ SP2_NonNegativeReserves 
-       /\ SP3_NonNegativeAvailable /\ SP4_FenceEpochMonotonic
-
------------------------------------------------------------------------------
-(* INITIAL STATE — matches initial_state() in Python *)
 -----------------------------------------------------------------------------
 
 Init ==
     /\ available_balance = InitialPool
+    /\ fence_epoch = 1
+    /\ rep_balance = InitialPool
+    /\ rep_epoch = 1
     /\ agent_reserves = [a \in AgentIDs |-> 0]
-    /\ fence_epoch = 1                          \* Start at epoch 1 (0 = "never seen")
-    /\ agent_epochs = [a \in AgentIDs |-> 0]
+    /\ ledger = [a \in AgentIDs |-> 0]
+    /\ rep_ledger = [a \in AgentIDs |-> 0]
+    /\ agent_epochs = [a \in AgentIDs |-> 1]     \* seeded at startup
+    /\ read_balance = [a \in AgentIDs |-> 0]
+    /\ read_epoch = [a \in AgentIDs |-> 0]
+    /\ spent = 0
+    /\ stale_failovers = 0
 
------------------------------------------------------------------------------
-(* FENCED ACTIONS — Correct implementation with epoch guards *)
------------------------------------------------------------------------------
+Basis(a) == IF Reconciled THEN available_balance ELSE read_balance[a]
 
-(* FencedReserve: Reserve an amount for an agent with fence epoch validation.
-   Python: fenced_reserve() lines 162-208
-   
-   Guards:
-   - amount > 0 (implicit by using ReserveAmount constant)
-   - current_reserve < MaxAgentReserve (bounded state space)
-   - amount <= available_balance (SP-3)
-   - agent_epoch = 0 OR agent_epoch >= fence_epoch - 1 (SP-4: not stale) *)
-FencedReserve(agent) ==
-    /\ ReserveAmount > 0
-    /\ agent_reserves[agent] < MaxAgentReserve
-    /\ ReserveAmount <= available_balance
-    /\ \/ agent_epochs[agent] = 0                          \* New agent
-       \/ agent_epochs[agent] >= fence_epoch - 1           \* Not stale
-    /\ available_balance' = available_balance - ReserveAmount
-    /\ agent_reserves' = [agent_reserves EXCEPT ![agent] = @ + ReserveAmount]
-    /\ agent_epochs' = [agent_epochs EXCEPT ![agent] = fence_epoch]
-    /\ UNCHANGED fence_epoch
+(* _check_fence_epoch + state read. *)
+Read(a) ==
+    /\ read_epoch[a] = 0
+    /\ agent_reserves[a] < MaxAgentReserve
+    /\ available_balance >= ReserveAmount
+    /\ ~(Fenced /\ agent_epochs[a] > fence_epoch)
+    /\ agent_epochs' = [agent_epochs EXCEPT ![a] = Max(@, fence_epoch)]
+    /\ read_balance' = [read_balance EXCEPT ![a] = available_balance]
+    /\ read_epoch' = [read_epoch EXCEPT ![a] = fence_epoch]
+    /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
+                   agent_reserves, ledger, rep_ledger, spent, stale_failovers>>
 
-(* FencedCommit: Commit an agent's reserved amount with epoch validation.
-   Python: fenced_commit() lines 211-244
-   
-   Guards:
-   - reserved > 0 (has active reservation)
-   - agent_epoch = fence_epoch (epoch must match exactly) *)
-FencedCommit(agent) ==
-    /\ agent_reserves[agent] > 0
-    /\ agent_epochs[agent] = fence_epoch
-    /\ agent_reserves' = [agent_reserves EXCEPT ![agent] = 0]
-    /\ UNCHANGED <<available_balance, fence_epoch, agent_epochs>>
-
-(* FencedRollback: Rollback an agent's reservation, returning balance.
-   Python: fenced_rollback() lines 247-277
-   
-   Bumps fence_epoch to invalidate other in-flight operations.
-   Guards:
-   - reserved > 0 (has something to rollback)
-   - fence_epoch < MaxFenceEpoch (bounded state space) *)
-FencedRollback(agent) ==
-    /\ agent_reserves[agent] > 0
+(* LUA_ATOMIC_CBF success: CAS, barrier, SET, INCR, ledger the debit. *)
+Write(a) ==
+    /\ read_epoch[a] # 0
     /\ fence_epoch < MaxFenceEpoch
-    /\ available_balance' = available_balance + agent_reserves[agent]
-    /\ agent_reserves' = [agent_reserves EXCEPT ![agent] = 0]
+    /\ ~(Fenced /\ fence_epoch # read_epoch[a])
+    /\ Basis(a) >= ReserveAmount
+    /\ available_balance' = Basis(a) - ReserveAmount
     /\ fence_epoch' = fence_epoch + 1
-    /\ UNCHANGED agent_epochs
+    /\ agent_reserves' = [agent_reserves EXCEPT ![a] = @ + ReserveAmount]
+    /\ ledger' = [ledger EXCEPT ![a] = @ + ReserveAmount]
+    /\ agent_epochs' = [agent_epochs EXCEPT ![a] = fence_epoch + 1]
+    /\ read_balance' = [read_balance EXCEPT ![a] = 0]
+    /\ read_epoch' = [read_epoch EXCEPT ![a] = 0]
+    /\ UNCHANGED <<rep_balance, rep_epoch, rep_ledger, spent, stale_failovers>>
 
-(* Failover: Simulate a Redis failover event.
-   Python: failover() lines 280-306
-   
-   Returns all reservations to available, bumps epoch, resets agent epochs.
-   Guards:
-   - fence_epoch < MaxFenceEpoch (bounded state space) *)
-Failover ==
+(* LUA_ATOMIC_CBF refusal (CAS mismatch, barrier, or epoch bound). *)
+WriteReject(a) ==
+    /\ read_epoch[a] # 0
+    /\ ~( /\ (~Fenced \/ fence_epoch = read_epoch[a])
+          /\ fence_epoch < MaxFenceEpoch
+          /\ Basis(a) >= ReserveAmount )
+    /\ read_balance' = [read_balance EXCEPT ![a] = 0]
+    /\ read_epoch' = [read_epoch EXCEPT ![a] = 0]
+    /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
+                   agent_reserves, ledger, rep_ledger, agent_epochs,
+                   spent, stale_failovers>>
+
+(* Actuation: not re-fenced; under SyncReplication only after WAIT N. *)
+Commit(a) ==
+    /\ agent_reserves[a] > 0
+    /\ ~(SyncReplication /\ rep_ledger[a] # agent_reserves[a])
+    /\ spent' = spent + agent_reserves[a]
+    /\ agent_reserves' = [agent_reserves EXCEPT ![a] = 0]
+    /\ ledger' = [ledger EXCEPT ![a] = 0]
+    /\ rep_ledger' = [rep_ledger EXCEPT ![a] = 0]
+    /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
+                   agent_epochs, read_balance, read_epoch, stale_failovers>>
+
+(* LUA_ROLLBACK by debit_id. Reconciled: removes the ledger entry if the
+   primary holds it. A missing entry takes ROLLED_BACK_SETTLED and restores
+   the magnitude to the state key, which only the self-reported barrier
+   reads. *)
+Rollback(a) ==
+    /\ agent_reserves[a] > 0
+    /\ read_epoch[a] = 0
     /\ fence_epoch < MaxFenceEpoch
-    /\ available_balance' = available_balance + TotalReserved
-    /\ agent_reserves' = [a \in AgentIDs |-> 0]
+    /\ available_balance' = available_balance
+                            + (IF Reconciled THEN ledger[a] ELSE agent_reserves[a])
     /\ fence_epoch' = fence_epoch + 1
-    /\ agent_epochs' = [a \in AgentIDs |-> 0]
+    /\ agent_reserves' = [agent_reserves EXCEPT ![a] = 0]
+    /\ ledger' = [ledger EXCEPT ![a] = 0]
+    /\ rep_ledger' = [rep_ledger EXCEPT ![a] = 0]
+    /\ agent_epochs' = [agent_epochs EXCEPT ![a] = fence_epoch + 1]
+    /\ UNCHANGED <<rep_balance, rep_epoch, read_balance, read_epoch,
+                   spent, stale_failovers>>
 
------------------------------------------------------------------------------
-(* UNFENCED ACTIONS — Vulnerable variant for negative control testing *)
------------------------------------------------------------------------------
+(* Process restart: _last_seen_epoch re-seeded from the primary. *)
+AgentRestart(a) ==
+    /\ AllowRestart
+    /\ agent_reserves[a] = 0
+    /\ read_epoch[a] = 0
+    /\ agent_epochs[a] # fence_epoch
+    /\ agent_epochs' = [agent_epochs EXCEPT ![a] = fence_epoch]
+    /\ UNCHANGED <<available_balance, fence_epoch, rep_balance, rep_epoch,
+                   agent_reserves, ledger, rep_ledger, read_balance,
+                   read_epoch, spent, stale_failovers>>
 
-(* UnfencedReserve: Reserve WITHOUT fence epoch validation.
-   Python: unfenced_reserve() lines 314-345
-   
-   This variant removes the SP-4 fence epoch check, allowing stale reads.
-   Used to prove the fence mechanism is load-bearing (not decorative).
-   
-   The Python BFS negative control test_ungated_variant_produces_reachable_violation()
-   demonstrates that removing fencing can lead to unsafe states. *)
-UnfencedReserve(agent) ==
-    /\ ReserveAmount > 0
-    /\ ReserveAmount <= available_balance
-    \* NO FENCE EPOCH CHECK — this is the vulnerability
-    /\ available_balance' = available_balance - ReserveAmount
-    /\ agent_reserves' = [agent_reserves EXCEPT ![agent] = @ + ReserveAmount]
-    /\ agent_epochs' = [agent_epochs EXCEPT ![agent] = fence_epoch]
-    /\ UNCHANGED fence_epoch
+ReplicaCurrent ==
+    /\ rep_balance = available_balance
+    /\ rep_epoch = fence_epoch
+    /\ rep_ledger = ledger
 
-(* UnfencedCommit: Commit WITHOUT fence epoch validation.
-   Python: unfenced_commit() lines 348-372
-   
-   Removes the epoch check at commit time, allowing double-spend. *)
-UnfencedCommit(agent) ==
-    /\ agent_reserves[agent] > 0
-    \* NO FENCE EPOCH CHECK — this is the vulnerability
-    /\ agent_reserves' = [agent_reserves EXCEPT ![agent] = 0]
-    /\ UNCHANGED <<available_balance, fence_epoch, agent_epochs>>
+Replicate ==
+    /\ ~ReplicaCurrent
+    /\ rep_balance' = available_balance
+    /\ rep_epoch' = fence_epoch
+    /\ rep_ledger' = ledger
+    /\ UNCHANGED <<available_balance, fence_epoch, agent_reserves, ledger,
+                   agent_epochs, read_balance, read_epoch, spent,
+                   stale_failovers>>
 
------------------------------------------------------------------------------
-(* NEXT STATE RELATION — Fenced architecture (correct) *)
------------------------------------------------------------------------------
+(* Replica promoted: balance, epoch, HWM and ledger regress; last_seen does
+   not. Under SyncReplication a debit the replica lacks cannot be actuated
+   (Commit waits for it on the replica); the process rolls it back. *)
+StaleFailover ==
+    /\ stale_failovers < MaxStaleFailovers
+    /\ ~ReplicaCurrent
+    /\ available_balance' = rep_balance
+    /\ fence_epoch' = rep_epoch
+    /\ ledger' = rep_ledger
+    /\ stale_failovers' = stale_failovers + 1
+    /\ UNCHANGED <<rep_balance, rep_epoch, rep_ledger, agent_reserves,
+                   agent_epochs, read_balance, read_epoch, spent>>
 
-\* All possible fenced transitions by any agent
-FencedAgentAction(agent) ==
-    \/ FencedReserve(agent)
-    \/ FencedCommit(agent)
-    \/ FencedRollback(agent)
+Next ==
+    \/ \E a \in AgentIDs :
+          \/ Read(a) \/ Write(a) \/ WriteReject(a)
+          \/ Commit(a) \/ Rollback(a) \/ AgentRestart(a)
+    \/ Replicate
+    \/ StaleFailover
 
-\* The fenced Next relation — used for safety verification
-FencedNext ==
-    \/ \E a \in AgentIDs : FencedAgentAction(a)
-    \/ Failover
-
-\* Default Next uses the fenced (safe) architecture
-Next == FencedNext
-
------------------------------------------------------------------------------
-(* UNFENCED NEXT — Vulnerable architecture for negative control *)
------------------------------------------------------------------------------
-
-\* All possible unfenced transitions by any agent
-UnfencedAgentAction(agent) ==
-    \/ UnfencedReserve(agent)
-    \/ UnfencedCommit(agent)
-    \/ FencedRollback(agent)    \* Rollback is safe, no need to unfence
-
-\* The unfenced Next relation — should violate Safety under TLC
-UnfencedNext ==
-    \/ \E a \in AgentIDs : UnfencedAgentAction(a)
-    \/ Failover
-
------------------------------------------------------------------------------
-(* SPECIFICATION — Standard TLA+ Spec formulation *)
------------------------------------------------------------------------------
-
-\* Fenced specification (safe)
 Spec == Init /\ [][Next]_vars
 
-\* Unfenced specification (for negative control — expect Safety violation)
-UnfencedSpec == Init /\ [][UnfencedNext]_vars
-
------------------------------------------------------------------------------
-(* LIVENESS PROPERTIES — Optional, not verified by Python BFS *)
 -----------------------------------------------------------------------------
 
-\* Weak fairness ensures agents eventually act
-FairSpec == Spec /\ WF_vars(Next)
+TypeOK ==
+    /\ available_balance \in Nat
+    /\ rep_balance \in Nat
+    /\ spent \in Nat
+    /\ fence_epoch \in 1..MaxFenceEpoch
+    /\ rep_epoch \in 1..MaxFenceEpoch
+    /\ agent_reserves \in [AgentIDs -> 0..MaxAgentReserve]
+    /\ agent_epochs \in [AgentIDs -> 1..MaxFenceEpoch]
+    /\ read_epoch \in [AgentIDs -> 0..MaxFenceEpoch]
+    /\ stale_failovers \in 0..MaxStaleFailovers
 
------------------------------------------------------------------------------
-(* TLC MODEL CHECKING NOTES *)
------------------------------------------------------------------------------
-(*
-   Cross-Validation with Python BFS:
-   ---------------------------------
-   Run TLC with the FencedSpec and verify Safety holds.
-   Expected reachable state counts should match Python BFS:
-   - N=2 (AgentIDs = {"agent_0", "agent_1"}): 357 states
-   - N=3 (add "agent_2"): 2246 states
-   - N=4 (add "agent_3"): 12184 states
+(* An admitted debit that can still reach the broker: under SyncReplication
+   one the primary no longer holds can only be rolled back. *)
+Actuatable == [a \in AgentIDs |->
+                 IF SyncReplication /\ ledger[a] # agent_reserves[a]
+                 THEN 0 ELSE agent_reserves[a]]
 
-   Note: TLC counts may differ slightly due to how TLA+ handles
-   symmetric reductions and the exact state representation. The
-   key verification is that Safety holds in all reachable states.
+(* SP-1: no double spend. Actuated spend plus actuatable in-flight debits
+   never exceed the pool. *)
+SP1_NoDoubleSpend == spent + SumOver(Actuatable, AgentIDs) <= InitialPool
 
-   Negative Control:
-   -----------------
-   To verify the fence mechanism is load-bearing:
-   1. Replace Next with UnfencedNext in the model
-   2. TLC should find a counterexample to SP1_NoDoubleSpend or SP3_NonNegativeAvailable
-   3. This mirrors test_ungated_variant_produces_reachable_violation() in Python
+(* SP-2: no over-credit. Admissible balance never exceeds what the pool can
+   still fund — the leading indicator of a later SP-1 violation. *)
+SP2_NoOvercommit ==
+    available_balance + spent + SumOver(Actuatable, AgentIDs) <= InitialPool
 
-   The Python model constructs an explicit race condition state via
-   _construct_race_condition_state() that demonstrates the violation:
-   - Both agents reserve 3 of 4 pool units
-   - available_balance = 4 - 6 = -2 (SP-3 violation)
-   - TotalBalance = 6 > 4 (SP-1 violation)
-
-   This state is reachable under UnfencedNext but NOT under FencedNext,
-   proving the fence epoch mechanism is essential for safety.
-*)
+(* SP-4: the fence epoch decreases only at a stale failover. *)
+SP4_FenceEpochMonotonic ==
+    [][fence_epoch' >= fence_epoch \/ stale_failovers' > stale_failovers]_vars
 
 =============================================================================

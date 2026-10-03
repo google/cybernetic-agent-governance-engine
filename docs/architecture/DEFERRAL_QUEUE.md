@@ -56,13 +56,7 @@ A `DeferToken` represents the parked execution context and progresses through a 
 
 ## 5. Configuration Contracts & Runtime Matrix
 
-<<<<<<< HEAD
-- **Confidence Boundaries**: Limits are configured via `config/governance_thresholds.json`. By default, executions below `FRIA_ZONE_DEFER` (0.70) are deferred.
+- **Confidence Boundaries**: Limits are configured via `config/governance_thresholds.json`. By default, executions below `confidence.defer_floor` (0.70, `get_confidence_defer_floor()`) are deferred; `replay_evaluate()` admits a hydrated token only once its confidence clears the same floor.
 - **Redis Isolation**: Deferral operations depend strictly on `db=1`, isolating them from the LangGraph checkpointer at `db=0`. In the `gcp-gke` target this is the governance Memorystore instance, and Redis runs with `noeviction` in every environment.
 - **Feature Flagging**: Controlled by `CAGE_DEFER_ENABLED` (default: `true`), read once at assembly into the governor's `ClassificationEngine`. If disabled, all deferrable events fall back directly to a terminal `DENY` to ensure fail-closed safety.
-=======
-- **Confidence Boundaries**: Limits are configured via `config/governance_thresholds.json`. By default, executions below `confidence.defer_floor` (0.70, `get_confidence_defer_floor()`) are deferred; `replay_evaluate()` admits a hydrated token only once its confidence clears the same floor.
-- **Redis Isolation**: Deferral operations depend strictly on `db=1`, isolating them from the LangGraph checkpointer at `db=0`.
-- **Feature Flagging**: Controlled by `CAGE_DEFER_ENABLED` (default: `true`). If disabled, all deferrable events fallback directly to a terminal `DENY` to ensure fail-closed safety.
->>>>>>> 5e5a3aa (refactor(governance)!: wire FRIA only under the EU_ECB posture)
 

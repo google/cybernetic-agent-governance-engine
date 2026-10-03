@@ -101,6 +101,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import product
 
 # ---------------------------------------------------------------------------
 # State definition
@@ -110,9 +111,9 @@ from dataclasses import dataclass
 # by ``run_pipeline()``.  Each tier can be PENDING, PASS or FAIL.
 #
 # Tier numbering follows the paper (§4.2).  Tier 3 is split into its two
-# concurrently-evaluated components (``cbf`` and ``opa``) because each can
-# independently block the action; see ``concurrent_tier_transitions()`` for
-# the proof that their evaluation order does not affect the invariant.
+# components (``cbf`` and ``opa``) because each can independently block the
+# action.  They are evaluated sequentially (OPA in phase 1, CBF in phase 2 of
+# ``run_pipeline()``), so no interleaving sub-proof is needed.
 # FTRA (Tier 0.5) added to close proof/implementation divergence (ARCH-1).
 TIERS = (
     "ftra",  # Tier 0.5: FTRA action classification & reachability analysis
@@ -321,6 +322,78 @@ def hard_preview_denies_before_hitl() -> bool:
             if (barrier_preview == "FAIL") != bool(preview):
                 return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Verdict lattice
+# ---------------------------------------------------------------------------
+#
+# Mirrors ``ClassificationEngine.classify`` in
+# ``src/gateway/governance/classification_engine.py`` (parity in
+# ``tests/test_distributed_cbf_proof.py``). Only ALLOW and NARROW lead to
+# SEAL_ISSUED; DENY, REQUIRE_APPROVAL and DEFER mint no seal.
+
+VERDICTS: tuple[str, ...] = ("ALLOW", "NARROW", "DEFER", "REQUIRE_APPROVAL", "DENY")
+SEALING_VERDICTS: frozenset[str] = frozenset({"ALLOW", "NARROW"})
+
+
+def verdict_of(
+    kinds: frozenset[str],
+    *,
+    low_confidence: bool,
+    narrows: bool,
+    manual_review: bool = False,
+    defer_enabled: bool = True,
+) -> str:
+    """HARD > (MANUAL_REVIEW | HITL) > all-NARROWABLE + proposal > DEFERRABLE
+    with low confidence > DENY. ``narrows`` = NARROW enabled and a narrower
+    proposes clamped params. No findings is ALLOW."""
+    if not kinds:
+        return "ALLOW"
+    if "HARD" in kinds:
+        return "DENY"
+    if manual_review or "HITL" in kinds:
+        return "REQUIRE_APPROVAL"
+    if kinds == frozenset({"NARROWABLE"}) and narrows:
+        return "NARROW"
+    if "DEFERRABLE" in kinds and defer_enabled and low_confidence:
+        return "DEFER"
+    return "DENY"
+
+
+def _verdict_inputs() -> Iterator[tuple[frozenset[str], bool, bool, bool, bool]]:
+    for kinds in _kind_sets():
+        for low, nar, mr, de in product((False, True), repeat=4):
+            yield kinds, low, nar, mr, de
+
+
+def verdict_lattice_holds() -> bool:
+    """Claims: any HARD finding denies; DEFER needs a DEFERRABLE finding and
+    low confidence; NARROW needs every finding NARROWABLE; a seal-issuing
+    verdict (ALLOW, NARROW) never coexists with a HARD, HITL or DEFERRABLE
+    finding; ALLOW iff no findings."""
+    for kinds, low, nar, mr, de in _verdict_inputs():
+        v = verdict_of(kinds, low_confidence=low, narrows=nar, manual_review=mr, defer_enabled=de)
+        if "HARD" in kinds and v != "DENY":
+            return False
+        if v == "DEFER" and not ("DEFERRABLE" in kinds and low):
+            return False
+        if v == "NARROW" and kinds != frozenset({"NARROWABLE"}):
+            return False
+        if v in SEALING_VERDICTS and kinds & {"HARD", "HITL", "DEFERRABLE"}:
+            return False
+        if (v == "ALLOW") != (not kinds):
+            return False
+    return True
+
+
+def narrow_valid(state: State) -> bool:
+    """I-6 (restated): ``phase = NARROW ⇒ seal_present ∧ resolved_allow ∧
+    clamped_params_valid``. Replaces the manuscript's ``EXECUTED_unmodified``,
+    which no model defines."""
+    return state.phase != "NARROW" or (
+        state.seal_present and state.resolved_allow and state.clamped_params_valid
+    )
 
 
 @dataclass(frozen=True)
@@ -1040,10 +1113,13 @@ def main() -> None:
     print()
 
     # Verify NARROW states satisfy NoDirectBind (they are ALLOW variants)
-    narrow_valid = all(s.resolved_allow and s.seal_present for s in narrow_states)
+    narrow_ok = all(narrow_valid(s) for s in gated_states)
     print(
-        f"  NARROW states have resolvedAllow=TRUE and seal_present=TRUE: {narrow_valid}"
+        "  I-6 narrow_valid (NARROW => seal_present, resolvedAllow, clamped_params_valid): "
+        f"{narrow_ok}"
     )
+    lattice_ok = verdict_lattice_holds()
+    print(f"  Verdict lattice (only ALLOW/NARROW seal; HARD always denies): {lattice_ok}")
 
     # Verify profile ALLOW property
     # under every profile, an ALLOW (SEAL_ISSUED) requires every tier in that profile to PASS.
@@ -1111,9 +1187,10 @@ def main() -> None:
         "PROOF FAILED: no-seal govern() should violate No-Direct-Bind!"
     )
     # NARROW assertions
-    assert narrow_valid, (
-        "PROOF FAILED: NARROW states must have resolvedAllow=TRUE and seal_present=TRUE!"
+    assert narrow_ok, (
+        "PROOF FAILED: I-6 narrow_valid violated by a reachable NARROW state!"
     )
+    assert lattice_ok, "PROOF FAILED: verdict lattice violated!"
     assert profile_allow_valid, "PROOF FAILED: SEAL_ISSUED requires all profile tiers to pass!"
     assert profile_fail_blocks, "PROOF FAILED: SEAL_ISSUED state with failed profile tier!"
 
@@ -1149,7 +1226,8 @@ def main() -> None:
     print("  2. The ungated (direct-bind) variant provably violates the invariant.")
     print("  3. The pre-fix govern() path (no seal) provably violates the invariant.")
     print(f"  4. NARROW states ({len(narrow_states)}) are ALLOW variants with")
-    print("     resolvedAllow=TRUE and seal_present=TRUE (seal on clamped params).")
+    print("     resolvedAllow=TRUE, seal_present=TRUE and clamped_params_valid=TRUE")
+    print("     (I-6, narrow_valid).")
     print("  5. Every reachable phase is in PHASES: the model names no verdict")
     print("     the runtime lacks (there is no PAUSE).")
     print("  6. The ungated NARROW variant produces a counterexample, confirming")
@@ -1165,6 +1243,9 @@ def main() -> None:
     print("     is issued unless the region's obligations passed (fria under EU_ECB),")
     print("     and the phase-1 jurisdiction tiers leave the POST_HITL set unchanged")
     print(f"     (EU_ECB: {region_results['EU_ECB'][0]} states).")
+    print(" 11. Verdict lattice (verdict_of, parity with ClassificationEngine): HARD")
+    print("     always denies, DEFER needs low confidence, and only ALLOW/NARROW")
+    print("     reach SEAL_ISSUED (verdict_lattice_holds).")
     print()
     print("PLAUSIBLE (not proved here):")
     print("  That this model generalises to the full production CAGE stack.")
