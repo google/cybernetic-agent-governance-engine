@@ -50,8 +50,16 @@ REDIS_MANIFEST="deployment/k8s/benchmark-redis.yaml"
 JOB_MANIFEST="deployment/k8s/benchmark-job.yaml"
 GIT_SHA=$(git rev-parse --short HEAD)
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}}"
+# Binary Authorization admits digest references only, so resolve the tag.
+BENCHMARK_IMAGE=$(gcloud container images describe \
+  "${REGISTRY_URL}/governed-financial-advisor:${IMAGE_TAG}" \
+  --format='value(image_summary.fully_qualified_digest)' 2>/dev/null || true)
+if [ -z "${BENCHMARK_IMAGE}" ]; then
+  echo -e "${RED}❌ ${REGISTRY_URL}/governed-financial-advisor:${IMAGE_TAG} not found; build it with deployment/docker/cloudbuild.image.yaml.${NC}"
+  exit 1
+fi
 BENCHMARK_REDIS_IMAGE="${BENCHMARK_REDIS_IMAGE:-redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0}"
-export IMAGE_TAG BENCHMARK_REDIS_IMAGE
+export BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE
 
 # Render a manifest, substituting only the named variables (python3, so the
 # runner does not depend on gettext's envsubst; the Job's own ${BACKEND_URL}-
@@ -95,7 +103,7 @@ echo -e "${CYAN}================================================================
 echo -e "Namespace:   ${YELLOW}${NAMESPACE}${NC}"
 echo -e "Job Name:    ${YELLOW}${JOB_NAME}${NC}"
 echo -e "Git SHA:     ${YELLOW}${GIT_SHA}${NC}"
-echo -e "Image tag:   ${YELLOW}${IMAGE_TAG}${NC}"
+echo -e "Image:       ${YELLOW}${BENCHMARK_IMAGE} (tag ${IMAGE_TAG})${NC}"
 echo -e "Target Dir:  ${YELLOW}${OUTPUT_DIR}${NC}"
 echo ""
 
@@ -126,7 +134,7 @@ kubectl create configmap benchmark-scripts \
   --from-file=scripts/measure_reconciliation_metrics.py \
   -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-render "${JOB_MANIFEST}" REGISTRY_URL IMAGE_TAG GOOGLE_CLOUD_PROJECT \
+render "${JOB_MANIFEST}" BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT \
   | kubectl apply -n "${NAMESPACE}" -f -
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
@@ -136,6 +144,12 @@ for _ in $(seq 1 60); do
   [ -n "$(kubectl get pods -l app=cage-paper-benchmark -n "${NAMESPACE}" -o name 2>/dev/null)" ] && break
   sleep 2
 done
+if [ -z "$(kubectl get pods -l app=cage-paper-benchmark -n "${NAMESPACE}" -o name 2>/dev/null)" ]; then
+  echo -e "${RED}❌ The Job created no pod. Its events:${NC}"
+  kubectl get events -n "${NAMESPACE}" --field-selector "involvedObject.name=${JOB_NAME}" \
+    --sort-by=.lastTimestamp | tail -5
+  exit 1
+fi
 kubectl wait --for=condition=Ready pod -l app=cage-paper-benchmark -n "${NAMESPACE}" --timeout=600s
 POD_NAME=$(kubectl get pods -l app=cage-paper-benchmark -n "${NAMESPACE}" -o jsonpath='{.items[0].metadata.name}')
 JOB_IMAGE=$(kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" \
@@ -196,6 +210,7 @@ cat <<EOF > "${OUTPUT_DIR}/PROVENANCE.md"
 |---|---|
 | Generated | $(date -u +%Y-%m-%dT%H:%M:%SZ) |
 | Git SHA | ${GIT_SHA} |
+| Image tag | ${IMAGE_TAG} |
 | Benchmark image | ${JOB_IMAGE} |
 | Pod | ${POD_NAME} |
 | Namespace | ${NAMESPACE} |
