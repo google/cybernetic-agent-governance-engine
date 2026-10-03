@@ -204,7 +204,7 @@ class TestGuardFailClosed:
         gateway(fail)
         spy = _SpyNode()
 
-        result = await gateway_tool_guard("fetch_market_data")(spy)(
+        result = await gateway_tool_guard("market_analysis")(spy)(
             _state(_call("t1"))
         )
 

@@ -121,6 +121,9 @@ control_actions:
 
   - name: market_analysis
     description: "Read-only query for market intelligence."
+    # FTRA: reads market data, modifies nothing. The data analyst submits every
+    # market-data tool call under this action (data_analyst_graph.py).
+    terminal_classification: READ_ONLY
     params:
       - name: symbol
         type: string

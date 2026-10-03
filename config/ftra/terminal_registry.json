@@ -1,9 +1,9 @@
 {
   "version": "3.0",
   "domain": "finance",
-  "serial": 3,
-  "generated_at": "2026-09-30T00:00:00+00:00",
-  "issued_at": "2026-09-30T00:00:00+00:00",
+  "serial": 4,
+  "generated_at": "2026-10-03T00:00:00+00:00",
+  "issued_at": "2026-10-03T00:00:00+00:00",
   "expires_at": "2027-09-30T00:00:00+00:00",
   "system": "CAGE Financial Advisor",
   "system_version": "1.2.0",
@@ -12,6 +12,7 @@
   "terminals": {
     "check_balance": "READ_ONLY",
     "execute_trade": "IRREVERSIBLE_TERMINAL",
+    "market_analysis": "READ_ONLY",
     "prompt_injection_check": "READ_ONLY",
     "execute_trade_bounded": "EXTERNALLY_REVERSIBLE"
   },
@@ -23,5 +24,5 @@
       "max_magnitude": 10000.0
     }
   },
-  "manifest_sha256": "3a05aa5afe198f6098246bb9c23bc2bbfcf3eab08107b6c9c14d049c156bf237"
+  "manifest_sha256": "5d628920471c19985e0127f25270788e1ce6874f0904bbcef5a8c6656631d6e5"
 }

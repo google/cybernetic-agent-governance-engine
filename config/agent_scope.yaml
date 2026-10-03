@@ -59,7 +59,7 @@ permitted_boundaries:
       requires_approval_above_usd: null
     - name: "check_safety_constraints"
       requires_approval_above_usd: null
-    - name: "fetch_market_data"
+    - name: "market_analysis"
       requires_approval_above_usd: null
 
   # Approved asset classes — enforced by OPA
