@@ -121,6 +121,28 @@ def _judge_context(
     return {**(context or {}), key: text}
 
 
+def _as_llm_model(llm: Any) -> Any:
+    """Return ``llm`` as the ``LLMModel`` NeMo's ``llm_call()`` requires.
+
+    The runtime injects the main model as registered by ``register_llm_provider``
+    (our ``VLLMLLM``, a LangChain ``BaseChatModel``). NeMo 0.23's ``llm_call()``
+    rejects anything that is not an ``LLMModel`` with "Expected an LLMModel
+    instance", so the built-in self-checks failed on every call. LangChain
+    models are wrapped in NeMo's own adapter.
+    """
+    if llm is None:
+        return None
+    from nemoguardrails.types import LLMModel  # pyright: ignore[reportMissingTypeStubs]
+
+    if isinstance(llm, LLMModel):
+        return llm
+    from nemoguardrails.integrations.langchain.llm_adapter import (  # pyright: ignore[reportMissingTypeStubs]
+        LangChainLLMAdapter,
+    )
+
+    return LangChainLLMAdapter(llm)
+
+
 class JudgeDidNotRunError(RuntimeError):
     """NeMo's self-check returned no verdict, so the LLM judge never ran."""
 
@@ -699,7 +721,7 @@ async def custom_self_check_input(
             result = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                 llm_task_manager=llm_task_manager,
                 context=_judge_context(context, "user_message", raw_text),
-                llm=llm,
+                llm=_as_llm_model(llm),
                 config=config,
             )
             is_safe = _judge_allows(_require_verdict(result))
@@ -840,7 +862,7 @@ async def custom_self_check_output(
             result = await nemo_self_check(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                 llm_task_manager=llm_task_manager,
                 context=_judge_context(context, "bot_message", raw_text),
-                llm=llm,
+                llm=_as_llm_model(llm),
                 config=config,
             )
             is_safe = _judge_allows(_require_verdict(result))
