@@ -676,4 +676,55 @@ class TestPythonGeneratedLessThanFiniteness:
         assert "import math" in gen
 
 
+class TestCompositeGrammar:
+    """``composite`` is a closed grammar: one form, compiled by every generator.
+
+    Any other expression used to compile to a comment (``pass`` in Python,
+    ``false`` in Rego), i.e. a UCA that enforced nothing. It is now refused.
+    """
+
+    _SCALED = "order_size > threshold_ref(stpa.max_fraction) * daily_vol"
+
+    def _cs(self, composite: str) -> ControlStructureModel:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["condition"] = {"composite": composite}
+        return ControlStructureModel(**raw)
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            "order_size > 0.01 * daily_vol",
+            "a AND b",
+            "always",
+            "order_size >= threshold_ref(stpa.max_fraction) * daily_vol",
+            "order_size > threshold_ref(stpa..x) * daily_vol",
+            "order_size > threshold_ref(stpa.max_fraction) * daily_vol or True",
+        ],
+    )
+    def test_any_other_expression_is_refused(self, expr: str) -> None:
+        with pytest.raises(ValueError, match="condition.composite must have the form"):
+            self._cs(expr)
+
+    def test_scaled_threshold_form_is_accepted_and_stripped(self) -> None:
+        cs = self._cs(f"  {self._SCALED}  ")
+        assert cs.unsafe_control_actions[0].condition.composite == self._SCALED
+
+    def test_opa_enforces_the_composite(self) -> None:
+        rego = generate_opa(self._cs(self._SCALED))
+        assert "input.daily_vol > 0" in rego
+        assert "input.order_size > input._thresholds.stpa_max_fraction * input.daily_vol" in rego
+        assert "placeholder" not in rego and "    false" not in rego
+
+    def test_python_enforces_the_composite(self) -> None:
+        py = generate_python(self._cs(self._SCALED))
+        assert 'params.get("order_size")' in py and 'params.get("daily_vol")' in py
+        assert "* f_rhs:" in py
+        assert "            pass" not in py
+
+    def test_shipped_finance_composite_compiles(self) -> None:
+        cs = load_control_structure(_FINANCE_YAML_PATH)
+        composites = [u.condition.composite for u in cs.unsafe_control_actions if u.condition.composite]
+        assert composites, "UCA-6 should use the scaled-threshold composite"
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

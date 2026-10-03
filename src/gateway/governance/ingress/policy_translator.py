@@ -238,6 +238,8 @@ def _compile_patch(patch: dict[str, Any], bundle: ArtifactBundle) -> None:
     required fields for a valid ControlStructureModel (e.g. OSCAL patches
     with no UCAs that have opa_rule defined).
     """
+    from pydantic import ValidationError
+
     from src.gateway.governance.stpa_compiler import (
         ControlStructureModel,
         compile_control_structure,
@@ -270,6 +272,21 @@ def _compile_patch(patch: dict[str, Any], bundle: ArtifactBundle) -> None:
 
     try:
         cs = ControlStructureModel(**clean_patch)
+    except ValidationError as exc:
+        # A condition outside the compiled grammar is not a partial patch: the
+        # policy declares enforcement that cannot be compiled. Fail the bundle
+        # rather than report a warning and ship nothing for that UCA.
+        if any(err.get("loc", ())[-1:] == ("composite",) for err in exc.errors()):
+            bundle.errors.append(
+                f"Unenforceable condition in policy: {exc}. A composite condition "
+                "must have the form '<param> > threshold_ref(<path>) * <param>'."
+            )
+            return
+        bundle.warnings.append(
+            f"ControlStructureModel validation failed (patch may be partial): {exc}. "
+            "Skipping STPA compiler — raw patch preserved in control_structure_patch."
+        )
+        return
     except Exception as exc:
         bundle.warnings.append(
             f"ControlStructureModel validation failed (patch may be partial): {exc}. "
