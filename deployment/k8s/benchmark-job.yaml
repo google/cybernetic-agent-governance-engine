@@ -71,17 +71,21 @@ spec:
               # 2. Run Paper Metrics Collection (§6.2, §6.6). --unmocked builds
               #    the governor over the real Redis CBF, OPA and consensus
               #    backends below ("Table 2b: over-the-wire, in-cluster").
-              echo "📊 [Step 2/3] Running scripts/measure_paper_metrics.py --unmocked..."
+              echo "📊 [Step 2/3] Running scripts/measure_paper_metrics.py ${PAPER_METRICS_FLAGS}..."
               cd /app || cd /
-              python3 scripts/measure_paper_metrics.py --unmocked
+              python3 scripts/measure_paper_metrics.py ${PAPER_METRICS_FLAGS}
               echo ""
 
               # 3. Run Reconciliation Metrics Collection (§6.3, §6.4, §6.5)
               # Signs snapshots as the reconciler (RECONCILER_KMS_KEY). The
               # gateway key is unset for this step: trust.py refuses a
-              # reconciler key equal to the gateway key (G8).
-              echo "📊 [Step 3/3] Running scripts/measure_reconciliation_metrics.py..."
-              env -u KMS_GOVERNANCE_KEY python3 scripts/measure_reconciliation_metrics.py || {
+              # reconciler key equal to the gateway key (G8). Step 2 leaves CBF
+              # state in DB 0, and this script refuses a Redis that already
+              # holds it, so it runs against DB 1 (REDIS_URL for the raw and
+              # fiscal clients, REDIS_DB for the kernel client).
+              echo "📊 [Step 3/3] Running scripts/measure_reconciliation_metrics.py (Redis DB 1)..."
+              REDIS_URL="${REDIS_URL%/0}/1" REDIS_DB=1 env -u KMS_GOVERNANCE_KEY \
+                python3 scripts/measure_reconciliation_metrics.py || {
                 echo "⚠️  Reconciliation benchmark completed with warnings/skips (check KMS/Redis availability)."
               }
               echo ""
@@ -109,6 +113,13 @@ spec:
               value: "http://governed-financial-advisor.governance-stack.svc.cluster.local:80"
             - name: GATEWAY_URL
               value: "http://gateway.governance-stack.svc.cluster.local:8080"
+            # Bearer token for the advisor's /agent/query (require_api_key).
+            # Without it every deflection/FPR prompt gets HTTP 401.
+            - name: CAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: CAGE_API_KEY
             # Throwaway primary+replica from benchmark-redis.yaml. Never the
             # shared redis-master: both scripts write CBF, fence and snapshot
             # keys, and measure_reconciliation_metrics.py refuses a Redis that

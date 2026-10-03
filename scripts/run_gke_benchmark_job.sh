@@ -26,6 +26,8 @@
 #               IMAGE_TAG (default: short SHA of HEAD; build it first with
 # deployment/docker/cloudbuild.image.yaml, _IMAGE_NAME=gateway,
 # _DOCKERFILE=src/gateway/Dockerfile).
+#               BENCHMARK_SCOPE (default: full) is full or latency; latency
+#               skips adversarial deflection and benign FPR.
 #               BENCHMARK_REDIS_IMAGE (default: the Docker Hub redis pin; set an
 #               attested mirror, e.g. gcr.io/<project>/redis@sha256:..., when the
 #               cluster enforces Binary Authorization).
@@ -64,7 +66,17 @@ if [ -z "${BENCHMARK_IMAGE}" ]; then
 fi
 BENCHMARK_REDIS_IMAGE="${BENCHMARK_REDIS_IMAGE:-redis:7.2-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0}"
 CAGE_ENVIRONMENT="${CAGE_ENVIRONMENT:-dev}"
-export BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE CAGE_ENVIRONMENT
+# full: latency + adversarial deflection + benign FPR (needs a live advisor
+# whose inference backends are serving). latency: Table 2b only; deflection
+# and FPR are recorded as not measured.
+BENCHMARK_SCOPE="${BENCHMARK_SCOPE:-full}"
+case "${BENCHMARK_SCOPE}" in
+  full)    PAPER_METRICS_FLAGS="--unmocked"; SCOPE_NOTE="" ;;
+  latency) PAPER_METRICS_FLAGS="--unmocked --latency-only"
+           SCOPE_NOTE="; adversarial deflection and benign FPR not measured" ;;
+  *) echo -e "${RED}❌ BENCHMARK_SCOPE must be full or latency.${NC}"; exit 1 ;;
+esac
+export BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE CAGE_ENVIRONMENT PAPER_METRICS_FLAGS
 
 # Render a manifest, substituting only the named variables (python3, so the
 # runner does not depend on gettext's envsubst; the Job's own ${BACKEND_URL}-
@@ -142,7 +154,7 @@ kubectl create configmap benchmark-scripts \
   --from-file=scripts/measure_reconciliation_metrics.py \
   -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-render "${JOB_MANIFEST}" BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT CAGE_ENVIRONMENT \
+render "${JOB_MANIFEST}" BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT CAGE_ENVIRONMENT PAPER_METRICS_FLAGS \
   | kubectl apply -n "${NAMESPACE}" -f -
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
@@ -171,7 +183,9 @@ echo -e "${CYAN}📡 [Step 5/6] Streaming benchmark logs...${NC}"
 kubectl logs -f "${POD_NAME}" -c benchmark-runner -n "${NAMESPACE}" &
 LOGS_PID=$!
 elapsed=0
-until kubectl exec "${POD_NAME}" -c benchmark-runner -n "${NAMESPACE}" -- test -f /tmp/cage_benchmark_done 2>/dev/null; do
+# Through sh: the image's venv ships a `test` console script that shadows
+# /usr/bin/test on PATH, so a bare `test -f` never succeeds.
+until kubectl exec "${POD_NAME}" -c benchmark-runner -n "${NAMESPACE}" -- sh -c 'test -f /tmp/cage_benchmark_done' 2>/dev/null; do
   phase=$(kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" -o jsonpath='{.status.phase}')
   if [ "${phase}" = "Failed" ] || [ "${phase}" = "Succeeded" ]; then
     kill "${LOGS_PID}" 2>/dev/null || true
@@ -229,6 +243,8 @@ cat <<EOF > "${OUTPUT_DIR}/PROVENANCE.md"
 | OPA | ${OPA_IMAGE} |
 | Consensus backend | vllm-reasoning \`${VLLM_MODEL}\` (${VLLM_IMAGE}) |
 | Latency mode | ${LATENCY_MODE} |
+| Scope | ${BENCHMARK_SCOPE} (\`measure_paper_metrics.py ${PAPER_METRICS_FLAGS}\`)${SCOPE_NOTE} |
+| Reconciliation Redis | DB 1 of the same throwaway Redis (step 2 leaves CBF state in DB 0) |
 | Output Directory | ${OUTPUT_DIR} |
 
 ## Run Artifacts
