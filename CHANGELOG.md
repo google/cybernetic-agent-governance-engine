@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Documentation
+
+- Recorded the full-scope in-cluster benchmark `docs/paper/measurements/2026-10-03-57556228/` (Table 2b n = 200 per row, adversarial deflection 26/26, benign FPR 11/20 = 55 %), with a root-cause breakdown of the false positives in its `PROVENANCE.md`.
+
 ### Added
 
 - **Governance trace conformance against `proof/model.py` (review round 2, WS-F).** `PipelineResult` now records the run's `plan` (stages selected, in execution order, with phase), per-stage `stage_outcomes` (`PASS`/`FAIL`) and `governed`. Every governor decision publishes a `GOVERNANCE_TRACE` evidence event ([`src/gateway/governance/governor/trace.py`](src/gateway/governance/governor/trace.py)), and `verify_and_consume_seal()` publishes an `EXECUTED` event that references the consumed seal by SHA-256. [`proof/trace_conformance.py`](proof/trace_conformance.py) projects each event onto a model `State` and checks it against `reachable_over(plan, profile)`, the gated model instantiated over that run's tiers, plus seal-before-execution and single-use rules; [`scripts/check_trace_conformance.py`](scripts/check_trace_conformance.py) runs it over an export. `tests/test_governance_trace_conformance.py` drives the real governor over 265 fault configurations, with a mutation control and one negative control per rule. The model's `TIERS` are reordered to the pipeline's execution order (phase 1, then phase 2; state counts unchanged); `pipeline.UNGOVERNED_STAGES` replaces an inline literal and is pinned to `model.UNGOVERNED_TIERS` (`feat(governance)`).
