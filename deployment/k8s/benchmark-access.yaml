@@ -1,0 +1,75 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Access grants for the manual paper benchmark (benchmark-job.yaml).
+# scripts/run_gke_benchmark_job.sh applies this with the throwaway Redis and
+# deletes it afterwards, so the grants exist only for the run.
+#
+# 1. Egress: governance-stack denies external egress by default (default-deny-
+#    external-egress). The benchmark signs with the benchmark-only KMS key, so
+#    its pod needs Cloud KMS and nothing else; Workload Identity tokens come
+#    from the metadata server, which the default policy already allows. Same
+#    shape as reconciliation-worker-egress-fqdn
+#    (infra/targets/gcp-gke/network_policy.tf).
+# 2. OPA: the Linkerd Server opa-server-8181 denies every identity not named
+#    by an AuthorizationPolicy (deployment/k8s/linkerd-mtls-policy.yaml
+#    authorizes the gateway and compliance bridge). --unmocked queries OPA
+#    directly as cage-benchmark-sa, so it gets its own grant.
+apiVersion: networking.gke.io/v1alpha1
+kind: FQDNNetworkPolicy
+metadata:
+  name: benchmark-egress-fqdn
+  namespace: governance-stack
+  labels:
+    cage.io/benchmark-purpose: "paper-evaluation"
+  annotations:
+    cage.io/poam: "POAM-2026-079"
+spec:
+  podSelector:
+    matchLabels:
+      app: cage-paper-benchmark
+  egress:
+    - matches:
+        - name: cloudkms.googleapis.com
+      ports:
+        - port: 443
+          protocol: TCP
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: benchmark-to-opa-authn
+  namespace: governance-stack
+  labels:
+    cage.io/benchmark-purpose: "paper-evaluation"
+spec:
+  identities:
+    - cage-benchmark-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: authorize-benchmark-to-opa
+  namespace: governance-stack
+  labels:
+    cage.io/benchmark-purpose: "paper-evaluation"
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: opa-server-8181
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: benchmark-to-opa-authn
