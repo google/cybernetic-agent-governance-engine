@@ -57,21 +57,15 @@ from typing import Any
 
 import httpx
 
-from src.gateway.governance.decisions import GovernanceDecision
+from src.governed_financial_advisor.graph.nodes.trade_contract import (
+    PROCEED_VERDICTS,
+    TRADE_ACTION,
+    trade_params,
+)
 from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 
 logger = logging.getLogger("SafetyNode")
-
-#: Gateway verdicts that may proceed to the governed trader. REQUIRE_APPROVAL
-#: proceeds because the human-approval path lives in the trader subgraph.
-_PROCEED_VERDICTS = frozenset(
-    {
-        GovernanceDecision.ALLOW,
-        GovernanceDecision.NARROW,
-        GovernanceDecision.REQUIRE_APPROVAL,
-    }
-)
 
 # Policy-probing attack mitigation constant (ADR-008)
 MAX_CONSECUTIVE_DENIALS = 2
@@ -163,16 +157,9 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         }
 
     try:
-        params: dict[str, Any] = {
-            "action": plan.get("action", "execute_trade"),
-            "symbol": plan.get("symbol", "UNKNOWN"),
-            "amount": float(plan.get("amount", 0) or 0),
-            "currency": plan.get("currency", "USD"),
-            "trader_role": plan.get("trader_role", "junior"),
-            "confidence": plan.get("confidence", 1.0),
-        }
+        params = trade_params(plan)
         result = await GatewayClient().validate_action(
-            action="execute_trade", params=params
+            action=TRADE_ACTION, params=params
         )
     except PermissionError as exc:
         # Gateway DENIED the action.
@@ -224,7 +211,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
 
     verdict = result.get("verdict") if isinstance(result, dict) else None
 
-    if verdict in _PROCEED_VERDICTS:
+    if verdict in PROCEED_VERDICTS:
         logger.info(
             "✅ Safety Node: gateway routed action %s (envelope_id=%s)",
             verdict,
@@ -260,7 +247,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         policy_rule="NOT_APPROVED",
         evidence=(
             f"Gateway returned verdict {verdict!r}, not one of "
-            f"{sorted(v.value for v in _PROCEED_VERDICTS)}"
+            f"{sorted(v.value for v in PROCEED_VERDICTS)}"
         ),
         reason_code="NOT_APPROVED",
         recoverable=False,

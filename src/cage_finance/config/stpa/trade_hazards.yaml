@@ -132,6 +132,17 @@ control_actions:
         type: string
         required: false
 
+  - name: check_market_status
+    description: "Read-only check that a symbol's market is open."
+    # FTRA: the execution analyst's plans open with this step (agent.py
+    # "Available Actions"). Unregistered, it made every trade plan look
+    # irreversible to the FTRA node.
+    terminal_classification: READ_ONLY
+    params:
+      - name: symbol
+        type: string
+        required: true
+
 unsafe_control_actions:
   - id: UCA-2
     action: execute_trade

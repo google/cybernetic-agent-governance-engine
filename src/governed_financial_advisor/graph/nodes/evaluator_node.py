@@ -22,6 +22,11 @@ from src.governed_financial_advisor.agents.evaluator.agent import (
     simulate_governance_check,
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
+from src.governed_financial_advisor.graph.nodes.trade_contract import (
+    PROCEED_VERDICTS,
+    TRADE_ACTION,
+    trade_params,
+)
 from src.governed_financial_advisor.graph.state import AgentState
 
 logger = logging.getLogger("EvaluatorNode")
@@ -65,8 +70,18 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
                     k in step.get("action", "").lower()
                     for k in ["trade", "execute", "buy", "sell"]
                 ):
-                    target_params = step.get("parameters", {})
-                    target_tool = step.get("action", "execute_trade")
+                    # Preview the trade exactly as the gateway will see it:
+                    # the registered trade action with the canonical payload
+                    # (trade_contract). The step's own action name and any
+                    # role it asserts are model output and are not forwarded.
+                    try:
+                        target_params = trade_params(step.get("parameters") or {})
+                    except (TypeError, ValueError) as exc:
+                        return {
+                            "risk_status": "REJECTED_REVISE",
+                            "risk_feedback": f"Trade step has an invalid amount: {exc}",
+                        }
+                    target_tool = TRADE_ACTION
                     break
 
     # Populate required STPA numeric fields with safe defaults before the
@@ -99,13 +114,20 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
             target_tool, target_params, risk_profile
         )
 
-        # Only a clean dry run (ALLOW) is safe; any other verdict, or an
-        # error with no verdict, sends the plan back for revision.
-        is_safe = safety_resp.get("verdict") == GovernanceDecision.ALLOW
+        # The dry run proceeds on the same verdicts as the pre-trade gate
+        # (trade_contract.PROCEED_VERDICTS). REQUIRE_APPROVAL proceeds to the
+        # human-approval path instead of being re-planned: no revision can
+        # remove an approval requirement, so treating it as a rejection only
+        # looped the planner until it gave up. DENY, DEFER and errors still
+        # send the plan back for revision.
+        verdict_value = safety_resp.get("verdict")
+        is_safe = verdict_value in {v.value for v in PROCEED_VERDICTS}
+        needs_approval = verdict_value == GovernanceDecision.REQUIRE_APPROVAL
         safety_msg = safety_resp.get("message", "Unknown safety status")
         opa_results = safety_resp.get("opa_results")
 
         span.set_attribute("safety_check.passed", is_safe)
+        span.set_attribute("safety_check.requires_approval", needs_approval)
 
     verdict = "APPROVED" if is_safe else "REJECTED"
     risk_status = "REJECTED_REVISE" if not is_safe else "APPROVED"
@@ -126,6 +148,7 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
             "verdict": verdict,
             "reasoning": safety_msg,
             "policy_check": "PASSED" if is_safe else "FAILED",
+            "requires_approval": needs_approval,
         },
         "opa_results": opa_results,  # Pass OPA metadata to Auditor!
         "risk_status": risk_status,

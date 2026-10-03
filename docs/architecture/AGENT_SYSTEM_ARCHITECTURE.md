@@ -318,6 +318,8 @@ The reviewer may supply `max_slippage_pct` in the resume payload to tighten slip
 
 The advisor's `POST /tools/execute` endpoint (`src/governed_financial_advisor/tools/api.py`) forwards `simulate_governance_check`, `verify_content_safety`, `evaluate_policy` and `execute_trade` to the gateway through `GatewayClient.execute_tool()`; the advisor does not run NeMo content-safety checks for these tools in-process. The evaluator's verdict is advisory and unsigned — the only signature in state (`governance_signature`) comes from the gateway via `safety_check`. Post-hoc trace auditing is performed by `EvaluatorAuditor.audit_trace()` in `src/governed_financial_advisor/agents/evaluator/auditor.py`.
 
+`evaluator_node` ([`evaluator_node.py`](../../src/governed_financial_advisor/graph/nodes/evaluator_node.py)) previews a plan's trade step with `simulate_governance_check`. It builds the request with the same [`trade_contract.py`](../../src/governed_financial_advisor/graph/nodes/trade_contract.py) as `safety_check_node`. A trade-like step is always submitted as the registered `execute_trade` action, with `symbol`, `amount` and `currency` from the step. The RBAC role is always the least-privilege `junior`, never a role the model wrote into the plan. The evaluator proceeds on the same verdicts as the pre-trade gate (`PROCEED_VERDICTS`: `ALLOW`, `NARROW`, `REQUIRE_APPROVAL`). `REQUIRE_APPROVAL` goes on to the human-approval path instead of back to the planner, and `evaluation_result.requires_approval` records it. `DENY`, `DEFER` and errors send the plan back for revision. [`tests/test_evaluator_trade_preview.py`](../../tests/test_evaluator_trade_preview.py) pins this behaviour.
+
 ---
 
 ## 9. RiskAnalystAgent & STPA Integration
