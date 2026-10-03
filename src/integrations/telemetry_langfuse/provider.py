@@ -34,6 +34,31 @@ from src.gateway.governance.telemetry_provider import (
 
 logger = logging.getLogger("cage.integrations.telemetry_langfuse")
 
+# The Langfuse public API caps ``GET /api/public/traces`` at 100 rows a page.
+_PAGE_LIMIT = 100
+
+
+def _list_recent_traces(client: Any, n_samples: int) -> list[Any]:
+    """Return up to ``n_samples`` of the most recent traces, newest first.
+
+    Uses the SDK's generated public-API client (``client.api.trace.list``).
+    Langfuse SDK v3 removed the v2 ``Langfuse.fetch_traces`` helper, and calling
+    it raised ``AttributeError`` on every causal evaluation.
+    """
+    traces: list[Any] = []
+    page = 1
+    while len(traces) < n_samples:
+        limit = min(_PAGE_LIMIT, n_samples - len(traces))
+        response = client.api.trace.list(
+            page=page, limit=limit, order_by="timestamp.desc"
+        )
+        batch = list(getattr(response, "data", None) or [])
+        traces.extend(batch)
+        if len(batch) < limit:
+            break
+        page += 1
+    return traces[:n_samples]
+
 
 class LangfuseTelemetryProvider(BaseTelemetryProvider):
     """[CTRL_TEL_003] Pull live governance telemetry from Langfuse.
@@ -114,10 +139,7 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
 
         try:
             # Fetch recent traces from Langfuse (domain-agnostic).
-            response = self._client.fetch_traces(  # type: ignore[attr-defined]
-                limit=n_samples,
-            )
-            traces = response.data if hasattr(response, "data") else []
+            traces = _list_recent_traces(self._client, n_samples)
 
             rows: list[dict] = []
             for trace in traces:
@@ -125,10 +147,14 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
                 input_data = getattr(trace, "input", {}) or {}
                 scores_list = getattr(trace, "scores", []) or []
 
-                # Build score lookup: {name -> value}
+                # Build score lookup: {name -> value}. The trace list endpoint
+                # returns score ids (strings), not score objects; only objects
+                # carry a name/value, so ids are skipped and the metadata
+                # ``risk_score`` is used instead.
                 scores = {
                     getattr(s, "name", ""): getattr(s, "value", None)
                     for s in scores_list
+                    if not isinstance(s, str)
                 }
 
                 market_vol = meta.get("market_volatility")

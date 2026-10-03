@@ -76,14 +76,15 @@ _NEMO_AVAILABLE = True
 # None and the scan is skipped (graceful degradation).
 # ---------------------------------------------------------------------------
 
+# Identity-bearing entities only. DATE_TIME, LOCATION and NRP are not
+# redacted: on their own they do not identify a person, and redacting them
+# mangles ordinary financial text ("reports on 22 October", "US equities")
+# now that the redacted text replaces the message the agents see.
 _PII_ENTITIES: list[str] = [
     "PHONE_NUMBER",
     "CREDIT_CARD",
     "EMAIL_ADDRESS",
-    "LOCATION",
     "PERSON",
-    "DATE_TIME",
-    "NRP",
     "CRYPTO",
     "US_SSN",
     "US_ITIN",
@@ -157,6 +158,51 @@ def _ensure_presidio_engines() -> None:
             "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
             _presidio_init_exc,
         )
+
+
+def _redact_pii(text: str) -> tuple[str, list[str]]:
+    """Replace identity PII in ``text`` with ``<ENTITY_TYPE>`` tokens.
+
+    Returns the redacted text and the sorted entity types found. When the
+    Presidio engines are unavailable the text is returned unchanged. Engine
+    errors propagate; each caller decides how to fail.
+    """
+    _ensure_presidio_engines()
+    if _presidio_analyzer is None or _presidio_anonymizer is None:
+        return text, []
+    results = _presidio_analyzer.analyze(
+        text=text, entities=_PII_ENTITIES, language="en"
+    )
+    if not results:
+        return text, []
+    entity_types = sorted({r.entity_type for r in results})
+    from presidio_anonymizer.entities import OperatorConfig
+
+    anonymized = _presidio_anonymizer.anonymize(
+        text=text,
+        analyzer_results=results,  # type: ignore[arg-type]
+        operators={
+            et: OperatorConfig("replace", {"new_value": f"<{et}>"})
+            for et in entity_types
+        },
+    )
+    return anonymized.text, entity_types
+
+
+def _replace_last_message(state: StateDict, original: str, text: str) -> list[Any]:
+    """Return a ``messages`` update that rewrites the last message to ``text``.
+
+    The ``add_messages`` reducer replaces a message in place when the update
+    carries the same ``id``. Nothing is rewritten unless the last message is
+    the one whose content was redacted.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return []
+    last = messages[-1]
+    if getattr(last, "content", None) != original or not getattr(last, "id", None):
+        return []
+    return [last.model_copy(update={"content": text})]
 
 
 _nemo_reload_lock: asyncio.Lock | None = None
@@ -335,58 +381,27 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
             span.set_attribute("nemo.input_rail.input_length", len(user_input))
 
+            original_input = user_input
             try:
                 rails = get_nemo_rails()
 
                 # --- Input-side PII scan (Fix 3 / P1) ---
-                # Scan the input for PII BEFORE it reaches the LLM.  If PII is
-                # detected, redact it in-place so the downstream NeMo rail and
-                # any LLM call never see raw personal data.
-                # The scan is wrapped in try/except so a Presidio failure never
-                # blocks the input rail (graceful degradation).
+                # Scan the input for PII BEFORE it reaches the LLM. Redacted
+                # text goes to the NeMo rail and, on PASS, replaces the user
+                # message in state so no downstream agent or LLM sees the raw
+                # values. A Presidio failure never blocks the input rail
+                # (graceful degradation); the output rail masks again.
                 try:
-                    _ensure_presidio_engines()
-                    if (
-                        _presidio_analyzer is not None
-                        and _presidio_anonymizer is not None
-                    ):
-                        pii_results = _presidio_analyzer.analyze(
-                            text=user_input,
-                            entities=_PII_ENTITIES,
-                            language="en",
+                    user_input, entity_types = _redact_pii(user_input)
+                    span.set_attribute("input.pii_redacted", bool(entity_types))
+                    if entity_types:
+                        logger.warning(
+                            "⚠️ Input PII detected — redacting before NeMo rail "
+                            "(entity_types=%s). Raw values NOT logged.",
+                            entity_types,
                         )
-                        if pii_results:
-                            entity_types: list[str] = sorted(
-                                {r.entity_type for r in pii_results}
-                            )
-                            logger.warning(
-                                "⚠️ Input PII detected — redacting before NeMo rail "
-                                "(entity_types=%s, count=%d). Raw values NOT logged.",
-                                entity_types,
-                                len(pii_results),
-                            )
-                            from presidio_anonymizer.entities import OperatorConfig
-
-                            anonymized = _presidio_anonymizer.anonymize(
-                                text=user_input,
-                                analyzer_results=pii_results,  # type: ignore[arg-type]
-                                operators={
-                                    et: OperatorConfig(
-                                        "replace", {"new_value": f"<{et}>"}
-                                    )
-                                    for et in entity_types
-                                },
-                            )
-                            user_input = anonymized.text
-                            # OTel audit trail — types only, never values
-                            span.set_attribute("input.pii_redacted", True)
-                            span.set_attribute(
-                                "input.pii_entity_types", str(entity_types)
-                            )
-                        else:
-                            span.set_attribute("input.pii_redacted", False)
-                    else:
-                        span.set_attribute("input.pii_redacted", False)
+                        # OTel audit trail — types only, never values
+                        span.set_attribute("input.pii_entity_types", str(entity_types))
                 except Exception as pii_exc:
                     logger.warning(
                         "⚠️ Input PII scan failed — continuing without redaction: %s",
@@ -432,11 +447,16 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
             logger.info("nemo_guardrail_node: input PASSED — proceeding")
             base = {**state} if cfg.pass_through_state else {}
-            return {
+            update: dict[str, Any] = {
                 **base,
                 cfg.blocked_state_key: False,
                 cfg.reason_state_key: "",
             }
+            if user_input != original_input:
+                redacted = _replace_last_message(state, original_input, user_input)
+                if redacted:
+                    update["messages"] = redacted
+            return update
 
     nemo_guardrail_node.__qualname__ = "nemo_guardrail_node[harness]"
     return nemo_guardrail_node
@@ -512,9 +532,14 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             )
 
             # --- Call 1 of 2: PII masking ---
+            # Presidio identity masking first (PERSON and the other entities
+            # the regex scrubber cannot see), then the NeMo output pass. Any
+            # error replaces the output with the blocked sentinel.
             try:
                 rails = get_nemo_rails()
-                masked_text = await verify_and_mask_output(rails, output_text)
+                presidio_text, output_entities = _redact_pii(output_text)
+                span.set_attribute("output.pii_entity_types", str(output_entities))
+                masked_text = await verify_and_mask_output(rails, presidio_text)
                 span.set_attribute(
                     "nemo.output_rail.masked", masked_text != output_text
                 )

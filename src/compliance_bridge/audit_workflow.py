@@ -409,7 +409,7 @@ async def _fetch_failing_traces(
         app_lf = _make_app_langfuse()
         since = datetime.now(tz=timezone.utc) - timedelta(hours=24)
         try:
-            response = app_lf.fetch_traces(
+            response = app_lf.api.trace.list(
                 tags=[f"control:{control_id}"],
                 from_timestamp=since,
                 limit=limit * 2,

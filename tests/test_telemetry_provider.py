@@ -351,10 +351,10 @@ class TestRemoteTelemetryProviderGetLatestData:
 
     def _make_provider_with_traces(self, traces, n_samples=500):
         """Build a provider whose mock client returns the given list of traces."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["api"])
         mock_response = MagicMock()
         mock_response.data = traces
-        mock_client.fetch_traces.return_value = mock_response
+        mock_client.api.trace.list.return_value = mock_response
         fallback = MockTelemetryProvider(seed=42)
         return RemoteTelemetryProvider(langfuse_client=mock_client, fallback=fallback)
 
@@ -420,8 +420,8 @@ class TestRemoteTelemetryProviderGetLatestData:
         assert len(df) == len(good_traces)
 
     def test_exception_during_fetch_falls_back_to_mock(self):
-        mock_client = MagicMock()
-        mock_client.fetch_traces.side_effect = RuntimeError("network error")
+        mock_client = MagicMock(spec=["api"])
+        mock_client.api.trace.list.side_effect = RuntimeError("network error")
         fallback = MockTelemetryProvider(seed=42)
         provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=fallback
@@ -433,9 +433,9 @@ class TestRemoteTelemetryProviderGetLatestData:
 
     def test_response_without_data_attribute_falls_back(self):
         """When response has no .data attribute, treat as empty → fallback."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["api"])
         mock_response = MagicMock(spec=[])  # spec=[] means no attributes
-        mock_client.fetch_traces.return_value = mock_response
+        mock_client.api.trace.list.return_value = mock_response
         fallback = MockTelemetryProvider(seed=42)
         provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=fallback
@@ -454,10 +454,10 @@ class TestRemoteTelemetryProviderGetLatestData:
             trace.scores = []  # Empty scores — should fall back to meta.risk_score
             traces.append(trace)
 
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["api"])
         mock_response = MagicMock()
         mock_response.data = traces
-        mock_client.fetch_traces.return_value = mock_response
+        mock_client.api.trace.list.return_value = mock_response
         provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=MockTelemetryProvider()
         )
@@ -465,17 +465,19 @@ class TestRemoteTelemetryProviderGetLatestData:
         assert len(df) == n
         assert all(abs(v - 0.6) < 1e-9 for v in df["risk_score"])
 
-    def test_fetch_traces_called_with_correct_params(self):
+    def test_trace_list_called_with_correct_params(self):
         traces = [_make_trace() for _ in range(MIN_SAMPLES + 1)]
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["api"])
         mock_response = MagicMock()
         mock_response.data = traces
-        mock_client.fetch_traces.return_value = mock_response
+        mock_client.api.trace.list.return_value = mock_response
         provider = RemoteTelemetryProvider(
             langfuse_client=mock_client, fallback=MockTelemetryProvider()
         )
         provider.get_latest_data(n_samples=200)
-        mock_client.fetch_traces.assert_called_once_with(limit=200)
+        mock_client.api.trace.list.assert_called_once_with(
+            page=1, limit=100, order_by="timestamp.desc"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -523,3 +525,29 @@ def _selective_import_error(blocked_module: str):
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+
+def test_provider_uses_the_installed_langfuse_sdk_api(monkeypatch) -> None:
+    """The provider's trace query exists on the real SDK client.
+
+    The ``MagicMock`` clients above accept any attribute, which hid that
+    Langfuse SDK v3 removed ``Langfuse.fetch_traces``; every causal evaluation
+    on staging raised ``AttributeError`` (2026-10-03 benchmark).
+    """
+    import importlib
+    import inspect
+    import sys
+    import types
+
+    pytest.importorskip("langfuse")
+    # Other tests stub ``langfuse`` in sys.modules; check the installed SDK.
+    for name in [n for n in sys.modules if n == "langfuse" or n.startswith("langfuse.")]:
+        if not isinstance(sys.modules[name], types.ModuleType):
+            monkeypatch.delitem(sys.modules, name)
+    langfuse = importlib.import_module("langfuse")
+    api_client = importlib.import_module("langfuse.api.client")
+
+    assert not hasattr(langfuse.Langfuse, "fetch_traces")
+    api = api_client.LangfuseAPI(base_url="http://127.0.0.1:9")
+    params = inspect.signature(api.trace.list).parameters
+    assert {"page", "limit", "order_by"} <= set(params)
