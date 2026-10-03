@@ -95,6 +95,10 @@ jobs:
           VLLM_BASE_URL: "http://localhost:8081/v1"
           GOVERNANCE_SALT: "ci-only-insecure-placeholder-salt-not-for-production-use"
           CAGE_TRUSTED_CLIENT_IDENTITIES: ${{ env.CLIENT_ID }}
+          # The per-IP /validate-action limiter (60/min, GHSA-v3h4-8458-5ww3)
+          # stays on; all 10 Locust users share one IP (~160 req/min), so the
+          # CI-local gateway raises the limit instead of measuring 429s.
+          VALIDATE_ACTION_RATE_LIMIT: "1200"
           LANGSMITH_TRACING: "false"
           LANGCHAIN_TRACING_V2: "false"
         run: |
@@ -113,7 +117,9 @@ jobs:
           echo "Gateway ready."
       - name: Run Locust headless (10 users, 30 s)
         run: |
-          uv run locust -f tests/load/locustfile.py \
+          # Locust is not a project dependency (it would pull gevent into every
+          # --all-groups job); pin it here, for this workflow only.
+          uv run --with "locust==2.46.6" locust -f tests/load/locustfile.py \
             --headless -u 10 -r 5 -t 30s \
             --host http://localhost:8080 \
             --html /tmp/locust-report.html \
