@@ -31,12 +31,21 @@ Produces measurement artefacts used to fill the §6 tables in CAGE_ARXIV.MD:
      producing independent samples of the whole pipeline rather than per-tier
      measurements.  That methodology is replaced here.
 
-     Mocked I/O mode (default): Redis, OPA HTTP, and consensus RPC are
-     replaced with zero-latency AsyncMocks to isolate pure governance-logic
-     CPU cost from network jitter.
+     Mocked I/O mode (default, "Table 2: compute-only"): OPA HTTP, the CBF,
+     the fiscal guard, consensus RPC and the causal check are replaced with
+     zero-latency AsyncMocks to isolate pure governance-logic CPU cost from
+     network jitter. Only the seal's evidence-chain commit touches Redis.
 
-     Unmocked mode (--unmocked): hits the live GKE governance stack via
-     port-forward.  Requires BACKEND_URL to point at a running gateway.
+     Unmocked mode (--unmocked, "Table 2b: over-the-wire, in-cluster"): the
+     governor is built by the production composition root
+     (bootstrap_governor() with CAGE_DOMAIN=finance), so every tier talks to
+     its real backend — the Redis-backed CBF and FiscalLimitGuard.from_env(),
+     build_finance_consensus_gate() critics, and OPAClient() at OPA_URL.
+     Requires REDIS_URL, OPA_URL, and a consensus endpoint
+     (CONSENSUS_<ROLE>_URL, VLLM_REASONING_API_BASE or VLLM_FAST_API_BASE).
+     Run it in-cluster next to those services; numbers from a laptop over
+     port-forward measure the tunnel, not CAGE. The CBF debits real headroom
+     on every approval, so point it at an ephemeral Redis.
 
   2. DEFLECTION — adversarial deflection rate by attack category, measured
                   live against the governed-financial-advisor backend at
@@ -52,6 +61,9 @@ Usage:
     # 2. Run measurements (mocked I/O, default):
     #    CAGE_ENV=development uv run python scripts/measure_paper_metrics.py
     #
+    #    Or over the wire, in-cluster (see "Unmocked mode" above):
+    #    uv run python scripts/measure_paper_metrics.py --unmocked
+    #
     # 3. Results are written to:
     #    /tmp/cage_paper_metrics.json   (machine-readable)
     #    /tmp/cage_paper_metrics.txt    (human-readable table summary)
@@ -61,6 +73,9 @@ Environment variables:
                        (default: http://localhost:18080)
     LATENCY_RUNS     — number of governor invocations per measurement run
                        (default: 200)
+    UNMOCKED_TRADE_AMOUNT — trade amount (USD) per approval in --unmocked
+                       mode (default: 10.0); small so LATENCY_RUNS approvals
+                       stay inside the real CBF and fiscal headroom
     ADVERSARIAL_JSON — path to adversarial dataset
                        (default: tests/red_team/adversarial_dataset.json)
     BENIGN_JSON      — path to benign dataset for FPR measurement
@@ -72,6 +87,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
@@ -339,6 +355,46 @@ def _build_governor(
     return governor
 
 
+def _consensus_endpoint_configured() -> bool:
+    """True if any consensus critic can reach a model over the wire."""
+    if os.environ.get("VLLM_REASONING_API_BASE") or os.environ.get("VLLM_FAST_API_BASE"):
+        return True
+    return any(
+        key.startswith("CONSENSUS_") and key.endswith("_URL") and value
+        for key, value in os.environ.items()
+    )
+
+
+def _require_unmocked_env() -> None:
+    """Fail closed unless every backend the unmocked governor calls is configured."""
+    missing = [name for name in ("REDIS_URL", "OPA_URL") if not os.environ.get(name)]
+    if not _consensus_endpoint_configured():
+        missing.append("CONSENSUS_<ROLE>_URL or VLLM_REASONING_API_BASE/VLLM_FAST_API_BASE")
+    if missing:
+        raise RuntimeError(
+            "--unmocked measures real backends and refuses to run without them; "
+            f"set: {', '.join(missing)}"
+        )
+
+
+def _build_unmocked_governor() -> Any:
+    """Assemble the production finance governor: real CBF, fiscal guard, consensus, OPA.
+
+    Uses ``bootstrap_governor()`` (the composition root) so the wiring is
+    exactly what the gateway serves, with DEFER/NARROW off as in mocked mode.
+    """
+    from src.gateway.governance.governor.assembly import DecisionFlags  # noqa: PLC0415
+    from src.gateway.governance.governor.bootstrap import (  # noqa: PLC0415
+        bootstrap_governor,
+    )
+
+    _require_unmocked_env()
+    os.environ.setdefault("CAGE_DOMAIN", "finance")
+    if os.environ["CAGE_DOMAIN"] != "finance":
+        raise RuntimeError("--unmocked benchmarks the finance domain; set CAGE_DOMAIN=finance")
+    return bootstrap_governor(flags=DecisionFlags(defer=False, narrow=False))
+
+
 # ---------------------------------------------------------------------------
 # Section 3: Percentile helper
 # ---------------------------------------------------------------------------
@@ -439,7 +495,7 @@ def _extract_span_durations(
     return durations
 
 
-async def measure_governor_latency() -> dict[str, dict[str, float]]:
+async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[str, float]]:
     """Measure per-tier and total latency of the real approval path via OTel span harvest.
 
     Methodology:
@@ -449,9 +505,11 @@ async def measure_governor_latency() -> dict[str, dict[str, float]]:
            OPA, confidence and the phase-1 domain tiers.
         2. ``revalidate_post_hitl`` (POST_HITL profile) → seal; re-runs OPA and
            commits the phase-2 barriers (CBF, fiscal).
-    - Policy, barrier, fiscal, consensus and causal backends are all-pass
-      zero-latency mocks. The seal is real: it is committed to the evidence
-      chain, so REDIS_URL (or EVIDENCE_STREAM_REDIS_URL) must point at Redis.
+    - Mocked (default): policy, barrier, fiscal, consensus and causal
+      backends are all-pass zero-latency mocks. ``unmocked=True``: every tier
+      calls its real backend (see :func:`_build_unmocked_governor`).
+    - The seal is real either way: it is committed to the evidence chain, so
+      REDIS_URL (or EVIDENCE_STREAM_REDIS_URL) must point at Redis.
     - Any other outcome aborts the run (RuntimeError): refusals are never
       timed as approvals.
     - Per-tier durations come from the spans of the same iteration, so
@@ -475,20 +533,28 @@ async def measure_governor_latency() -> dict[str, dict[str, float]]:
 
     _provider, exporter = _setup_in_memory_tracer()
 
-    gov = _build_governor(
-        opa_decision="ALLOW",
-        cbf_result="SAFE",
-        consensus_approved=True,
-        fiscal_approved=True,
-    )
+    if unmocked:
+        gov = _build_unmocked_governor()
+        # Every approval commits a real CBF debit and fiscal reservation, so
+        # the amount is kept small enough for LATENCY_RUNS approvals to fit.
+        amount = float(os.environ.get("UNMOCKED_TRADE_AMOUNT", "10.0"))
+        quantity, price = 1, amount
+    else:
+        gov = _build_governor(
+            opa_decision="ALLOW",
+            cbf_result="SAFE",
+            consensus_approved=True,
+            fiscal_approved=True,
+        )
+        amount, quantity, price = 1950.0, 10, 195.0
     params = {
         "symbol": "AAPL",
-        "quantity": 10,
-        "price": 195.0,
+        "quantity": quantity,
+        "price": price,
         "confidence": 0.97,
         "account_balance": 50000.0,
-        "trade_value": 1950.0,
-        "amount": 1950.0,
+        "trade_value": amount,
+        "amount": amount,
         "agent_id": "test-agent",
     }
 
@@ -1389,11 +1455,18 @@ def measure_benign_fpr() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _fmt_latency_table(latency: dict[str, dict[str, float]]) -> str:
+def _latency_table_title(unmocked: bool) -> str:
+    """Table caption: the two modes measure different things and are never merged."""
+    if unmocked:
+        return "## Table 2b: Eight-Tier Governor Latency (over-the-wire, in-cluster)"
+    return "## Table 2: Eight-Tier Governor Latency (compute-only, in-process, mocked I/O)"
+
+
+def _fmt_latency_table(latency: dict[str, dict[str, float]], *, unmocked: bool = False) -> str:
     """Render a markdown-style latency table for the paper."""
     lines = [
         "",
-        "## Table 2: Eight-Tier Governor Latency (in-process, mocked I/O)",
+        _latency_table_title(unmocked),
         "## Methodology: OTel span harvest — per-tier and total from same govern() call",
         "",
         f"{'Tier':<28} {'P50 (ms)':>10} {'P95 (ms)':>10} {'P99 (ms)':>10} {'Mean (ms)':>10}",
@@ -1849,6 +1922,8 @@ def _write_outputs(
     latency: dict[str, dict[str, float]],
     deflection: dict[str, Any],
     benign: dict[str, Any],
+    *,
+    unmocked: bool = False,
 ) -> None:
     """Write JSON and human-readable text results to /tmp/."""
     # Merge error_type_counts from both measurement passes into a single
@@ -1865,6 +1940,7 @@ def _write_outputs(
         "latency_runs": LATENCY_RUNS,
         "backend_url": BACKEND_URL,
         "methodology": "otel_span_harvest",
+        "latency_mode": "over_the_wire_in_cluster" if unmocked else "compute_only_mocked_io",
         "error_type_counts": merged_error_type_counts,
         "latency": latency,
         "deflection": deflection,
@@ -1884,7 +1960,8 @@ def _write_outputs(
         f"Latency runs: {LATENCY_RUNS}\n"
         f"Backend URL: {BACKEND_URL}\n"
         f"Methodology: OTel span harvest (per-tier + total from same govern() call)\n"
-        + _fmt_latency_table(latency)
+        f"Latency mode: {combined['latency_mode']}\n"
+        + _fmt_latency_table(latency, unmocked=unmocked)
         + "\n"
         + _fmt_deflection_table(deflection)
         + "\n"
@@ -1902,10 +1979,11 @@ def _write_outputs(
 # ---------------------------------------------------------------------------
 
 
-async def _async_main() -> None:
+async def _async_main(*, unmocked: bool = False) -> None:
     print("=" * 60)
     print("CAGE §6 Evaluation — Measurement Script (Phase 2 revision)")
     print("=" * 60)
+    print(f"LATENCY MODE : {'unmocked (over-the-wire)' if unmocked else 'mocked (compute-only)'}")
     print(f"CAGE_ENV     : {os.environ.get('CAGE_ENV', '(not set)')}")
     print(f"BACKEND_URL  : {BACKEND_URL}")
     print(f"LATENCY_RUNS : {LATENCY_RUNS}")
@@ -1913,8 +1991,8 @@ async def _async_main() -> None:
     print(f"BENIGN       : {BENIGN_JSON}")
     print()
 
-    # --- Part 1: Governor latency (OTel span harvest, mocked I/O, always on) ---
-    latency_results = await measure_governor_latency()
+    # --- Part 1: Governor latency (OTel span harvest) ---
+    latency_results = await measure_governor_latency(unmocked=unmocked)
 
     # --- Part 2: Adversarial deflection (live HTTP) ---
     deflection_results = measure_adversarial_deflection()
@@ -1923,11 +2001,26 @@ async def _async_main() -> None:
     benign_results = measure_benign_fpr()
 
     # --- Write outputs ---
-    _write_outputs(latency_results, deflection_results, benign_results)
+    _write_outputs(latency_results, deflection_results, benign_results, unmocked=unmocked)
 
 
-def main() -> None:
-    asyncio.run(_async_main())
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="CAGE §6 evaluation data collector.")
+    parser.add_argument(
+        "--unmocked",
+        action="store_true",
+        help=(
+            "Measure governor latency against the real backends (Redis CBF, fiscal "
+            "guard, consensus critics, OPA). Requires REDIS_URL, OPA_URL and a "
+            "consensus endpoint; reported as Table 2b (over-the-wire, in-cluster)."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    asyncio.run(_async_main(unmocked=args.unmocked))
 
 
 if __name__ == "__main__":

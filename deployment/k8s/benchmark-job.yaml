@@ -66,8 +66,11 @@ spec:
               echo ""
 
               # 3. Run Reconciliation Metrics Collection (§6.3, §6.4, §6.5)
+              # Signs snapshots as the reconciler (RECONCILER_KMS_KEY). The
+              # gateway key is unset for this step: trust.py refuses a
+              # reconciler key equal to the gateway key (G8).
               echo "📊 [Step 3/3] Running scripts/measure_reconciliation_metrics.py..."
-              python3 scripts/measure_reconciliation_metrics.py || {
+              env -u KMS_GOVERNANCE_KEY python3 scripts/measure_reconciliation_metrics.py || {
                 echo "⚠️  Reconciliation benchmark completed with warnings/skips (check KMS/Redis availability)."
               }
               echo ""
@@ -101,6 +104,11 @@ spec:
             # No verifier trusts it, so benchmark signatures carry no authority
             # (POAM-2026-079). Keyring name is cage-signing-<environment>.
             - name: KMS_GOVERNANCE_KEY
+              value: "projects/${GOOGLE_CLOUD_PROJECT}/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/benchmark-signing/cryptoKeyVersions/1"
+            # Reconciler identity for measure_reconciliation_metrics.py. Same
+            # benchmark-only key: only the benchmark process's own in-process
+            # verifier trusts it, never the gateway's CBF.
+            - name: RECONCILER_KMS_KEY
               value: "projects/${GOOGLE_CLOUD_PROJECT}/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/benchmark-signing/cryptoKeyVersions/1"
             - name: ADVERSARIAL_JSON
               value: "/app/tests/red_team/adversarial_dataset.json"
