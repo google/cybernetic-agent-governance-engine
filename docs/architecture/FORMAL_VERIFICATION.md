@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-09-29                |
 | **Version**        | 3.0.1                     |
-| **Status**         | Current — v3.0.1 stable; NoDirectBind invariant machine-verified over 52 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF Multi-Agent Proof verified ($N \in \{2, 3, 4\}$) |
+| **Status**         | Current — v3.0.1 stable; NoDirectBind invariant machine-verified over 38 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF stale-replica failover model: shipped posture (reconciled + `WAIT 1`) safe for $N \in \{1, 2, 3\}$, TLC-checked at $N = 2$ (`proof/DistributedCBF.tla`) |
 | **Canonical Path** | `docs/architecture/FORMAL_VERIFICATION.md` |
 
 **Last Updated:** 2026-09-29
@@ -192,7 +192,7 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 
 **Scope of the model.** The tuple covers the **STERA Runtime Pipeline** together with the FTRA boundary gate, giving **8 tuple positions**: `ftra`, `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal` (see `TIERS` in [`proof/model.py`](../../proof/model.py)). FTRA is modelled as **Tier 0.5** — it was folded into the tuple to close the proof/implementation divergence tracked as ARCH-1 — and at runtime it is the first phase-1 stage of `run_pipeline()` ([`src/gateway/governance/governor/stages/ftra.py`](../../src/gateway/governance/governor/stages/ftra.py)); the plan-level LangGraph gate in [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) records its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) separately. There is no `fria` position in the universal tuple: the `fria` tier exists only under `EU_ECB` and is covered by a per-region sub-proof (`JURISDICTION_TIERS` / `region_tiers()` in `proof/model.py`), which asserts every jurisdiction tier is phase 1. `cbf` and `opa` occupy separate positions (Tier 3a / 3b) because each can independently block the action. Plugin tiers (finance `bounding`, healthcare `dose_barrier`) add no positions; `PLUGIN_TIER_PHASE` keeps the POST_HITL predicate from skipping them.
 
-> **Scope limitation:** The current BFS proof covers the governance state machine (52-state gated model). It does not model the full implementation including the LangGraph harness or Redis state. A TLA+/Alloy extension to the full implementation is tracked as future work.
+> **Scope limitation:** The current BFS proof covers the governance state machine (38-state gated model). It does not model the full implementation including the LangGraph harness or Redis state. A TLA+/Alloy extension to the full implementation is tracked as future work.
 
 > **Under-approximation note:** The automaton prunes HITL-resumption paths (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope. Actuator-side seal verification (`routing_seal.verify_seal()`) is likewise a distinct trust boundary and is not re-modelled here.
 
@@ -238,7 +238,7 @@ NARROW state-space sub-proofs (C1-sub audit remediation):
   Every reachable phase is in PHASES: True
 
 Ungated NARROW negative control (C1-sub):
-  Reachable states: 40
+  Reachable states: 36
   No-Direct-Bind holds: False
 
 ✅ All assertions passed.
@@ -246,17 +246,9 @@ Ungated NARROW negative control (C1-sub):
 
 The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The `SEAL_ISSUED` → `EXECUTED` transition additionally marks the seal `seal_consumed = True`, enforcing single use. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all eight tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters; transient operational failures are `HARD` violations and terminate in `DENIED`.
 
-<<<<<<< HEAD
 ### Evaluation Order: Sequential Two-Phase Pipeline
 
-`gated_transitions()` advances tiers in a fixed order. The runtime matches this: every profile (`FULL`, `POST_HITL`, `DRY_RUN`) goes through `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py), which runs the read-only stages sequentially in Phase 1 (FTRA → STPA → OPA → confidence → Phase-1 domain tiers, stopping at the first HARD violation) and the mutating stages sequentially in Phase 2 (CBF → fiscal) only when Phase 1 produced zero violations. There is no concurrent CBF ∥ OPA evaluation on any path, so no interleaving sub-proof is required.
-
-> **Model maintenance note:** An earlier revision of `proof/model.py` contained a `concurrent_tier_transitions()` interleaving sub-proof (49 states). It is no longer in the model; the `EXPECTED_CONCURRENT_STATES` constant and the "Concurrent CBF/OPA model" header comment in [`tests/test_no_direct_bind_proof.py`](../../tests/test_no_direct_bind_proof.py) and [`proof/model.py`](../../proof/model.py) are vestigial and assert nothing.
-=======
-### Tier Order and the CBF / OPA Split
-
-`gated_transitions()` advances tiers in a fixed order. `cbf` and `opa` are separate tuple positions because each can block the action on its own. The model does **not** enumerate CBF/OPA interleavings: the former `concurrent_tier_transitions()` sub-proof was removed from `proof/model.py`, and at runtime the question no longer arises, because `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py) runs OPA as a phase-1 read-only stage and CBF as a phase-2 mutating stage, on every path including `revalidate_post_hitl()`.
->>>>>>> 810e4ea (refactor(gateway)!: remove check route, legacy shims and stage state)
+`gated_transitions()` advances tiers in a fixed order. `cbf` and `opa` are separate tuple positions because each can block the action on its own. The model does **not** enumerate CBF/OPA interleavings, and none is required: every profile (`FULL`, `POST_HITL`, `DRY_RUN`) goes through `run_pipeline()` in [`src/gateway/governance/governor/pipeline.py`](../../src/gateway/governance/governor/pipeline.py), which runs the read-only stages sequentially in Phase 1 (FTRA → STPA → OPA → confidence → Phase-1 domain tiers) and the mutating stages sequentially in Phase 2 (CBF → fiscal) only when Phase 1 produced zero violations. There is no concurrent CBF ∥ OPA evaluation on any path, including `revalidate_post_hitl()`. The former `concurrent_tier_transitions()` sub-proof was removed from `proof/model.py`.
 
 ### Closure of the Direct-Bind Shortcut (Gap 2)
 
@@ -281,10 +273,10 @@ The proof file also verifies these sub-cases:
 
 | Sub-proof | Configuration modelled | Invariant holds? | Interpretation |
 | --------- | ---------------------- | ---------------- | -------------- |
-| Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (21 states) | Confirms the seal gate is load-bearing, not decorative |
-| Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** — violation confirmed (21 states) | Proves both seal issuance and actuator verification are load-bearing |
-| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally, 49 states) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
-| C1-sub (ungated NARROW negative control) | NARROW decision reaches `EXECUTED` without seal verification | ❌ **No** — violation confirmed (50 states) | Proves the seal gate is load-bearing for the NARROW path, not only for plain ALLOW |
+| Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (19 states) | Confirms the seal gate is load-bearing, not decorative |
+| Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** — violation confirmed (19 states) | Proves both seal issuance and actuator verification are load-bearing |
+| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally, 35 states) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| C1-sub (ungated NARROW negative control) | NARROW decision reaches `EXECUTED` without seal verification | ❌ **No** — violation confirmed (36 states) | Proves the seal gate is load-bearing for the NARROW path, not only for plain ALLOW |
 
 For Gap 4, the structural invariant is preserved because the seal is still issued after the remaining tiers pass. However, the *completeness* of the gate is degraded — a mandatory tier is absent. The production startup assertions (see Step 7.1 below) prevent these configurations from being reachable in production at all, closing the gap at the deployment boundary rather than the runtime boundary.
 
@@ -526,46 +518,52 @@ The key is set with `EXPIRE window_seconds` on every write, ensuring automatic r
 
 ---
 
-## Step 12: Distributed CBF Multi-Agent Formal Verification
+## Step 12: Distributed CBF — Stale-Replica Failover Model
 
-**Source:** [`proof/distributed_cbf_model.py`](../../proof/distributed_cbf_model.py)
+**Sources:** [`proof/distributed_cbf_model.py`](../../proof/distributed_cbf_model.py) (exhaustive BFS) and [`proof/DistributedCBF.tla`](../../proof/DistributedCBF.tla) (line-for-line TLA+ transliteration), pinned by [`tests/test_distributed_cbf_proof.py`](../../tests/test_distributed_cbf_proof.py). Remediates POAM-2026-090.
 
-Step 8 proves discrete-time invariance for a single control barrier agent. In a multi-agent environment where $N$ autonomous agents simultaneously request capital allocation against a shared balance $B$, concurrent execution could potentially violate the barrier condition $h(x) \ge 0$ if state transitions interleave un-safely.
+Step 8 proves discrete-time invariance for one barrier evaluation. This step asks whether the protocol in [`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) stays safe when $N$ gateway processes share one Redis primary that can **fail over to a lagging replica**. The previous model assumed a single linearizable store and so could not express the failure mode that matters.
 
-### Multi-Agent Formal State Model
+### What the Model Represents
 
-The multi-agent state space is modeled as an asynchronous transition system:
+| Model element | Runtime counterpart |
+|---|---|
+| `available_balance`, `fence_epoch`, `ledger` (primary) and `rep_*` (replica) | Redis state key, `safety:fence_epoch`, `cbf:debits:*` on primary and replica |
+| `agent_epochs[a]` | the per-process `_last_seen_epoch` checked by `_check_fence_epoch()` |
+| `write` | `LUA_ATOMIC_CBF`: epoch CAS, barrier, SET, epoch `INCR`, debit-ledger write |
+| `commit` | actuation; under strict replication it requires the `WAIT` ack first |
+| `rollback` | `LUA_ROLLBACK`, including the `ROLLED_BACK_SETTLED` fallback, always `INCR`s the epoch |
+| `agent_restart` | a fresh process re-seeding `_last_seen_epoch` from the primary |
+| `stale_failover` | replica promotion: balance, epoch and ledger regress; `spent` (the broker side effect) does not |
 
-$$S_{\text{multi}} = \langle B, F, \{(a_i, r_i, c_i)\}_{i=1}^N \rangle$$
+`Config` toggles `sync_replication` (`CAGE_STRICT_REPLICATION` + `WAIT ≥ 1`), `reconciled` (`CAGE_CBF_STRICT_MODE`, live debit netting), `fenced` and `allow_restart`. Bounds: pool 2, reserve 1, fence epoch ≤ 4, at most one stale failover.
 
-where:
-- $B \in \mathbb{R}_{\ge 0}$ is the shared cash balance.
-- $F \in \mathbb{N}$ is the monotonic fence epoch counter.
-- For each agent $i \in \{1, \dots, N\}$: $a_i \in \{\text{IDLE}, \text{RESERVED}, \text{COMMITTED}, \text{ROLLED\_BACK}\}$, $r_i$ is the reserved capital amount, and $c_i$ is the actual committed amount.
+### Properties
 
-### Mechanized Safety Properties Verified
+1. **SP-1 (No Double-Spend):** $\text{spent} + \sum_a \text{actuatable}(a) \le \text{pool}$, where a reserve is actuatable only once replication has acknowledged it (under sync).
+2. **SP-2 (No Overcommit):** $\text{available} + \text{spent} + \sum_a \text{actuatable}(a) \le \text{pool}$.
+3. **SP-4 (Fence Monotonicity):** the fence epoch decreases only at a stale failover (action property in TLA+).
 
-The model explores all reachable interleavings under breadth-first search (BFS) across $N \in \{2, 3, 4\}$ agents and mechanically asserts four core safety properties:
+### Results
 
-1. **SP-1 (No Double-Spend):** Total balance never exceeds the initial pool:
-   $$\sum_{i=1}^N \left( r_i(s) + c_i(s) \right) + B(s) \le B(s_0)$$
-2. **SP-2 (Non-Negative Agent Reserves):** Individual agent reserves are always non-negative:
-   $$r_i(s) \ge 0 \quad \forall i, \forall s$$
-3. **SP-3 (Available-Balance Invariant):** Concurrent reserves never exceed the available balance:
-   $$B_{\text{available}}(s) = B(s_0) - \sum_{i=1}^N r_i(s) \ge 0$$
-4. **SP-4 (Fence Epoch Guard):** The fence epoch prevents stale-read exploitation — an agent whose observed epoch lags the current epoch $F$ cannot reserve or commit.
+`uv run python proof/distributed_cbf_model.py`; TLC via `TLA_TOOLS_JAR=… make verify-tla` (manual CI: `tlc-model-check.yml`). TLC and the BFS agree exactly on state counts and verdicts at $N = 2$.
 
-### Verification Results
+| Config | $N=1$ | $N=2$ | $N=3$ | Verdict |
+|---|---|---|---|---|
+| `DistributedCBF` (reconciled + sync — **shipped posture**) | 107 | 1,945 | 27,809 | SP-1 ✅ SP-2 ✅ |
+| `DistributedCBF_nosync` (no `WAIT`) | 244 | 4,232 | 56,435 | SP-1 ❌ SP-2 ❌ |
+| `DistributedCBF_selfreported` (scalar barrier) | 98 | 1,933 | 28,924 | $N=1$: SP-2 ❌; $N \ge 2$: SP-1 ❌ SP-2 ❌ |
+| `DistributedCBF_unfenced` (reconciled + sync, no fence CAS) | 110 | 2,536 | 51,302 | SP-1 ✅ SP-2 ✅ |
 
-Exhaustive state space enumeration in `proof/distributed_cbf_model.py` (run: `uv run python proof/distributed_cbf_model.py`) verifies 100% compliance across all properties under the **fenced** transition function:
+### Findings
 
-| Agent Count ($N$) | Reachable States Explored | Property Violations | Result |
-|---|---|---|---|
-| $N = 2$ | 357 states | 0 | **PASS** |
-| $N = 3$ | 2,246 states | 0 | **PASS** |
-| $N = 4$ | 12,184 states | 0 | **PASS** |
+- **`WAIT` is load-bearing.** Without synchronous replication, neither the fence epoch nor `_last_seen_epoch` prevents a double spend after failover: a second process, or a rollback that re-assigns `_last_seen_epoch` to the regressed epoch, re-admits the lost debit. The earlier claim that SP-1 holds without sync "iff no restart precedes replication" is false.
+- **The fence CAS is not needed for SP-1 in reconciled mode.** Live debit netting plus `WAIT` carries the property; the fence remains defense in depth.
+- **Self-reported mode has two defects:** a fence-epoch ABA (a rollback's `INCR` restores an epoch value the stale writer expects) and rollback over-credit through `ROLLED_BACK_SETTLED`. The mode is refused by `CAGE_CBF_STRICT_MODE` under every enforcing posture, so it is a dev-only residual.
 
-**Negative control.** The script additionally enumerates the **unfenced** variant ($N = 2$, 431 reachable states), constructs a race state in which two agents each reserve 3 of a 4-unit pool, and confirms the invariant checker flags it (`SP-3: Negative available balance: -2`). Reachability analysis then shows that this race state is **unreachable** under the fenced transition function — establishing that the fence epoch mechanism is load-bearing rather than decorative.
+### Scope
+
+The model is bounded (pool 2, one failover, $N \le 3$) and abstracts amounts to unit reserves; it does not model `WAIT` timeouts beyond "unacknowledged ⇒ not actuatable", nor the reconciler's snapshot signing (Step 8).
 
 ---
 
@@ -599,12 +597,12 @@ Exhaustive state space enumeration in `proof/distributed_cbf_model.py` (run: `uv
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 52 gated reachable states, including NARROW via re-verified clamped params | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 38 gated reachable states, including NARROW via re-verified clamped params | **PASS** |
 | 8 | CBF discrete-time invariance — invariant-parametric $h(S(t+1)) \ge (1-\gamma) \cdot h(S(t))$, V1–V4 invariant validation, Lua atomic check+commit+debit, shared fence HWM, replica `WAIT` barrier, reconciler-`kid`-verified ground truth | **PASS** (only finance `CashBarrier` enforced — POAM-2026-078) |
 | 9 | Routing seal v3 integrity — asymmetric JWT signed via KMS HSM (dev fallback: 4-tuple HMAC), 30s TTL, constant-time compare | **PASS** |
 | 10 | Provenance hash chain — SHA-256, $O(n)$ tamper detection, deterministic RFC 8785 JCS serialization | **PASS** |
 | 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86,400s window, exponential backoff | **PASS** |
-| 12 | Distributed CBF multi-agent formal verification — SP-1 through SP-4 across $N \in \{2, 3, 4\}$ agents | **PASS** |
+| 12 | Distributed CBF stale-replica failover — SP-1, SP-2, SP-4 for the shipped posture (reconciled + `WAIT 1`), $N \in \{1, 2, 3\}$, BFS and TLC agree; negative controls fail as expected | **PASS** (shipped posture; self-reported mode unsafe, dev-only) |
 | 13 | Attestation failure attributability — Ed25519 CER signature verification with fail-closed security enforcement | **PASS** |
 | 14 | Evidence serialization and KMS staging/production requirements — the compliance-bridge custodian requires an active `EVIDENCE_KMS_KEY` signer under an enforcing posture, full `RefusalReceipt` v3 evidence serialization | **PASS** |
 

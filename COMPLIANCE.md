@@ -52,11 +52,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
 | --- | --- | --- | --- | --- |
-<<<<<<< HEAD
-| **Autonomous Engine** | Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/normative_provider.py` *(not wired into the pipeline; see §2.4)* |
-=======
 | **Autonomous Engine** | `fria` tier — Fundamental Rights Impact Assessment (FRIA) currency + provider validation (phase 1, after `causal`) | **EU AI Act Art. 27** | `CTRL_FRIA_006` | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` |
->>>>>>> 5e5a3aa (refactor(governance)!: wire FRIA only under the EU_ECB posture)
 | **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` |
 | **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
 
@@ -78,11 +74,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` | *All Regions* |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` | *All Regions* |
 | **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** <br> **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` | *All Regions* |
-<<<<<<< HEAD
-| **Autonomous Engine** | Fundamental Rights Impact Assessment (FRIA) Attestation | **EU AI Act Art. 29a** | `CTRL_FRIA_006` | `src/gateway/governance/normative_provider.py` *(not wired into the pipeline; see §2.4)* | `EU_ECB` only |
-=======
 | **Autonomous Engine** | `fria` tier — Fundamental Rights Impact Assessment (FRIA) currency + provider validation | **EU AI Act Art. 27** | `CTRL_FRIA_006` | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` | `EU_ECB` only |
->>>>>>> 5e5a3aa (refactor(governance)!: wire FRIA only under the EU_ECB posture)
 | **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** <br> **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` | *All Regions* |
 | **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** <br> **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` | *All Regions* |
 | **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `src/compliance_bridge/aarm_mapper.py` | *All Regions* |

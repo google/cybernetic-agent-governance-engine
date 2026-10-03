@@ -231,17 +231,17 @@ test-property:
 # TLA+ model checking (formal verification)
 # ---------------------------------------------------------------------------
 
-## Run TLC model checker on TLA+ specs (requires manual TLA+ Toolbox installation)
+## Model-check proof/DistributedCBF*.cfg with TLC and cross-check the Python BFS.
+## Needs TLA_TOOLS_JAR=/path/to/tla2tools.jar (JAVA=... if java is not on PATH);
+## without it, runs the Python BFS only. FtraBoundary/LangGraphHarness: POAM-2026-091.
 verify-tla:
-	@echo "NOTE: TLC model checker requires manual installation of TLA+ Toolbox"
-	@echo "Download from: https://github.com/tlaplus/tlaplus/releases"
-	@echo ""
-	@echo "To run TLC verification:"
-	@echo "  java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla"
-	@echo "  java -cp tla2tools.jar tlc2.TLC -config proof/FtraBoundary.cfg proof/FtraBoundary.tla"
-	@echo "  java -cp tla2tools.jar tlc2.TLC -config proof/LangGraphHarness.cfg proof/LangGraphHarness.tla"
-	@echo ""
-	@echo "See proof/README.md for detailed instructions and expected output."
+	@uv run python proof/distributed_cbf_model.py
+	@if [ -n "$$TLA_TOOLS_JAR" ]; then \
+		uv run python scripts/verify_tla.py; \
+	else \
+		echo "TLA_TOOLS_JAR not set: TLC skipped (Python BFS only)."; \
+		echo "Download tla2tools.jar from https://github.com/tlaplus/tlaplus/releases"; \
+	fi
 
 # ---------------------------------------------------------------------------
 # NeMo ConfigMap sync (R-22 fix)

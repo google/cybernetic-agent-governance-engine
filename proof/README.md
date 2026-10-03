@@ -63,6 +63,10 @@ The model proves four concrete CAGE gaps:
 - **Gap 2**: `govern()` without seal issuance violates NoDirectBind
 - **Gap 4**: DoWhy `ImportError` (causal tier silently skipped) preserves structure but removes a mandatory check
 
+### Verdict Lattice and I-6
+
+`verdict_of()` mirrors `ClassificationEngine.classify`: HARD → DENY; OPA `MANUAL_REVIEW` or HITL → REQUIRE_APPROVAL; every finding NARROWABLE with a narrower proposal → NARROW; DEFERRABLE with confidence below the floor → DEFER; otherwise DENY; no findings → ALLOW. `verdict_lattice_holds()` checks that only ALLOW and NARROW reach `SEAL_ISSUED`. I-6 is `narrow_valid`: `phase = NARROW ⇒ seal_present ∧ resolved_allow ∧ clamped_params_valid` (it replaces `EXECUTED_unmodified`, which no model defines). Parity with the real engine is pinned in `tests/test_distributed_cbf_proof.py`.
+
 ### NARROW State (C1-sub Audit Remediation)
 
 - **NARROW**: Soft threshold exceeded → seal issued on clamped parameters (ALLOW variant, `resolvedAllow=TRUE`)
@@ -95,34 +99,58 @@ PROVED:
 
 | Spec File | Scope | Invariants |
 |-----------|-------|------------|
-| `DistributedCBF.tla` | Multi-agent Redis CBF barrier, fence epochs, split-brain scenarios | `SP1_NoDoubleSpend`, `SP2_ReserveNonNegative`, `SP3_AvailableNonNegative`, `SP4_FenceEpochMonotonic` |
-| `FtraBoundary.tla` | FTRA action classification, controller boundary coverage, fail-closed semantics | `ControllerBoundaryCoversInGraphBypass`, `FailClosedOnUnknownAction`, `NetworkPolicyEnforced` |
-| `LangGraphHarness.tla` | LangGraph state machine, evidence chain, seal issuance, HITL timeout safety, client SDK session lifecycle | `NoDirectBind`, `EvidenceChainIntegrity`, `SealGateIntegrity`, `HITLTimeoutSafety`, `OutputRailCoverage`, `SingleUseDeferralTicket`, `BudgetNeverExceededWithoutPause` |
+| `DistributedCBF.tla` | Multi-process CBF admission under a lagging Redis replica: read → CAS write, stale failover, process restart, rollback; twin of `distributed_cbf_model.py` | `SP1_NoDoubleSpend`, `SP2_NoOvercommit`, `SP4_FenceEpochMonotonic` (action property) |
+| `FtraBoundary.tla` | FTRA action classification, controller boundary coverage, fail-closed semantics — **not model-checked: its initial state violates `ControllerBoundaryCoversInGraphBypass` (POAM-2026-091)** | `ControllerBoundaryCoversInGraphBypass`, `FailClosedOnUnknownAction`, `NetworkPolicyEnforced` |
+| `LangGraphHarness.tla` | LangGraph state machine, evidence chain, seal issuance, HITL timeout safety, client SDK session lifecycle — **not model-checked: most actions leave `consecutive_denials` / `deferral_resolved` unassigned (POAM-2026-091)** | `NoDirectBind`, `EvidenceChainIntegrity`, `SealGateIntegrity`, `HITLTimeoutSafety`, `OutputRailCoverage`, `SingleUseDeferralTicket`, `BudgetNeverExceededWithoutPause` |
+
+### Distributed CBF: Results
+
+One agent is one gateway process; Redis is one primary replicating asynchronously to one replica. `distributed_cbf_model.py` documents the mapping of every action to `cbf_engine.py`. Bounds: pool 2, one in-flight debit per process, epoch ≤ 4, one stale failover. TLC on each cfg (N = 2, `-continue`) reports exactly the BFS distinct-state count and verdicts (`scripts/verify_tla.py`).
+
+| cfg | Posture | States (N=1 / 2 / 3) | SP-1 | SP-2 |
+|-----|---------|----------------------|------|------|
+| `DistributedCBF.cfg` | Shipped staging/prod: reconciled (`CAGE_CBF_STRICT_MODE`) + `WAIT 1` with strict rollback | 107 / 1945 / 27809 | ✅ | ✅ |
+| `DistributedCBF_nosync.cfg` | No `WAIT N` (negative control) | 244 / 4232 / 56435 | ❌ | ❌ |
+| `DistributedCBF_selfreported.cfg` | Self-reported scalar (non-strict; dev only, and dev runs no replica) | 98 / 1933 / 28924 | ❌ (N ≥ 2) | ❌ |
+| `DistributedCBF_unfenced.cfg` | Shipped posture without the fence-epoch CAS | 110 / 2536 / 51302 | ✅ | ✅ |
+
+What the counterexamples show:
+- **`WAIT N` is load-bearing.** Without it a committed debit is lost at failover and another process — or the same one after a rollback or restart re-seeds `_last_seen_epoch` — spends the restored balance. The fence epoch and `_last_seen_epoch` do not prevent this; `safety:fence_epoch_hwm` regresses with the replica.
+- **Self-reported mode (residual, dev only):** a read in flight across the failover passes the epoch CAS once the epoch climbs back to the value it read (ABA), and `LUA_ROLLBACK`'s `ROLLED_BACK_SETTLED` branch restores the magnitude of a debit the promoted primary never deducted (SP-2).
+- **Reconciled mode does not rely on the fence CAS for SP-1:** the script nets the live ledger total and refuses a replaced snapshot.
 
 ### TLA+ Config Files
 
 Each `.tla` spec has a corresponding `.cfg` config file that defines:
 - **Constants**: Model parameters (agent sets, thresholds, timeout bounds)
 - **Invariants**: Safety properties to check
-- **Deadlock checking**: Enabled for all specs
+- **Deadlock checking**: disabled — the models are bounded, so terminal states are expected
 
-Example config (`DistributedCBF.cfg`):
+Example config (`DistributedCBF.cfg`; `tests/test_distributed_cbf_proof.py` checks every cfg's constants against the spec and the Python `CONFIGS`):
 ```
 SPECIFICATION Spec
 
 CONSTANTS
-    Agents = {a1, a2}
-    InitialAvailable = 1000
-    MaxAmount = 500
+    AgentIDs = {a0, a1}
+    InitialPool = 2
+    ReserveAmount = 1
+    MaxAgentReserve = 1
+    MaxFenceEpoch = 4
+    MaxStaleFailovers = 1
+    SyncReplication = TRUE
+    Reconciled = TRUE
+    Fenced = TRUE
+    AllowRestart = TRUE
 
 INVARIANTS
     TypeOK
     SP1_NoDoubleSpend
-    SP2_ReserveNonNegative
-    SP3_AvailableNonNegative
+    SP2_NoOvercommit
+
+PROPERTIES
     SP4_FenceEpochMonotonic
 
-CHECK_DEADLOCK TRUE
+CHECK_DEADLOCK FALSE
 ```
 
 ### LangGraph Harness Model Checker Parameters
@@ -150,7 +178,7 @@ The `LangGraphHarness.tla` specification extends the governance pipeline model t
 - `ResumeApproval: ParkedForReview → Active` — Session resumes after manual approval
 - `ExceedBudget: Active → PausedBudgetExceeded` — Budget exhausted after MaxConsecutiveDenials
 
-**Model Configuration:**
+**Model Configuration** ([`LangGraphHarness.cfg`](LangGraphHarness.cfg); `SingleUseDeferralTicket` and `BudgetNeverExceededWithoutPause` are defined but not yet checked — POAM-2026-091):
 ```
 SPECIFICATION Spec
 
@@ -166,51 +194,23 @@ INVARIANTS
     SealGateIntegrity
     HITLTimeoutSafety
     OutputRailCoverage
-    SingleUseDeferralTicket
-    BudgetNeverExceededWithoutPause
 
-CHECK_DEADLOCK TRUE
+CHECK_DEADLOCK FALSE
 ```
 
 ### Running TLC Model Checker
 
-TLC (TLA+ model checker) requires manual installation of the TLA+ Toolbox.
-
-**Installation**:
-1. Download TLA+ Toolbox from: https://github.com/tlaplus/tlaplus/releases
-2. Extract `tla2tools.jar` to a known path
-
-**Verification commands**:
+TLC needs Java 11+ and `tla2tools.jar` (https://github.com/tlaplus/tlaplus/releases; CI pins v1.7.4 by sha256).
 
 ```bash
-# Verify distributed CBF barrier
+# Python BFS, then TLC on every DistributedCBF*.cfg, compared with the BFS pins
+TLA_TOOLS_JAR=/path/to/tla2tools.jar make verify-tla
+
+# A single cfg
 java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla
-
-# Verify FTRA boundary enforcement
-java -cp tla2tools.jar tlc2.TLC -config proof/FtraBoundary.cfg proof/FtraBoundary.tla
-
-# Verify LangGraph harness integrity
-java -cp tla2tools.jar tlc2.TLC -config proof/LangGraphHarness.cfg proof/LangGraphHarness.tla
 ```
 
-**Make target** (prints instructions):
-```bash
-make verify-tla
-```
-
-### Expected TLC Output
-
-For each spec, TLC should report:
-```
-TLC2 Version 2.XX ...
-Checking XX states...
-Model checking completed. No error has been found.
-  Estimates of the probability that TLC did not check all reachable states
-  because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = ...
-```
-
-If an invariant is violated, TLC produces a **counterexample trace** showing the sequence of states leading to the violation.
+`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1945 distinct states. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails only on a count or verdict that differs from the BFS. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
 
 ## Architectural Notes
 
@@ -227,7 +227,7 @@ If an invariant is violated, TLC produces a **counterexample trace** showing the
    - ✅ Temporal logic (liveness, fairness, eventually properties)
    - ✅ Mature distributed systems verification (Raft, Paxos, etc.)
    - ✅ Expressive language for concurrency and non-determinism
-   - ❌ Manual installation (not in CI)
+   - ❌ Needs Java and `tla2tools.jar` (manual `tlc-model-check` workflow, not per PR)
    - ❌ Requires TLA+ expertise to interpret traces
 
 ### Proof/Implementation Divergence (ARCH-1)
@@ -258,30 +258,23 @@ These are **not provable in the Python BFS model** (which abstracts FTRA as a bi
 - name: no-direct-bind-proof
   run: uv run python proof/model.py
 
-- name: pytest-logic
+- name: pytest-logic   # includes tests/test_distributed_cbf_proof.py
   run: uv run pytest tests/test_no_direct_bind_proof.py -v
 ```
 
-Regression tests pin the exact state counts (42/21/49/39). Any change to tier logic that alters these numbers fails CI and triggers a review of `docs/paper/REVISION_TRACKER.md` (published figures must stay consistent with proof).
+Regression tests pin the governance model counts — gated 38 / ungated 19 / DoWhy-absent 35 / EU_ECB 42 — and every distributed CBF count and verdict in the table above, plus the cfg ↔ spec ↔ Python constant parity. Any change that alters these numbers fails CI and triggers a review of `docs/paper/REVISION_TRACKER.md` (published figures must stay consistent with proof).
 
-### TLA+ (Manual Validation)
+### TLA+ (TLC)
 
-TLC is **not** in the CI pipeline because:
-1. TLA+ Toolbox installation is manual (not in `pyproject.toml`)
-2. TLC runtime can exceed CI timeout for large state spaces
-3. TLA+ specs are **illustrative reference models** — they document intended properties but are not gatekeepers for PR merges
-
-**Recommended workflow**:
-- Run `make verify-tla` locally before major releases
-- Archive TLC output in `proof/tlc_results/` with version tags
-- Update TLA+ specs when distributed consensus/CBF logic changes
+TLC runs in the manually dispatched [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow and locally via `make verify-tla`; it is not a per-PR gate because it needs Java and the jar. The PR gate still catches drift: `tests/test_distributed_cbf_proof.py` fails if a cfg names a constant or invariant the spec does not define, and runs TLC itself when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
 
 ## References
 
 - **Python BFS Model**: `proof/model.py`
 - **TLA+ Specs**: `proof/*.tla`
 - **TLC Configs**: `proof/*.cfg`
-- **Regression Tests**: `tests/test_no_direct_bind_proof.py`
+- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`
+- **TLC runner**: `scripts/verify_tla.py`
 - **Paper Citation**: CAGE_ARXIV.MD §4.4 "Formal Verification", Appendix A
 - **Revision Tracker**: `docs/paper/REVISION_TRACKER.md` (published state counts)
 

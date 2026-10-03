@@ -635,7 +635,7 @@ here for readability is, in the actual wire format, the envelope's own
   "proof_artifact": "proof/model.py",
   "proof_artifact_digest": "sha256:<hash of proof output text>",
   "invariant": "NoDirectBind == (phase = \"EXECUTED\") => (resolvedAllow = TRUE)",
-  "reachable_states_verified": 52,
+  "reachable_states_verified": 38,
   "deployed_commit_sha": "88fa9d7...",
   "proof_last_run_at": "2026-08-20T00:00:00.000Z",
   "distributed_proof_artifact": "proof/distributed_cbf_model.py",
@@ -659,10 +659,11 @@ here for readability is, in the actual wire format, the envelope's own
   environment at deploy time (e.g. `CAGE_PROOF_ARTIFACT_DIGEST` env var or a
   baked-in build metadata file), mirroring how `deployed_commit_sha` is
   typically injected via `CAGE_INSTANCE_ID`/build labels today.
-- `distributed_proof_artifact` — references the multi-agent cross-Redis
-  contention proof
-  ([`proof/distributed_cbf_model.py`](../../proof/distributed_cbf_model.py))
-  for deployments where cross-shard coordination is in scope — included
+- `distributed_proof_artifact` — references the multi-process stale-replica
+  failover proof
+  ([`proof/distributed_cbf_model.py`](../../proof/distributed_cbf_model.py),
+  transliterated to [`proof/DistributedCBF.tla`](../../proof/DistributedCBF.tla))
+  for deployments where cross-process coordination is in scope — included
   because Terry's "no backdoors or alternate routes" claim must cover
   distributed race conditions, not just single-request interleavings (see
   the model-scope caveat at
