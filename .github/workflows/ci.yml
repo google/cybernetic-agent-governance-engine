@@ -29,11 +29,6 @@ on:
   pull_request:
     branches:
       - main
-  schedule:
-    # Nightly load test at 02:00 UTC — runs against a CI-local gateway instance.
-    # Only locust-load-test reacts to this event; every other job in this
-    # workflow is scoped to push/pull_request.
-    - cron: "0 2 * * *"
 
 # Default least-privilege permissions for every job in this workflow.
 # zizmor's excessive-permissions audit flags jobs with no permissions:
@@ -635,72 +630,6 @@ jobs:
           uv run pytest -p no:langsmith -p no:langsmith_plugin tests/red_team/ -m "red_team and not integration" -v --no-cov
           uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m apac_mas -v --no-cov
 
-  locust-load-test:
-    name: "Nightly Load Test (Locust)"
-    runs-on: ubuntu-latest
-    # DISABLED: cannot start the gateway. Three defects must be fixed first:
-    #  1. vllm_client.py:76 reads VLLM_BASE_URL but the job sets VLLM_GATEWAY_URL
-    #  2. no services: containers for Redis (6379) or OPA (8181) that the env points at
-    #  3. the health loop prints "Gateway ready" even after 30 failed curl attempts,
-    #     so Locust would silently hammer a dead port with no early failure signal
-    # Verified by execution: gateway crashes with "VLLM_BASE_URL must be set"
-    if: false  # was: github.event_name == 'schedule'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-        with:
-          enable-cache: true
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: "pyproject.toml"
-      - name: Install dependencies
-        run: uv sync --all-groups --all-extras
-      - name: Start gateway under test (background)
-        env:
-          CAGE_ENV: "ci"
-          OPA_CACHE_ENABLED: "false"
-          OPA_URL: "http://localhost:8181"
-          REDIS_URL: "redis://localhost:6379/0"
-          OPENAI_API_KEY: "sk-dummy"
-          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
-          VLLM_API_KEY: "dummy"
-          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
-          LANGFUSE_HOST: "http://localhost:3000"
-          LANGFUSE_PUBLIC_KEY: "pk-dummy"
-          LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: |
-          uv run python -m uvicorn src.gateway.server.mcp_tool_server:app \
-            --host 0.0.0.0 --port 8080 &
-          # Wait up to 30 s for the server to become healthy.
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8080/health && break || sleep 1
-          done
-          echo "Gateway ready."
-      - name: Run Locust headless (10 users, 30 s)
-        run: |
-          uv run locust -f tests/load/locustfile.py \
-            --headless -u 10 -r 5 -t 30s \
-            --host http://localhost:8080 \
-            --html /tmp/locust-report.html \
-            --csv /tmp/locust-stats \
-            --exit-code-on-error 1
-      - name: Assert p95 latency regression gate
-        run: |
-          uv run python scripts/check_locust_baseline.py \
-            --stats-csv /tmp/locust-stats_stats.csv \
-            --p95-baseline-ms 2000
-      - name: Upload Locust report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: locust-report-${{ github.sha }}
-          path: /tmp/locust-*.html
-          retention-days: 30
-
   cbrn-keyword-check:
     name: "CBRN Keyword List Validation"
     runs-on: ubuntu-latest
@@ -790,7 +719,6 @@ jobs:
   mesh-conformance:
     name: "Linkerd Mesh Policy Conformance (kind)"
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
