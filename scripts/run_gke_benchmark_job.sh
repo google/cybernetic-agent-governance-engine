@@ -48,6 +48,7 @@ export REGISTRY_URL GOOGLE_CLOUD_PROJECT
 NAMESPACE="${NAMESPACE:-governance-stack}"
 JOB_NAME="cage-paper-benchmark"
 REDIS_MANIFEST="deployment/k8s/benchmark-redis.yaml"
+EGRESS_MANIFEST="deployment/k8s/benchmark-egress.yaml"
 JOB_MANIFEST="deployment/k8s/benchmark-job.yaml"
 GIT_SHA=$(git rev-parse --short HEAD)
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}}"
@@ -86,6 +87,7 @@ cleanup() {
   echo -e "${CYAN}🧹 Deleting Job ${JOB_NAME} and the throwaway benchmark Redis...${NC}"
   kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true --wait=false || true
   render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl delete -f - -n "${NAMESPACE}" --ignore-not-found=true --wait=false || true
+  kubectl delete -f "${EGRESS_MANIFEST}" -n "${NAMESPACE}" --ignore-not-found=true --wait=false || true
 }
 trap cleanup EXIT
 
@@ -113,6 +115,7 @@ echo ""
 echo -e "${CYAN}🧹 [Step 1/6] Removing any previous benchmark Job and Redis...${NC}"
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true --wait=true
 render "${REDIS_MANIFEST}" BENCHMARK_REDIS_IMAGE | kubectl delete -f - -n "${NAMESPACE}" --ignore-not-found=true --wait=true
+kubectl delete -f "${EGRESS_MANIFEST}" -n "${NAMESPACE}" --ignore-not-found=true --wait=true
 
 # 2. Throwaway Redis primary + replica
 echo -e "${CYAN}🧱 [Step 2/6] Starting throwaway Redis (${REDIS_MANIFEST})...${NC}"
@@ -123,7 +126,8 @@ kubectl rollout status deployment/benchmark-redis-replica -n "${NAMESPACE}" --ti
 REDIS_IMAGE=$(kubectl get deployment benchmark-redis-primary -n "${NAMESPACE}" \
   -o jsonpath='{.spec.template.spec.containers[0].image}')
 
-# 3. ConfigMaps and the Job.
+# 3. Egress (Cloud KMS only), ConfigMaps and the Job.
+kubectl apply -f "${EGRESS_MANIFEST}" -n "${NAMESPACE}"
 echo -e "${CYAN}📦 [Step 3/6] Refreshing ConfigMaps and applying ${JOB_MANIFEST}...${NC}"
 kubectl create configmap red-team-datasets \
   --from-file=tests/red_team/adversarial_dataset.json \
