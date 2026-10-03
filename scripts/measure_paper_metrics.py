@@ -572,8 +572,23 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
         "compliance_checked": True,
     }
 
-    async def _approval_path() -> tuple[float, float]:
-        """Run one approval; return (full_ms, post_hitl_ms). Abort on any other outcome."""
+    # Which approval path the governor takes for this trade, decided once in
+    # the try block below. Mocked mode is pinned to the HITL path (Table 2).
+    # The real finance stack ALLOWs a small junior trade outright; the gateway
+    # then makes one committing govern() FULL pass, which mints the seal
+    # (governance_middleware.py), so that pass is the approved-path latency
+    # and revalidate_post_hitl does not apply.
+    path = {"allow": False}
+
+    async def _approval_path() -> tuple[float, float | None]:
+        """Run one approval; return (full_ms, post_hitl_ms or None). Abort on any other outcome."""
+        if path["allow"]:
+            t0 = time.perf_counter()
+            seal = await gov.govern("execute_trade", dict(params))
+            t1 = time.perf_counter()
+            if not seal:
+                raise RuntimeError("latency benchmark: govern() returned no seal")
+            return (t1 - t0) * 1000, None
         t0 = time.perf_counter()
         verdict = await gov.validate_action("execute_trade", dict(params))
         t1 = time.perf_counter()
@@ -603,6 +618,10 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
     sink = get_evidence_sink()
     await sink.start()
     try:
+        first = await gov.validate_action("execute_trade", dict(params))
+        if first.get("verdict") == GovernanceDecision.ALLOW and unmocked:
+            path["allow"] = True
+            print("  Approval path: ALLOW without HITL -> timing govern() (FULL, sealed)")
         return await _measure_approval_latency(gov, params, exporter, _approval_path, GovernanceError)
     finally:
         await sink.stop()
@@ -622,12 +641,15 @@ async def _measure_approval_latency(
         await _approval_path()
     exporter.clear()
 
+    allow_path = False
     for i in range(LATENCY_RUNS):
         exporter.clear()
         full_ms, post_hitl_ms = await _approval_path()
-        total_ms = full_ms + post_hitl_ms
+        allow_path = post_hitl_ms is None
+        total_ms = full_ms + (post_hitl_ms or 0.0)
         full_samples.append(full_ms)
-        post_hitl_samples.append(post_hitl_ms)
+        if post_hitl_ms is not None:
+            post_hitl_samples.append(post_hitl_ms)
         total_approved_samples.append(total_ms)
 
         finished = list(exporter.get_finished_spans())
@@ -680,11 +702,25 @@ async def _measure_approval_latency(
                 f"  {label:<25} (span not emitted — tier inactive in this configuration)"
             )
 
-    results["validate_action (FULL)"] = _percentiles(full_samples)
-    results["revalidate_post_hitl"] = _percentiles(post_hitl_samples)
+    full_label = "govern (FULL, sealed)" if allow_path else "validate_action (FULL)"
+    results[full_label] = _percentiles(full_samples)
+    if allow_path:
+        results["revalidate_post_hitl"] = {
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+            "mean": 0.0,
+            "note": "not applicable: trade ALLOWed without HITL",
+            "display": "(n/a)",
+        }
+    else:
+        results["revalidate_post_hitl"] = _percentiles(post_hitl_samples)
     results["Total (APPROVED)"] = _percentiles(total_approved_samples)
     results["Total (REJECTED)"] = _percentiles(total_rejected_samples)
-    for label, samples in (("validate_action (FULL)", full_samples), ("revalidate_post_hitl", post_hitl_samples)):
+    timed = [(full_label, full_samples)]
+    if not allow_path:
+        timed.append(("revalidate_post_hitl", post_hitl_samples))
+    for label, samples in timed:
         print(
             f"  {label:<25} n={len(samples):3d}  P50={results[label]['p50']:.3f}ms  P95={results[label]['p95']:.3f}ms  P99={results[label]['p99']:.3f}ms"
         )
@@ -1490,7 +1526,7 @@ def _fmt_latency_table(latency: dict[str, dict[str, float]], *, unmocked: bool =
         note = stats.get("note", "")
         if note:
             lines.append(
-                f"{tier:<28} {'(not emitted)':>10} {'':>10} {'':>10} {'':>10}  # {note}"
+                f"{tier:<28} {stats.get('display', '(not emitted)'):>10} {'':>10} {'':>10} {'':>10}  # {note}"
             )
         else:
             lines.append(
