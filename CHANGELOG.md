@@ -178,6 +178,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Review round 2 documentation sync (WS-H).** POAM-2026-092 closed with merge evidence (`42ee97a5`). The POAM-2026-090 residual and the ADR-010 status now cite the merge SHAs. `REVISION_TRACKER.md` closes S17 and S19, records the S18 and S20 evidence, and lists the follow-ups (#358, #359, #361). `GATEWAY_ARCHITECTURE.md` §5.5 states the streaming trade-off (D5): the full response is buffered, a rail edit downgrades it to JSON, and client TTFT equals generation time. §5.5 also places NeMo as a content layer outside the admissibility decision, and `LATENCY_STRATEGY.md` no longer implies real-time token streaming. `STPA_ANALYSIS.md` §3.1 documents the compiler schema, the closed condition grammar, deterministic templates, the freshness gate, and the unenforced-`composite` caveat. OSCAL artifacts were re-exported.
 - **docker-compose.local-dev.yml** — Removed misleading Ollama reference from line 38 comment; replaced with generic "host services" description (`docs(deployment)`).
 - **Architecture Documentation** — Added comprehensive interrupt() pattern examples and migration guide to [`docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`](docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md) §7.1 (`docs(architecture)`).
 - **HITL Remediation Documentation** — Clarified LangGraph interrupt()/resume semantics in [`docs/security/HITL_TOCTOU_REMEDIATION.md`](docs/security/HITL_TOCTOU_REMEDIATION.md) with updated sequence diagram annotations (`docs(security)`).
