@@ -289,11 +289,11 @@ async def test_defer_token_resolution_traverses_replay_evaluate():
         ttl_seconds=3600,
     )
 
-    # Mock queue.get to return the token
-    mock_queue.get = AsyncMock(return_value=mock_token)
+    # Mock the status-bearing read to return the parked token
+    mock_queue._read_token_with_rev = AsyncMock(return_value=(mock_token, "PARKED", 0))
 
     # Mock queue._resolve to track calls
-    mock_queue._resolve = AsyncMock()
+    mock_queue._resolve = AsyncMock(return_value=mock_token)
 
     # Enriched context with confidence above threshold
     enriched_context = {

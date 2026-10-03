@@ -17,611 +17,568 @@
    LangGraph Harness State Machine — TLA+ Formal Specification
    --------------------------------------------------------------------------
 
-   This specification models the LangGraph harness state machine for the
-   CAGE Governed Financial Advisor (GFA) workflow. It captures:
-   
-   - Graph lifecycle phases (INIT → ROUTING → GOVERNANCE_CHECK → LLM_CALL → RESPONSE/ERROR)
-   - Canonical GovernanceDecision branching (ALLOW/DENY/DEFER/NARROW/REQUIRE_APPROVAL)
-   - Evidence chain commit points (routing seal generation)
-   - Fence epoch validation integration (EXTENDS DistributedCBF concepts)
-   - HITL interrupt/park semantics with TTL expiration
+   One Governed Financial Advisor (GFA) thread over MaxTurns user turns, and
+   the gateway DeferQueue tickets those turns park.
 
-   Source Code Cross-Reference:
-   - src/governed_financial_advisor/graph/graph.py     → Graph topology
-   - src/governed_financial_advisor/graph/state.py     → AgentState TypedDict
-   - src/gateway/governance/decisions.py              → GovernanceDecision enum
-   - src/gateway/governance/routing_seal.py           → Seal generation/validation
-   - src/gateway/governance/provenance_chain.py       → Evidence chain
-   - src/gateway/governance/symbolic_governor.py      → Governance pipeline
+   Graph (src/governed_financial_advisor/graph/graph.py, _build_workflow):
+     nemo_guardrail    -> END (blocked, no output rail) | thinker -> doer
+     doer (supervisor) -> data_analyst -> nemo_output_rail
+                        | nemo_output_rail (FINISH)
+                        | execution_analyst
+     execution_analyst -> evaluator
+     evaluator         -> ftra_node (APPROVED)
+                        | execution_analyst (rejected, loop_count < 3)
+                        | explainer (rejected, loop_count >= 3)
+     ftra_node         -> safety_check (CLEAR) | explainer (BLOCKED)
+                        | interrupt (HITL_REQUIRED), then explainer on resume
+                          (route_after_ftra sends HITL_REQUIRED to explainer)
+     safety_check      -> approval_node | governed_trader (APPROVED / SKIPPED)
+                        | defer_node (DEFERRED) | explainer (BLOCKED / HARD_PAUSE)
+     approval_node     -> governed_trader | explainer
+     governed_trader   -> explainer;  defer_node -> explainer
+     explainer         -> nemo_output_rail -> END
 
-   Key Graph Nodes (from graph.py):
-   - nemo_guardrail      → BLOCKED | thinker_node
-   - thinker_node        → doer_node
-   - doer_node           → data_analyst | execution_analyst | nemo_output_rail
-   - execution_analyst   → evaluator
-   - evaluator           → ftra_node | execution_analyst (loop) | explainer
-   - ftra_node           → safety_check | explainer | [DeferQueue park]
-   - safety_check        → governed_trader | defer_node | explainer
-   - governed_trader     → explainer (interrupt_before triggers here)
-   - explainer           → nemo_output_rail
-   - nemo_output_rail    → END
+   safety_check (graph/nodes/safety_node.py) asks the gateway
+   (POST /governance/validate-action) only for an execute_trade plan; any
+   other plan is SKIPPED. ALLOW / NARROW / REQUIRE_APPROVAL reset
+   consecutive_denials to 0; DEFER leaves it; a refusal or gateway error
+   increments it and reports HARD_PAUSE_BUDGET_EXCEEDED once the new count
+   reaches MAX_CONSECUTIVE_DENIALS (2), else BLOCKED. The counter lives in
+   the thread checkpoint across turns. The pause ends that turn; it does not
+   lock the thread.
 
-   Governance Decision Flow (from symbolic_governor.py):
-   - ALLOW            → Routing seal issued, action proceeds
-   - DENY             → Action blocked, no seal
-   - REQUIRE_APPROVAL → HITL queue (human sign-off required)
-   - DEFER            → DeferQueue (automated data-hydration)
-   - NARROW           → Clamped parameters, action proceeds with constraints
-   (There is no PAUSE: a transient fault is a DENY with a refusal receipt.)
+   Actuation happens only in the governed-trader subgraph
+   (graph/subgraphs/governed_trader_graph.py): gateway_tool_guard submits each
+   tool call to the gateway (FULL profile). ALLOW / NARROW: the gateway seals,
+   commits evidence and actuates inside execute_trade_action. REQUIRE_APPROVAL:
+   the gateway parks a HITL_REQUIRED ticket, the subgraph interrupts, and on
+   resume (after post-HITL re-hydration and the drift check) the gateway runs
+   enforce_approved_governance (server/governance_middleware.py):
+   consume_approval exactly once, then POST_HITL re-validation, then the
+   seal. Every refusal emits a refusal receipt (evidence).
 
-   Verification Status:
-   - Python BFS (proof/model.py): 21-state automaton for 8-tier governance
-   - This TLA+ extends to include full LangGraph harness lifecycle
-   - Cross-validates with DistributedCBF.tla for fence epoch semantics
+   DeferQueue (src/gateway/governance/defer_queue.py), one ticket slot per
+   turn. Kinds: DEFER (governor DEFER at safety_check, injectable), FTRA
+   (ftra_node park, FTRA_IRREVERSIBLE_TERMINAL; the bridge's reason gate
+   forbids injection) and APPROVAL (HITL_REQUIRED, consumed by the trader).
+   Status PARKED -> PARTIALLY_APPROVED -> RESOLVED/ESCALATED (approve, quorum
+   abstracted to two approvals) -> CONSUMED (consume_approval); PARKED ->
+   RESOLVED/INJECTED (POST /v1/defer/{id}/inject -> replay_evaluate);
+   PARKED | PARTIALLY_APPROVED -> RESOLVED/EXPIRED (expire_stale). Tickets
+   change asynchronously, in any later turn.
 
-   TLC Configuration:
-   ---------------------------------------------------------------------------
-   CONSTANTS
-       MaxLoopCount = 3
-       HITLTimeoutTicks = 5
-   INIT Init
-   NEXT Next
-   INVARIANT TypeOK
-   INVARIANT NoDirectBind
-   INVARIANT EvidenceChainIntegrity
-   ---------------------------------------------------------------------------
+   ResolveGuarded = TRUE is HEAD after POAM-2026-093: _resolve only leaves
+   the statuses in _RESOLVABLE_FROM. ResolveGuarded = FALSE is the code
+   before it: replay_evaluate re-resolved any token the bridge's gates let
+   through, and expire_stale could overwrite a quorum approval in the window
+   between approve()'s CAS and its zrem.
+
+   Bounding: loop_count saturates at MaxLoopCount (the router only compares
+   it with 3; the runtime counter keeps growing and is never reset in a
+   thread). resolve_count is capped at 2, enough to witness a second
+   resolution.
+
+   Configurations (POAM-2026-091):
+     LangGraphHarness.cfg            HEAD: every invariant holds
+     LangGraphHarness_unguarded.cfg  NEGATIVE CONTROL (pre-POAM-2026-093
+                                     DeferQueue): SingleUseDeferralTicket fails
 *)
 
-EXTENDS Naturals, FiniteSets, Sequences
-
------------------------------------------------------------------------------
-(* CONSTANTS *)
------------------------------------------------------------------------------
+EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-    MaxLoopCount,           \* Safety breaker loop cap (default: 3)
-    HITLTimeoutTicks,       \* HITL TTL in abstract time ticks (default: 5)
-    MaxConsecutiveDenials   \* Budget cap for consecutive denials (default: 2)
+    MaxLoopCount,           \* evaluator re-plan cap (route_after_evaluator: 3)
+    HITLTimeoutTicks,       \* interrupt TTL in abstract ticks
+    MaxConsecutiveDenials,  \* safety_node.MAX_CONSECUTIVE_DENIALS (2)
+    MaxTurns,               \* user turns explored on one thread
+    ResolveGuarded          \* _resolve status guard (TRUE at HEAD)
+
+ASSUME MaxConsecutiveDenials >= 1 /\ MaxTurns >= 1 /\ ResolveGuarded \in BOOLEAN
 
 -----------------------------------------------------------------------------
-(* GRAPH PHASES — Lifecycle states of the LangGraph execution *)
+(* VOCABULARY *)
 -----------------------------------------------------------------------------
 
-\* Graph execution phases
 Phases == {
-    "INIT",                  \* Initial state, awaiting input
-    "GUARDRAIL",             \* NeMo input guardrail check
-    "ROUTING",               \* Supervisor routing decision
-    "GOVERNANCE_CHECK",      \* Symbolic Governor validation (7-tier)
-    "FTRA_CHECK",            \* FTRA Tier 0.5 reachability analysis
-    "LLM_CALL",              \* LLM inference in progress
-    "HITL_PENDING",          \* Awaiting human-in-the-loop approval
-    "DEFER_PENDING",         \* Parked in DeferQueue for data hydration
-    "RESPONSE",              \* Successful completion with output
-    "ERROR",                 \* Terminal error state
-    "Active",                \* Client session active
-    "ParkedForReview",       \* Client session parked pending review
-    "PausedBudgetExceeded",  \* Client session paused due to budget cap
-    "Completed"              \* Client session completed successfully
+    "IDLE",           \* awaiting the first user message
+    "GUARDRAIL",      \* nemo_guardrail
+    "SUPERVISOR",     \* thinker_node -> doer_node
+    "PLANNING",       \* execution_analyst -> evaluator
+    "FTRA_CHECK",     \* ftra_node
+    "FTRA_HITL",      \* ftra_node interrupt()
+    "SAFETY_CHECK",   \* safety_check (gateway validate-action)
+    "APPROVAL",       \* approval_node interrupt()
+    "TRADER",         \* governed_trader: tool call through gateway_tool_guard
+    "TRADER_HITL",    \* governed_trader approval interrupt (deferred_id)
+    "DEFER_NODE",     \* defer_node
+    "EXPLAINER",      \* explainer
+    "OUTPUT_RAIL",    \* nemo_output_rail
+    "DONE"            \* END of the turn
 }
+HITLPhases == {"FTRA_HITL", "APPROVAL", "TRADER_HITL"}
+TradingPhases == {"APPROVAL", "TRADER", "TRADER_HITL"}
 
-\* Canonical governance decisions (from decisions.py GovernanceDecision enum)
-GovernanceDecisions == {
-    "ALLOW",
-    "DENY",
-    "REQUIRE_APPROVAL",
-    "DEFER",
-    "NARROW"
-}
-
-\* FTRA verdicts (from ftra/models.py FTRAVerdict enum)
+GatewayDecisions == {"ALLOW", "NARROW", "REQUIRE_APPROVAL", "DENY"}
 FTRAVerdicts == {"CLEAR", "HITL_REQUIRED", "BLOCKED"}
+SafetyStatuses == {"APPROVED", "SKIPPED", "DEFERRED", "BLOCKED",
+                   "HARD_PAUSE_BUDGET_EXCEEDED"}
 
-\* Safety check statuses (from state.py AgentState.safety_status)
-SafetyStatuses == {"APPROVED", "BLOCKED", "ESCALATED", "SKIPPED", "DEFERRED", "MANUAL_REVIEW"}
+TicketIds == 1..MaxTurns          \* ticket t is parked in turn t
+TicketKinds == {"DEFER", "FTRA", "APPROVAL"}
+TicketStatuses == {"PARKED", "PARTIALLY_APPROVED", "RESOLVED", "CONSUMED"}
+Resolutions == {"ESCALATED", "INJECTED", "EXPIRED"}
+MaxResolveCount == 2
 
 -----------------------------------------------------------------------------
-(* VARIABLES — LangGraph harness state *)
+(* VARIABLES *)
 -----------------------------------------------------------------------------
 
 VARIABLES
-    phase,                \* Current execution phase
-    loop_count,           \* Recursion depth counter for safety breaker
-    governance_decision,  \* Latest GovernanceDecision from validate_action()
-    ftra_verdict,         \* FTRA Tier 0.5 verdict
-    safety_status,        \* OPA safety gate status
-    seal_issued,          \* TRUE if routing seal was generated
-    seal_valid,           \* TRUE if seal passed verification
-    evidence_committed,   \* TRUE if evidence chain record committed
-    hitl_ticks_remaining, \* Countdown for HITL TTL expiration
-    guardrail_blocked,    \* TRUE if NeMo guardrail blocked input
-    output_rail_applied,  \* TRUE if NeMo output rail was executed
-    resolved_allow,       \* TRUE only when all gates passed AND seal valid
-    consecutive_denials,  \* Counter for consecutive DENY verdicts
-    deferral_resolved     \* Set of resolved deferral ticket IDs
+    phase,                \* current graph node (per turn)
+    turn,                 \* turns started on this thread
+    loop_count,           \* AgentState.loop_count (thread-lifetime)
+    consecutive_denials,  \* AgentState.consecutive_denials (thread-lifetime)
+    ftra_verdict,         \* this turn's ftra_status
+    safety_status,        \* this turn's safety_status
+    governance_decision,  \* this turn's gateway decision on the trader's tool call
+    guardrail_blocked,    \* this turn's input was blocked
+    output_rail_applied,  \* this turn passed nemo_output_rail
+    seal_issued,          \* the gateway sealed this turn's action
+    resolved_allow,       \* the gateway's authority resolved to allow
+    executed,             \* the trade was actuated this turn
+    evidence_committed,   \* a decision or refusal receipt was committed this turn
+    hitl_ticks_remaining, \* TTL of this turn's interrupt
+    ticket_kind,          \* [TicketIds -> TicketKinds \cup {"NONE"}]
+    ticket_status,        \* [TicketIds -> TicketStatuses \cup {"NONE"}]
+    ticket_resolution,    \* [TicketIds -> Resolutions \cup {"NONE"}]
+    resolve_count,        \* [TicketIds -> 0..MaxResolveCount]: times resolved
+    consume_count         \* [TicketIds -> 0..2]: times consumed
 
-\* All variables for UNCHANGED expressions
-vars == <<phase, loop_count, governance_decision, ftra_verdict, safety_status,
-          seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-          guardrail_blocked, output_rail_applied, resolved_allow,
-          consecutive_denials, deferral_resolved>>
-
------------------------------------------------------------------------------
-(* TYPE INVARIANT *)
------------------------------------------------------------------------------
+turn_vars == <<ftra_verdict, safety_status, governance_decision, guardrail_blocked,
+               output_rail_applied, seal_issued, resolved_allow, executed,
+               evidence_committed, hitl_ticks_remaining>>
+ticket_vars == <<ticket_kind, ticket_status, ticket_resolution, resolve_count,
+                 consume_count>>
+vars == <<phase, turn, loop_count, consecutive_denials, turn_vars, ticket_vars>>
 
 TypeOK ==
     /\ phase \in Phases
+    /\ turn \in 0..MaxTurns
     /\ loop_count \in 0..MaxLoopCount
-    /\ governance_decision \in GovernanceDecisions \cup {"NONE"}
+    /\ consecutive_denials \in 0..MaxTurns
     /\ ftra_verdict \in FTRAVerdicts \cup {"NONE"}
     /\ safety_status \in SafetyStatuses \cup {"NONE"}
-    /\ seal_issued \in BOOLEAN
-    /\ seal_valid \in BOOLEAN
-    /\ evidence_committed \in BOOLEAN
-    /\ hitl_ticks_remaining \in 0..HITLTimeoutTicks
+    /\ governance_decision \in GatewayDecisions \cup {"NONE"}
     /\ guardrail_blocked \in BOOLEAN
     /\ output_rail_applied \in BOOLEAN
+    /\ seal_issued \in BOOLEAN
     /\ resolved_allow \in BOOLEAN
-    /\ consecutive_denials \in 0..MaxConsecutiveDenials + 1
-    /\ deferral_resolved \subseteq (1..100)  \* Ticket IDs 1-100
+    /\ executed \in BOOLEAN
+    /\ evidence_committed \in BOOLEAN
+    /\ hitl_ticks_remaining \in 0..HITLTimeoutTicks
+    /\ ticket_kind \in [TicketIds -> TicketKinds \cup {"NONE"}]
+    /\ ticket_status \in [TicketIds -> TicketStatuses \cup {"NONE"}]
+    /\ ticket_resolution \in [TicketIds -> Resolutions \cup {"NONE"}]
+    /\ resolve_count \in [TicketIds -> 0..MaxResolveCount]
+    /\ consume_count \in [TicketIds -> 0..2]
 
------------------------------------------------------------------------------
-(* SAFETY INVARIANTS *)
------------------------------------------------------------------------------
-
-(* NoDirectBind: The core safety property from proof/model.py
-   RESPONSE phase is only reachable when resolved_allow = TRUE.
-   This ensures execution cannot proceed without validated governance approval.
-   
-   Python cross-reference: proof/model.py lines 22-23, 435-447
-   TLA+ formulation: (phase = "RESPONSE") => (resolved_allow = TRUE) *)
-NoDirectBind == (phase = "RESPONSE") => resolved_allow
-
-(* EvidenceChainIntegrity: Evidence must be committed before response.
-   
-   Python cross-reference:
-   - src/gateway/governance/provenance_chain.py
-   - EVIDENCE_CHAIN_BLOCKING mode in evidence_stream.py
-   
-   This property ensures audit trail integrity. *)
-EvidenceChainIntegrity ==
-    (phase = "RESPONSE" /\ governance_decision = "ALLOW") => evidence_committed
-
-(* SealGateIntegrity: Seal must be issued and valid for ALLOW responses.
-   
-   Python cross-reference: src/gateway/governance/routing_seal.py lines 33-38 *)
-SealGateIntegrity ==
-    (phase = "RESPONSE" /\ governance_decision = "ALLOW") => (seal_issued /\ seal_valid)
-
-(* HITLTimeoutSafety: HITL timeout leads to ERROR, not RESPONSE.
-   
-   If HITL times out without approval, the request must not proceed. *)
-HITLTimeoutSafety ==
-    (phase = "HITL_PENDING" /\ hitl_ticks_remaining = 0) => ~resolved_allow
-
-(* OutputRailCoverage: All non-error terminal paths pass through output rail.
-   
-   Python cross-reference: graph.py line 238 (nemo_output_rail → END)
-   Exception: guardrail_blocked path skips output rail (no agent output to screen) *)
-OutputRailCoverage ==
-    (phase = "RESPONSE" /\ ~guardrail_blocked) => output_rail_applied
-
-(* SingleUseDeferralTicket: A deferral ticket cannot be resolved more than once.
-   
-   Client SDK cross-reference: DeferQueue single-use token consumption
-   This ensures audit trail integrity and prevents replay attacks. *)
-SingleUseDeferralTicket ==
-    \A ticket \in deferral_resolved : Cardinality({t \in deferral_resolved : t = ticket}) = 1
-
-(* BudgetNeverExceededWithoutPause: Budget cap enforcement.
-   
-   If consecutive denials exceed MaxConsecutiveDenials, state must be PausedBudgetExceeded.
-   This prevents runaway client sessions from exhausting governance budget. *)
-BudgetNeverExceededWithoutPause ==
-    (consecutive_denials > MaxConsecutiveDenials) => (phase = "PausedBudgetExceeded")
-
-\* Combined safety invariant
-Safety == NoDirectBind /\ EvidenceChainIntegrity /\ SealGateIntegrity
-       /\ HITLTimeoutSafety /\ OutputRailCoverage
-       /\ SingleUseDeferralTicket /\ BudgetNeverExceededWithoutPause
+\* Tickets resolved at least once (formerly the deferral_resolved variable).
+DeferralResolved == {t \in TicketIds : resolve_count[t] > 0}
 
 -----------------------------------------------------------------------------
 (* INITIAL STATE *)
 -----------------------------------------------------------------------------
 
 Init ==
-    /\ phase = "INIT"
+    /\ phase = "IDLE"
+    /\ turn = 0
     /\ loop_count = 0
-    /\ governance_decision = "NONE"
+    /\ consecutive_denials = 0
     /\ ftra_verdict = "NONE"
     /\ safety_status = "NONE"
-    /\ seal_issued = FALSE
-    /\ seal_valid = FALSE
-    /\ evidence_committed = FALSE
-    /\ hitl_ticks_remaining = HITLTimeoutTicks
+    /\ governance_decision = "NONE"
     /\ guardrail_blocked = FALSE
     /\ output_rail_applied = FALSE
+    /\ seal_issued = FALSE
     /\ resolved_allow = FALSE
-    /\ consecutive_denials = 0
-    /\ deferral_resolved = {}
+    /\ executed = FALSE
+    /\ evidence_committed = FALSE
+    /\ hitl_ticks_remaining = HITLTimeoutTicks
+    /\ ticket_kind = [t \in TicketIds |-> "NONE"]
+    /\ ticket_status = [t \in TicketIds |-> "NONE"]
+    /\ ticket_resolution = [t \in TicketIds |-> "NONE"]
+    /\ resolve_count = [t \in TicketIds |-> 0]
+    /\ consume_count = [t \in TicketIds |-> 0]
 
 -----------------------------------------------------------------------------
-(* ACTIONS — Graph node transitions *)
+(* HELPERS *)
 -----------------------------------------------------------------------------
 
-(* StartExecution: INIT → GUARDRAIL
-   Begin processing a new request through the NeMo input guardrail. *)
-StartExecution ==
-    /\ phase = "INIT"
+\* Move to the next node; nothing else in the turn changes.
+Goto(p) ==
+    /\ phase' = p
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, turn_vars, ticket_vars>>
+
+\* DeferQueue.park for this turn's slot.
+Park(kind) ==
+    /\ ticket_kind' = [ticket_kind EXCEPT ![turn] = kind]
+    /\ ticket_status' = [ticket_status EXCEPT ![turn] = "PARKED"]
+    /\ UNCHANGED <<ticket_resolution, resolve_count, consume_count>>
+
+\* _resolve(t, resolution): one resolution of ticket t.
+Resolve(t, res) ==
+    /\ ticket_status' = [ticket_status EXCEPT ![t] = "RESOLVED"]
+    /\ ticket_resolution' = [ticket_resolution EXCEPT ![t] = res]
+    /\ resolve_count' = [resolve_count EXCEPT ![t] = @ + 1]
+    /\ UNCHANGED <<ticket_kind, consume_count>>
+
+-----------------------------------------------------------------------------
+(* GRAPH ACTIONS *)
+-----------------------------------------------------------------------------
+
+(* A new user message on the thread. Per-turn fields start clean; the
+   checkpointed counters (loop_count, consecutive_denials) carry over. *)
+StartTurn ==
+    /\ phase \in {"IDLE", "DONE"}
+    /\ turn < MaxTurns
     /\ phase' = "GUARDRAIL"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
-(* GuardrailPass: GUARDRAIL → ROUTING
-   Input passes NeMo guardrail, proceed to supervisor routing. *)
-GuardrailPass ==
-    /\ phase = "GUARDRAIL"
-    /\ phase' = "ROUTING"
+    /\ turn' = turn + 1
+    /\ ftra_verdict' = "NONE"
+    /\ safety_status' = "NONE"
+    /\ governance_decision' = "NONE"
     /\ guardrail_blocked' = FALSE
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   output_rail_applied, resolved_allow>>
+    /\ output_rail_applied' = FALSE
+    /\ seal_issued' = FALSE
+    /\ resolved_allow' = FALSE
+    /\ executed' = FALSE
+    /\ evidence_committed' = FALSE
+    /\ hitl_ticks_remaining' = HITLTimeoutTicks
+    /\ UNCHANGED <<loop_count, consecutive_denials, ticket_vars>>
 
-(* GuardrailBlock: GUARDRAIL → ERROR
-   Input blocked by NeMo guardrail, terminate immediately.
-   Note: This path skips output rail (no agent output to screen). *)
+(* route_after_guardrail: blocked input ends the turn without the output
+   rail (there is no agent output to screen). *)
 GuardrailBlock ==
     /\ phase = "GUARDRAIL"
-    /\ phase' = "ERROR"
+    /\ phase' = "DONE"
     /\ guardrail_blocked' = TRUE
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   output_rail_applied, resolved_allow>>
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict, safety_status,
+                   governance_decision, output_rail_applied, seal_issued,
+                   resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
 
-(* RouteToGovernance: ROUTING → GOVERNANCE_CHECK
-   Supervisor routes to execution_analyst → evaluator → governance check. *)
-RouteToGovernance ==
-    /\ phase = "ROUTING"
-    /\ phase' = "GOVERNANCE_CHECK"
-    /\ loop_count' = loop_count + 1
-    /\ UNCHANGED <<governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+GuardrailPass   == phase = "GUARDRAIL"  /\ Goto("SUPERVISOR")
 
-(* RouteToDataAnalyst: ROUTING → RESPONSE (via data_analyst)
-   Supervisor routes to data_analyst path (no governance needed).
-   Still passes through output rail. *)
-RouteToDataAnalyst ==
-    /\ phase = "ROUTING"
-    /\ phase' = "RESPONSE"
-    /\ output_rail_applied' = TRUE
-    /\ resolved_allow' = TRUE  \* Data analyst path has implicit approval
-    /\ evidence_committed' = TRUE  \* Commit provenance record
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, hitl_ticks_remaining, guardrail_blocked>>
+(* route_supervisor: data_analyst (then the output rail) or FINISH. *)
+RouteToOutput   == phase = "SUPERVISOR" /\ Goto("OUTPUT_RAIL")
+RouteToPlanner  == phase = "SUPERVISOR" /\ Goto("PLANNING")
 
-(* GovernanceAllow: GOVERNANCE_CHECK → FTRA_CHECK
-   Governance passes with ALLOW verdict, proceed to FTRA Tier 0.5. *)
-GovernanceAllow ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ phase' = "FTRA_CHECK"
-    /\ governance_decision' = "ALLOW"
-    /\ UNCHANGED <<loop_count, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+(* execution_analyst increments loop_count; route_after_evaluator. *)
+Plan ==
+    /\ phase = "PLANNING"
+    /\ LET lc == IF loop_count < MaxLoopCount THEN loop_count + 1 ELSE MaxLoopCount
+       IN  /\ loop_count' = lc
+           /\ \E approved \in BOOLEAN :
+                phase' = IF approved THEN "FTRA_CHECK"
+                         ELSE IF lc >= MaxLoopCount THEN "EXPLAINER"
+                         ELSE "PLANNING"
+    /\ UNCHANGED <<turn, consecutive_denials, turn_vars, ticket_vars>>
 
-(* GovernanceDeny: GOVERNANCE_CHECK → ERROR
-   Governance rejects with DENY verdict. *)
-GovernanceDeny ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ phase' = "ERROR"
-    /\ governance_decision' = "DENY"
-    /\ consecutive_denials' = consecutive_denials + 1
-    /\ UNCHANGED <<loop_count, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow, deferral_resolved>>
-
-(* GovernanceRequireApproval: GOVERNANCE_CHECK → HITL_PENDING
-   Governance requires human sign-off (MANUAL_REVIEW from OPA). *)
-GovernanceRequireApproval ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ phase' = "HITL_PENDING"
-    /\ governance_decision' = "REQUIRE_APPROVAL"
-    /\ UNCHANGED <<loop_count, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
-(* GovernanceDefer: GOVERNANCE_CHECK → DEFER_PENDING
-   Governance defers for data hydration (confidence below threshold). *)
-GovernanceDefer ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ phase' = "DEFER_PENDING"
-    /\ governance_decision' = "DEFER"
-    /\ UNCHANGED <<loop_count, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
-(* GovernanceNarrow: GOVERNANCE_CHECK → FTRA_CHECK (with narrowed params)
-   Governance allows with clamped parameters. *)
-GovernanceNarrow ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ phase' = "FTRA_CHECK"
-    /\ governance_decision' = "NARROW"
-    /\ UNCHANGED <<loop_count, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
-(* FTRAClear: FTRA_CHECK → LLM_CALL
-   FTRA clears the plan, proceed to safety_check and LLM execution. *)
 FTRAClear ==
     /\ phase = "FTRA_CHECK"
-    /\ phase' = "LLM_CALL"
+    /\ phase' = "SAFETY_CHECK"
     /\ ftra_verdict' = "CLEAR"
-    /\ safety_status' = "APPROVED"  \* safety_check passes
-    /\ seal_issued' = TRUE          \* Generate routing seal
-    /\ UNCHANGED <<loop_count, governance_decision,
-                   seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, safety_status,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   seal_issued, resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
 
-(* FTRAHITLRequired: FTRA_CHECK → HITL_PENDING
-   FTRA detects irreversible terminal with sufficient confidence.
-   Parks in DeferQueue db=1 for human review. *)
-FTRAHITLRequired ==
-    /\ phase = "FTRA_CHECK"
-    /\ phase' = "HITL_PENDING"
-    /\ ftra_verdict' = "HITL_REQUIRED"
-    /\ UNCHANGED <<loop_count, governance_decision, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
-
-(* FTRABlocked: FTRA_CHECK → ERROR
-   FTRA blocks the plan (low confidence + irreversible terminal). *)
 FTRABlocked ==
     /\ phase = "FTRA_CHECK"
-    /\ phase' = "ERROR"
+    /\ phase' = "EXPLAINER"
     /\ ftra_verdict' = "BLOCKED"
-    /\ UNCHANGED <<loop_count, governance_decision, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, safety_status,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   seal_issued, resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
 
-(* LLMCallComplete: LLM_CALL → RESPONSE
-   LLM inference completes, verify seal, commit evidence, finalize.
-   This is the only path that sets resolved_allow = TRUE. *)
-LLMCallComplete ==
-    /\ phase = "LLM_CALL"
-    /\ seal_issued = TRUE
-    /\ seal_valid' = TRUE           \* Seal verification passes
-    /\ evidence_committed' = TRUE   \* Commit evidence chain record
-    /\ output_rail_applied' = TRUE  \* Pass through output rail
-    /\ resolved_allow' = TRUE       \* CRITICAL: Authority resolved
-    /\ phase' = "RESPONSE"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, hitl_ticks_remaining, guardrail_blocked>>
+(* HITL_REQUIRED from the reachability analysis parks a ticket
+   (_park_in_defer_queue); HITL_REQUIRED from a parse failure does not
+   (ftra_defer_id None). Either way the node interrupts. *)
+FTRAHITLRequired ==
+    /\ phase = "FTRA_CHECK"
+    /\ phase' = "FTRA_HITL"
+    /\ ftra_verdict' = "HITL_REQUIRED"
+    /\ \/ Park("FTRA")
+       \/ UNCHANGED ticket_vars
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, safety_status,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   seal_issued, resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining>>
 
-(* LLMCallError: LLM_CALL → ERROR
-   LLM inference fails or seal verification fails. *)
-LLMCallError ==
-    /\ phase = "LLM_CALL"
-    /\ phase' = "ERROR"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+(* On resume the node returns ftra_status HITL_REQUIRED, which
+   route_after_ftra sends to the explainer: an FTRA park never trades in
+   this turn. *)
+FTRAResume  == phase = "FTRA_HITL" /\ hitl_ticks_remaining > 0  /\ Goto("EXPLAINER")
+FTRATimeout == phase = "FTRA_HITL" /\ hitl_ticks_remaining = 0  /\ Goto("EXPLAINER")
 
-(* HITLApprove: HITL_PENDING → LLM_CALL
-   Human approves the request, proceed with execution. *)
-HITLApprove ==
-    /\ phase = "HITL_PENDING"
-    /\ hitl_ticks_remaining > 0
-    /\ phase' = "LLM_CALL"
-    /\ seal_issued' = TRUE          \* Generate seal after HITL approval
+(* safety_check: a non-trade plan skips the gateway. *)
+SafetySkip ==
+    /\ phase = "SAFETY_CHECK"
+    /\ safety_status' = "SKIPPED"
+    /\ phase' \in {"APPROVAL", "TRADER"}
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   seal_issued, resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
+
+(* Gateway ALLOW / NARROW / REQUIRE_APPROVAL: APPROVED, counter reset.
+   route_after_safety picks approval_node on risk or amount. *)
+SafetyApprove ==
+    /\ phase = "SAFETY_CHECK"
     /\ safety_status' = "APPROVED"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict,
-                   seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+    /\ consecutive_denials' = 0
+    /\ phase' \in {"APPROVAL", "TRADER"}
+    /\ UNCHANGED <<turn, loop_count, ftra_verdict, governance_decision,
+                   guardrail_blocked, output_rail_applied, seal_issued,
+                   resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
 
-(* HITLReject: HITL_PENDING → ERROR
-   Human rejects the request. *)
-HITLReject ==
-    /\ phase = "HITL_PENDING"
-    /\ phase' = "ERROR"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+(* Gateway DEFER with a defer_id: the governor parked a ticket; the counter
+   is left alone (deferral is not approval). *)
+SafetyDefer ==
+    /\ phase = "SAFETY_CHECK"
+    /\ safety_status' = "DEFERRED"
+    /\ phase' = "DEFER_NODE"
+    /\ Park("DEFER")
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   seal_issued, resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining>>
 
-(* HITLTimeout: HITL_PENDING → ERROR
-   HITL TTL expires without response. *)
-HITLTimeout ==
-    /\ phase = "HITL_PENDING"
-    /\ hitl_ticks_remaining = 0
-    /\ phase' = "ERROR"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+(* Gateway refusal (HTTP 403 / PermissionError), gateway error or an
+   unroutable verdict: safety_node._blocked. The gateway commits a refusal
+   receipt for a refusal; a transport error is modelled the same way. *)
+SafetyDeny ==
+    /\ phase = "SAFETY_CHECK"
+    /\ LET new == consecutive_denials + 1
+       IN  /\ consecutive_denials' = new
+           /\ safety_status' = IF new >= MaxConsecutiveDenials
+                               THEN "HARD_PAUSE_BUDGET_EXCEEDED" ELSE "BLOCKED"
+    /\ evidence_committed' = TRUE
+    /\ phase' = "EXPLAINER"
+    /\ UNCHANGED <<turn, loop_count, ftra_verdict, governance_decision,
+                   guardrail_blocked, output_rail_applied, seal_issued,
+                   resolved_allow, executed, hitl_ticks_remaining, ticket_vars>>
 
-(* HITLTick: Time passes while waiting for HITL
-   Models the hitl_expires_at TTL countdown. *)
+(* approval_node: interrupt(); Command(goto=...) on the reviewer's decision. *)
+ApprovalGranted  == phase = "APPROVAL" /\ hitl_ticks_remaining > 0 /\ Goto("TRADER")
+ApprovalRejected == phase = "APPROVAL" /\ Goto("EXPLAINER")
+
+(* The trader's tool call, gateway FULL run: ALLOW / NARROW seal, commit
+   evidence and actuate in execute_trade_action. *)
+TraderAllow ==
+    /\ phase = "TRADER"
+    /\ \E d \in {"ALLOW", "NARROW"} : governance_decision' = d
+    /\ seal_issued' = TRUE
+    /\ resolved_allow' = TRUE
+    /\ evidence_committed' = TRUE
+    /\ executed' = TRUE
+    /\ phase' = "EXPLAINER"
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict, safety_status,
+                   guardrail_blocked, output_rail_applied, hitl_ticks_remaining,
+                   ticket_vars>>
+
+TraderDeny ==
+    /\ phase = "TRADER"
+    /\ governance_decision' = "DENY"
+    /\ evidence_committed' = TRUE
+    /\ phase' = "EXPLAINER"
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict, safety_status,
+                   guardrail_blocked, output_rail_applied, seal_issued,
+                   resolved_allow, executed, hitl_ticks_remaining, ticket_vars>>
+
+(* REQUIRE_APPROVAL: the governor parks a HITL_REQUIRED ticket; the
+   subgraph interrupts with its deferred_id. *)
+TraderRequireApproval ==
+    /\ phase = "TRADER"
+    /\ governance_decision' = "REQUIRE_APPROVAL"
+    /\ phase' = "TRADER_HITL"
+    /\ Park("APPROVAL")
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict, safety_status,
+                   guardrail_blocked, output_rail_applied, seal_issued,
+                   resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining>>
+
+(* The executor emitted no tool call. *)
+TraderNoToolCall == phase = "TRADER" /\ Goto("EXPLAINER")
+
+(* Resume after the interrupt: post_hitl_rehydrate / revalidate (the drift
+   check may block), then the executor's tool call carries deferred_id and
+   the gateway runs enforce_approved_governance: consume_approval (status
+   RESOLVED, resolution ESCALATED, kind HITL_REQUIRED; atomic
+   RESOLVED -> CONSUMED), then POST_HITL re-validation. The approval is
+   spent before re-validation, so a re-validation refusal burns it. *)
+TraderResume ==
+    /\ phase = "TRADER_HITL"
+    /\ hitl_ticks_remaining > 0
+    /\ phase' = "EXPLAINER"
+    /\ \E drift_blocked \in BOOLEAN, revalidates \in BOOLEAN :
+        LET t == turn
+            consumable == /\ ticket_kind[t] = "APPROVAL"
+                          /\ ticket_status[t] = "RESOLVED"
+                          /\ ticket_resolution[t] = "ESCALATED"
+        IN  IF drift_blocked
+            THEN UNCHANGED <<seal_issued, resolved_allow, executed,
+                             evidence_committed, ticket_vars>>
+            ELSE IF ~consumable
+            THEN /\ evidence_committed' = TRUE      \* refusal receipt
+                 /\ UNCHANGED <<seal_issued, resolved_allow, executed, ticket_vars>>
+            ELSE /\ ticket_status' = [ticket_status EXCEPT ![t] = "CONSUMED"]
+                 /\ consume_count' = [consume_count EXCEPT ![t] = @ + 1]
+                 /\ UNCHANGED <<ticket_kind, ticket_resolution, resolve_count>>
+                 /\ evidence_committed' = TRUE
+                 /\ seal_issued' = revalidates
+                 /\ resolved_allow' = revalidates
+                 /\ executed' = revalidates
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict, safety_status,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   hitl_ticks_remaining>>
+
+TraderHITLTimeout == phase = "TRADER_HITL" /\ hitl_ticks_remaining = 0 /\ Goto("EXPLAINER")
+
+(* Interrupt TTL countdown. *)
 HITLTick ==
-    /\ phase = "HITL_PENDING"
+    /\ phase \in HITLPhases
     /\ hitl_ticks_remaining > 0
     /\ hitl_ticks_remaining' = hitl_ticks_remaining - 1
-    /\ UNCHANGED <<phase, loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+    /\ UNCHANGED <<phase, turn, loop_count, consecutive_denials, ftra_verdict,
+                   safety_status, governance_decision, guardrail_blocked,
+                   output_rail_applied, seal_issued, resolved_allow, executed,
+                   evidence_committed, ticket_vars>>
 
-(* DeferResolve: DEFER_PENDING → GOVERNANCE_CHECK
-   Deferred request is resolved with hydrated data, retry governance.
-   Records ticket resolution to enforce single-use semantics. *)
-DeferResolve ==
-    /\ phase = "DEFER_PENDING"
-    /\ \E ticket \in (1..100) :
-        /\ ticket \notin deferral_resolved
-        /\ phase' = "GOVERNANCE_CHECK"
-        /\ deferral_resolved' = deferral_resolved \cup {ticket}
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow, consecutive_denials>>
+DeferNodeDone == phase = "DEFER_NODE" /\ Goto("EXPLAINER")
+ExplainerDone == phase = "EXPLAINER"  /\ Goto("OUTPUT_RAIL")
 
-(* DeferTimeout: DEFER_PENDING → ERROR
-   Defer TTL expires without resolution. *)
-DeferTimeout ==
-    /\ phase = "DEFER_PENDING"
-    /\ phase' = "ERROR"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+OutputRail ==
+    /\ phase = "OUTPUT_RAIL"
+    /\ phase' = "DONE"
+    /\ output_rail_applied' = TRUE
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict, safety_status,
+                   governance_decision, guardrail_blocked, seal_issued,
+                   resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
 
-(* LoopBack: GOVERNANCE_CHECK → ROUTING
-   Loop back for re-planning (safety breaker check). *)
-LoopBack ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ loop_count < MaxLoopCount
-    /\ phase' = "ROUTING"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow>>
+-----------------------------------------------------------------------------
+(* DEFERQUEUE ACTIONS — asynchronous, on any parked ticket *)
+-----------------------------------------------------------------------------
 
-(* LoopCapExceeded: GOVERNANCE_CHECK → ERROR
-   Safety breaker triggered — max loop count exceeded. *)
-LoopCapExceeded ==
-    /\ phase = "GOVERNANCE_CHECK"
-    /\ loop_count >= MaxLoopCount
-    /\ phase' = "ERROR"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow,
-                   consecutive_denials, deferral_resolved>>
+DQ(stmt) == stmt /\ UNCHANGED <<phase, turn, loop_count, consecutive_denials, turn_vars>>
 
-(* TriggerDenial: Active → ParkedForReview
-   Client SDK session receives DENY verdict and parks for review. *)
-TriggerDenial ==
-    /\ phase = "Active"
-    /\ consecutive_denials < MaxConsecutiveDenials
-    /\ phase' = "ParkedForReview"
-    /\ consecutive_denials' = consecutive_denials + 1
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow, deferral_resolved>>
+(* approve(): first approval. *)
+ApproveFirst(t) == DQ(
+    /\ ticket_status[t] = "PARKED"
+    /\ ticket_status' = [ticket_status EXCEPT ![t] = "PARTIALLY_APPROVED"]
+    /\ UNCHANGED <<ticket_kind, ticket_resolution, resolve_count, consume_count>>)
 
-(* TriggerDeferral: Active → DEFER_PENDING
-   Client SDK session receives DEFER verdict for data hydration. *)
-TriggerDeferral ==
-    /\ phase = "Active"
-    /\ phase' = "DEFER_PENDING"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow,
-                   consecutive_denials, deferral_resolved>>
+(* approve(): quorum reached -> RESOLVED / ESCALATED. *)
+ApproveQuorum(t) == DQ(
+    /\ ticket_status[t] = "PARTIALLY_APPROVED"
+    /\ resolve_count[t] < MaxResolveCount
+    /\ Resolve(t, "ESCALATED"))
 
-(* ResumeApproval: ParkedForReview → Active
-   Client SDK session resumes after manual review approval. *)
-ResumeApproval ==
-    /\ phase = "ParkedForReview"
-    /\ phase' = "Active"
-    /\ consecutive_denials' = 0  \* Reset denial counter on approval
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow, deferral_resolved>>
+(* POST /v1/defer/{id}/inject -> replay_evaluate -> _resolve(INJECTED).
+   Bridge gates: no quorum-3 reason (FTRA), no partial approvals. *)
+Inject(t) == DQ(
+    /\ ticket_kind[t] \in {"DEFER", "APPROVAL"}
+    /\ ticket_status[t] \in {"PARKED", "RESOLVED", "CONSUMED"}
+    /\ ResolveGuarded => ticket_status[t] = "PARKED"
+    /\ resolve_count[t] < MaxResolveCount
+    /\ Resolve(t, "INJECTED"))
 
-(* ExceedBudget: Active → PausedBudgetExceeded
-   Client SDK session exhausts consecutive denial budget. *)
-ExceedBudget ==
-    /\ phase = "Active"
-    /\ consecutive_denials >= MaxConsecutiveDenials
-    /\ phase' = "PausedBudgetExceeded"
-    /\ UNCHANGED <<loop_count, governance_decision, ftra_verdict, safety_status,
-                   seal_issued, seal_valid, evidence_committed, hitl_ticks_remaining,
-                   guardrail_blocked, output_rail_applied, resolved_allow,
-                   consecutive_denials, deferral_resolved>>
+(* expire_stale -> _resolve(EXPIRED) on an index member past its TTL.
+   Unguarded, a quorum approval still in the index (approve()'s CAS landed,
+   its zrem not yet) is overwritten. *)
+Expire(t) == DQ(
+    /\ \/ ticket_status[t] \in {"PARKED", "PARTIALLY_APPROVED"}
+       \/ /\ ~ResolveGuarded
+          /\ ticket_status[t] = "RESOLVED" /\ ticket_resolution[t] = "ESCALATED"
+    /\ resolve_count[t] < MaxResolveCount
+    /\ Resolve(t, "EXPIRED"))
 
 -----------------------------------------------------------------------------
 (* NEXT STATE RELATION *)
 -----------------------------------------------------------------------------
 
 Next ==
-    \/ StartExecution
-    \/ GuardrailPass
-    \/ GuardrailBlock
-    \/ RouteToGovernance
-    \/ RouteToDataAnalyst
-    \/ GovernanceAllow
-    \/ GovernanceDeny
-    \/ GovernanceRequireApproval
-    \/ GovernanceDefer
-    \/ GovernanceNarrow
-    \/ FTRAClear
-    \/ FTRAHITLRequired
-    \/ FTRABlocked
-    \/ LLMCallComplete
-    \/ LLMCallError
-    \/ HITLApprove
-    \/ HITLReject
-    \/ HITLTimeout
-    \/ HITLTick
-    \/ DeferResolve
-    \/ DeferTimeout
-    \/ LoopBack
-    \/ LoopCapExceeded
-    \/ TriggerDenial
-    \/ TriggerDeferral
-    \/ ResumeApproval
-    \/ ExceedBudget
-
------------------------------------------------------------------------------
-(* SPECIFICATION *)
------------------------------------------------------------------------------
+    \/ StartTurn \/ GuardrailBlock \/ GuardrailPass
+    \/ RouteToOutput \/ RouteToPlanner \/ Plan
+    \/ FTRAClear \/ FTRABlocked \/ FTRAHITLRequired \/ FTRAResume \/ FTRATimeout
+    \/ SafetySkip \/ SafetyApprove \/ SafetyDefer \/ SafetyDeny
+    \/ ApprovalGranted \/ ApprovalRejected
+    \/ TraderAllow \/ TraderDeny \/ TraderRequireApproval \/ TraderNoToolCall
+    \/ TraderResume \/ TraderHITLTimeout \/ HITLTick
+    \/ DeferNodeDone \/ ExplainerDone \/ OutputRail
+    \/ \E t \in TicketIds : ApproveFirst(t) \/ ApproveQuorum(t) \/ Inject(t) \/ Expire(t)
 
 Spec == Init /\ [][Next]_vars
 
-\* Fairness: Eventually all pending actions complete (for liveness)
-FairSpec == Spec /\ WF_vars(Next)
-
 -----------------------------------------------------------------------------
-(* TEMPORAL PROPERTIES — Optional liveness checks *)
+(* SAFETY INVARIANTS *)
 -----------------------------------------------------------------------------
 
-\* Eventually reach a terminal state (RESPONSE or ERROR)
-EventuallyTerminates == <>(phase \in {"RESPONSE", "ERROR"})
+(* proof/model.py's core property: nothing is actuated without the
+   gateway's authority. *)
+NoDirectBind == executed => resolved_allow
 
-\* If HITL approval is granted, eventually reach RESPONSE
-HITLEventuallyResolves ==
-    (phase = "HITL_PENDING") ~> (phase \in {"RESPONSE", "ERROR"})
+(* A trade executes only under a gateway seal, issued for ALLOW / NARROW or
+   for a quorum approval this turn spent exactly once. *)
+SealGateIntegrity ==
+    executed =>
+        /\ seal_issued
+        /\ \/ governance_decision \in {"ALLOW", "NARROW"}
+           \/ /\ governance_decision = "REQUIRE_APPROVAL"
+              /\ ticket_kind[turn] = "APPROVAL"
+              /\ ticket_status[turn] = "CONSUMED"
+              /\ ticket_resolution[turn] = "ESCALATED"
+              /\ consume_count[turn] = 1
 
------------------------------------------------------------------------------
-(* TLC MODEL CHECKING NOTES *)
------------------------------------------------------------------------------
-(*
-   Cross-Validation with Python BFS (proof/model.py):
-   --------------------------------------------------
-   The Python model verifies NoDirectBind over 21 states for the 8-tier
-   governance automaton. This TLA+ model extends to include:
-   - Full LangGraph node lifecycle (GUARDRAIL through OUTPUT_RAIL)
-   - HITL interrupt/TTL semantics (hitl_expires_at)
-   - FTRA Tier 0.5 integration (CLEAR/HITL_REQUIRED/BLOCKED)
-   - DEFER/NARROW decision paths
+(* Every actuation and every refusal leaves a committed receipt. *)
+EvidenceChainIntegrity ==
+    (\/ executed
+     \/ governance_decision = "DENY"
+     \/ safety_status \in {"BLOCKED", "HARD_PAUSE_BUDGET_EXCEEDED"})
+        => evidence_committed
 
-   The extended state space is larger than the Python model, but the
-   core NoDirectBind property should still hold: RESPONSE is only
-   reachable when resolved_allow = TRUE.
+(* An expired interrupt never resumes into execution. *)
+HITLTimeoutSafety ==
+    (phase \in HITLPhases /\ hitl_ticks_remaining = 0) => ~executed
 
-   Integration with DistributedCBF.tla:
-   ------------------------------------
-   This module references fence epoch semantics from DistributedCBF.
-   In a composed model, the seal_issued/seal_valid transitions would
-   be conditioned on successful fence epoch validation. For standalone
-   model checking, these are modeled abstractly.
+(* Every turn that was not blocked at the input guardrail ends through
+   nemo_output_rail. *)
+OutputRailCoverage ==
+    (phase = "DONE" /\ ~guardrail_blocked) => output_rail_applied
 
-   Key Invariants to Verify:
-   1. NoDirectBind        — Core safety, always holds
-   2. EvidenceChainIntegrity — Audit trail, always holds
-   3. SealGateIntegrity   — Cryptographic gate, always holds
-   4. HITLTimeoutSafety   — TTL enforcement, always holds
-   5. OutputRailCoverage  — NeMo output screening, always holds
+(* A deferral ticket is resolved at most once and an approval is spent at
+   most once. *)
+SingleUseDeferralTicket ==
+    \A t \in TicketIds : resolve_count[t] <= 1 /\ consume_count[t] <= 1
 
-   Expected Behavior:
-   - All safety invariants hold under Spec
-   - EventuallyTerminates holds under FairSpec
-*)
+(* The denial budget at its real threshold: a refusal that brings the
+   counter to MaxConsecutiveDenials or more pauses the turn; one below it
+   does not. *)
+BudgetNeverExceededWithoutPause ==
+    safety_status \in {"BLOCKED", "HARD_PAUSE_BUDGET_EXCEEDED"} =>
+        ((safety_status = "HARD_PAUSE_BUDGET_EXCEEDED")
+            <=> (consecutive_denials >= MaxConsecutiveDenials))
+
+(* A refused, paused or deferred turn never reaches the trader. *)
+RefusedTurnNeverTrades ==
+    safety_status \in {"BLOCKED", "HARD_PAUSE_BUDGET_EXCEEDED", "DEFERRED"} =>
+        (~executed /\ phase \notin TradingPhases)
+
+(* An FTRA HITL or BLOCKED verdict never trades in that turn. *)
+FtraHoldNeverTradesThisTurn ==
+    ftra_verdict \in {"HITL_REQUIRED", "BLOCKED"} =>
+        (~executed /\ phase \notin TradingPhases \cup {"SAFETY_CHECK"})
 
 =============================================================================

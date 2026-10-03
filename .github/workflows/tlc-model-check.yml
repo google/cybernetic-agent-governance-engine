@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TLC model check of proof/DistributedCBF*.cfg, cross-checked against the
-# Python BFS in proof/distributed_cbf_model.py (POAM-2026-090). The BFS and
-# the cfg/spec parity run on every PR in pytest-logic
-# (tests/test_distributed_cbf_proof.py); this job adds the TLC run.
+# TLC model check of every pinned proof/*.cfg: DistributedCBF*.cfg against
+# the Python BFS in proof/distributed_cbf_model.py (POAM-2026-090), and
+# FtraBoundary*.cfg / LangGraphHarness*.cfg against the state counts and
+# violated invariants pinned in proof/tla_pins.py (POAM-2026-091). The BFS
+# and the cfg/spec parity run on every PR in pytest-logic
+# (tests/test_distributed_cbf_proof.py, tests/test_tla_specs_proof.py); this
+# job adds the TLC runs.
 name: tlc-model-check
 
 on:
@@ -30,7 +33,7 @@ env:
 
 jobs:
   tlc-model-check:
-    name: "TLC: DistributedCBF"
+    name: "TLC: DistributedCBF, FtraBoundary, LangGraphHarness"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,6 +53,6 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/tla2tools.jar" \
             "https://github.com/tlaplus/tlaplus/releases/download/${TLA_TOOLS_VERSION}/tla2tools.jar"
           echo "${TLA_TOOLS_SHA256}  $RUNNER_TEMP/tla2tools.jar" | sha256sum -c -
-      - name: TLC vs Python BFS
+      - name: TLC vs Python BFS and pinned results
         run: |
           JAVA="$JAVA_HOME_21_X64/bin/java" TLA_TOOLS_JAR="$RUNNER_TEMP/tla2tools.jar" make verify-tla

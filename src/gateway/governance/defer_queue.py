@@ -75,6 +75,23 @@ _EXPIRY_ZSET = "DEFER:expiry_index"
 _DEFAULT_TTL = 3600 * 4  # 4-hour park window before stale escalation
 _DEFAULT_HOLD_TTL = 300  # 5-minute default TTL for external hold escalations
 
+#: Statuses each ``_resolve()`` resolution may leave. A ticket is resolved at
+#: most once (``SingleUseDeferralTicket`` in proof/LangGraphHarness.tla): a
+#: RESOLVED or CONSUMED token is never re-resolved, so an inject replay cannot
+#: re-admit it and an expiry sweep cannot overwrite a quorum approval.
+#: Injection is refused once any approval exists (PARTIALLY_APPROVED).
+#:
+#: The guard is checked on the snapshot ``_cas_update`` compares by revision.
+#: Every write that moves a token out of these statuses (``approve``,
+#: ``_resolve``) goes through ``_cas_update`` and bumps the revision;
+#: ``atomic_resolve`` writes status alone but only ever leaves RESOLVED,
+#: which no entry below accepts.
+_RESOLVABLE_FROM: dict[str, frozenset[str]] = {
+    "INJECTED": frozenset({"PARKED"}),
+    "EXPIRED": frozenset({"PARKED", "PARTIALLY_APPROVED"}),
+    "ESCALATED": frozenset({"PARKED", "PARTIALLY_APPROVED"}),
+}
+
 # ---------------------------------------------------------------------------
 # Lua CAS Script for Revision-Based Compare-and-Swap
 # ---------------------------------------------------------------------------
@@ -759,7 +776,10 @@ class DeferQueue:
         violates ADR-008 Phase 5.
 
         Uses revision-based CAS with bounded retry (3 attempts) to prevent lost
-        updates during concurrent resolution attempts.
+        updates during concurrent resolution attempts. A token is resolved at
+        most once: the CAS only proceeds from a status in
+        ``_RESOLVABLE_FROM[resolution]``, so a RESOLVED or CONSUMED token
+        (an earlier injection, a quorum approval, a spent approval) is refused.
 
         Args:
             defer_id:       The token's defer_id.
@@ -767,9 +787,15 @@ class DeferQueue:
             injection_data: Optional data payload for INJECTED resolutions.
 
         Returns:
-            The updated DeferToken, or None if the token was not found or CAS
-            retry was exhausted.
+            The updated DeferToken, or None if the token was not found, is not
+            in a status this resolution may leave, or CAS retry was exhausted.
+
+        Raises:
+            ValueError: ``resolution`` is not a known resolution kind.
         """
+        if resolution not in _RESOLVABLE_FROM:
+            raise ValueError(f"unknown DEFER resolution {resolution!r}")
+        allowed = _RESOLVABLE_FROM[resolution]
         max_retries = 3
         base_jitter_ms = 5
 
@@ -781,6 +807,21 @@ class DeferQueue:
                 logger.warning(
                     "[defer_queue] _resolve() called for unknown defer_id=%s", defer_id
                 )
+                return None
+
+            if current_status not in allowed:
+                # Single-use: never re-resolve (replayed inject, or an expiry
+                # sweep racing approve()'s zrem). A token in this status does
+                # not belong in the expiry index.
+                logger.warning(
+                    "[defer_queue] _resolve(%s) refused for defer_id=%s: status=%s "
+                    "is not one of %s (ticket already resolved)",
+                    resolution,
+                    defer_id,
+                    current_status,
+                    sorted(allowed),
+                )
+                await self._redis.zrem(_EXPIRY_ZSET, defer_id)
                 return None
 
             # Mutate token in-memory
@@ -1400,11 +1441,15 @@ class ReplayResult(str, Enum):
     PARKED:    Effective confidence is still below the threshold; the token
                remains in Redis db=1 awaiting further hydration or escalation.
     NOT_FOUND: No token with the given defer_id exists in the queue.
+    ALREADY_RESOLVED: The token is not PARKED (already injected, expired,
+               partially or fully approved, or consumed). A ticket is resolved
+               at most once, so the replay is refused and nothing changes.
     """
 
     ADMITTED = "ADMITTED"
     PARKED = "PARKED"
     NOT_FOUND = "NOT_FOUND"
+    ALREADY_RESOLVED = "ALREADY_RESOLVED"
 
 
 async def replay_evaluate(
@@ -1433,6 +1478,9 @@ async def replay_evaluate(
           The token remains PARKED; returns ``ReplayResult.PARKED``.
       - If the token is not found (expired or never parked):
           Returns ``ReplayResult.NOT_FOUND``.
+      - If the token is not PARKED (already resolved, under approval, or
+        consumed), or another resolution wins the race:
+          Returns ``ReplayResult.ALREADY_RESOLVED`` without changing it.
 
     PRAXIS Phase 2 Zero-Authority Parking:
       - Authority-bound tokens (upstream_permit_id is set) REFUSE injection
@@ -1453,13 +1501,22 @@ async def replay_evaluate(
     replay is a formal re-entry point that prevents indefinite parking of tokens
     whose context has been enriched by automated data-hydration loops.
     """
-    token = await queue.get(defer_id)
+    token, status, _rev = await queue._read_token_with_rev(defer_id)
     if token is None:
         logger.warning(
             "[replay_evaluate] Token not found for defer_id=%s — returning NOT_FOUND.",
             defer_id,
         )
         return ReplayResult.NOT_FOUND
+
+    if status not in _RESOLVABLE_FROM["INJECTED"]:
+        logger.warning(
+            "[replay_evaluate] Injection REFUSED for defer_id=%s: status=%s "
+            "(a deferral ticket is resolved at most once).",
+            defer_id,
+            status,
+        )
+        return ReplayResult.ALREADY_RESOLVED
 
     # PRAXIS Phase 2: Refuse injection for authority-bound tokens
     if token.is_authority_bound():
@@ -1480,7 +1537,12 @@ async def replay_evaluate(
 
     defer_floor = get_confidence_defer_floor()
     if effective_confidence >= defer_floor:
-        await queue._resolve(defer_id, "INJECTED", injection_data=enriched_context)
+        resolved = await queue._resolve(
+            defer_id, "INJECTED", injection_data=enriched_context
+        )
+        if resolved is None:
+            # Lost the race to another resolution (or the token vanished).
+            return ReplayResult.ALREADY_RESOLVED
         logger.info(
             "[replay_evaluate] Token ADMITTED: defer_id=%s effective_confidence=%.3f "
             "threshold=%.2f",

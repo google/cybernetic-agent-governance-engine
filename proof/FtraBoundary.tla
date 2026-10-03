@@ -17,490 +17,443 @@
    FTRA Boundary Verification — TLA+ Formal Specification
    --------------------------------------------------------------------------
 
-   This specification models the Forward-Looking Trajectory Reachability
-   Analyzer (FTRA) boundary enforcement at both the agent-side (in-graph
-   ftra_node) and controller-side (validate_action boundary check).
+   One request's path through the two FTRA enforcement points:
 
-   FTRA addresses risks R-02 and R-03:
-   - R-02: Trust Boundary Mutation — ftra_node fires within GFA's LangGraph,
-     but classification happens BEFORE execution; a compromised host agent
-     could mutate the plan post-classification but pre-execution.
-   - R-03: Trust Boundary Bypass — ftra_node only fires if the host agent
-     wires it into its own LangGraph. Direct HTTP access to /validate-action
-     or ext_authz bypasses it entirely.
+   - IN-GRAPH: the advisor graph's ftra_node (create_ftra_node in
+     src/gateway/governance/ftra/node_factory.py, analysis in
+     ftra/graph_analyzer.py). Only the governed-financial-advisor (GFA) pod
+     runs it. It has no magnitude extractor, so nothing auto-clears in-graph.
+   - CONTROLLER: FtraStage (src/gateway/governance/governor/stages/ftra.py),
+     the first read-only stage of every FULL / DRY_RUN governor run
+     (kernel_stages() in governor/assembly.py; read_only_sort_key in
+     governor/pipeline.py). It is unconditional: there is no feature flag.
 
-   The controller-boundary check (_ftra_boundary_check in symbolic_governor.py)
-   closes the R-03 gap by running the same IrreversibilityClassifier at the
-   HTTP/controller layer, catching direct bypasses.
+   R-03 (trust-boundary bypass): ftra_node only fires if the caller wires it
+   into its graph. Any other admitted caller reaches the governor directly;
+   the controller check covers that path. R-02 (post-classification plan
+   mutation) is outside this model.
 
-   Source Code Cross-Reference:
-   - src/gateway/governance/ftra/models.py          → FtraBoundaryResult, ParseFailureClass
-   - src/gateway/governance/ftra/node_factory.py    → ftra_node, route_after_ftra
-   - src/gateway/governance/ftra/classifier.py      → IrreversibilityClassifier
-   - src/gateway/governance/ftra/graph_analyzer.py  → PlanGraphAnalyzer
-   - src/gateway/governance/symbolic_governor.py    → _ftra_boundary_check()
-   - deployment/k8s/ftra-network-policy.yaml        → NetworkPolicy constraints
-   - config/ftra/terminal_registry.json             → Action classification registry
+   Every request starts PENDING and ends in one terminal phase:
+     DROPPED   network policy refused the connection
+     REFUSED   the in-graph node blocked it, or a human rejected the
+               in-graph HITL park
+     DENIED    the governor refused it (FTRA HARD, another tier, a human, or
+               post-approval re-validation)
+     EXECUTED  sealed by the governor and actuated
+   Only the governor issues a routing seal and only a sealed action is
+   actuated (verify_and_consume_seal + ActuatorRegistry, ADR-008), so
+   Execute requires SEALED.
 
-   Integration with LangGraphHarness.tla:
-   - This module extends LangGraphHarness's ftra_verdict concept
-   - FTRA_CHECK phase in LangGraphHarness corresponds to FtraNode here
-   - The controller-boundary check runs BEFORE all other governance checks
+   Registry: the finance registry config/ftra/terminal_registry.json —
+   execute_trade IRREVERSIBLE_TERMINAL and execute_trade_bounded
+   EXTERNALLY_REVERSIBLE, both with an autonomous envelope; check_balance
+   READ_ONLY; anything else unregistered (fail-closed IRREVERSIBLE_TERMINAL).
+   Each process loads the registry independently (ig_registry_ok,
+   ctl_registry_ok); an unloadable registry classifies everything
+   IRREVERSIBLE_TERMINAL (classifier.classify_with_provenance, UNAVAILABLE).
 
-   Verification Status:
-   - Python BFS: Not directly modeled (FTRA is outside proof/model.py scope)
-   - This TLA+ model fills the gap identified in CAGE_IMPLEMENTATION_SPECS §2.9.2
+   Confidence is an integer percentage. CONFIDENCE_DEFER_FLOOR is
+   confidence.defer_floor (0.70) and CONFIDENCE_ALLOW_FLOOR is
+   confidence.agent_threshold (0.95), the conditional-clear floor
+   (autonomy.conditional_clear_reason). Confidences is the finite set of
+   values explored; it must straddle both floors.
 
-   TLC Configuration:
-   ---------------------------------------------------------------------------
-   CONSTANTS
-       CONFIDENCE_DEFER_FLOOR = 70
-       CONFIDENCE_ALLOW_FLOOR = 95
-   INIT Init
-   NEXT Next
-   INVARIANT TypeOK
-   INVARIANT ControllerBoundaryCoversInGraphBypass
-   INVARIANT FailClosedOnUnknownAction
-   INVARIANT NetworkPolicyEnforced
-   ---------------------------------------------------------------------------
+   Configurations (POAM-2026-091):
+     FtraBoundary.cfg             shipped posture, network policy applied
+     FtraBoundary_nonetpol.cfg    no NetworkPolicy (e.g. the agnostic target):
+                                  the controller check alone must suffice
+     FtraBoundary_noboundary.cfg  NEGATIVE CONTROL: governor without FtraStage;
+                                  the R-03 invariants must fail
 *)
 
 EXTENDS Naturals, FiniteSets
 
------------------------------------------------------------------------------
-(* CONSTANTS *)
------------------------------------------------------------------------------
-
 CONSTANTS
-    CONFIDENCE_DEFER_FLOOR,   \* Confidence threshold for HITL (default: 70 = 0.70)
-    CONFIDENCE_ALLOW_FLOOR    \* Confidence threshold for clear passage (default: 95 = 0.95)
+    CONFIDENCE_DEFER_FLOOR,     \* confidence.defer_floor x 100 (70)
+    CONFIDENCE_ALLOW_FLOOR,     \* confidence.agent_threshold x 100 (95)
+    Confidences,                \* explored confidence values (subset of 0..100)
+    NetworkPolicyApplied,       \* deployment/k8s/ftra-network-policy.yaml in force
+    ControllerBoundaryEnabled   \* FtraStage in the governor (TRUE at HEAD)
 
-\* Confidence values are integers 0-100 representing percentages
-\* to avoid floating-point complexity in TLA+
-
------------------------------------------------------------------------------
-(* TERMINAL CLASSIFICATIONS — From ftra/models.py TerminalClassification *)
------------------------------------------------------------------------------
-
-\* Action reversibility classifications
-TerminalClassifications == {
-    "IRREVERSIBLE_TERMINAL",  \* Commits external, unalterable state change
-    "REVERSIBLE",             \* Modifiable state with compensating action
-    "READ_ONLY"               \* No state modification
-}
+ASSUME Confidences \subseteq 0..100
+ASSUME NetworkPolicyApplied \in BOOLEAN /\ ControllerBoundaryEnabled \in BOOLEAN
 
 -----------------------------------------------------------------------------
-(* FTRA VERDICTS — From ftra/models.py FTRAVerdict *)
+(* VOCABULARY — ftra/models.py *)
 -----------------------------------------------------------------------------
 
-\* Commencement-time routing verdicts
-FTRAVerdicts == {
-    "CLEAR",          \* No IRREVERSIBLE_TERMINAL reachable, proceed to safety_check
-    "HITL_REQUIRED",  \* IRREVERSIBLE_TERMINAL reachable, confidence >= CONFIDENCE_DEFER_FLOOR
-    "BLOCKED"         \* IRREVERSIBLE_TERMINAL reachable, confidence < CONFIDENCE_DEFER_FLOOR
-}
+IRREV   == "IRREVERSIBLE_TERMINAL"
+EXTREV  == "EXTERNALLY_REVERSIBLE"
+TerminalClassifications == {IRREV, EXTREV, "REVERSIBLE", "READ_ONLY"}
+Terminal(c) == c \in {IRREV, EXTREV}   \* autonomy.ENVELOPE_CLASSIFICATIONS
 
------------------------------------------------------------------------------
-(* PARSE FAILURE CLASSES — From ftra/models.py ParseFailureClass *)
------------------------------------------------------------------------------
+FTRAVerdicts == {"CLEAR", "HITL_REQUIRED", "BLOCKED"}
 
-\* Classification of parse failures for structured error handling
-ParseFailureClasses == {
-    "SUCCESS",                 \* Parsing succeeded
-    "JSON_DECODE_ERROR",       \* Raw JSON syntax error (blocking)
-    "SCHEMA_VALIDATION_ERROR", \* Valid JSON but fails ExecutionPlan validation (blocking)
-    "EMPTY_STEPS",             \* Valid plan with no steps (warning)
-    "TRUNCATED_PLAN",          \* Plan appears cut off (warning → DEFER)
-    "TOKENIZER_ARTIFACT"       \* Input contains tokenizer artifacts (informational)
-}
+\* ParseFailureClass plus PLAN_MISSING (plan extractor returned None, which
+\* node_factory._run_ftra reports as BLOCKED / SCHEMA_VALIDATION_ERROR).
+ParseOutcomes == {"SUCCESS", "TOKENIZER_ARTIFACT", "JSON_DECODE_ERROR",
+                  "SCHEMA_VALIDATION_ERROR", "EMPTY_STEPS", "TRUNCATED_PLAN",
+                  "PLAN_MISSING"}
+\* Outcomes after which the node never returns CLEAR.
+NonClearingParse == {"JSON_DECODE_ERROR", "SCHEMA_VALIDATION_ERROR",
+                     "TRUNCATED_PLAN", "PLAN_MISSING"}
 
-\* Blocking errors vs warnings (from ParseResult.is_blocking_error)
-BlockingParseErrors == {"JSON_DECODE_ERROR", "SCHEMA_VALIDATION_ERROR"}
-WarningParseClasses == {"EMPTY_STEPS", "TRUNCATED_PLAN", "TOKENIZER_ARTIFACT"}
-
------------------------------------------------------------------------------
-(* TRUST BOUNDARY LOCATIONS — Controller vs Agent side *)
------------------------------------------------------------------------------
-
-\* Where the FTRA check is enforced
-EnforcementPoints == {
-    "IN_GRAPH",     \* ftra_node within GFA's LangGraph (agent-side)
-    "CONTROLLER"    \* _ftra_boundary_check in symbolic_governor (controller-side)
-}
-
-\* Request source types (for network policy modeling)
 RequestSources == {
-    "GFA_POD",              \* governed-financial-advisor pod (trusted, has in-graph ftra_node)
-    "COMPLIANCE_BRIDGE",    \* compliance-bridge pod (trusted infrastructure)
-    "INGRESS_CONTROLLER",   \* External traffic via nginx-ingress
-    "DIRECT_HTTP",          \* Direct HTTP access (potential bypass)
-    "GOVERNANCE_VALIDATED"  \* Pod with governance-validated label
+    "GFA_POD",              \* runs the in-graph ftra_node
+    "COMPLIANCE_BRIDGE",    \* governance infrastructure
+    "INGRESS_CONTROLLER",   \* external traffic via ingress
+    "GOVERNANCE_VALIDATED", \* pod with the governance-validated label
+    "DIRECT_HTTP"           \* any other pod
 }
 
+\* ftra-network-policy.yaml: ingress to cage-gateway only from these.
+NetworkPolicyPermits(src) ==
+    src \in {"GFA_POD", "COMPLIANCE_BRIDGE", "INGRESS_CONTROLLER", "GOVERNANCE_VALIDATED"}
+
+Actions == {"execute_trade", "execute_trade_bounded", "check_balance", "unknown_action"}
+InRegistry(a)  == a # "unknown_action"
+HasEnvelope(a) == a \in {"execute_trade", "execute_trade_bounded"}
+RegClass(a) ==
+    CASE a = "execute_trade"         -> IRREV
+      [] a = "execute_trade_bounded" -> EXTREV
+      [] a = "check_balance"         -> "READ_ONLY"
+      [] OTHER                       -> IRREV
+\* IrreversibilityClassifier.classify_with_provenance: every non-REGISTERED
+\* state is IRREVERSIBLE_TERMINAL.
+Classify(a, registry_ok) == IF registry_ok /\ InRegistry(a) THEN RegClass(a) ELSE IRREV
+\* What the action really is: a terminal, or unknown to the domain.
+TrulyTerminal(a) == ~InRegistry(a) \/ Terminal(RegClass(a))
+
+Phases == {"PENDING", "IN_GRAPH_HITL", "AT_GATEWAY", "TIERS", "AWAITING_HUMAN",
+           "SEALED", "DROPPED", "REFUSED", "DENIED", "EXECUTED"}
+TerminalPhases == {"DROPPED", "REFUSED", "DENIED", "EXECUTED"}
+\* Phases a request reaches only through a governor run.
+GovernorPhases == {"TIERS", "AWAITING_HUMAN", "SEALED", "EXECUTED"}
+
 -----------------------------------------------------------------------------
-(* VARIABLES — FTRA boundary state *)
+(* VARIABLES *)
 -----------------------------------------------------------------------------
 
 VARIABLES
-    \* In-graph ftra_node state
-    in_graph_classification,  \* TerminalClassification from ftra_node
-    in_graph_verdict,         \* FTRAVerdict from ftra_node
-    in_graph_executed,        \* TRUE if ftra_node has executed
-    
-    \* Controller-boundary check state
-    controller_classification,\* TerminalClassification from _ftra_boundary_check
-    controller_verdict,       \* FTRAVerdict/requires_hitl outcome
-    controller_executed,      \* TRUE if boundary check has executed
-    
-    \* Request context
-    action_name,              \* The action being validated
-    action_in_registry,       \* TRUE if action is in terminal_registry.json
-    confidence,               \* Evaluator confidence score (0-100)
-    request_source,           \* Where the request originated
-    
-    \* Parse state
-    parse_failure_class,      \* ParseFailureClass from parsing LLM output
-    
-    \* Network policy state
-    network_policy_allows,    \* TRUE if network policy permits the request
-    bypassed_ftra_node        \* TRUE if controller detected in-graph bypass
+    \* request (fixed at Init)
+    request_source, action_name, confidence, magnitude_in_envelope,
+    network_policy_allows, ig_registry_ok, ctl_registry_ok,
+    \* lifecycle
+    request_phase,
+    \* in-graph ftra_node
+    parse_failure_class, in_graph_classification, in_graph_verdict,
+    in_graph_executed, ig_human_approved,
+    \* controller FtraStage (FtraBoundaryResult)
+    controller_classification, controller_verdict, controller_executed,
+    auto_cleared, bypassed_ftra_node,
+    \* governor human approval (DeferQueue quorum + consume_approval)
+    human_approved
 
-\* All variables
-vars == <<in_graph_classification, in_graph_verdict, in_graph_executed,
-          controller_classification, controller_verdict, controller_executed,
-          action_name, action_in_registry, confidence, request_source,
-          parse_failure_class, network_policy_allows, bypassed_ftra_node>>
-
------------------------------------------------------------------------------
-(* TYPE INVARIANT *)
------------------------------------------------------------------------------
+request_vars == <<request_source, action_name, confidence, magnitude_in_envelope,
+                  network_policy_allows, ig_registry_ok, ctl_registry_ok>>
+ig_vars   == <<parse_failure_class, in_graph_classification, in_graph_verdict,
+               in_graph_executed, ig_human_approved>>
+ctl_vars  == <<controller_classification, controller_verdict, controller_executed,
+               auto_cleared, bypassed_ftra_node>>
+vars == <<request_vars, request_phase, ig_vars, ctl_vars, human_approved>>
 
 TypeOK ==
+    /\ request_source \in RequestSources
+    /\ action_name \in Actions
+    /\ confidence \in Confidences
+    /\ magnitude_in_envelope \in BOOLEAN
+    /\ network_policy_allows \in BOOLEAN
+    /\ ig_registry_ok \in BOOLEAN
+    /\ ctl_registry_ok \in BOOLEAN
+    /\ request_phase \in Phases
+    /\ parse_failure_class \in ParseOutcomes \cup {"NONE"}
     /\ in_graph_classification \in TerminalClassifications \cup {"NONE"}
     /\ in_graph_verdict \in FTRAVerdicts \cup {"NONE"}
     /\ in_graph_executed \in BOOLEAN
+    /\ ig_human_approved \in BOOLEAN
     /\ controller_classification \in TerminalClassifications \cup {"NONE"}
     /\ controller_verdict \in FTRAVerdicts \cup {"NONE"}
     /\ controller_executed \in BOOLEAN
-    /\ action_name \in {"execute_trade", "market_analysis", "check_balance", "unknown_action"}
-    /\ action_in_registry \in BOOLEAN
-    /\ confidence \in 0..100
-    /\ request_source \in RequestSources
-    /\ parse_failure_class \in ParseFailureClasses
-    /\ network_policy_allows \in BOOLEAN
+    /\ auto_cleared \in BOOLEAN
     /\ bypassed_ftra_node \in BOOLEAN
+    /\ human_approved \in BOOLEAN
 
 -----------------------------------------------------------------------------
-(* HELPER PREDICATES *)
+(* VERDICT FUNCTIONS *)
 -----------------------------------------------------------------------------
 
-\* Determine verdict based on classification and confidence
-\* From ftra/graph_analyzer.py lines 249-254
-ComputeVerdict(classification, conf) ==
-    IF classification # "IRREVERSIBLE_TERMINAL"
-    THEN "CLEAR"
-    ELSE IF conf >= CONFIDENCE_DEFER_FLOOR
-         THEN "HITL_REQUIRED"
-         ELSE "BLOCKED"
+\* PlanGraphAnalyzer.analyze verdict without a magnitude extractor
+\* (graph_analyzer.py: IRREVERSIBLE gates on the defer floor;
+\* EXTERNALLY_REVERSIBLE always needs a human).
+AnalyzerVerdict(c, conf) ==
+    CASE c = IRREV  -> IF conf >= CONFIDENCE_DEFER_FLOOR THEN "HITL_REQUIRED" ELSE "BLOCKED"
+      [] c = EXTREV -> "HITL_REQUIRED"
+      [] OTHER      -> "CLEAR"
 
-\* Map action to classification (from terminal_registry.json semantics)
-\* execute_trade → IRREVERSIBLE_TERMINAL (commits trade)
-\* market_analysis → READ_ONLY (no state change)
-\* check_balance → READ_ONLY (no state change)
-\* unknown_action → IRREVERSIBLE_TERMINAL (fail-closed)
-ActionClassification(action, in_registry) ==
-    IF ~in_registry THEN "IRREVERSIBLE_TERMINAL"  \* Fail-closed on unknown
-    ELSE IF action = "execute_trade" THEN "IRREVERSIBLE_TERMINAL"
-    ELSE IF action = "market_analysis" THEN "READ_ONLY"
-    ELSE IF action = "check_balance" THEN "READ_ONLY"
-    ELSE "IRREVERSIBLE_TERMINAL"  \* Fail-closed default
+\* node_factory._run_ftra. EMPTY_STEPS compares against a literal 0.70,
+\* equal to the shipped confidence.defer_floor.
+InGraphVerdict(pf, c, conf) ==
+    CASE pf = "PLAN_MISSING" -> "BLOCKED"
+      [] pf \in {"JSON_DECODE_ERROR", "SCHEMA_VALIDATION_ERROR", "TRUNCATED_PLAN"}
+                             -> "HITL_REQUIRED"
+      [] pf = "EMPTY_STEPS"  -> IF conf >= CONFIDENCE_DEFER_FLOOR THEN "CLEAR" ELSE "HITL_REQUIRED"
+      [] OTHER               -> AnalyzerVerdict(c, conf)
 
-\* Network policy evaluation (from ftra-network-policy.yaml)
-\* - GFA_POD: allowed (has in-graph ftra_node)
-\* - COMPLIANCE_BRIDGE: allowed (governance infrastructure)
-\* - INGRESS_CONTROLLER: allowed (subject to controller boundary check)
-\* - GOVERNANCE_VALIDATED: allowed (has governance-validated label)
-\* - DIRECT_HTTP: denied (bypasses governance)
-NetworkPolicyPermits(source) ==
-    source \in {"GFA_POD", "COMPLIANCE_BRIDGE", "INGRESS_CONTROLLER", "GOVERNANCE_VALIDATED"}
+\* autonomy.conditional_clear_reason # None
+ConditionalClear(a, registry_ok, conf, in_env) ==
+    /\ registry_ok /\ InRegistry(a)
+    /\ Terminal(RegClass(a))
+    /\ HasEnvelope(a)
+    /\ in_env
+    /\ conf >= CONFIDENCE_ALLOW_FLOOR
 
------------------------------------------------------------------------------
-(* SAFETY INVARIANTS *)
------------------------------------------------------------------------------
-
-(* ControllerBoundaryCoversInGraphBypass: If in-graph ftra_node is bypassed
-   (request comes via direct HTTP without in-graph execution), the controller
-   boundary check must have executed.
-   
-   This is the R-03 mitigation: direct HTTP access triggers controller-side check.
-   
-   Python cross-reference:
-   - symbolic_governor.py lines 834-849: bypassed_ftra_node detection
-   - symbolic_governor.py lines 974-1005: CAGE_FTRA_BOUNDARY_ENABLED check *)
-ControllerBoundaryCoversInGraphBypass ==
-    (request_source = "DIRECT_HTTP" /\ ~in_graph_executed) => controller_executed
-
-(* FailClosedOnUnknownAction: Actions not in terminal_registry must be classified
-   as IRREVERSIBLE_TERMINAL (fail-closed).
-   
-   Python cross-reference:
-   - ftra/classifier.py: IrreversibilityClassifier.classify() fail-closed behavior
-   - ftra/models.py lines 349-351: FtraBoundaryResult violation string for unknown *)
-FailClosedOnUnknownAction ==
-    ~action_in_registry =>
-        /\ (in_graph_executed => in_graph_classification = "IRREVERSIBLE_TERMINAL")
-        /\ (controller_executed => controller_classification = "IRREVERSIBLE_TERMINAL")
-
-(* NetworkPolicyEnforced: Requests from sources not permitted by network policy
-   must not proceed.
-   
-   Python cross-reference: deployment/k8s/ftra-network-policy.yaml
-   The network policy blocks DIRECT_HTTP requests that don't have
-   governance-validated label or come from untrusted pods. *)
-NetworkPolicyEnforced ==
-    network_policy_allows = NetworkPolicyPermits(request_source)
-
-(* ConsistentClassification: If both in-graph and controller checks execute,
-   they must produce the same classification (they use the same
-   IrreversibilityClassifier and terminal_registry.json).
-   
-   Note: This assumes no TOCTOU race between checks. R-02 addresses
-   plan mutation post-classification. *)
-ConsistentClassification ==
-    (in_graph_executed /\ controller_executed) =>
-        (in_graph_classification = controller_classification)
-
-(* HITLRequiredPropagates: If either check requires HITL, execution must be blocked.
-   Both checks independently can require HITL for the same action. *)
-HITLRequiredPropagates ==
-    ((in_graph_verdict = "HITL_REQUIRED") \/ (controller_verdict = "HITL_REQUIRED"))
-        => ~(in_graph_verdict = "CLEAR" /\ controller_verdict = "CLEAR")
-
-(* ParseErrorsPreventClear: Blocking parse errors cannot result in CLEAR verdict.
-   
-   Python cross-reference: ftra/node_factory.py lines 380-428
-   JSON_DECODE_ERROR and SCHEMA_VALIDATION_ERROR → HITL_REQUIRED (not BLOCKED)
-   per BUG-FTRA-SCHEMA-001 fix *)
-ParseErrorsPreventClear ==
-    (parse_failure_class \in BlockingParseErrors) =>
-        (in_graph_verdict # "CLEAR")
-
-\* Combined safety invariant
-Safety == ControllerBoundaryCoversInGraphBypass /\ FailClosedOnUnknownAction
-       /\ NetworkPolicyEnforced /\ ConsistentClassification
-       /\ HITLRequiredPropagates /\ ParseErrorsPreventClear
+\* FtraBoundaryResult.from_classification: HARD (BLOCKED here) when the
+\* registry is UNAVAILABLE; HITL for an uncleared terminal (registered,
+\* unregistered or invalid); otherwise no violation.
+ControllerVerdict(registry_ok, c, cleared) ==
+    IF ~registry_ok THEN "BLOCKED"
+    ELSE IF Terminal(c) /\ ~cleared THEN "HITL_REQUIRED"
+    ELSE "CLEAR"
 
 -----------------------------------------------------------------------------
 (* INITIAL STATE *)
 -----------------------------------------------------------------------------
 
 Init ==
+    /\ request_source \in RequestSources
+    /\ action_name \in Actions
+    /\ confidence \in Confidences
+    /\ magnitude_in_envelope \in BOOLEAN
+    /\ network_policy_allows = (IF NetworkPolicyApplied
+                                THEN NetworkPolicyPermits(request_source)
+                                ELSE TRUE)
+    /\ ig_registry_ok \in BOOLEAN
+    /\ ctl_registry_ok \in BOOLEAN
+    /\ request_phase = "PENDING"
+    /\ parse_failure_class = "NONE"
     /\ in_graph_classification = "NONE"
     /\ in_graph_verdict = "NONE"
     /\ in_graph_executed = FALSE
+    /\ ig_human_approved = FALSE
     /\ controller_classification = "NONE"
     /\ controller_verdict = "NONE"
     /\ controller_executed = FALSE
-    /\ action_name \in {"execute_trade", "market_analysis", "check_balance", "unknown_action"}
-    /\ action_in_registry = (action_name # "unknown_action")
-    /\ confidence \in 0..100
-    /\ request_source \in RequestSources
-    /\ parse_failure_class = "SUCCESS"  \* Assume successful parse initially
-    /\ network_policy_allows = NetworkPolicyPermits(request_source)
+    /\ auto_cleared = FALSE
     /\ bypassed_ftra_node = FALSE
+    /\ human_approved = FALSE
 
 -----------------------------------------------------------------------------
-(* ACTIONS — FTRA check execution *)
+(* ACTIONS *)
 -----------------------------------------------------------------------------
 
-(* InGraphFtraNode: Execute the in-graph ftra_node.
-   This models the ftra_node in GFA's LangGraph workflow.
-   
-   Python cross-reference: ftra/node_factory.py create_ftra_node() *)
-InGraphFtraNode ==
-    /\ ~in_graph_executed
-    /\ request_source = "GFA_POD"  \* Only GFA has in-graph ftra_node
-    /\ in_graph_classification' = ActionClassification(action_name, action_in_registry)
-    /\ in_graph_verdict' = ComputeVerdict(in_graph_classification', confidence)
-    /\ in_graph_executed' = TRUE
-    /\ UNCHANGED <<controller_classification, controller_verdict, controller_executed,
-                   action_name, action_in_registry, confidence, request_source,
-                   parse_failure_class, network_policy_allows, bypassed_ftra_node>>
-
-(* ControllerBoundaryCheck: Execute the controller-side FTRA boundary check.
-   This models _ftra_boundary_check in symbolic_governor.py.
-   
-   Python cross-reference: symbolic_governor.py lines 785-932 *)
-ControllerBoundaryCheck ==
-    /\ ~controller_executed
-    /\ controller_classification' = ActionClassification(action_name, action_in_registry)
-    /\ controller_verdict' = IF controller_classification' = "IRREVERSIBLE_TERMINAL"
-                             THEN "HITL_REQUIRED"  \* Controller check always requires HITL for irreversible
-                             ELSE "CLEAR"
-    /\ controller_executed' = TRUE
-    \* Detect if this check is catching a bypass of in-graph ftra_node
-    /\ bypassed_ftra_node' = (~in_graph_executed /\ controller_classification' = "IRREVERSIBLE_TERMINAL")
-    /\ UNCHANGED <<in_graph_classification, in_graph_verdict, in_graph_executed,
-                   action_name, action_in_registry, confidence, request_source,
-                   parse_failure_class, network_policy_allows>>
-
-(* ParseSuccess: LLM output parses successfully. *)
-ParseSuccess ==
-    /\ parse_failure_class = "SUCCESS"
-    /\ UNCHANGED vars
-
-(* ParseJsonError: JSON decode error during parsing.
-   Results in HITL_REQUIRED, not BLOCKED (BUG-FTRA-SCHEMA-001 fix).
-   
-   Python cross-reference: ftra/node_factory.py lines 382-398 *)
-ParseJsonError ==
-    /\ parse_failure_class' = "JSON_DECODE_ERROR"
-    /\ in_graph_verdict' = "HITL_REQUIRED"  \* DEFER, not BLOCKED
-    /\ in_graph_executed' = TRUE
-    /\ UNCHANGED <<in_graph_classification, controller_classification, controller_verdict,
-                   controller_executed, action_name, action_in_registry, confidence,
-                   request_source, network_policy_allows, bypassed_ftra_node>>
-
-(* ParseSchemaError: Schema validation error during parsing.
-   Results in HITL_REQUIRED, not BLOCKED (BUG-FTRA-SCHEMA-001 fix).
-   
-   Python cross-reference: ftra/node_factory.py lines 400-426 *)
-ParseSchemaError ==
-    /\ parse_failure_class' = "SCHEMA_VALIDATION_ERROR"
-    /\ in_graph_verdict' = "HITL_REQUIRED"  \* DEFER, not BLOCKED
-    /\ in_graph_executed' = TRUE
-    /\ UNCHANGED <<in_graph_classification, controller_classification, controller_verdict,
-                   controller_executed, action_name, action_in_registry, confidence,
-                   request_source, network_policy_allows, bypassed_ftra_node>>
-
-(* ParseTruncated: Plan appears truncated.
-   Results in HITL_REQUIRED (warning, not blocking).
-   
-   Python cross-reference: ftra/node_factory.py lines 460-477 *)
-ParseTruncated ==
-    /\ parse_failure_class' = "TRUNCATED_PLAN"
-    /\ in_graph_verdict' = "HITL_REQUIRED"  \* DEFER, not BLOCKED
-    /\ in_graph_executed' = TRUE
-    /\ UNCHANGED <<in_graph_classification, controller_classification, controller_verdict,
-                   controller_executed, action_name, action_in_registry, confidence,
-                   request_source, network_policy_allows, bypassed_ftra_node>>
-
-(* ParseEmptySteps: Plan has no steps.
-   With high confidence, this can still CLEAR (empty plan is valid choice).
-   
-   Python cross-reference: ftra/node_factory.py lines 419-458 *)
-ParseEmptySteps ==
-    /\ parse_failure_class' = "EMPTY_STEPS"
-    /\ in_graph_verdict' = IF confidence >= CONFIDENCE_ALLOW_FLOOR
-                           THEN "CLEAR"         \* High confidence: empty plan is OK
-                           ELSE "HITL_REQUIRED" \* Low confidence: defer for review
-    /\ in_graph_executed' = TRUE
-    /\ UNCHANGED <<in_graph_classification, controller_classification, controller_verdict,
-                   controller_executed, action_name, action_in_registry, confidence,
-                   request_source, network_policy_allows, bypassed_ftra_node>>
-
-(* DirectHTTPAccess: Model direct HTTP access that bypasses in-graph ftra_node.
-   Network policy may block this, or controller boundary check catches it.
-   
-   Python cross-reference: 
-   - R-03 risk in CAGE_RISK_MATRIX.md
-   - symbolic_governor.py line 843-849: WARN log for bypass detection *)
-DirectHTTPAccess ==
-    /\ request_source = "DIRECT_HTTP"
-    /\ ~in_graph_executed  \* No in-graph check
-    /\ UNCHANGED vars
-
-(* NetworkPolicyBlock: Network policy blocks the request.
-   Models the ftra-network-policy.yaml NetworkPolicy enforcement. *)
+(* The connection never reaches cage-gateway. *)
 NetworkPolicyBlock ==
+    /\ request_phase = "PENDING"
     /\ ~network_policy_allows
-    /\ UNCHANGED vars
+    /\ request_phase' = "DROPPED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
 
------------------------------------------------------------------------------
-(* NEXT STATE RELATION *)
------------------------------------------------------------------------------
+(* Any admitted caller other than the GFA pod calls the gateway directly:
+   no in-graph check runs (the R-03 bypass path). *)
+ReachGatewayDirect ==
+    /\ request_phase = "PENDING"
+    /\ network_policy_allows
+    /\ request_source # "GFA_POD"
+    /\ request_phase' = "AT_GATEWAY"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
+
+(* The GFA graph's ftra_node: parse, classify, verdict, route
+   (route_after_ftra). CLEAR goes on to safety_check, whose gateway call (or
+   the governed trader's gateway_tool_guard) reaches the governor. BLOCKED
+   goes to the explainer. HITL_REQUIRED parks in the DeferQueue. *)
+InGraphFtraNode ==
+    /\ request_phase = "PENDING"
+    /\ network_policy_allows
+    /\ request_source = "GFA_POD"
+    /\ ~in_graph_executed
+    /\ \E pf \in ParseOutcomes :
+        LET analyzed == pf \in {"SUCCESS", "TOKENIZER_ARTIFACT"}
+            cls      == IF analyzed THEN Classify(action_name, ig_registry_ok) ELSE "NONE"
+            v        == InGraphVerdict(pf, cls, confidence)
+        IN  /\ parse_failure_class' = pf
+            /\ in_graph_classification' = cls
+            /\ in_graph_verdict' = v
+            /\ in_graph_executed' = TRUE
+            /\ request_phase' = CASE v = "CLEAR"         -> "AT_GATEWAY"
+                                  [] v = "HITL_REQUIRED" -> "IN_GRAPH_HITL"
+                                  [] OTHER               -> "REFUSED"
+    /\ UNCHANGED <<request_vars, ig_human_approved, ctl_vars, human_approved>>
+
+(* A human clears the in-graph park; the request still goes through the
+   governor (the advisor holds no governance state). *)
+InGraphHumanApprove ==
+    /\ request_phase = "IN_GRAPH_HITL"
+    /\ ig_human_approved' = TRUE
+    /\ request_phase' = "AT_GATEWAY"
+    /\ UNCHANGED <<request_vars, parse_failure_class, in_graph_classification,
+                   in_graph_verdict, in_graph_executed, ctl_vars, human_approved>>
+
+InGraphHumanReject ==
+    /\ request_phase = "IN_GRAPH_HITL"
+    /\ request_phase' = "REFUSED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
+
+(* FtraStage._ftra_boundary_check: the first read-only stage. A HARD
+   violation (registry UNAVAILABLE) stops the pipeline and the governor
+   denies; HITL goes to the remaining tiers, which cannot clear it (the
+   classifier routes any violation to approval at best); CLEAR goes to the
+   remaining tiers. bypassed_ftra_node is set for every uncleared
+   IRREVERSIBLE_TERMINAL: the stage cannot see whether ftra_node ran, so the
+   flag is a telemetry label, not a detection.
+   With ControllerBoundaryEnabled = FALSE (negative control) the governor
+   runs without FtraStage. *)
+ControllerBoundaryCheck ==
+    /\ request_phase = "AT_GATEWAY"
+    /\ IF ControllerBoundaryEnabled
+       THEN LET cls     == Classify(action_name, ctl_registry_ok)
+                cleared == ConditionalClear(action_name, ctl_registry_ok,
+                                            confidence, magnitude_in_envelope)
+                v       == ControllerVerdict(ctl_registry_ok, cls, cleared)
+            IN  /\ controller_classification' = cls
+                /\ controller_verdict' = v
+                /\ controller_executed' = TRUE
+                /\ auto_cleared' = cleared
+                /\ bypassed_ftra_node' = (cls = IRREV /\ ~cleared)
+                /\ request_phase' = CASE v = "BLOCKED"       -> "DENIED"
+                                      [] v = "HITL_REQUIRED" -> "AWAITING_HUMAN"
+                                      [] OTHER               -> "TIERS"
+       ELSE /\ request_phase' = "TIERS"
+            /\ UNCHANGED ctl_vars
+    /\ UNCHANGED <<request_vars, ig_vars, human_approved>>
+
+(* STPA, OPA, confidence and the domain tiers, abstracted: they may seal,
+   ask for approval or deny. None of them owns irreversibility. *)
+OtherTiersSeal ==
+    /\ request_phase = "TIERS"
+    /\ request_phase' = "SEALED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
+
+OtherTiersRequireApproval ==
+    /\ request_phase = "TIERS"
+    /\ request_phase' = "AWAITING_HUMAN"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
+
+OtherTiersDeny ==
+    /\ request_phase = "TIERS"
+    /\ request_phase' = "DENIED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
+
+(* Quorum approval consumed once, then POST_HITL re-validation seals
+   (enforce_approved_governance). FTRA is not re-run post-HITL. *)
+HumanApprove ==
+    /\ request_phase = "AWAITING_HUMAN"
+    /\ human_approved' = TRUE
+    /\ request_phase' = "SEALED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars>>
+
+(* Rejection, expiry, or a refused post-approval re-validation. *)
+HumanReject ==
+    /\ request_phase = "AWAITING_HUMAN"
+    /\ request_phase' = "DENIED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
+
+(* verify_and_consume_seal + ActuatorRegistry dispatch. *)
+Execute ==
+    /\ request_phase = "SEALED"
+    /\ request_phase' = "EXECUTED"
+    /\ UNCHANGED <<request_vars, ig_vars, ctl_vars, human_approved>>
 
 Next ==
-    \/ InGraphFtraNode
-    \/ ControllerBoundaryCheck
-    \/ ParseSuccess
-    \/ ParseJsonError
-    \/ ParseSchemaError
-    \/ ParseTruncated
-    \/ ParseEmptySteps
-    \/ DirectHTTPAccess
     \/ NetworkPolicyBlock
-
------------------------------------------------------------------------------
-(* SPECIFICATION *)
------------------------------------------------------------------------------
+    \/ ReachGatewayDirect
+    \/ InGraphFtraNode
+    \/ InGraphHumanApprove
+    \/ InGraphHumanReject
+    \/ ControllerBoundaryCheck
+    \/ OtherTiersSeal
+    \/ OtherTiersRequireApproval
+    \/ OtherTiersDeny
+    \/ HumanApprove
+    \/ HumanReject
+    \/ Execute
 
 Spec == Init /\ [][Next]_vars
-
-\* Fairness for liveness properties
 FairSpec == Spec /\ WF_vars(Next)
 
 -----------------------------------------------------------------------------
-(* TEMPORAL PROPERTIES — Optional liveness checks *)
+(* SAFETY INVARIANTS *)
 -----------------------------------------------------------------------------
 
-\* If GFA pod makes a request, in-graph ftra_node eventually executes
-GFAPodEventuallyChecked ==
-    (request_source = "GFA_POD") ~> in_graph_executed
+(* R-03: a request that skipped the in-graph node and reached a governor
+   decision was checked at the controller boundary. Stated over reachable
+   states: Init has every request PENDING, before any check could run. *)
+ControllerBoundaryCoversInGraphBypass ==
+    (request_phase \in GovernorPhases /\ ~in_graph_executed) => controller_executed
 
-\* Direct HTTP access eventually triggers controller boundary check
-DirectHTTPEventuallyCaught ==
-    (request_source = "DIRECT_HTTP") ~> controller_executed
+(* Stronger: the controller check runs on every governed request, in-graph
+   node or not. *)
+ControllerBoundaryUnconditional ==
+    request_phase \in GovernorPhases => controller_executed
+
+(* No terminal (or unknown) action executes unless a human approved it (at
+   the governor or at the in-graph park) or it cleared inside its registered
+   autonomous envelope. *)
+NoUnreviewedIrreversibleExecution ==
+    (request_phase = "EXECUTED" /\ TrulyTerminal(action_name))
+        => (human_approved \/ ig_human_approved \/ auto_cleared)
+
+(* Unregistered actions fail closed at both enforcement points. *)
+FailClosedOnUnknownAction ==
+    ~InRegistry(action_name) =>
+        /\ in_graph_classification \in {"NONE", IRREV}
+        /\ in_graph_verdict # "CLEAR" \/ parse_failure_class = "EMPTY_STEPS"
+        /\ controller_executed =>
+               /\ controller_classification = IRREV
+               /\ controller_verdict # "CLEAR"
+               /\ ~auto_cleared
+
+(* An unreadable registry at the controller is a HARD refusal. *)
+RegistryUnavailableFailsClosed ==
+    (controller_executed /\ ~ctl_registry_ok) =>
+        (controller_verdict = "BLOCKED" /\ request_phase = "DENIED")
+
+(* Only a registered terminal inside its envelope, at or above the ALLOW
+   floor, auto-clears (UNREGISTERED_NEVER_AUTO_CLEARS). *)
+AutoClearOnlyInsideEnvelope ==
+    auto_cleared =>
+        /\ ctl_registry_ok /\ InRegistry(action_name) /\ HasEnvelope(action_name)
+        /\ magnitude_in_envelope /\ confidence >= CONFIDENCE_ALLOW_FLOOR
+
+(* With the NetworkPolicy applied, a source it does not permit never gets
+   past the network. *)
+NetworkPolicyEnforced ==
+    (NetworkPolicyApplied /\ ~NetworkPolicyPermits(request_source)
+        /\ request_phase # "PENDING") => request_phase = "DROPPED"
+
+(* Both checks use the same classifier and registry: when both processes
+   loaded it (or both failed to), they agree. If only one loaded it they may
+   differ, and both differences are fail-closed (IRREVERSIBLE_TERMINAL). *)
+ConsistentClassification ==
+    (in_graph_classification # "NONE" /\ controller_executed
+        /\ ig_registry_ok = ctl_registry_ok)
+        => in_graph_classification = controller_classification
+
+(* A HITL verdict at either point is never passed without a human. *)
+HITLRequiredPropagates ==
+    /\ (in_graph_verdict = "HITL_REQUIRED" /\ request_phase \notin {"IN_GRAPH_HITL", "REFUSED"})
+           => ig_human_approved
+    /\ (controller_verdict = "HITL_REQUIRED" /\ request_phase \in {"SEALED", "EXECUTED"})
+           => human_approved
+
+(* BUG-FTRA-SCHEMA-001: parse failures never CLEAR (they DEFER to a human,
+   or BLOCK when there is no plan at all). *)
+ParseErrorsPreventClear ==
+    parse_failure_class \in NonClearingParse => in_graph_verdict # "CLEAR"
 
 -----------------------------------------------------------------------------
-(* TLC MODEL CHECKING NOTES *)
+(* LIVENESS — checked under FairSpec in FtraBoundary.cfg *)
 -----------------------------------------------------------------------------
-(*
-   Cross-Validation with Python Model:
-   ------------------------------------
-   The Python BFS model (proof/model.py) explicitly excludes FTRA/Tier 0.5
-   from its scope. This TLA+ model fills that gap as described in
-   CAGE_IMPLEMENTATION_SPECS §2.9.2 Phase C.
 
-   Integration with LangGraphHarness.tla:
-   --------------------------------------
-   - LangGraphHarness.tla models the full graph lifecycle
-   - FtraBoundary.tla focuses on the FTRA-specific checks
-   - The FTRA_CHECK phase in LangGraphHarness corresponds to
-     InGraphFtraNode here
-   - ControllerBoundaryCheck runs BEFORE all other governance checks
-     (represented by CAGE_FTRA_BOUNDARY_ENABLED in symbolic_governor.py)
-
-   Network Policy Modeling:
-   ------------------------
-   The ftra-network-policy.yaml defines three NetworkPolicies:
-   1. ftra-egress-lockdown: Restricts ingress to cage-gateway to
-      pods with governance-validated=true label
-   2. ftra-allow-gfa-ingress: Allows governed-financial-advisor pod
-   3. ftra-allow-ingress-controller: Allows nginx-ingress traffic
-
-   This is modeled via NetworkPolicyPermits predicate and
-   NetworkPolicyEnforced invariant.
-
-   Risk Mitigation Verification:
-   -----------------------------
-   - R-02 (Trust Boundary Mutation): Model does not directly address
-     post-classification mutation (requires temporal logic over plan state)
-   - R-03 (Trust Boundary Bypass): ControllerBoundaryCoversInGraphBypass
-     invariant verifies that controller check catches direct HTTP bypasses
-
-   Key Invariants to Verify:
-   1. ControllerBoundaryCoversInGraphBypass — R-03 mitigation
-   2. FailClosedOnUnknownAction — Defense in depth
-   3. NetworkPolicyEnforced — Network-level isolation
-   4. ConsistentClassification — Classifier determinism
-   5. HITLRequiredPropagates — Human review requirement
-   6. ParseErrorsPreventClear — BUG-FTRA-SCHEMA-001 fix
-
-   Expected Behavior:
-   - All safety invariants hold under Spec
-   - GFAPodEventuallyChecked holds under FairSpec
-   - DirectHTTPEventuallyCaught holds under FairSpec
-*)
+EveryRequestTerminates == <>(request_phase \in TerminalPhases)
 
 =============================================================================

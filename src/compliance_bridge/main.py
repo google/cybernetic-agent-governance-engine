@@ -1726,6 +1726,14 @@ async def defer_inject(
                 status_code=404,
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
             )
+        elif result == ReplayResult.ALREADY_RESOLVED:
+            # Single-use ticket: a resolved, approved or consumed token is
+            # never re-resolved by injection.
+            await client.aclose()
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "DEFER_TOKEN_ALREADY_RESOLVED", "defer_id": defer_id},
+            )
         elif result == ReplayResult.PARKED:
             # Injected context did not raise confidence above confidence.defer_floor (0.70)
             # Publish DEFER_PARKED event (not DEFER_RESOLVED) for accurate audit trail

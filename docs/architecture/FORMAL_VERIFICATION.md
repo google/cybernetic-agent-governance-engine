@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-09-29                |
 | **Version**        | 3.0.1                     |
-| **Status**         | Current — v3.0.1 stable; NoDirectBind invariant machine-verified over 38 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF stale-replica failover model: shipped posture (reconciled + `WAIT 1`) safe for $N \in \{1, 2, 3\}$, TLC-checked at $N = 2$ (`proof/DistributedCBF.tla`) |
+| **Status**         | Current — v3.0.1 stable; NoDirectBind invariant machine-verified over 38 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF stale-replica failover model: shipped posture (reconciled + `WAIT 1`) safe for $N \in \{1, 2, 3\}$, TLC-checked at $N = 2$ (`proof/DistributedCBF.tla`); FTRA boundary and LangGraph harness TLC-checked (`proof/FtraBoundary.tla`, `proof/LangGraphHarness.tla`, Step 15) |
 | **Canonical Path** | `docs/architecture/FORMAL_VERIFICATION.md` |
 
 **Last Updated:** 2026-09-29
@@ -594,6 +594,40 @@ The model is bounded (pool 2, one failover, $N \le 3$) and abstracts amounts to 
 
 ---
 
+## Step 15: FTRA Boundary and LangGraph Harness Model Checking (POAM-2026-091)
+
+**Claim:** The controller `FtraStage` covers every caller that bypasses the advisor graph's in-graph `ftra_node`, so no irreversible action executes unreviewed; and an advisor thread never trades on a refused, paused or FTRA-parked turn, with each DeferQueue ticket resolved and consumed at most once.
+
+**Sources:** [`proof/FtraBoundary.tla`](../../proof/FtraBoundary.tla) and [`proof/LangGraphHarness.tla`](../../proof/LangGraphHarness.tla), pinned in [`proof/tla_pins.py`](../../proof/tla_pins.py), run by [`scripts/verify_tla.py`](../../scripts/verify_tla.py) (`make verify-tla`), cfg/spec parity in [`tests/test_tla_specs_proof.py`](../../tests/test_tla_specs_proof.py).
+
+### What is modelled
+
+- **FtraBoundary:** one request through the NetworkPolicy, the in-graph node ([`node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)) and [`FtraStage`](../../src/gateway/governance/governor/stages/ftra.py), with the finance registry (`config/ftra/terminal_registry.json`), independent registry loads per process, conditional auto-clear (registered terminal, envelope, magnitude inside it, confidence ≥ 0.95), the in-graph verdict table (parse errors → HITL; analyzer defer floor 0.70), the other governor tiers and human review.
+- **LangGraphHarness:** one advisor thread over three turns following [`graph.py`](../../src/governed_financial_advisor/graph/graph.py) and [`safety_node.py`](../../src/governed_financial_advisor/graph/nodes/safety_node.py), the governed-trader subgraph's gateway calls, and one [`DeferQueue`](../../src/gateway/governance/defer_queue.py) ticket per turn (DEFER, FTRA, APPROVAL) changing asynchronously through approve, inject, expire and consume.
+
+### Results (TLC v1.7.4, `-continue`)
+
+| Config | Distinct states | Verdict |
+|---|---|---|
+| `FtraBoundary` (**shipped**; fairness + `EveryRequestTerminates`) | 8,272 | all 11 invariants ✅, liveness ✅ |
+| `FtraBoundary_nonetpol` (no NetworkPolicy) | 8,756 | all invariants ✅ |
+| `FtraBoundary_noboundary` (no `FtraStage`; negative control) | 13,792 | `NoUnreviewedIrreversibleExecution` ❌ `ControllerBoundaryCoversInGraphBypass` ❌ `ControllerBoundaryUnconditional` ❌ |
+| `LangGraphHarness` (**HEAD**) | 82,652 | all 10 invariants ✅ |
+| `LangGraphHarness_unguarded` (pre-POAM-2026-093 DeferQueue; negative control) | 906 | `SingleUseDeferralTicket` ❌ |
+
+### Findings
+
+- **DeferQueue tokens could be resolved twice (POAM-2026-093, fixed).** `_resolve` compared only the revision, so an inject re-resolved `INJECTED`, `ESCALATED` or `CONSUMED` tokens and `expire_stale` could overwrite a quorum approval. `_RESOLVABLE_FROM` now restricts each resolution's source statuses; the bridge returns 409.
+- **The budget pause is per turn.** `HARD_PAUSE_BUDGET_EXCEEDED` is reported when a refusal brings `consecutive_denials` to 2; the counter persists in the thread, but the pause does not lock it. The earlier session-lifecycle states (POAM-2026-024) were unreachable.
+- **The controller check alone suffices.** Without the NetworkPolicy every invariant still holds; without `FtraStage` an irreversible action can execute unreviewed.
+- **Classification agrees only when both registry loads agree.** If exactly one process fails to load the registry, the two classifications differ; both fail closed.
+
+### Scope
+
+Bounded: one request (FtraBoundary), three turns with one ticket per turn and a two-approval quorum (LangGraphHarness). Amounts are abstracted to "inside the envelope" or not; R-02 (plan mutation after classification), the CBF and the seal cryptography are covered elsewhere (Steps 8, 9, 12).
+
+---
+
 ## Overall Verification Summary
 
 | Step | Claim | Verdict |
@@ -612,5 +646,6 @@ The model is bounded (pool 2, one failover, $N \le 3$) and abstracts amounts to 
 | 12 | Distributed CBF stale-replica failover — SP-1, SP-2, SP-4 for the shipped posture (reconciled + `WAIT 1`), $N \in \{1, 2, 3\}$, BFS and TLC agree; negative controls fail as expected | **PASS** (shipped posture; self-reported mode unsafe, dev-only) |
 | 13 | Attestation failure attributability — Ed25519 CER signature verification with fail-closed security enforcement | **PASS** |
 | 14 | Evidence serialization and KMS staging/production requirements — the compliance-bridge custodian requires an active `EVIDENCE_KMS_KEY` signer under an enforcing posture, full `RefusalReceipt` v3 evidence serialization | **PASS** |
+| 15 | FTRA boundary and LangGraph harness under TLC — controller `FtraStage` covers the in-graph bypass; no trade on a refused, paused or FTRA-parked turn; single-use DeferQueue tickets; negative controls fail as expected | **PASS** (DeferQueue defect found and fixed — POAM-2026-093) |
 
-**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`. Steps 8–14 document the formal mathematical properties of the CBF barrier certificate, routing seal cryptographic contract, provenance hash chain, FiscalLimitGuard quantitative parameters, multi-agent distributed barrier proofs, Ed25519 CER signature verification, and evidence KMS requirements as verified against the production source code.
+**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`. Step 15 model-checks the FTRA boundary and the LangGraph harness with TLC. Steps 8–14 document the formal mathematical properties of the CBF barrier certificate, routing seal cryptographic contract, provenance hash chain, FiscalLimitGuard quantitative parameters, multi-agent distributed barrier proofs, Ed25519 CER signature verification, and evidence KMS requirements as verified against the production source code.

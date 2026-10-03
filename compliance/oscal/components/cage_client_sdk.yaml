@@ -86,16 +86,19 @@ component-definition:
                 - Single-use nonce consumption via Redis atomic SETNX
                 - Action slug and thread ID binding to prevent seal reuse
 
-                The SDK implements session lifecycle management with consecutive denial
-                budget enforcement (MaxConsecutiveDenials = 2). After exceeding the
-                budget, the session transitions to PausedBudgetExceeded state, preventing
-                runaway client sessions from exhausting governance capacity.
+                The advisor graph enforces a consecutive denial budget
+                (MAX_CONSECUTIVE_DENIALS = 2 in graph/nodes/safety_node.py). A refusal
+                that brings the thread's consecutive_denials to 2 ends the turn with
+                HARD_PAUSE_BUDGET_EXCEEDED and no trade. The counter persists in the
+                thread checkpoint; the pause does not lock the thread, and a later
+                ALLOW, NARROW or REQUIRE_APPROVAL resets it.
 
                 Reference implementation:
                 - Client SDK seal validation: src/governed_financial_advisor/tools/api.py
                 - Gateway seal generation: src/gateway/governance/routing_seal.py
-                - Session lifecycle: TLA+ LangGraphHarness.tla states (Active, ParkedForReview,
-                  PausedBudgetExceeded, Completed)
+                - Denial budget: src/governed_financial_advisor/graph/nodes/safety_node.py,
+                  model-checked as BudgetNeverExceededWithoutPause in proof/LangGraphHarness.tla
+                  (POAM-2026-091)
               props:
                 - name: implementation-status
                   value: implemented
@@ -114,7 +117,7 @@ component-definition:
                   text: "Client SDK seal validation enforcement"
                 - href: "../../proof/LangGraphHarness.tla"
                   rel: verification
-                  text: "TLA+ formal specification of session lifecycle"
+                  text: "TLA+ model of the advisor thread (BudgetNeverExceededWithoutPause, RefusedTurnNeverTrades)"
 
             - uuid: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
               control-id: au-10
@@ -228,13 +231,14 @@ component-definition:
                 - Short enough to prevent meaningful staleness (market conditions change)
                 - Long enough to accommodate network latency and client processing time
 
-                Session lifecycle state transitions (Active → ParkedForReview →
-                PausedBudgetExceeded) are tracked per-client-session and persist across
-                seal validations, providing session continuity while enforcing per-request
-                freshness.
+                Routing seal single-use consumption is enforced by
+                verify_and_consume_seal() (verify, then an atomic SET NX nonce burn).
 
-                Formal verification: TLA+ LangGraphHarness.tla models seal TTL expiration
-                and single-use consumption semantics via the SingleUseDeferralTicket invariant.
+                Formal verification: TLA+ LangGraphHarness.tla checks that a trade
+                executes only after a gateway ALLOW with a seal (SealGateIntegrity) and
+                that each DeferQueue ticket is resolved and consumed at most once
+                (SingleUseDeferralTicket, POAM-2026-091 / POAM-2026-093). It does not
+                model the seal TTL.
               props:
                 - name: implementation-status
                   value: implemented
@@ -252,7 +256,7 @@ component-definition:
                   text: "Routing seal TTL validation and single-use consumption"
                 - href: "../../proof/LangGraphHarness.tla"
                   rel: verification
-                  text: "TLA+ SingleUseDeferralTicket invariant"
+                  text: "TLA+ SealGateIntegrity and SingleUseDeferralTicket invariants"
 
     # -----------------------------------------------------------------------
     # Related Components (References Only)
