@@ -63,6 +63,7 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.safety.debit_ledger import (
     DEBITS_BY_TIME_KEY,
     DEBITS_KEY,
+    DEBITS_PENDING_KEY,
     DEBITS_ROLLED_BACK_KEY,
     DEBITS_TOTAL_KEY,
     settle_debits_sync,
@@ -140,10 +141,11 @@ class World:
     async def commit(
         self, amount: float, *, debit_id: str | None = None, execute: bool = True
     ) -> tuple[bool, str, str]:
-        """Commit through the CBF and, if admitted, journal the fill with the custodian.
+        """Commit through the CBF and, if admitted and ``execute``, run the action.
 
-        Mirrors the production split: the barrier ledgers the debit under
-        ``debit_id``; the actuator tells the custodian about the fill.
+        Mirrors the production split: the barrier ledgers the debit (pending)
+        under ``debit_id``; the actuator tells the custodian about the fill;
+        then the governor's settlement confirms the debit.
         """
         debit_id = debit_id or uuid.uuid4().hex
         committed, reason, _ = await self.cbf.atomic_verify_and_commit(
@@ -153,7 +155,11 @@ class World:
             self.provider.record_debit(
                 amount, submitted_at=time.time(), debit_id=debit_id
             )
+            assert await self.confirm(debit_id)
         return committed, reason, debit_id
+
+    async def confirm(self, debit_id: str) -> bool:
+        return await self.cbf.confirm_debit(debit_id)
 
     async def rollback(self, amount: float, debit_id: str) -> None:
         await self.cbf.rollback_state(amount, debit_id=debit_id)
@@ -177,6 +183,12 @@ class World:
     def epoch(self) -> int:
         return int(self.sync_redis.get(FENCE_EPOCH_KEY) or 0)
 
+    def pending(self) -> dict[str, float]:
+        return dict(self.sync_redis.zrange(DEBITS_PENDING_KEY, 0, -1, withscores=True))
+
+    def confirmed(self) -> dict[str, float]:
+        return dict(self.sync_redis.zrange(DEBITS_BY_TIME_KEY, 0, -1, withscores=True))
+
 
 def _build_world(
     monkeypatch: pytest.MonkeyPatch,
@@ -185,6 +197,7 @@ def _build_world(
     skew_s: float = 0.0,
     lag_fallback_s: float = 120.0,
     initial: float = INITIAL,
+    pending_max_age_s: float = 600.0,
 ) -> World:
     monkeypatch.setenv("CAGE_ENV", "development")
     monkeypatch.delenv(trust.RECONCILER_KMS_KEY_ENV, raising=False)
@@ -214,6 +227,7 @@ def _build_world(
         signer=signer,
         settlement_lag_seconds=lag_fallback_s,
         settlement_clock_skew_seconds=skew_s,
+        pending_debit_max_age_seconds=pending_max_age_s,
     )
     cbf = ControlBarrierFunction(
         invariant=CashBarrier(),
@@ -368,35 +382,44 @@ class _Clock:
         return getattr(time, name)
 
 
-@pytest.mark.asyncio
-async def test_skew_margin_covers_commit_to_custodian_latency(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``submitted_at`` is stamped when the CBF commits; the custodian learns of the fill
-    only when the actuator journals it. ``settlement_clock_skew_seconds`` is the contract
-    that covers that gap (ADR-010 §4): a fill journaled up to ``skew`` seconds after the
-    commit is settled exactly when the custodian first reflects it — never earlier."""
-    skew = 5.0
+def _frozen_clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     clock = _Clock(1_700_000_000.0)
     for module in (
         "src.gateway.governance.seams.ground_truth",
         "src.gateway.governance.safety.cbf_engine",
+        "src.gateway.governance.safety.debit_ledger",
         "src.gateway.governance.reconciliation.daemon",
     ):
         monkeypatch.setattr(f"{module}.time", clock)
+    return clock
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_debit_is_never_settled_however_late_the_actuator_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The commit-to-custodian gap is closed by confirm(), not by the skew margin.
+
+    ``submitted_at`` is stamped when the CBF commits, before the actuator tells
+    the custodian about the fill. A debit stays pending (never settled) until
+    the governor confirms it after execution; confirm stamps it with the
+    confirm time, which is at or after the custodian's receipt, so the skew
+    margin only has to cover clock skew.
+    """
+    skew = 5.0
+    clock = _frozen_clock(monkeypatch)
     world = _build_world(monkeypatch, custodian_lag_s=0.0, skew_s=skew)
     with world.live():
         assert world.reconcile() is not None
-        ok, _, debit_id = await world.commit(
-            10_000.0, execute=False
-        )  # actuator has not run yet
+        ok, _, debit_id = await world.commit(10_000.0, execute=False)
         assert ok
-        committed_at = world.ledger()[debit_id]["submitted_at"]
-        assert committed_at == clock.now
+        assert world.ledger()[debit_id]["submitted_at"] == clock.now
+        assert set(world.pending()) == {debit_id} and world.confirmed() == {}
 
-        # One second short of the margin: the custodian has not seen the fill,
-        # and the cutoff (now - skew) is still before the commit -> nothing settles.
-        clock.advance(skew - 1.0)
+        # Ten times the skew margin later the actuator still has not run. Under
+        # the old commit-time stamp this debit would already be settled while
+        # the custodian does not carry it (headroom overstated by 10k).
+        clock.advance(10 * skew)
         snap = world.reconcile()
         assert snap is not None and snap.state_scalar == INITIAL
         assert debit_id in world.ledger()
@@ -404,32 +427,77 @@ async def test_skew_margin_covers_commit_to_custodian_latency(
             _max_admissible(INITIAL - 10_000.0)
         )
 
-        # Exactly at the margin the actuator journals the fill. The custodian
-        # reflects it in the same instant the cutoff reaches the commit time:
-        # the debit leaves the ledger only once the scalar carries it.
-        clock.advance(1.0)
+        # The actuator journals the fill, then the governor confirms.
         world.provider.record_debit(10_000.0, submitted_at=clock.now, debit_id=debit_id)
+        assert await world.confirm(debit_id)
+        assert world.confirmed() == {debit_id: clock.now} and world.pending() == {}
+        assert world.ledger()[debit_id]["confirmed_at"] == clock.now
+        assert not await world.confirm(debit_id)  # idempotent
+
+        # The custodian reflects the fill at once (lag 0), but the cutoff
+        # (now - skew) is before the confirm stamp: the debit is counted twice
+        # for one skew window, which errs toward less headroom.
         snap = world.reconcile()
-        assert snap is not None and snap.state_scalar == pytest.approx(
-            INITIAL - 10_000.0
+        assert snap is not None and snap.state_scalar == pytest.approx(INITIAL - 10_000.0)
+        assert debit_id in world.ledger()
+        assert await world.headroom() == pytest.approx(
+            _max_admissible(INITIAL - 20_000.0)
         )
+
+        clock.advance(skew)
+        assert world.reconcile() is not None
         assert world.ledger() == {} and world.total() == 0.0
         assert await world.headroom() == pytest.approx(
             _max_admissible(INITIAL - 10_000.0)
         )
 
-        # Beyond the margin is the documented limit of the contract: a fill the
-        # actuator journals later than `skew` after the commit is settled before
-        # the custodian reflects it. Operators must size the margin above their
-        # worst-case commit-to-custodian latency.
-        ok, _, late_id = await world.commit(10_000.0, execute=False)
+
+@pytest.mark.asyncio
+async def test_unconfirmed_debit_is_promoted_after_the_max_age(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No confirm ever arrives (the governor's settlement hold expired) but the
+    action may have executed: once older than the max age the debit is promoted
+    to confirmed, stamped at promotion, and settles a skew window later."""
+    skew, max_age = 5.0, 60.0
+    clock = _frozen_clock(monkeypatch)
+    world = _build_world(
+        monkeypatch, custodian_lag_s=0.0, skew_s=skew, pending_max_age_s=max_age
+    )
+    with world.live():
+        assert world.reconcile() is not None
+        ok, _, debit_id = await world.commit(10_000.0, execute=False)
         assert ok
-        clock.advance(skew + 1.0)
-        snap = world.reconcile()  # the actuator still has not journaled
-        assert snap is not None and snap.state_scalar == pytest.approx(
-            INITIAL - 10_000.0
-        )
-        assert late_id not in world.ledger()
+        committed_at = clock.now
+        world.provider.record_debit(10_000.0, submitted_at=clock.now, debit_id=debit_id)
+
+        clock.advance(max_age - 1.0)
+        assert world.reconcile() is not None
+        assert set(world.pending()) == {debit_id}
+
+        clock.advance(1.0)  # exactly max_age old: promoted, not yet settled
+        assert world.reconcile() is not None
+        assert world.pending() == {}
+        assert world.confirmed() == {debit_id: committed_at + max_age}
+        assert debit_id in world.ledger()
+
+        clock.advance(skew)
+        assert world.reconcile() is not None
+        assert world.ledger() == {} and world.total() == 0.0
+
+
+def test_settle_never_prunes_pending_debits() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    r.hset(DEBITS_KEY, "p", json.dumps({"amount": 25.0, "submitted_at": 100.0}))
+    r.zadd(DEBITS_PENDING_KEY, {"p": 100.0})
+    r.set(DEBITS_TOTAL_KEY, "25.0")
+    assert settle_debits_sync(r, 10_000.0) == 0
+    assert r.hexists(DEBITS_KEY, "p") and float(r.get(DEBITS_TOTAL_KEY)) == 25.0
+    # Pending debits are unsettled by definition, whatever the cutoff.
+    assert unsettled_total_sync(r, 10_000.0) == pytest.approx(25.0)
+    # An orphan cutoff before the commit leaves it pending.
+    assert settle_debits_sync(r, 10_000.0, orphan_before=99.0, now=500.0) == 0
+    assert r.zscore(DEBITS_PENDING_KEY, "p") == 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -822,3 +890,13 @@ async def test_broker_actuator_refuses_when_the_custodian_journal_fails(
     assert receipt.accepted is False
     assert receipt.retryable is True
     assert [f["code"] for f in receipt.findings] == ["CUSTODIAN_JOURNAL_FAILED"]
+
+
+def test_pending_max_age_outlasts_the_governor_settlement_hold() -> None:
+    """Promotion must not race a confirm or rollback that can still arrive."""
+    from src.gateway.governance.governor.settlement import DEFAULT_HOLD_SECONDS
+    from src.gateway.governance.schemas.thresholds import (
+        get_reconciliation_pending_debit_max_age_seconds,
+    )
+
+    assert get_reconciliation_pending_debit_max_age_seconds() >= DEFAULT_HOLD_SECONDS

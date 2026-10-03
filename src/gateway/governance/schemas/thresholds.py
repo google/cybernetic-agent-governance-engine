@@ -306,7 +306,21 @@ class ReconciliationThresholds(BaseModel):
         description=(
             "[EV-7] Clock-skew margin subtracted from every settlement cutoff "
             "(attested or lag-derived) before local debits are settled. "
+            "Confirmed debits are stamped after the action executed, so the "
+            "margin covers clock skew between gateway and custodian only. "
             "Env override: RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS"
+        ),
+    )
+    pending_debit_max_age_seconds: float = Field(
+        default=600.0,
+        gt=0.0,
+        description=(
+            "[EV-7] Age after which an admitted debit that was never confirmed "
+            "or rolled back is promoted to confirmed (stamped at promotion), "
+            "because it may have executed. Must be at least the governor's "
+            "settlement hold (governor/settlement.py DEFAULT_HOLD_SECONDS), "
+            "after which no confirm or rollback can arrive. Env override: "
+            "RECONCILIATION_PENDING_DEBIT_MAX_AGE_SECONDS"
         ),
     )
 
@@ -459,6 +473,10 @@ _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     ),
     "RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS": (
         "reconciliation.settlement_clock_skew_seconds",
+        float,
+    ),
+    "RECONCILIATION_PENDING_DEBIT_MAX_AGE_SECONDS": (
+        "reconciliation.pending_debit_max_age_seconds",
         float,
     ),
 }
@@ -701,6 +719,11 @@ def get_reconciliation_settlement_lag_seconds() -> float:
 def get_reconciliation_settlement_clock_skew_seconds() -> float:
     """Clock-skew margin subtracted from every settlement cutoff."""
     return THRESHOLDS.reconciliation.settlement_clock_skew_seconds
+
+
+def get_reconciliation_pending_debit_max_age_seconds() -> float:
+    """Age after which an unconfirmed debit is promoted to confirmed."""
+    return THRESHOLDS.reconciliation.pending_debit_max_age_seconds
 
 
 # ---------------------------------------------------------------------------

@@ -68,7 +68,8 @@ All four are owned by
 | Key | Type | Content | Written by |
 |---|---|---|---|
 | `cbf:debits` | HASH | `debit_id -> JSON{amount, submitted_at, mode, snapshot_sequence, snapshot_verified_at}` | commit Lua |
-| `cbf:debits:by_time` | ZSET | score `submitted_at`, member `debit_id` | commit Lua |
+| `cbf:debits:pending` | ZSET | score commit time (`submitted_at`), member `debit_id` — admitted, not yet confirmed | commit Lua; confirm, rollback and settle (orphan promotion) remove |
+| `cbf:debits:by_time` | ZSET | score confirm time, member `debit_id` — confirmed, settleable | confirm Lua; settle (orphan promotion) |
 | `cbf:debits:total` | STRING (float) | running sum of outstanding debits | commit / rollback / settle Lua |
 | `cbf:debits:rolled_back` | HASH | `debit_id -> rolled_back_at` tombstones | rollback Lua; pruned by settle |
 
@@ -150,22 +151,31 @@ preserved.
   ```
 
   with `skew = reconciliation.settlement_clock_skew_seconds`.
-- **What the skew margin must cover.** The ledger stamps `submitted_at` when
-  the CBF *commits*; the custodian learns of the fill only when the actuator
-  *journals* it, some latency later, and `settled_through` is expressed in
-  the custodian's clock. The margin therefore has to exceed the worst-case
-  commit-to-custodian-submission latency **plus** clock skew. Within that
-  envelope a debit leaves the ledger exactly when the custodian first
-  reflects it, never earlier (`test_skew_margin_covers_commit_to_custodian_latency`
-  pins the boundary at `latency == skew`); beyond it the debit is settled
-  before the custodian carries it. Operators of a real custodian adapter set
-  `RECONCILIATION_SETTLEMENT_CLOCK_SKEW_SECONDS` above their measured
-  submission latency; the reference deployment's latency is milliseconds
-  against a 5 s default.
-- `LUA_SETTLE_DEBITS` (daemon only, off the hot path) removes every member of
-  the ZSET with score `<= cutoff`, **recomputes** `cbf:debits:total` from
-  `HVALS cbf:debits` (correcting `INCRBYFLOAT` drift on every poll), and prunes
-  tombstones with `rolled_back_at <= cutoff`.
+- **Only confirmed debits settle (amended 2026-10-03, POAM-2026-092).** The
+  commit stamps `submitted_at` before the actuator has told the custodian
+  about the fill, so a commit-time stamp compared against `settled_through`
+  let a debit settle before the custodian carried it whenever the
+  commit-to-custodian latency exceeded the skew margin. A commit therefore
+  enters `cbf:debits:pending`. ADR-009 `confirm()` — which the governor runs
+  only after the action executed — calls `confirm_barrier()` →
+  `ControlBarrierFunction.confirm_debit()` (`LUA_CONFIRM_DEBIT`), moving the
+  entry to `cbf:debits:by_time` stamped with the confirm time and recording
+  `confirmed_at` in the entry. The confirm time is at or after the custodian's
+  own receipt time, so the skew margin has to cover clock skew only. A
+  debit whose confirm never arrives (the governor's settlement hold,
+  `DEFAULT_HOLD_SECONDS`, expired) may still have executed, so the settle
+  script promotes pending entries older than
+  `reconciliation.pending_debit_max_age_seconds` (default 600 s, at least the
+  settlement hold) to `by_time` stamped at promotion. The promotion stamp is
+  after every snapshot cutoff, so a promoted debit never settles in the pass
+  that promotes it.
+- `LUA_SETTLE_DEBITS` (daemon only, off the hot path) first promotes orphaned
+  pending debits, then removes every member of `cbf:debits:by_time` with score
+  `<= cutoff`, **recomputes** `cbf:debits:total` from `HVALS cbf:debits`
+  (pending and confirmed; correcting `INCRBYFLOAT` drift on every poll), and
+  prunes tombstones with `rolled_back_at <= cutoff`. It never touches a
+  pending entry otherwise. `LUA_UNSETTLED_TOTAL` (discrepancy guard) counts
+  every pending debit plus confirmed debits stamped after the cutoff.
 - The R-04 snapshot-sequence logic is kept for replay defence only; it no
   longer drives pruning.
 
@@ -298,13 +308,15 @@ Every failure mode over-restricts.
 - **The development-only `reconciled_unsigned` branch** nets in Python and
   flows as `mode="self_reported"`; it has neither the in-script netting nor the
   generation check and is never admitted in an enforcing posture.
-- **Commit-time stamping leans on the skew margin.** The structurally
-  stronger design re-stamps the ledger entry's `submitted_at` at
-  ADR-009 `confirm()` time (after actuation, so it is an upper bound on the
-  custodian's receipt time) via `ZADD XX` on `cbf:debits:by_time`, leaving the
-  margin to cover true clock skew only. That adds a `confirm_debit(debit_id)`
-  method to `BarrierEngine` / `SafetyFilter` and every domain barrier tier,
-  so it is deferred to a follow-up rather than widened into this change.
+- **A debit is counted twice for one skew window after confirm.** The
+  custodian may reflect a fill before the cutoff passes its confirm stamp;
+  until then the snapshot and the ledger both carry it. This errs toward less
+  headroom.
+- **Orphan promotion trusts the settlement hold.** If
+  `pending_debit_max_age_seconds` were set below the governor's settlement
+  hold, a debit could be promoted (and later settled) before a late confirm
+  or rollback arrives; `test_pending_max_age_outlasts_the_governor_settlement_hold`
+  pins the defaults.
 
 ## Verification
 
@@ -321,11 +333,16 @@ through the same fakeredis server):
   while `settled_through < submitted_at`.
 - `test_skew_margin_delays_settlement` — debit at `t`; `settled_through =
   t + 1` with skew 5 does not settle it; `t + 6` does.
-- `test_skew_margin_covers_commit_to_custodian_latency` — under a frozen
-  clock, a fill journaled `skew − 1` s after the commit stays outstanding, one
-  journaled at exactly `skew` leaves the ledger in the same reconcile that the
-  custodian first reflects it, and one journaled later than `skew` is the
-  documented limit (settled before the custodian carries it).
+- `test_unconfirmed_debit_is_never_settled_however_late_the_actuator_runs` —
+  under a frozen clock, an unconfirmed debit survives a reconcile ten skew
+  margins after the commit; once confirmed it is stamped with the confirm time
+  and leaves the ledger one skew window later, never before the custodian
+  reflects it.
+- `test_unconfirmed_debit_is_promoted_after_the_max_age` — with no confirm,
+  the debit stays pending until it is `pending_debit_max_age_seconds` old, is
+  then promoted (stamped at promotion), and settles a skew window later.
+- `test_settle_never_prunes_pending_debits` — a pending debit survives any
+  cutoff and counts as unsettled for the discrepancy guard.
 - `test_rollback_by_debit_id_is_exact_and_idempotent` — two equal commits,
   roll back one, the other is intact; the second rollback is a `NOOP` and does
   not bump the epoch.

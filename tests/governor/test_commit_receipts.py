@@ -59,6 +59,7 @@ def _engine(applied: float) -> MagicMock:
     engine = MagicMock()
     engine.atomic_verify_and_commit = AsyncMock(return_value=(True, "COMMITTED", applied))
     engine.rollback_state = AsyncMock()
+    engine.confirm_debit = AsyncMock(return_value=True)
     return engine
 
 
@@ -143,6 +144,61 @@ async def test_barrier_rollback_restores_committed_magnitude_not_params(tier_cls
     await tier.rollback(action, params, receipt)
 
     engine.rollback_state.assert_awaited_once_with(magnitude=100.0, debit_id=debit_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tier_cls", "action", "key"),
+    [
+        (CBFTierPlugin, "execute_trade", "amount"),
+        (DoseBarrierTier, "administer_medication", "dose_mg"),
+        (KinematicBarrierTier, "move_arm", "velocity"),
+    ],
+)
+async def test_barrier_confirm_makes_exactly_the_receipted_debit_settleable(
+    tier_cls, action, key
+) -> None:
+    """ADR-010: confirm() moves the ledger entry from pending to settleable."""
+    engine = _engine(applied=100.0)
+    tier = tier_cls(engine)
+    _, receipt = await tier.commit(action, {key: 100.0})
+    engine.confirm_debit.assert_not_awaited()  # commit alone never confirms
+
+    await tier.confirm(action, {key: 100.0}, receipt)
+
+    engine.confirm_debit.assert_awaited_once_with(receipt.token)
+    engine.rollback_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_barrier_confirm_failure_propagates() -> None:
+    """A failed confirm surfaces as CONFIRM_FAILED; the entry stays pending."""
+    engine = _engine(applied=100.0)
+    engine.confirm_debit = AsyncMock(side_effect=ConnectionError("redis down"))
+    tier = CBFTierPlugin(engine)
+    _, receipt = await tier.commit("execute_trade", {"amount": 100.0})
+    with pytest.raises(ConnectionError):
+        await tier.confirm("execute_trade", {"amount": 100.0}, receipt)
+    engine.rollback_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_multi_engine_kinematic_settles_each_engine_by_its_own_debit_id() -> None:
+    """Every engine's own receipt (and debit_id) is kept, so rollback retires
+    and confirm settles exactly the entry each engine ledgered."""
+    first, second = _engine(applied=10.0), _engine(applied=20.0)
+    tier = KinematicBarrierTier([first, second])
+    _, receipt = await tier.commit("move_arm", {"velocity": 1.0})
+    ids = [e.atomic_verify_and_commit.await_args.kwargs["debit_id"] for e in (first, second)]
+    assert len(set(ids)) == 2
+
+    await tier.confirm("move_arm", {}, receipt)
+    first.confirm_debit.assert_awaited_once_with(ids[0])
+    second.confirm_debit.assert_awaited_once_with(ids[1])
+
+    await tier.rollback("move_arm", {}, receipt)
+    first.rollback_state.assert_awaited_once_with(magnitude=10.0, debit_id=ids[0])
+    second.rollback_state.assert_awaited_once_with(magnitude=20.0, debit_id=ids[1])
 
 
 @pytest.mark.asyncio

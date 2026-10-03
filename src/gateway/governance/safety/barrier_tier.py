@@ -22,6 +22,8 @@ Phase-2 barrier tiers delegate all three tier hooks here:
 * ``commit_barrier``   — ``commit()``: atomic verify-and-commit; the receipt
   records the magnitude the engine reports it deducted.
 * ``rollback_barrier`` — ``rollback()``: restores exactly that magnitude.
+* ``confirm_barrier``  — ``confirm()``: the action executed; the ledger entry
+  becomes settleable, stamped with the confirm time (ADR-010).
 
 Refusals carry ``Violation.bound`` (the engine's admissible cost) when the
 engine is a :class:`BoundedBarrier`; otherwise, or if reading it fails, the
@@ -69,6 +71,8 @@ class BarrierEngine(BarrierReader, Protocol):
         *,
         debit_id: str | None = None,
     ) -> None: ...
+
+    async def confirm_debit(self, debit_id: str) -> bool: ...
 
 
 @runtime_checkable
@@ -149,3 +153,13 @@ async def rollback_barrier(cbf: BarrierEngine, receipt: CommitReceipt) -> None:
     if the entry has already settled) and ignores a repeated rollback.
     """
     await cbf.rollback_state(magnitude=receipt.magnitude, debit_id=receipt.token)
+
+
+async def confirm_barrier(cbf: BarrierEngine, receipt: CommitReceipt) -> None:
+    """Confirm exactly the debit recorded by ``commit_barrier`` (ADR-009/010).
+
+    Until confirmed the debit is pending and the reconciler never settles it.
+    A receipt without a ``debit_id`` token has nothing ledgered to confirm.
+    """
+    if isinstance(receipt.token, str) and receipt.token:
+        await cbf.confirm_debit(receipt.token)

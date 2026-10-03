@@ -26,6 +26,7 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.safety.barrier_tier import (
     commit_barrier,
+    confirm_barrier,
     preview_barrier,
     rollback_barrier,
 )
@@ -123,22 +124,20 @@ class KinematicBarrierTier(MutatingTier):
             raise
 
         first_mag = committed_steps[0][1].magnitude if committed_steps else 0.0
+        # Keep each engine's own receipt so rollback and confirm address its
+        # ledgered debit_id, not just a magnitude.
         return [], CommitReceipt(
             tier=self.tier_name,
             magnitude=first_mag,
-            token=tuple(
-                (eng, rec.magnitude) for eng, rec in committed_steps
-            ),
+            token=tuple(committed_steps),
         )
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
         if isinstance(receipt.token, tuple):
-            for engine, magnitude in reversed(receipt.token):
-                await rollback_barrier(
-                    engine, CommitReceipt(tier=self.tier_name, magnitude=magnitude)
-                )
+            for engine, step_receipt in reversed(receipt.token):
+                await rollback_barrier(engine, step_receipt)
             return
         if self._cbfs:
             await rollback_barrier(self._cbfs[0], receipt)
@@ -146,4 +145,10 @@ class KinematicBarrierTier(MutatingTier):
     async def confirm(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
     ) -> None:
-        """The debit is final at commit; nothing expires, so nothing to confirm."""
+        """The motion executed: every engine's debit becomes settleable (ADR-010)."""
+        if isinstance(receipt.token, tuple):
+            for engine, step_receipt in receipt.token:
+                await confirm_barrier(engine, step_receipt)
+            return
+        if self._cbfs:
+            await confirm_barrier(self._cbfs[0], receipt)
