@@ -24,9 +24,11 @@ Test Coverage:
   - TC-03: Loop breaker with step ID uniqueness across cycles
   - TC-04: Policy block with payload preservation
   - TC-05: Large DAG (22-node fan-in) processing
+  - TC-06: HITL approval path (safety_check -> hitl_interrupt -> governed_trader)
   - TC-ERR-01: Invalid parent step ID rejection
   - TC-ERR-02: Non-canonical JCS float rejection
   - TC-ERR-03: Unknown terminal path graceful handling
+  - TC-ERR-04: Malformed hitl_interrupt stateHash fail-closed rejection
 
 Prerequisites:
   - PROVIDER_02_API_ENDPOINT must be set to staging deployment
@@ -46,6 +48,10 @@ from typing import Any
 import pytest
 
 from src.integrations.provider_02.provider import Provider02AttestationProvider
+from tests.integrations.provider_02.hitl_bundle import (
+    build_hitl_approval_bundle,
+    hitl_invariant_violations,
+)
 
 pytestmark = [
     pytest.mark.partner_integration,
@@ -217,6 +223,32 @@ async def test_tc05_large_dag(provider: Provider02AttestationProvider) -> None:
     assert multi_parent_found, "No fan-in nodes found in large DAG fixture"
 
 
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["runtime", "fixture"])
+async def test_tc06_hitl_approval(
+    provider: Provider02AttestationProvider, source: str
+) -> None:
+    """TC-06: Submit the HITL approval-path bundle and expect acceptance.
+
+    ``runtime`` is emitted by the adapter at test time (what CAGE ships today);
+    ``fixture`` is the committed 06_hitl_approval.json handed to the partner.
+    Expected: 200 OK with bundleHash/bundleId. The partner previously rejected
+    this path fail-closed on stateHash format, topology membership and lineage.
+    """
+    bundle = (
+        build_hitl_approval_bundle()
+        if source == "runtime"
+        else load_fixture("06_hitl_approval.json")
+    )
+    assert not hitl_invariant_violations(bundle), "Precondition: bundle must be valid"
+
+    response = await provider.register_project_bundle(bundle)
+
+    assert "error" not in response, f"Unexpected error: {response.get('error')}"
+    assert "bundleHash" in response or "bundleId" in response
+
+
 # ---------------------------------------------------------------------------
 # Error Handling Tests
 # ---------------------------------------------------------------------------
@@ -296,6 +328,27 @@ async def test_tc_err_03_unknown_terminal_path(
     assert (
         "error" not in response or "unknown" not in response.get("error", "").lower()
     ), "Provider should accept terminalPath='unknown' gracefully"
+
+
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+async def test_tc_err_04_malformed_hitl_state_hash(
+    provider: Provider02AttestationProvider,
+) -> None:
+    """TC-ERR-04: A hitl_interrupt step with a non-conforming stateHash must be rejected.
+
+    Reproduces the pre-fix defect (non-hex stateHash on the interrupt step).
+    Expected: fail-closed rejection, never a registered bundle.
+    """
+    bundle = build_hitl_approval_bundle()
+    hitl = next(s for s in bundle["steps"] if s["nodeName"] == "hitl_interrupt")
+    hitl["stateHash"] = "hitl-paused"
+
+    response = await provider.register_project_bundle(bundle)
+
+    assert "error" in response, (
+        f"Provider accepted a malformed hitl_interrupt stateHash: {response}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -71,6 +71,7 @@ def attestation_schema():
         "03_loop_breaker.json",
         "04_nemo_policy_block.json",
         "05_large_dag.json",
+        "06_hitl_approval.json",
     ],
 )
 def test_fixture_validates_against_schema(fixture_name, attestation_schema):
@@ -109,6 +110,7 @@ def test_all_expected_fixtures_exist():
         "03_loop_breaker.json",
         "04_nemo_policy_block.json",
         "05_large_dag.json",
+        "06_hitl_approval.json",
     ]
 
     for fixture_name in expected_fixtures:
