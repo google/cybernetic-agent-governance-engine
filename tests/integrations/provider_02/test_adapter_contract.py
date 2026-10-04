@@ -358,8 +358,8 @@ class TestHelperFunctions:
         )
 
         topology = GraphTopology(
-            nodes=node_names | {terminal_node},
-            attestation_nodes=node_names,
+            nodes=frozenset(node_names | {terminal_node}),
+            attestation_nodes=frozenset(node_names),
             parent_edges={},  # Not needed for classification
             terminal_node=terminal_node,
         )
@@ -477,13 +477,22 @@ class TestProvider02AttestationCallback:
         cb = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
         )
-        # Execute several attestation nodes before the interrupt to establish recorded ancestors
-        for node in ["nemo_guardrail", "evaluator", "safety_check"]:
+        # Execute the real pre-interrupt path (every edge must be a legal executed edge)
+        for node in [
+            "nemo_guardrail",
+            "thinker_node",
+            "doer_node",
+            "execution_analyst",
+            "evaluator",
+            "safety_check",
+        ]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {"risk_status": "APPROVED"})
 
         # Capture safety_check step_id for DAG provenance validation
-        safety_check_step_id = cb._step_id_by_node["safety_check"]
+        safety_check_step_id = next(
+            s.step_id for s in cb._steps if s.node_name == "safety_check"
+        )
 
         state = {
             "approval_required": True,
@@ -565,8 +574,8 @@ class TestProvider02AttestationCallback:
 
         # Synthetic topology with all nodes as attestation nodes
         topology = GraphTopology(
-            nodes={"A", "B", "C", "D"},
-            attestation_nodes={"A", "B", "C", "D"},
+            nodes=frozenset({"A", "B", "C", "D"}),
+            attestation_nodes=frozenset({"A", "B", "C", "D"}),
             parent_edges={
                 "A": [],
                 "B": ["A"],
@@ -607,8 +616,10 @@ class TestProvider02AttestationCallback:
 
         # Only A and D are attestation nodes; B and C are skipped
         topology = GraphTopology(
-            nodes={"A", "B", "C", "D"},
-            attestation_nodes={"A", "D"},  # B and C are NOT attestation nodes
+            nodes=frozenset({"A", "B", "C", "D"}),
+            attestation_nodes=frozenset(
+                {"A", "D"}
+            ),  # B and C are NOT attestation nodes
             parent_edges={
                 "A": [],
                 "B": ["A"],
@@ -652,14 +663,17 @@ class TestProvider02AttestationCallback:
         """Branched DAG: A -> B -> D and A -> C -> D, where B and C are skipped.
 
         D.parent_step_ids must contract to [A.step_id] without duplicates.
+        The fan-out/fan-in is declared via ``executed_predecessors`` because a
+        sequential event stream cannot express parallel branches (B -> C is not
+        an edge).
         """
         from src.gateway.governance.seams.graph_topology import GraphTopology
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         # A and D are attestation nodes; B and C are skipped intermediate nodes
         topology = GraphTopology(
-            nodes={"A", "B", "C", "D"},
-            attestation_nodes={"A", "D"},
+            nodes=frozenset({"A", "B", "C", "D"}),
+            attestation_nodes=frozenset({"A", "D"}),
             parent_edges={
                 "A": [],
                 "B": ["A"],
@@ -671,10 +685,11 @@ class TestProvider02AttestationCallback:
 
         cb = Provider02AttestationCallback(topology=topology, thread_id="branch-test")
 
-        # Execute all nodes
-        for node in ["A", "B", "C", "D"]:
+        # Execute all nodes; B and C both ran from A, and D converged from both.
+        executed = {"A": None, "B": ["A"], "C": ["A"], "D": ["B", "C"]}
+        for node, preds in executed.items():
             cb.on_chain_start(node, {})
-            cb.on_chain_end(node, {})
+            cb.on_chain_end(node, {}, executed_predecessors=preds)
 
         bundle = cb.get_bundle()
 
@@ -701,8 +716,8 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         topology = GraphTopology(
-            nodes={"A", "B", "C", "D"},
-            attestation_nodes={"A", "C", "D"},  # B is skipped
+            nodes=frozenset({"A", "B", "C", "D"}),
+            attestation_nodes=frozenset({"A", "C", "D"}),  # B is skipped
             parent_edges={
                 "A": [],
                 "B": ["A"],
@@ -739,17 +754,16 @@ class TestProvider02AttestationCallback:
             f"Step D should have parent [C.step_id], got {step_d.parent_step_ids}"
         )
 
-    def test_cycle_detection_in_parent_resolution(self) -> None:
-        """Cycle detection: graph with a cycle should raise ValueError during parent resolution."""
+    @staticmethod
+    def _unrecorded_cycle_topology() -> Any:
         from src.gateway.governance.seams.graph_topology import GraphTopology
-        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        # Create a cyclic topology where the cycle doesn't include the target node:
-        # A (attested) -> B -> D -> B (cycle among unrecorded nodes B and D)
-        #              -> C (attested, depends on B which leads to cycle)
-        topology = GraphTopology(
-            nodes={"A", "B", "D", "C"},
-            attestation_nodes={"A", "C"},  # B and D are unrecorded intermediate nodes
+        # A (attested) -> B <-> D (unrecorded cycle) -> C (attested, from B only)
+        return GraphTopology(
+            nodes=frozenset({"A", "B", "D", "C"}),
+            attestation_nodes=frozenset(
+                {"A", "C"}
+            ),  # B and D are unrecorded intermediate nodes
             parent_edges={
                 "A": [],
                 "B": ["A", "D"],  # B depends on A and D, creating cycle with D
@@ -759,22 +773,43 @@ class TestProvider02AttestationCallback:
             terminal_node="C",
         )
 
-        cb = Provider02AttestationCallback(topology=topology, thread_id="cycle-test")
+    def test_unrecorded_cycle_contracts_over_executed_edges(self) -> None:
+        """A cycle of unrecorded nodes contracts finitely over the executed edges.
 
-        # Execute A (no issue)
-        cb.on_chain_start("A", {})
-        cb.on_chain_end("A", {})
+        Contraction follows the edges actually taken (A -> B -> D -> B -> C), so
+        static cycles among unrecorded nodes can no longer cause unbounded
+        traversal.
+        """
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        # Execute B and D (both skipped as non-attestation nodes)
-        for node in ["B", "D"]:
+        cb = Provider02AttestationCallback(
+            topology=self._unrecorded_cycle_topology(), thread_id="cycle-test"
+        )
+        for node in ["A", "B", "D", "B", "C"]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {})
 
-        # Execute C - this should trigger cycle detection when resolving parents through B <-> D
-        cb.on_chain_start("C", {})
+        step_a, step_c = cb.get_bundle().steps
+        assert step_c.parent_step_ids == [step_a.step_id]
 
-        with pytest.raises(ValueError, match=r"Cycle detected in graph topology"):
+    def test_illegal_executed_edge_fails_closed(self) -> None:
+        """D -> C is not a parent_edges candidate: the adapter must refuse it."""
+        from src.integrations.provider_02.adapter import (
+            LineageError,
+            Provider02AttestationCallback,
+        )
+
+        cb = Provider02AttestationCallback(
+            topology=self._unrecorded_cycle_topology(), thread_id="cycle-test"
+        )
+        for node in ["A", "B", "D"]:
+            cb.on_chain_start(node, {})
+            cb.on_chain_end(node, {})
+
+        cb.on_chain_start("C", {})
+        with pytest.raises(LineageError, match=r"Illegal executed edge 'D' -> 'C'"):
             cb.on_chain_end("C", {})
+        assert cb.step_count == 1
 
 
 # ---------------------------------------------------------------------------

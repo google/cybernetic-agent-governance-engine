@@ -16,8 +16,8 @@
 
 Checks both the bundle the adapter emits at runtime and the committed
 ``06_hitl_approval.json`` fixture against the vendored Provider 02 schema and
-the three HITL interop invariants agreed with the partner (stateHash format,
-topology membership, causal parentage). The over-the-wire counterpart is
+the HITL interop invariants (stateHash format, topology membership, causal
+parentage, actual parents only). The over-the-wire counterpart is
 ``test_tc06_hitl_approval`` in ``test_staging_e2e.py``.
 """
 
@@ -93,3 +93,56 @@ def test_invariant_check_rejects_trader_bypassing_hitl() -> None:
     by_node = {s["nodeName"]: s for s in bundle["steps"]}
     by_node["governed_trader"]["parentStepIds"] = [by_node["safety_check"]["stepId"]]
     assert any("governed_trader" in v for v in hitl_invariant_violations(bundle))
+
+
+def _steps_by_node(bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {s["nodeName"]: s for s in bundle["steps"]}
+
+
+def test_invariant_check_rejects_static_explainer_overapproximation() -> None:
+    """Pre-fix lineage: explainer cited every static candidate, not just the executed one."""
+    bundle = copy.deepcopy(build_hitl_approval_bundle())
+    by_node = _steps_by_node(bundle)
+    by_node["explainer"]["parentStepIds"] = [
+        by_node[n]["stepId"] for n in ("governed_trader", "evaluator", "safety_check")
+    ]
+    violations = hitl_invariant_violations(bundle)
+    assert any(v.startswith("explainer.parentStepIds") for v in violations)
+    # Each extra parent is a legal candidate, so only the actual-parent rule catches it.
+    assert not any("illegal parent edge" in v for v in violations)
+
+
+def test_invariant_check_rejects_unexecuted_reachability() -> None:
+    """Pre-fix lineage: nemo_output_rail reached nemo_guardrail via unexecuted data_analyst."""
+    bundle = copy.deepcopy(build_hitl_approval_bundle())
+    by_node = _steps_by_node(bundle)
+    by_node["nemo_output_rail"]["parentStepIds"] = [
+        by_node["nemo_guardrail"]["stepId"],
+        by_node["explainer"]["stepId"],
+    ]
+    assert any(
+        v.startswith("nemo_output_rail.parentStepIds")
+        for v in hitl_invariant_violations(bundle)
+    )
+
+
+def test_invariant_check_rejects_illegal_parent_edge() -> None:
+    """A parent that is not a parentEdges candidate is rejected as an illegal edge."""
+    bundle = copy.deepcopy(build_hitl_approval_bundle())
+    by_node = _steps_by_node(bundle)
+    by_node["safety_check"]["parentStepIds"] = [by_node["nemo_guardrail"]["stepId"]]
+    assert any(
+        "illegal parent edge(s) ['nemo_guardrail'] -> safety_check" in v
+        for v in hitl_invariant_violations(bundle)
+    )
+
+
+def test_invariant_check_rejects_forward_parent_reference() -> None:
+    """A parent that is not an earlier step is rejected."""
+    bundle = copy.deepcopy(build_hitl_approval_bundle())
+    by_node = _steps_by_node(bundle)
+    by_node["evaluator"]["parentStepIds"] = [by_node["explainer"]["stepId"]]
+    assert any(
+        "evaluator: parentStepIds cite unknown or later steps" in v
+        for v in hitl_invariant_violations(bundle)
+    )

@@ -55,6 +55,15 @@ snapshots `AgentState` at governance-significant node boundaries
 `nemo_output_rail`), deep-copying to survive destructive in-place loop mutation,
 and assembles an `AttestationBundle` DAG at graph completion.
 
+`parentStepIds` records **executed** parents only: the callback tracks the
+executed predecessor of each node event, including unrecorded nodes, and
+contracts those executed edges back to the nearest recorded step. Each executed
+edge must be a `GraphTopology.parent_edges` candidate. Otherwise
+`LineageError` is raised (fail-closed). Node events are assumed to arrive
+sequentially, so callers declare genuine parallel fan-in with
+`on_chain_end(..., executed_predecessors=[...])`. `handle_hitl_interrupt()`
+records `hitl_interrupt` as an ordinary executed node.
+
 Terminal paths classified: `happy_path`, `nemo_block`, `cbf_block`,
 `loop_breaker`, `unknown`.
 

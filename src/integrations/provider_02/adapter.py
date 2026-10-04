@@ -60,6 +60,7 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -390,11 +391,50 @@ def _classify_terminal_path(
 # ---------------------------------------------------------------------------
 
 
+class LineageError(ValueError):
+    """Raised when an executed edge is not legal under ``GraphTopology.parent_edges``.
+
+    Fail-closed: the adapter refuses to emit a step whose lineage would cite a
+    parent that is not a legal ``parentEdges`` candidate, or a predecessor that
+    never executed in this run (NATIVE_SCHEMA_SPEC.md §4.1, rules 2-4).
+    """
+
+
+#: Pseudo-node name under which :meth:`Provider02AttestationCallback.handle_hitl_interrupt`
+#: records the HITL pause. It is a step name in the Provider 02 native schema, so the
+#: topology must declare it (``nodes`` + ``parent_edges``) for its edges to be legal.
+HITL_INTERRUPT_STEP = "hitl_interrupt"
+
+
 class Provider02AttestationCallback:
     """LangGraph callback handler that emits Provider 02 attestation CERs.
 
     Subscribes to node lifecycle events and captures immutable state snapshots
     at governance-significant node boundaries.
+
+    Lineage (``parentStepIds``) records only **executed** relationships
+    (NATIVE_SCHEMA_SPEC.md §4.1 "Possible vs. Actual Relationships"):
+
+    - Every node event — recorded attestation node or not — has an *executed
+      predecessor set*: by default the node that completed immediately before
+      it (the edge actually taken). Each executed edge is validated against
+      ``GraphTopology.parent_edges``; an illegal edge raises
+      :class:`LineageError` (fail-closed).
+    - Each node execution carries a *lineage*: ``[own step_id]`` for recorded
+      steps, otherwise the lineage inherited over its executed edges. A recorded
+      step's ``parentStepIds`` is the deduplicated union of its executed
+      predecessors' lineages, i.e. executed edges contracted back to the nearest
+      recorded steps. Static reachability is never consulted, so a legal-but-
+      unexecuted parent can never appear.
+    - Loops unroll naturally: each iteration inherits the lineage of the
+      iteration that actually preceded it.
+
+    Sequential-event assumption: the callback receives node events in
+    completion order, one node at a time (the Governed Financial Advisor graph
+    has no parallel branches). Genuine fan-in after parallel branches cannot be
+    inferred from a sequential stream; callers declare it by passing
+    ``executed_predecessors=[...]`` to :meth:`on_chain_end`, and every declared
+    predecessor's lineage is included.
 
     Args:
         topology: Graph topology defining nodes, edges, terminal/interrupt nodes
@@ -422,7 +462,10 @@ class Provider02AttestationCallback:
         self._topology = topology
         self._thread_id = thread_id or str(uuid.uuid4())
         self._steps: list[ProjectBundleStepEntry] = []
-        self._step_id_by_node: dict[str, str] = {}  # node_name → last step_id
+        # node_name → lineage of its most recent execution (nearest recorded step ids)
+        self._lineage_by_node: dict[str, tuple[str, ...]] = {}
+        # node that completed most recently (the default executed predecessor)
+        self._last_completed: str | None = None
         self._node_start_times: dict[str, float] = {}
         self._started_at = time.time()
         self._started_at_utc = ""
@@ -447,175 +490,155 @@ class Provider02AttestationCallback:
         self,
         node_name: str,
         state: dict[str, Any],
+        *,
+        executed_predecessors: Sequence[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Called when a LangGraph node completes execution.
 
-        For governance-significant nodes, captures an immutable state snapshot
+        Every node event advances the executed-edge lineage. For
+        governance-significant nodes, also captures an immutable state snapshot
         and creates a ProjectBundleStepEntry.
+
+        Args:
+            node_name: The node that completed.
+            state: The AgentState at the node boundary.
+            executed_predecessors: Nodes that actually fed this execution. Defaults
+                to the node that completed immediately before (sequential
+                execution); pass several names only for genuine fan-in.
+
+        Raises:
+            LineageError: If an executed edge is illegal under ``parent_edges``.
         """
+        parent_step_ids = self._resolve_executed_parents(
+            node_name, executed_predecessors
+        )
+        start_time = self._node_start_times.pop(node_name, time.monotonic())
+
         if node_name not in self._topology.attestation_nodes:
-            # Still track step IDs for parent resolution
-            step_id = str(uuid.uuid4())
-            self._step_id_by_node[node_name] = step_id
+            # Unrecorded node: pass its executed lineage through unchanged.
+            self._advance(node_name, tuple(parent_step_ids))
             return
 
-        from datetime import datetime, timezone
-
-        start_time = self._node_start_times.pop(node_name, time.monotonic())
-        duration_ms = (time.monotonic() - start_time) * 1000
-
-        # Deep-copy state to protect against mutation during loops
-        state_snapshot = _serialize_state_snapshot(state)
-        state_hash = _hash_state(state_snapshot)
-
-        # Build parent step IDs from graph topology
-        parent_step_ids = self._build_parent_step_ids(node_name)
-
-        # Extract governance signals
-        signals = _extract_signals(node_name, state)
-
-        step = ProjectBundleStepEntry(
-            node_name=node_name,
-            parent_step_ids=parent_step_ids,
-            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
-            duration_ms=duration_ms,
-            signals=signals,
+        step = self._record_step(
+            node_name,
+            state,
+            parent_step_ids,
+            signals=_extract_signals(node_name, state),
             metadata={
                 "loopIteration": state.get("loop_count"),
                 "threadId": self._thread_id,
             },
-            state_hash=state_hash,
+            duration_ms=(time.monotonic() - start_time) * 1000,
         )
-
-        self._steps.append(step)
-        self._step_id_by_node[node_name] = step.step_id
 
         logger.debug(
             "[Provider02Adapter] Step recorded: node=%s step_id=%s parents=%s signals=%d",
             node_name,
             step.step_id[:8],
             [p[:8] for p in parent_step_ids],
-            len(signals),
+            len(step.signals),
         )
 
-    def _build_parent_step_ids(self, node_name: str) -> list[str]:
-        """Resolve parent step IDs from the graph topology with ancestor contraction.
-
-        If an immediate parent is not an attestation node (not present in self._steps),
-        traverses upstream recursively through parent edges until finding the nearest
-        recorded ancestor nodes.
+    def _resolve_executed_parents(
+        self, node_name: str, executed_predecessors: Sequence[str] | None
+    ) -> list[str]:
+        """Contract executed edges into ``node_name`` back to the nearest recorded steps.
 
         Args:
-            node_name: The node name to build parent IDs for
+            node_name: The node whose execution is being recorded.
+            executed_predecessors: Explicit executed predecessors, or ``None`` to
+                use the node that completed immediately before.
 
         Returns:
-            Deduplicated list of step IDs from recorded ancestor nodes
+            Deduplicated, order-preserving list of recorded ancestor step ids.
+            Empty when no predecessor executed in this run (root of the
+            observed execution).
 
         Raises:
-            ValueError: If infinite recursion is detected during ancestor traversal
+            LineageError: If a predecessor never executed in this run, or an
+                executed edge is not a legal ``parent_edges`` candidate.
         """
-        # Dynamic binding: enforce causal parentage when resuming past an interruption
-        if (
-            node_name == self._topology.interrupt_node
-            and "hitl_interrupt" in self._step_id_by_node
-        ):
-            return [self._step_id_by_node["hitl_interrupt"]]
-
-        def _find_recorded_ancestors(
-            current_node: str, visited: set[str], target_node: str
-        ) -> list[str]:
-            """Recursively find recorded ancestors, with cycle detection.
-
-            Cycle detection only triggers if we visit the same unrecorded node twice
-            in a single path, indicating infinite traversal. Topological cycles in
-            the graph (like execution_analyst -> evaluator -> execution_analyst) are
-            allowed if at least one node in the cycle is recorded.
-
-            Args:
-                current_node: The node being examined
-                visited: Set of nodes visited in this traversal path
-                target_node: The node we're building parents for (cannot be its own ancestor)
-            """
-            # Check if this node is an attestation node that has been recorded.
-            # _step_id_by_node tracks ALL nodes (attestation and non-attestation),
-            # but only attestation nodes are actually recorded in self._steps.
-            # We must return the step_id ONLY for attestation nodes.
-            # For unrolled loops, if target_node itself was recorded in a prior
-            # iteration, that prior iteration is a valid sequential ancestor.
-            if (
-                current_node in self._topology.attestation_nodes
-                and current_node in self._step_id_by_node
-            ):
-                return [self._step_id_by_node[current_node]]
-
-            # Boundary condition: if we've reached the target node during traversal
-            # and it has not been recorded previously (e.g. first iteration),
-            # stop (a node cannot be its own ancestor on first execution).
-            # This naturally breaks cycles that include the unrecorded target node.
-            if current_node == target_node:
-                return []
-
-            # Node is not recorded. Check for traversal cycle (infinite loop).
-            # This prevents infinite recursion when traversing through unrecorded nodes.
-            if current_node in visited:
-                raise ValueError(
-                    f"Cycle detected in graph topology at node {current_node!r}. "
-                    f"Visited path: {sorted(visited)}. "
-                    f"All nodes in this cycle are unrecorded (not attestation nodes), "
-                    f"creating infinite traversal."
-                )
-
-            visited.add(current_node)
-
-            # Traverse upstream to find recorded ancestors
-            possible_parents = self._topology.parent_edges.get(current_node, [])
-            if not possible_parents:
-                # No parents; this is a root node that wasn't recorded
-                return []
-
-            # Recursively collect ancestors from all parents
-            ancestor_ids = []
-            for parent in possible_parents:
-                # Create a new visited set for each branch to allow DAG convergence
-                branch_visited = visited.copy()
-                ancestor_ids.extend(
-                    _find_recorded_ancestors(parent, branch_visited, target_node)
-                )
-
-            return ancestor_ids
-
-        # Start the search from the immediate parents of the target node
-        possible_parents = self._topology.parent_edges.get(node_name, [])
-        all_ancestor_ids = []
-
-        for parent in possible_parents:
-            visited: set[str] = set()
-            all_ancestor_ids.extend(
-                _find_recorded_ancestors(parent, visited, node_name)
+        if executed_predecessors is None:
+            preds: tuple[str, ...] = (
+                () if self._last_completed is None else (self._last_completed,)
             )
+        else:
+            preds = tuple(executed_predecessors)
 
-        # Deduplicate while preserving order
-        seen: dict[str, None] = {}
-        for step_id in all_ancestor_ids:
-            seen[step_id] = None
+        legal_parents = self._topology.parent_edges.get(node_name, [])
+        lineage: dict[str, None] = {}
+        for pred in preds:
+            if pred not in self._lineage_by_node:
+                raise LineageError(
+                    f"Executed predecessor {pred!r} of {node_name!r} has not "
+                    f"executed in this run; refusing to record unexecuted lineage."
+                )
+            if pred not in legal_parents:
+                raise LineageError(
+                    f"Illegal executed edge {pred!r} -> {node_name!r}: not a "
+                    f"parent_edges candidate (legal parents: {sorted(legal_parents)})."
+                )
+            for step_id in self._lineage_by_node[pred]:
+                lineage[step_id] = None
+        return list(lineage)
 
-        return list(seen.keys())
+    def _advance(self, node_name: str, lineage: tuple[str, ...]) -> None:
+        """Mark ``node_name`` as the most recently completed node with ``lineage``."""
+        self._lineage_by_node[node_name] = lineage
+        self._last_completed = node_name
 
-    def handle_hitl_interrupt(self, state: dict[str, Any]) -> None:
-        """Explicitly record the HITL interrupt as a paused DAG step.
-
-        Called when the graph is interrupted at the configured interrupt node.
-        The approval_decision field captures the reviewer's identity,
-        rationale, and timestamp per ISO 42001 A.7.2.
-        """
+    def _record_step(
+        self,
+        node_name: str,
+        state: dict[str, Any],
+        parent_step_ids: list[str],
+        *,
+        signals: dict[str, Any],
+        metadata: dict[str, Any],
+        duration_ms: float = 0.0,
+    ) -> ProjectBundleStepEntry:
+        """Append a recorded step and make it the lineage of ``node_name``."""
         from datetime import datetime, timezone
 
-        # Serialize state snapshot and compute RFC 8785 deterministic hash
-        state_snapshot = _serialize_state_snapshot(state)
-        state_hash = _hash_state(state_snapshot)
+        # Deep-copy state to protect against mutation during loops
+        state_hash = _hash_state(_serialize_state_snapshot(state))
+        step = ProjectBundleStepEntry(
+            node_name=node_name,
+            parent_step_ids=parent_step_ids,
+            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+            duration_ms=duration_ms,
+            signals=signals,
+            metadata=metadata,
+            state_hash=state_hash,
+        )
+        self._steps.append(step)
+        self._advance(node_name, (step.step_id,))
+        return step
 
-        signals = {}
+    def handle_hitl_interrupt(
+        self,
+        state: dict[str, Any],
+        *,
+        executed_predecessors: Sequence[str] | None = None,
+    ) -> None:
+        """Record the HITL interrupt as an executed, paused DAG step.
+
+        The pause is treated as one more executed node (``hitl_interrupt``): its
+        parents are resolved over the executed edge into it, and the node that
+        resumes after approval inherits it as its executed predecessor. The
+        approval_decision field captures the reviewer's identity, rationale,
+        and timestamp per ISO 42001 A.7.2.
+
+        Raises:
+            LineageError: If the topology does not declare the executed edge
+                into ``hitl_interrupt``.
+        """
+        parent_step_ids = self._resolve_executed_parents(
+            HITL_INTERRUPT_STEP, executed_predecessors
+        )
+
+        signals: dict[str, Any] = {}
         if approval := state.get("approval_decision"):
             signals["hitlApproval"] = {
                 "approved": approval.get("approved"),
@@ -623,36 +646,24 @@ class Provider02AttestationCallback:
                 "rationale": approval.get("rationale"),
                 "timestamp": approval.get("timestamp"),
             }
-        signals["interruptType"] = "HITL_MANUAL_REVIEW"  # type: ignore[assignment]
+        signals["interruptType"] = "HITL_MANUAL_REVIEW"
         signals["approvalRequired"] = state.get("approval_required", False)
 
         interrupt_node = self._topology.interrupt_node or self._topology.terminal_node
-
-        # Resolve parent step IDs with explicit awareness of "hitl_interrupt" in parent_edges
-        parent_step_ids = (
-            self._build_parent_step_ids("hitl_interrupt")
-            if "hitl_interrupt" in self._topology.parent_edges
-            else self._build_parent_step_ids(interrupt_node)
-        )
-
-        step = ProjectBundleStepEntry(
-            node_name="hitl_interrupt",
-            parent_step_ids=parent_step_ids,
-            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+        step = self._record_step(
+            HITL_INTERRUPT_STEP,
+            state,
+            parent_step_ids,
             signals=signals,
             metadata={
                 "threadId": self._thread_id,
                 "interruptNode": interrupt_node,
             },
-            state_hash=state_hash,
         )
-
-        self._steps.append(step)
-        self._step_id_by_node["hitl_interrupt"] = step.step_id
         logger.info(
             "[Provider02Adapter] HITL interrupt recorded: step_id=%s state_hash=%s",
             step.step_id[:8],
-            state_hash[:8],
+            step.state_hash[:8],
         )
 
     def get_bundle(self) -> AttestationBundle:

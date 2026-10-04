@@ -32,6 +32,7 @@ Usage::
 
 from .adapter import (
     AttestationBundle,
+    LineageError,
     ProjectBundleStepEntry,
     Provider02AttestationCallback,
     Provider02Client,
@@ -49,6 +50,7 @@ __all__ = [
     "CERReceipt",
     "CERVerification",
     "JWKCache",
+    "LineageError",
     "ProjectBundleStepEntry",
     "Provider02AttestationCallback",
     "Provider02AttestationProvider",
