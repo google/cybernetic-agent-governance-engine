@@ -14,6 +14,7 @@
 
 import json
 import logging
+import os
 import re
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -362,12 +363,69 @@ async def handle_deny(
     # Lead with the violation that decided the refusal (a HARD one when
     # present), so a co-occurring HITL finding never masks the real cause.
     ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.HARD)
+
+    quarantine_meta: dict[str, Any] = {}
+    auto_quarantine = os.getenv(
+        "CAGE_ENABLE_AUTO_QUARANTINE", "false"
+    ).strip().lower() in ("true", "1", "yes") or bool(
+        params.get("_quarantine_on_breach")
+    )
+    if auto_quarantine and ordered and ordered[0].kind == ViolationKind.HARD:
+        import time as _time
+
+        from src.gateway.governance.quarantine_actuator import dispatch_quarantine
+        from src.gateway.governance.seams.quarantine import (
+            QuarantineDirective,
+            QuarantineTriggerReason,
+        )
+
+        lead_code = ordered[0].code
+        if lead_code.startswith("FTRA"):
+            trigger_reason = QuarantineTriggerReason.FTRA_UNCONTAINABLE_TERMINAL
+        elif lead_code.startswith("RECON"):
+            trigger_reason = QuarantineTriggerReason.RECONCILIATION_STATE_DRIFT
+        else:
+            trigger_reason = QuarantineTriggerReason.CRITICAL_CBF_BREACH
+
+        agent_svid = str(
+            params.get("_caller_principal")
+            or params.get("agent_svid")
+            or params.get("workload_svid")
+            or "spiffe://cluster.local/ns/cage/sa/unknown-agent"
+        )
+        thread_id = str(params.get("thread_id") or "default-thread")
+        sandbox_id = str(params.get("sandbox_id") or "default-sandbox")
+        directive = QuarantineDirective(
+            thread_id=thread_id,
+            agent_svid=agent_svid,
+            sandbox_id=sandbox_id,
+            reason=trigger_reason,
+            violation_codes=tuple(v.code for v in ordered),
+            issued_at=int(_time.time()),
+            correlation_id=str(params.get("correlation_id") or uuid.uuid4()),
+            governance_decision_digest=receipt.proof_hash,
+            nonce=uuid.uuid4().hex,
+        )
+        q_receipt = await dispatch_quarantine(directive)
+        span.set_attribute("cage.quarantine.rule_id", q_receipt.rule_id or "")
+        span.set_attribute("cage.quarantine.quarantined", q_receipt.quarantined)
+        quarantine_meta = {
+            "quarantine_rule_id": q_receipt.rule_id,
+            "quarantined": q_receipt.quarantined,
+            "quarantine_enforcement_plane": q_receipt.enforcement_plane,
+        }
+
     raise GovernanceError(
         _error_message(ordered[0]),
-        payload={**(classification_meta or {}), **_control_payload(ordered[0])},
+        payload={
+            **(classification_meta or {}),
+            **_control_payload(ordered[0]),
+            **quarantine_meta,
+        },
         receipt=receipt,
         violations=[_error_message(v) for v in ordered],
     )
+
 
 
 

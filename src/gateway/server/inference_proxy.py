@@ -281,6 +281,27 @@ async def chat_completions(
                 status_code=401,
             )
 
+        # ── Step 2.5: Out-of-Band Quarantine Enforcement (SC-7 / AC-3) ──
+        from src.gateway.governance.quarantine_actuator import is_workload_quarantined
+
+        request_thread_id = body.get("thread_id") or request.headers.get(
+            "x-cage-thread-id"
+        )
+        if await is_workload_quarantined(
+            thread_id=str(request_thread_id) if request_thread_id else None,
+            agent_svid=agent_id,
+        ):
+            stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
+            return JSONResponse(
+                content={
+                    "error": "workload_quarantined",
+                    "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
+                    "agent_id": agent_id,
+                    "thread_id": request_thread_id,
+                },
+                status_code=403,
+            )
+
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
         token_delta = int(body.get("max_tokens", 0))

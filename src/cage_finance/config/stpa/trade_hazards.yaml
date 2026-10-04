@@ -157,10 +157,18 @@ unsafe_control_actions:
       param: latency_ms
       operator: greater_than
       threshold_ref: stpa.max_latency_ms
-    enforcement: [opa, python]
+    enforcement: [opa, python, sandbox]
     opa_rule:
       decision: DENY
       message: "UCA-2: Market data latency exceeds maximum allowable threshold."
+    sandbox_rule:
+      allowed_endpoints:
+        - "https://cage-gateway.internal/v1/mcp/tools/call/execute_trade"
+      allowed_http_verbs: ["POST"]
+      allowed_mcp_methods: ["tools/call:execute_trade"]
+      allowed_binaries: ["/usr/bin/python3"]
+      require_routing_seal: true
+      credential_placeholder: "CAGE_TRADE_EXECUTION_CREDENTIAL"
 
   - id: UCA-3
     action: execute_trade

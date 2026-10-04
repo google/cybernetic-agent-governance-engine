@@ -738,4 +738,68 @@ class TestCompositeGrammar:
         assert v._check_uca_6("execute_trade", {"order_size": 10, "daily_vol": 10_000}) is None
 
 
+class TestSandboxPolicyGeneration:
+    """Tests for --targets sandbox / openshell and SandboxRuleModel input hardening."""
+
+    def test_missing_sandbox_rule_when_sandbox_in_enforcement_raises(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["enforcement"] = ["opa", "sandbox"]
+        with pytest.raises(ValueError, match="sandbox_rule is missing"):
+            ControlStructureModel(**raw)
+
+    def test_binary_path_traversal_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["enforcement"] = ["opa", "sandbox"]
+        raw["unsafe_control_actions"][0]["sandbox_rule"] = {
+            "allowed_binaries": ["/usr/bin/../bin/sh"],
+        }
+        with pytest.raises(ValueError, match="path traversal"):
+            ControlStructureModel(**raw)
+
+    def test_endpoint_injection_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["enforcement"] = ["opa", "sandbox"]
+        raw["unsafe_control_actions"][0]["sandbox_rule"] = {
+            "allowed_endpoints": ['https://evil.example.com/"\ninjected: true'],
+        }
+        with pytest.raises(ValueError):
+            ControlStructureModel(**raw)
+
+    def test_generate_sandbox_policy_emits_valid_yaml_and_precredentials_seal(self) -> None:
+        from src.gateway.governance.stpa_compiler import generate_sandbox_policy
+
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["enforcement"] = ["opa", "sandbox"]
+        raw["unsafe_control_actions"][0]["terminal_classification"] = "IRREVERSIBLE_TERMINAL"
+        raw["unsafe_control_actions"][0]["sandbox_rule"] = {
+            "allowed_endpoints": ["https://cage-gateway.internal/v1/mcp/tools/call/do_thing"],
+            "allowed_http_verbs": ["POST"],
+            "allowed_mcp_methods": ["tools/call:do_thing"],
+            "allowed_binaries": ["/usr/bin/python3"],
+            "require_routing_seal": True,
+            "credential_placeholder": "CAGE_DO_THING_CREDENTIAL",
+        }
+        cs = ControlStructureModel(**raw)
+        out = generate_sandbox_policy(cs)
+        assert "# Generated:" in out
+        doc = yaml.safe_load(out)
+        assert doc["version"] == 1
+        assert doc["metadata"]["require_cage_stera_seal"] is True
+        assert "do_thing" in doc["network_policies"]
+        pol = doc["network_policies"]["do_thing"]
+        assert pol["require_routing_seal"] is True
+        assert pol["terminal_classification"] == "IRREVERSIBLE_TERMINAL"
+        assert doc["credential_broker_rules"][0]["phase"] == "PreCredentials"
+        assert doc["credential_broker_rules"][0]["seal_header"] == "X-CAGE-Routing-Seal"
+        assert "CAGE_DO_THING_CREDENTIAL" in doc["credential_broker_rules"][0]["credential_placeholders"]
+
+    def test_compile_openshell_alias_target(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        cs = ControlStructureModel(**raw)
+        res = compile_control_structure(cs, ["openshell"])
+        assert not res.errors
+        assert res.sandbox_content
+        assert "credential_broker_rules:" in res.sandbox_content
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

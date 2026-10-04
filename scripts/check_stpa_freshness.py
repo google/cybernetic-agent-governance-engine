@@ -87,6 +87,7 @@ _GENERATED_ARTIFACTS: list[Path] = [
     _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego",
     _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co",
     _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt",
+    _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml",
 ]
 
 _CORE = "core"
@@ -103,6 +104,7 @@ _ARTIFACT_RECIPES: dict[Path, tuple[str, str]] = {
     _GENERATED_ARTIFACTS[4]: (_CORE, "opa"),
     _GENERATED_ARTIFACTS[5]: (_CORE, "nemo"),
     _GENERATED_ARTIFACTS[6]: (_CORE, "agp"),
+    _GENERATED_ARTIFACTS[7]: (_CORE, "sandbox"),
 }
 
 #: Targets whose written form is passed through ``ruff format`` by the compiler.
@@ -193,6 +195,7 @@ def _regenerate_all() -> dict[Path, str | None]:
         "langgraph": stpa_compiler.generate_langgraph,
         "agp": stpa_compiler.generate_agp,
         "ftra": stpa_compiler.generate_terminal_registry,
+        "sandbox": stpa_compiler.generate_sandbox_policy,
     }
     structures: dict[str, object | None] = {}
     for name, directory in source_dirs.items():
