@@ -170,19 +170,21 @@ class TestExecutionAnalystNodeBehavior:
         mock_agent_chain = AsyncMock()
         mock_agent_chain.ainvoke = AsyncMock(return_value=MagicMock(content="{}"))
 
+        # Patch where the names are looked up: agent_nodes binds both via
+        # ``from ... import`` at import time, so patching the defining modules
+        # is a no-op whenever another test imported agent_nodes first (the real
+        # factory then builds ChatOpenAI(model=None) and the test fails).
+        from src.governed_financial_advisor.graph.nodes import agent_nodes
+
         with (
-            patch(
-                "src.governed_financial_advisor.agents.execution_analyst.agent.create_execution_analyst_agent",
+            patch.object(
+                agent_nodes,
+                "create_execution_analyst_agent",
                 return_value=mock_agent_chain,
             ),
-            patch(
-                "src.gateway.infrastructure.telemetry_client.get_tracer",
-                return_value=MagicMock(),
-            ),
+            patch.object(agent_nodes, "get_tracer", return_value=MagicMock()),
         ):
-            from src.governed_financial_advisor.graph.nodes.agent_nodes import (
-                execution_analyst_node,
-            )
+            execution_analyst_node = agent_nodes.execution_analyst_node
 
             state: dict[str, Any] = {
                 "messages": [MagicMock(content="Buy AAPL")],
