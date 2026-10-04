@@ -88,7 +88,7 @@ class TestRoutingSeal:
 
     def test_happy_path(self):
         """A freshly generated seal must verify successfully."""
-        seal = generate_seal("execute_trade", PARAMS)
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
         assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
 
     def test_v2_seal_format_has_four_parts(self):
@@ -113,12 +113,16 @@ class TestRoutingSeal:
         assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
 
     def test_seal_without_record_hash_uses_sentinel(self):
-        """Seal generated without record_hash uses sentinel value."""
+        """Seal generated without record_hash uses sentinel value and is refused.
+
+        Evidence binding is required by default in every posture, so an
+        unbound seal no longer verifies.
+        """
         seal = generate_seal("execute_trade", PARAMS, record_hash=None)
         record_hash = extract_record_hash(seal)
         assert record_hash == "no-evidence-binding"
-        # Verify it validates
-        assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
+        with pytest.raises(SymbolicGovernorViolation, match="evidence"):
+            gfa_verify_seal(seal, "execute_trade", PARAMS)
 
     def test_expired_seal(self):
         """A seal generated with ttl=0 should be expired immediately."""
@@ -180,13 +184,13 @@ class TestRoutingSeal:
         """Dict ordering must not affect seal validity (JSON sort_keys=True)."""
         params_a = {"symbol": "AAPL", "amount": 1000.0, "currency": "USD"}
         params_b = {"currency": "USD", "amount": 1000.0, "symbol": "AAPL"}
-        seal = generate_seal("execute_trade", params_a)
+        seal = generate_seal("execute_trade", params_a, record_hash=TEST_RECORD_HASH)
         assert gfa_verify_seal(seal, "execute_trade", params_b) is True
 
     def test_action_slug_normalisation(self):
         """Action names with underscores are normalised to dashes in slug."""
         params_a = {"symbol": "AAPL", "amount": 1000.0, "currency": "USD"}
-        seal = generate_seal("execute_trade", params_a)
+        seal = generate_seal("execute_trade", params_a, record_hash=TEST_RECORD_HASH)
         # Action slug is 'execute-trade' internally — verify must still pass
         assert gfa_verify_seal(seal, "execute_trade", params_a) is True
 
@@ -279,14 +283,14 @@ class TestRoutingSealGatewayMirrorParity:
             "evaluate_policy",
             "trigger_safety_intervention",
         ):
-            seal = generate_seal(action, PARAMS)
+            seal = generate_seal(action, PARAMS, record_hash=TEST_RECORD_HASH)
             assert gfa_verify_seal(seal, action, PARAMS) is True, (
                 f"GFA verify_seal rejected a valid gateway seal for action='{action}'"
             )
 
     def test_correct_seal_required_before_actuation(self):
         """Simulates the defense-in-depth check in tools/api.py."""
-        seal = generate_seal("execute_trade", PARAMS)
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
         # Correct: verify passes → actuation allowed
         assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
         # Tampered seal: verify raises → actuation blocked
