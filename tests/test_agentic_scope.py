@@ -101,7 +101,7 @@ class TestRoutingSealRejectsInvalidSeal:
         # across all tests. Do not override here.
         from src.gateway.governance.routing_seal import generate_seal, verify_seal
 
-        seal = generate_seal("execute_trade", {"amount": 5000})
+        seal = generate_seal("execute_trade", {"amount": 5000}, record_hash="a" * 64)
         result = verify_seal(seal, "execute_trade", {"amount": 5000})
         assert result is True
 

@@ -40,7 +40,11 @@ from unittest.mock import patch
 import pytest
 from freezegun import freeze_time
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+# A committed evidence record hash. Evidence binding is required by default,
+# so every seal that is expected to verify carries one.
+RH = "a" * 64
 
 
 @pytest.fixture(autouse=True)
@@ -184,7 +188,7 @@ def test_gateway_generate_and_gfa_verify_round_trip():
     )
 
     params = {"symbol": "AAPL", "amount": 5000.0, "currency": "USD"}
-    seal = generate_seal("execute_trade", params)
+    seal = generate_seal("execute_trade", params, record_hash=RH)
     assert gfa_verify(seal, "execute_trade", params) is True
 
 
@@ -193,18 +197,25 @@ def test_gateway_generate_and_gateway_verify_round_trip():
     from src.gateway.governance.routing_seal import generate_seal, verify_seal
 
     params = {"symbol": "TSLA", "amount": 10000.0, "confidence": 0.97}
-    seal = generate_seal("execute_trade", params)
+    seal = generate_seal("execute_trade", params, record_hash=RH)
     assert verify_seal(seal, "execute_trade", params) is True
 
 
-def test_round_trip_with_nested_params_coerced_to_string():
-    """generate_seal() + verify_seal() round-trip succeeds when params contain non-primitive values (coerced to str)."""
-    from src.gateway.governance.routing_seal import generate_seal, verify_seal
+def test_round_trip_with_nested_params_is_structural():
+    """Nested params are hashed structurally (JCS), never coerced to str."""
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        generate_seal,
+        verify_seal,
+    )
 
-    # Non-primitive values are coerced to str in _canonical_payload
     params = {"symbol": "GOOG", "amount": 1000.0, "metadata": {"key": "value"}}
-    seal = generate_seal("execute_trade", params)
+    seal = generate_seal("execute_trade", params, record_hash=RH)
     assert verify_seal(seal, "execute_trade", params) is True
+    # The str() rendering of the nested value is a different action.
+    stringly = {**params, "metadata": str(params["metadata"])}
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal(seal, "execute_trade", stringly)
 
 
 # ---------------------------------------------------------------------------
@@ -316,17 +327,21 @@ async def test_gateway_verify_and_consume_seal_prevents_replay():
 
     redis = fakeredis.FakeRedis()
     params = {"symbol": "AAPL", "amount": 100.0}
-    seal = generate_seal("execute_trade", params)
+    seal = generate_seal("execute_trade", params, record_hash=RH)
 
     # First consumption succeeds
     assert (
-        await verify_and_consume_seal(seal, "execute_trade", params, redis_client=redis)
+        await verify_and_consume_seal(
+            seal, "execute_trade", params, redis_client=redis, expected_record_hash=RH
+        )
         is True
     )
 
     # Second consumption within TTL must fail with replay violation
     with pytest.raises(SymbolicGovernorViolation) as exc_info:
-        await verify_and_consume_seal(seal, "execute_trade", params, redis_client=redis)
+        await verify_and_consume_seal(
+            seal, "execute_trade", params, redis_client=redis, expected_record_hash=RH
+        )
 
     assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)
 
@@ -342,9 +357,16 @@ class TestEvidenceBindingEnforcement:
     When evidence binding is required, seals with record_hash="no-evidence-binding"
     (or empty/none variants) are rejected. This ensures all financial actions are
     cryptographically bound to evidence records in the compliance evidence stream.
+
+    The flag is read at call time and defaults to on; ``false`` is honoured only
+    outside production.
     """
 
-    def test_gateway_rejects_no_evidence_binding_in_strict_mode(self):
+    @pytest.fixture(autouse=True)
+    def _test_posture(self, monkeypatch):
+        monkeypatch.setenv("CAGE_ENV", "test")
+
+    def test_gateway_rejects_no_evidence_binding_in_strict_mode(self, monkeypatch):
         """P0: Gateway verify_seal() rejects 'no-evidence-binding' when enforcement is enabled."""
         import src.gateway.governance.routing_seal as gw_seal
 
@@ -352,29 +374,27 @@ class TestEvidenceBindingEnforcement:
         # Generate a seal without evidence binding
         seal = gw_seal.generate_seal("execute_trade", params, record_hash=None)
 
-        with (
-            patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
-                gw_seal.verify_seal(seal, "execute_trade", params)
+        monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
+        with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
+            gw_seal.verify_seal(seal, "execute_trade", params)
 
-            assert "Evidence sufficiency violation" in str(exc_info.value)
+        assert "Evidence sufficiency violation" in str(exc_info.value)
 
-    def test_gateway_accepts_no_evidence_binding_when_enforcement_disabled(self):
+    def test_gateway_accepts_no_evidence_binding_when_enforcement_disabled(
+        self, monkeypatch
+    ):
         """P0: Gateway verify_seal() accepts 'no-evidence-binding' when enforcement is disabled."""
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "MSFT", "amount": 500.0}
         seal = gw_seal.generate_seal("execute_trade", params, record_hash=None)
 
-        with (
-            patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", False),
-        ):
-            # Should not raise
-            result = gw_seal.verify_seal(seal, "execute_trade", params)
-            assert result is True
+        monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "false")
+        # Should not raise
+        result = gw_seal.verify_seal(seal, "execute_trade", params)
+        assert result is True
 
-    def test_gateway_accepts_valid_evidence_binding_in_strict_mode(self):
+    def test_gateway_accepts_valid_evidence_binding_in_strict_mode(self, monkeypatch):
         """P0: Gateway verify_seal() accepts seals with valid evidence hash."""
         import src.gateway.governance.routing_seal as gw_seal
 
@@ -386,13 +406,11 @@ class TestEvidenceBindingEnforcement:
             "execute_trade", params, record_hash=valid_record_hash
         )
 
-        with (
-            patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            result = gw_seal.verify_seal(seal, "execute_trade", params)
-            assert result is True
+        monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
+        result = gw_seal.verify_seal(seal, "execute_trade", params)
+        assert result is True
 
-    def test_gateway_rejects_empty_record_hash_in_strict_mode(self):
+    def test_gateway_rejects_empty_record_hash_in_strict_mode(self, monkeypatch):
         """P0: Gateway verify_seal() rejects empty record_hash when enforcement is enabled."""
         import src.gateway.governance.routing_seal as gw_seal
 
@@ -400,28 +418,24 @@ class TestEvidenceBindingEnforcement:
         # Manually craft a seal with empty record_hash
         seal = gw_seal.generate_seal("execute_trade", params, record_hash="")
 
-        with (
-            patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
-                gw_seal.verify_seal(seal, "execute_trade", params)
+        monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
+        with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
+            gw_seal.verify_seal(seal, "execute_trade", params)
 
-            assert "Evidence sufficiency violation" in str(exc_info.value)
+        assert "Evidence sufficiency violation" in str(exc_info.value)
 
-    def test_gateway_rejects_none_string_record_hash_in_strict_mode(self):
+    def test_gateway_rejects_none_string_record_hash_in_strict_mode(self, monkeypatch):
         """P0: Gateway verify_seal() rejects 'none' as record_hash."""
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "NVDA", "amount": 200.0}
         seal = gw_seal.generate_seal("execute_trade", params, record_hash="none")
 
-        with (
-            patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
-                gw_seal.verify_seal(seal, "execute_trade", params)
+        monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
+        with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
+            gw_seal.verify_seal(seal, "execute_trade", params)
 
-            assert "Evidence sufficiency violation" in str(exc_info.value)
+        assert "Evidence sufficiency violation" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -439,17 +453,21 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
 
     redis = fakeredis.FakeRedis()
     params = {"symbol": "GOOGL", "amount": 250.0}
-    seal = generate_seal("execute_trade", params)
+    seal = generate_seal("execute_trade", params, record_hash=RH)
 
     # First consumption succeeds
     assert (
-        await gfa_verify_and_consume(seal, "execute_trade", params, redis_client=redis)
+        await gfa_verify_and_consume(
+            seal, "execute_trade", params, redis_client=redis, expected_record_hash=RH
+        )
         is True
     )
 
     # Replay attempt fails
     with pytest.raises(GFASymbolicGovernorViolation) as exc_info:
-        await gfa_verify_and_consume(seal, "execute_trade", params, redis_client=redis)
+        await gfa_verify_and_consume(
+            seal, "execute_trade", params, redis_client=redis, expected_record_hash=RH
+        )
 
     assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)
 
@@ -489,16 +507,14 @@ def _es256_keypair():
 
 
 def _jwt_seal(private_key, kid: str, action: str, params: dict, nonce: str) -> str:
-    import hashlib
-
     import jwt as pyjwt
 
-    from src.gateway.governance.routing_seal import jcs_canonicalize_plan
+    from src.gateway.governance.routing_seal import SEAL_CANON, compute_action_hash
 
-    canon = jcs_canonicalize_plan({"action": action, **params})
     claims = {
-        "action_hash": hashlib.sha256(canon).hexdigest(),
-        "record_hash": "a" * 64,
+        "action_hash": compute_action_hash(action, params),
+        "canon": SEAL_CANON,
+        "record_hash": RH,
         "nonce": nonce,
         "exp": int(time.time()) + 300,
     }
@@ -547,14 +563,20 @@ async def test_failed_verification_does_not_burn_nonce(trusted_jwks, forgery):
         attacker_key, _ = _es256_keypair()
         forged = _jwt_seal(attacker_key, "trusted", action, params, victim_nonce)
     else:
-        forged = _jwt_seal(trusted_jwks, "trusted", "cancel_trade", params, victim_nonce)
+        forged = _jwt_seal(
+            trusted_jwks, "trusted", "cancel_trade", params, victim_nonce
+        )
 
     with pytest.raises(SymbolicGovernorViolation):
-        await verify_and_consume_seal(forged, action, params, redis_client=redis)
+        await verify_and_consume_seal(
+            forged, action, params, redis_client=redis, expected_record_hash=RH
+        )
 
     assert await redis.dbsize() == 0, "a failed verification must not burn a nonce"
     assert (
-        await verify_and_consume_seal(genuine, action, params, redis_client=redis)
+        await verify_and_consume_seal(
+            genuine, action, params, redis_client=redis, expected_record_hash=RH
+        )
         is True
     )
     assert await redis.dbsize() == 1
@@ -578,7 +600,9 @@ async def test_concurrent_valid_replays_exactly_one_wins(trusted_jwks):
 
     results = await asyncio.gather(
         *(
-            verify_and_consume_seal(seal, action, params, redis_client=redis)
+            verify_and_consume_seal(
+                seal, action, params, redis_client=redis, expected_record_hash=RH
+            )
             for _ in range(20)
         ),
         return_exceptions=True,
@@ -608,42 +632,55 @@ async def test_redis_failure_after_valid_verification_fails_closed(trusted_jwks)
     seal = _jwt_seal(trusted_jwks, "trusted", action, params, "down-nonce-0001")
 
     with pytest.raises(SymbolicGovernorViolation, match="replay protection failed"):
-        await verify_and_consume_seal(seal, action, params, redis_client=broken)
+        await verify_and_consume_seal(
+            seal, action, params, redis_client=broken, expected_record_hash=RH
+        )
 
 
 @pytest.mark.asyncio
 async def test_seal_audience_mismatch_is_rejected_without_burning_nonce(trusted_jwks):
     """A seal carrying an aud claim for one executor is rejected by another."""
-    import hashlib
-
     import fakeredis.aioredis as fakeredis
     import jwt as pyjwt
 
     from src.gateway.governance.routing_seal import (
+        SEAL_CANON,
         SymbolicGovernorViolation,
-        jcs_canonicalize_plan,
+        compute_action_hash,
         verify_and_consume_seal,
     )
 
     redis = fakeredis.FakeRedis()
     action, params = "execute_trade", {"symbol": "AAPL", "amount": 100.0}
-    canon = jcs_canonicalize_plan({"action": action, **params})
     claims = {
-        "action_hash": hashlib.sha256(canon).hexdigest(),
-        "record_hash": "a" * 64,
+        "action_hash": compute_action_hash(action, params),
+        "canon": SEAL_CANON,
+        "record_hash": RH,
         "nonce": "aud-nonce-0001",
         "exp": int(time.time()) + 300,
         "aud": "actuator_01",
     }
-    seal = pyjwt.encode(claims, trusted_jwks, algorithm="ES256", headers={"kid": "trusted"})
+    seal = pyjwt.encode(
+        claims, trusted_jwks, algorithm="ES256", headers={"kid": "trusted"}
+    )
 
     with pytest.raises(SymbolicGovernorViolation, match="audience mismatch"):
         await verify_and_consume_seal(
-            seal, action, params, redis_client=redis, expected_aud="actuator_02"
+            seal,
+            action,
+            params,
+            redis_client=redis,
+            expected_aud="actuator_02",
+            expected_record_hash=RH,
         )
 
     assert await verify_and_consume_seal(
-        seal, action, params, redis_client=redis, expected_aud="actuator_01"
+        seal,
+        action,
+        params,
+        redis_client=redis,
+        expected_aud="actuator_01",
+        expected_record_hash=RH,
     )
 
 

@@ -126,6 +126,16 @@ class ExecutionClearance:
 
     ttl_seconds: int = 30  # ≤30 per partner Micro-TTL
 
+    routing_seal: str | None = field(default=None, repr=False)
+    """The single-use routing seal that authorised ``(action, params)``.
+
+    Delivered to the actuator out of band (e.g. the ``X-CAGE-Routing-Seal``
+    header), never inside ``params``, so a partner recomputing the seal's
+    ``action_hash`` over ``(action, params)`` hashes exactly what the governor
+    sealed. A bearer credential: excluded from :meth:`to_dict` (and therefore
+    from envelope digests) and from ``repr``.
+    """
+
     def to_dict(self) -> dict:
         """Convert clearance to dictionary, preserving all v3.0 routing fields."""
         return {

@@ -81,7 +81,9 @@ class TestEvidenceLayerPlacement:
             assert hasattr(evidence_pkg, "get_cold_store")
 
             # Verify seal generation works without compliance_bridge
-            seal = routing_seal.generate_seal("test_action", {"key": "value"})
+            seal = routing_seal.generate_seal(
+                "test_action", {"key": "value"}, record_hash="a" * 64
+            )
             assert seal is not None
             assert routing_seal.verify_seal(seal, "test_action", {"key": "value"})
 

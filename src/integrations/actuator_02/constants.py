@@ -23,6 +23,13 @@ RECEIPT_SIGNATURE_DOMAIN_TAG: bytes = b"CAGE_ACTUATION_RECEIPT_V1:"
 
 MAX_ENVELOPE_BYTES: int = 4096
 
+# Seal verification profile (docs/partners/actuator_02/SEAL_VERIFICATION_PROFILE.md).
+# Every actuation carries the routing seal; the Supervisor verifies it
+# independently against the gateway JWKS before acting.
+SEAL_PROFILE: str = "cage-seal/1"
+ROUTING_SEAL_HEADER: str = "X-CAGE-Routing-Seal"
+SEAL_PROFILE_HEADER: str = "X-CAGE-Seal-Profile"
+
 # Allowed OCSF class UIDs emitted by sandboxed supervisor telemetry:
 #   1001 = File System Activity
 #   1007 = Process Activity

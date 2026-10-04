@@ -18,15 +18,20 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import jwt as pyjwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.routing_seal import SEAL_CANON, compute_action_hash
 from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
     ExecutionClearance,
@@ -34,7 +39,10 @@ from src.gateway.governance.seams.actuation import (
 )
 from src.gateway.governance.seams.credential_broker import CredentialAccessDenied
 from src.integrations.actuator_02.adapter import Actuator02Adapter
-from src.integrations.actuator_02.constants import RECEIPT_SIGNATURE_DOMAIN_TAG
+from src.integrations.actuator_02.constants import (
+    RECEIPT_SIGNATURE_DOMAIN_TAG,
+    SEAL_PROFILE,
+)
 from src.integrations.actuator_02.ocsf_ingestor import OcsfEvidenceIngestor
 from src.integrations.actuator_02.policy_advisor_bridge import (
     PolicyAdvisorBridge,
@@ -71,6 +79,10 @@ class _StubCredentialBroker:
         return {"X-Brokered-Token": "ephemeral-scoped-token"}
 
 
+# Shape-valid compact JWS; tests that need a verifiable seal mint one below.
+_STUB_SEAL = "eyJhbGciOiJFUzI1NiJ9.eyJub25jZSI6Im4ifQ.c2lnbmF0dXJl"
+
+
 def _make_clearance(**overrides: Any) -> ExecutionClearance:
     defaults: dict[str, Any] = {
         "thread_id": "thread-02",
@@ -86,8 +98,9 @@ def _make_clearance(**overrides: Any) -> ExecutionClearance:
         "governance_decision_digest": "a" * 64,
         "opa_input_digest": "b" * 64,
         "nonce": "c" * 32,
-        "params": {"table": "audit", "_routing_seal": "seal.jwt.v3"},
+        "params": {"table": "audit"},
         "executor_id": "actuator_02",
+        "routing_seal": _STUB_SEAL,
     }
     defaults.update(overrides)
     return ExecutionClearance(**defaults)
@@ -139,7 +152,8 @@ class TestActuator02Adapter:
         assert receipt.accepted is True
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         assert receipt.verification is ReceiptVerification.VERIFIED
-        assert captured_headers.get("x-cage-routing-seal") == "seal.jwt.v3"
+        assert captured_headers.get("x-cage-routing-seal") == _STUB_SEAL
+        assert captured_headers.get("x-cage-seal-profile") == SEAL_PROFILE
         assert captured_headers.get("x-brokered-token") == "ephemeral-scoped-token"
         assert len(broker.calls) == 1
 
@@ -322,3 +336,139 @@ class TestPolicyAdvisorBridge:
         )
         assert outcome.status == "REJECTED"
         assert outcome.defer_id is None
+
+
+def _wire_recorder() -> tuple[httpx.AsyncClient, list[httpx.Request]]:
+    seen: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"receipt_id": "r", "status": "ACCEPTED"})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(_handler)), seen
+
+
+class TestSealProfile:
+    """cage-seal/1: the seal is mandatory, partner-verifiable and out of band."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("seal", "code"),
+        [
+            (None, "ROUTING_SEAL_MISSING"),
+            ("", "ROUTING_SEAL_MISSING"),
+            ("65f0a1b2.execute-trade." + "a" * 64 + "." + "b" * 64, "ROUTING_SEAL_NOT_JWS"),
+            ("not a jws", "ROUTING_SEAL_NOT_JWS"),
+            ("a.b.c\nX-Injected: 1", "ROUTING_SEAL_NOT_JWS"),
+        ],
+    )
+    async def test_missing_or_unverifiable_seal_refused_before_wire(
+        self, seal: str | None, code: str
+    ) -> None:
+        client, seen = _wire_recorder()
+        broker = _StubCredentialBroker()
+        adapter = Actuator02Adapter(
+            endpoint="https://127.0.0.1:8443",
+            signer=_StubSigner(),
+            http_client=client,
+            credential_broker=broker,
+        )
+        receipt = await adapter.actuate(_make_clearance(routing_seal=seal))
+        assert receipt.accepted is False
+        assert receipt.outcome is ActuationOutcome.REJECTED
+        assert [f["code"] for f in receipt.findings] == [code]
+        assert seen == []
+        assert broker.calls == [], "no credential is brokered for an unsealed clearance"
+
+    @pytest.mark.asyncio
+    async def test_seal_stays_out_of_the_envelope(self) -> None:
+        client, seen = _wire_recorder()
+        adapter = Actuator02Adapter(
+            endpoint="https://127.0.0.1:8443", signer=_StubSigner(), http_client=client
+        )
+        clearance = _make_clearance()
+        await adapter.actuate(clearance)
+        (request,) = seen
+        assert _STUB_SEAL.encode() not in request.content
+        assert "routing_seal" not in clearance.to_dict()
+        assert _STUB_SEAL not in repr(clearance)
+        assert request.headers["x-cage-envelope-digest"] == hashlib.sha256(
+            jcs_canonicalize_plan(clearance.to_dict())
+        ).hexdigest()
+
+    @pytest.mark.asyncio
+    async def test_brokered_headers_cannot_shadow_cage_headers(self) -> None:
+        class _HostileBroker(_StubCredentialBroker):
+            async def fetch_credential(self, *a: Any, **k: Any) -> dict[str, str]:
+                return {
+                    "x-cage-routing-seal": "attacker.seal.value",
+                    "X-CAGE-Seal-Profile": "none",
+                    "X-Brokered-Token": "ok",
+                }
+
+        client, seen = _wire_recorder()
+        adapter = Actuator02Adapter(
+            endpoint="https://127.0.0.1:8443",
+            signer=_StubSigner(),
+            http_client=client,
+            credential_broker=_HostileBroker(),
+        )
+        await adapter.actuate(_make_clearance())
+        (request,) = seen
+        assert request.headers.get_list("x-cage-routing-seal") == [_STUB_SEAL]
+        assert request.headers.get_list("x-cage-seal-profile") == [SEAL_PROFILE]
+        assert request.headers["x-brokered-token"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_supervisor_can_verify_seal_from_wire_bytes_alone(self) -> None:
+        """The Supervisor's checks (profile doc section 4) pass on exactly what it receives."""
+        gateway_key = ec.generate_private_key(ec.SECP256R1())
+        params = {"table": "audit", "rows": [1, 2], "meta": {"k": None}}
+        seal = pyjwt.encode(
+            {
+                "action_hash": compute_action_hash("write_db", params),
+                "canon": SEAL_CANON,
+                "record_hash": "e" * 64,
+                "nonce": "n-1",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 30,
+                "iss": "cage-gateway",
+                "aud": "cage-actuator:write_db",
+            },
+            gateway_key,
+            algorithm="ES256",
+            headers={"kid": "gw-1"},
+        )
+        client, seen = _wire_recorder()
+        adapter = Actuator02Adapter(
+            endpoint="https://127.0.0.1:8443", signer=_StubSigner(), http_client=client
+        )
+        await adapter.actuate(_make_clearance(params=params, routing_seal=seal))
+        (request,) = seen
+
+        envelope = json.loads(request.content)
+        claims = pyjwt.decode(
+            request.headers["x-cage-routing-seal"],
+            gateway_key.public_key(),
+            algorithms=["ES256", "EdDSA"],
+            audience=f"cage-actuator:{envelope['action']}",
+            issuer="cage-gateway",
+            options={"require": ["exp", "aud", "nonce", "action_hash", "canon"]},
+        )
+        assert request.headers["x-cage-seal-profile"] == SEAL_PROFILE
+        assert claims["canon"] == SEAL_CANON
+        recomputed = hashlib.sha256(
+            jcs_canonicalize_plan(
+                {"action": envelope["action"], "params": envelope["params"]}
+            )
+        ).hexdigest()
+        assert recomputed == claims["action_hash"]
+
+        # A tampered envelope would not match the sealed hash.
+        tampered = {**envelope["params"], "rows": "[1, 2]"}
+        assert (
+            hashlib.sha256(
+                jcs_canonicalize_plan({"action": envelope["action"], "params": tampered})
+            ).hexdigest()
+            != claims["action_hash"]
+        )

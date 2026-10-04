@@ -10,8 +10,10 @@ Per `AGENTS.md` (*Generic in Code, Specific in Prose*), the package path and run
 
 1. **Seal-Bound `PreCredentials` Brokerage (`Actuator02Adapter`)**:
    - Implements [`ExecutionActuator`](../../gateway/governance/seams/actuation.py) (`actuator_id = "actuator_02"`).
-   - Verifies that an [`ExecutionClearance`](../../gateway/governance/seams/actuation.py) carries `decision == "ALLOW"` and a valid KMS-signed [`RoutingSeal`](../../gateway/governance/routing_seal.py) before invoking [`CredentialBrokerAdapter.fetch_credential()`](../../gateway/governance/seams/credential_broker.py).
+   - Requires an [`ExecutionClearance`](../../gateway/governance/seams/actuation.py) with `decision == "ALLOW"` and a JWS routing seal on its `routing_seal` field. The seal has already been verified and consumed by [`verify_and_consume_seal()`](../../gateway/governance/routing_seal.py) before dispatch. A clearance without a JWS seal is refused before any credential is brokered (`ROUTING_SEAL_MISSING` / `ROUTING_SEAL_NOT_JWS`).
+   - Brokers credentials via [`CredentialBrokerAdapter.fetch_credential()`](../../gateway/governance/seams/credential_broker.py). Brokered headers can never set `X-CAGE-*` headers.
    - Canonicalizes the clearance envelope per RFC 8785 (JCS), signs the assertion with `CAGE_OPENSHELL_ASSERTION_V1:`, and submits to the OpenShell Supervisor over mTLS (`ACTUATOR_02_ENDPOINT`, `ACTUATOR_02_CERT_PATH`, `ACTUATOR_02_KEY_PATH`, `ACTUATOR_02_CA_PATH`).
+   - Sends the seal out of band (`X-CAGE-Routing-Seal`, `X-CAGE-Seal-Profile: cage-seal/1`) for independent Supervisor verification. The seal is never in the envelope body. See [`SEAL_VERIFICATION_PROFILE.md`](../../../docs/partners/actuator_02/SEAL_VERIFICATION_PROFILE.md).
    - Verifies the Supervisor's detached Ed25519 receipt signature against an out-of-band `kid`-resolved key manifest (`ACTUATOR_02_RECEIPT_KEY_MANIFEST_URL`).
 
 2. **OCSF Telemetry Hash-Chain Ingestion (`OcsfEvidenceIngestor`)**:
