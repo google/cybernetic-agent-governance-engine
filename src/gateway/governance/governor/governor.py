@@ -314,20 +314,30 @@ class SymbolicGovernor:
         and a narrower proposes clamped params, the seal covers *those*
         params instead (see :meth:`_sealed_narrow`) and a NARROW receipt
         names them. Any other refusal raises ``GovernanceError``.
+
+        ``params`` is snapshotted on entry: the stages, the evidence event and
+        the seal all name that snapshot, never the caller's live dict. Without
+        it, a concurrent holder of the same dict could change a value during
+        the evidence-commit await, so the seal would name params no stage had
+        evaluated (issue #379). The stages get their own copy, as on the
+        narrow path, so a stage cannot mutate what is sealed either.
         """
+        sealed = copy.deepcopy(params)
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
             span.set_attribute(
-                OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params})
+                OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": sealed})
             )
 
-            ctx = StageContext(action=tool_name, params=params, profile=Profile.FULL)
+            ctx = StageContext(
+                action=tool_name, params=copy.deepcopy(sealed), profile=Profile.FULL
+            )
             result, seal = await run_sealed(
-                self.stages, ctx, params, path="govern", settlements=self._settlements
+                self.stages, ctx, sealed, path="govern", settlements=self._settlements
             )
             if seal is None:
-                seal = await self._sealed_narrow(tool_name, params, result)
+                seal = await self._sealed_narrow(tool_name, sealed, result)
             else:
                 await _trace(
                     result, tool_name, Profile.FULL, "govern", GovernanceDecision.ALLOW, seal=seal

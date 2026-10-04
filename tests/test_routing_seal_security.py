@@ -645,3 +645,26 @@ async def test_seal_audience_mismatch_is_rejected_without_burning_nonce(trusted_
     assert await verify_and_consume_seal(
         seal, action, params, redis_client=redis, expected_aud="actuator_01"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_seal", [None, 0, 12345, b"bytes.seal", ""])
+async def test_non_string_seal_refuses_with_governor_violation(bad_seal):
+    """A non-string or empty seal refuses via SymbolicGovernorViolation (issue #379).
+
+    Callers such as tool_provider catch only SymbolicGovernorViolation; an
+    AttributeError from the parse step would escape their refusal path.
+    """
+    import fakeredis.aioredis as fakeredis
+
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        verify_and_consume_seal,
+    )
+
+    redis = fakeredis.FakeRedis()
+    with pytest.raises(SymbolicGovernorViolation, match="non-empty string"):
+        await verify_and_consume_seal(
+            bad_seal, "execute_trade", {"amount": 1.0}, redis_client=redis
+        )
+    assert await redis.dbsize() == 0  # nothing consumed

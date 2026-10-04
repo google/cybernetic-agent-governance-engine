@@ -15,116 +15,157 @@
 """verify_chain.py — Authoritative Evidence Chain Verifier
 
 This module acts as the independent authoritative verifier for the
-CAGE evidence chain. It reads records (either from a JSONL file or directly
-from ClickHouse) and structurally validates the cryptographic hash chain
-using the post-W2 schema.
+CAGE evidence chain. It reads records from a JSONL export and structurally
+validates the cryptographic hash chain under the ``cage-audit/3.0`` contract.
+
+Per-record hash recomputation is delegated to the kernel's
+:func:`~src.gateway.governance.evidence.stream.verify_record`, so the header
+members inside the hash (``chain_id``, ``trace_id`` and the sparse
+``classification_reason`` / ``narrowing_applied`` / ``pause_token``) are read
+in exactly one place. A schema change to ``_link_hash`` therefore cannot
+silently desynchronise this CLI from the emitter again (issue #286).
+
+Exit codes:
+    0  chain verified
+    1  chain broken (sequence gap, broken link, chain splice, hash mismatch)
+    2  nothing verified (unreadable file, malformed record, or empty chain)
 
 Usage:
     uv run python -m src.compliance_bridge.verify_chain /path/to/evidence.jsonl
 """
 
 import argparse
+import enum
 import json
 import logging
 import sys
 from typing import Any
 
-# Use the authoritative hash function from the kernel
-from src.gateway.governance.evidence.stream import _link_hash
+from src.gateway.governance.evidence.stream import verify_record
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
-def verify_evidence_chain(records: list[dict[str, Any]]) -> bool:
-    """Verify an ordered list of cage-audit/3.0 evidence records.
+class ChainStatus(enum.IntEnum):
+    """Outcome of a chain verification; the value is the CLI exit code."""
+
+    VALID = 0
+    BROKEN = 1
+    UNVERIFIED = 2
+
+
+def _parse_sequence(record: dict[str, Any], index: int) -> int:
+    """Return the record's integer sequence or raise ``ValueError``."""
+    raw = record.get("sequence")
+    if raw is None:
+        raise ValueError(f"record at index {index} has no sequence")
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"record at index {index} has non-integer sequence {raw!r}"
+        ) from exc
+
+
+def verify_evidence_chain(records: list[dict[str, Any]]) -> ChainStatus:
+    """Verify an ordered list of ``cage-audit/3.0`` evidence records.
+
+    An empty chain is reported as :attr:`ChainStatus.UNVERIFIED` rather than
+    valid, so an empty export can never read as a verified one.
 
     Args:
-        records: List of evidence dictionaries (must be ordered by sequence).
+        records: Evidence dictionaries, ordered by sequence.
 
     Returns:
-        True if the chain is intact, False otherwise.
+        The chain status.
     """
     if not records:
-        logger.info("Chain is empty.")
-        return True
+        logger.error("Chain is empty — nothing was verified.")
+        return ChainStatus.UNVERIFIED
 
+    chain_id = records[0].get("chain_id", "")
     expected_prev = ""
     for i, record in enumerate(records):
-        seq = int(record.get("sequence", 0))
+        try:
+            seq = _parse_sequence(record, i)
+        except ValueError as exc:
+            logger.error("Malformed record: %s", exc)
+            return ChainStatus.UNVERIFIED
+
         if seq != i:
             logger.error("Sequence gap detected at index %d (seq=%d)", i, seq)
-            return False
+            return ChainStatus.BROKEN
 
-        prev_hash = record.get("prev_hash", "")
-        # First record may have None or empty prev_hash
-        if prev_hash is None:
-            prev_hash = ""
+        if record.get("chain_id", "") != chain_id:
+            logger.error(
+                "Chain splice at sequence %d: chain_id=%r, expected=%r",
+                seq,
+                record.get("chain_id", ""),
+                chain_id,
+            )
+            return ChainStatus.BROKEN
 
-        if i > 0 and prev_hash != expected_prev:
+        # Genesis records carry "" (Redis) or None (ClickHouse NULL).
+        prev_hash = record.get("prev_hash") or ""
+        if prev_hash != expected_prev:
             logger.error(
                 "Link broken at sequence %d: prev_hash=%s, expected=%s",
                 seq,
                 prev_hash,
                 expected_prev,
             )
-            return False
+            return ChainStatus.BROKEN
 
-        # Recompute the hash
-        payload_json = record.get("payload_json", "{}")
-        # Ensure we use JCS representation for narrowing_applied if it exists
-        # In a real tool we'd parse and canonicalize, but here we assume the JSON string is exact
-        # (the kernel normalizes and JCS-canonicalizes it prior to stream insertion).
+        result = verify_record(record, prev_hash)
+        if not result.valid:
+            logger.error("Record invalid at sequence %d: %s", seq, result.error)
+            return ChainStatus.BROKEN
 
-        computed_hash = _link_hash(
-            prev_hash=prev_hash,
-            sequence=seq,
-            event_type=record.get("event_type", ""),
-            control_id=record.get("control_id", ""),
-            payload_json=payload_json,
-        )
-
-        record_hash = record.get("record_hash", "")
-        if computed_hash != record_hash:
-            logger.error(
-                "Hash mismatch at sequence %d: computed=%s, record=%s",
-                seq,
-                computed_hash,
-                record_hash,
-            )
-            return False
-
-        expected_prev = record_hash
+        expected_prev = result.expected_hash
 
     logger.info("Chain verification successful (%d records).", len(records))
-    return True
+    return ChainStatus.VALID
 
 
-def main() -> None:
+def _load_records(path: str) -> list[dict[str, Any]]:
+    """Read a JSONL evidence export, sorted by sequence.
+
+    Raises:
+        OSError: If the file cannot be read.
+        ValueError: If a line is not a JSON object or a sequence is not an
+            integer.
+    """
+    records: list[dict[str, Any]] = []
+    with open(path) as f:
+        for line_no, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError(f"line {line_no} is not a JSON object")
+            records.append(record)
+
+    keyed = [(_parse_sequence(r, i), r) for i, r in enumerate(records)]
+    keyed.sort(key=lambda pair: pair[0])
+    return [r for _, r in keyed]
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Verify CAGE evidence chain integrity."
     )
     parser.add_argument("file", help="Path to JSONL evidence file")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    records = []
     try:
-        with open(args.file) as f:
-            for line in f:
-                if line.strip():
-                    records.append(json.loads(line))
-    except Exception as exc:
-        logger.error("Failed to read file: %s", exc)
-        sys.exit(1)
+        records = _load_records(args.file)
+    except (OSError, ValueError) as exc:
+        logger.error("Failed to read evidence file: %s", exc)
+        return int(ChainStatus.UNVERIFIED)
 
-    # Sort by sequence just in case
-    records.sort(key=lambda x: int(x.get("sequence", 0)))
-
-    if verify_evidence_chain(records):
-        sys.exit(0)
-    else:
-        sys.exit(1)
+    return int(verify_evidence_chain(records))
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
