@@ -336,6 +336,138 @@ component-definition:
                   rel: implementation
                   text: "AttestationAggregator._do_fetch() pre-capture error handling"
 
+            - uuid: "0c2d40d7-0d19-4b9d-9afa-6c80967b31b4"
+              control-id: sc-13
+              description: |
+                Asymmetric routing seals round-trip under every supported KMS key type
+                (POAM-2026-095). generate_seal() (src/gateway/governance/routing_seal.py)
+                writes the signer's JOSE algorithm (jose_alg) into the protected header
+                rather than a provider label, and KMSGovernanceSigner.sign_jws()
+                (src/gateway/governance/kms_signer.py) converts ECDSA DER signatures to
+                the JOSE raw R||S form; providers declare their native ECDSA encoding.
+                The verifier accepts only ES256/ES384/ES512 for EC keys. Seal
+                verification resolves keys strictly by kid (src/gateway/governance/jwks.py):
+                a seal with no kid no longer falls back to a single published key and
+                fails closed.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-095"
+              links:
+                - href: "../../src/gateway/governance/routing_seal.py"
+                  rel: implementation
+                  text: "generate_seal() JOSE alg header"
+                - href: "../../src/gateway/governance/kms_signer.py"
+                  rel: implementation
+                  text: "KMSGovernanceSigner.sign_jws() DER to raw conversion"
+                - href: "../../src/gateway/governance/jwks.py"
+                  rel: implementation
+                  text: "kid-required key resolution"
+                - href: "../../tests/test_routing_seal_asymmetric_roundtrip.py"
+                  rel: test
+
+            - uuid: "17537e23-e213-4c9c-b583-68992eb29794"
+              control-id: ca-7
+              description: |
+                Continuous ground-truth reconciliation keeps verified CBF state fresh
+                (POAM-2026-096). The reconciliation worker
+                (deployment/k8s/reconciliation-worker.yaml) runs as a single-replica
+                Deployment in loop mode, polling every 60 s against a 300 s verified-state
+                TTL, and run_loop() (src/gateway/governance/reconciliation/daemon.py)
+                refuses to start when the TTL is less than twice the poll interval, so
+                verified state cannot lapse between runs. When the discrepancy guard trips,
+                the daemon records the failure, advances the fence epoch, and invalidates
+                state; it never writes the CBF state key from an unverified reading.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-096"
+              links:
+                - href: "../../deployment/k8s/reconciliation-worker.yaml"
+                  rel: implementation
+                  text: "Reconciler Deployment (loop mode)"
+                - href: "../../src/gateway/governance/reconciliation/daemon.py"
+                  rel: implementation
+                  text: "run_loop() TTL/poll guard and floor branch"
+                - href: "../../tests/test_reconciliation_worker_manifest.py"
+                  rel: test
+                - href: "../../tests/test_reconciliation_discrepancy_floor.py"
+                  rel: test
+
+            - uuid: "943496c8-5b07-48e4-a175-731366d416fa"
+              control-id: si-10
+              description: |
+                Ground-truth sequence numbers are checked atomically and fail closed
+                (POAM-2026-097). The CBF engine (src/gateway/governance/safety/cbf_engine.py)
+                performs the replay check as a single Redis Lua compare-and-advance: a
+                sequence regression is rejected, an equal sequence (re-read) is accepted,
+                and the read and write cannot interleave with a concurrent writer. A Redis
+                error during the check is treated as a violation rather than a pass.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-097"
+              links:
+                - href: "../../src/gateway/governance/safety/cbf_engine.py"
+                  rel: implementation
+                  text: "Atomic Lua sequence compare-and-advance"
+                - href: "../../tests/test_replay_defense.py"
+                  rel: test
+
+            - uuid: "2de236dc-7f43-4ec2-939e-febbed7f1a5c"
+              control-id: au-10
+              description: |
+                Actuation outcomes are three-valued, recorded exactly once, and carry a
+                signature verification status (POAM-2026-098). ActuationReceipt
+                (src/gateway/governance/seams/actuation.py) distinguishes ACCEPTED,
+                REJECTED and UNKNOWN; an UNKNOWN outcome is never retryable and settles as
+                possibly executed, so an indeterminate dispatch cannot release reserved
+                capacity. The kernel dispatch_actuation()
+                (src/gateway/governance/execution_actuator.py) is the sole caller of
+                actuate() and the sole writer of actuation evidence: it converts an
+                actuator exception into an UNKNOWN receipt and records every receipt once
+                as ACTUATION_RECEIPT, ACTUATION_REFUSAL_RECEIPT or
+                ACTUATION_INDETERMINATE_RECEIPT. Each receipt carries a ReceiptVerification
+                status (VERIFIED / UNVERIFIED / INVALID). The actuator_01 adapter verifies
+                an optional detached Ed25519 receipt signature against a key resolved by
+                kid from an independently fetched manifest
+                (src/integrations/actuator_01/receipt_verifier.py), never from the receipt;
+                an invalid signature, unknown kid or envelope-digest mismatch forces the
+                outcome to UNKNOWN, and a strict mode treats unsigned receipts the same way.
+                Residual: the receipt signature format is a CAGE-proposed extension that
+                the partner has not yet adopted, so live receipts are recorded as
+                UNVERIFIED until partner adoption and over-the-wire conformance testing.
+              props:
+                - name: implementation-status
+                  value: partial
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-098"
+              links:
+                - href: "../../src/gateway/governance/execution_actuator.py"
+                  rel: implementation
+                  text: "dispatch_actuation() single evidence owner"
+                - href: "../../src/gateway/governance/seams/actuation.py"
+                  rel: implementation
+                  text: "ActuationOutcome and ReceiptVerification"
+                - href: "../../src/integrations/actuator_01/receipt_verifier.py"
+                  rel: implementation
+                  text: "kid-resolved receipt signature verification"
+                - href: "../../tests/test_actuation_outcome.py"
+                  rel: test
+                - href: "../../tests/test_actuator_01_receipt_verification.py"
+                  rel: test
+
             - uuid: "61c43f8a-6693-4049-ae09-edd8b22f500a"
               control-id: sc-12
               description: |
