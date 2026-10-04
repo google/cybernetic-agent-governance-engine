@@ -711,7 +711,7 @@ class TestCompositeGrammar:
 
     def test_opa_enforces_the_composite(self) -> None:
         rego = generate_opa(self._cs(self._SCALED))
-        assert "input.daily_vol > 0" in rego
+        assert "input.daily_vol > 0" not in rego
         assert "input.order_size > input._thresholds.stpa_max_fraction * input.daily_vol" in rego
         assert "placeholder" not in rego and "    false" not in rego
 
@@ -725,6 +725,17 @@ class TestCompositeGrammar:
         cs = load_control_structure(_FINANCE_YAML_PATH)
         composites = [u.condition.composite for u in cs.unsafe_control_actions if u.condition.composite]
         assert composites, "UCA-6 should use the scaled-threshold composite"
+
+    def test_composite_fails_closed_on_zero_negative_nan_or_missing_rhs(self) -> None:
+        from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
+
+        v = GeneratedSTPAValidator()
+        assert v._check_uca_6("execute_trade", {"order_size": 100, "daily_vol": 0}) is not None
+        assert v._check_uca_6("execute_trade", {"order_size": 0, "daily_vol": -10}) is not None
+        assert v._check_uca_6("execute_trade", {"order_size": float("nan"), "daily_vol": 1000}) is not None
+        assert v._check_uca_6("execute_trade", {"order_size": 100}) is not None
+        assert v._check_uca_6("execute_trade", {"order_size": 0, "daily_vol": 0}) is None
+        assert v._check_uca_6("execute_trade", {"order_size": 10, "daily_vol": 10_000}) is None
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

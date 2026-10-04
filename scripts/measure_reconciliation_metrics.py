@@ -332,6 +332,10 @@ def measure_write_path(n: int, sync_redis: Any, identity: SigningIdentity | None
     sync_redis.set(CashBarrier.state_key, repr(READ_PATH_BALANCE))
     reconciler = _build_reconciler(sync_redis, identity.signer, READ_PATH_BALANCE, cbf_floor)
 
+    # Warm up the KMS gRPC/TLS channel and public-key cache before timing,
+    # matching _measure_approval_latency() in measure_paper_metrics.py.
+    reconciler.reconcile(CashBarrier.invariant_id)
+
     stages: dict[str, list[float]] = {"fetch_ms": [], "kms_sign_ms": [], "redis_write_ms": []}
     total_ms: list[float] = []
     failures: list[str] = []

@@ -179,13 +179,13 @@ def settlement_cutoff(
     lag_seconds: float,
     skew_seconds: float,
 ) -> float:
-    """Latest ``submitted_at`` a snapshot is trusted to have absorbed.
+    """Latest ``confirmed_at`` a snapshot is trusted to have absorbed.
 
     A provider that attests ``settled_through`` is believed up to that
     instant (but never past the snapshot's own ``verified_at``); one that
     does not is assumed to lag by ``lag_seconds``. ``skew_seconds`` is then
-    subtracted because ``submitted_at`` is stamped by the gateway's clock and
-    ``settled_through`` by the provider's.
+    subtracted because ``confirmed_at`` is stamped by the gateway's clock and
+    ``settled_through`` / ``verified_at`` by the provider's.
     """
     if settled_through is not None and math.isfinite(settled_through):
         base = min(float(settled_through), float(verified_at))

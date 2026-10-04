@@ -369,6 +369,32 @@ def test_dry_run_seal_is_rejected() -> None:
     assert "seal" in rules
 
 
+def test_dry_run_reachable_states_never_seal_or_execute() -> None:
+    from proof.model import reachable_over
+
+    plan = tuple((str(n), int(p)) for n, p in _event()["plan"])
+    states = reachable_over(plan, "DRY_RUN")
+    assert all(
+        not s.seal_present
+        and not s.resolved_allow
+        and s.phase not in {"SEAL_ISSUED", "NARROW", "EXECUTED"}
+        for s in states
+    )
+
+
+def test_check_no_direct_bind_requires_seal_present() -> None:
+    from proof.model import State, check_no_direct_bind
+
+    bad = State(
+        phase="EXECUTED",
+        tier_results=(("ftra", "PASS"),),
+        seal_present=False,
+        resolved_allow=True,
+    )
+    holds, cex = check_no_direct_bind({bad})
+    assert not holds and cex == bad
+
+
 def test_pending_verdict_must_be_unsealed_checking() -> None:
     event = _event(verdict="REQUIRE_APPROVAL", phase="DENIED", seal_present=False, seal_ref=None)
     assert "seal" in _rules([event])

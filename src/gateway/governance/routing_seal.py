@@ -303,6 +303,7 @@ def generate_seal(
     params: dict,
     ttl_s: int = _TTL_S,
     record_hash: str | None = None,
+    aud: str | None = None,
 ) -> str:
     """Generate a short-lived routing seal.
 
@@ -342,6 +343,7 @@ def generate_seal(
             "iat": now,
             "exp": expire_ts,
             "iss": "cage-gateway",
+            "aud": aud or f"cage-actuator:{action}",
         }
 
         b64_header = (
@@ -388,6 +390,7 @@ async def generate_seal_with_evidence(
     params: dict,
     ttl_s: int = _TTL_S,
     evidence_timeout_s: float = 5.0,
+    aud: str | None = None,
 ) -> str:
     """Generate a routing seal with evidence chain blocking gate (R-06 mitigation).
 
@@ -529,7 +532,7 @@ async def generate_seal_with_evidence(
                     )
 
         # Generate and return the seal with evidence binding (B2)
-        seal = generate_seal(action, params, ttl_s, record_hash=record_hash)
+        seal = generate_seal(action, params, ttl_s, record_hash=record_hash, aud=aud)
         span.set_attribute("cage.seal.issued", True)
         return seal
 
@@ -554,6 +557,7 @@ def verify_seal(
     action: str,
     params: dict,
     expected_record_hash: str | None = None,
+    expected_aud: str | None = None,
 ) -> bool:
     """Verify a routing seal (v3 JWT format with KMS or v2 HMAC format without)."""
     try:
@@ -603,12 +607,28 @@ def verify_seal(
 
             try:
                 claims = pyjwt.decode(
-                    seal, pem, algorithms=algs, options={"verify_exp": True}
+                    seal,
+                    pem,
+                    algorithms=algs,
+                    options={"verify_exp": True, "verify_aud": False},
                 )
             except pyjwt.ExpiredSignatureError:
                 _reject_seal("expired", action)
             except pyjwt.InvalidTokenError as exc:
                 _reject_seal(f"malformed seal or invalid signature: {exc}", action)
+
+            claim_aud = claims.get("aud")
+            target_aud = expected_aud or f"cage-actuator:{action}"
+            if claim_aud is not None and claim_aud != target_aud:
+                _reject_seal(
+                    "audience mismatch — aud does not match target executor",
+                    action,
+                )
+            elif expected_aud is not None and claim_aud != expected_aud:
+                _reject_seal(
+                    "audience mismatch — aud does not match target executor",
+                    action,
+                )
 
             # Check action hash
             safe_params = {
@@ -876,6 +896,7 @@ async def verify_and_consume_seal(
     params: dict,
     redis_client: Any = None,
     expected_record_hash: str | None = None,
+    expected_aud: str | None = None,
 ) -> bool:
     """Verify a routing seal, then consume its nonce exactly once.
 
@@ -912,6 +933,7 @@ async def verify_and_consume_seal(
         params: The parameters being authorized.
         redis_client: Optional async Redis client (defaults to global client).
         expected_record_hash: Optional expected evidence record hash.
+        expected_aud: Optional expected audience / executor identifier.
 
     Returns:
         True if the seal verified and this caller consumed its nonce.
@@ -968,6 +990,7 @@ async def verify_and_consume_seal(
             action=action,
             params=params,
             expected_record_hash=expected_record_hash,
+            expected_aud=expected_aud,
         )
     except SymbolicGovernorViolation:
         logger.warning(
