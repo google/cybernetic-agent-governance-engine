@@ -95,7 +95,7 @@ def create_finance_tiers(
     Returns:
         Tuple of finance domain tiers in (phase, order, tier_name) order.
         The tiers are:
-        - BoundingContractTierPlugin (phase=2, order=2) — Phase 5 pre-trade constraints
+        - BoundingContractTierPlugin (phase=1, order=2) — Phase 5 pre-trade constraints
         - CBFTierPlugin (phase=2, order=3) — Cash barrier validation
         - FiscalTierPlugin (phase=2, order=4) — Daily limit reservation
         - ConsensusTierPlugin (phase=1, order=5) — Multi-model consensus

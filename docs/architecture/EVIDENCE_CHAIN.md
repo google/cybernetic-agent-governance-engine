@@ -93,14 +93,20 @@ evidentiary weight as an ALLOW. Both the actuation seam and the post-FRIA
   [`adapter.py`](../../src/integrations/actuator_01/adapter.py),
   [`broker_actuator.py`](../../src/cage_finance/actuators/broker_actuator.py),
   and [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md).
-- **Idempotent actuation receipt ingestion (`ingest_actuation_receipt`)**:
+- **Single-owner actuation receipt ingestion (`dispatch_actuation`)**:
+  actuators never write evidence. The kernel
+  [`dispatch_actuation()`](../../src/gateway/governance/execution_actuator.py)
+  is the only sanctioned caller of `ExecutionActuator.actuate()` (used by
+  [`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py)); it
+  converts an actuator exception into an `UNKNOWN`, non-retryable receipt
+  (finding `ACTUATOR_EXCEPTION`) and calls
   [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)
-  is invoked inside [`Actuator01Adapter.actuate()`](../../src/integrations/actuator_01/adapter.py),
-  [`BrokerActuator.actuate()`](../../src/cage_finance/actuators/broker_actuator.py),
-  and [`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py)
-  (deduplicated per `ActuationReceipt` instance via `receipt.evidence_id`),
-  emitting `ACTUATION_REFUSAL_RECEIPT` on `accepted=False` and
-  `ACTUATION_RECEIPT` on `accepted=True` into `cage:evidence:stream`.
+  exactly once per dispatch. The event type follows the receipt outcome:
+  `ACTUATION_RECEIPT` (`ACCEPTED`), `ACTUATION_REFUSAL_RECEIPT` (`REJECTED`),
+  or `ACTUATION_INDETERMINATE_RECEIPT` (`UNKNOWN` — the side effect may have
+  happened). Each event also records the receipt's signature `verification`
+  status (`VERIFIED` / `UNVERIFIED` / `INVALID`, see
+  [`ReceiptVerification`](../../src/gateway/governance/seams/actuation.py)).
 - **`ConsequenceGateway` decisions (`CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`)**:
   [`ConsequenceGateway.evaluate()`](../../src/gateway/governance/consequence_gateway.py)
   emits every `EXECUTE` (`CONSEQUENCE_GATEWAY_DECISION`) and `BLOCK` / `HOLD`

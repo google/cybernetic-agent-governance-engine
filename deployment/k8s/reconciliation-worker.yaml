@@ -13,8 +13,15 @@
 # limitations under the License.
 
 ---
-apiVersion: batch/v1
-kind: CronJob
+# Long-running reconciler. A Deployment running ``run_loop()`` replaces the
+# former */5 CronJob: with single-shot runs every 5 minutes and a 300 s
+# snapshot TTL, the signed snapshot expired before the next run could land
+# (pod scheduling + image pull + startup + KMS sign), so strict-mode CBF
+# refused every CBF-gated action for part of every cycle. Polling every 60 s
+# against a 300 s TTL gives a 5x freshness margin and keeps the daemon's
+# in-memory per-invariant sequence check meaningful across ticks.
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: reconciliation-worker
   namespace: governance-stack
@@ -24,140 +31,137 @@ metadata:
     app.kubernetes.io/version: "2.1.0"
     cage.io/account-purpose: "ledger-reconciliation"
 spec:
-  # Run every 5 minutes.  The worker completes a single reconciliation cycle
-  # per invocation (run_loop is not used in CronJob mode — see entrypoint).
-  schedule: "*/5 * * * *"
-  concurrencyPolicy: Forbid   # Never overlap runs; fail closed on contention.
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 5
-  jobTemplate:
+  # Exactly one writer of ground-truth snapshots. Recreate (not RollingUpdate)
+  # so two reconcilers never overlap during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: reconciliation-worker
+  template:
+    metadata:
+      labels:
+        app: reconciliation-worker
+        cage.io/account-purpose: "ledger-reconciliation"
     spec:
-      # Fail the job after 4 minutes to avoid overlapping the next 5-minute window.
-      activeDeadlineSeconds: 240
-      backoffLimit: 2
-      template:
-        metadata:
-          labels:
-            app: reconciliation-worker
-            cage.io/account-purpose: "ledger-reconciliation"
-        spec:
-          restartPolicy: OnFailure
-          serviceAccountName: cage-reconciler-sa
-          # §3: Governance-critical pods carry an explicit anti-Spot nodeAffinity rule
-          # so even a wildcard toleration cannot schedule them on Spot VMs.
-          affinity:
-            nodeAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                nodeSelectorTerms:
-                  - matchExpressions:
-                      - key: cloud.google.com/gke-spot
-                        operator: NotIn
-                        values:
-                          - "true"
+      serviceAccountName: cage-reconciler-sa
+      # §3: Governance-critical pods carry an explicit anti-Spot nodeAffinity rule
+      # so even a wildcard toleration cannot schedule them on Spot VMs.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-spot
+                    operator: NotIn
+                    values:
+                      - "true"
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconciliation-worker
+          # Reuse the compliance-bridge image; it ships src/gateway on
+          # PYTHONPATH=/app, which contains the GroundTruthReconciler.
+          image: ${REGISTRY_URL}/compliance-bridge:latest
+          imagePullPolicy: Always
+          command:
+            - python
+            - -m
+            - src.gateway.governance.reconciliation.daemon
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
             runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
             seccompProfile:
               type: RuntimeDefault
-          containers:
-            - name: reconciliation-worker
-              # Reuse the compliance-bridge image; it ships src/gateway on
-              # PYTHONPATH=/app, which contains the GroundTruthReconciler.
-              image: ${REGISTRY_URL}/compliance-bridge:latest
-              imagePullPolicy: Always
-              command:
-                - python
-                - -m
-                - src.gateway.governance.reconciliation.daemon
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop:
-                    - ALL
-                runAsNonRoot: true
-                runAsUser: 1000
-                readOnlyRootFilesystem: true
-                seccompProfile:
-                  type: RuntimeDefault
-              env:
-                # --- Provider ---
-                # Label only: GroundTruthReconciler.from_env() always builds the
-                # simulated Tier 2 provider (the ledger providers were removed).
-                # The value tags reconciliation spans and failure records.
-                - name: RECONCILIATION_PROVIDER
-                  value: "simulated"
-                # ADR-010: read the fills the gateway's BrokerActuator journals
-                # into Redis (sim:ledger:<invariant>) and attest settled_through
-                # = now - lag on every signed snapshot. Must match gateway.yaml.
-                - name: CAGE_SIM_LEDGER_BACKEND
-                  value: "redis"
-                - name: CAGE_SIM_SETTLEMENT_LAG_SECONDS
-                  value: "90"
+          env:
+            # --- Provider ---
+            # Label only: GroundTruthReconciler.from_env() always builds the
+            # simulated Tier 2 provider (the ledger providers were removed).
+            # The value tags reconciliation spans and failure records.
+            - name: RECONCILIATION_PROVIDER
+              value: "simulated"
+            # ADR-010: read the fills the gateway's BrokerActuator journals
+            # into Redis (sim:ledger:<invariant>) and attest settled_through
+            # = now - lag on every signed snapshot. Must match gateway.yaml.
+            - name: CAGE_SIM_LEDGER_BACKEND
+              value: "redis"
+            - name: CAGE_SIM_SETTLEMENT_LAG_SECONDS
+              value: "90"
 
-                # --- KMS signing (G8) ---
-                # The reconciler signs ground-truth snapshots with its own key,
-                # separate from the gateway's KMS_GOVERNANCE_KEY. The gateway
-                # trusts only this key (by kid) for ground truth.
-                - name: RECONCILER_KMS_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: reconciliation-worker-secrets
-                      key: reconciler-kms-key
+            # --- KMS signing (G8) ---
+            # The reconciler signs ground-truth snapshots with its own key,
+            # separate from the gateway's KMS_GOVERNANCE_KEY. The gateway
+            # trusts only this key (by kid) for ground truth.
+            - name: RECONCILER_KMS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: reconciliation-worker-secrets
+                  key: reconciler-kms-key
 
-                # --- Redis ---
-                - name: REDIS_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: redis-credentials
-                      key: REDIS_URL
-                - name: REDIS_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: redis-credentials
-                      key: REDIS_PASSWORD
+            # --- Redis ---
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
 
-                # --- CAGE deployment region ---
-                - name: CAGE_DEPLOYMENT_REGION
-                  value: "US_FED"
+            # --- CAGE deployment region ---
+            - name: CAGE_DEPLOYMENT_REGION
+              value: "US_FED"
 
-                # --- OpenTelemetry ---
-                - name: OTEL_TRACES_EXPORTER
-                  value: "otlp"
-                - name: OTEL_EXPORTER_OTLP_ENDPOINT
-                  value: "http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces"
-                - name: OTEL_EXPORTER_OTLP_PROTOCOL
-                  value: "http/protobuf"
-                - name: OTEL_EXPORTER_OTLP_HEADERS
-                  valueFrom:
-                    secretKeyRef:
-                      name: advisor-secrets
-                      key: OTEL_EXPORTER_OTLP_HEADERS
-                      optional: true
+            # --- OpenTelemetry ---
+            - name: OTEL_TRACES_EXPORTER
+              value: "otlp"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: OTEL_EXPORTER_OTLP_HEADERS
+                  optional: true
 
-                # --- Reconciliation tuning ---
-                - name: RECONCILIATION_POLL_INTERVAL_SECONDS
-                  value: "60"
-                - name: RECONCILIATION_TTL_SECONDS
-                  value: "300"
-                # Single-shot mode: exit after one cycle (CronJob invocation)
-                - name: RECONCILIATION_SINGLE_SHOT
-                  value: "true"
+            # --- Reconciliation tuning ---
+            - name: RECONCILIATION_POLL_INTERVAL_SECONDS
+              value: "60"
+            - name: RECONCILIATION_TTL_SECONDS
+              value: "300"
+            # Loop mode (RECONCILIATION_SINGLE_SHOT unset). The daemon refuses
+            # to start if TTL < 2 x poll interval, and
+            # tests/test_reconciliation_worker_manifest.py pins the same
+            # invariant on this manifest.
 
-              resources:
-                requests:
-                  cpu: "25m"
-                  memory: "128Mi"
-                limits:
-                  cpu: "100m"
-                  memory: "256Mi"
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "128Mi"
+            limits:
+              cpu: "100m"
+              memory: "256Mi"
 
-              # Writable tmp volume required for read-only root filesystem.
-              volumeMounts:
-                - name: tmp-dir
-                  mountPath: /tmp
-
-          volumes:
+          # Writable tmp volume required for read-only root filesystem.
+          volumeMounts:
             - name: tmp-dir
-              emptyDir: {}
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
 
 ---
 # reconciliation-worker-secrets

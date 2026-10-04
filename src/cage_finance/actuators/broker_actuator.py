@@ -32,6 +32,7 @@ from src.cage_finance.invariants import finance_cost_resolver
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.trade_executor import execute_trade
 from src.gateway.governance.seams.actuation import (
+    ActuationOutcome,
     ActuationReceipt,
     ActuatorCapability,
     ExecutionClearance,
@@ -134,7 +135,8 @@ class BrokerActuator:
         1. Validates clearance signature digest and quorum
         2. Constructs TradeOrder from clearance parameters
         3. Invokes execute_trade with routing_seal
-        4. Ingests ActuationReceipt into the evidence stream and returns it
+        4. Returns the ActuationReceipt (evidence is recorded by the kernel's
+           ``dispatch_actuation()``, never by the actuator)
 
         Args:
             clearance: Validated ExecutionClearance from governance kernel
@@ -143,15 +145,6 @@ class BrokerActuator:
             ActuationReceipt with accepted=True on success, or accepted=False
             with structured findings on failure.
         """
-        from src.gateway.governance.execution_actuator import ingest_actuation_receipt
-
-        receipt = await self._actuate_once(clearance)
-        await ingest_actuation_receipt(
-            clearance, receipt, actuator_id=self.actuator_id
-        )
-        return receipt
-
-    async def _actuate_once(self, clearance: ExecutionClearance) -> ActuationReceipt:
         timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
         findings: list[dict] = []
 
@@ -332,14 +325,18 @@ class BrokerActuator:
                             "detail": str(journal_exc),
                         }
                     )
+                    # The trade already executed; only the custodian journal
+                    # failed.  The outcome is indeterminate from the ledger's
+                    # point of view and a retry would double-execute.
                     return ActuationReceipt(
                         accepted=False,
                         receipt_id=None,
                         session_uuid=clearance.thread_id,
                         raw_receipt=None,
                         findings=findings,
-                        retryable=True,
+                        retryable=False,
                         timestamp_utc=timestamp_utc,
+                        outcome=ActuationOutcome.UNKNOWN,
                     )
 
             return ActuationReceipt(

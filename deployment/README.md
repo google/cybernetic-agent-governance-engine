@@ -207,7 +207,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
 | `lula-cron.yaml` | Scheduled Lula compliance scan CronJob |
 | `lula-rbac.yaml` | RBAC for Lula scanner |
 | `security-scan-cronjob.yaml` | Security scan CronJob (Trivy) |
-| `reconciliation-worker.yaml` | CronJob (`*/5 * * * *`) + Secret template. Runs `GroundTruthReconciler` (`src/gateway/governance/reconciliation/daemon.py`) with the simulated Tier 2 provider and writes KMS-signed ground-truth snapshots to Redis. `RECONCILIATION_PROVIDER` is a span label only. |
+| `reconciliation-worker.yaml` | Single-replica Deployment (`run_loop()`, 60 s poll, 300 s snapshot TTL) + Secret template. Runs `GroundTruthReconciler` (`src/gateway/governance/reconciliation/daemon.py`) with the simulated Tier 2 provider and writes KMS-signed ground-truth snapshots to Redis. `RECONCILIATION_PROVIDER` is a span label only. |
 | `sbom-cronjob.yaml` | SBOM generation CronJob |
 | `oscal-artifact-secrets.yaml` | OSCAL artifact secret template |
 | `service-account.yaml` | One ServiceAccount per workload (`cage-gateway-sa`, `cage-advisor-sa`, `cage-reconciler-sa`, …), each bound to its own GSA (POAM-2026-079) |

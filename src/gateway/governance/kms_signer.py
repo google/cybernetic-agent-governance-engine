@@ -78,6 +78,62 @@ def _canonicalise_plan(plan: dict[str, Any]) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# ECDSA DER → JWS raw signature conversion
+# ---------------------------------------------------------------------------
+
+# RFC 7518 §3.4 fixed raw R||S widths per JOSE algorithm.
+_ECDSA_RAW_SIGNATURE_LENGTHS: dict[str, int] = {
+    "ES256": 64,  # P-256: 32-byte R + 32-byte S
+    "ES384": 96,  # P-384: 48-byte R + 48-byte S
+    "ES512": 132,  # P-521: 66-byte R + 66-byte S (not 128)
+}
+
+
+def der_to_raw_ecdsa_signature(der_signature: bytes, algorithm: str) -> bytes:
+    """Convert an ASN.1 DER ECDSA signature to the JWS raw ``R||S`` encoding.
+
+    Cloud KMS and AWS KMS return ECDSA signatures as DER; JWS requires the
+    fixed-width concatenation of R and S (RFC 7518 §3.4).
+
+    Args:
+        der_signature: DER-encoded ECDSA signature.
+        algorithm: JOSE algorithm name (``ES256``, ``ES384`` or ``ES512``).
+
+    Returns:
+        Raw ``R||S`` signature bytes of the curve's fixed width.
+
+    Raises:
+        ValueError: If the algorithm is unsupported or conversion fails.
+    """
+    from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
+
+    if algorithm not in _ECDSA_RAW_SIGNATURE_LENGTHS:
+        raise ValueError(
+            f"Unsupported JOSE algorithm: {algorithm}. "
+            f"Supported: {list(_ECDSA_RAW_SIGNATURE_LENGTHS)}"
+        )
+
+    expected_len = _ECDSA_RAW_SIGNATURE_LENGTHS[algorithm]
+    component_len = expected_len // 2
+
+    try:
+        r, s = asym_utils.decode_dss_signature(der_signature)
+        raw_signature = r.to_bytes(component_len, byteorder="big") + s.to_bytes(
+            component_len, byteorder="big"
+        )
+        if len(raw_signature) != expected_len:
+            raise ValueError(
+                f"Converted signature length {len(raw_signature)} does not match "
+                f"expected length {expected_len} for {algorithm}"
+            )
+        return raw_signature
+    except Exception as e:
+        raise ValueError(
+            f"Failed to convert DER signature to raw format for {algorithm}: {e}"
+        ) from e
+
+
+# ---------------------------------------------------------------------------
 # Abstract KMS Provider Strategy & Hermetic Software Providers
 # ---------------------------------------------------------------------------
 
@@ -138,6 +194,16 @@ class BaseKMSProvider(abc.ABC):
             self.digest_algorithm,
         )
         return "ES256"
+
+    @property
+    def ecdsa_signature_encoding(self) -> str:
+        """Wire encoding of ECDSA signatures returned by ``sign_digest``.
+
+        ``"der"`` (ASN.1; Cloud KMS, AWS KMS, ``cryptography``) is the default.
+        Providers that already return JWS-style ``R||S`` (Azure Key Vault)
+        override this with ``"raw"``.
+        """
+        return "der"
 
     @property
     def uses_rsa_pss(self) -> bool:
@@ -442,7 +508,11 @@ class KMSGovernanceSigner:
 
     @property
     def signing_algorithm(self) -> str:
-        """Returns active signing algorithm and provider identifier."""
+        """Provider label recorded on ``SignedRecord`` envelopes and spans.
+
+        Not a JOSE identifier (returns e.g. ``KMS_ASYMMETRIC`` or
+        ``SOFTWARE_ED25519``). JWS headers must use :attr:`jose_alg`.
+        """
         if not self._kms_active:
             return "HMAC_SHA256_FALLBACK"
         return self._provider.provider_name if self._provider else "KMS_ASYMMETRIC"
@@ -644,6 +714,23 @@ class KMSGovernanceSigner:
             hash_fn = getattr(hashlib, self._provider.digest_algorithm)
             digest = hash_fn(message).digest()
             return self._provider.sign_digest(digest)
+
+    def sign_jws(self, signing_input: bytes) -> bytes:
+        """Sign a JWS signing input and return RFC 7518 signature bytes.
+
+        Wraps :meth:`sign_raw` and normalises ECDSA output to the raw
+        ``R||S`` encoding JWS requires, so callers never handle provider wire
+        formats. Pair with :attr:`jose_alg` for the header ``alg``.
+        """
+        signature = self.sign_raw(signing_input)
+        alg = self.jose_alg
+        if (
+            alg in _ECDSA_RAW_SIGNATURE_LENGTHS
+            and self._provider is not None
+            and self._provider.ecdsa_signature_encoding == "der"
+        ):
+            signature = der_to_raw_ecdsa_signature(signature, alg)
+        return signature
 
     def sign_precomputed_digest(self, digest: bytes) -> str:
         """Sign a pre-computed envelope digest directly."""

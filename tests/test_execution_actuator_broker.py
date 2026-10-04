@@ -348,11 +348,15 @@ async def test_credential_headers_not_in_audit_record():
 async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Refused (CREDENTIAL_BROKER_FAILED) and accepted ActuationReceipts are ingested into EvidenceStreamSink."""
+    """Refused (CREDENTIAL_BROKER_FAILED) and accepted receipts each enter the
+    evidence stream exactly once — written by the kernel dispatcher, never by
+    the actuator itself."""
     import json
+
     import fakeredis.aioredis
+
     from src.gateway.governance.evidence.stream import EvidenceStreamSink
-    from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+    from src.gateway.governance.execution_actuator import dispatch_actuation
 
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     sink = EvidenceStreamSink()
@@ -376,13 +380,12 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
             )
         ),
     )
-    refusal_receipt = await denied_adapter.actuate(clearance)
-    assert refusal_receipt.accepted is False
-    assert getattr(refusal_receipt, "evidence_id", None)
+    # The adapter alone writes nothing.
+    await denied_adapter.actuate(clearance)
+    assert await fake_redis.xrange(sink._stream_key) == []
 
-    # Calling ingest_actuation_receipt a second time on the same receipt is idempotent
-    second_id = await ingest_actuation_receipt(clearance, refusal_receipt)
-    assert second_id == getattr(refusal_receipt, "evidence_id", None)
+    refusal_receipt = await dispatch_actuation(denied_adapter, clearance)
+    assert refusal_receipt.accepted is False
 
     # 2. Accepted path
     mock_response = MagicMock(spec=httpx.Response)
@@ -398,9 +401,8 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
         signer=MockSigner(),
         credential_broker=MockCredentialBroker(),
     )
-    accepted_receipt = await accepted_adapter.actuate(clearance)
+    accepted_receipt = await dispatch_actuation(accepted_adapter, clearance)
     assert accepted_receipt.accepted is True
-    assert getattr(accepted_receipt, "evidence_id", None)
 
     entries = await fake_redis.xrange(sink._stream_key)
     assert len(entries) == 2
@@ -420,3 +422,5 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
     accepted_payload = json.loads(accepted_fields["payload_json"])
     assert accepted_payload["accepted"] is True
     assert accepted_payload["receipt_id"] == "receipt-005"
+    # Unsigned partner receipt: resolution is not verification.
+    assert accepted_payload["verification"] == "UNVERIFIED"

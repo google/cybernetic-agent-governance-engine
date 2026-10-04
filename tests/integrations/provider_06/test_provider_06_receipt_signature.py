@@ -425,7 +425,9 @@ class TestAdapterReceiptVerification:
             # Create valid receipt, then corrupt signature
             receipt = create_test_receipt()
             original_sig = receipt["signature"]["value"]
-            receipt["signature"]["value"] = "X" + original_sig[1:]  # Flip first char
+            # Always change the char (a fixed "X" was a no-op ~1/64 of the time).
+            flipped = "A" if original_sig[0] != "A" else "B"
+            receipt["signature"]["value"] = flipped + original_sig[1:]
 
             # Mock HTTP response
             with patch("httpx.AsyncClient") as MockHTTPClient:

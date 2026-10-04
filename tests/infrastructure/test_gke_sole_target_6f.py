@@ -275,15 +275,15 @@ class TestNodePoolsAndAntiSpotAffinity:
             for expr in term.get("matchExpressions", [])
         ), "gateway Deployment must enforce cloud.google.com/gke-spot NotIn ['true']"
 
-        # 2. Reconciliation Worker CronJob
+        # 2. Reconciliation Worker Deployment (continuous loop; see manifest header)
         rw_docs = _load_yaml_docs(K8S_DIR / "reconciliation-worker.yaml")
-        rw_cron = next(
+        rw_deploy = next(
             d for d in rw_docs
-            if d.get("kind") == "CronJob"
+            if d.get("kind") == "Deployment"
             and d.get("metadata", {}).get("name") == "reconciliation-worker"
         )
         rw_terms = (
-            rw_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
+            rw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
             ["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
         )
         assert any(
@@ -292,7 +292,7 @@ class TestNodePoolsAndAntiSpotAffinity:
             and "true" in expr.get("values", [])
             for term in rw_terms
             for expr in term.get("matchExpressions", [])
-        ), "reconciliation-worker CronJob must enforce cloud.google.com/gke-spot NotIn ['true']"
+        ), "reconciliation-worker Deployment must enforce cloud.google.com/gke-spot NotIn ['true']"
 
     def test_gateway_terraform_module_enforces_anti_spot_node_affinity(self) -> None:
         gateway_tf = (GATEWAY_MODULE_DIR / "main.tf").read_text(encoding="utf-8")

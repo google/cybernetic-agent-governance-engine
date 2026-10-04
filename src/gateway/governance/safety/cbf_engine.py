@@ -65,6 +65,21 @@ _REPLAY_DEFENSE_ENABLED: bool = os.environ.get(
 
 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
 
+# Atomic compare-and-advance of the replay high-water mark. Returns
+# {1, last} when the incoming sequence is >= last (advancing the mark if
+# strictly greater) and {0, last} on regression.
+_SEQUENCE_ADVANCE_LUA = """
+local last = tonumber(redis.call('GET', KEYS[1]) or '0')
+local incoming = tonumber(ARGV[1])
+if incoming < last then
+  return {0, last}
+end
+if incoming > last then
+  redis.call('SET', KEYS[1], ARGV[1])
+end
+return {1, last}
+"""
+
 _FENCE_EPOCH_ENABLED: bool = os.environ.get(
     "CAGE_REDIS_SYNCHRONOUS_REPLICATION", "true"
 ).lower() in ("true", "1", "yes")
@@ -831,31 +846,36 @@ return {1, status, tostring(restored), new_epoch}
     async def _validate_sequence(
         self, incoming_sequence: int, source: str, sync_redis: Any
     ) -> tuple[bool, str]:
+        """Reject reconciled snapshots whose sequence regresses (R-04).
+
+        Every admission re-reads the current snapshot, so a sequence *equal*
+        to the high-water mark is the normal case and is accepted; only a
+        strictly lower sequence (an older snapshot replayed into the key) is
+        a replay. The compare-and-advance is a single Lua script so two
+        gateway replicas cannot interleave GET/SET. A Redis error fails
+        closed: the caller falls back to the non-reconciled path, which
+        strict mode refuses.
+        """
         try:
-            last_accepted_raw = await asyncio.to_thread(
-                sync_redis.get,
-                _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
-            )
-            last_accepted = int(last_accepted_raw) if last_accepted_raw else 0
-
-            if incoming_sequence <= last_accepted:
-                reason = (
-                    f"sequence={incoming_sequence} <= last_accepted={last_accepted}"
-                )
-                return (False, reason)
-
-            await asyncio.to_thread(
-                sync_redis.set,
+            accepted, last_accepted = await asyncio.to_thread(
+                sync_redis.eval,
+                _SEQUENCE_ADVANCE_LUA,
+                1,
                 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
                 str(incoming_sequence),
             )
+            if int(accepted) != 1:
+                return (
+                    False,
+                    f"sequence={incoming_sequence} < last_accepted={int(last_accepted)}",
+                )
             return (True, "OK")
         except Exception as exc:
             logger.warning(
-                "[R-04] Sequence validation error: %s — allowing payload (fail-open)",
+                "[R-04] Sequence validation error: %s — rejecting payload (fail-closed)",
                 exc,
             )
-            return (True, f"validation error (fail-open): {exc}")
+            return (False, f"validation error (fail-closed): {exc}")
 
     @staticmethod
     def _reconciled_state(

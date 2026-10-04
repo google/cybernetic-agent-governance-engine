@@ -157,26 +157,58 @@ All configuration is sourced from environment variables:
 | `ACTUATOR_01_KEY_PATH` | Yes | Client private key PEM path |
 | `ACTUATOR_01_CA_PATH` | Yes | CA bundle PEM path |
 | `ACTUATOR_01_TENANT_ID` | Yes | Secure tenant identifier |
+| `ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL` | No | `https://` (or `file://`) URL of the partner's Ed25519 receipt key manifest (JWKS) |
+| `ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS` | No | `1`/`true`/`yes`: treat unsigned or unverifiable receipts as `UNKNOWN` (requires the manifest URL) |
 
 Missing any required variable causes `from_env()` to raise `RuntimeError` with
 a list of missing keys.
 
+## Signed Receipts (CAGE-proposed extension)
+
+The partner contract does not yet define receipt signatures; this is a
+CAGE-proposed wire extension pending partner adoption and over-the-wire
+conformance testing. A response body MAY carry a detached Ed25519 signature:
+
+```json
+{"status": "accepted", "envelope_digest": "<sha256 hex>", "...": "...",
+ "signature": {"alg": "EdDSA", "kid": "<key id>", "value": "<base64url>"}}
+```
+
+The signed message is `CAGE_ACTUATION_RECEIPT_V1:` followed by the RFC 8785
+(JCS) canonical form of the body without `signature`
+([`RECEIPT_SIGNATURE_DOMAIN_TAG`](constants.py)). [`verify_partner_receipt()`](receipt_verifier.py)
+resolves the public key **only by `kid`** from the independently fetched
+manifest, never from the receipt, and never raises:
+
+| Condition | `verification` | Effect on outcome |
+|---|---|---|
+| Valid signature, signed `envelope_digest` matches ours | `VERIFIED` | Unchanged |
+| No signature, or manifest unconfigured/unreachable | `UNVERIFIED` | Unchanged (strict mode: `UNKNOWN`, finding `RECEIPT_UNVERIFIED`) |
+| Malformed signature, unknown `kid`, bad signature, digest mismatch | `INVALID` | Forced to `UNKNOWN` |
+
+An unauthenticated accept or reject cannot settle the action, so it is treated
+as indeterminate. When a manifest is configured the adapter advertises
+`ActuatorCapability.SIGNED_RECEIPTS`.
+
 ## Fail-Closed Behavior
 
-All failure modes produce `ActuationReceipt(accepted=False)` with structured
-findings:
+Every failure produces `ActuationReceipt(accepted=False)` with structured
+findings and a three-valued `outcome`:
 
-| Condition | Finding code | Effect |
+| Condition | Finding code | Outcome |
 |---|---|---|
-| Envelope too large (> 4KB) | `ENVELOPE_TOO_LARGE` | Hard deny |
-| Invalid clearance structure | `INVALID_CLEARANCE` | Hard deny |
-| Assertion build failure | `ASSERTION_BUILD_ERROR` | Hard deny |
-| Signature quorum failure | `SIGNATURE_QUORUM_ERROR` | Hard deny |
-| Network timeout / transport error | `NETWORK_ERROR` | Hard deny |
-| Non-2xx HTTP status | `HTTP_ERROR` | Hard deny |
-| Malformed response body | `PARSE_ERROR` | Hard deny |
+| Executor / route / credential gate failure | `EXECUTOR_ID_MISMATCH`, `TARGET_ROUTE_MISMATCH`, `CREDENTIAL_BROKER_FAILED` | `REJECTED` (never sent) |
+| Invalid clearance, oversize envelope, assertion or quorum failure | `INVALID_CLEARANCE`, `ENVELOPE_TOO_LARGE`, `ASSERTION_BUILD_FAILED`, `QUORUM_SIGNING_FAILED` | `REJECTED` (never sent) |
+| Transport error before the request left the client | network findings | `REJECTED` (retryable) |
+| Transport error after send, unexpected error | network findings, `UNEXPECTED_ERROR` | `UNKNOWN` |
+| Definitive refusal status from the partner | HTTP findings | `REJECTED` |
+| Any other non-accepted response | HTTP / parse findings | `UNKNOWN` |
+| Invalid receipt signature | `RECEIPT_*` | `UNKNOWN` |
 
-The adapter never returns `accepted=True` on an ambiguous outcome.
+The adapter never returns `accepted=True` on an ambiguous outcome, and it
+never writes evidence itself: the kernel
+`dispatch_actuation()` (`src/gateway/governance/execution_actuator.py`) records
+each receipt exactly once.
 
 ## Vendor Isolation
 

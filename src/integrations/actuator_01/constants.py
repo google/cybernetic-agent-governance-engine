@@ -27,3 +27,9 @@ MAX_TTL_SECONDS = 30
 
 # Nonce format: 32 hex chars (16 bytes)
 NONCE_HEX_LENGTH = 32
+
+# Domain tag prepended to the JCS-canonical receipt body before the partner's
+# Ed25519 receipt signature (CAGE-proposed wire extension; see README
+# "Signed receipts"). Isolates receipt signatures from every other signature
+# context so a receipt signature can never be replayed as an assertion.
+RECEIPT_SIGNATURE_DOMAIN_TAG = b"CAGE_ACTUATION_RECEIPT_V1:"

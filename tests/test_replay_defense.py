@@ -153,119 +153,90 @@ class TestSequenceInSignedPayload:
 
 
 class TestCBFSequenceValidation:
-    """Tests for CBF read-path sequence validation."""
+    """Tests for CBF read-path sequence validation (atomic, regression-only)."""
 
-    @pytest.mark.asyncio
-    async def test_monotonic_sequence_number_rejects_non_advancing_replay(
-        self,
-    ) -> None:
-        """R-04: Verify CBF rejects payloads with non-advancing sequence numbers."""
+    @staticmethod
+    def _cbf():
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-        cbf = ControlBarrierFunction(
+        return ControlBarrierFunction(
             invariant=CashBarrier(),
             cost_resolver=finance_cost_resolver,
             skip_epoch_seed=True,
         )
 
-        # Mock sync Redis client
-        mock_sync_redis = MagicMock()
-        # Last accepted sequence is 10
-        mock_sync_redis.get.return_value = b"10"
+    @staticmethod
+    def _redis(last_accepted: int | None):
+        import fakeredis
 
-        # Incoming sequence is 5 (non-advancing)
-        incoming_sequence = 5
-
-        is_valid, reason = await cbf._validate_sequence(
-            incoming_sequence, "test_source", mock_sync_redis
+        from src.gateway.governance.safety.cbf_engine import (
+            _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
         )
 
+        r = fakeredis.FakeRedis()
+        if last_accepted is not None:
+            r.set(_REDIS_KEY_SEQUENCE_LAST_ACCEPTED, str(last_accepted))
+        return r
+
+    @pytest.mark.asyncio
+    async def test_monotonic_sequence_number_rejects_regression(self) -> None:
+        """R-04: a sequence lower than the high-water mark is a replay."""
+        r = self._redis(10)
+        is_valid, reason = await self._cbf()._validate_sequence(5, "test_source", r)
+
         assert is_valid is False
-        assert "5" in reason
-        assert "10" in reason
-        assert "sequence" in reason.lower() or "<=" in reason
+        assert "5" in reason and "10" in reason
+        assert int(r.get("reconciliation:sequence:last_accepted")) == 10
 
     @pytest.mark.asyncio
     async def test_sequence_validation_accepts_advancing_sequence(self) -> None:
-        """Verify CBF accepts payloads with advancing sequence numbers."""
-        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-
-        cbf = ControlBarrierFunction(
-            invariant=CashBarrier(),
-            cost_resolver=finance_cost_resolver,
-            skip_epoch_seed=True,
-        )
-
-        # Mock sync Redis client
-        mock_sync_redis = MagicMock()
-        # Last accepted sequence is 10
-        mock_sync_redis.get.return_value = b"10"
-
-        # Incoming sequence is 11 (advancing)
-        incoming_sequence = 11
-
-        is_valid, reason = await cbf._validate_sequence(
-            incoming_sequence, "test_source", mock_sync_redis
-        )
+        """An advancing sequence is accepted and advances the high-water mark."""
+        r = self._redis(10)
+        is_valid, reason = await self._cbf()._validate_sequence(11, "test_source", r)
 
         assert is_valid is True
         assert reason == "OK"
-        # Verify last_accepted was updated
-        mock_sync_redis.set.assert_called_once()
+        assert int(r.get("reconciliation:sequence:last_accepted")) == 11
 
     @pytest.mark.asyncio
     async def test_sequence_validation_first_sequence_accepted(self) -> None:
-        """Verify first sequence (when last_accepted is 0) is accepted."""
-        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-
-        cbf = ControlBarrierFunction(
-            invariant=CashBarrier(),
-            cost_resolver=finance_cost_resolver,
-            skip_epoch_seed=True,
-        )
-
-        # Mock sync Redis client (no previous sequence)
-        mock_sync_redis = MagicMock()
-        mock_sync_redis.get.return_value = None  # No previous sequence
-
-        # First sequence
-        incoming_sequence = 1
-
-        is_valid, reason = await cbf._validate_sequence(
-            incoming_sequence, "test_source", mock_sync_redis
-        )
+        """First sequence (no high-water mark yet) is accepted."""
+        r = self._redis(None)
+        is_valid, reason = await self._cbf()._validate_sequence(1, "test_source", r)
 
         assert is_valid is True
         assert reason == "OK"
 
     @pytest.mark.asyncio
-    async def test_sequence_validation_rejects_equal_sequence(self) -> None:
-        """Verify CBF rejects payloads with sequence equal to last_accepted."""
-        from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
-        from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
+    async def test_sequence_validation_accepts_reread_of_current_snapshot(
+        self,
+    ) -> None:
+        """Re-reading the current snapshot (equal sequence) is not a replay.
 
-        cbf = ControlBarrierFunction(
-            invariant=CashBarrier(),
-            cost_resolver=finance_cost_resolver,
-            skip_epoch_seed=True,
-        )
+        Every admission re-reads the same snapshot until the reconciler
+        publishes the next one; rejecting equal sequences would admit only
+        one trade per snapshot generation.
+        """
+        cbf = self._cbf()
+        r = self._redis(None)
+        for _ in range(3):
+            is_valid, reason = await cbf._validate_sequence(42, "test_source", r)
+            assert is_valid is True, reason
+        assert int(r.get("reconciliation:sequence:last_accepted")) == 42
 
-        # Mock sync Redis client
-        mock_sync_redis = MagicMock()
-        mock_sync_redis.get.return_value = b"42"
+    @pytest.mark.asyncio
+    async def test_sequence_validation_fails_closed_on_redis_error(self) -> None:
+        """A Redis error rejects the reconciled payload (fail-closed)."""
+        broken = MagicMock()
+        broken.eval.side_effect = ConnectionError("redis down")
 
-        # Same sequence (replay attempt)
-        incoming_sequence = 42
-
-        is_valid, reason = await cbf._validate_sequence(
-            incoming_sequence, "test_source", mock_sync_redis
+        is_valid, reason = await self._cbf()._validate_sequence(
+            7, "test_source", broken
         )
 
         assert is_valid is False
-        assert "42" in reason
+        assert "fail-closed" in reason
 
     @pytest.mark.asyncio
     async def test_sequence_zero_default_accepted_when_disabled(self) -> None:
@@ -398,9 +369,11 @@ class TestReplayDefenseTelemetry:
                 skip_epoch_seed=True,
             )
 
-            # Mock sync Redis - last_accepted=10, incoming=5 (replay)
-            mock_sync_redis = MagicMock()
-            mock_sync_redis.get.return_value = b"10"
+            # last_accepted=10, incoming=5 (replay)
+            import fakeredis
+
+            mock_sync_redis = fakeredis.FakeRedis()
+            mock_sync_redis.set("reconciliation:sequence:last_accepted", "10")
 
             is_valid, _ = await cbf._validate_sequence(
                 5, "test_source", mock_sync_redis

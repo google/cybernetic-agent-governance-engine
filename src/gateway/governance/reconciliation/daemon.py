@@ -818,21 +818,12 @@ class GroundTruthReconciler:
                 result.invariant_id, target_provider
             )
             if is_snapshot and barrier_floor is not None and scalar < barrier_floor:
+                # Fail closed without touching the gateway's CBF state key:
+                # the reconciler writes only snapshot keys. Overwriting the
+                # state key would bypass the Lua CAS/ledger discipline and
+                # re-anchor the discrepancy baseline to the custodian's own
+                # value, masking the divergence on the next cycle.
                 self._failure_count += 1
-                state_key = getattr(
-                    target_provider,
-                    "state_key",
-                    _DEFAULT_STATE_KEYS.get(result.invariant_id),
-                )
-                if (
-                    self._redis is not None
-                    and state_key
-                    and hasattr(self._redis, "set")
-                ):
-                    try:
-                        self._redis.set(state_key, str(scalar))
-                    except Exception:
-                        pass
                 self._increment_fence_epoch()
                 self._invalidate_redis_verified_state(result.invariant_id)
                 result.error = (
@@ -947,7 +938,19 @@ class GroundTruthReconciler:
         return results
 
     def run_loop(self) -> None:
-        """Run the reconciliation daemon in a blocking loop."""
+        """Run the reconciliation daemon in a blocking loop.
+
+        Raises:
+            ValueError: If ``ttl < 2 * poll_interval``. A snapshot must
+                survive at least one missed tick, otherwise strict-mode CBF
+                refuses every admission for part of each cycle.
+        """
+        if self._ttl < 2 * self._poll_interval:
+            raise ValueError(
+                f"Reconciler TTL ({self._ttl}s) must be >= 2 x poll interval "
+                f"({self._poll_interval}s) so a signed snapshot outlives one "
+                "missed tick."
+            )
         while True:
             try:
                 self.reconcile_all()
@@ -1123,7 +1126,12 @@ def _single_shot_enabled() -> bool:
 
 
 def main() -> int:
-    """Entry point: one reconciliation pass (CronJob) or the polling loop."""
+    """Entry point: the polling loop (Deployment) or one ad-hoc pass.
+
+    ``RECONCILIATION_SINGLE_SHOT=true`` runs a single ``reconcile_all()`` and
+    exits (for ``kubectl run`` / diagnostics). It is not a scheduling mode:
+    single-shot runs cannot keep a TTL-bound snapshot continuously fresh.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s %(message)s",

@@ -114,7 +114,7 @@ graph TB
     SYM -.->|BLOCKED / Audit| EVID
     CQG -->|Verified Token| ACTUATOR
     CQG -->|Seal & Audit| EVID
-    ACTUATOR -->|ingest_actuation_receipt| EVID
+    ACTUATOR -->|dispatch_actuation: receipt recorded once| EVID
     EVID --> R_HOT
     R_HOT -->|Compliance-bridge EvidenceCustodian<br/>re-verify, KMS attest, put-if-absent| CH_COLD
     CH_COLD -->|CustodyVerifier<br/>kid-resolved verify, assert_citable| OSCAL_CITE[OSCAL Assessment Results]
@@ -127,7 +127,7 @@ graph TB
    - **Phase 1 (Read-Only Inspection)**: Runs the non-mutating stages sequentially — FTRA, STPA, OPA, confidence, then the domain's read-only tiers by `(phase, order)` (e.g. bounding, consensus, causal) — and stops at the first `HARD` violation.
    - **Phase 2 (Atomic Mutation)**: Only if Phase 1 produced zero violations do the mutating tiers commit (e.g. discrete-time Control Barrier Functions via Redis Lua scripts and fiscal reservations). Each commit returns a `CommitReceipt` held by the request's `ReservationScope` ([`reservation.py`](../../src/gateway/governance/governor/reservation.py)); any Phase 2 failure rolls back exactly the recorded receipts in LIFO order.
 4. **Seal & Actuation Clearance**: On a clean run the governor issues a routing seal inside the same `ReservationScope` ([`sealing.py`](../../src/gateway/governance/governor/sealing.py)). Commits stay in force only once the seal is issued; a failing or cancelled seal rolls them all back. The seal is a KMS-signed JWT bound to a durable evidence record ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)). Before dispatch, [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) verifies the seal and only then atomically consumes its nonce, so exactly one verified caller executes. A short-lived KMS-signed ConsequenceToken (JWS, [`consequence_token_service.py`](../../src/gateway/governance/consequence_token_service.py)) is the separate single-use credential for normative-provider admissions, verified by the [`ConsequenceGateway`](CONSEQUENCE_GATEWAY.md) only for callers that present one; it is not on the governor ALLOW path.
-5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, `CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`, and `ACTUATION_RECEIPT` / `ACTUATION_REFUSAL_RECEIPT` via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1), asynchronously drained to durable cold storage by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py), and verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py).
+5. **Evidentiary Hash-Chaining**: Every decision, receipt (RefusalReceipt, `CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`, and `ACTUATION_RECEIPT` / `ACTUATION_REFUSAL_RECEIPT` / `ACTUATION_INDETERMINATE_RECEIPT`, recorded exactly once per dispatch with their signature `verification` status by the kernel [`dispatch_actuation()`](../../src/gateway/governance/execution_actuator.py)), and outcome is appended to an immutable, SHA-256 hash-chained stream in Redis (db=1), asynchronously drained to durable cold storage by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py), and verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py).
 
 ---
 

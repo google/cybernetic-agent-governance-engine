@@ -43,6 +43,8 @@ class ActuatorCapability(str, Enum):
     MTLS_REQUIRED = "mtls_required"
     DIGEST_ONLY_PAYLOAD = "digest_only_payload"
     REPLAY_PROTECTED = "replay_protected"
+    # Partner receipts are signature-verified against a kid-resolved manifest.
+    SIGNED_RECEIPTS = "signed_receipts"
 
 
 @dataclass
@@ -156,14 +158,53 @@ class ExecutionClearance:
         }
 
 
+class ActuationOutcome(str, Enum):
+    """What the caller may conclude about the downstream side effect.
+
+    ``REJECTED`` means the action *definitively did not* happen (refused
+    before the wire, or an explicit admission-control refusal). Anything the
+    caller cannot rule out — a timeout after the request left, a 5xx, a 200
+    without a parseable receipt, an execution that succeeded but could not be
+    journaled — is ``UNKNOWN``. Settlement treats ``UNKNOWN`` like
+    ``ACCEPTED`` (reservations are confirmed, never released): the
+    reconciler's custodian snapshot nets an unfilled order back out, whereas
+    releasing a filled one over-credits headroom.
+    """
+
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReceiptVerification(str, Enum):
+    """Cryptographic status of the actuator's own receipt.
+
+    Resolution is not verification: a parsed partner response is
+    ``UNVERIFIED`` until its signature has been checked against a key
+    resolved by ``kid`` from an independently fetched key manifest.
+    ``INVALID`` means a signature was present and failed (bad signature,
+    unknown ``kid``, or a receipt bound to a different envelope); the
+    partner's claim cannot be trusted in either direction, so the outcome
+    must be ``UNKNOWN``.
+    """
+
+    VERIFIED = "VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    INVALID = "INVALID"
+
+
 @dataclass
 class ActuationReceipt:
     """
     Outcome of an actuation attempt.
 
     Returned by ExecutionActuator.actuate(). Follows the fail-closed pattern:
-    network timeouts, HTTP errors, and parse failures produce accepted=False
-    with structured findings.
+    network timeouts, HTTP errors, and parse failures never produce
+    ``accepted=True``. ``outcome`` distinguishes a definitive refusal
+    (``REJECTED``) from an indeterminate one (``UNKNOWN``); when omitted it
+    is derived from ``accepted`` (``True`` → ``ACCEPTED``, ``False`` →
+    ``REJECTED``), so adapters must set ``UNKNOWN`` explicitly wherever the
+    side effect may already have happened.
     """
 
     accepted: bool  # True only on a verified 200 with a valid receipt
@@ -171,11 +212,44 @@ class ActuationReceipt:
     session_uuid: str | None  # Partner-issued session UUID (if accepted)
     raw_receipt: dict | None  # Full partner receipt (if accepted)
     findings: list[dict] = field(default_factory=list)  # Error/rejection details
-    retryable: bool = False  # True only for transient failures (429, 503, load shed)
+    # True only for transient failures that definitively did not execute
+    # (429, 503, load shed); never True for an UNKNOWN outcome, where a retry
+    # could duplicate the side effect.
+    retryable: bool = False
 
     # Evidence chain fields
     envelope_digest: str | None = None  # SHA-256 of canonical envelope bytes
     timestamp_utc: str | None = None  # ISO-8601 UTC when actuation was attempted
+
+    outcome: ActuationOutcome | None = None
+
+    # Cryptographic status of the actuator's receipt (see ReceiptVerification).
+    verification: ReceiptVerification = ReceiptVerification.UNVERIFIED
+
+    def __post_init__(self) -> None:
+        if self.outcome is None:
+            self.outcome = (
+                ActuationOutcome.ACCEPTED if self.accepted else ActuationOutcome.REJECTED
+            )
+        if self.accepted != (self.outcome is ActuationOutcome.ACCEPTED):
+            raise ValueError(
+                f"accepted={self.accepted} contradicts outcome={self.outcome.value}"
+            )
+        if self.outcome is ActuationOutcome.UNKNOWN and self.retryable:
+            raise ValueError("an UNKNOWN outcome must not be marked retryable")
+        if (
+            self.verification is ReceiptVerification.INVALID
+            and self.outcome is not ActuationOutcome.UNKNOWN
+        ):
+            raise ValueError(
+                "an INVALID receipt signature leaves the outcome UNKNOWN, "
+                f"got {self.outcome.value}"
+            )
+
+    @property
+    def may_have_executed(self) -> bool:
+        """True unless the action definitively did not happen."""
+        return self.outcome is not ActuationOutcome.REJECTED
 
 
 @runtime_checkable
@@ -236,5 +310,11 @@ class ExecutionActuator(Protocol):
         - Canonical envelope ≤ 4096 bytes
 
         Invariant: An envelope is evidence that ALLOW was reached.
+
+        Actuators do NOT write evidence. The kernel's ``dispatch_actuation()``
+        (``src.gateway.governance.execution_actuator``) is the single caller:
+        it records every receipt — accepted, refused, or indeterminate —
+        exactly once, and converts an exception raised here into an
+        ``UNKNOWN`` receipt.
         """
         ...

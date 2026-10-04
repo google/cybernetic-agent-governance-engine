@@ -197,6 +197,46 @@ def test_explicit_absolute_threshold_still_wins(
     assert "threshold=5.00" in (result.error or "")
 
 
+def test_floor_violation_never_writes_cbf_state_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A snapshot below the barrier floor fails closed without touching the state key.
+
+    The reconciler writes only snapshot keys. Overwriting ``STATE_KEY`` would
+    bypass the gateway's Lua CAS and re-anchor the discrepancy baseline to the
+    custodian's own value, so the next cycle's band check could never trip.
+    """
+    signer = _signer(monkeypatch)
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    redis.set(STATE_KEY, "1000.0")
+    redis.set(FENCE_EPOCH_KEY, "0")
+    provider = SimulatedCashLedgerProvider(
+        initial_scalar=400.0, barrier_floor=500.0, seed=42
+    )
+    reconciler = GroundTruthReconciler(
+        provider=provider, redis_client=redis, signer=signer
+    )
+
+    result = reconciler.reconcile(invariant_id=INVARIANT_ID)
+
+    assert result.is_valid is False
+    assert "below barrier floor" in (result.error or "")
+    assert redis.get(STATE_KEY) == "1000.0"
+    assert int(redis.get(FENCE_EPOCH_KEY)) == 1
+    assert read_verified_state(redis, INVARIANT_ID, signer=signer) is None
+
+    # With the floor lifted, the untouched baseline still lets the band trip:
+    # delta 600 > max(0.5 * 1000, 100).
+    follow_up = GroundTruthReconciler(
+        provider=SimulatedCashLedgerProvider(
+            initial_scalar=400.0, barrier_floor=0.0, seed=42
+        ),
+        redis_client=redis,
+        signer=signer,
+    ).reconcile(invariant_id=INVARIANT_ID)
+    assert follow_up.discrepancy_detected is True
+
+
 def test_constructor_floor_overrides_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pinning ``discrepancy_abs_floor=0.0`` restores the ratio-only behaviour (and it refuses)."""
     signer = _signer(monkeypatch)
