@@ -135,7 +135,8 @@ class BrokerActuator:
         1. Validates clearance signature digest and quorum
         2. Constructs TradeOrder from clearance parameters
         3. Invokes execute_trade with routing_seal
-        4. Ingests ActuationReceipt into the evidence stream and returns it
+        4. Returns the ActuationReceipt (evidence is recorded by the kernel's
+           ``dispatch_actuation()``, never by the actuator)
 
         Args:
             clearance: Validated ExecutionClearance from governance kernel
@@ -144,15 +145,6 @@ class BrokerActuator:
             ActuationReceipt with accepted=True on success, or accepted=False
             with structured findings on failure.
         """
-        from src.gateway.governance.execution_actuator import ingest_actuation_receipt
-
-        receipt = await self._actuate_once(clearance)
-        await ingest_actuation_receipt(
-            clearance, receipt, actuator_id=self.actuator_id
-        )
-        return receipt
-
-    async def _actuate_once(self, clearance: ExecutionClearance) -> ActuationReceipt:
         timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
         findings: list[dict] = []
 

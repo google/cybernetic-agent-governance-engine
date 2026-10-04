@@ -854,16 +854,10 @@ async def test_broker_actuator_journals_the_fill_with_the_custodian(
     custodian = SimulatedCashLedgerProvider(journal=journal, settlement_lag_s=0.0)
     actuator = BrokerActuator(ledger=custodian)
     clearance = _clearance(250.0)
-    with (
-        patch(
-            "src.cage_finance.actuators.broker_actuator.execute_trade",
-            new_callable=AsyncMock,
-            return_value="EXECUTED",
-        ),
-        patch(
-            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
-            new_callable=AsyncMock,
-        ),
+    with patch(
+        "src.cage_finance.actuators.broker_actuator.execute_trade",
+        new_callable=AsyncMock,
+        return_value="EXECUTED",
     ):
         receipt = await actuator.actuate(clearance)
     assert receipt.accepted is True
@@ -883,16 +877,10 @@ async def test_broker_actuator_refuses_when_the_custodian_journal_fails(
     broken = MagicMock()
     broken.record_debit = MagicMock(side_effect=ConnectionError("journal down"))
     actuator = BrokerActuator(ledger=broken)
-    with (
-        patch(
-            "src.cage_finance.actuators.broker_actuator.execute_trade",
-            new_callable=AsyncMock,
-            return_value="EXECUTED",
-        ),
-        patch(
-            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
-            new_callable=AsyncMock,
-        ),
+    with patch(
+        "src.cage_finance.actuators.broker_actuator.execute_trade",
+        new_callable=AsyncMock,
+        return_value="EXECUTED",
     ):
         receipt = await actuator.actuate(_clearance(250.0))
     assert receipt.accepted is False

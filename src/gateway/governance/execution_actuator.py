@@ -40,6 +40,7 @@ from src.gateway.governance.seams.actuation import (
     ActuatorCapability,
     ExecutionActuator,
     ExecutionClearance,
+    ReceiptVerification,
 )
 
 logger = logging.getLogger("Gateway.Governance.ExecutionActuator")
@@ -51,10 +52,59 @@ __all__ = [
     "ActuatorRegistry",
     "ExecutionActuator",
     "ExecutionClearance",
+    "ReceiptVerification",
+    "dispatch_actuation",
     "get_actuator_registry",
     "ingest_actuation_receipt",
     "load_actuators_from_env",
 ]
+
+_EVENT_TYPE_BY_OUTCOME: dict[ActuationOutcome, str] = {
+    ActuationOutcome.ACCEPTED: "ACTUATION_RECEIPT",
+    ActuationOutcome.REJECTED: "ACTUATION_REFUSAL_RECEIPT",
+    ActuationOutcome.UNKNOWN: "ACTUATION_INDETERMINATE_RECEIPT",
+}
+
+
+async def dispatch_actuation(
+    actuator: ExecutionActuator,
+    clearance: ExecutionClearance,
+) -> ActuationReceipt:
+    """Actuate through the kernel boundary and record the receipt exactly once.
+
+    This is the only sanctioned way to invoke ``ExecutionActuator.actuate()``.
+    Actuators never write evidence themselves, so every receipt — accepted,
+    refused, or indeterminate — enters the hash-chained stream from this one
+    place. An exception raised by the actuator is not proof the side effect
+    did not happen, so it is converted into an ``UNKNOWN``, non-retryable
+    receipt rather than propagated.
+    """
+    try:
+        receipt = await actuator.actuate(clearance)
+    except Exception as exc:
+        logger.error(
+            "[ExecutionActuator] %s raised during actuate (outcome UNKNOWN): %s",
+            actuator.actuator_id,
+            exc,
+        )
+        receipt = ActuationReceipt(
+            accepted=False,
+            receipt_id=None,
+            session_uuid=None,
+            raw_receipt=None,
+            findings=[
+                {
+                    "code": "ACTUATOR_EXCEPTION",
+                    "severity": "TERMINAL",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+            retryable=False,
+            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+            outcome=ActuationOutcome.UNKNOWN,
+        )
+    await ingest_actuation_receipt(clearance, receipt, actuator_id=actuator.actuator_id)
+    return receipt
 
 
 async def ingest_actuation_receipt(
@@ -63,27 +113,18 @@ async def ingest_actuation_receipt(
     *,
     actuator_id: str | None = None,
 ) -> str | None:
-    """Emit an ``ActuationReceipt`` (accepted or refused) to the evidence stream.
+    """Emit an ``ActuationReceipt`` to the evidence stream; return its msg id.
 
-    Idempotent per ``ActuationReceipt`` instance so calling this inside both an
-    actuator's ``actuate()`` implementation and a caller's dispatch wrapper
-    produces at most one hash-chained record. Refusal receipts (including
-    ``CREDENTIAL_BROKER_FAILED``, ``EXECUTOR_ID_MISMATCH``, and
+    Called by ``dispatch_actuation()``; not by actuators. Refusal receipts
+    (including ``CREDENTIAL_BROKER_FAILED``, ``EXECUTOR_ID_MISMATCH``, and
     ``TARGET_ROUTE_MISMATCH``) are recorded as ``ACTUATION_REFUSAL_RECEIPT``;
-    accepted receipts are recorded as ``ACTUATION_RECEIPT``; indeterminate
-    ones (the side effect may have happened) as
-    ``ACTUATION_INDETERMINATE_RECEIPT``.
+    accepted receipts as ``ACTUATION_RECEIPT``; indeterminate ones (the side
+    effect may have happened) as ``ACTUATION_INDETERMINATE_RECEIPT``. The
+    receipt's signature ``verification`` status is recorded alongside.
     """
-    if getattr(receipt, "_evidence_ingested", False):
-        return getattr(receipt, "evidence_id", None)
-
     from src.gateway.governance.evidence.stream import get_evidence_sink
 
-    event_type = {
-        ActuationOutcome.ACCEPTED: "ACTUATION_RECEIPT",
-        ActuationOutcome.REJECTED: "ACTUATION_REFUSAL_RECEIPT",
-        ActuationOutcome.UNKNOWN: "ACTUATION_INDETERMINATE_RECEIPT",
-    }[receipt.outcome]
+    event_type = _EVENT_TYPE_BY_OUTCOME[receipt.outcome]
     finding_codes = [
         str(f.get("code", ""))
         for f in (receipt.findings or [])
@@ -94,6 +135,7 @@ async def ingest_actuation_receipt(
         "controlId": "AC-3",
         "accepted": bool(receipt.accepted),
         "outcome": receipt.outcome.value,
+        "verification": receipt.verification.value,
         "actuator_id": actuator_id or clearance.executor_id,
         "thread_id": clearance.thread_id,
         "action": clearance.action,
@@ -115,10 +157,7 @@ async def ingest_actuation_receipt(
 
     try:
         sink = get_evidence_sink()
-        msg_id = await sink.ingest(event)
-        object.__setattr__(receipt, "_evidence_ingested", True)
-        object.__setattr__(receipt, "evidence_id", msg_id)
-        return msg_id
+        return await sink.ingest(event)
     except Exception as exc:
         logger.error(
             "[ExecutionActuator] Failed to ingest %s for action=%s thread_id=%s: %s",

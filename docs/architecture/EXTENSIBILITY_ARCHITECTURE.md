@@ -510,7 +510,7 @@ All three are re-exported from [`src/gateway/governance/seams/__init__.py`](../.
 - Fail closed: raise on authorization failure rather than returning empty headers.
 - Be safe for concurrent access.
 
-**Fail-closed semantics:** The reference actuator treats *any* broker exception as terminal — it returns `ActuationReceipt(accepted=False, retryable=False)` with a single `CREDENTIAL_BROKER_FAILED` finding, records an `ACTUATION_REFUSAL_RECEIPT` in [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py), and performs no network dispatch. See [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md) for the full ALLOW-path gate sequence and [`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py) for the behavioural contract.
+**Fail-closed semantics:** The reference actuator treats *any* broker exception as terminal — it returns `ActuationReceipt(accepted=False, retryable=False)` with a single `CREDENTIAL_BROKER_FAILED` finding, and performs no network dispatch. The actuator itself writes no evidence: the kernel [`dispatch_actuation()`](../../src/gateway/governance/execution_actuator.py) records the receipt as an `ACTUATION_REFUSAL_RECEIPT` in [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py). See [`CONSEQUENCE_GATEWAY.md §2.1`](CONSEQUENCE_GATEWAY.md) for the full ALLOW-path gate sequence and [`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py) for the behavioural contract.
 
 **Hermetic default:** no broker is configured unless one is explicitly constructed and injected, so local development and CI runs dispatch without outbound credentials.
 

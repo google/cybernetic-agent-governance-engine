@@ -43,6 +43,8 @@ class ActuatorCapability(str, Enum):
     MTLS_REQUIRED = "mtls_required"
     DIGEST_ONLY_PAYLOAD = "digest_only_payload"
     REPLAY_PROTECTED = "replay_protected"
+    # Partner receipts are signature-verified against a kid-resolved manifest.
+    SIGNED_RECEIPTS = "signed_receipts"
 
 
 @dataclass
@@ -174,6 +176,23 @@ class ActuationOutcome(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class ReceiptVerification(str, Enum):
+    """Cryptographic status of the actuator's own receipt.
+
+    Resolution is not verification: a parsed partner response is
+    ``UNVERIFIED`` until its signature has been checked against a key
+    resolved by ``kid`` from an independently fetched key manifest.
+    ``INVALID`` means a signature was present and failed (bad signature,
+    unknown ``kid``, or a receipt bound to a different envelope); the
+    partner's claim cannot be trusted in either direction, so the outcome
+    must be ``UNKNOWN``.
+    """
+
+    VERIFIED = "VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    INVALID = "INVALID"
+
+
 @dataclass
 class ActuationReceipt:
     """
@@ -204,6 +223,9 @@ class ActuationReceipt:
 
     outcome: ActuationOutcome | None = None
 
+    # Cryptographic status of the actuator's receipt (see ReceiptVerification).
+    verification: ReceiptVerification = ReceiptVerification.UNVERIFIED
+
     def __post_init__(self) -> None:
         if self.outcome is None:
             self.outcome = (
@@ -215,6 +237,14 @@ class ActuationReceipt:
             )
         if self.outcome is ActuationOutcome.UNKNOWN and self.retryable:
             raise ValueError("an UNKNOWN outcome must not be marked retryable")
+        if (
+            self.verification is ReceiptVerification.INVALID
+            and self.outcome is not ActuationOutcome.UNKNOWN
+        ):
+            raise ValueError(
+                "an INVALID receipt signature leaves the outcome UNKNOWN, "
+                f"got {self.outcome.value}"
+            )
 
     @property
     def may_have_executed(self) -> bool:
@@ -280,5 +310,11 @@ class ExecutionActuator(Protocol):
         - Canonical envelope ≤ 4096 bytes
 
         Invariant: An envelope is evidence that ALLOW was reached.
+
+        Actuators do NOT write evidence. The kernel's ``dispatch_actuation()``
+        (``src.gateway.governance.execution_actuator``) is the single caller:
+        it records every receipt — accepted, refused, or indeterminate —
+        exactly once, and converts an exception raised here into an
+        ``UNKNOWN`` receipt.
         """
         ...

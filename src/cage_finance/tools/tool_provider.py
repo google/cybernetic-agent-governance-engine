@@ -29,7 +29,10 @@ from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.market_service import get_market_data
 from src.gateway.governance.contracts import DomainToolProvider
-from src.gateway.governance.execution_actuator import get_actuator_registry
+from src.gateway.governance.execution_actuator import (
+    dispatch_actuation,
+    get_actuator_registry,
+)
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
     enforce_approved_governance,
@@ -284,28 +287,13 @@ async def execute_trade_action(
                 action="execute_trade",
             )
 
-        receipt = None
-        try:
-            from src.gateway.governance.execution_actuator import (
-                ingest_actuation_receipt,
-            )
-
-            receipt = await actuator.actuate(clearance)
-            await ingest_actuation_receipt(
-                clearance, receipt, actuator_id=getattr(actuator, "actuator_id", None)
-            )
-        except Exception as exc:
-            # An actuator that raised gives no evidence the order did NOT
-            # reach the venue, so its outcome is indeterminate: confirm the
-            # reservations (conservative) rather than release headroom.
-            executed = True if receipt is None else receipt.may_have_executed
-            logger.error(
-                "Actuation error (settling executed=%s): %s", executed, exc
-            )
-            return f"ERROR: {exc}"
+        # The kernel dispatcher records the receipt exactly once and turns an
+        # actuator exception into an UNKNOWN receipt. Anything not provably
+        # REJECTED confirms the reservations rather than releasing headroom.
+        receipt = await dispatch_actuation(actuator, clearance)
+        executed = receipt.may_have_executed
 
         if not receipt.accepted:
-            executed = receipt.may_have_executed
             findings_str = "; ".join(
                 f"{f.get('code', 'UNKNOWN')}: {f.get('detail', '')}"
                 for f in receipt.findings
@@ -320,7 +308,6 @@ async def execute_trade_action(
                 f"Actuation rejected: {findings_str}", action="execute_trade"
             )
 
-        executed = True
         return f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} (Receipt ID: {receipt.receipt_id})"
     finally:
         await _settle(governor, seal, executed=executed)

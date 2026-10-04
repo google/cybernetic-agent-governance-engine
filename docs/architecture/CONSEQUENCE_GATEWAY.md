@@ -34,7 +34,8 @@ sequenceDiagram
     Store-->>Gateway: Result: Consumed Successfully
     Gateway->>Evidence: _emit_evaluation() -> CONSEQUENCE_GATEWAY_DECISION / REFUSAL
     Gateway-->>Adapter: ConsequenceDecision.EXECUTE
-    Adapter->>Evidence: ingest_actuation_receipt() -> ACTUATION_RECEIPT / REFUSAL_RECEIPT
+    Note over Adapter,Evidence: Kernel dispatch_actuation() wraps actuate() and records the receipt once
+    Adapter->>Evidence: (via dispatch_actuation) ACTUATION_RECEIPT / REFUSAL / INDETERMINATE
 ```
 
 ### 2.1 Pre-Dispatch Credential Authorization (ALLOW Path)
@@ -76,14 +77,26 @@ secret for the tool) — aborts the dispatch before envelope construction and
 returns `ActuationReceipt(accepted=False, retryable=False, envelope_digest=None)`
 carrying a single `TERMINAL` finding with code `CREDENTIAL_BROKER_FAILED`. No
 canonical envelope is built, no quorum signature is produced, and no HTTP
-request is issued. Every terminal actuation outcome is recorded in
-[`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) via idempotent
+request is issued. Actuators never write evidence themselves: the kernel
+[`dispatch_actuation()`](../../src/gateway/governance/execution_actuator.py) invokes
+`actuate()` and records every outcome exactly once in
+[`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) via
 [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py) as
-`ACTUATION_RECEIPT` (`accepted=True`) or `ACTUATION_REFUSAL_RECEIPT` (`accepted=False`,
+`ACTUATION_RECEIPT` (`ACCEPTED`), `ACTUATION_REFUSAL_RECEIPT` (`REJECTED`,
 including `CREDENTIAL_BROKER_FAILED`, `EXECUTOR_ID_MISMATCH`, and `TARGET_ROUTE_MISMATCH`),
-so post-evaluation actuation refusals enter the tamper-evident evidence chain with the same
-completeness as pre-execution governance verdicts. When no broker is configured the actuator
+or `ACTUATION_INDETERMINATE_RECEIPT` (`UNKNOWN`, including an actuator exception recorded as
+`ACTUATOR_EXCEPTION`), so post-evaluation actuation refusals enter the tamper-evident evidence chain
+with the same completeness as pre-execution governance verdicts. When no broker is configured the actuator
 dispatches without `extra_headers`; the broker is an opt-in hardening seam, not a mandatory gate.
+
+**Receipt verification:** each receipt carries a
+[`ReceiptVerification`](../../src/gateway/governance/seams/actuation.py) status. The
+reference actuator verifies an optional detached Ed25519 receipt signature against a
+`kid`-resolved key manifest
+([`receipt_verifier.py`](../../src/integrations/actuator_01/receipt_verifier.py)); an
+invalid signature, unknown `kid`, or envelope-digest mismatch is `INVALID` and forces the
+outcome to `UNKNOWN`, because an unauthenticated accept/reject cannot settle the action.
+Unsigned receipts are `UNVERIFIED` unless strict mode requires signatures.
 
 Behaviour is pinned by
 [`tests/test_execution_actuator_broker.py`](../../tests/test_execution_actuator_broker.py).

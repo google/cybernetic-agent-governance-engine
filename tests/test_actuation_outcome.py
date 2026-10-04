@@ -28,12 +28,69 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.gateway.governance.execution_actuator import dispatch_actuation
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
+from src.gateway.governance.seams.actuation import (
+    ActuationOutcome,
+    ActuationReceipt,
+    ExecutionClearance,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _SEAL = "valid-seal-outcome"
+
+
+class TestDispatchActuation:
+    """The kernel dispatcher is the single writer of actuation evidence."""
+
+    @staticmethod
+    def _clearance() -> ExecutionClearance:
+        return ExecutionClearance(
+            thread_id="t-1",
+            decision="ALLOW",
+            decision_path="DIRECT",
+            action="execute_trade",
+            target="acct",
+            operator_urn="urn:op",
+            issued_at=0,
+            issued_at_provenance="CONSTRUCTION_TIME",
+            correlation_id="550e8400-e29b-41d4-a716-446655440000",
+            correlation_id_source="INGRESS_MINTED",
+            governance_decision_digest="a" * 64,
+            opa_input_digest="b" * 64,
+            nonce="c" * 32,
+            approvals=[],
+            required_quorum=0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_records_each_receipt_exactly_once(self) -> None:
+        actuator = MagicMock(actuator_id="stub")
+        actuator.actuate = AsyncMock(return_value=_receipt(accepted=True))
+        with patch(
+            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+            new_callable=AsyncMock,
+        ) as ingest:
+            receipt = await dispatch_actuation(actuator, self._clearance())
+        assert receipt.outcome is ActuationOutcome.ACCEPTED
+        ingest.assert_awaited_once()
+        assert ingest.await_args.kwargs["actuator_id"] == "stub"
+
+    @pytest.mark.asyncio
+    async def test_actuator_exception_becomes_recorded_unknown_receipt(self) -> None:
+        actuator = MagicMock(actuator_id="stub")
+        actuator.actuate = AsyncMock(side_effect=TimeoutError("venue"))
+        with patch(
+            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+            new_callable=AsyncMock,
+        ) as ingest:
+            receipt = await dispatch_actuation(actuator, self._clearance())
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
+        assert receipt.retryable is False
+        assert receipt.findings[0]["code"] == "ACTUATOR_EXCEPTION"
+        ingest.assert_awaited_once()
+        assert ingest.await_args.args[1] is receipt
 
 
 def _receipt(**overrides) -> ActuationReceipt:
@@ -129,5 +186,6 @@ class TestSettlementDirection:
         governor, result = await _run_trade(
             AsyncMock(side_effect=RuntimeError("venue socket died"))
         )
-        assert isinstance(result, str) and result.startswith("ERROR:")
+        assert isinstance(result, SymbolicGovernorViolation)
+        assert "ACTUATOR_EXCEPTION" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)

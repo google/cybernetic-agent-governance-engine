@@ -97,11 +97,11 @@ async def test_rejected_trade_releases() -> None:
 @pytest.mark.asyncio
 async def test_actuation_error_confirms() -> None:
     # An actuator that raised (e.g. timed out mid-request) gives no proof the
-    # order did not fill: the outcome is indeterminate, so reservations are
-    # confirmed (conservative) rather than released (fail-open).
+    # order did not fill: dispatch_actuation records it as an UNKNOWN receipt,
+    # so reservations are confirmed (conservative), never released.
     governor = _governor()
-    result = await _run(governor, actuate=AsyncMock(side_effect=TimeoutError("broker")))
-    assert result.startswith("ERROR")
+    with pytest.raises(SymbolicGovernorViolation, match="indeterminate"):
+        await _run(governor, actuate=AsyncMock(side_effect=TimeoutError("broker")))
     governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
 

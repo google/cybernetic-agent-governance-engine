@@ -62,6 +62,7 @@ from src.gateway.governance.execution_actuator import (
     ActuationReceipt,
     ActuatorCapability,
     ExecutionClearance,
+    ReceiptVerification,
 )
 from src.gateway.governance.execution_actuator import (
     ExecutionActuator as ExecutionActuator,
@@ -78,12 +79,17 @@ from src.integrations.actuator_01.envelope_builder import (
     InvalidClearanceError,
     build_and_canonicalize,
 )
+from src.integrations.actuator_01.receipt_verifier import verify_partner_receipt
 from src.integrations.actuator_01.response_classifier import (
     ResponseCategory,
     classify_network_error,
     classify_response,
 )
 from src.integrations.actuator_01.signatures import sign_for_quorum
+from src.integrations.trust.key_manifest import (
+    Ed25519KeyManifestClient,
+    Ed25519KeyResolver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +102,8 @@ _ENV_CERT_PATH = "ACTUATOR_01_CERT_PATH"
 _ENV_KEY_PATH = "ACTUATOR_01_KEY_PATH"
 _ENV_CA_PATH = "ACTUATOR_01_CA_PATH"
 _ENV_TENANT_ID = "ACTUATOR_01_TENANT_ID"
+_ENV_RECEIPT_KEY_MANIFEST_URL = "ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL"
+_ENV_REQUIRE_SIGNED_RECEIPTS = "ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS"
 
 # Capabilities declared by this actuator.
 _CAPABILITIES: set[ActuatorCapability] = {
@@ -130,6 +138,7 @@ class Actuator01Adapter:
     - mTLS HTTP submission
     - Response classification with fail-closed semantics
     - Optional credential broker integration for outbound authentication
+    - Optional kid-resolved verification of partner-signed receipts
 
     Configuration is sourced from environment variables:
     - ``ACTUATOR_01_ENDPOINT``: Base URL (required)
@@ -137,6 +146,11 @@ class Actuator01Adapter:
     - ``ACTUATOR_01_KEY_PATH``: Client private key PEM (required)
     - ``ACTUATOR_01_CA_PATH``: CA bundle PEM (required)
     - ``ACTUATOR_01_TENANT_ID``: Secure tenant identifier (required)
+    - ``ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL``: Partner receipt-signing JWKS
+      (optional; enables receipt signature verification)
+    - ``ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS``: ``true`` to treat any partner
+      response without a VERIFIED signature as an UNKNOWN outcome (requires
+      the manifest URL)
 
     Args:
         client: Pre-configured ``ActuatorHttpClient``.
@@ -145,6 +159,13 @@ class Actuator01Adapter:
             for per-operator signing keys. If ``None``, defaults to ``signer`` for all operators.
         policy_signer: Optional policy authority signer for dual-authority decision signatures.
         credential_broker: Optional ``CredentialBrokerAdapter`` for fetching outbound API credentials.
+        receipt_key_resolver: Optional kid-resolved trust anchor for partner
+            receipt signatures. Without it, signed receipts are ``UNVERIFIED``.
+        require_signed_receipts: Strict mode — only a ``VERIFIED`` partner
+            response may move the outcome off ``UNKNOWN``.
+
+    Raises:
+        ValueError: ``require_signed_receipts`` without a ``receipt_key_resolver``.
     """
 
     def __init__(
@@ -154,12 +175,21 @@ class Actuator01Adapter:
         signer_resolver: SignerResolver | None = None,
         policy_signer: RawMessageSigner | None = None,
         credential_broker: CredentialBrokerAdapter | None = None,
+        receipt_key_resolver: Ed25519KeyResolver | None = None,
+        require_signed_receipts: bool = False,
     ) -> None:
+        if require_signed_receipts and receipt_key_resolver is None:
+            raise ValueError(
+                "[actuator_01/adapter] require_signed_receipts needs a "
+                "receipt_key_resolver (kid-resolved trust anchor)"
+            )
         self._client = client
         self._signer = signer
         self._resolve_signer = signer_resolver or (lambda _urn: signer)
         self._policy_signer = policy_signer  # Optional dual-authority policy signer
         self._credential_broker = credential_broker  # Optional credential broker
+        self._receipt_key_resolver = receipt_key_resolver
+        self._require_signed_receipts = require_signed_receipts
 
     @classmethod
     def from_env(
@@ -181,6 +211,8 @@ class Actuator01Adapter:
 
         Raises:
             RuntimeError: If any required environment variable is missing.
+            ValueError: Strict receipts requested without a manifest URL, or a
+                manifest URL with a disallowed scheme.
         """
         if signer is None:
             from src.gateway.governance.kms_signer import get_governance_signer
@@ -218,12 +250,21 @@ class Actuator01Adapter:
             tenant_id=tenant_id,
         )
 
+        manifest_url = os.environ.get(_ENV_RECEIPT_KEY_MANIFEST_URL, "").strip()
+        require_signed = os.environ.get(
+            _ENV_REQUIRE_SIGNED_RECEIPTS, ""
+        ).strip().lower() in ("1", "true", "yes")
+
         return cls(
             client=client,
             signer=signer,
             signer_resolver=signer_resolver,
             policy_signer=policy_signer,
             credential_broker=credential_broker,
+            receipt_key_resolver=(
+                Ed25519KeyManifestClient(manifest_url) if manifest_url else None
+            ),
+            require_signed_receipts=require_signed,
         )
 
     # ── ExecutionActuator Protocol Implementation ─────────────────────────
@@ -247,7 +288,10 @@ class Actuator01Adapter:
 
     def get_capabilities(self) -> set[ActuatorCapability]:
         """Declare this actuator's capabilities."""
-        return _CAPABILITIES.copy()
+        capabilities = _CAPABILITIES.copy()
+        if self._receipt_key_resolver is not None:
+            capabilities.add(ActuatorCapability.SIGNED_RECEIPTS)
+        return capabilities
 
     async def actuate(self, clearance: ExecutionClearance) -> ActuationReceipt:
         """Actuate an authorized action at the downstream execution boundary.
@@ -260,13 +304,14 @@ class Actuator01Adapter:
         4. Sign for quorum — one signature per operator (signatures)
         5. Submit over mTLS (client)
         6. Classify response (response_classifier)
-        7. Ingest ActuationReceipt into the hash-chained evidence stream and return
+        7. Verify the partner's receipt signature (receipt_verifier) and
+           return the ActuationReceipt
 
         Fail-closed: any step that fails returns ``accepted=False`` with
-        structured findings.  Definitive refusals carry ``outcome=REJECTED``
-        and emit an ``ACTUATION_REFUSAL_RECEIPT`` event; failures after the
-        envelope may have reached the partner carry ``outcome=UNKNOWN``
-        (non-retryable) and emit an ``ACTUATION_INDETERMINATE_RECEIPT`` event.
+        structured findings.  Definitive refusals carry ``outcome=REJECTED``;
+        failures after the envelope may have reached the partner carry
+        ``outcome=UNKNOWN`` (non-retryable).  Evidence is recorded by the
+        kernel's ``dispatch_actuation()``, never by this adapter.
 
         Args:
             clearance: ``ExecutionClearance`` from the governance decision.
@@ -274,15 +319,6 @@ class Actuator01Adapter:
         Returns:
             ``ActuationReceipt`` with accept/reject status and evidence fields.
         """
-        from src.gateway.governance.execution_actuator import ingest_actuation_receipt
-
-        receipt = await self._actuate_once(clearance)
-        await ingest_actuation_receipt(
-            clearance, receipt, actuator_id=self.actuator_id
-        )
-        return receipt
-
-    async def _actuate_once(self, clearance: ExecutionClearance) -> ActuationReceipt:
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
         # ── v3.0 Security Gates ───────────────────────────────────────────
@@ -579,33 +615,63 @@ class Actuator01Adapter:
         # ── Step 6: Classify response ─────────────────────────────────────
         classified = classify_response(response)
 
-        # ── Step 7: Build ActuationReceipt ────────────────────────────────
+        # ── Step 7: Verify receipt signature, build ActuationReceipt ───────
         if classified.category == ResponseCategory.ACCEPTED:
             outcome = ActuationOutcome.ACCEPTED
         elif classified.status_code in _DEFINITIVE_REFUSAL_STATUSES:
             outcome = ActuationOutcome.REJECTED
         else:
             outcome = ActuationOutcome.UNKNOWN
+
+        findings = list(classified.findings)
+        check = await verify_partner_receipt(
+            classified.raw_body,
+            envelope_digest=envelope_digest,
+            key_resolver=self._receipt_key_resolver,
+        )
+        if check.finding is not None:
+            findings.append(check.finding)
+        if check.verification is ReceiptVerification.INVALID:
+            # A forged or mis-bound receipt cannot be trusted in either
+            # direction: the partner may or may not have executed.
+            outcome = ActuationOutcome.UNKNOWN
+        elif (
+            check.verification is ReceiptVerification.UNVERIFIED
+            and self._require_signed_receipts
+            and outcome is not ActuationOutcome.UNKNOWN
+        ):
+            findings.append(
+                {
+                    "code": "RECEIPT_UNVERIFIED",
+                    "severity": "TERMINAL",
+                    "detail": "signed receipts required; partner response not "
+                    "verified — outcome indeterminate",
+                }
+            )
+            outcome = ActuationOutcome.UNKNOWN
+
         receipt = ActuationReceipt(
             accepted=outcome is ActuationOutcome.ACCEPTED,
             receipt_id=classified.receipt_id,
             session_uuid=classified.session_uuid,
             raw_receipt=classified.raw_body,
-            findings=classified.findings,
+            findings=findings,
             # An indeterminate outcome is never retryable: a retry could
             # double-execute an order the partner already filled.
             retryable=classified.retryable and outcome is ActuationOutcome.REJECTED,
             envelope_digest=envelope_digest,
             timestamp_utc=timestamp_utc,
             outcome=outcome,
+            verification=check.verification,
         )
 
         if receipt.accepted:
             logger.info(
                 "[actuator_01/adapter] Actuation ACCEPTED: receipt_id=%s "
-                "session_uuid=%s digest=%s",
+                "session_uuid=%s verification=%s digest=%s",
                 receipt.receipt_id,
                 receipt.session_uuid,
+                receipt.verification.value,
                 envelope_digest[:16],
             )
         else:
