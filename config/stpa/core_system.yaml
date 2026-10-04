@@ -132,10 +132,18 @@ unsafe_control_actions:
     condition:
       param: approval_token
       operator: is_null
-    enforcement: [opa, python]
+    enforcement: [opa, python, sandbox]
     opa_rule:
       decision: DENY
       message: "UCA-1: write_db requires a signed approval_token."
+    sandbox_rule:
+      allowed_endpoints:
+        - "https://cage-gateway.internal/v1/mcp/tools/call/write_db"
+      allowed_http_verbs: ["POST"]
+      allowed_mcp_methods: ["tools/call:write_db"]
+      allowed_binaries: ["/usr/bin/python3"]
+      require_routing_seal: true
+      credential_placeholder: "CAGE_DB_WRITE_CREDENTIAL"
 
   - id: UCA-7
     action: prompt_injection_check

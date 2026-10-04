@@ -173,7 +173,7 @@ def _load_actuator(name: str) -> ExecutionActuator:
     """Lazy-load execution actuator by name.
 
     Args:
-        name: Actuator name (actuator_01, a01, archytan).
+        name: Actuator name (actuator_01, actuator_02, actuator_03).
 
     Returns:
         Instantiated ExecutionActuator.
@@ -189,7 +189,19 @@ def _load_actuator(name: str) -> ExecutionActuator:
 
         return Actuator01Adapter.from_env()
 
-    raise ValueError(f"Unknown execution actuator: '{name}'. Supported: actuator_01")
+    if normalized in ("actuator_02", "a02", "openshell"):
+        from src.integrations.actuator_02.adapter import Actuator02Adapter
+
+        return Actuator02Adapter.from_env()
+
+    if normalized in ("actuator_03", "a03", "sentry", "doca_quarantine"):
+        from src.integrations.actuator_03.adapter import Actuator03Adapter
+
+        return Actuator03Adapter.from_env()
+
+    raise ValueError(
+        f"Unknown execution actuator: '{name}'. Supported: actuator_01, actuator_02, actuator_03"
+    )
 
 
 class ActuatorRegistry:

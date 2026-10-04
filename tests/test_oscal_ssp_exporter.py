@@ -225,6 +225,7 @@ class TestGenerateSspPatch:
         assert "artifact-opa" in props
         assert "artifact-nemo" in props
         assert "artifact-python" in props
+        assert props.get("artifact-sandbox") == "config/sandbox/generated_sandbox_policy.yaml"
 
     def test_by_components_non_empty(self, minimal_cs: ControlStructureModel) -> None:
         block = generate_ssp_patch(minimal_cs)

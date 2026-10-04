@@ -759,6 +759,7 @@ def generate_ssp_patch(
               - config/opa/generated_stpa_policy.rego    (OPA Rego — {len([u for u in cs.unsafe_control_actions if "opa" in u.enforcement or "all" in u.enforcement])} UCAs)
               - config/rails/generated_stpa_rails.co     (NeMo Colang — {len([u for u in cs.unsafe_control_actions if "nemo" in u.enforcement or "all" in u.enforcement])} UCAs)
               - src/gateway/governance/stpa_validator.py (Python — {len([u for u in cs.unsafe_control_actions if "python" in u.enforcement or "all" in u.enforcement])} UCAs)
+              - config/sandbox/generated_sandbox_policy.yaml (Sandbox — {len([u for u in cs.unsafe_control_actions if u.sandbox_rule is not None])} UCAs)
 
             Target compliance framework: {framework_label}
             Framework reference: {framework_source}
@@ -783,6 +784,10 @@ def generate_ssp_patch(
             {
                 "name": "artifact-python",
                 "value": "src/gateway/governance/stpa_validator.py",
+            },
+            {
+                "name": "artifact-sandbox",
+                "value": "config/sandbox/generated_sandbox_policy.yaml",
             },
             {
                 "name": "compiler-source",

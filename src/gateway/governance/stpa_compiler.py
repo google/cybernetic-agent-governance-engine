@@ -81,6 +81,9 @@ _DEFAULT_FTRA_OUT = (
 _DEFAULT_REGISTRY_OUT = (
     _REPO_ROOT / "config" / "registry" / "generated_tool_authorizations.json"
 )
+_DEFAULT_SANDBOX_OUT = (
+    _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml"
+)
 
 # AGP Semantic Governance Policy character budget (platform limit)
 _AGP_CHAR_BUDGET = 5_000
@@ -90,8 +93,11 @@ _AGP_CHAR_BUDGET = 5_000
 # ---------------------------------------------------------------------------
 
 UcaType = Literal["not_provided", "unsafe_action", "wrong_timing", "stopped_too_soon"]
-EnforcementTarget = Literal["opa", "nemo", "python", "langgraph", "ftra", "all"]
+EnforcementTarget = Literal[
+    "opa", "nemo", "python", "langgraph", "ftra", "sandbox", "openshell", "all"
+]
 OpaDecision = Literal["DENY", "GOVERNANCE_VIOLATION", "MANUAL_REVIEW", "ALLOW"]
+HttpVerb = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
 
 # ---------------------------------------------------------------------------
 # Input hardening for fields that reach the code generators.
@@ -113,6 +119,12 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _ACTION_RE = re.compile(r"^(?:\*|[A-Za-z_][A-Za-z0-9_.-]*)$")
 _DOTTED_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_URI_ENDPOINT_RE = re.compile(
+    r"^(?:https?://)?[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=-]*)?$"
+)
+_BINARY_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
+_MCP_METHOD_RE = re.compile(r"^[A-Za-z0-9_./:-]+$")
+_CRED_PLACEHOLDER_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _TEXT_FORBIDDEN = ('"', "\\", "{", "}", "\n", "\r")
 
 # The only ``composite`` form: ``<lhs> > threshold_ref(<path>) * <rhs>``. Every
@@ -329,6 +341,58 @@ class SagaModel(BaseModel):
         return self
 
 
+class SandboxRuleModel(BaseModel):
+    """Sandbox / OpenShell Supervisor enforcement rule for a UCA.
+
+    Emits deterministic network, process, and PreCredentials routing-seal rules
+    into ``config/sandbox/generated_sandbox_policy.yaml``.
+    """
+
+    allowed_endpoints: list[str] = Field(default_factory=list)
+    allowed_http_verbs: list[HttpVerb] = Field(default_factory=lambda: ["POST"])
+    allowed_mcp_methods: list[str] = Field(default_factory=list)
+    allowed_binaries: list[str] = Field(default_factory=list)
+    require_routing_seal: bool = True
+    credential_placeholder: str | None = None
+
+    @field_validator("allowed_endpoints")
+    @classmethod
+    def _v_endpoints(cls, v: list[str]) -> list[str]:
+        for ep in v:
+            _reject_source_breaking(ep, "sandbox_rule.allowed_endpoints")
+            _require_pattern(ep, _URI_ENDPOINT_RE, "sandbox_rule.allowed_endpoints")
+        return v
+
+    @field_validator("allowed_mcp_methods")
+    @classmethod
+    def _v_mcp_methods(cls, v: list[str]) -> list[str]:
+        return [
+            _require_pattern(m, _MCP_METHOD_RE, "sandbox_rule.allowed_mcp_methods")
+            for m in v
+        ]
+
+    @field_validator("allowed_binaries")
+    @classmethod
+    def _v_binaries(cls, v: list[str]) -> list[str]:
+        for b in v:
+            _reject_source_breaking(b, "sandbox_rule.allowed_binaries")
+            _require_pattern(b, _BINARY_PATH_RE, "sandbox_rule.allowed_binaries")
+            if ".." in b.split("/"):
+                raise ValueError(
+                    f"sandbox_rule.allowed_binaries may not contain '..' path traversal: {b!r}"
+                )
+        return v
+
+    @field_validator("credential_placeholder")
+    @classmethod
+    def _v_credential_placeholder(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _require_pattern(
+            v, _CRED_PLACEHOLDER_RE, "sandbox_rule.credential_placeholder"
+        )
+
+
 class UCAModel(BaseModel):
     id: str
     action: str
@@ -340,6 +404,7 @@ class UCAModel(BaseModel):
     opa_rule: OpaRuleModel | None = None
     nemo_rail: NemoRailModel | None = None
     langgraph_saga: SagaModel | None = None
+    sandbox_rule: SandboxRuleModel | None = None
     # FTRA: commencement-time worst-case reachability classification.
     # Fail-closed: IrreversibilityClassifier treats absent entries as IRREVERSIBLE_TERMINAL.
     terminal_classification: TerminalClassification | None = None
@@ -375,6 +440,11 @@ class UCAModel(BaseModel):
             if self.langgraph_saga is None:
                 raise ValueError(
                     f"{self.id}: enforcement includes 'langgraph' but langgraph_saga is missing."
+                )
+        if "sandbox" in self.enforcement or "openshell" in self.enforcement:
+            if self.sandbox_rule is None:
+                raise ValueError(
+                    f"{self.id}: enforcement includes 'sandbox' but sandbox_rule is missing."
                 )
         return self
 
@@ -2002,6 +2072,156 @@ def generate_registry_manifest(cs: ControlStructureModel) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Sandbox / OpenShell Supervisor policy generator
+# ---------------------------------------------------------------------------
+
+
+def generate_sandbox_policy(cs: ControlStructureModel) -> str:
+    """Generate a deterministic OpenShell Supervisor / sandbox YAML policy.
+
+    Compiles STPA control actions, UCAs, and FTRA terminal classifications into
+    an out-of-process sandbox policy enforcing:
+      - ``filesystem_policy`` and ``landlock`` isolation defaults
+      - ``process`` binary allowlists
+      - ``credential_broker_rules`` requiring CAGE ``PreCredentials``
+        ``RoutingSeal`` verification before credential injection
+      - ``network_policies`` per governed action
+    """
+    now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    allowed_binaries_set: set[str] = {"/usr/bin/python3"}
+    network_policies: dict[str, dict[str, Any]] = {}
+    credential_broker_rules: list[dict[str, Any]] = []
+
+    action_ucas: dict[str, list[UCAModel]] = {}
+    for uca in cs.unsafe_control_actions:
+        action_ucas.setdefault(uca.action, []).append(uca)
+        if uca.sandbox_rule and uca.sandbox_rule.allowed_binaries:
+            allowed_binaries_set.update(uca.sandbox_rule.allowed_binaries)
+
+    all_actions = sorted(
+        {ca["name"] for ca in cs.control_actions if "name" in ca}
+        | set(action_ucas.keys())
+    )
+    ca_by_name = {
+        ca["name"]: ca for ca in cs.control_actions if "name" in ca
+    }
+
+    for action in all_actions:
+        ucas = sorted(action_ucas.get(action, []), key=lambda u: u.id)
+        ca = ca_by_name.get(action)
+
+        # Determine worst-case FTRA terminal classification (fail-closed)
+        classifications: list[str] = []
+        if ca and ca.get("terminal_classification"):
+            classifications.append(str(ca["terminal_classification"]))
+        for u in ucas:
+            if u.terminal_classification:
+                classifications.append(u.terminal_classification)
+        if "IRREVERSIBLE_TERMINAL" in classifications or not classifications:
+            term_class = "IRREVERSIBLE_TERMINAL"
+        elif "EXTERNALLY_REVERSIBLE" in classifications:
+            term_class = "EXTERNALLY_REVERSIBLE"
+        elif "REVERSIBLE" in classifications:
+            term_class = "REVERSIBLE"
+        else:
+            term_class = "READ_ONLY"
+
+        endpoints: list[str] = []
+        verbs: list[str] = []
+        mcp_methods: list[str] = []
+        require_seal = term_class != "READ_ONLY"
+        cred_placeholders: list[str] = []
+
+        for u in ucas:
+            if u.sandbox_rule is not None:
+                for ep in u.sandbox_rule.allowed_endpoints:
+                    if ep not in endpoints:
+                        endpoints.append(ep)
+                for v in u.sandbox_rule.allowed_http_verbs:
+                    if v not in verbs:
+                        verbs.append(v)
+                for m in u.sandbox_rule.allowed_mcp_methods:
+                    if m not in mcp_methods:
+                        mcp_methods.append(m)
+                if u.sandbox_rule.require_routing_seal:
+                    require_seal = True
+                if (
+                    u.sandbox_rule.credential_placeholder
+                    and u.sandbox_rule.credential_placeholder not in cred_placeholders
+                ):
+                    cred_placeholders.append(u.sandbox_rule.credential_placeholder)
+
+        if not verbs:
+            verbs = ["GET"] if term_class == "READ_ONLY" else ["POST"]
+        if not mcp_methods:
+            mcp_methods = [f"tools/call:{action}"]
+
+        uca_refs = [u.id for u in ucas]
+        hazard_refs = sorted({h for u in ucas for h in u.hazard_refs})
+
+        network_policies[action] = {
+            "terminal_classification": term_class,
+            "require_routing_seal": require_seal,
+            "allowed_http_verbs": verbs,
+            "allowed_endpoints": endpoints
+            or [f"https://cage-gateway.internal/v1/mcp/tools/call/{action}"],
+            "allowed_mcp_methods": mcp_methods,
+            "uca_refs": uca_refs,
+            "hazard_refs": hazard_refs,
+        }
+
+        if require_seal:
+            credential_broker_rules.append(
+                {
+                    "action": action,
+                    "phase": "PreCredentials",
+                    "require_routing_seal": True,
+                    "seal_header": "X-CAGE-Routing-Seal",
+                    "credential_placeholders": cred_placeholders
+                    or ["CAGE_GOVERNED_CREDENTIAL"],
+                }
+            )
+
+    policy_doc: dict[str, Any] = {
+        "version": 1,
+        "metadata": {
+            "generated_by": "CAGE stpa_compiler",
+            "system": cs.system.name,
+            "system_version": cs.system.version,
+            "domain": cs.system.domain,
+            "require_cage_stera_seal": True,
+        },
+        "filesystem_policy": {
+            "include_workdir": True,
+            "read_only": ["/usr", "/lib", "/etc", "/app"],
+            "read_write": ["/sandbox", "/var/sandbox/scratch"],
+        },
+        "landlock": {
+            "compatibility": "best_effort",
+        },
+        "process": {
+            "run_as_user": "sandbox",
+            "run_as_group": "sandbox",
+            "allowed_binaries": sorted(allowed_binaries_set),
+        },
+        "credential_broker_rules": credential_broker_rules,
+        "network_policies": network_policies,
+    }
+
+    header = (
+        "# Copyright 2026 Google LLC\n"
+        "# SPDX-License-Identifier: Apache-2.0\n"
+        "#\n"
+        "# AUTO-GENERATED BY CAGE stpa_compiler — DO NOT EDIT MANUALLY\n"
+        f"# System: {cs.system.name} v{cs.system.version}\n"
+        f"# Generated: {now_utc}\n"
+        "---\n"
+    )
+    return header + yaml.safe_dump(policy_doc, sort_keys=False)
+
+
+# ---------------------------------------------------------------------------
 # Compiler orchestrator
 # ---------------------------------------------------------------------------
 
@@ -2015,6 +2235,7 @@ class CompileResult:
     agp_content: str = ""
     ftra_content: str = ""
     registry_content: str = ""
+    sandbox_content: str = ""
     errors: list[str] = field(default_factory=list)
 
 
@@ -2063,7 +2284,7 @@ def compile_control_structure(
     effective_targets = (
         targets
         if "all" not in targets
-        else ["opa", "nemo", "python", "langgraph", "ftra"]
+        else ["opa", "nemo", "python", "langgraph", "ftra", "sandbox"]
     )
 
     if "opa" in effective_targets:
@@ -2108,6 +2329,12 @@ def compile_control_structure(
         except Exception as exc:
             result.errors.append(f"Agent Registry manifest generation failed: {exc}")
 
+    if "sandbox" in effective_targets or "openshell" in effective_targets:
+        try:
+            result.sandbox_content = generate_sandbox_policy(cs)
+        except Exception as exc:
+            result.errors.append(f"Sandbox policy generation failed: {exc}")
+
     return result
 
 
@@ -2145,6 +2372,7 @@ def write_artifacts(
     agp_out: Path | None = None,
     ftra_out: Path | None = None,
     registry_out: Path | None = None,
+    sandbox_out: Path | None = None,
 ) -> None:
     """Write generated artifacts to disk, creating parent dirs as needed."""
     if result.opa_content:
@@ -2201,6 +2429,12 @@ def write_artifacts(
         effective_registry_out.parent.mkdir(parents=True, exist_ok=True)
         effective_registry_out.write_text(result.registry_content)
         logger.info("✅ Agent Registry manifest written → %s", effective_registry_out)
+
+    if result.sandbox_content:
+        effective_sandbox_out = sandbox_out or _DEFAULT_SANDBOX_OUT
+        effective_sandbox_out.parent.mkdir(parents=True, exist_ok=True)
+        effective_sandbox_out.write_text(result.sandbox_content)
+        logger.info("✅ Sandbox policy written → %s", effective_sandbox_out)
 
 
 # ---------------------------------------------------------------------------
@@ -2275,6 +2509,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "agp",
             "ftra",
             "registry",
+            "sandbox",
+            "openshell",
             "all",
         ],
         default=["all"],
@@ -2283,7 +2519,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "Use 'agp' for AGP Semantic Policy. "
             "Use 'ftra' for FTRA terminal registry (config/ftra/terminal_registry.json). "
             "Use 'registry' for GEAP Agent Registry tool authorization manifest "
-            "(GCP Adaptation — config/registry/generated_tool_authorizations.json)."
+            "(GCP Adaptation — config/registry/generated_tool_authorizations.json). "
+            "Use 'sandbox' (or 'openshell') for OpenShell Supervisor sandbox policy "
+            "(config/sandbox/generated_sandbox_policy.yaml)."
         ),
     )
     compile_p.add_argument(
@@ -2337,6 +2575,13 @@ def _build_parser() -> argparse.ArgumentParser:
             f"Agent Registry manifest output path (default: {_DEFAULT_REGISTRY_OUT}). "
             "GCP Adaptation — only used when --targets registry is specified."
         ),
+    )
+    compile_p.add_argument(
+        "--sandbox-out",
+        type=Path,
+        default=_DEFAULT_SANDBOX_OUT,
+        metavar="FILE",
+        help=f"Sandbox/OpenShell policy output path (default: {_DEFAULT_SANDBOX_OUT})",
     )
     compile_p.add_argument(
         "--dry-run",
@@ -2464,6 +2709,8 @@ def cmd_compile(args: argparse.Namespace) -> int:
                 + sep
                 + result.registry_content
             )
+        if result.sandbox_content:
+            print(sep + "SANDBOX POLICY (YAML)" + sep + result.sandbox_content)
         return 0
 
     python_out = args.python_out
@@ -2483,6 +2730,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
         agp_out=args.agp_out,
         ftra_out=ftra_out,
         registry_out=args.registry_out,
+        sandbox_out=args.sandbox_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
     if result.opa_content:
@@ -2499,6 +2747,8 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"   FTRA terminal registry → {ftra_out}")
     if result.registry_content:
         print(f"   Agent Registry manifest [GCP] → {args.registry_out}")
+    if result.sandbox_content:
+        print(f"   Sandbox policy → {args.sandbox_out}")
     return 0
 
 
