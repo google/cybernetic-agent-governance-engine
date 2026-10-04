@@ -101,83 +101,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 # ---------------------------------------------------------------------------
-# ECDSA DER → raw signature conversion (M-2 fix)
-# ---------------------------------------------------------------------------
-
-
-def _der_to_raw_ecdsa_signature(der_signature: bytes, algorithm: str) -> bytes:
-    """
-    Convert DER-encoded ECDSA signature to raw R||S format for JWT.
-
-    M-2 Fix: This function removes silent exception swallowing and adds
-    explicit length validation to prevent malformed signatures from being
-    silently accepted.
-
-    KMS returns ECDSA signatures in DER format (ASN.1), but JWT requires
-    raw concatenated R||S format. This function performs the conversion
-    and validates the output length matches the expected curve size.
-
-    Args:
-        der_signature: DER-encoded ECDSA signature from KMS.
-        algorithm: JOSE algorithm name (ES256, ES384, or ES512).
-
-    Returns:
-        Raw R||S signature bytes with proper padding.
-
-    Raises:
-        ValueError: If algorithm is unsupported or conversion fails.
-
-    Expected output lengths:
-        ES256 (P-256): 64 bytes (32-byte R + 32-byte S)
-        ES384 (P-384): 96 bytes (48-byte R + 48-byte S)
-        ES512 (P-521): 132 bytes (66-byte R + 66-byte S)
-    """
-    from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
-
-    # Map JOSE algorithm to expected raw signature length
-    expected_lengths = {
-        "ES256": 64,  # P-256: 32 bytes R + 32 bytes S
-        "ES384": 96,  # P-384: 48 bytes R + 48 bytes S
-        "ES512": 132,  # P-521: 66 bytes R + 66 bytes S (not 128!)
-    }
-
-    if algorithm not in expected_lengths:
-        raise ValueError(
-            f"Unsupported JOSE algorithm: {algorithm}. "
-            f"Supported: {list(expected_lengths.keys())}"
-        )
-
-    expected_len = expected_lengths[algorithm]
-    component_len = expected_len // 2
-
-    try:
-        # Decode DER signature to extract R and S components
-        r, s = asym_utils.decode_dss_signature(der_signature)
-
-        # Convert R and S to fixed-length byte arrays (big-endian)
-        r_bytes = r.to_bytes(component_len, byteorder="big")
-        s_bytes = s.to_bytes(component_len, byteorder="big")
-
-        # Concatenate to produce raw signature
-        raw_signature = r_bytes + s_bytes
-
-        # M-2 fix: Explicit length validation (no silent failures)
-        if len(raw_signature) != expected_len:
-            raise ValueError(
-                f"Converted signature length {len(raw_signature)} does not match "
-                f"expected length {expected_len} for {algorithm}"
-            )
-
-        return raw_signature
-
-    except Exception as e:
-        # M-2 fix: Raise explicitly instead of silent exception swallowing
-        raise ValueError(
-            f"Failed to convert DER signature to raw format for {algorithm}: {e}"
-        ) from e
-
-
-# ---------------------------------------------------------------------------
 # Environment detection (module-level so tests can patch it)
 # ---------------------------------------------------------------------------
 _cage_env_seal = (
@@ -402,8 +325,13 @@ def generate_seal(
         canon = jcs_canonicalize_plan({"action": action, **safe_params})
         action_hash = hashlib.sha256(canon).hexdigest()
 
+        # The JWS header must carry the RFC 7518 identifier (``ES256``,
+        # ``EdDSA``…), never the provider label from ``signing_algorithm``
+        # (``KMS_ASYMMETRIC``, ``SOFTWARE_ED25519``…) — verify_seal's PyJWT
+        # allow-list only admits JOSE names.
+        jose_alg = signer.jose_alg
         header = {
-            "alg": signer.signing_algorithm,
+            "alg": jose_alg,
             "typ": "JWT",
             "kid": pem_to_jwk(signer.get_public_key_pem())["kid"],
         }
@@ -424,7 +352,8 @@ def generate_seal(
         )
 
         signing_input = f"{b64_header}.{b64_payload}".encode()
-        signature = signer.sign_raw(signing_input)
+        # sign_jws normalises KMS DER ECDSA output to the JWS raw R||S form.
+        signature = signer.sign_jws(signing_input)
         b64_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
 
         seal = f"{b64_header}.{b64_payload}.{b64_signature}"
@@ -470,20 +399,22 @@ async def generate_seal_with_evidence(
       3. Any audit can verify seal ↔ evidence correspondence
 
     This async function provides the EVIDENCE_CHAIN_BLOCKING gate that ensures
-    evidence is durably committed before a routing seal is issued. When blocking
-    mode is enabled (EVIDENCE_CHAIN_BLOCKING=true), this function:
+    evidence is durably committed before a routing seal is issued. When
+    blocking mode is enabled (EVIDENCE_CHAIN_BLOCKING=true, the default — see
+    ``evidence/stream.py``), this function:
 
       1. Commits the governance decision as evidence to the durable store
       2. Blocks until commit is confirmed or timeout
-      3. Binds the evidence record_hash into the HMAC seal
+      3. Binds the evidence record_hash into the seal
       4. Only then generates and returns the routing seal
       5. If evidence commit fails, raises EvidenceChainUnavailableError (no seal)
 
-    When blocking mode is disabled (EVIDENCE_CHAIN_BLOCKING=false, the default),
-    this function falls back to fire-and-forget behavior: evidence is ingested
-    asynchronously without blocking, and the seal is issued with sentinel
-    ``"no-evidence-binding"`` as the record_hash. This preserves backward
-    compatibility and avoids latency impact when the gate is not enabled.
+    When blocking mode is explicitly disabled (EVIDENCE_CHAIN_BLOCKING=false;
+    refused at startup in enforcing postures unless
+    CAGE_ALLOW_NONBLOCKING_PROD=true), this function falls back to
+    fire-and-forget behavior: evidence is ingested asynchronously without
+    blocking, and the seal is issued with sentinel ``"no-evidence-binding"``
+    as the record_hash.
 
     Risk mitigation: R-06 (evidence-of-execution claims overclaimed)
     This gate ensures that every routing seal corresponds to evidence that is
@@ -583,7 +514,7 @@ async def generate_seal_with_evidence(
                 span.set_attribute("cage.evidence.status", "failed")
                 raise
         else:
-            # EVIDENCE_CHAIN_BLOCKING=false (default): Fire-and-forget
+            # EVIDENCE_CHAIN_BLOCKING=false (explicit opt-out): Fire-and-forget
             span.set_attribute("cage.evidence.mode", "fire_and_forget")
             span.set_attribute("cage.seal.record_hash_bound", False)
             if sink.is_running:
@@ -656,7 +587,7 @@ def verify_seal(
             # Determine allowed algorithms based on key type
             kty = jwk.get("kty", "EC")
             if kty == "EC":
-                algs = ["ES256", "ES384", "ES512", "EdDSA"]
+                algs = ["ES256", "ES384", "ES512"]
             elif kty == "OKP":
                 algs = ["EdDSA"]
             else:

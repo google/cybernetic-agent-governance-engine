@@ -175,21 +175,20 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 3: reconciliation-worker CronJob has at least one successful Job run
+# Check 3: reconciliation-worker Deployment has a ready replica
 # ---------------------------------------------------------------------------
-echo "  ⏰ Checking reconciliation-worker CronJob successful runs..."
+echo "  ⏰ Checking reconciliation-worker Deployment readiness..."
 
-successful_runs=$(kubectl get jobs \
-  -n "$NAMESPACE" \
-  -l app=reconciliation-worker 2>/dev/null | grep -c "1/1" || true)
-successful_runs="${successful_runs:-0}"
+ready_replicas=$(kubectl get deployment reconciliation-worker \
+  -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+ready_replicas="${ready_replicas:-0}"
 
-if [[ "$successful_runs" -eq 0 ]]; then
-  record WARN "CronJob: reconciliation-worker" \
-    "no successful Job runs found yet — may be expected on first deploy"
+if [[ "$ready_replicas" -eq 0 ]]; then
+  record WARN "Deployment: reconciliation-worker" \
+    "no ready replica yet — may be expected on first deploy"
 else
-  record OK "CronJob: reconciliation-worker" \
-    "$successful_runs successful run(s) found"
+  record OK "Deployment: reconciliation-worker" \
+    "$ready_replicas ready replica(s)"
 fi
 
 echo ""

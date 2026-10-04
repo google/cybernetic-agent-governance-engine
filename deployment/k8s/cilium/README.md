@@ -43,7 +43,7 @@ kubectl rollout restart deployment/gateway -n governance-stack
 |---|---|---|
 | `egress-lockdown.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | FQDN allowlist for Gateway (external LLM APIs, `*.googleapis.com`, `metadata.google.internal`, Langfuse, OFAC); restricted DNS egress (`kube-dns` + `169.254.169.254/32`); internal-only lockdown for `governed-financial-advisor` and `sovereign-agent` pods; cluster-wide external egress default-deny. |
 | `trivy-egress-fqdn.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | FQDN egress allowlist for Trivy vulnerability scanner (`ghcr.io`, `*.ghcr.io`, `pkg.dev`, `*.pkg.dev`) + restricted DNS egress. |
-| `reconciliation-worker-egress.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | Egress isolation for the ground-truth reconciler CronJob (`cloudkms.googleapis.com` via `FQDNNetworkPolicy`, Memorystore for Valkey PSC CIDR via `ipBlock` on TLS port `6379`, Langfuse OTLP on port `3000`, and restricted DNS). |
+| `reconciliation-worker-egress.yaml` | `FQDNNetworkPolicy`, `NetworkPolicy` | Egress isolation for the ground-truth reconciler Deployment (`cloudkms.googleapis.com` via `FQDNNetworkPolicy`, Memorystore for Valkey PSC CIDR via `ipBlock` on TLS port `6379`, Langfuse OTLP on port `3000`, and restricted DNS). |
 
 ---
 

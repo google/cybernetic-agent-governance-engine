@@ -33,6 +33,7 @@ import httpx
 import pytest
 
 from src.gateway.governance.execution_actuator import (
+    ActuationOutcome,
     ActuationReceipt,
     ActuatorCapability,
     ExecutionClearance,
@@ -539,7 +540,99 @@ class TestFailClosedBranches:
         assert not receipt.accepted
         assert receipt.findings[0]["code"] in ("NETWORK_ERROR", "CONNECTION_RESET")
         assert receipt.findings[0]["severity"] == "TRANSIENT"
-        assert receipt.retryable  # Network errors are retryable
+        # ConnectError: the request never left the client → definitive refusal.
+        assert receipt.outcome is ActuationOutcome.REJECTED
+        assert receipt.retryable
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            httpx.ReadTimeout("read timed out"),
+            httpx.RemoteProtocolError("peer closed connection mid-response"),
+            httpx.ReadError("connection reset by peer"),
+        ],
+    )
+    async def test_post_send_network_error_is_indeterminate(self, exc):
+        """A transport failure after the envelope may have been sent is UNKNOWN.
+
+        The partner may have executed the order, so the receipt must not be
+        retryable (a retry could double-execute) and must report
+        ``may_have_executed`` so the governor confirms its reservations.
+        """
+        clearance = make_valid_clearance()
+
+        async def mock_submit(*args, **kwargs):
+            raise exc
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.submit_envelope = mock_submit
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=MockPerOperatorSigner("urn:actuator_01:op:test"),  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
+        assert receipt.may_have_executed
+        assert receipt.retryable is False
+
+    @pytest.mark.parametrize(
+        ("status", "expected_outcome"),
+        [
+            (400, ActuationOutcome.REJECTED),
+            (409, ActuationOutcome.REJECTED),
+            (422, ActuationOutcome.REJECTED),
+            (429, ActuationOutcome.REJECTED),
+            (503, ActuationOutcome.REJECTED),
+            (408, ActuationOutcome.UNKNOWN),
+            (500, ActuationOutcome.UNKNOWN),
+            (502, ActuationOutcome.UNKNOWN),
+            (504, ActuationOutcome.UNKNOWN),
+            (418, ActuationOutcome.UNKNOWN),
+        ],
+    )
+    async def test_http_status_outcome_classification(self, status, expected_outcome):
+        """Only explicit partner refusals are REJECTED; everything else is UNKNOWN."""
+        clearance = make_valid_clearance()
+
+        async def mock_submit(*args, **kwargs):
+            return httpx.Response(status, json={"error": "X"})
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.submit_envelope = mock_submit
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=MockPerOperatorSigner("urn:actuator_01:op:test"),  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.outcome is expected_outcome
+        if expected_outcome is ActuationOutcome.UNKNOWN:
+            assert receipt.retryable is False
+
+    async def test_200_without_receipt_is_indeterminate(self):
+        """A 200 whose body cannot be parsed as a receipt is UNKNOWN, not REJECTED."""
+        clearance = make_valid_clearance()
+
+        async def mock_submit(*args, **kwargs):
+            return httpx.Response(200, content=b"not-json")
+
+        mock_client = MagicMock(spec=ActuatorHttpClient)
+        mock_client.submit_envelope = mock_submit
+        adapter = Actuator01Adapter(
+            client=mock_client,
+            signer=MockPerOperatorSigner("urn:actuator_01:op:test"),  # type: ignore[arg-type]
+        )
+
+        receipt = await adapter.actuate(clearance)
+
+        assert not receipt.accepted
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
+        assert receipt.retryable is False
 
     async def test_unexpected_error_fails_closed(self, monkeypatch):
         """UNEXPECTED_ERROR: catch-all for non-HTTPError exceptions."""
@@ -562,6 +655,7 @@ class TestFailClosedBranches:
         assert not receipt.accepted
         assert receipt.findings[0]["code"] == "UNEXPECTED_ERROR"
         assert receipt.findings[0]["severity"] == "TERMINAL"
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
         assert not receipt.retryable
 
 

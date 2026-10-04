@@ -284,22 +284,38 @@ async def execute_trade_action(
                 action="execute_trade",
             )
 
+        receipt = None
         try:
-            from src.gateway.governance.execution_actuator import ingest_actuation_receipt
+            from src.gateway.governance.execution_actuator import (
+                ingest_actuation_receipt,
+            )
 
             receipt = await actuator.actuate(clearance)
             await ingest_actuation_receipt(
                 clearance, receipt, actuator_id=getattr(actuator, "actuator_id", None)
             )
         except Exception as exc:
-            logger.error("Actuation error: %s", exc)
+            # An actuator that raised gives no evidence the order did NOT
+            # reach the venue, so its outcome is indeterminate: confirm the
+            # reservations (conservative) rather than release headroom.
+            executed = True if receipt is None else receipt.may_have_executed
+            logger.error(
+                "Actuation error (settling executed=%s): %s", executed, exc
+            )
             return f"ERROR: {exc}"
 
         if not receipt.accepted:
+            executed = receipt.may_have_executed
             findings_str = "; ".join(
                 f"{f.get('code', 'UNKNOWN')}: {f.get('detail', '')}"
                 for f in receipt.findings
             )
+            if executed:
+                raise SymbolicGovernorViolation(
+                    f"Actuation outcome indeterminate (reservations confirmed "
+                    f"pending reconciliation): {findings_str}",
+                    action="execute_trade",
+                )
             raise SymbolicGovernorViolation(
                 f"Actuation rejected: {findings_str}", action="execute_trade"
             )

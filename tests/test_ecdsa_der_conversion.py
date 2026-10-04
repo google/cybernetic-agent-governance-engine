@@ -15,7 +15,7 @@
 """
 M-2 Fix: ECDSA DER→raw Signature Conversion Tests
 
-Tests for the `_der_to_raw_ecdsa_signature()` function that converts
+Tests for the `der_to_raw_ecdsa_signature()` function that converts
 DER-encoded ECDSA signatures from KMS to raw R||S format required by JWT.
 
 The key vulnerability being tested (M-2): The original implementation silently
@@ -35,7 +35,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
 
-from src.gateway.governance.routing_seal import _der_to_raw_ecdsa_signature
+from src.gateway.governance.kms_signer import der_to_raw_ecdsa_signature
 
 # ---------------------------------------------------------------------------
 # Helper: Generate real ECDSA signatures
@@ -59,7 +59,7 @@ def _generate_ecdsa_signature(curve, message: bytes = b"test message") -> bytes:
 def test_es256_conversion():
     """Test ES256 DER→raw conversion with real signature."""
     der_sig = _generate_ecdsa_signature(ec.SECP256R1())
-    raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
+    raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES256")
 
     # ES256: 32 bytes R + 32 bytes S = 64 bytes
     assert len(raw_sig) == 64
@@ -73,7 +73,7 @@ def test_es256_multiple_conversions():
     # Generate multiple signatures to increase probability of hitting leading-zero case
     for _ in range(20):
         der_sig = _generate_ecdsa_signature(ec.SECP256R1())
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
+        raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES256")
         assert len(raw_sig) == 64
 
 
@@ -92,7 +92,7 @@ def test_es256_round_trip():
     der_sig = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
 
     # Convert to raw
-    raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
+    raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES256")
     assert len(raw_sig) == 64
 
     # Extract R and S from raw signature
@@ -118,7 +118,7 @@ def test_es256_round_trip():
 def test_es384_conversion():
     """Test ES384 DER→raw conversion with real signature."""
     der_sig = _generate_ecdsa_signature(ec.SECP384R1())
-    raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES384")
+    raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES384")
 
     # ES384: 48 bytes R + 48 bytes S = 96 bytes
     assert len(raw_sig) == 96
@@ -131,7 +131,7 @@ def test_es384_multiple_conversions():
     """Test ES384 conversion across multiple signatures."""
     for _ in range(20):
         der_sig = _generate_ecdsa_signature(ec.SECP384R1())
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES384")
+        raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES384")
         assert len(raw_sig) == 96
 
 
@@ -145,7 +145,7 @@ def test_es384_multiple_conversions():
 def test_es512_conversion():
     """Test ES512 DER→raw conversion with real signature."""
     der_sig = _generate_ecdsa_signature(ec.SECP521R1())
-    raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES512")
+    raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES512")
 
     # ES512 (P-521): 66 bytes R + 66 bytes S = 132 bytes (not 128!)
     assert len(raw_sig) == 132
@@ -158,7 +158,7 @@ def test_es512_multiple_conversions():
     """Test ES512 conversion across multiple signatures."""
     for _ in range(20):
         der_sig = _generate_ecdsa_signature(ec.SECP521R1())
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES512")
+        raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES512")
         assert len(raw_sig) == 132
 
 
@@ -173,7 +173,7 @@ def test_output_length_validation_es256():
     """Test that output length is always 64 bytes for ES256."""
     for _ in range(10):
         der_sig = _generate_ecdsa_signature(ec.SECP256R1())
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES256")
+        raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES256")
         assert len(raw_sig) == 64, "ES256 raw signature must be exactly 64 bytes"
 
 
@@ -183,7 +183,7 @@ def test_output_length_validation_es384():
     """Test that output length is always 96 bytes for ES384."""
     for _ in range(10):
         der_sig = _generate_ecdsa_signature(ec.SECP384R1())
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES384")
+        raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES384")
         assert len(raw_sig) == 96, "ES384 raw signature must be exactly 96 bytes"
 
 
@@ -193,7 +193,7 @@ def test_output_length_validation_es512():
     """Test that output length is always 132 bytes for ES512."""
     for _ in range(10):
         der_sig = _generate_ecdsa_signature(ec.SECP521R1())
-        raw_sig = _der_to_raw_ecdsa_signature(der_sig, "ES512")
+        raw_sig = der_to_raw_ecdsa_signature(der_sig, "ES512")
         assert len(raw_sig) == 132, "ES512 raw signature must be exactly 132 bytes"
 
 
@@ -208,7 +208,7 @@ def test_unsupported_algorithm():
     """Test that unsupported algorithms raise ValueError."""
     der_sig = _generate_ecdsa_signature(ec.SECP256R1())
     with pytest.raises(ValueError, match="Unsupported JOSE algorithm"):
-        _der_to_raw_ecdsa_signature(der_sig, "RS256")
+        der_to_raw_ecdsa_signature(der_sig, "RS256")
 
 
 @pytest.mark.unit
@@ -217,7 +217,7 @@ def test_invalid_der_signature():
     """Test that invalid DER input raises ValueError."""
     invalid_der = b"not a valid der signature"
     with pytest.raises(ValueError, match="Failed to convert"):
-        _der_to_raw_ecdsa_signature(invalid_der, "ES256")
+        der_to_raw_ecdsa_signature(invalid_der, "ES256")
 
 
 @pytest.mark.unit
@@ -227,7 +227,7 @@ def test_truncated_der_signature():
     der_sig = _generate_ecdsa_signature(ec.SECP256R1())
     truncated = der_sig[:10]  # Truncate to invalid length
     with pytest.raises(ValueError, match="Failed to convert"):
-        _der_to_raw_ecdsa_signature(truncated, "ES256")
+        der_to_raw_ecdsa_signature(truncated, "ES256")
 
 
 @pytest.mark.unit
@@ -238,7 +238,7 @@ def test_wrong_curve_for_algorithm():
     der_sig = _generate_ecdsa_signature(ec.SECP384R1())
     # This should either raise or produce wrong length
     try:
-        _der_to_raw_ecdsa_signature(der_sig, "ES256")
+        der_to_raw_ecdsa_signature(der_sig, "ES256")
         # If it doesn't raise, it should fail length validation
         # (though PyJWT might not detect this mismatch)
     except ValueError:
@@ -268,7 +268,7 @@ def test_m2_fix_no_silent_exception_swallowing():
 
     # Should raise, not silently swallow the exception
     with pytest.raises(ValueError):
-        _der_to_raw_ecdsa_signature(invalid_der, "ES256")
+        der_to_raw_ecdsa_signature(invalid_der, "ES256")
 
 
 @pytest.mark.unit
@@ -284,5 +284,5 @@ def test_m2_fix_length_validation():
             (ec.SECP521R1(), "ES512", 132),
         ]:
             der_sig = _generate_ecdsa_signature(curve)
-            raw_sig = _der_to_raw_ecdsa_signature(der_sig, alg)
+            raw_sig = der_to_raw_ecdsa_signature(der_sig, alg)
             assert len(raw_sig) == expected_len

@@ -34,6 +34,15 @@ Fail-closed: any step that fails produces ``accepted=False`` with structured
 findings.  Network timeouts, HTTP errors, and parse failures never produce a
 silent success.
 
+Outcome classification (``ActuationOutcome``): a failure is ``REJECTED`` only
+when the partner definitively did not execute — pre-wire gate failures, a
+connection that was never established, or an explicit partner refusal.  A
+failure after the envelope may have reached the partner (read timeout, reset
+mid-request, 5xx gateway errors, a 200 without a parseable receipt) is
+``UNKNOWN`` and non-retryable: the order may have executed, so the governor
+confirms rather than releases its reservations and a blind retry could
+double-execute.
+
 This module lives in ``src/integrations/actuator_01/`` (Layer 3) and imports
 from the kernel (Layer 1) only through the vendor-neutral protocol.
 """
@@ -49,6 +58,7 @@ from types import TracebackType
 import httpx
 
 from src.gateway.governance.execution_actuator import (
+    ActuationOutcome,
     ActuationReceipt,
     ActuatorCapability,
     ExecutionClearance,
@@ -94,6 +104,20 @@ _CAPABILITIES: set[ActuatorCapability] = {
     ActuatorCapability.DIGEST_ONLY_PAYLOAD,
     ActuatorCapability.REPLAY_PROTECTED,
 }
+
+# HTTP statuses that are an explicit partner refusal: the envelope was
+# received and definitively NOT executed.  Every other non-accepted status
+# (200 without a valid receipt, 408, 500, 502, 504, unrecognised) leaves the
+# execution state indeterminate.
+_DEFINITIVE_REFUSAL_STATUSES: frozenset[int] = frozenset(
+    {400, 401, 403, 409, 421, 422, 429, 503}
+)
+
+# Transport errors raised before any request bytes leave the client.
+_PRE_SEND_TRANSPORT_ERRORS: tuple[type[httpx.HTTPError], ...] = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+)
 
 
 class Actuator01Adapter:
@@ -239,7 +263,10 @@ class Actuator01Adapter:
         7. Ingest ActuationReceipt into the hash-chained evidence stream and return
 
         Fail-closed: any step that fails returns ``accepted=False`` with
-        structured findings and emits an ``ACTUATION_REFUSAL_RECEIPT`` event.
+        structured findings.  Definitive refusals carry ``outcome=REJECTED``
+        and emit an ``ACTUATION_REFUSAL_RECEIPT`` event; failures after the
+        envelope may have reached the partner carry ``outcome=UNKNOWN``
+        (non-retryable) and emit an ``ACTUATION_INDETERMINATE_RECEIPT`` event.
 
         Args:
             clearance: ``ExecutionClearance`` from the governance decision.
@@ -502,8 +529,10 @@ class Actuator01Adapter:
             )
         except httpx.HTTPError as exc:
             classified = classify_network_error(exc)
+            never_sent = isinstance(exc, _PRE_SEND_TRANSPORT_ERRORS)
             logger.error(
-                "[actuator_01/adapter] Network error during submission: %s",
+                "[actuator_01/adapter] Network error during submission (%s): %s",
+                "never sent" if never_sent else "outcome indeterminate",
                 exc,
             )
             return ActuationReceipt(
@@ -512,12 +541,19 @@ class Actuator01Adapter:
                 session_uuid=None,
                 raw_receipt=None,
                 findings=classified.findings,
-                retryable=classified.retryable,
+                # Only a request that never left the client is safe to retry.
+                retryable=classified.retryable and never_sent,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
+                outcome=(
+                    ActuationOutcome.REJECTED
+                    if never_sent
+                    else ActuationOutcome.UNKNOWN
+                ),
             )
         except Exception as exc:
-            # Catch-all for unexpected transport errors (fail-closed).
+            # Catch-all for unexpected transport errors (fail-closed).  The
+            # envelope may already be on the wire, so the outcome is unknown.
             logger.error(
                 "[actuator_01/adapter] Unexpected error during submission: %s",
                 exc,
@@ -537,21 +573,31 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.UNKNOWN,
             )
 
         # ── Step 6: Classify response ─────────────────────────────────────
         classified = classify_response(response)
 
         # ── Step 7: Build ActuationReceipt ────────────────────────────────
+        if classified.category == ResponseCategory.ACCEPTED:
+            outcome = ActuationOutcome.ACCEPTED
+        elif classified.status_code in _DEFINITIVE_REFUSAL_STATUSES:
+            outcome = ActuationOutcome.REJECTED
+        else:
+            outcome = ActuationOutcome.UNKNOWN
         receipt = ActuationReceipt(
-            accepted=classified.category == ResponseCategory.ACCEPTED,
+            accepted=outcome is ActuationOutcome.ACCEPTED,
             receipt_id=classified.receipt_id,
             session_uuid=classified.session_uuid,
             raw_receipt=classified.raw_body,
             findings=classified.findings,
-            retryable=classified.retryable,
+            # An indeterminate outcome is never retryable: a retry could
+            # double-execute an order the partner already filled.
+            retryable=classified.retryable and outcome is ActuationOutcome.REJECTED,
             envelope_digest=envelope_digest,
             timestamp_utc=timestamp_utc,
+            outcome=outcome,
         )
 
         if receipt.accepted:
@@ -564,12 +610,13 @@ class Actuator01Adapter:
             )
         else:
             logger.warning(
-                "[actuator_01/adapter] Actuation REJECTED: category=%s "
+                "[actuator_01/adapter] Actuation %s: category=%s "
                 "status=%d error=%s retryable=%s digest=%s",
+                outcome.value,
                 classified.category.value,
                 classified.status_code,
                 classified.error_code,
-                classified.retryable,
+                receipt.retryable,
                 envelope_digest[:16],
             )
 

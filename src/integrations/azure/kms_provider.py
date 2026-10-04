@@ -62,6 +62,11 @@ class AzureKMSProvider(BaseKMSProvider):
     def provider_name(self) -> str:
         return "AZURE_KEYVAULT_HSM"
 
+    @property
+    def ecdsa_signature_encoding(self) -> str:
+        # Key Vault's sign() already returns the JWS raw R||S concatenation.
+        return "raw"
+
     def sign_digest(self, digest: bytes) -> bytes:
         from azure.keyvault.keys.crypto import (
             SignatureAlgorithm,  # type: ignore[import]

@@ -32,6 +32,7 @@ from src.cage_finance.invariants import finance_cost_resolver
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.trade_executor import execute_trade
 from src.gateway.governance.seams.actuation import (
+    ActuationOutcome,
     ActuationReceipt,
     ActuatorCapability,
     ExecutionClearance,
@@ -332,14 +333,18 @@ class BrokerActuator:
                             "detail": str(journal_exc),
                         }
                     )
+                    # The trade already executed; only the custodian journal
+                    # failed.  The outcome is indeterminate from the ledger's
+                    # point of view and a retry would double-execute.
                     return ActuationReceipt(
                         accepted=False,
                         receipt_id=None,
                         session_uuid=clearance.thread_id,
                         raw_receipt=None,
                         findings=findings,
-                        retryable=True,
+                        retryable=False,
                         timestamp_utc=timestamp_utc,
+                        outcome=ActuationOutcome.UNKNOWN,
                     )
 
             return ActuationReceipt(

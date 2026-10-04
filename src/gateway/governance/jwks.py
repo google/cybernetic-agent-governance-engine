@@ -444,23 +444,19 @@ def get_verification_key_for_jwt(token: str) -> bytes | None:
     """Get the PEM-encoded public key for verifying a JWT.
 
     Extracts the kid from the JWT header and looks up the corresponding key
-    in the global JWKSet.
+    in the global JWKSet. Trust is decided by ``kid`` alone: a token without
+    a ``kid`` is never matched to a key, even when the JWKSet holds exactly
+    one (fail closed).
 
     Args:
         token: The JWT token string.
 
     Returns:
-        The PEM-encoded public key, or None if not found.
+        The PEM-encoded public key, or None if the kid is absent or unknown.
     """
     kid = extract_kid_from_jwt(token)
-    if kid is None:
-        # No kid in header — try to use the first (only) key
-        jwks = get_jwks()
-        jwks_dict = jwks.to_dict()
-        if len(jwks_dict["keys"]) == 1:
-            # Single key — use it
-            return jwks.get_pem(jwks_dict["keys"][0]["kid"])
-        logger.warning("⚠️ JWT has no kid header and JWKSet has multiple keys")
+    if not kid:
+        logger.warning("⚠️ JWT has no kid header — rejecting (kid is mandatory)")
         return None
 
     return get_jwks().get_pem(kid)

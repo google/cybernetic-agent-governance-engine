@@ -27,14 +27,15 @@ in the same PR per the C0 specification.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 # Re-export seam contracts for backward compatibility during transition.
 # New code should import directly from seams.actuation.
 from src.gateway.governance.seams.actuation import (
+    ActuationOutcome,
     ActuationReceipt,
     ActuatorCapability,
     ExecutionActuator,
@@ -44,6 +45,7 @@ from src.gateway.governance.seams.actuation import (
 logger = logging.getLogger("Gateway.Governance.ExecutionActuator")
 
 __all__ = [
+    "ActuationOutcome",
     "ActuationReceipt",
     "ActuatorCapability",
     "ActuatorRegistry",
@@ -68,18 +70,20 @@ async def ingest_actuation_receipt(
     produces at most one hash-chained record. Refusal receipts (including
     ``CREDENTIAL_BROKER_FAILED``, ``EXECUTOR_ID_MISMATCH``, and
     ``TARGET_ROUTE_MISMATCH``) are recorded as ``ACTUATION_REFUSAL_RECEIPT``;
-    accepted receipts are recorded as ``ACTUATION_RECEIPT``.
+    accepted receipts are recorded as ``ACTUATION_RECEIPT``; indeterminate
+    ones (the side effect may have happened) as
+    ``ACTUATION_INDETERMINATE_RECEIPT``.
     """
     if getattr(receipt, "_evidence_ingested", False):
         return getattr(receipt, "evidence_id", None)
 
     from src.gateway.governance.evidence.stream import get_evidence_sink
 
-    event_type = (
-        "ACTUATION_RECEIPT"
-        if receipt.accepted
-        else "ACTUATION_REFUSAL_RECEIPT"
-    )
+    event_type = {
+        ActuationOutcome.ACCEPTED: "ACTUATION_RECEIPT",
+        ActuationOutcome.REJECTED: "ACTUATION_REFUSAL_RECEIPT",
+        ActuationOutcome.UNKNOWN: "ACTUATION_INDETERMINATE_RECEIPT",
+    }[receipt.outcome]
     finding_codes = [
         str(f.get("code", ""))
         for f in (receipt.findings or [])
@@ -89,6 +93,7 @@ async def ingest_actuation_receipt(
         "type": event_type,
         "controlId": "AC-3",
         "accepted": bool(receipt.accepted),
+        "outcome": receipt.outcome.value,
         "actuator_id": actuator_id or clearance.executor_id,
         "thread_id": clearance.thread_id,
         "action": clearance.action,

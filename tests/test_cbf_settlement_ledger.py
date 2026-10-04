@@ -70,7 +70,10 @@ from src.gateway.governance.safety.debit_ledger import (
     settlement_cutoff,
     unsettled_total_sync,
 )
-from src.gateway.governance.seams.actuation import ExecutionClearance
+from src.gateway.governance.seams.actuation import (
+    ActuationOutcome,
+    ExecutionClearance,
+)
 from src.gateway.governance.seams.ground_truth import (
     FaultMode,
     InMemoryLedgerJournal,
@@ -893,7 +896,11 @@ async def test_broker_actuator_refuses_when_the_custodian_journal_fails(
     ):
         receipt = await actuator.actuate(_clearance(250.0))
     assert receipt.accepted is False
-    assert receipt.retryable is True
+    # The trade executed before the journal failed: indeterminate, and a
+    # retry would double-execute.
+    assert receipt.outcome is ActuationOutcome.UNKNOWN
+    assert receipt.may_have_executed is True
+    assert receipt.retryable is False
     assert [f["code"] for f in receipt.findings] == ["CUSTODIAN_JOURNAL_FAILED"]
 
 

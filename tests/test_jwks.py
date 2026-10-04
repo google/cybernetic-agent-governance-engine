@@ -371,8 +371,8 @@ class TestVerificationKeyLookup:
 
         assert result_pem == pem
 
-    def test_lookup_single_key_no_kid(self, ec_key_pair):
-        """Test key lookup when JWT has no kid but JWKSet has single key."""
+    def test_lookup_single_key_no_kid_rejected(self, ec_key_pair):
+        """A JWT without kid is rejected even when the JWKSet has a single key."""
         from src.gateway.governance.jwks import (
             JWKSet,
             get_verification_key_for_jwt,
@@ -397,7 +397,7 @@ class TestVerificationKeyLookup:
         with patch("src.gateway.governance.jwks.get_jwks", return_value=jwks):
             result_pem = get_verification_key_for_jwt(token)
 
-        assert result_pem == pem
+        assert result_pem is None
 
     def test_lookup_multiple_keys_no_kid(self, ec_key_pair, rsa_key_pair):
         """Test key lookup fails when JWT has no kid and JWKSet has multiple keys."""
