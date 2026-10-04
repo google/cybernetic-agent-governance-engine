@@ -373,10 +373,15 @@ class TestM14PIIFinancialPatterns:
 
     def test_redacts_swift_bic(self):
         s = self._sanitizer()
-        text = "Route via DEUTDEDB for settlement"
+        # A BIC is redacted only when labelled (or under a BIC/SWIFT key); the
+        # shape alone matched ordinary words such as APPROVED and REJECTED.
+        text = "Route via BIC DEUTDEDB for settlement"
         result = s.sanitize(text)
         assert "DEUTDEDB" not in result
         assert "REDACTED" in result
+        assert s.sanitize("Trade APPROVED, transfer REJECTED") == (
+            "Trade APPROVED, transfer REJECTED"
+        )
 
     def test_preserves_non_pii_text(self):
         s = self._sanitizer()

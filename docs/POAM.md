@@ -82,6 +82,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-086 | SC-8 / SC-23 | Memorystore server CA not delivered to gateway/compliance-bridge pods; evidence-stream fail-closed check exposed it on 2026-10-01. Remediated in IaC (PR-3, `fix/memorystore-ca-pinning`) by mounting `module.memorystore_governance.managed_server_ca` via `<app>-redis-ca` ConfigMaps at `/etc/cage/tls/redis/ca.pem` (`REDIS_CA_CERT_PATH`, `cage.io/redis-ca-sha256` rollout annotation, and `lula-validation-sc8.yaml` Check 5); remains Open pending PR-4 (`fix/redis-tls-one-rule`) unification of synchronous/module-level Redis TLS verification across all enforcing postures | High | 2026-10-15 |
 | POAM-2026-094 | SI-10 / CA-7 / `CTRL_MRM_004` | The causal tier has no live world-model feed outside dev/test/ci, so it denies every `execute_trade` in enforcing postures. The 2026-10-03 staging benchmark (`docs/paper/measurements/2026-10-03-5aa1a65f/`) recorded all 4 benign trade prompts as refused, first with `CAUSAL_TELEMETRY_UNAVAILABLE`. [`LangfuseTelemetryProvider`](../src/integrations/telemetry_langfuse/provider.py) called `Langfuse.fetch_traces`, which SDK v3 removed (fixed in #387), and then aborted on the first trace whose `input` was a string (fixed in #389). With both fixed, the provider reads live traces in the gateway pod (verified 2026-10-03 at `c43c41be`), but 0 of them carry the causal columns. The tier therefore still denies with `CAUSAL_TELEMETRY_UNAVAILABLE` (1 to 49 rows would give `CAUSAL_INSUFFICIENT_SAMPLES`), because nothing produces the rows the model needs. `amount` is real. `market_volatility` comes only from [`StubMarketDataProvider`](../src/cage_finance/safety/bounding/providers.py) (a constant 0.15). No component observes a post-trade `risk_score` outcome. The deny is correct fail-closed bootstrap behaviour (POAM-2026-088). The gap is the missing Tier 2 data source: a deterministically seeded, fault-injectable market-data and outcome backend. Emitting the system's own risk formula as the outcome would make DoWhy validate the model against itself, so that is not a remediation | Moderate | 2026-12-31 |
 | POAM-2026-098 | AU-10 / AC-3 / SI-10 | Partner actuation receipts are not yet signed. The code side is remediated in `9c68a6e8` and `72574529`: [`ActuationReceipt`](../src/gateway/governance/seams/actuation.py) has a three-valued outcome (an `UNKNOWN` receipt settles as executed and is never retried), the kernel [`dispatch_actuation()`](../src/gateway/governance/execution_actuator.py) is the only writer of actuation evidence, and [`verify_partner_receipt()`](../src/integrations/actuator_01/receipt_verifier.py) checks a detached Ed25519 signature against a key resolved by `kid` (`INVALID` forces `UNKNOWN`). The signature format is a CAGE-proposed extension that the actuator_01 partner has not adopted, so live receipts are recorded as `UNVERIFIED`. Closure requires partner adoption, an over-the-wire conformance test against the partner sandbox, and `ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS` enabled in enforcing postures. Residual duplication: `Provider07JwksClient` has not moved to the shared [`Ed25519KeyManifestClient`](../src/integrations/trust/key_manifest.py) | Moderate | 2026-12-31 |
+| POAM-2026-100 | SI-10 / AU-10 | Evidence data integrity: the `PIISanitizer` SWIFT/BIC pattern matched any eight- or eleven-character upper-case token, so governance verdicts and states such as `APPROVED`, `REJECTED` and `ESCALATE` were redacted to `[REDACTED_SWIFT]` before hashing in the evidence stream. Records lost their verdicts, and events differing only in such a word produced identical payloads. Remediated in code on `fix/pii-swift-false-positive`: a BIC is redacted only with a contextual cue (`BIC`/`SWIFT` label or BIC/SWIFT dict key) and a valid ISO 3166-1 alpha-2 country code ([`pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py)); property test over all upper-case literals in `src/` ([`test_pii_sanitizer_bic.py`](../tests/test_pii_sanitizer_bic.py)). Records written before the fix stay verifiable but keep the redaction. See [`EVIDENCE_CHAIN.md` §4.4](architecture/EVIDENCE_CHAIN.md). Remains Open pending merge SHA | High | 2026-10-15 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -91,7 +92,7 @@ The following findings are tracked as open items with target remediation dates. 
 | EU-AI-ACT-001 | EU AI Act Art. 9 | Compliance bridge endpoint for EU AI Act risk management system evidence not yet implemented | High | 2026-12-31 |
 | EU-GDPR-001 | GDPR Art. 22 | Compliance bridge endpoint for GDPR human oversight of automated decisions not yet implemented | High | 2026-12-31 |
 | EU-001 | EU AI Act Art. 27 | FRIA gating normative provider is in stub mode; external compliance validation provider not yet configured for EU_ECB | High | 2026-12-31 |
-| POAM-2026-084 | EU AI Act Art. 27 / SI-10 | FRIA (`CTRL_FRIA_006`) was never enforced: from v2.0.0-dev.1 (2026-06-01) `enforce_fria_boundary()` had no pipeline caller, so no EU_ECB decision consulted an impact assessment. Remediated in `refactor/fria-jurisdiction` by the EU_ECB-only `fria` jurisdiction tier; closes at merge | High | 2026-10-15 |
+| POAM-2026-099 | EU AI Act Art. 27 / SI-10 | FRIA (`CTRL_FRIA_006`) was never enforced: from v2.0.0-dev.1 (2026-06-01) `enforce_fria_boundary()` had no pipeline caller, so no EU_ECB decision consulted an impact assessment. Remediated in `refactor/fria-jurisdiction` by the EU_ECB-only `fria` jurisdiction tier; closes at merge | High | 2026-10-15 |
 
 ### APAC MAS Region (APAC_MAS)
 
@@ -437,7 +438,9 @@ While `POAM-2026-013` pinned third-party image tags in `deployment/k8s/`, the so
 1. Every image digest referenced by [`infra/targets/gcp-gke/staging.tfvars`](../infra/targets/gcp-gke/staging.tfvars) carries a Binary Authorization attestation whose creator is `cage-cloudbuild-staging@<project>.iam.gserviceaccount.com`; zero manual `sign-and-create` executions since PR-2.
 2. Confirm all pods in `governance-stack` pass Binary Authorization admission and record live `lula validate -f compliance/lula/lula-validation-si2.yaml` evidence.
 
-### POAM-2026-084: FRIA Declared but Never Enforced (EU_ECB)
+### POAM-2026-099: FRIA Declared but Never Enforced (EU_ECB)
+
+> Renumbered on 2026-10-04 from POAM-2026-084, which was also assigned to the evidence pipeline integrity item (AU-9). The content is unchanged.
 
 **Control:** EU AI Act Art. 27 (`CTRL_FRIA_006`), NIST SI-10
 **Risk Level:** High
@@ -458,6 +461,24 @@ From `v2.0.0-dev.1` (commit `1902c92`, 2026-06-01) until `refactor/fria-jurisdic
 **Remaining Closure Criteria:**
 1. Merge `refactor/fria-jurisdiction`; record the merge commit SHA and the actual merge date here.
 2. Independent external FRIA validation remains tracked by EU-001 (provider credentials).
+
+### POAM-2026-100: SWIFT/BIC Sanitizer Pattern Redacted Governance Verdicts
+
+**Control:** NIST SI-10, AU-10
+**Risk Level:** High
+**Status:** Open (remediated in `fix/pii-swift-false-positive`, pending merge)
+**Date Opened:** 2026-10-04
+**Target Closure:** 2026-10-15
+
+**Description:**
+[`EvidenceStreamSink`](../src/gateway/governance/evidence/stream.py) sanitizes every event before JCS canonicalization and hashing. The SWIFT/BIC pattern in [`pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py) (`[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?`) matched any eight- or eleven-character upper-case token. Governance verdicts and node statuses (`APPROVED`, `REJECTED`, `ESCALATE`, `COMPLETE`, ...) were permanently replaced by `[REDACTED_SWIFT]` in tamper-evident evidence. Two events differing only in such a word produced identical payloads, which undermines non-repudiation of the recorded decision.
+
+**Remediation Implemented in Code:**
+1. A BIC is redacted only when a `BIC`/`SWIFT` label precedes it in text, or when it is the value of a BIC/SWIFT dict key. Its positions 5-6 must also be an ISO 3166-1 alpha-2 country code. A country check alone does not separate English words (`ESCALATE` → `AT`), so the contextual cue is required.
+2. [`tests/test_pii_sanitizer_bic.py`](../tests/test_pii_sanitizer_bic.py) covers labelled true positives, key-context positives, and a property test showing that no upper-case string literal in `src/`, and no `GovernanceDecision` / `OpaVerdict` / `FTRAVerdict` value, is redacted. Hypothesis tests show that unlabelled upper-case words are never redacted and that every structurally valid labelled BIC is.
+
+**Remaining Closure Criteria:**
+1. Merge `fix/pii-swift-false-positive`; record the merge commit SHA and the actual merge date here.
 
 ### POAM-2026-085: Causal Gatekeeper Cache Bypassed the Risk Boundary
 
