@@ -13,7 +13,7 @@
 |---|---|
 | Protocol | Vendor-specific attestation surface — **not** `NormativeProvider`, and **not** a subclass of the abstract [`AttestationProvider`](../../gateway/governance/attestation_provider.py:36) |
 | Integration style | Out-of-band attestation; no per-transaction hot-path call |
-| Classes | `Provider02AttestationProvider` ([`provider.py`](provider.py:137)), `Provider02Client` and `Provider02AttestationCallback` ([`adapter.py`](adapter.py:361)) |
+| Classes | `Provider02AttestationProvider` ([`provider.py`](provider.py:137)), `Provider02Client` and `Provider02AttestationCallback` ([`adapter.py`](adapter.py:408)) |
 | Status | HTTP clients implemented; no endpoint configured |
 | Factory names | `provider_02`, alias `p02` (resolvable through `get_normative_provider()`, but it does not satisfy the `NormativeProvider` method set) |
 | Conformance suite | Registered in `ATTESTATION_PROVIDERS`; covered by `test_attestation_providers_exist` ([`tests/test_normative_provider_conformance.py`](../../../tests/test_normative_provider_conformance.py:49)) |
@@ -55,6 +55,26 @@ snapshots `AgentState` at governance-significant node boundaries
 `nemo_output_rail`), deep-copying to survive destructive in-place loop mutation,
 and assembles an `AttestationBundle` DAG at graph completion.
 
+**State commitments.** Each step's `stateHash` is a *producer commitment*
+(NexArt preserves and certificate-binds it but never recomputes it), so CAGE
+retains the preimage. The callback is constructed with a `committer`
+([`StateCommitter`](../../gateway/governance/seams/state_commitment.py)) and
+stages a JSON-native snapshot per step. The async
+[`seal()`](adapter.py:637) forwards each snapshot, in order, to the gateway's
+`POST /governance/state-commitments` endpoint (via
+`GatewayClient.commit_state`; caller authenticated by Linkerd mTLS
+`l5d-client-id`). The gateway PII-sanitizes, JCS-canonicalizes (RFC 8785) and
+SHA-256-hashes the snapshot once, appends a `STATE_COMMITMENT` event to the
+evidence stream (the compliance-bridge custodian writes it to WORM storage with
+`x-data-classification: internal-pii-sanitized`), and returns the `stateHash`.
+Every step also carries `stateHashAlg: sha256`,
+`stateHashCanon: RFC8785-JCS` and
+`stateHashScope: agentstate-pii-sanitized/v1` metadata.
+[`get_bundle()`](adapter.py:720) raises until the callback is sealed, so a
+failed gateway commit means no step and no bundle (fail-closed).
+[`submit_attested_bundle()`](adapter.py:752) (seal → register) is the single
+submit path. The advisor holds no cold store and no Google Cloud identity.
+
 `parentStepIds` records **executed** parents only: the callback tracks the
 executed predecessor of each node event, including unrecorded nodes, and
 contracts those executed edges back to the nearest recorded step. Each executed
@@ -75,14 +95,19 @@ wire it up:
 | Component | On HTTP/transport failure |
 |---|---|
 | `Provider02AttestationProvider` ([`provider.py`](provider.py:252)) | Returns a dataclass with `error` populated (`CERReceipt(error=...)`, `CERVerification(valid=False, ...)`) |
-| `Provider02Client` ([`adapter.py`](adapter.py:536)) | **Raises** `Provider02Error` with `code="ENDPOINT_ERROR"` |
+| `Provider02Client` ([`adapter.py`](adapter.py:776)) | **Raises** `Provider02Error` with `code="ENDPOINT_ERROR"` |
 
-## Wire contract change in the backward-compatibility remediation
+## Wire contract change (breaking)
 
-**No wire-contract change.** The only change touching this package was internal:
-[`_hash_state()`](adapter.py:230) migrated to RFC 8785 JCS canonicalization, so
-the `stateHash` digest values submitted in bundles differ from those produced by
-earlier builds. The request and response *shapes* are unchanged.
+The request and response *shapes* sent to NexArt are unchanged, but:
+
+- `stateHash` values differ from earlier builds: the snapshot is now
+  PII-sanitized before RFC 8785 JCS canonicalization, and the hash is computed
+  by the gateway (`StateCommitmentService`), not by the adapter. The former
+  adapter-local `_hash_state()` was removed.
+- Step `metadata` gains the three additive `stateHash*` method keys above.
+- `Provider02AttestationCallback(topology, *, committer, thread_id="")` now
+  requires a `committer`, and `get_bundle()` requires a prior `await seal()`.
 
 ## HITL interop
 

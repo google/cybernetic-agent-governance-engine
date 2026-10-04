@@ -34,6 +34,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
+from src.gateway.governance.evidence.state_commitment import canonicalize_state
 from src.integrations.provider_02.adapter import (
     AttestationBundle,
     LineageError,
@@ -42,8 +43,12 @@ from src.integrations.provider_02.adapter import (
     Provider02Client,
     _classify_terminal_path,
     _extract_signals,
-    _hash_state,
     _serialize_state_snapshot,
+)
+from tests.integrations.provider_02.state_commitment_support import (
+    InProcessCommitter,
+    seal,
+    sealed_bundle,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -160,18 +165,19 @@ class TestStateSerialization:
         assert "completed_transactions" not in snapshot
 
     def test_hash_deterministic(self):  # type: ignore[no-untyped-def]
-        """Same state produces the same hash."""
+        """Same state produces the same commitment."""
         state = _base_state(governance_signature="test_sig")
-        h1 = _hash_state(_serialize_state_snapshot(state))
-        h2 = _hash_state(_serialize_state_snapshot(state))
+        h1 = canonicalize_state(_serialize_state_snapshot(state))[2]
+        h2 = canonicalize_state(_serialize_state_snapshot(state))[2]
         assert h1 == h2
 
     def test_hash_different_for_different_states(self):  # type: ignore[no-untyped-def]
-        """Different states produce different hashes."""
+        """Different states produce different commitments."""
         s1 = _base_state(governance_signature="sig_a")
         s2 = _base_state(governance_signature="sig_b")
-        assert _hash_state(_serialize_state_snapshot(s1)) != _hash_state(
-            _serialize_state_snapshot(s2)
+        assert (
+            canonicalize_state(_serialize_state_snapshot(s1))[2]
+            != canonicalize_state(_serialize_state_snapshot(s2))[2]
         )
 
 
@@ -251,7 +257,9 @@ class TestCallbackHandler:
     def test_records_attestation_node(self):  # type: ignore[no-untyped-def]
         """Governance-significant nodes produce step entries."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
         state = _approved_state()
 
@@ -263,7 +271,9 @@ class TestCallbackHandler:
     def test_skips_non_attestation_node(self):  # type: ignore[no-untyped-def]
         """Non-governance nodes don't produce step entries but track IDs."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
         state = _base_state()
 
@@ -275,7 +285,9 @@ class TestCallbackHandler:
     def test_parent_step_ids_resolve(self):  # type: ignore[no-untyped-def]
         """Parent step IDs contract executed edges back to the nearest recorded step."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
         state = _base_state()
 
@@ -306,7 +318,9 @@ class TestCallbackHandler:
         import re
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
         state = _base_state()
 
@@ -338,7 +352,9 @@ class TestCallbackHandler:
         assert hitl_step.signals["hitlApproval"]["approved"] is True
         assert hitl_step.signals["interruptType"] == "HITL_MANUAL_REVIEW"
 
-        # Confirm state_hash is non-empty and matches 64 lowercase hex characters
+        # stateHash is the gateway receipt: empty until sealed, then 64 hex chars
+        assert hitl_step.state_hash == ""
+        seal(cb)
         assert hitl_step.state_hash, "state_hash must be non-empty"
         assert re.match(r"^[a-f0-9]{64}$", hitl_step.state_hash), (
             f"state_hash must be 64 lowercase hex chars, got {hitl_step.state_hash!r}"
@@ -374,7 +390,9 @@ class TestLoopUnrolling:
     def test_single_iteration(self):  # type: ignore[no-untyped-def]
         """Single loop iteration produces correct parentStepIds."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
         state = _base_state(loop_count=1)
 
@@ -389,7 +407,9 @@ class TestLoopUnrolling:
     def test_multi_iteration_produces_sequential_parents(self):  # type: ignore[no-untyped-def]
         """Multiple loop iterations produce sequential parent chains."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
 
         for iteration in range(3):
@@ -413,7 +433,9 @@ class TestLoopUnrolling:
     def test_loop_breaker_at_count_3(self):  # type: ignore[no-untyped-def]
         """After 3 iterations, the path should classify as loop_breaker."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-thread",
         )
 
         for iteration in range(3):
@@ -428,7 +450,7 @@ class TestLoopUnrolling:
         cb.on_chain_start("explainer", state)
         cb.on_chain_end("explainer", state)
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
         assert bundle.terminal_path == "loop_breaker"
 
 
@@ -458,7 +480,9 @@ class TestExecutedLineage:
         """explainer has static candidates evaluator/safety_check, but only
         governed_trader actually preceded it; nemo_output_rail must not reach
         nemo_guardrail through data_analyst, which never ran."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             [
@@ -580,7 +604,9 @@ class TestExecutedLineage:
 
     def test_data_analyst_path_contracts_to_entry_guardrail(self) -> None:
         """When data_analyst does run, nemo_output_rail contracts through it."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             [
@@ -599,7 +625,9 @@ class TestExecutedLineage:
 
     def test_cbf_block_explainer_cites_safety_check_only(self) -> None:
         """CBF fail-closed: explainer follows safety_check, not evaluator."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             ["nemo_guardrail", "thinker_node", "doer_node", "execution_analyst"],
@@ -614,7 +642,9 @@ class TestExecutedLineage:
 
     def test_loop_unrolling_on_full_path(self) -> None:
         """Each evaluator iteration cites the iteration that actually preceded it."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(cb, ["nemo_guardrail", "thinker_node", "doer_node"], _base_state())
         for i in range(3):
             _run(cb, ["execution_analyst", "evaluator"], _base_state(loop_count=i))
@@ -629,7 +659,9 @@ class TestExecutedLineage:
 
     def test_illegal_executed_edge_fails_closed(self) -> None:
         """nemo_guardrail -> evaluator is not a parent_edges candidate: refuse it."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(cb, ["nemo_guardrail"], _base_state())
         cb.on_chain_start("evaluator", _base_state())
         with pytest.raises(LineageError, match="Illegal executed edge"):
@@ -638,14 +670,18 @@ class TestExecutedLineage:
 
     def test_illegal_edge_through_unrecorded_node_fails_closed(self) -> None:
         """Validation applies to unrecorded nodes too (doer_node after nemo_guardrail)."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(cb, ["nemo_guardrail"], _base_state())
         with pytest.raises(LineageError, match="Illegal executed edge"):
             cb.on_chain_end("doer_node", _base_state())
 
     def test_hitl_interrupt_from_illegal_predecessor_fails_closed(self) -> None:
         """hitl_interrupt may only follow safety_check."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             ["nemo_guardrail", "thinker_node", "doer_node", "execution_analyst"],
@@ -657,7 +693,9 @@ class TestExecutedLineage:
 
     def test_declared_predecessor_that_never_ran_fails_closed(self) -> None:
         """A legal candidate that did not execute must not be cited."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(cb, ["nemo_guardrail", "thinker_node", "doer_node"], _base_state())
         with pytest.raises(LineageError, match="has not executed"):
             cb.on_chain_end(
@@ -676,7 +714,9 @@ class TestExecutedLineage:
             parent_edges={"A": [], "B": ["A"], "C": ["A"], "D": ["B", "C"]},
             terminal_node="D",
         )
-        cb = Provider02AttestationCallback(topology=topology)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=topology
+        )
         _run(cb, ["A", "B"], {})
         cb.on_chain_end("C", {}, executed_predecessors=["A"])
         cb.on_chain_end("D", {}, executed_predecessors=["B", "C"])
@@ -772,7 +812,9 @@ class TestBundleAssembly:
     def test_bundle_from_callback(self):  # type: ignore[no-untyped-def]
         """Full callback flow produces a valid bundle."""
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="e2e-thread"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="e2e-thread",
         )
         state = _base_state()
 
@@ -792,7 +834,7 @@ class TestBundleAssembly:
         cb.on_chain_start("explainer", _approved_state())
         cb.on_chain_end("explainer", _approved_state())
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
         assert bundle.thread_id == "e2e-thread"
         assert bundle.terminal_path == "happy_path"
         assert len(bundle.steps) == 5  # guardrail, evaluator, safety, trader, explainer

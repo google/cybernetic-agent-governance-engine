@@ -42,7 +42,11 @@ Custody cycle (:meth:`EvidenceCustodian.flush_once`)
 6. Sign the attestation. Under an enforcing posture a signing failure writes
    nothing and does not advance. In a permissive posture without an active
    signer the attestation is written **non-evidentiary** (see below).
-7. ``put_if_absent`` the NDJSON batch, then its attestation.
+7. ``put_if_absent`` the NDJSON batch, then its attestation, each through
+   :func:`~src.gateway.governance.evidence.cold_store.put_if_absent_verified`:
+   a pre-existing object is read back and must hold the same bytes (for the
+   attestation: the same body, ignoring the non-deterministic signature).
+   Anything else is an integrity failure, never a silent "already written".
 8. Advance the cursor and clear ``pending_end_id``.
 
 Object layout
@@ -91,12 +95,21 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from src.gateway.governance.env_posture import is_enforcing
-from src.gateway.governance.evidence.cold_store import EvidenceColdStore
+from src.gateway.governance.evidence.cold_store import (
+    ColdStoreIntegrityError,
+    EvidenceColdStore,
+    put_if_absent_verified,
+)
 from src.gateway.governance.evidence.stream import verify_record
 
 logger = logging.getLogger("cage.compliance_bridge.evidence_custodian")
 
 ATTESTATION_SCHEMA = "cage-evidence-batch/1"
+# Every evidence-stream payload is PII-sanitized before it is hash-chained
+# (EvidenceStreamSink._append), so custodied objects are Internal and
+# PII-sanitized — not PII-free by construction for every possible input; see
+# docs/architecture/EVIDENCE_CHAIN.md for the sanitizer's coverage limits.
+DATA_CLASSIFICATION = "internal-pii-sanitized"
 DEFAULT_STREAM_KEY = "cage:evidence:stream"
 DEFAULT_BATCH_SIZE = 5000
 DEFAULT_INTERVAL_S = 60.0
@@ -237,6 +250,25 @@ def _ndjson(entries: list[tuple[str, dict[str, str]]]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def _same_attestation_body(stored: bytes, supplied: bytes) -> bool:
+    """True if two attestations differ at most in their signature value.
+
+    KMS ECDSA signatures are randomized, so a retry after a crash between the
+    attestation write and the cursor update re-signs an identical body. That
+    is the same evidence; any other difference is a conflict.
+    """
+    try:
+        stored_body = json.loads(stored)
+        supplied_body = json.loads(supplied)
+    except ValueError:
+        return False
+    if not isinstance(stored_body, dict) or not isinstance(supplied_body, dict):
+        return False
+    stored_body.pop("signature", None)
+    supplied_body.pop("signature", None)
+    return stored_body == supplied_body
+
+
 class EvidenceCustodian:
     """Moves verified evidence from the Redis Stream into WORM storage.
 
@@ -264,6 +296,14 @@ class EvidenceCustodian:
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
+        if is_enforcing() and cold_store.backend_id == "null":
+            # EVIDENCE_COLD_STORE defaults to null when unset; a null store
+            # silently discards custodied evidence (including retained state
+            # preimages), so it is refused at composition time.
+            raise EvidenceCustodyConfigError(
+                "EVIDENCE_COLD_STORE=null (or unset) is forbidden under an "
+                "enforcing posture; evidence custody needs a WORM backend (gcs or s3)."
+            )
         if require_signature and (signer is None or not signer.is_kms_active):
             raise EvidenceCustodyConfigError(
                 "Evidence custody requires an active KMS attestation signer "
@@ -425,6 +465,7 @@ class EvidenceCustodian:
                 "last-sequence": str(last_seq),
                 "content-sha256": content_sha256,
                 "evidentiary": evidentiary,
+                "x-data-classification": DATA_CLASSIFICATION,
             },
         )
         await self._put(
@@ -434,7 +475,9 @@ class EvidenceCustodian:
                 "content-type": "application/json",
                 "data-key": data_key,
                 "evidentiary": evidentiary,
+                "x-data-classification": DATA_CLASSIFICATION,
             },
+            equivalent=_same_attestation_body,
         )
 
         await self._redis.hset(
@@ -597,12 +640,29 @@ class EvidenceCustodian:
             "value": value,
         }
 
-    async def _put(self, key: str, content: bytes, metadata: dict[str, str]) -> None:
+    async def _put(
+        self,
+        key: str,
+        content: bytes,
+        metadata: dict[str, str],
+        *,
+        equivalent: Any = None,
+    ) -> None:
         backend = self._cold_store.backend_id
         try:
-            _receipt, created = await self._cold_store.put_if_absent(
-                key=key, content=content, metadata=metadata
+            _receipt, created = await put_if_absent_verified(
+                self._cold_store,
+                key,
+                content,
+                metadata,
+                equivalent=equivalent,
             )
+        except ColdStoreIntegrityError as exc:
+            if _PROM_AVAILABLE:
+                COLD_STORE_WRITES_TOTAL.labels(
+                    backend=backend, outcome="conflict"
+                ).inc()
+            self._integrity_failure(key, str(exc))
         except Exception:
             if _PROM_AVAILABLE:
                 COLD_STORE_WRITES_TOTAL.labels(backend=backend, outcome="error").inc()

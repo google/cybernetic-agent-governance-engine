@@ -485,3 +485,31 @@ async def test_lifespan_succeeds_in_dev_mode(monkeypatch):
 
         async with _gateway_lifespan(app_mock):
             pass
+
+
+@pytest.mark.asyncio
+async def test_lifespan_installs_state_commitment_service(monkeypatch):
+    """The lifespan exposes the kernel state-commitment service on app state.
+
+    Development posture with no evidence sink still yields a service (it fails
+    closed per request); enforcing postures refuse at startup instead
+    (covered by ``tests/test_state_commitment_service.py``).
+    """
+    monkeypatch.setenv("CAGE_ENV", "ci")
+    monkeypatch.setenv("RECONCILIATION_PROVIDER", "stub")
+    monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
+
+    stubs = _make_hybrid_stubs()
+    sys.modules.pop("src.gateway.server.hybrid_server", None)
+
+    with patch.dict("sys.modules", stubs):
+        from src.gateway.governance.evidence.state_commitment import (
+            StateCommitmentService,
+        )
+        from src.gateway.server.hybrid_server import _gateway_lifespan
+
+        app_mock = MagicMock()
+        app_mock.state = MagicMock()
+
+        async with _gateway_lifespan(app_mock):
+            assert isinstance(app_mock.state.state_commitments, StateCommitmentService)

@@ -35,6 +35,11 @@ from src.integrations.provider_02.adapter import (
     Provider02AttestationCallback,
     _classify_terminal_path,
 )
+from tests.integrations.provider_02.state_commitment_support import (
+    InProcessCommitter,
+    seal,
+    sealed_bundle,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
@@ -50,7 +55,9 @@ class TestTopologyInjection:
     def test_callback_accepts_topology(self) -> None:
         """Callback accepts a valid topology and stores it."""
         callback = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-123"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="test-123",
         )
         assert callback._topology == FINANCIAL_ADVISOR_TOPOLOGY
         assert callback._thread_id == "test-123"

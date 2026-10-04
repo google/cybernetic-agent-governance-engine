@@ -326,26 +326,39 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     checkpointer = get_checkpointer(redis_url)
 
     # Provider 02 Attestation — opt-in via PROVIDER_02_ATTESTATION_ENABLED=true
-    # When enabled, a Provider02AttestationCallback is created and stored on the
-    # compiled graph as ``_provider_02_callback`` for retrieval after execution.
+    # When enabled, a per-run callback factory is stored on the compiled graph
+    # as ``_provider_02_callback_factory`` (one callback per thread, never a
+    # shared instance accumulating steps across requests). State commitments
+    # go through GatewayClient to the gateway, which sanitizes, hashes and
+    # retains each preimage: the advisor builds no cold store and needs no
+    # storage identity ("Advisor Holds No Governance State").
     # Zero overhead when disabled — no import, no instantiation.
-    provider_02_callback = None
+    provider_02_callback_factory = None
     if os.environ.get("PROVIDER_02_ATTESTATION_ENABLED", "").lower() == "true":
         try:
             from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
+            from src.governed_financial_advisor.infrastructure.gateway_client import (
+                GatewayClient,
+            )
             from src.integrations.provider_02 import Provider02AttestationCallback
 
-            provider_02_callback = Provider02AttestationCallback(
-                topology=FINANCIAL_ADVISOR_TOPOLOGY
-            )
+            def provider_02_callback_factory(
+                thread_id: str = "",
+            ) -> Provider02AttestationCallback:
+                return Provider02AttestationCallback(
+                    topology=FINANCIAL_ADVISOR_TOPOLOGY,
+                    committer=GatewayClient(),
+                    thread_id=thread_id,
+                )
+
         except ImportError:
             pass  # provider_02 adapter not available — skip silently
 
     # Phase 2.1: Removed static interrupt_before — approval_node uses dynamic interrupt()
     compiled = workflow.compile(checkpointer=checkpointer)
 
-    # Attach the callback for caller retrieval (does not affect graph execution)
-    compiled._provider_02_callback = provider_02_callback  # type: ignore[attr-defined]
+    # Attach the factory for caller retrieval (does not affect graph execution)
+    compiled._provider_02_callback_factory = provider_02_callback_factory  # type: ignore[attr-defined]
 
     return compiled
 

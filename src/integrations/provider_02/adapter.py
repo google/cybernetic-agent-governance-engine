@@ -44,6 +44,23 @@ The Governed Financial Advisor graph has 4 terminal paths:
 Each path produces a valid ``ProjectBundle`` with ``parentStepIds`` reflecting
 the actual DAG traversal.
 
+State commitments (``stateHash``)
+---------------------------------
+Provider 02 preserves and certificate-binds each step's ``stateHash`` as a
+producer-supplied commitment; it never recomputes the preimage. So the
+commitment is only verifiable if CAGE keeps the preimage. The adapter does not
+hash or store anything itself: it stages a JSON-native snapshot per recorded
+step and, in :meth:`Provider02AttestationCallback.seal`, sends each one to the
+gateway's generic state-commitment service through an injected
+:class:`~src.gateway.governance.seams.state_commitment.StateCommitter`
+(``GatewayClient`` in production). The gateway PII-sanitizes the snapshot,
+canonicalizes it once (RFC 8785 JCS), hashes it (SHA-256), appends the
+sanitized preimage to its tamper-evident evidence chain and returns the
+digest. The adapter writes that digest into the step together with the
+method metadata (``stateHashAlg`` / ``stateHashCanon`` / ``stateHashScope``).
+A bundle cannot be obtained until every step is committed, so a failed
+commitment means no step — and no bundle — is emitted.
+
 Environment variables
 ---------------------
   PROVIDER_02_ATTESTATION_ENABLED   — "true" to enable (default: "false")
@@ -55,18 +72,22 @@ Environment variables
 from __future__ import annotations
 
 import copy
-import hashlib
 import logging
 import os
 import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
-from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.evidence.state_commitment import json_native
 from src.gateway.governance.seams.graph_topology import GraphTopology
+from src.gateway.governance.seams.state_commitment import (
+    STATE_COMMITMENT_METHOD,
+    StateCommitmentError,
+    StateCommitmentLinkage,
+    StateCommitter,
+)
 
 logger = logging.getLogger("cage.provider_02_adapter")
 
@@ -95,6 +116,9 @@ _API_ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("PROVIDER_02_API_KEY", "")
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_ATTESTATION_TIMEOUT", "5.0"))
 
+#: Linkage namespace under which this adapter's state commitments are recorded.
+STATE_COMMITMENT_NAMESPACE = "provider_02"
+
 
 # ---------------------------------------------------------------------------
 # Data contracts
@@ -116,7 +140,9 @@ class ProjectBundleStepEntry:
     duration_ms: float = 0.0
     signals: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    state_hash: str = ""  # SHA-256 of the serialized AgentState snapshot
+    # Gateway-issued commitment: sha256 over the RFC 8785 JCS bytes of the
+    # PII-sanitized snapshot (see STATE_COMMITMENT_METHOD). Empty until sealed.
+    state_hash: str = ""
 
     def to_dict(self) -> dict:
         """Serialize to Provider 02 API-compatible dict."""
@@ -199,33 +225,6 @@ def _serialize_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
     snapshot.pop("completed_transactions", None)  # Saga ledger — handled in signals
 
     return snapshot
-
-
-def _hash_state(state: dict[str, Any]) -> str:
-    """SHA-256 hash of a serialized state snapshot.
-
-    v3.1.0: Migrated to RFC 8785 JCS with pre-normalization.
-    """
-    # Pre-normalize datetime/Decimal (default=str was used)
-    from datetime import datetime
-
-    def _normalize(obj: Any) -> Any:
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        elif isinstance(obj, Decimal):
-            return str(obj)
-        elif isinstance(obj, dict):
-            return {k: _normalize(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [_normalize(item) for item in obj]
-        elif isinstance(obj, (str, int, float, bool, type(None))):
-            return obj
-        else:
-            return str(obj)
-
-    normalized = _normalize(state)
-    canonical_bytes = jcs_canonicalize_plan(normalized)
-    return hashlib.sha256(canonical_bytes).hexdigest()
 
 
 def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -438,10 +437,14 @@ class Provider02AttestationCallback:
 
     Args:
         topology: Graph topology defining nodes, edges, terminal/interrupt nodes
-        thread_id: Unique thread identifier (generated if not provided)
+        committer: Gateway state-commitment client (``GatewayClient`` in
+            production). Required: a step's ``stateHash`` is only ever the
+            gateway's receipt for a retained preimage.
+        thread_id: Unique thread identifier (generated if not provided). Must
+            match ``LINKAGE_ID_PATTERN`` or sealing fails closed.
 
     Raises:
-        TypeError: If topology is not provided (required parameter)
+        TypeError: If topology or committer is not provided.
 
     Usage::
 
@@ -449,19 +452,30 @@ class Provider02AttestationCallback:
 
         callback = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY,
-            thread_id="thread-123"
+            committer=GatewayClient(),
+            thread_id="thread-123",
         )
         # Pass to LangGraph invoke/stream as a callback
         graph.invoke(input, config={"callbacks": [callback]})
 
-        # After graph completion:
-        bundle = callback.get_bundle()
+        # After graph completion: commit every staged snapshot, then submit.
+        await submit_attested_bundle(callback, Provider02Client())
     """
 
-    def __init__(self, topology: GraphTopology, thread_id: str = "") -> None:
+    def __init__(
+        self,
+        topology: GraphTopology,
+        *,
+        committer: StateCommitter,
+        thread_id: str = "",
+    ) -> None:
         self._topology = topology
+        self._committer = committer
         self._thread_id = thread_id or str(uuid.uuid4())
+        self._bundle_id = str(uuid.uuid4())
         self._steps: list[ProjectBundleStepEntry] = []
+        # Steps whose snapshot has not yet been committed by the gateway.
+        self._pending: list[tuple[ProjectBundleStepEntry, dict[str, Any]]] = []
         # node_name → lineage of its most recent execution (nearest recorded step ids)
         self._lineage_by_node: dict[str, tuple[str, ...]] = {}
         # node that completed most recently (the default executed predecessor)
@@ -598,11 +612,15 @@ class Provider02AttestationCallback:
         metadata: dict[str, Any],
         duration_ms: float = 0.0,
     ) -> ProjectBundleStepEntry:
-        """Append a recorded step and make it the lineage of ``node_name``."""
+        """Append a recorded step and make it the lineage of ``node_name``.
+
+        The step's snapshot is staged (deep-copied, JSON-native) for
+        :meth:`seal`; its ``stateHash`` stays empty until the gateway commits it.
+        """
         from datetime import datetime, timezone
 
         # Deep-copy state to protect against mutation during loops
-        state_hash = _hash_state(_serialize_state_snapshot(state))
+        snapshot = json_native(_serialize_state_snapshot(state))
         step = ProjectBundleStepEntry(
             node_name=node_name,
             parent_step_ids=parent_step_ids,
@@ -610,11 +628,45 @@ class Provider02AttestationCallback:
             duration_ms=duration_ms,
             signals=signals,
             metadata=metadata,
-            state_hash=state_hash,
         )
         self._steps.append(step)
+        self._pending.append((step, snapshot))
         self._advance(node_name, (step.step_id,))
         return step
+
+    async def seal(self) -> None:
+        """Commit every staged snapshot through the gateway, in step order.
+
+        For each pending step the gateway sanitizes, canonicalizes, hashes and
+        retains the snapshot; its receipt supplies the step's ``stateHash`` and
+        the method metadata (:data:`STATE_COMMITMENT_METHOD`) is merged into
+        the step's ``metadata``. A step leaves the pending set only after its
+        receipt validates, so a partial failure can be retried.
+
+        Raises:
+            StateCommitmentError: A commitment failed or returned a receipt
+                that does not match the expected method. The bundle stays
+                unsealed and :meth:`get_bundle` keeps refusing.
+        """
+        while self._pending:
+            step, snapshot = self._pending[0]
+            linkage = StateCommitmentLinkage(
+                namespace=STATE_COMMITMENT_NAMESPACE,
+                bundle_id=self._bundle_id,
+                step_id=step.step_id,
+                thread_id=self._thread_id,
+                label=step.node_name,
+            )
+            receipt = await self._committer.commit_state(snapshot, linkage=linkage)
+            receipt.validate()
+            step.state_hash = receipt.state_hash
+            step.metadata.update(STATE_COMMITMENT_METHOD)
+            self._pending.pop(0)
+
+    @property
+    def is_sealed(self) -> bool:
+        """True when every recorded step carries a gateway-issued ``stateHash``."""
+        return not self._pending
 
     def handle_hitl_interrupt(
         self,
@@ -661,21 +713,29 @@ class Provider02AttestationCallback:
             },
         )
         logger.info(
-            "[Provider02Adapter] HITL interrupt recorded: step_id=%s state_hash=%s",
+            "[Provider02Adapter] HITL interrupt recorded: step_id=%s (commitment pending)",
             step.step_id[:8],
-            step.state_hash[:8],
         )
 
     def get_bundle(self) -> AttestationBundle:
         """Assemble all collected steps into a Project Bundle.
 
-        Call this after graph execution completes.
+        Call this after graph execution completes and :meth:`seal` succeeded.
+
+        Raises:
+            StateCommitmentError: Some step has no committed ``stateHash`` yet.
         """
         from datetime import datetime, timezone
 
+        if self._pending:
+            raise StateCommitmentError(
+                f"{len(self._pending)} step(s) have no committed stateHash; "
+                "call seal() before get_bundle()"
+            )
         terminal_path = _classify_terminal_path(self._steps, self._topology)
 
         return AttestationBundle(
+            bundle_id=self._bundle_id,
             thread_id=self._thread_id,
             steps=list(self._steps),
             started_at=self._started_at_utc,
@@ -687,6 +747,25 @@ class Provider02AttestationCallback:
     def step_count(self) -> int:
         """Number of steps recorded so far."""
         return len(self._steps)
+
+
+async def submit_attested_bundle(
+    callback: Provider02AttestationCallback,
+    client: Provider02Client,
+) -> dict[str, Any]:
+    """Seal ``callback``'s steps through the gateway, then register the bundle.
+
+    This is the single submit path: commitments always precede registration,
+    so Provider 02 never receives a ``stateHash`` whose preimage is not
+    retained in the evidence chain.
+
+    Raises:
+        StateCommitmentError: A state commitment failed; nothing was submitted.
+        Provider02Error: Registration with Provider 02 failed.
+    """
+    await callback.seal()
+    bundle = callback.get_bundle()
+    return await client.register_project_bundle(bundle.to_dict())
 
 
 # ---------------------------------------------------------------------------

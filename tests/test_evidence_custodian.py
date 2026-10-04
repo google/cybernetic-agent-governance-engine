@@ -82,6 +82,11 @@ class FakeColdStore:
         )
         return receipt, created
 
+    async def get(self, key):
+        if key not in self.objects:
+            raise ColdStoreError(f"missing {key}", backend_id="fake")
+        return self.objects[key]
+
     def data_keys(self) -> list[str]:
         return sorted(k for k in self.objects if k.endswith(".ndjson"))
 
@@ -408,6 +413,99 @@ class TestCustodyContinuity:
 # ---------------------------------------------------------------------------
 # from_env preconditions
 # ---------------------------------------------------------------------------
+
+
+class TestReadBackVerification:
+    """A pre-existing WORM object must be the same evidence (GCS digest quirk)."""
+
+    @pytest.mark.asyncio
+    async def test_conflicting_existing_data_object_halts_custody(self, server):
+        await _produce(server, 2)
+        store = FakeColdStore()
+        probe = _custodian(server, FakeColdStore())
+        expected_key = (await probe.flush_once()).data_key
+        store.objects[expected_key] = b"forged batch\n"  # squatted key
+        await _redis(server).delete(CURSOR_KEY)  # the probe advanced it
+
+        custodian = _custodian(server, store)
+        with pytest.raises(EvidenceCustodyIntegrityError, match="different content"):
+            await custodian.flush_once()
+        cursor = await _redis(server).hgetall(CURSOR_KEY)
+        assert "last_id" not in cursor  # not advanced past the conflict
+
+    @pytest.mark.asyncio
+    async def test_identical_existing_objects_are_accepted(self, server):
+        await _produce(server, 2)
+        store = FakeColdStore()
+        store.fail_on = {".attestation.json"}
+        custodian = _custodian(server, store)
+        with pytest.raises(ColdStoreError):
+            await custodian.flush_once()
+        store.fail_on = set()
+        outcome = await custodian.flush_once()  # data object re-put: same bytes
+        assert outcome.status is CustodyStatus.WRITTEN
+
+    @pytest.mark.asyncio
+    async def test_resigned_identical_attestation_is_accepted(self, server):
+        """A randomized re-signature over the same body is the same evidence."""
+        await _produce(server, 2)
+        store = FakeColdStore()
+        first = await _custodian(server, store).flush_once()
+        stored = json.loads(store.objects[first.attestation_key])
+        stored["signature"]["value"] = "a-different-randomized-signature"
+        store.objects[first.attestation_key] = json.dumps(stored).encode()
+        await _redis(server).delete(CURSOR_KEY)  # replay the same batch
+
+        outcome = await _custodian(server, store).flush_once()
+        assert outcome.attestation_key == first.attestation_key
+
+    @pytest.mark.asyncio
+    async def test_conflicting_attestation_body_halts_custody(self, server):
+        await _produce(server, 2)
+        store = FakeColdStore()
+        first = await _custodian(server, store).flush_once()
+        stored = json.loads(store.objects[first.attestation_key])
+        stored["entries_count"] = 999
+        store.objects[first.attestation_key] = json.dumps(stored).encode()
+        await _redis(server).delete(CURSOR_KEY)  # replay the same batch
+
+        with pytest.raises(EvidenceCustodyIntegrityError):
+            await _custodian(server, store).flush_once()
+
+    @pytest.mark.asyncio
+    async def test_objects_carry_data_classification(self, server):
+        await _produce(server, 1)
+        store = FakeColdStore()
+        outcome = await _custodian(server, store).flush_once()
+        for key in (outcome.data_key, outcome.attestation_key):
+            assert store.metadata[key]["x-data-classification"] == (
+                "internal-pii-sanitized"
+            )
+
+
+class TestNullColdStorePosture:
+    class _NullStore(FakeColdStore):
+        backend_id = "null"
+
+    @pytest.mark.parametrize("env", ["production", "staging"])
+    def test_constructor_refuses_null_store_when_enforcing(
+        self, server, monkeypatch, env
+    ):
+        monkeypatch.setenv("CAGE_ENV", env)
+        with pytest.raises(EvidenceCustodyConfigError, match="null"):
+            _custodian(server, self._NullStore())
+
+    def test_constructor_allows_null_store_when_permissive(self, server, monkeypatch):
+        monkeypatch.setenv("CAGE_ENV", "dev")
+        assert _custodian(server, self._NullStore()) is not None
+
+    def test_enforcing_rejects_unset_cold_store(self, monkeypatch):
+        """EVIDENCE_COLD_STORE unset defaults to null and is refused."""
+        monkeypatch.setenv("CAGE_ENV", "production")
+        monkeypatch.setenv("EVIDENCE_STREAM_REDIS_URL", "redis://localhost:6379")
+        monkeypatch.delenv("EVIDENCE_COLD_STORE", raising=False)
+        with pytest.raises(EvidenceCustodyConfigError, match="null"):
+            EvidenceCustodian.from_env()
 
 
 class TestFromEnv:
