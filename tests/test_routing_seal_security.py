@@ -609,3 +609,39 @@ async def test_redis_failure_after_valid_verification_fails_closed(trusted_jwks)
 
     with pytest.raises(SymbolicGovernorViolation, match="replay protection failed"):
         await verify_and_consume_seal(seal, action, params, redis_client=broken)
+
+
+@pytest.mark.asyncio
+async def test_seal_audience_mismatch_is_rejected_without_burning_nonce(trusted_jwks):
+    """A seal carrying an aud claim for one executor is rejected by another."""
+    import hashlib
+
+    import fakeredis.aioredis as fakeredis
+    import jwt as pyjwt
+
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        jcs_canonicalize_plan,
+        verify_and_consume_seal,
+    )
+
+    redis = fakeredis.FakeRedis()
+    action, params = "execute_trade", {"symbol": "AAPL", "amount": 100.0}
+    canon = jcs_canonicalize_plan({"action": action, **params})
+    claims = {
+        "action_hash": hashlib.sha256(canon).hexdigest(),
+        "record_hash": "a" * 64,
+        "nonce": "aud-nonce-0001",
+        "exp": int(time.time()) + 300,
+        "aud": "actuator_01",
+    }
+    seal = pyjwt.encode(claims, trusted_jwks, algorithm="ES256", headers={"kid": "trusted"})
+
+    with pytest.raises(SymbolicGovernorViolation, match="audience mismatch"):
+        await verify_and_consume_seal(
+            seal, action, params, redis_client=redis, expected_aud="actuator_02"
+        )
+
+    assert await verify_and_consume_seal(
+        seal, action, params, redis_client=redis, expected_aud="actuator_01"
+    )

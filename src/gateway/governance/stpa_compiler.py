@@ -676,7 +676,6 @@ def generate_opa(cs: ControlStructureModel) -> str:
             elif cond.composite:
                 lhs, ref, rhs = _composite_parts(cond.composite)
                 lines.append(f"    # composite: {cond.composite}")
-                lines.append(f"    input.{rhs} > 0")
                 lines.append(
                     f"    input.{lhs} > input._thresholds.{ref.replace('.', '_')} * input.{rhs}"
                 )
@@ -1100,10 +1099,24 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f"            # Composite condition: {cond.composite}",
                 f'            lhs_val = params.get("{lhs_param}")',
                 f'            rhs_val = params.get("{rhs_param}")',
+                "            if (lhs_val is None) != (rhs_val is None):",
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Incomplete composite params `{lhs_param}` / `{rhs_param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
                 "            if lhs_val is not None and rhs_val is not None:",
                 "                f_lhs = float(lhs_val)",
                 "                f_rhs = float(rhs_val)",
-                f'                if f_rhs > 0 and f_lhs > _resolve_threshold("{thresh_ref}") * f_rhs:',
+                "                if not (math.isfinite(f_lhs) and math.isfinite(f_rhs)):",
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="Non-finite composite param `{lhs_param}` or `{rhs_param}`.",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
+                f'                if f_lhs < 0 or f_rhs < 0 or f_lhs > _resolve_threshold("{thresh_ref}") * f_rhs:',
                 "                    return Violation(",
                 '                        tier="stpa",',
                 f'                        code="{uca_code}",',

@@ -526,19 +526,6 @@ def gated_transitions(state: State) -> Iterator[State]:
                     narrower_present=state.narrower_present,
                     clamped_params_valid=state.clamped_params_valid,
                 )
-            else:
-                # Dry run never issues a seal, but doesn't block execution in test/dry modes
-                yield State(
-                    phase="EXECUTED",
-                    tier_results=state.tier_results,
-                    seal_present=False,
-                    resolved_allow=True,
-                    seal_consumed=False,
-                    seal_expired=False,
-                    profile=state.profile,
-                    narrower_present=state.narrower_present,
-                    clamped_params_valid=state.clamped_params_valid,
-                )
         else:
             next_tier = pending_tiers[0]
             for outcome in ("PASS", "FAIL"):
@@ -574,18 +561,19 @@ def gated_transitions(state: State) -> Iterator[State]:
                         narrower_present=True,
                         clamped_params_valid=False,
                     )
-                    # Narrower present, and rerun passes -> NARROW (ALLOW variant)
-                    yield State(
-                        phase="NARROW",
-                        tier_results=new_tier_results,
-                        seal_present=True,
-                        resolved_allow=True,
-                        seal_consumed=False,
-                        seal_expired=False,
-                        profile=state.profile,
-                        narrower_present=True,
-                        clamped_params_valid=True,
-                    )
+                    # Narrower present, and rerun passes -> NARROW (ALLOW variant, committing profiles only)
+                    if state.profile != "DRY_RUN":
+                        yield State(
+                            phase="NARROW",
+                            tier_results=new_tier_results,
+                            seal_present=True,
+                            resolved_allow=True,
+                            seal_consumed=False,
+                            seal_expired=False,
+                            profile=state.profile,
+                            narrower_present=True,
+                            clamped_params_valid=True,
+                        )
                 else:
                     # PASS: continue checking
                     yield State(
@@ -907,14 +895,14 @@ def enumerate_reachable(
 def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
     """Check the No-Direct-Bind invariant over all states.
 
-    Invariant: (phase = "EXECUTED") => (resolvedAllow = TRUE)
+    Invariant: (phase = "EXECUTED") => (resolvedAllow = TRUE and seal_present = TRUE)
 
     Returns:
         (holds, counterexample) — holds=True if the invariant holds everywhere,
         counterexample is the first violating state (or None if holds=True).
     """
     for state in states:
-        if state.phase == "EXECUTED" and not state.resolved_allow:
+        if state.phase == "EXECUTED" and not (state.resolved_allow and state.seal_present):
             return False, state
     return True, None
 
