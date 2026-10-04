@@ -260,8 +260,9 @@ Always return `verification_status=UNVERIFIED` until Ed25519 verification succee
 | Invalid Ed25519 signature | 200 | `SIGNATURE_VERIFICATION_FAILED` | `False` | Tampered response → reject |
 | Malformed JSON | 200 | `SCHEMA_VALIDATION_ERROR` | `False` | Cannot parse → cannot trust |
 | Missing `authority_record_id` on `ALLOW` | 200 | `TOKEN_MINT_FAILED` | `False` | Authorization without audit token is invalid |
-| `decision == "REFUSE"` | 200 | (none) | `False` | Normative refusal (legitimate deny) |
-| `decision == "ESCALATE"` | 200 | (none) | `False` | Deferred to human → block autonomous execution |
+| Non-null `authority_record_id` on `REFUSE` or `ESCALATE` | 200 | `TOKEN_MINT_FAILED` | `False` | Only `ALLOW` may mint an authority record |
+| `decision == "REFUSE"` (`authority_record_id == null`) | 200 | (none) | `False` | Normative refusal (legitimate deny) |
+| `decision == "ESCALATE"` (`authority_record_id == null`) | 200 | (none) | `False` | Deferred to human → block autonomous execution |
 | `decision == "ALLOW"` + valid signature + `authority_record_id` present | 200 | (none) | `True` | All safety gates passed |
 
 **Refusals Are Primary Evidence**: `REFUSE` and `ESCALATE` responses must enter the tamper-evident audit chain with the same cryptographic rigor as `ALLOW` approvals.

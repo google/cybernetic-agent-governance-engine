@@ -451,6 +451,26 @@ class Provider07NormativeProvider:
                 findings=[finding],
             )
 
+        elif decision in ("REFUSE", "ESCALATE") and (
+            inference_response.authority_record_id is not None
+        ):
+            logger.error(
+                "provider_07: %s decision must not carry authority_record_id=%r — failing closed",
+                decision,
+                inference_response.authority_record_id,
+            )
+            return ValidationResult(
+                admitted=False,
+                error=f"{decision} decision must have authority_record_id=None",
+                findings=[
+                    {
+                        "code": "TOKEN_MINT_FAILED",
+                        "message": f"{decision} decision must not include authority_record_id",
+                        "status": "fail",
+                    }
+                ],
+            )
+
         elif decision == "REFUSE":
             logger.info(
                 "provider_07: REFUSE decision posterior_risk=%.3f",

@@ -49,7 +49,7 @@ The adapter maps InferTheta's tri-state decision model (`ALLOW`, `REFUSE`, `ESCA
 **Key Invariants**:
 - Layer 1 Kernel **NEVER** imports `provider_07` directly (enforced by Gate G3: [`scripts/check_import_boundaries.py`](../../../scripts/check_import_boundaries.py))
 - Generic package naming (`provider_07`) enforces Gate G8 (Vendor Brand Isolation)
-- Vendor brand name "InferTheta" appears **only** in this README and [`docs/partners/INFERTHETA_CANONICAL_SCHEMA.md`](../../../docs/partners/INFERTHETA_CANONICAL_SCHEMA.md)
+- Vendor brand name "InferTheta" appears **only** in this README and [`docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md`](../../../docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md)
 
 ---
 
@@ -126,8 +126,9 @@ The adapter enforces **strict fail-closed semantics** on all error conditions:
 | **Invalid Ed25519 signature** | 200 | `SIGNATURE_VERIFICATION_FAILED` | `False` | Signature mismatch | Tampered response → reject |
 | **Malformed JSON** | 200 | `SCHEMA_VALIDATION_ERROR` | `False` | Parsing error | Cannot parse → cannot trust |
 | **Missing `authority_record_id` on `ALLOW`** | 200 | `TOKEN_MINT_FAILED` | `False` | Missing audit token | Authorization without token is invalid |
-| **`decision == "REFUSE"`** | 200 | *(none)* | `False` | Full response body | Normative refusal (legitimate deny) |
-| **`decision == "ESCALATE"`** | 200 | *(none)* | `False` | Full response body | Deferred to human → block autonomous execution |
+| **Non-null `authority_record_id` on `REFUSE` / `ESCALATE`** | 200 | `TOKEN_MINT_FAILED` | `False` | Illegal authority token | Only `ALLOW` may carry an authority record |
+| **`decision == "REFUSE"` (`authority_record_id == null`)** | 200 | *(none)* | `False` | Full response body | Normative refusal (legitimate deny) |
+| **`decision == "ESCALATE"` (`authority_record_id == null`)** | 200 | *(none)* | `False` | Full response body | Deferred to human → block autonomous execution |
 | **`decision == "ALLOW"` + valid signature + token** | 200 | *(none)* | `True` | Full response + signature | All safety gates passed |
 
 **Canonical Transform** (from tri-state to binary):

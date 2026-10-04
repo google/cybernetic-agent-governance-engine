@@ -117,11 +117,17 @@ class Provider07JwksClient:
         cache_age = current_time - self._cache_timestamp
 
         # Cache miss or expired: refresh from remote
+        refreshed = False
         if cache_age > self._cache_ttl_seconds or not self._key_cache:
             await self._refresh_keys()
+            refreshed = True
 
-        # Resolve key from cache
+        # Resolve key from cache (refresh once on warm-cache miss for key rotation)
         key = self._key_cache.get(kid)
+        if key is None and not refreshed:
+            await self._refresh_keys()
+            key = self._key_cache.get(kid)
+
         if key is None:
             logger.warning(
                 "provider_07: Unknown kid=%r in JWKS manifest (url=%s). "

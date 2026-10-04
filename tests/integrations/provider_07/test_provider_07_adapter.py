@@ -1117,3 +1117,121 @@ class TestInferThetaPartnerContractVectors:
                     allow_step1_unsigned=True,
                 )
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("decision", ["REFUSE", "ESCALATE"])
+    async def test_refuse_or_escalate_with_authority_record_id_fails_closed(
+        self,
+        adapter: Provider07NormativeProvider,
+        valid_request_payload: dict[str, Any],
+        ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
+        decision: str,
+    ) -> None:
+        """Step 2 negative vector: REFUSE/ESCALATE carrying non-null authority_record_id fails closed."""
+        private_key, _ = ed25519_keypair
+        unsigned_payload = {
+            "decision": decision,
+            "confidence_score": 0.75,
+            "posterior_risk_score": 0.45 if decision == "REFUSE" else 0.26,
+            "marginal_probabilities": {},
+            "utility_rankings": [],
+            "authority_record_id": "illegal-authority-token-on-non-allow",
+            "findings": [],
+        }
+
+        signed_resp = sign_response(unsigned_payload, private_key)
+        mock_response = _mock_http_response(signed_resp)
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(valid_request_payload)
+
+        assert result.admitted is False
+        assert result.error is not None
+        assert len(result.findings) == 1
+        assert result.findings[0]["code"] == "TOKEN_MINT_FAILED"
+        assert "needs_human_review" not in result.findings[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty_field", ["kid", "signature"])
+    async def test_empty_kid_or_signature_fails_schema_validation(
+        self,
+        adapter: Provider07NormativeProvider,
+        valid_request_payload: dict[str, Any],
+        empty_field: str,
+    ) -> None:
+        """Step 2 invariant: empty kid or signature string fails closed at schema validation."""
+        raw_payload = {
+            "decision": "ALLOW",
+            "confidence_score": 0.95,
+            "posterior_risk_score": 0.10,
+            "marginal_probabilities": {},
+            "utility_rankings": [],
+            "authority_record_id": "auth-123",
+            "kid": "test-key-001",
+            "signature": "valid-non-empty-placeholder",
+            "findings": [],
+        }
+        raw_payload[empty_field] = ""
+        mock_response = _mock_http_response(raw_payload)
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(valid_request_payload)
+
+        assert result.admitted is False
+        assert result.findings[0]["code"] == "PROVIDER_07_PARSE_ERROR"
+
+    @pytest.mark.asyncio
+    async def test_jwks_client_refreshes_once_on_rotated_kid_in_warm_cache(
+        self,
+        ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
+    ) -> None:
+        """Step 2 key rotation: warm JWKS cache refreshes once when encountering a newly rotated kid."""
+        _, pub1 = ed25519_keypair
+        priv2 = Ed25519PrivateKey.generate()
+        pub2 = priv2.public_key()
+
+        x1 = base64.urlsafe_b64encode(pub1.public_bytes_raw()).rstrip(b"=").decode("ascii")
+        x2 = base64.urlsafe_b64encode(pub2.public_bytes_raw()).rstrip(b"=").decode("ascii")
+
+        jwks_v1 = {"keys": [{"kty": "OKP", "crv": "Ed25519", "kid": "key-v1", "x": x1}]}
+        jwks_v2 = {
+            "keys": [
+                {"kty": "OKP", "crv": "Ed25519", "kid": "key-v1", "x": x1},
+                {"kty": "OKP", "crv": "Ed25519", "kid": "key-v2", "x": x2},
+            ]
+        }
+
+        resp_v1 = MagicMock()
+        resp_v1.json.return_value = jwks_v1
+        resp_v1.raise_for_status = MagicMock()
+
+        resp_v2 = MagicMock()
+        resp_v2.json.return_value = jwks_v2
+        resp_v2.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.get.side_effect = [resp_v1, resp_v2]
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            client = Provider07JwksClient(
+                jwks_url="http://localhost:8087/.well-known/jwks.json",
+                cache_ttl_seconds=3600,
+            )
+            k1 = await client.get_key("key-v1")
+            assert k1 is not None
+            assert k1.public_bytes_raw() == pub1.public_bytes_raw()
+
+            # Rotated key-v2 arrives while cache is still warm (<3600s)
+            k2 = await client.get_key("key-v2")
+            assert k2 is not None
+            assert k2.public_bytes_raw() == pub2.public_bytes_raw()
+            assert client_instance.get.call_count == 2
+
