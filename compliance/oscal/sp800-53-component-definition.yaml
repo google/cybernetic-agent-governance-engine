@@ -1070,6 +1070,50 @@ component-definition:
                   rel: test
                   text: "Integrity halt, gap recording, retry-safe cursor, fail-closed config"
 
+            - uuid: "abd3ab8a-f0cf-439c-a0ee-8537cbf42b2b"
+              control-id: au-11
+              description: |
+                Customer responsibility (audit record retention). This statement makes
+                no implementation claim; it records what an adopter must decide.
+
+                CAGE retains governance evidence, including Provider 02 stateHash
+                preimages (STATE_COMMITMENT records), in a retention-locked WORM
+                bucket. The preimages are PII-sanitized, not anonymized
+                (docs/architecture/EVIDENCE_CHAIN.md §4.4 lists the sanitizer's gaps:
+                free-text names, addresses, non-IBAN account numbers, numeric PII and the
+                pseudonymous user_id). The reference defaults in
+                infra/targets/gcp-gke/main.tf are a 7-year locked retention policy in
+                prod, a 1-day locked policy in staging, and an unlocked policy in dev.
+                These are illustrative defaults, not a legal determination.
+
+                Before deploying, the adopting organization must (1) establish the
+                lawful basis and the retention period for audit records in its
+                jurisdiction and set the WORM retention to match before the policy is
+                locked, and (2) determine whether residual personal data in
+                WORM-retained, PII-sanitized evidence falls under an erasure exemption
+                (for example GDPR Art. 17(3)(b) or (e)). If no exemption applies,
+                the organization must decide how erasure requests are met (for example
+                with a shorter retention, or by excluding such data before
+                commitment), because a locked bucket cannot delete objects early.
+              props:
+                - name: control-origination
+                  value: customer-configured
+                - name: responsibility
+                  ns: "https://cage.laah.cybernetics.dev/ns/oscal"
+                  value: customer
+                  class: customer-responsibility
+                - name: poam-reference
+                  value: "POAM-2026-084"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-11"
+                  rel: reference
+                - href: "../../infra/targets/gcp-gke/main.tf"
+                  rel: reference
+                  text: "Reference WORM retention defaults (prod 7y locked / staging 1d locked / dev unlocked)"
+                - href: "../../docs/architecture/EVIDENCE_CHAIN.md"
+                  rel: reference
+                  text: "State commitments: sanitizer coverage and known gaps"
+
             - uuid: "4bc5258d-a69c-4bdf-a40c-a12496cb279b"
               control-id: au-9.3
               description: |

@@ -11,7 +11,7 @@ the following (invariant 4 implements the clarified spec §4.1 rules 2–4):
 
 | # | Invariant | CAGE implementation |
 |---|---|---|
-| 1 | `hitl_interrupt.stateHash` is SHA-256 hex (`^[a-f0-9]{64}$`) over the RFC 8785 JCS snapshot | `_hash_state()` in [`adapter.py`](../../../../src/integrations/provider_02/adapter.py) |
+| 1 | `hitl_interrupt.stateHash` is SHA-256 hex (`^[a-f0-9]{64}$`) over the RFC 8785 JCS bytes of the PII-sanitized snapshot, and every step carries `stateHashAlg="sha256"`, `stateHashCanon="RFC8785-JCS"`, `stateHashScope="agentstate-pii-sanitized/v1"` in `metadata` | Gateway `StateCommitmentService` in [`state_commitment.py`](../../../../src/gateway/governance/evidence/state_commitment.py); `Provider02AttestationCallback.seal()` in [`adapter.py`](../../../../src/integrations/provider_02/adapter.py) |
 | 2 | `hitl_interrupt` is declared in `GraphTopology.nodes` and `attestation_nodes` | [`graph_topology.py`](../../../../src/cage_finance/graph_topology.py) |
 | 3 | Lineage: `safety_check` → `hitl_interrupt` → `governed_trader`, and `governed_trader.parentStepIds == [hitl_interrupt.stepId]` | `_resolve_executed_parents()` / `handle_hitl_interrupt()` in [`adapter.py`](../../../../src/integrations/provider_02/adapter.py) |
 | 4 | Actual parents only: every `parentStepIds` entry is an executed edge that is legal under `parentEdges` (`explainer == [governed_trader]`, `nemo_output_rail == [explainer]`) | `_resolve_executed_parents()` in [`adapter.py`](../../../../src/integrations/provider_02/adapter.py); illegal edges raise `LineageError` |
@@ -73,7 +73,23 @@ The partner confirmed the 0.4.0 rejection was in their SDK, not malformed CAGE o
 The partner keeps `stateHash` and binds it into the certificate as a
 **producer-supplied commitment**. They do **not** recompute it from the preimage.
 Independent verification of the commitment therefore depends on CAGE keeping
-the canonical snapshot (the preimage). See the open items below.
+the canonical snapshot (the preimage), which it now does:
+
+- The adapter no longer hashes anything. `seal()` sends each step's snapshot to
+  the gateway (`POST /governance/state-commitments`, Linkerd mTLS workload
+  identity), which PII-sanitizes it with the evidence-chain sanitizer,
+  canonicalizes it once (RFC 8785), hashes it (SHA-256) and appends the
+  sanitized preimage to the hash-chained evidence stream as a
+  `STATE_COMMITMENT` record. The compliance bridge custodies that record into
+  the WORM bucket under a KMS-signed batch attestation.
+- A bundle cannot be obtained (`get_bundle()` raises) until every step has a
+  gateway receipt, so a failed commitment emits no step and no bundle.
+- Verification: `verify_state_commitment()` re-canonicalizes the record's
+  `state` and compares SHA-256 with the step's `stateHash`; `linkageDigest`
+  binds the record to the exact `bundleId` / `stepId`.
+- The digest binds the **sanitized** state. Bundles without the
+  `stateHashScope` key were hashed over raw state and cannot be recomputed from
+  a sanitized preimage.
 
 ## Resolved items
 
@@ -96,10 +112,22 @@ the canonical snapshot (the preimage). See the open items below.
   The bundles are smaller; they are not looser. Before this counts as verified,
   `test_tc06_hitl_approval` must pass over the wire.
 
+- **`stateHash` preimage retention (hermetic).** The sanitized preimage is
+  retained in the evidence chain and the hash recomputes from it
+  ([`test_state_commitment_adapter.py`](../../../../tests/integrations/provider_02/test_state_commitment_adapter.py),
+  [`test_state_commitment_service.py`](../../../../tests/test_state_commitment_service.py)).
+  Live verification is still pending: the WORM-path checks in
+  [`test_state_commitment_worm_live.py`](../../../../tests/integrations/test_state_commitment_worm_live.py)
+  have not yet been run against the staging bucket, and closure is tracked by
+  POAM-2026-084 in [`POAM.md`](../../../POAM.md).
+
 ## Open items
 
-- **`stateHash` preimage retention.** The adapter builds the canonical snapshot,
-  hashes it and discards it. Because the partner doesn't recompute the hash, no
-  party can verify the commitment today. Fix: keep the canonical snapshot in
-  tamper-evident evidence storage, keyed by `stateHash`, and add a test that
-  recomputes the hash from it.
+- **Live WORM verification of state preimages.** Run
+  `test_state_commitment_worm_live.py` against the locked staging bucket
+  (`CAGE_LIVE_WORM_BUCKET`) and record the result here and in POAM-2026-084.
+- **Production callback wiring.** The real advisor graph runs `ftra_node`,
+  `defer_node` and `approval_node`, which `FINANCIAL_ADVISOR_TOPOLOGY` does not
+  declare, so streaming live node events into the callback would raise
+  `LineageError`. `submit_attested_bundle()` is the single submit path, but no
+  server route drives it yet; the topology must be reconciled first.

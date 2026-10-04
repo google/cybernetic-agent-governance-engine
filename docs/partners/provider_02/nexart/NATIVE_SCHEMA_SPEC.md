@@ -146,7 +146,7 @@ CAGE defines three foundational schemas for governance DAG recording:
 | `parentStepIds` | UUID[] | Array of parent step IDs (DAG edges) | Each ID must reference earlier step in same bundle |
 | `timestampUtc` | ISO 8601 string | Node execution start time (UTC) | Monotonic non-decreasing relative to parents |
 | `durationMs` | number | Execution duration in milliseconds | Non-negative float |
-| `stateHash` | string | SHA-256 hex digest of node state | 64-character lowercase hex string |
+| `stateHash` | string | SHA-256 hex digest of the PII-sanitized, RFC 8785-canonicalized node state (see §3.4) | 64-character lowercase hex string |
 
 **Extension Point Fields:**
 
@@ -154,6 +154,27 @@ CAGE defines three foundational schemas for governance DAG recording:
 |-------|------|-------------|-------------------------------|
 | `signals` | object | Governance signals (CBF verdicts, OPA decisions, NeMo outcomes) | **YES** — Keys must be sorted, no trailing zeros |
 | `metadata` | object | Arbitrary node metadata (model names, policy IDs, timing breakdowns) | **YES** — Keys must be sorted, no trailing zeros |
+
+**State-Commitment Method Keys in `metadata` (optional, additive):**
+
+Every step CAGE emits carries three `metadata` keys describing how its
+`stateHash` was computed. They live inside the existing `metadata` extension
+object, so the bundle and step schemas are unchanged (no new top-level fields;
+`additionalProperties: false` still holds). Consumers MUST treat them as
+optional and MUST preserve them like any other `metadata` key.
+
+| Key | Value | Meaning |
+|-----|-------|---------|
+| `stateHashAlg` | `"sha256"` | Digest algorithm applied to the canonical preimage bytes |
+| `stateHashCanon` | `"RFC8785-JCS"` | Canonicalization applied before hashing |
+| `stateHashScope` | `"agentstate-pii-sanitized/v1"` | Preimage scope: the `AgentState` snapshot after CAGE's evidence-chain PII sanitizer, version 1 |
+
+The scope tag is versioned. Steps without these keys (bundles produced before
+this change) carry a `stateHash` computed over the **unsanitized** snapshot;
+the two are not comparable, and a verifier must not try to recompute an
+untagged digest from a sanitized preimage. The constants are defined once in
+[`state_commitment.py`](../../../../src/gateway/governance/seams/state_commitment.py)
+(`STATE_COMMITMENT_METHOD`).
 
 **Common Signal Examples:**
 
@@ -171,7 +192,7 @@ CAGE defines three foundational schemas for governance DAG recording:
 **Semantic Invariants:**
 - `parentStepIds` MUST reference steps with earlier array indices in `AttestationBundle.steps`
 - `timestampUtc` MUST be ≥ any parent step's `timestampUtc` (monotonic time ordering)
-- `stateHash` MUST be deterministically computed from JCS-canonicalized state snapshot
+- `stateHash` MUST be deterministically computed from the JCS-canonicalized, PII-sanitized state snapshot; the method is declared by the `stateHash*` metadata keys above
 - Unknown fields in `signals`/`metadata` MUST be preserved by NexArt for forward compatibility
 
 ### 2.4 GraphTopology Schema
@@ -288,37 +309,18 @@ const canonical = canonicalize(data);
 
 **Node-Level State Hash (`stateHash` field):**
 
-The `stateHash` field is a **producer-supplied cryptographic commitment** over the private JCS-canonicalized (RFC 8785) `AgentState` snapshot at the time of node execution. This hash is computed by CAGE (the producer) and submitted as an opaque, unforgeable commitment within each [`ProjectBundleStepEntry`](../../../src/integrations/provider_02/adapter.py:104).
+The `stateHash` field is a **producer-supplied cryptographic commitment** over the private, PII-sanitized, JCS-canonicalized (RFC 8785) `AgentState` snapshot at the time of node execution. It is computed by the CAGE gateway and submitted as an opaque commitment within each [`ProjectBundleStepEntry`](../../../../src/integrations/provider_02/adapter.py).
 
-**Critical Invariant:** `stateHash` is **NOT recomputed by NexArt**. NexArt records the `stateHash` value as-is, treating it as an unforgeable producer commitment. The state snapshot used to compute `stateHash` is private to CAGE and is never transmitted to NexArt.
+**Critical Invariant:** `stateHash` is **NOT recomputed by NexArt**. NexArt records the `stateHash` value as-is and certificate-binds it as a producer commitment. The preimage is private to CAGE and is never transmitted to NexArt.
 
 **Producer Computation (CAGE Responsibility):**
-- Compute SHA-256 digest of JCS-canonicalized `AgentState` snapshot
-- State snapshot includes: `stepId`, `nodeName`, `timestampUtc`, `signals`, `metadata`, plus private internal state fields not transmitted to NexArt
-- Exclude `parentStepIds` and `durationMs` from state hash (these are DAG metadata, not state)
+1. The advisor-side adapter deep-copies the `AgentState` at the node boundary (messages truncated to 500 chars, saga ledger removed) and sends it to the gateway's generic state-commitment endpoint (`POST /governance/state-commitments`, authenticated by Linkerd mTLS workload identity).
+2. The gateway applies the evidence-chain PII sanitizer, normalizes to JSON-native types, canonicalizes **once** with RFC 8785 JCS, and computes SHA-256 over those bytes.
+3. The gateway appends the sanitized snapshot (the exact preimage) to its hash-chained evidence stream as a `STATE_COMMITMENT` record; the compliance bridge custodies it into the WORM bucket with a KMS-signed batch attestation.
+4. The digest is returned to the adapter and written into the step as `stateHash`, with the method keys in `metadata` (§2.3).
 - **Format:** 64-character lowercase hexadecimal string
 
-**Example State Hash Computation (CAGE Internal):**
-```python
-import jcs
-import hashlib
-
-# Private AgentState snapshot (not transmitted to NexArt)
-state = {
-    "stepId": "c9bf9e57-1685-4c89-bafb-ff5af830be8a",
-    "nodeName": "safety_check",
-    "timestampUtc": "2026-09-14T12:00:00.500Z",
-    "signals": {"opa_verdict": "ALLOW"},
-    "metadata": {"policy": "OPA_PRE_TRADE_001"},
-    # Additional private fields (e.g., internal graph state, model weights)
-    # may be included in hash computation but NOT transmitted
-}
-
-canonical = jcs.canonicalize(state)
-state_hash = hashlib.sha256(canonical).hexdigest()
-# Result: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
-# This hash is submitted to NexArt as an opaque commitment
-```
+**Independent Verification (CAGE / auditor):** fetch the custodied `STATE_COMMITMENT` record whose `linkageDigest` matches the step (`namespace="provider_02"`, `bundleId`, `stepId`, `threadId`, `label=nodeName`), re-canonicalize its `state` object with RFC 8785, hash with SHA-256 and compare to the step's `stateHash` (`verify_state_commitment()` in [`state_commitment.py`](../../../../src/gateway/governance/evidence/state_commitment.py)). Because the preimage is sanitized, verification needs no access to raw PII.
 
 **Bundle-Level CER Digest (NexArt responsibility):**
 - NexArt MAY compute composite CER for entire `AttestationBundle`
@@ -335,8 +337,8 @@ state_hash = hashlib.sha256(canonical).hexdigest()
 5. Preserve original `signals`/`metadata` content after validation
 
 **CAGE Submission Pipeline MUST:**
-1. Apply JCS canonicalization to private `AgentState` snapshot before computing `stateHash`
-2. Submit `stateHash` as an opaque commitment (never transmit the private state snapshot to NexArt)
+1. PII-sanitize, then JCS-canonicalize the private `AgentState` snapshot before computing `stateHash`, and retain the sanitized preimage in the evidence chain before the step is emitted
+2. Submit `stateHash` as an opaque commitment (never transmit the private state snapshot to NexArt) together with the `stateHashAlg` / `stateHashCanon` / `stateHashScope` metadata keys
 3. Sign the canonicalized `ProjectBundleStepEntry` payload with CAGE's private key
 
 **Signature Verification (NexArt):**
