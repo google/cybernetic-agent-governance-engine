@@ -196,6 +196,9 @@ local/
 .local/
 .maintainer/
 docs/internal/
+*[cC][aA][gG][eE]_[aA][rR][xX][iI][vV]*
+*cage_arxiv*
+*CAGE_ARXIV*
 
 # Governance transpiler output — regenerate via PolicyTranspiler
 **/generated_actions.py
