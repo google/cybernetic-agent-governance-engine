@@ -1,11 +1,17 @@
-# Architecture & Implementation Plan: OpsCanvas (`provider_08`) CloudOps Partner Adapter
+# Architecture & Implementation Plan: OpsCanvas (`provider_09`) CloudOps Partner Adapter
 
-**Document ID:** PLAN-2026-PROV08-01  
+**Document ID:** PLAN-2026-PROV09-01  
 **Status:** DRAFT / PROPOSAL  
 **Author:** Lars Ahlfors  
-**Target Package:** `src/integrations/provider_08/`  
-**Target Seams:** [`src/gateway/governance/seams/normative.py`](../src/gateway/governance/seams/normative.py) · [`src/gateway/governance/defer_queue.py`](../src/gateway/governance/defer_queue.py) · [`src/gateway/governance/ftra/`](../src/gateway/governance/ftra/)  
+**Target Package:** `src/integrations/provider_09/`  
+**Target Seams:** [`src/gateway/governance/seams/estate.py`](../src/gateway/governance/seams/estate.py) (primary, `EstateProvider`) · [`src/gateway/governance/seams/normative.py`](../src/gateway/governance/seams/normative.py) (optional) · [`src/gateway/governance/defer_queue.py`](../src/gateway/governance/defer_queue.py) · [`src/gateway/governance/ftra/`](../src/gateway/governance/ftra/)  
 **Classification:** Reference Architecture Partner Integration  
+**Decision Points:** [`docs/partners/provider_09/DECISION_POINTS.md`](../docs/partners/provider_09/DECISION_POINTS.md)  
+
+> **Slot note (2026-10-04):** This plan originally targeted `provider_08`, which is held by
+> Verdict Systems. OpsCanvas is `provider_09`, matching the alias map in
+> [`estate_provider.py`](../src/gateway/governance/estate_provider.py). The kernel already ships the
+> `EstateProvider` seam and factory; the `provider_09` adapter package does not exist yet.
 
 ---
 
@@ -14,13 +20,13 @@
 ### 1.1 The Integration Handshake: "Perimeter Meets Estate"
 Autonomous AI agents are increasingly authorized to manage infrastructure, modify cloud configurations, trigger deployments, and remediate incidents (CloudOps). In a cybernetic architecture:
 * **CAGE (Layer 1 Kernel)** enforces the **admission control perimeter and deterministic physical invariants**: discrete-time Control Barrier Functions (CBFs), compiled OPA Rego ASTs, Forward Trajectory Reachability Analysis (FTRA), asymmetric deferral queues (`PARK` → `HYDRATE` → `REPLAY`), and cryptographic state-mutation seals. CAGE **deliberately avoids building cloud discovery scanners, graph databases, or asset scrapers**.
-* **OpsCanvas (`provider_08`)** provides the **dated ground truth of the cloud estate**: confirmed dependency graphs (services, deployments, network topology, ownership, blast radius, cost) assembled from git repos, IaC (Terraform), CI/CD, and cloud APIs, exposed over the **Model Context Protocol (MCP)**.
+* **OpsCanvas (`provider_09`)** provides the **dated ground truth of the cloud estate**: confirmed dependency graphs (services, deployments, network topology, ownership, blast radius, cost) assembled from git repos, IaC (Terraform), CI/CD, and cloud APIs, exposed over the **Model Context Protocol (MCP)**.
 
 ### 1.2 Architectural Invariants (ADR-008 & Three-Layer Architecture)
 1. **Zero Kernel Pollutants (Gate G3):** The CAGE kernel ([`src/gateway/`](../src/gateway/)) is domain-agnostic and vendor-neutral. Code in `src/gateway/` must never import `src/integrations/` directly (enforced via dynamic factory loading).
 2. **Fail-Closed by Design:** If the OpsCanvas MCP server is unreachable, times out, or emits malformed data, CAGE policies fail closed (`DENY` or `PARK`), never failing open into unverified mutations.
-3. **Over-the-Wire Conformance Mandate:** Conformance tests (`tests/integrations/provider_08/`) must run over physical wire/stdio transports against an authentic OpsCanvas daemon/sandbox. In-memory stubs or synthetic HTTP mocks are prohibited.
-4. **Anonymized Code, Specific Prose:** Code paths and package names use `provider_08`. Brand names (OpsCanvas) appear only in prose documentation, READMEs, and meeting memos.
+3. **Over-the-Wire Conformance Mandate:** Conformance tests (`tests/integrations/provider_09/`) must run over physical wire/stdio transports against an authentic OpsCanvas daemon/sandbox. In-memory stubs or synthetic HTTP mocks are prohibited.
+4. **Anonymized Code, Specific Prose:** Code paths and package names use `provider_09`. Brand names (OpsCanvas) appear only in prose documentation, READMEs, and meeting memos.
 
 ---
 
@@ -62,7 +68,7 @@ Policy engines (OPA Rego) and barrier functions (CBF) evaluate in microseconds a
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.1 Pydantic Wire Contract (`src/integrations/provider_08/schema.py`)
+### 2.1 Pydantic Wire Contract (`src/integrations/provider_09/schema.py`)
 
 ```python
 from __future__ import annotations
@@ -130,7 +136,7 @@ class CloudOpsResourcePredicate(BaseModel):
     
     # 5. Provenance Anchor
     snapshot_id: str = Field(..., description="OpsCanvas immutable snapshot ID")
-    snapshot_hash: str = Field(..., regex=r"^sha256:[a-f0-9]{64}$", description="Content-addressed root hash")
+    snapshot_hash: str = Field(..., pattern=r"^sha256:[a-f0-9]{64}$", description="Content-addressed root hash")
     evaluated_at_utc: str = Field(..., description="ISO 8601 evaluation timestamp")
 ```
 
@@ -186,7 +192,7 @@ class CloudOpsResourcePredicate(BaseModel):
 
 ### 3.3 Touchpoint 3: Normative Provider Protocol Adaptation
 * **Anchor:** [`src/gateway/governance/seams/normative.py`](../src/gateway/governance/seams/normative.py) (`NormativeProvider`).
-* **Implementation in `provider_08`:**
+* **Implementation in `provider_09`:**
   * `fetch_baseline(region)`: Fetches expected cloud topology baseline and allowed infrastructure tags for `US_FED`, `EU_ECB`, or `APAC_MAS`.
   * `validate_fria(payload)`: Submits the proposed cloud mutation to OpsCanvas to assert no circular dependencies or network boundary violations are introduced.
   * `submit_evidence(thread_id, evidence_hash)`: Links the local decision hash to OpsCanvas for mutual sealing.
@@ -246,8 +252,8 @@ defer {
 
 | Milestone | Deliverables | Target Timeline | Verification Gate |
 |---|---|---|---|
-| **M1: Wire Schema & MCP Client** | `src/integrations/provider_08/schema.py`, `mcp_client.py` (stdio / SSE JSON-RPC) | Week 1 | Unit tests with mock stdio subprocess |
-| **M2: Normative Seam Adapter** | `src/integrations/provider_08/adapter.py` implementing `NormativeProvider` | Week 2 | Interface verification against `NormativeProvider` protocol |
+| **M1: Wire Schema & MCP Client** | `src/integrations/provider_09/schema.py`, `mcp_client.py` (stdio / SSE JSON-RPC) | Week 1 | Unit tests with mock stdio subprocess |
+| **M2: Estate Seam Adapter** | `src/integrations/provider_09/adapter.py` exporting `Provider09EstateProvider` (implements `EstateProvider`, `from_env()`) | Week 2 | Decision-point scenarios DP-01…DP-08 answered over the wire |
 | **M3: Deferral Queue Hydration** | Extension to `defer_queue.py` hydration loop for CloudOps predicates | Week 3 | `PARK` → `HYDRATE` → `REPLAY` integration test |
 | **M4: FTRA Reachability Extension** | Dynamic predicate ingestion in `graph_analyzer.py` | Week 4 | Action DAG reachability evaluation with live blast radius |
-| **M5: Over-the-Wire Conformance** | `tests/integrations/provider_08/` running against live OpsCanvas sandbox | Week 5 | End-to-end multi-agent CloudOps test with zero synthetic stubs |
+| **M5: Over-the-Wire Conformance** | `tests/integrations/provider_09/` running against live OpsCanvas sandbox | Week 5 | End-to-end multi-agent CloudOps test with zero synthetic stubs |

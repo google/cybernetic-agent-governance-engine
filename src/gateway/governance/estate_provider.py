@@ -58,6 +58,7 @@ _NON_PRODUCTION_ENVS = frozenset({"development", "test", "dev", "ci"})
 
 UNAVAILABLE_PROVIDER_NAME = "unavailable"
 STUB_PROVIDER_NAME = "stub"
+_PROVIDER_09_PACKAGE = "src.integrations.provider_09"
 
 
 class UnavailableEstateProvider(EstateProvider):
@@ -254,7 +255,24 @@ def get_estate_provider(name: str | None = None) -> EstateProvider:
 
     # Vendor providers — function-scope lazy import (Gate G3 factory allowlist)
     if provider_name == "provider_09":
-        from src.integrations.provider_09 import Provider09EstateProvider
+        try:
+            from src.integrations.provider_09 import Provider09EstateProvider
+        except ModuleNotFoundError as exc:
+            # The slot is reserved but the partner adapter is not installed.
+            # Fail closed with an observable UNAVAILABLE status rather than
+            # crashing; import errors raised *inside* an installed adapter
+            # still propagate so genuine defects are never masked.
+            if exc.name not in (_PROVIDER_09_PACKAGE, "src.integrations"):
+                raise
+            logger.error(
+                "EstateProvider: %r requested but %s is not installed — "
+                "using fail-closed UnavailableEstateProvider.",
+                provider_name,
+                _PROVIDER_09_PACKAGE,
+            )
+            return UnavailableEstateProvider(
+                reason=f"{provider_name} adapter not installed"
+            )
 
         return Provider09EstateProvider.from_env()
 

@@ -3,7 +3,7 @@
 > **Architecture Standard — Generic in Code, Specific in Prose.**
 > In accordance with CAGE architecture standards (ADR-008), core kernel code (Layer 1)
 > and integration adapter packages (Layer 3) use anonymized provider namespaces (`provider_01`
-> through `provider_07`). Partner brand names, technical contracts, and upstream alignment
+> through `provider_09`). Partner brand names, technical contracts, and upstream alignment
 > specifications belong in this directory.
 
 This directory houses partner-specific documentation, wire contracts, compliance alignment
@@ -25,6 +25,7 @@ specifications, and technical exchange artifacts.
 | `provider_06` | **Guardian Cyber Agent Integrity** | Synchronous Verifier & Conformance Harness (`1-alpha`) | [`provider_06/`](provider_06/) | [`src/integrations/provider_06/`](../../src/integrations/provider_06/) |
 | `provider_07` | **InferTheta** | Graph Topology & Governance Schema Provider | [`provider_07/`](provider_07/) | [`src/integrations/provider_07/`](../../src/integrations/provider_07/) |
 | `provider_08` | **Verdict Systems** | Synchronous Normative Provider (`NormativeProvider`) + external evidence custody (Sigstore Rekor) | [`provider_08/`](provider_08/) | [`src/integrations/provider_08/`](../../src/integrations/provider_08/) |
+| `provider_09` | **OpsCanvas** | Infrastructure Estate Provider (`EstateProvider`) — dated, confirmed CloudOps dependency graph over MCP | [`provider_09/`](provider_09/) | *(Planned — seam + factory in [`estate_provider.py`](../../src/gateway/governance/estate_provider.py))* |
 
 ---
 
