@@ -41,7 +41,10 @@ export interface ProjectBundleStepEntry {
   nodeName: string;
 
   /**
-   * Step IDs of all parent nodes in the DAG. Empty for entry nodes.
+   * Step IDs of the actual causal parents of this step in this execution
+   * (after ancestor contraction). A subset of the legal candidates declared by
+   * `GraphTopology.parentEdges`, never required to contain all of them.
+   * Empty for entry nodes.
    */
   parentStepIds: string[];
 
@@ -140,8 +143,10 @@ export interface GraphTopology {
   nodes: string[];
 
   /**
-   * Maps each node to its possible parent nodes.
+   * Maps each node to its possible (legal) parent nodes across all executions.
    * Keys are node names, values are arrays of parent node names.
+   * The actual parents for one execution are recorded per step in
+   * `parentStepIds`, which may be a subset of these candidates.
    */
   parentEdges: Record<string, string[]>;
 

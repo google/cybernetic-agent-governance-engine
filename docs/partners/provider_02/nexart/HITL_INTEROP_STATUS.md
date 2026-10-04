@@ -49,17 +49,41 @@ uv run pytest tests/integrations/provider_02/test_staging_e2e.py -v --no-cov -p 
 
 Change the "Verified by" column only after a CAGE over-the-wire run has passed.
 
+## Partner root cause (0.4.0 → 0.4.1)
+
+The partner confirmed the 0.4.0 rejection was in their SDK, not malformed CAGE output.
+
+- SDK 0.4.0 required `governed_trader.parentStepIds` to contain **every**
+  `parentEdges` candidate (`safety_check` and `hitl_interrupt`). It rejected the
+  valid HITL bundle, whose only actual parent is `hitl_interrupt`, with
+  `MISSING_CONTRACTED_PARENT`.
+- SDK 0.4.1 / Node 0.29.1 accept `parentStepIds` as a subset of the legal
+  candidates. They still fail closed on illegal, unknown or stale parent
+  references.
+- No schema change was needed. The spec ([`NATIVE_SCHEMA_SPEC.md`](NATIVE_SCHEMA_SPEC.md) §2.4, §4.1)
+  and the schema descriptions now say that `parentEdges` holds the *possible*
+  relationships and `parentStepIds` the *actual* ones.
+- The partner reports that the complete current CAGE HITL artifact passed their
+  production validation unchanged.
+
+### `stateHash` trust model
+
+The partner keeps `stateHash` and binds it into the certificate as a
+**producer-supplied commitment**. They do **not** recompute it from the preimage.
+Independent verification of the commitment therefore depends on CAGE keeping
+the canonical snapshot (the preimage). See the open items below.
+
 ## Open items
 
-- **Partner-side compatibility fixes in 0.4.1 / 0.29.1.** The partner described
-  them as minor and on their side, but did not list them. Ask for the list. If any
-  of them reflects how CAGE emits bundles, update the vendored schemas in
-  [`config/partners/provider_02/schemas`](../../../../config/partners/provider_02/schemas)
-  and [`NATIVE_SCHEMA_SPEC.md`](NATIVE_SCHEMA_SPEC.md).
-- **Parents on edges that weren't taken.** Ancestor contraction resolves parents
-  from static topology edges, not from the edges actually traversed. On the HITL
-  path, `explainer` therefore lists `governed_trader`, `evaluator` and
-  `safety_check` as parents, and `nemo_output_rail` lists `nemo_guardrail` through
-  `data_analyst`, which never ran. The partner accepts this today, and it doesn't
-  affect the three agreed invariants. It is still weaker lineage than the strictly
-  causal edge agreed for `governed_trader`.
+- **Actual vs. static parentage (CAGE emission).** Ancestor contraction in
+  `_build_parent_step_ids()` resolves parents from static `parentEdges`, not from
+  the edges actually traversed. On the HITL path, `explainer` lists
+  `governed_trader`, `evaluator` and `safety_check`, and `nemo_output_rail` lists
+  `nemo_guardrail` through `data_analyst`, which never ran. This is valid under
+  the partner's subset rule, but it violates the clarified §4.1 rules 2–4. Fix:
+  record only executed edges, then re-run the live staging cases.
+- **`stateHash` preimage retention.** The adapter builds the canonical snapshot,
+  hashes it and discards it. Because the partner doesn't recompute the hash, no
+  party can verify the commitment today. Fix: keep the canonical snapshot in
+  tamper-evident evidence storage, keyed by `stateHash`, and add a test that
+  recomputes the hash from it.
