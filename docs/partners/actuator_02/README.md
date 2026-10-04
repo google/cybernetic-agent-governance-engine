@@ -25,6 +25,17 @@ The CAGE integration bridges OpenShell with CAGE's **STERA Admissibility Engine*
 
 ---
 
+## Seal Verification Profile (default)
+
+Every actuation sends the governor's routing seal under profile `cage-seal/1`
+(`X-CAGE-Routing-Seal` + `X-CAGE-Seal-Profile`), so the Supervisor can verify
+independently that CAGE authorised this exact `(action, params)`. CAGE refuses
+to dispatch a clearance without a JWS seal. The Supervisor-side checks are a
+specification and not yet implemented upstream. See
+[`SEAL_VERIFICATION_PROFILE.md`](SEAL_VERIFICATION_PROFILE.md).
+
+---
+
 ## Upstream Contribution Draft
 
 For the complete GitHub Pull Request submission drafted for `nvidia/openshell`, see:

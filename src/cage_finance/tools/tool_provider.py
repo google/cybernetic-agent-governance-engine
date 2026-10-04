@@ -277,6 +277,7 @@ async def execute_trade_action(
             consequence_ceiling="HIGH_FINANCIAL",
             approvals=[],  # Populated by dual-control in future phases
             required_quorum=0,  # No quorum required for single-agent trades
+            routing_seal=seal,
         )
 
         # Step 6: Dispatch through ActuatorRegistry (ADR-008 Phase 1)

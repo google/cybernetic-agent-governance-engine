@@ -17,6 +17,12 @@
 Enforces seal-bound PreCredentials brokerage, RFC 8785 JCS canonicalization,
 KMS/Ed25519 assertion signing, mTLS submission, and out-of-band kid-resolved
 receipt signature verification.
+
+Seal profile ``cage-seal/1`` is the default and only mode: every actuation
+carries the clearance's routing seal (a JWS) in ``X-CAGE-Routing-Seal`` so the
+Supervisor can verify it independently against the gateway JWKS
+(docs/partners/actuator_02/SEAL_VERIFICATION_PROFILE.md). A clearance without
+a JWS seal is refused before the wire.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import binascii
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -51,6 +58,9 @@ from src.integrations.actuator_02.constants import (
     ASSERTION_DOMAIN_TAG,
     MAX_ENVELOPE_BYTES,
     RECEIPT_SIGNATURE_DOMAIN_TAG,
+    ROUTING_SEAL_HEADER,
+    SEAL_PROFILE,
+    SEAL_PROFILE_HEADER,
 )
 from src.integrations.trust.key_manifest import (
     Ed25519KeyManifestClient,
@@ -81,6 +91,9 @@ _PRE_SEND_TRANSPORT_ERRORS: tuple[type[httpx.HTTPError], ...] = (
     httpx.ConnectTimeout,
 )
 _ED25519_SIGNATURE_BYTES = 64
+# Compact JWS: three base64url segments. HMAC (v2) seals have four segments
+# and a symmetric key the Supervisor does not hold, so they are refused.
+_COMPACT_JWS = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 
 
 def _finding(code: str, severity: str, detail: str) -> dict[str, str]:
@@ -187,7 +200,6 @@ class Actuator02Adapter:
         credential_broker: CredentialBrokerAdapter | None = None,
         receipt_key_resolver: Ed25519KeyResolver | None = None,
         require_signed_receipts: bool = False,
-        expected_routing_seal: str | None = None,
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("https", "http"):
@@ -202,7 +214,6 @@ class Actuator02Adapter:
         self._credential_broker = credential_broker
         self._receipt_key_resolver = receipt_key_resolver
         self._require_signed_receipts = require_signed_receipts
-        self._expected_routing_seal = expected_routing_seal
 
     @classmethod
     def from_env(
@@ -309,6 +320,26 @@ class Actuator02Adapter:
                 outcome=ActuationOutcome.REJECTED,
             )
 
+        # cage-seal/1: the seal is mandatory and must be partner-verifiable.
+        seal = clearance.routing_seal
+        if not isinstance(seal, str) or not _COMPACT_JWS.fullmatch(seal):
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=[
+                    _finding(
+                        "ROUTING_SEAL_MISSING" if not seal else "ROUTING_SEAL_NOT_JWS",
+                        "TERMINAL",
+                        f"{SEAL_PROFILE} requires a JWS routing seal on the clearance",
+                    )
+                ],
+                retryable=False,
+                timestamp_utc=now_utc,
+                outcome=ActuationOutcome.REJECTED,
+            )
+
         # Canonicalize envelope per RFC 8785 JCS and enforce size ceiling
         envelope_dict = clearance.to_dict()
         canonical_bytes = jcs_canonicalize_plan(envelope_dict)
@@ -389,10 +420,13 @@ class Actuator02Adapter:
             "X-CAGE-OpenShell-Assertion": assertion_b64,
             "X-CAGE-Correlation-ID": clearance.correlation_id,
         }
-        seal_token = clearance.params.get("_routing_seal") or self._expected_routing_seal
-        if isinstance(seal_token, str) and seal_token:
-            headers["X-CAGE-Routing-Seal"] = seal_token
-        headers.update(broker_headers)
+        # Brokered credentials never carry CAGE protocol headers: drop any
+        # X-CAGE-* name (case-insensitively) so none can shadow the seal.
+        headers.update(
+            {k: v for k, v in broker_headers.items() if not k.lower().startswith("x-cage-")}
+        )
+        headers[ROUTING_SEAL_HEADER] = seal
+        headers[SEAL_PROFILE_HEADER] = SEAL_PROFILE
 
         if self._http_client is None:
             return ActuationReceipt(

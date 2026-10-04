@@ -25,6 +25,7 @@ These tests verify that:
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -246,10 +247,53 @@ class TestGenerateSealWithEvidence:
     """Tests for generate_seal_with_evidence() function."""
 
     @pytest.mark.asyncio
-    async def test_fire_and_forget_mode_returns_seal_immediately(self):
-        """Verify fire-and-forget mode returns seal without blocking."""
+    async def test_fire_and_forget_mode_refuses_unbound_seal_by_default(self):
+        """Fire-and-forget commits no evidence record, so no seal is minted.
+
+        Evidence binding is required by default; an unbound seal could never
+        be consumed.
+        """
         with patch.dict(
-            "os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False
+            "os.environ",
+            {"EVIDENCE_CHAIN_BLOCKING": "false", "CAGE_ENV": "test"},
+            clear=False,
+        ):
+            os.environ.pop("CAGE_REQUIRE_EVIDENCE_BINDING", None)
+            import importlib
+
+            import src.gateway.governance.evidence.stream as es
+
+            importlib.reload(es)
+
+            mock_sink = MagicMock()
+            mock_sink.is_running = True
+            mock_sink.ingest = AsyncMock(return_value="msg-id-123")
+
+            with patch.object(es, "get_evidence_sink", return_value=mock_sink):
+                # routing_seal bound the exception class at its own import,
+                # before the reload above.
+                from src.gateway.governance.routing_seal import (
+                    EvidenceChainUnavailableError,
+                    generate_seal_with_evidence,
+                )
+
+                with pytest.raises(EvidenceChainUnavailableError, match="binding"):
+                    await generate_seal_with_evidence(
+                        action="execute_trade",
+                        params={"symbol": "AAPL", "amount": 1000},
+                    )
+
+    @pytest.mark.asyncio
+    async def test_fire_and_forget_mode_returns_seal_immediately(self):
+        """With binding explicitly disabled (non-production), fire-and-forget issues a seal."""
+        with patch.dict(
+            "os.environ",
+            {
+                "EVIDENCE_CHAIN_BLOCKING": "false",
+                "CAGE_REQUIRE_EVIDENCE_BINDING": "false",
+                "CAGE_ENV": "test",
+            },
+            clear=False,
         ):
             import importlib
 
@@ -329,14 +373,22 @@ class TestGenerateSealWithEvidence:
             mock_sink.ingest_sync = AsyncMock(return_value=commit_result)
 
             with patch.object(es, "get_evidence_sink", return_value=mock_sink):
+                import fakeredis.aioredis as fakeredis
+
                 from src.gateway.governance.routing_seal import (
                     generate_seal_with_evidence,
+                    seal_nonce,
                 )
 
+                redis = fakeredis.FakeRedis()
                 seal = await generate_seal_with_evidence(
                     action="execute_trade",
                     params={"symbol": "AAPL", "amount": 1000},
+                    redis_client=redis,
                 )
+                # The issuance-time evidence index names the committed record.
+                indexed = await redis.get(f"cage:seal:evidence:{seal_nonce(seal)}")
+                assert indexed.decode() == commit_result.hash
 
                 # Seal should be issued after evidence commit
                 assert seal is not None
