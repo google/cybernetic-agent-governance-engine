@@ -484,6 +484,7 @@ class TestProvider02AttestationCallback:
             "doer_node",
             "execution_analyst",
             "evaluator",
+            "ftra_node",
             "safety_check",
         ]:
             cb.on_chain_start(node, {})

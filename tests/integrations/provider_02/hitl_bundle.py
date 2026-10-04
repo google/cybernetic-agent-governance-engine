@@ -21,6 +21,10 @@ over-the-wire staging case all exercise exactly what CAGE emits:
 
     safety_check ──► hitl_interrupt ──► governed_trader ──► explainer ──► nemo_output_rail
 
+(The executed sequence is ``… ftra_node → safety_check → approval_node →
+[hitl_interrupt] → governed_trader …``; ``ftra_node`` and ``approval_node`` are
+unrecorded, so lineage contracts through them.)
+
 Every ``parentStepIds`` entry is an executed edge, never a merely possible one.
 
 Regenerate the committed fixture with::
@@ -53,6 +57,7 @@ _PRE_INTERRUPT_NODES = (
     "doer_node",
     "execution_analyst",
     "evaluator",
+    "ftra_node",
     "safety_check",
 )
 _POST_APPROVAL_NODES = ("governed_trader", "explainer", "nemo_output_rail")
@@ -103,7 +108,11 @@ def build_hitl_approval_bundle(thread_id: str = "hitl-approval-path") -> dict[st
         cb.on_chain_start(node, pre)
         cb.on_chain_end(node, pre)
 
+    # approval_node calls interrupt(); it completes once the reviewer resumes the
+    # graph, and the HITL pause is then recorded with the approval decision.
     approved = _approved_state()
+    cb.on_chain_start("approval_node", pre)
+    cb.on_chain_end("approval_node", approved)
     cb.handle_hitl_interrupt(approved)
 
     for node in _POST_APPROVAL_NODES:

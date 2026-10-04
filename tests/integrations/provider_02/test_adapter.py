@@ -317,6 +317,7 @@ class TestCallbackHandler:
             "doer_node",
             "execution_analyst",
             "evaluator",
+            "ftra_node",
             "safety_check",
         ]:
             cb.on_chain_start(node, state)
@@ -466,6 +467,7 @@ class TestExecutedLineage:
                 "doer_node",
                 "execution_analyst",
                 "evaluator",
+                "ftra_node",
                 "safety_check",
             ],
             _approved_state(),
@@ -482,6 +484,99 @@ class TestExecutedLineage:
             ("explainer", ["governed_trader"]),
             ("nemo_output_rail", ["explainer"]),
         ]
+
+    @pytest.mark.parametrize("emit_approval_node", [True, False])
+    def test_hitl_step_contracts_through_approval_node(
+        self, emit_approval_node: bool
+    ) -> None:
+        """safety_check -> approval_node -> [hitl_interrupt] contracts to safety_check.
+
+        approval_node is unrecorded; callers that do not emit it (pause recorded
+        straight after safety_check) yield the same recorded chain.
+        """
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "safety_check",
+            ],
+            _approved_state(),
+        )
+        if emit_approval_node:
+            _run(cb, ["approval_node"], _hitl_state())
+        cb.handle_hitl_interrupt(_hitl_state())
+        _run(cb, ["governed_trader"], _hitl_state())
+
+        assert _parents_by_name(cb)[-3:] == [
+            ("safety_check", ["evaluator"]),
+            ("hitl_interrupt", ["safety_check"]),
+            ("governed_trader", ["hitl_interrupt"]),
+        ]
+
+    def test_deferral_path_contracts_through_defer_node(self) -> None:
+        """safety_check -> defer_node -> explainer: explainer cites safety_check."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "safety_check",
+                "defer_node",
+                "explainer",
+                "nemo_output_rail",
+            ],
+            _base_state(safety_status="DEFERRED"),
+        )
+        parents = dict(_parents_by_name(cb))
+        assert parents["explainer"] == ["safety_check"]
+        assert parents["nemo_output_rail"] == ["explainer"]
+
+    def test_ftra_block_explainer_cites_evaluator(self) -> None:
+        """evaluator -> ftra_node(BLOCKED) -> explainer contracts to evaluator."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "explainer",
+            ],
+            _base_state(),
+        )
+        assert dict(_parents_by_name(cb))["explainer"] == ["evaluator"]
+
+    def test_finish_routes_doer_to_output_rail(self) -> None:
+        """route_supervisor FINISH: doer_node -> nemo_output_rail is a legal edge."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            ["nemo_guardrail", "thinker_node", "doer_node", "nemo_output_rail"],
+            _base_state(),
+        )
+        assert dict(_parents_by_name(cb))["nemo_output_rail"] == ["nemo_guardrail"]
+
+    def test_evaluator_to_safety_check_without_ftra_fails_closed(self) -> None:
+        """The real graph routes evaluator -> ftra_node -> safety_check; a direct
+        evaluator -> safety_check edge no longer exists."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(cb, ["execution_analyst", "evaluator"], _base_state())
+        with pytest.raises(LineageError, match="'evaluator' -> 'safety_check'"):
+            cb.on_chain_end("safety_check", _base_state())
 
     def test_data_analyst_path_contracts_to_entry_guardrail(self) -> None:
         """When data_analyst does run, nemo_output_rail contracts through it."""
@@ -512,7 +607,7 @@ class TestExecutedLineage:
         )
         _run(
             cb,
-            ["evaluator", "safety_check", "explainer"],
+            ["evaluator", "ftra_node", "safety_check", "explainer"],
             _base_state(safety_status="BLOCKED"),
         )
         assert dict(_parents_by_name(cb))["explainer"] == ["safety_check"]
@@ -688,6 +783,8 @@ class TestBundleAssembly:
             cb.on_chain_end(node, state)
         cb.on_chain_start("evaluator", state)
         cb.on_chain_end("evaluator", _approved_state())
+        cb.on_chain_start("ftra_node", _approved_state())
+        cb.on_chain_end("ftra_node", _approved_state())
         cb.on_chain_start("safety_check", _approved_state())
         cb.on_chain_end("safety_check", _approved_state())
         cb.on_chain_start("governed_trader", _approved_state())
