@@ -13,21 +13,24 @@
 # limitations under the License.
 
 """
-Lifecycle Management for Agent Integrity Sidecar.
+Lifecycle probes for the Agent Integrity verified-release sidecar.
 
-Provides health check and daemon lifecycle utilities for the Agent Integrity
-verification sidecar process. Supports both HTTP endpoint health probes and
-subprocess management for test environments.
+The sidecar contract (Agent Integrity PR #11) defines two probes:
+
+- ``GET /health/live``  — the process is up and answering.
+- ``GET /health/ready`` — the sidecar can serve ``/verify`` (keys loaded,
+  dependencies reachable). It fails closed: anything but HTTP 200 is
+  "not ready".
+
+There is deliberately no fallback to a legacy ``/health`` or ``/status``
+path. A liveness-style endpoint answering 200 says nothing about readiness,
+so falling back to one would let CAGE dispatch to a sidecar that cannot yet
+sign receipts.
 
 Usage:
-    # Health check
     health = SidecarHealthCheck("http://localhost:8090")
     if await health.is_ready():
-        # Proceed with verification requests
-        ...
-
-    # Test daemon management (for integration tests)
-    # See tests/integrations/provider_06/conftest.py for usage examples
+        ...  # dispatch /verify
 """
 
 from __future__ import annotations
@@ -39,17 +42,19 @@ import httpx
 
 logger = logging.getLogger("cage.provider_06.lifecycle")
 
+READY_PATH = "/health/ready"
+LIVE_PATH = "/health/live"
+
 # Default timeout from environment
 _DEFAULT_TIMEOUT = float(os.environ.get("CAGE_AGENT_INTEGRITY_TIMEOUT", "10"))
 
 
 class SidecarHealthCheck:
     """
-    Health check client for Agent Integrity sidecar process.
+    Probe client for the Agent Integrity sidecar.
 
-    Probes HTTP endpoints to verify the sidecar is ready to accept
-    verification requests. Supports bounded timeouts to prevent hanging
-    during startup or failure scenarios.
+    Both probes are bounded by ``timeout`` and never raise: transport errors,
+    timeouts and non-200 responses all map to ``False`` (fail closed).
 
     Attributes:
         endpoint: Base URL of the sidecar (e.g., "http://localhost:8090")
@@ -60,59 +65,50 @@ class SidecarHealthCheck:
         self,
         endpoint: str,
         timeout: float = _DEFAULT_TIMEOUT,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         """
-        Initialize health check client.
+        Initialize the probe client.
 
         Args:
-            endpoint: Base URL of Agent Integrity sidecar
-            timeout: HTTP probe timeout in seconds
+            endpoint: Base URL of the Agent Integrity sidecar.
+            timeout: HTTP probe timeout in seconds.
+            transport: Optional httpx transport (hermetic tests only).
         """
         self._endpoint = endpoint.rstrip("/")
         self._timeout = timeout
+        self._transport = transport
 
     async def is_ready(self) -> bool:
-        """
-        Check if sidecar is ready to accept requests.
+        """True iff ``GET /health/ready`` answers HTTP 200."""
+        return await self._probe(READY_PATH)
 
-        Probes the /health endpoint (or /status if /health is not available).
-        Returns True if the endpoint responds with 2xx status code.
+    async def is_live(self) -> bool:
+        """True iff ``GET /health/live`` answers HTTP 200."""
+        return await self._probe(LIVE_PATH)
 
-        Returns:
-            True if sidecar is healthy, False otherwise
+    async def _probe(self, path: str) -> bool:
+        url = f"{self._endpoint}{path}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, transport=self._transport
+            ) as client:
+                response = await client.get(url)
+        except httpx.TimeoutException:
+            logger.warning(
+                "provider_06: probe TIMEOUT — %s (%.1fs)", url, self._timeout
+            )
+            return False
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "provider_06: probe FAILED — %s: %s", url, type(exc).__name__
+            )
+            return False
 
-        Note:
-            This method never raises exceptions. Network errors and HTTP
-            failures are caught and mapped to False.
-        """
-        probe_endpoints = ["/health", "/status"]
-
-        for path in probe_endpoints:
-            url = f"{self._endpoint}{path}"
-            try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    response = await client.get(url)
-                    if response.status_code == 200:
-                        logger.debug(
-                            "provider_06: Health check SUCCESS — %s", url
-                        )
-                        return True
-            except httpx.TimeoutException:
-                logger.warning(
-                    "provider_06: Health check TIMEOUT — %s (%.1fs)",
-                    url,
-                    self._timeout,
-                )
-            except Exception as exc:
-                logger.debug(
-                    "provider_06: Health check FAILED — %s: %s",
-                    url,
-                    exc,
-                )
-
-        logger.warning(
-            "provider_06: Sidecar not ready at %s (tried %s)",
-            self._endpoint,
-            probe_endpoints,
-        )
-        return False
+        if response.status_code != 200:
+            logger.warning(
+                "provider_06: probe NOT OK — %s (HTTP %d)", url, response.status_code
+            )
+            return False
+        logger.debug("provider_06: probe OK — %s", url)
+        return True

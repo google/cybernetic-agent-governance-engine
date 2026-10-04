@@ -29,7 +29,26 @@ verification fails closed).
 |---|---|---|---|
 | `POST` | `/verify` | `validate_fria()` | `ValidationResult` |
 | `POST` | `/receipt` | `submit_evidence()` | `EvidenceSeal` (from `receiptDigest`) |
+| `GET` | `/health/ready` | [`SidecarHealthCheck.is_ready()`](lifecycle.py) | `True` iff HTTP 200 |
+| `GET` | `/health/live` | [`SidecarHealthCheck.is_live()`](lifecycle.py) | `True` iff HTTP 200 |
 | — | *(none)* | `fetch_baseline()` | Synthesized locally — no network call |
+
+### Sidecar probes
+
+The probe paths follow the upstream verified-release sidecar contract
+(Agent Integrity PR #11). Readiness means the sidecar can serve `/verify`
+(signing keys loaded); liveness only means the process answers. Both probes
+fail closed: a timeout, transport error or any non-200 response reads as
+`False`. There is deliberately no fallback to a legacy `/health` or
+`/status` path, because a liveness-style 200 says nothing about readiness.
+
+> **Mock gap:** [`mock_endpoint.py`](mock_endpoint.py) still serves only a
+> legacy `GET /health`, so `SidecarHealthCheck` reports it not ready. The mock
+> is SHA-256-pinned by the recorded conformance experiment (`PROTECTED_PATHS`
+> in
+> [`provider_06_agent_integrity_cli.py`](../../../tests/integrations/provider_06/support/provider_06_agent_integrity_cli.py)),
+> so the probe routes are added in the Phase 2 adapter PR, which regenerates
+> that conformance record.
 
 `fetch_baseline()` does not call the vendor. Agent Integrity verifies responses
 rather than supplying normative data, so the adapter returns a minimal

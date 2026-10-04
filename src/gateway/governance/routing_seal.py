@@ -945,6 +945,14 @@ async def verify_and_consume_seal(
 
     _start_ns = _time_module.time_ns()
 
+    # A non-string seal (None, int, bytes) must refuse through the same
+    # exception every caller already handles, not escape as AttributeError
+    # from the parse below (issue #379).
+    if not isinstance(seal, str) or not seal:
+        raise SymbolicGovernorViolation(
+            f"seal must be a non-empty string, got {type(seal).__name__}", action
+        )
+
     # ---------------------------------------------------------------------------
     # Step 1: Extract nonce and expiry (parse only).
     # These values are used only after verify_seal() has verified this same
