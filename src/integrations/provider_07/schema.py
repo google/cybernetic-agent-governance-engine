@@ -25,7 +25,7 @@ Key Invariants:
 - authority_record_id mandatory when decision == "ALLOW"
 - Fail-closed on unknown kid, signature failure, or schema validation errors
 
-See: docs/partners/INFERTHETA_CANONICAL_SCHEMA.md
+See: docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md
 """
 
 from typing import Any, Literal
@@ -140,8 +140,8 @@ class InferThetaInferenceResponse(BaseModel):
     marginal_probabilities: dict[str, float] = Field(default_factory=dict)
     utility_rankings: list[ActionUtility] = Field(default_factory=list)
     authority_record_id: str | None = None
-    kid: str
-    signature: str
+    kid: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
     findings: list[dict[str, Any]] = Field(default_factory=list)
 
 
