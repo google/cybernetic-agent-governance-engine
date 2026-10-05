@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/google/cybernetic-agent-governance-engine/schemas/provider_09/estate_decision_response.schema.json",
+  "title": "provider_09 Estate Decision-Point Response",
+  "description": "One partner answer to one CAGE decision point (docs/partners/provider_09/DECISION_POINTS.md). Each answer carries one or more EstateProvider seam results. Field names and enums mirror src/gateway/governance/seams/estate.py exactly; that module is authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision_point_id", "schema_version", "answers"],
+  "properties": {
+    "decision_point_id": { "type": "string", "pattern": "^DP-[0-9]{2}$" },
+    "schema_version": { "const": "1.0" },
+    "answers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/answer" }
+    },
+    "fit": {
+      "description": "Partner self-assessment of how well the graph answers this decision point.",
+      "enum": ["NATIVE", "DERIVED", "PARTIAL", "NOT_AVAILABLE"]
+    },
+    "gaps": {
+      "description": "Seam fields the graph cannot populate today, or fields the partner proposes adding.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "status": { "enum": ["OK", "UNAVAILABLE", "STALE", "INVALID"] },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "answer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "args", "result"],
+          "properties": {
+            "method": { "const": "get_resource_predicate" },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["resource_urn"],
+              "properties": { "resource_urn": { "type": "string", "minLength": 1 } }
+            },
+            "result": { "$ref": "#/$defs/CloudOpsResourcePredicate" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "args", "result"],
+          "properties": {
+            "method": { "const": "query_blast_radius" },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["resource_urn", "action"],
+              "properties": {
+                "resource_urn": { "type": "string", "minLength": 1 },
+                "action": { "type": "string", "minLength": 1 }
+              }
+            },
+            "result": { "$ref": "#/$defs/BlastRadiusEstimate" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "args", "result"],
+          "properties": {
+            "method": { "const": "get_topology_snapshot" },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["scope"],
+              "properties": { "scope": { "type": "string", "minLength": 1 } }
+            },
+            "result": { "$ref": "#/$defs/TopologySnapshot" }
+          }
+        }
+      ]
+    },
+    "CloudOpsResourcePredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "resource_urn", "resource_type",
+        "is_load_bearing", "direct_dependents_count", "transitive_dependency_depth",
+        "has_failover_redundancy", "active_network_flows_last_1h",
+        "environment_tier", "criticality_tier", "owner_team_urn",
+        "managed_by_terraform", "iac_drift_status",
+        "reversibility_tier", "estimated_blast_radius_score",
+        "snapshot_id", "snapshot_hash", "evaluated_at_utc"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "resource_urn": { "type": "string" },
+        "resource_type": { "type": "string" },
+        "is_load_bearing": { "type": "boolean" },
+        "direct_dependents_count": { "type": "integer", "minimum": 0 },
+        "transitive_dependency_depth": { "type": "integer", "minimum": 0 },
+        "has_failover_redundancy": { "type": "boolean" },
+        "active_network_flows_last_1h": { "type": "integer", "minimum": 0 },
+        "environment_tier": { "enum": ["PRODUCTION", "STAGING", "DEVELOPMENT", "SANDBOX"] },
+        "criticality_tier": { "enum": ["TIER_0", "TIER_1", "TIER_2", "TIER_3"] },
+        "owner_team_urn": { "type": "string" },
+        "managed_by_terraform": { "type": "boolean" },
+        "iac_drift_status": { "enum": ["SYNCHRONIZED", "DRIFT_DETECTED", "UNMANAGED"] },
+        "last_iac_commit_hash": { "type": ["string", "null"] },
+        "reversibility_tier": {
+          "enum": ["READ_ONLY", "REVERSIBLE", "EXTERNALLY_REVERSIBLE", "IRREVERSIBLE_TERMINAL"]
+        },
+        "estimated_blast_radius_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "compensating_rollback_action": { "type": ["string", "null"] },
+        "snapshot_id": { "type": "string" },
+        "snapshot_hash": { "$ref": "#/$defs/sha256" },
+        "evaluated_at_utc": { "type": "string" },
+        "query_latency_ms": { "type": "number", "minimum": 0.0 },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "BlastRadiusEstimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "resource_urn", "action",
+        "estimated_affected_services", "estimated_affected_users",
+        "estimated_recovery_time_minutes", "requires_approval", "approval_tier"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "resource_urn": { "type": "string" },
+        "action": { "type": "string" },
+        "estimated_affected_services": { "type": "integer", "minimum": 0 },
+        "estimated_affected_users": { "type": "integer", "minimum": 0 },
+        "estimated_recovery_time_minutes": { "type": "integer", "minimum": 0 },
+        "requires_approval": { "type": "boolean" },
+        "approval_tier": { "enum": ["NONE", "TEAM_LEAD", "SRE_ONCALL", "VP_ENG"] },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "TopologySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "scope", "snapshot_id", "snapshot_hash", "nodes", "edges", "captured_at_utc"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "scope": { "type": "string" },
+        "snapshot_id": { "type": "string" },
+        "snapshot_hash": { "$ref": "#/$defs/sha256" },
+        "nodes": { "type": "array", "items": { "type": "object" } },
+        "edges": { "type": "array", "items": { "type": "object" } },
+        "captured_at_utc": { "type": "string" },
+        "ttl_seconds": { "type": "integer", "minimum": 0 },
+        "error": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

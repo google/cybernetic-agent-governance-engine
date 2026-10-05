@@ -1,0 +1,55 @@
+{
+  "decision_point_id": "DP-01",
+  "schema_version": "1.0",
+  "fit": "NATIVE",
+  "notes": "Illustrative CAGE-authored example showing the response shape. This is not partner data.",
+  "gaps": [],
+  "answers": [
+    {
+      "method": "get_resource_predicate",
+      "args": { "resource_urn": "gcp:sql:us-central1:orders-primary-replica-1" },
+      "result": {
+        "status": "OK",
+        "resource_urn": "gcp:sql:us-central1:orders-primary-replica-1",
+        "resource_type": "sql.instance",
+        "is_load_bearing": true,
+        "direct_dependents_count": 7,
+        "transitive_dependency_depth": 3,
+        "has_failover_redundancy": false,
+        "active_network_flows_last_1h": 18452,
+        "environment_tier": "PRODUCTION",
+        "criticality_tier": "TIER_0",
+        "owner_team_urn": "urn:team:payments-data",
+        "managed_by_terraform": true,
+        "iac_drift_status": "SYNCHRONIZED",
+        "last_iac_commit_hash": "4b116e07c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6",
+        "reversibility_tier": "IRREVERSIBLE_TERMINAL",
+        "estimated_blast_radius_score": 0.92,
+        "compensating_rollback_action": null,
+        "snapshot_id": "snap-2026-10-04T18:00:00Z",
+        "snapshot_hash": "sha256:54647b22bfbf7166613c12dabda026a6a21647d85f3e12de3206d8ebfbc066e6",
+        "evaluated_at_utc": "2026-10-04T18:00:02Z",
+        "query_latency_ms": 21.4,
+        "error": null
+      }
+    },
+    {
+      "method": "query_blast_radius",
+      "args": {
+        "resource_urn": "gcp:sql:us-central1:orders-primary-replica-1",
+        "action": "delete"
+      },
+      "result": {
+        "status": "OK",
+        "resource_urn": "gcp:sql:us-central1:orders-primary-replica-1",
+        "action": "delete",
+        "estimated_affected_services": 7,
+        "estimated_affected_users": 120000,
+        "estimated_recovery_time_minutes": 240,
+        "requires_approval": true,
+        "approval_tier": "VP_ENG",
+        "error": null
+      }
+    }
+  ]
+}
