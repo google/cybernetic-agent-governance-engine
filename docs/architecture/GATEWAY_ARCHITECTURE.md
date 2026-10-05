@@ -473,6 +473,19 @@ The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)**
 - **`node_factory.py`**: Composable factory nodes for workflow graphs.
 - Boundary-check outcomes are counted by `cage_ftra_boundary_checks_total` in [`governor/metrics.py`](../../src/gateway/governance/governor/metrics.py) (`GovernorMetrics`, created per Prometheus registry, never at import).
 
+### 7.3 Prometheus Operational & Safety Metrics
+
+While **Langfuse** serves as the sovereign LLM trace and control-outcome store, **Prometheus** (scraped on GKE by Google Cloud Managed Service for Prometheus via [`deployment/k8s/gateway-servicemonitor.yaml`](../../deployment/k8s/gateway-servicemonitor.yaml) and verified by [`compliance/lula/lula-validation-metrics.yaml`](../../compliance/lula/lula-validation-metrics.yaml)) collects operational, safety-gate, and evidence-pipeline telemetry. `/metrics` is listed as an open scrape path in [`workload_identity.py`](../../src/gateway/server/workload_identity.py). All collectors in `src/gateway/` treat `prometheus_client` as optional and degrade to no-ops when it is not installed:
+
+| Subsystem & Source | Metric Name(s) | Purpose |
+|---|---|---|
+| **CBF Safety Engine & Reconciliation** ([`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py)) | `cage_reconciliation_replay_rejected_total{source}`, `cage_cbf_epoch_regression_detected_total`, `cage_cbf_current_fence_epoch`, `cage_cbf_wait_latency_seconds`, `cage_cbf_wait_timeout_total`, `cage_cbf_strict_replication_rollback_total` | R-04 replay rejections, R-05 fence-epoch double-spend defense, and Redis `WAIT` synchronous replication latency/timeout/rollback tracking |
+| **Evidence Stream Producer** ([`evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)) | `cage_evidence_commit_total{status}`, `cage_evidence_commit_duration_seconds`, `cage_evidence_append_conflicts_total`, `cage_evidence_blocking_disabled{env}`, `cage_evidence_stream_disabled{env}` | Redis Stream commit throughput/latency, Lua compare-and-append contention, and fail-closed posture gauges |
+| **FTRA Boundary Gate** ([`governor/metrics.py`](../../src/gateway/governance/governor/metrics.py), [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)) | `cage_ftra_boundary_checks_total{result}`, `ftra_llm_parse_failures_total` | Pre-pipeline reachability outcomes (`passed`, `conditional_clear`, `hitl_required`, `error`) and LLM structured-output parse failures |
+| **MCP Tool Server Rate Limiter** ([`mcp_tool_server.py`](../../src/gateway/server/mcp_tool_server.py)) | `mcp_rate_limit_hits_total{client_ip}`, `mcp_rate_limit_active_buckets` | Per-client sliding-window tool-call rate-limit rejections and active bucket gauge |
+
+Downstream evidence custody, cold-store verification, and ClickHouse analytical sink metrics are documented in [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) (§3–§4.2) and [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) (§6.3).
+
 ---
 
 ## 8. Compliance Framework Matrix
