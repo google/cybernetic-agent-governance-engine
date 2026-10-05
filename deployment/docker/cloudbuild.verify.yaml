@@ -26,8 +26,17 @@
 #   _SMOKE_MODULE  — module the image's entry point imports (proves the venv,
 #                    native wheels and system libraries resolve at runtime)
 #
+# Optional substitutions:
+#   _ENVIRONMENT   — selects the dedicated cage-cloudbuild-<env> identity (default: staging)
+#
 # The Trivy step applies the same gate as .github/workflows/sbom.yml
 # (HIGH/CRITICAL, .trivyignore, --show-suppressed, exit code 1).
+
+substitutions:
+  _ENVIRONMENT: "staging"
+
+# Same dedicated build identity as the publishing configs (POAM-2026-083).
+serviceAccount: "projects/$PROJECT_ID/serviceAccounts/cage-cloudbuild-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com"
 
 steps:
   - name: "gcr.io/cloud-builders/docker"

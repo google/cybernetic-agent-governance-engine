@@ -107,11 +107,17 @@ def test_every_cloudbuild_yaml_declares_service_account_and_cloud_logging_only()
         )
 
     cloudbuild_files = sorted(DOCKER_DIR.glob("cloudbuild.*.yaml"))
-    assert [p.name for p in cloudbuild_files] == [
+    # Every config runs as the dedicated identity. Only publishing configs push
+    # and attest; cloudbuild.verify.yaml builds and scans without pushing (its
+    # no-push invariant lives in test_gke_sole_target_6f).
+    publishing = {
         "cloudbuild.image.yaml",
         "cloudbuild.lula.yaml",
         "cloudbuild.vllm.yaml",
-    ]
+    }
+    assert [p.name for p in cloudbuild_files] == sorted(
+        publishing | {"cloudbuild.verify.yaml"}
+    )
 
     for cb_path in cloudbuild_files:
         doc = yaml.safe_load(cb_path.read_text(encoding="utf-8"))
@@ -127,7 +133,7 @@ def test_every_cloudbuild_yaml_declares_service_account_and_cloud_logging_only()
             f"{cb_path.name} must set options.logging: CLOUD_LOGGING_ONLY"
         )
         text = cb_path.read_text(encoding="utf-8")
-        assert "scripts/attest_image.sh" in text, (
+        assert cb_path.name not in publishing or "scripts/attest_image.sh" in text, (
             f"{cb_path.name} must delegate attestation to scripts/attest_image.sh"
         )
         assert "_SHORT_SHA" not in (doc.get("substitutions") or {}), (
