@@ -41,7 +41,7 @@ The `PIISanitizer` class applies **8 regex patterns** plus a **key-based denylis
 | US Social Security Number (SSN) | `[REDACTED_SSN]` | `123-45-6789` → `[REDACTED_SSN]` |
 | Credit card numbers (Visa, MC, Amex, Discover) | `[REDACTED_CC]` | `4111-1111-1111-1111` → `[REDACTED_CC]` |
 | IBAN (international bank account) | `[REDACTED_IBAN]` | `GB82WEST12345698765432` → `[REDACTED_IBAN]` |
-| SWIFT/BIC code | `[REDACTED_SWIFT]` | `BOFAUS3N` → `[REDACTED_SWIFT]` |
+| SWIFT/BIC code (ISO 9362; **labelled only**, valid ISO 3166 country code) | `[REDACTED_SWIFT]` | `BIC: BOFAUS3N` → `BIC: [REDACTED_SWIFT]`; `{"swift_code": "BOFAUS3N"}` → `[REDACTED_SWIFT]` |
 | Email address | `[REDACTED_EMAIL]` | `user@example.com` → `[REDACTED_EMAIL]` |
 | Phone number (US/international) | `[REDACTED_PHONE]` | `+1 (555) 867-5309` → `[REDACTED_PHONE]` |
 | API keys / Bearer tokens | `[REDACTED_API_KEY]` | `pk-lf-abc123...` → `[REDACTED_API_KEY]` |
@@ -52,6 +52,8 @@ The `PIISanitizer` class applies **8 regex patterns** plus a **key-based denylis
 When `sanitize_dict()` encounters a key matching the denylist (case-insensitive), the value is unconditionally redacted to `[REDACTED_TOKEN]`, regardless of content. This ensures ConsequenceToken JWS strings are scrubbed even if format variations evade the regex pattern.
 
 **Denylisted keys:** `token`, `consequence_token`, `jws`, `jwt`, `bearer_token`
+
+**SWIFT/BIC context rule:** a BIC is redacted only after a `BIC` / `SWIFT` label in text (`BIC: X`, `SWIFT code X`, `SWIFT/BIC X`), or as the value of a BIC/SWIFT key (`bic`, `swift_code`, `beneficiaryBic`, ...), and only when positions 5-6 are an ISO 3166-1 alpha-2 country code. An unlabelled BIC in prose is not redacted. The earlier shape-only pattern redacted any eight- or eleven-letter upper-case word, including governance verdicts such as `APPROVED` and `REJECTED` (see [`EVIDENCE_CHAIN.md` §4.4](../../architecture/EVIDENCE_CHAIN.md)).
 
 **Configuration:** `PIISanitizer` is stateless; patterns compile once at import time.
 

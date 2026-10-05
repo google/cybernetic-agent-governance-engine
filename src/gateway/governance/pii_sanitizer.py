@@ -46,6 +46,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
@@ -103,7 +104,79 @@ _TELEMETRY_PII_SCRUBBING_ENABLED: bool = (
 # avoid partial matches (e.g. SSN before phone, CC before generic numbers).
 # ---------------------------------------------------------------------------
 
-_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+# ---------------------------------------------------------------------------
+# M-14: SWIFT/BIC (ISO 9362) detection
+# ---------------------------------------------------------------------------
+# A BIC is 4 bank letters + an ISO 3166-1 alpha-2 country code + 2 alphanumeric
+# location characters + an optional 3-character alphanumeric branch. The
+# previous shape-only pattern (any 8 or 11 upper-case characters) redacted
+# ordinary upper-case vocabulary, e.g. APPROVED, REJECTED, ESCALATE, and
+# governance verdicts recorded in the evidence stream. Requiring a valid
+# country code at positions 5-6 is not enough on its own: ESCALATE ("AT"),
+# DEPOSITS ("SI"), CONFIRMS ("IR") and many other words still pass. So a BIC is
+# redacted only with a contextual cue:
+#   * in free text, a preceding "BIC" / "SWIFT" label ("BIC: DEUTDEFF",
+#     "SWIFT code DEUTDEFF500", "SWIFT/BIC BNPAFRPPXXX"); or
+#   * in a dict, a value under a BIC/SWIFT key (``bic``, ``swift_code``,
+#     ``beneficiaryBic``; see :func:`_is_bic_key`).
+# In both cases the country code must also be valid.
+# Trade-off: an unlabelled BIC in prose ("route via DEUTDEFF") is no longer
+# redacted. A BIC identifies a bank, not a natural person, so a missed
+# unlabelled BIC leaks much less than corrupted verdicts, which damage audit
+# integrity and make distinct states hash the same.
+# ---------------------------------------------------------------------------
+
+# ISO 3166-1 alpha-2 officially assigned codes, plus XK (Kosovo, used by SWIFT).
+_ISO_3166_ALPHA2: frozenset[str] = frozenset(
+    """
+    AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ
+    BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR
+    CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+    GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU
+    ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ
+    LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ
+    MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF
+    PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI
+    SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR
+    TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW XK
+    """.split()
+)
+
+_BIC_REDACTION = "[REDACTED_SWIFT]"
+_BIC_SHAPE = r"[A-Z]{4}(?P<cc>[A-Z]{2})[A-Z0-9]{2}(?:[A-Z0-9]{3})?"
+_BIC_END = r"(?![A-Za-z0-9_])"
+
+# "BIC", "SWIFT", "SWIFT/BIC", "SWIFT code", "BIC no.", ... (case-insensitive),
+# then ":", "=", "#" or whitespace, then an upper-case BIC.
+_BIC_LABELLED = re.compile(
+    r"(?P<label>(?i:\b(?:swift|bic)(?:[ \t/_-]*(?:swift|bic|code|address|id|number|no\.?))*)"
+    r"(?:[ \t]*[:=#][ \t]*|[ \t]+))"
+    rf"(?P<bic>{_BIC_SHAPE}){_BIC_END}"
+)
+_BIC_STANDALONE = re.compile(rf"(?<![A-Za-z0-9_])(?P<bic>{_BIC_SHAPE}){_BIC_END}")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_BIC_KEY = re.compile(r"(?:^|[^a-z])(?:bic|swift)(?:$|[^a-z]|code)")
+
+
+def _redact_labelled_bic(match: re.Match[str]) -> str:
+    if match.group("cc") not in _ISO_3166_ALPHA2:
+        return match.group(0)
+    return match.group("label") + _BIC_REDACTION
+
+
+def _redact_standalone_bic(match: re.Match[str]) -> str:
+    if match.group("cc") not in _ISO_3166_ALPHA2:
+        return match.group(0)
+    return _BIC_REDACTION
+
+
+def _is_bic_key(key: str) -> bool:
+    """True for dict keys that label a BIC (``bic``, ``swift_code``, ``payeeBIC``)."""
+    snake = _CAMEL_BOUNDARY.sub("_", key).lower()
+    return bool(_BIC_KEY.search(snake))
+
+
+_PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]] = [
     # SSN: 9 digits in NNN-NN-NNNN or NNNNNNNNN format.
     # Excludes invalid ranges: 000, 666, 9xx area codes.
     (
@@ -138,12 +211,8 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b"),
         "[REDACTED_IBAN]",
     ),
-    # M-14: SWIFT/BIC code — 8 or 11 alphanumeric characters.
-    # Format: 4-char bank code + 2-char country + 2-char location + optional 3-char branch.
-    (
-        re.compile(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"),
-        "[REDACTED_SWIFT]",
-    ),
+    # M-14: SWIFT/BIC code (ISO 9362), only when labelled — see _BIC_LABELLED.
+    (_BIC_LABELLED, _redact_labelled_bic),
     # Email address: RFC 5321 simplified.  Local part and domain are
     # length-bounded (RFC 5321: local ≤64, domain ≤255) — the unbounded ``+``
     # form let a crafted no-TLD string ("a@a.a.a.…!") drive O(n²) backtracking
@@ -281,11 +350,21 @@ class PIISanitizer:
                     )
             elif isinstance(value, str):
                 result[key] = self.sanitize(value)
+                if _is_bic_key(key):
+                    # The key is the contextual cue for an unlabelled BIC value.
+                    result[key] = _BIC_STANDALONE.sub(
+                        _redact_standalone_bic, result[key]
+                    )
             elif isinstance(value, dict):
                 result[key] = self.sanitize_dict(value)
             elif isinstance(value, list):
+                bic_key = _is_bic_key(key)
                 result[key] = [
-                    self.sanitize(item)
+                    (
+                        _BIC_STANDALONE.sub(_redact_standalone_bic, self.sanitize(item))
+                        if bic_key
+                        else self.sanitize(item)
+                    )
                     if isinstance(item, str)
                     else (self.sanitize_dict(item) if isinstance(item, dict) else item)
                     for item in value

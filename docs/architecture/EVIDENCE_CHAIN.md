@@ -118,6 +118,34 @@ evidentiary weight as an ALLOW. Both the actuation seam and the post-FRIA
   fails closed by downgrading the decision to `BLOCK`
   (`EVIDENCE_CHAIN_UNAVAILABLE`).
 
+### 4.4 PII Sanitization Before Hashing
+
+`EvidenceStreamSink` runs every event through
+[`PIISanitizer.sanitize_dict()`](../../src/gateway/governance/pii_sanitizer.py)
+*before* JCS canonicalization and hashing. The sanitized `payload_json` is what
+gets chained, stored and later verified. A sanitizer false positive therefore
+permanently changes evidence content.
+
+- **SWIFT/BIC false positive (fixed, POAM-2026-100).** The SWIFT/BIC pattern
+  used to match any eight- or eleven-character upper-case token. It redacted
+  governance vocabulary such as `APPROVED`, `REJECTED` and `ESCALATE` to
+  `[REDACTED_SWIFT]`, so records lost their verdicts, and events that differed
+  only in such a word had the same payload. A BIC is now redacted only when it
+  carries a contextual cue (a `BIC`/`SWIFT` label in text, or a BIC/SWIFT dict
+  key) **and** has a valid ISO 3166-1 alpha-2 country code. An unlabelled BIC in
+  prose is no longer redacted. That is a deliberate trade-off: a BIC identifies
+  a bank, not a person. A property test
+  ([`test_pii_sanitizer_bic.py`](../../tests/test_pii_sanitizer_bic.py)) checks
+  that no upper-case string literal in `src/` is redacted as a BIC.
+- **Effect on existing evidence.** Records appended before the fix stay
+  verifiable. Verification recomputes hashes over the stored, already-sanitized
+  `payload_json` and never re-sanitizes it, so the old `[REDACTED_SWIFT]` tokens
+  are part of the hashed content. The original words cannot be recovered from
+  those records. New records that contain such words now keep them, so their
+  payload bytes and record hashes differ from what the old sanitizer would have
+  produced for the same event. Nothing in the repository recomputes a record
+  hash from the raw event, so this is not a breaking interface change.
+
 ## 5. Configuration Contracts & Runtime Matrix
 
 Shared (gateway and compliance bridge):
