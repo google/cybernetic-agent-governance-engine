@@ -189,8 +189,11 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
     (
         re.compile(
             r"\b(?:"
-            # Visa: 4 + 12 or 15 more digits (13 or 16 total), groups separated by [-\s]?
-            r"4\d{3}(?:[-\s]?\d{4}){2,3}"
+            # Visa: 16 digits in four 4-digit groups separated by [-\s]?. A
+            # 12-digit form is not a valid Visa length and matched UUID
+            # segments (e.g. "4365-4282-8412" inside a uuid4), corrupting
+            # identifiers in evidence records.
+            r"4\d{3}(?:[-\s]?\d{4}){3}"
             # Mastercard: 51-55 + 14 more digits
             r"|5[1-5]\d{2}(?:[-\s]?\d{4}){3}"
             # Amex: 34 or 37 + 13 more digits (15 total, groups 4-6-5)
@@ -358,20 +361,31 @@ class PIISanitizer:
             elif isinstance(value, dict):
                 result[key] = self.sanitize_dict(value)
             elif isinstance(value, list):
-                bic_key = _is_bic_key(key)
-                result[key] = [
-                    (
-                        _BIC_STANDALONE.sub(_redact_standalone_bic, self.sanitize(item))
-                        if bic_key
-                        else self.sanitize(item)
-                    )
-                    if isinstance(item, str)
-                    else (self.sanitize_dict(item) if isinstance(item, dict) else item)
-                    for item in value
-                ]
+                result[key] = self._sanitize_list(value, bic_key=_is_bic_key(key))
             else:
                 result[key] = value
         return result
+
+    def _sanitize_list(self, items: list, bic_key: bool = False) -> list:
+        """Sanitize list items, recursing into nested lists and dicts.
+
+        Nested lists (e.g. table-shaped agent state) were previously passed
+        through unsanitized.
+        """
+        out: list = []
+        for item in items:
+            if isinstance(item, str):
+                redacted = self.sanitize(item)
+                if bic_key:
+                    redacted = _BIC_STANDALONE.sub(_redact_standalone_bic, redacted)
+                out.append(redacted)
+            elif isinstance(item, dict):
+                out.append(self.sanitize_dict(item))
+            elif isinstance(item, list):
+                out.append(self._sanitize_list(item, bic_key=bic_key))
+            else:
+                out.append(item)
+        return out
 
 
 # ---------------------------------------------------------------------------

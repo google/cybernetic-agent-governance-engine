@@ -33,7 +33,9 @@ Contract Specification:
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+import hashlib
+import hmac
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -56,6 +58,17 @@ class ColdStoreNotFoundError(ColdStoreError):
 
     Distinct from other ``ColdStoreError``s so a verifier can tell a missing
     object (evidence gap or deletion) from a transient backend failure.
+    """
+
+
+class ColdStoreIntegrityError(ColdStoreError):
+    """An object already exists under the key but holds different content.
+
+    ``put_if_absent`` reports ``created=False`` for any pre-existing object,
+    and some backends (GCS on ``if_generation_match=0`` precondition failure)
+    return a receipt digest computed over the *supplied* bytes rather than the
+    stored ones. A conflict is therefore only detectable by reading the stored
+    object back, which :func:`put_if_absent_verified` does.
     """
 
 
@@ -202,3 +215,58 @@ class EvidenceColdStore(Protocol):
             ColdStoreHealth reporting availability status and details.
         """
         ...
+
+
+async def put_if_absent_verified(
+    store: EvidenceColdStore,
+    key: str,
+    content: bytes,
+    metadata: Mapping[str, str] | None = None,
+    *,
+    equivalent: Callable[[bytes, bytes], bool] | None = None,
+) -> tuple[ColdStoreReceipt, bool]:
+    """``put_if_absent`` that proves a pre-existing object is the same evidence.
+
+    When the backend reports ``created=False`` the stored bytes are read back
+    and compared with ``content``. Byte equality (constant-time) is the
+    default; ``equivalent(stored, supplied)`` may widen it for objects whose
+    bytes are legitimately non-deterministic across retries (for example an
+    attestation carrying a randomized signature over an identical body).
+
+    Args:
+        store: The WORM backend.
+        key: Target object key.
+        content: Bytes to persist.
+        metadata: Optional object metadata.
+        equivalent: Optional predicate accepting a differing pre-existing
+            object as the same evidence.
+
+    Returns:
+        ``(receipt, created)``. When ``created`` is False the receipt digest is
+        recomputed over the stored bytes, never the supplied ones.
+
+    Raises:
+        ColdStoreIntegrityError: An object exists under ``key`` with different
+            content.
+        ColdStoreError: On backend failure (including the read-back).
+    """
+    receipt, created = await store.put_if_absent(
+        key=key, content=content, metadata=metadata
+    )
+    if created:
+        return receipt, True
+
+    stored = await store.get(key)
+    same = hmac.compare_digest(stored, content) or (
+        equivalent is not None and equivalent(stored, content)
+    )
+    if not same:
+        raise ColdStoreIntegrityError(
+            f"object {key!r} already exists with different content; refusing to "
+            "treat a conflicting write as committed",
+            backend_id=store.backend_id,
+        )
+    return (
+        dataclasses.replace(receipt, content_sha256=hashlib.sha256(stored).hexdigest()),
+        False,
+    )

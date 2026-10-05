@@ -343,3 +343,21 @@ def test_realistic_validation_result_with_consequence_token(sanitizer):
     compliance_finding = result["findings"][1]
     assert compliance_finding["code"] == "COMPLIANCE_SATISFIED"
     assert compliance_finding["message"] == "ISO 42001 A.5 satisfied"
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_sanitize_dict_recurses_into_nested_lists(sanitizer: PIISanitizer) -> None:
+    """Table-shaped values (lists of lists) are sanitized, not passed through."""
+    data = {
+        "rows": [
+            ["contact", "jane.doe@example.com"],
+            [["deeper", "123-45-6789"], {"phone": "+1 (415) 555-0134"}],
+        ]
+    }
+    result = sanitizer.sanitize_dict(data)
+    flat = str(result)
+    assert "jane.doe@example.com" not in flat
+    assert "123-45-6789" not in flat
+    assert "555-0134" not in flat
+    assert result["rows"][0][0] == "contact"

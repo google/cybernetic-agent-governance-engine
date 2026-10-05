@@ -36,6 +36,7 @@ from .adapter import (
     ProjectBundleStepEntry,
     Provider02AttestationCallback,
     Provider02Client,
+    submit_attested_bundle,
 )
 from .provider import (
     CERReceipt,
@@ -56,4 +57,5 @@ __all__ = [
     "Provider02AttestationProvider",
     "Provider02Client",
     "get_provider_02",
+    "submit_attested_bundle",
 ]

@@ -146,6 +146,64 @@ permanently changes evidence content.
   produced for the same event. Nothing in the repository recomputes a record
   hash from the raw event, so this is not a breaking interface change.
 
+### 4.5 State Commitments (Provider 02 `stateHash` Preimages)
+
+A partner that certificate-binds a producer-supplied `stateHash` without
+recomputing it gives that hash evidentiary weight only if the preimage is kept.
+The kernel's generic state-commitment service retains it:
+
+- **Endpoint and identity**: `POST /governance/state-commitments`
+  ([`state_commitment_api.py`](../../src/gateway/server/state_commitment_api.py))
+  authenticates the caller by Linkerd mTLS workload identity (`l5d-client-id`
+  checked against `CAGE_TRUSTED_CLIENT_IDENTITIES`), never by HMAC routing seals.
+  Errors map to `403` (identity), `413` (preimage > 256 KiB), `422` (snapshot not
+  JSON-native) and `503` (service or evidence chain unavailable).
+- **One canonicalization**:
+  [`StateCommitmentService`](../../src/gateway/governance/evidence/state_commitment.py)
+  runs the snapshot through the evidence-stream sanitizer (`sanitize_dict`) and
+  `_normalize_for_jcs`, RFC 8785-canonicalizes it once, and hashes those bytes
+  with SHA-256. It then appends a `STATE_COMMITMENT` event (sanitized `state`,
+  `stateHash`, `linkage`, `linkageDigest`, method keys, `callerIdentity`) with
+  blocking `ingest_sync()`. If the append fails, no `stateHash` is returned.
+  Method constants (`stateHashAlg=sha256`, `stateHashCanon=RFC8785-JCS`,
+  `stateHashScope=agentstate-pii-sanitized/v1`) are defined once, in
+  [`seams/state_commitment.py`](../../src/gateway/governance/seams/state_commitment.py).
+- **Custody unchanged**: the gateway still holds no cold store. The
+  compliance-bridge `EvidenceCustodian` archives the event with the rest of the
+  chain. Its objects carry `x-data-classification: internal-pii-sanitized`,
+  and every write is read back and compared (`put_if_absent_verified()`), so an
+  existing object with different content is an integrity failure, not a silent
+  success.
+- **Verification**: `verify_state_commitment(state_hash, record_payload)`
+  recomputes `sha256(JCS(state))` from an archived record, checks that the
+  method keys match, and (optionally) checks the `linkageDigest` against an
+  expected linkage. Use `linkageDigest` to bind records to bundle steps: the
+  plain `linkage` passes through the sanitizer and may be redacted.
+- **Posture**: `build_state_commitment_service()` refuses to build under an
+  enforcing posture without a running evidence sink. The custodian also refuses
+  a `null` cold store in enforcing postures.
+
+**Sanitizer coverage and known gaps** (classification *Internal / PII-sanitized*,
+not *anonymized*). Covered (string values, in nested dicts and lists): US SSN,
+payment-card numbers, IBAN, SWIFT/BIC, email, phone numbers, API keys / Bearer
+tokens and compact JWS; plus values under denylisted keys (`token`, `jws`,
+`jwt`, ...). Not covered, so they
+may remain in preimages:
+
+- free-text personal names and postal addresses;
+- non-IBAN account numbers, and PII held as numbers rather than strings;
+- the opaque `user_id`, kept on purpose as pseudonymous attribution (no
+  pseudonymizer exists, and widening the global key denylist would change every
+  evidence record).
+
+The sanitizer also has known false positives. These are **hash-relevant**,
+because two states that differ only in redacted values get the same `stateHash`:
+
+- the SWIFT/BIC pattern previously redacted any eight-letter upper-case word;
+  fixed in POAM-2026-100 (§4.4) by requiring a contextual cue and country code;
+- some UUIDs whose groups are all digits match the card patterns (about 1.3e-4
+  of uuid4 values).
+
 ## 5. Configuration Contracts & Runtime Matrix
 
 Shared (gateway and compliance bridge):

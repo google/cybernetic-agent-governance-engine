@@ -54,6 +54,9 @@ from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.server.app_state import governor_of
+from src.gateway.server.state_commitment_api import (
+    router as state_commitment_router,
+)
 
 logger = logging.getLogger("Gateway.GovernanceMiddleware")
 
@@ -1153,6 +1156,9 @@ class OIDCValidationMiddleware:
 
         await self.app(scope, receive, send)
 
+
+# POST /governance/state-commitments — generic state-commitment service.
+governance_app.include_router(state_commitment_router)
 
 # Register the OIDC middleware on the governance_app sub-application.
 # It runs before all governance endpoints, injecting caller_identity into

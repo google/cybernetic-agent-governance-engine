@@ -40,6 +40,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.integrations.provider_02.state_commitment_support import (
+    InProcessCommitter,
+    seal,
+    sealed_bundle,
+)
+
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 # Base paths for fixtures
@@ -195,25 +201,28 @@ class TestHelperFunctions:
             "completed_transactions must be removed from the snapshot"
         )
 
-    def test_hash_state_is_deterministic(self) -> None:
-        """_hash_state must produce the same hash for identical state."""
-        from src.integrations.provider_02.adapter import _hash_state
+    def test_state_commitment_is_deterministic(self) -> None:
+        """The gateway commitment must be identical for identical snapshots."""
+        from src.gateway.governance.evidence.state_commitment import (
+            canonicalize_state,
+        )
 
         state = {"risk_status": "APPROVED", "loop_count": 1}
-        hash1 = _hash_state(state)
-        hash2 = _hash_state(state)
-        assert hash1 == hash2, "_hash_state must be deterministic"
+        _, _, hash1 = canonicalize_state(state)
+        _, _, hash2 = canonicalize_state(dict(state))
+        assert hash1 == hash2, "state commitment must be deterministic"
         assert len(hash1) == 64, "SHA-256 hex digest must be 64 chars"
 
-    def test_hash_state_differs_for_different_states(self) -> None:
-        """_hash_state must produce different hashes for different states."""
-        from src.integrations.provider_02.adapter import _hash_state
-
-        state_a = {"risk_status": "APPROVED"}
-        state_b = {"risk_status": "REJECTED"}
-        assert _hash_state(state_a) != _hash_state(state_b), (
-            "Different states must produce different hashes"
+    def test_state_commitment_differs_for_different_states(self) -> None:
+        """Different snapshots must produce different commitments."""
+        from src.gateway.governance.evidence.state_commitment import (
+            canonicalize_state,
         )
+
+        assert (
+            canonicalize_state({"loop_count": 1})[2]
+            != canonicalize_state({"loop_count": 2})[2]
+        ), "Different states must produce different hashes"
 
     def test_extract_signals_guardrail_blocked(self) -> None:
         """_extract_signals must capture guardrail_blocked and guardrail_reason."""
@@ -384,7 +393,9 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="thread-abc"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="thread-abc",
         )
         assert cb._thread_id == "thread-abc"
 
@@ -393,7 +404,9 @@ class TestProvider02AttestationCallback:
         from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         assert cb._thread_id, "thread_id must be auto-generated"
         parsed = uuid.UUID(cb._thread_id)
         assert str(parsed) == cb._thread_id
@@ -404,7 +417,9 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="t",
         )
         assert cb.step_count == 0
 
@@ -414,7 +429,9 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="t",
         )
         cb.on_chain_start("evaluator", {})
         cb.on_chain_end("evaluator", {"risk_status": "APPROVED"})
@@ -429,7 +446,9 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="t",
         )
         cb.on_chain_end("thinker_node", {"some": "state"})
 
@@ -446,12 +465,14 @@ class TestProvider02AttestationCallback:
         )
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="t",
         )
         cb.on_chain_start("evaluator", {})
         cb.on_chain_end("evaluator", {"risk_status": "APPROVED"})
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
         assert isinstance(bundle, AttestationBundle), (
             "get_bundle() must return an AttestationBundle"
         )
@@ -475,7 +496,9 @@ class TestProvider02AttestationCallback:
         )
 
         cb = Provider02AttestationCallback(
-            topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="t"
+            committer=InProcessCommitter(),
+            topology=FINANCIAL_ADVISOR_TOPOLOGY,
+            thread_id="t",
         )
         # Execute the real pre-interrupt path (every edge must be a legal executed edge)
         for node in [
@@ -513,7 +536,9 @@ class TestProvider02AttestationCallback:
         assert interrupt_step.node_name == "hitl_interrupt"
         assert interrupt_step.signals.get("interruptType") == "HITL_MANUAL_REVIEW"
 
-        # RFC 8785 64-char hex stateHash validation
+        # stateHash is the gateway receipt: empty until sealed, then 64 hex chars
+        assert interrupt_step.state_hash == ""
+        seal(cb)
         assert interrupt_step.state_hash, "state_hash must be non-empty"
         assert re.match(r"^[a-f0-9]{64}$", interrupt_step.state_hash), (
             f"state_hash must be 64 lowercase hex chars (RFC 8785), got {interrupt_step.state_hash!r}"
@@ -552,6 +577,7 @@ class TestProvider02AttestationCallback:
             f"expected [{interrupt_step.step_id}], got {governed_trader_step.parent_step_ids}"
         )
 
+        seal(cb)
         # Validate all generated step entries against PROJECT_STEP_VALIDATOR
         for step in cb._steps:
             try:
@@ -563,7 +589,7 @@ class TestProvider02AttestationCallback:
                 )
 
         # Terminal path classification
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
         assert bundle.terminal_path == "happy_path", (
             f"Expected terminal_path='happy_path' for HITL resumption, got {bundle.terminal_path!r}"
         )
@@ -586,14 +612,16 @@ class TestProvider02AttestationCallback:
             terminal_node="D",
         )
 
-        cb = Provider02AttestationCallback(topology=topology, thread_id="dag-test")
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=topology, thread_id="dag-test"
+        )
 
         # Execute nodes in order
         for node in ["A", "B", "C", "D"]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {})
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
 
         # Closure validation: collect all step IDs present in the bundle
         step_ids_in_bundle = {step.step_id for step in bundle.steps}
@@ -631,7 +659,9 @@ class TestProvider02AttestationCallback:
         )
 
         cb = Provider02AttestationCallback(
-            topology=topology, thread_id="contraction-test"
+            committer=InProcessCommitter(),
+            topology=topology,
+            thread_id="contraction-test",
         )
 
         # Execute all nodes (on_chain_end will skip B and C as non-attestation nodes)
@@ -639,7 +669,7 @@ class TestProvider02AttestationCallback:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {})
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
 
         # Bundle should contain only A and D
         assert len(bundle.steps) == 2, (
@@ -684,7 +714,9 @@ class TestProvider02AttestationCallback:
             terminal_node="D",
         )
 
-        cb = Provider02AttestationCallback(topology=topology, thread_id="branch-test")
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=topology, thread_id="branch-test"
+        )
 
         # Execute all nodes; B and C both ran from A, and D converged from both.
         executed = {"A": None, "B": ["A"], "C": ["A"], "D": ["B", "C"]}
@@ -692,7 +724,7 @@ class TestProvider02AttestationCallback:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {}, executed_predecessors=preds)
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
 
         # Bundle should contain only A and D
         assert len(bundle.steps) == 2, (
@@ -728,13 +760,15 @@ class TestProvider02AttestationCallback:
             terminal_node="D",
         )
 
-        cb = Provider02AttestationCallback(topology=topology, thread_id="partial-test")
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=topology, thread_id="partial-test"
+        )
 
         for node in ["A", "B", "C", "D"]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {})
 
-        bundle = cb.get_bundle()
+        bundle = sealed_bundle(cb)
 
         # Bundle should contain A, C, D (B is skipped)
         assert len(bundle.steps) == 3, (
@@ -784,13 +818,15 @@ class TestProvider02AttestationCallback:
         from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
         cb = Provider02AttestationCallback(
-            topology=self._unrecorded_cycle_topology(), thread_id="cycle-test"
+            committer=InProcessCommitter(),
+            topology=self._unrecorded_cycle_topology(),
+            thread_id="cycle-test",
         )
         for node in ["A", "B", "D", "B", "C"]:
             cb.on_chain_start(node, {})
             cb.on_chain_end(node, {})
 
-        step_a, step_c = cb.get_bundle().steps
+        step_a, step_c = sealed_bundle(cb).steps
         assert step_c.parent_step_ids == [step_a.step_id]
 
     def test_illegal_executed_edge_fails_closed(self) -> None:
@@ -801,7 +837,9 @@ class TestProvider02AttestationCallback:
         )
 
         cb = Provider02AttestationCallback(
-            topology=self._unrecorded_cycle_topology(), thread_id="cycle-test"
+            committer=InProcessCommitter(),
+            topology=self._unrecorded_cycle_topology(),
+            thread_id="cycle-test",
         )
         for node in ["A", "B", "D"]:
             cb.on_chain_start(node, {})

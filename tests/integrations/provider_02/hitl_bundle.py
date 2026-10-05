@@ -40,7 +40,13 @@ from pathlib import Path
 from typing import Any
 
 from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
+from src.gateway.governance.seams.state_commitment import STATE_COMMITMENT_METHOD
 from src.integrations.provider_02.adapter import Provider02AttestationCallback
+from tests.integrations.provider_02.state_commitment_support import (
+    InProcessCommitter,
+    seal,
+    sealed_bundle,
+)
 
 STATE_HASH_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
@@ -101,7 +107,9 @@ def _approved_state() -> dict[str, Any]:
 def build_hitl_approval_bundle(thread_id: str = "hitl-approval-path") -> dict[str, Any]:
     """Drive the adapter through the HITL approval path and return the bundle dict."""
     cb = Provider02AttestationCallback(
-        topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id=thread_id
+        committer=InProcessCommitter(),
+        topology=FINANCIAL_ADVISOR_TOPOLOGY,
+        thread_id=thread_id,
     )
     pre = _agent_state()
     for node in _PRE_INTERRUPT_NODES:
@@ -119,7 +127,7 @@ def build_hitl_approval_bundle(thread_id: str = "hitl-approval-path") -> dict[st
         cb.on_chain_start(node, approved)
         cb.on_chain_end(node, approved)
 
-    return cb.get_bundle().to_dict()
+    return sealed_bundle(cb).to_dict()
 
 
 #: Actual (executed) recorded parents on the approval path, by node name. Static
@@ -198,6 +206,9 @@ def hitl_invariant_violations(bundle: dict[str, Any]) -> list[str]:
     4. Actual parents only: every parent edge is legal under ``parentEdges`` and
        each step cites only its executed parents (``explainer == [governed_trader]``,
        ``nemo_output_rail == [explainer]``); see :func:`actual_parent_violations`.
+    5. Hash method: every step's ``metadata`` carries ``stateHashAlg``,
+       ``stateHashCanon`` and ``stateHashScope`` with exactly the values in
+       :data:`STATE_COMMITMENT_METHOD`.
     """
     errors: list[str] = []
     steps = bundle.get("steps", [])
@@ -209,6 +220,13 @@ def hitl_invariant_violations(bundle: dict[str, Any]) -> list[str]:
                 f"{step.get('nodeName')}: stateHash {step.get('stateHash')!r} "
                 "does not match ^[a-f0-9]{64}$"
             )
+        metadata = step.get("metadata", {})
+        for key, expected in STATE_COMMITMENT_METHOD.items():
+            if metadata.get(key) != expected:
+                errors.append(
+                    f"{step.get('nodeName')}: metadata[{key!r}] "
+                    f"{metadata.get(key)!r} != {expected!r}"
+                )
 
     if "hitl_interrupt" not in FINANCIAL_ADVISOR_TOPOLOGY.nodes:
         errors.append("hitl_interrupt missing from GraphTopology.nodes")

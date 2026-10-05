@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -30,6 +31,11 @@ from opentelemetry.propagate import inject as otel_inject
 
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governance_envelope import unwrap_governance_envelope
+from src.gateway.governance.seams.state_commitment import (
+    StateCommitmentError,
+    StateCommitmentLinkage,
+    StateCommitmentReceipt,
+)
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 
 logger = logging.getLogger("infrastructure.gateway_client")
@@ -189,7 +195,9 @@ class GatewayClient:
             logger.warning(
                 "Substrate drift caught during session. Fetching updated baseline pin and replaying."
             )
-            payload["policy_version_id"] = await self.get_policy_version(timeout=timeout)
+            payload["policy_version_id"] = await self.get_policy_version(
+                timeout=timeout
+            )
             response = await _post()
         if response.status_code == 403:
             raise PermissionError(
@@ -211,7 +219,9 @@ class GatewayClient:
                 f"Governance returned no routable verdict for '{action}' "
                 f"(verdict={verdict!r}): {'; '.join(violations)}"
             )
-        if verdict == GovernanceDecision.REQUIRE_APPROVAL and not result.get("deferred_id"):
+        if verdict == GovernanceDecision.REQUIRE_APPROVAL and not result.get(
+            "deferred_id"
+        ):
             # No approval token was parked, so no human can ever approve it.
             raise PermissionError(
                 f"Governance requires approval for '{action}' but parked no deferred_id"
@@ -252,6 +262,60 @@ class GatewayClient:
         response.raise_for_status()
         body: dict[str, Any] = response.json()
         return body
+
+    @side_effect_node(kind="api_call", external_system="gateway_api")
+    async def commit_state(
+        self,
+        snapshot: Mapping[str, Any],
+        *,
+        linkage: StateCommitmentLinkage,
+        timeout: float = 10.0,
+    ) -> StateCommitmentReceipt:
+        """Commit a state snapshot via ``POST /governance/state-commitments``.
+
+        Implements :class:`~src.gateway.governance.seams.state_commitment.StateCommitter`.
+        The gateway sanitizes, canonicalizes and hashes the snapshot and
+        appends the sanitized preimage to its evidence chain; the advisor keeps
+        no copy and holds no storage identity. The caller is authenticated by
+        its Linkerd mTLS workload identity, injected by the mesh proxy.
+
+        Args:
+            snapshot: JSON-native agent-state snapshot.
+            linkage: The attestation step the snapshot belongs to.
+            timeout: HTTP timeout in seconds.
+
+        Returns:
+            The validated gateway receipt (``stateHash`` + evidence linkage).
+
+        Raises:
+            StateCommitmentError: On any transport error, non-200 response, or
+                malformed receipt. The caller must not emit the step.
+        """
+        client = await self._ensure_client()
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        otel_inject(headers)
+        try:
+            response = await client.post(
+                "/governance/state-commitments",
+                json={"snapshot": dict(snapshot), "linkage": linkage.to_dict()},
+                headers=headers,
+                timeout=timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise StateCommitmentError(
+                f"state commitment transport error: {exc}"
+            ) from exc
+        if response.status_code != 200:
+            raise StateCommitmentError(
+                f"gateway refused state commitment: HTTP {response.status_code}"
+            )
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise StateCommitmentError("gateway returned a non-JSON receipt") from exc
+        if not isinstance(body, dict):
+            raise StateCommitmentError("gateway returned a non-object receipt")
+        return StateCommitmentReceipt.from_dict(body)
 
     async def close(self) -> None:
         """Close the underlying HTTP client and release resources."""

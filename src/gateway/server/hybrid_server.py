@@ -206,6 +206,18 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.governor = governor
     governance_app.state.governor = governor
 
+    # ── State-commitment service (POST /governance/state-commitments) ──────
+    # Retains sanitized state preimages through the evidence sink above; the
+    # gateway itself holds no cold store. Refused here under an enforcing
+    # posture when the sink is absent or disconnected.
+    from src.gateway.governance.evidence.state_commitment import (
+        build_state_commitment_service,
+    )
+
+    state_commitments = build_state_commitment_service(evidence_sink)
+    app.state.state_commitments = state_commitments
+    governance_app.state.state_commitments = state_commitments
+
     # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
     logger.info("🔥 Pre-warming OPA policy evaluation...")
     synthetic_params = {

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.gateway.governance.evidence.state_commitment import StateCommitmentService
 from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
@@ -32,3 +33,18 @@ def governor_of(app: Any) -> SymbolicGovernor:
     if not isinstance(governor, SymbolicGovernor):
         raise RuntimeError("no assembled governor on app.state; refusing to govern")
     return governor
+
+
+def state_commitment_service_of(app: Any) -> StateCommitmentService:
+    """The state-commitment service the lifespan built for ``app``; fail closed.
+
+    Raises:
+        RuntimeError: The lifespan has not stored a ``StateCommitmentService``
+            on ``app.state.state_commitments``.
+    """
+    service = getattr(getattr(app, "state", None), "state_commitments", None)
+    if not isinstance(service, StateCommitmentService):
+        raise RuntimeError(
+            "no state-commitment service on app.state; refusing to commit state"
+        )
+    return service
