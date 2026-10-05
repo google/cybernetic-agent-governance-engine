@@ -47,7 +47,7 @@ This directory contains realistic test fixtures for validating Provider 02's nat
 **Terminal Path:** `happy_path`  
 **Description:** HITL approval path emitted by the real `Provider02AttestationCallback` (not hand-written).
 - **Nodes:** nemo_guardrail → evaluator → safety_check → hitl_interrupt → governed_trader → explainer → nemo_output_rail
-- **Invariants:** 64-char lowercase hex `stateHash` on every step; `governed_trader.parentStepIds == [hitl_interrupt.stepId]`
+- **Invariants:** 64-char lowercase hex `stateHash` on every step; `governed_trader.parentStepIds == [hitl_interrupt.stepId]`; every `parentStepIds` entry is an executed, legal `parentEdges` edge (`explainer == [governed_trader]`, `nemo_output_rail == [explainer]`)
 - **Regenerate:** `uv run python -m tests.integrations.provider_02.hitl_bundle`
 - **Use Case:** Partner HITL interop (see [`HITL_INTEROP_STATUS.md`](../../../docs/partners/provider_02/nexart/HITL_INTEROP_STATUS.md)).
 

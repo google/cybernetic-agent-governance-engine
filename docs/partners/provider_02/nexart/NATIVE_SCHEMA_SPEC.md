@@ -363,7 +363,7 @@ CAGE's governance workflow may execute intermediate nodes that are not explicitl
 4. **Topological Ordering Preservation:** The contraction MUST preserve the reachability of the *executed* graph: if node A reached node B in this execution, the contracted graph MUST preserve this reachability. It MUST NOT add reachability that the execution did not exhibit.
 
 > [!NOTE]
-> Rules 2–4 were tightened on 2026-10-04 from static-topology wording to executed-edge wording. As of that date, the CAGE adapter still contracts over static `parentEdges` for some post-HITL steps. Its output is valid under the subset rule but over-approximates the actual parents. Conformance is tracked in [`HITL_INTEROP_STATUS.md`](HITL_INTEROP_STATUS.md).
+> Rules 2–4 were tightened on 2026-10-04 from static-topology wording to executed-edge wording. The CAGE adapter conforms: [`_resolve_executed_parents()`](../../../../src/integrations/provider_02/adapter.py) contracts only the edges executed in the run and raises `LineageError` on any executed edge that is not a `parentEdges` candidate. It assumes node events arrive sequentially, so genuine parallel fan-in must be declared by the caller through `executed_predecessors`. The over-the-wire re-run is tracked in [`HITL_INTEROP_STATUS.md`](HITL_INTEROP_STATUS.md).
 
 **Example Contraction:**
 ```

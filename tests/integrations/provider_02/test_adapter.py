@@ -18,7 +18,7 @@ tests/test_provider_02_adapter.py — Tests for the LangGraph-to-Provider 02 att
 Verification invariants:
   1. Step serialization captures all AgentState governance fields.
   2. copy.deepcopy guards against state mutation during loop iterations.
-  3. Parent step IDs resolve correctly from graph topology.
+  3. Parent step IDs record only executed edges, validated against the topology.
   4. HITL interrupt is recorded as a paused DAG step.
   5. Loop unrolling produces correct parentStepIds across iterations.
   6. All 4 degenerate paths produce valid bundles.
@@ -36,6 +36,7 @@ import pytest
 from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
 from src.integrations.provider_02.adapter import (
     AttestationBundle,
+    LineageError,
     ProjectBundleStepEntry,
     Provider02AttestationCallback,
     Provider02Client,
@@ -272,7 +273,7 @@ class TestCallbackHandler:
         assert cb.step_count == 0
 
     def test_parent_step_ids_resolve(self):  # type: ignore[no-untyped-def]
-        """Parent step IDs are correctly resolved from graph topology."""
+        """Parent step IDs contract executed edges back to the nearest recorded step."""
         cb = Provider02AttestationCallback(
             topology=FINANCIAL_ADVISOR_TOPOLOGY, thread_id="test-thread"
         )
@@ -293,8 +294,10 @@ class TestCallbackHandler:
 
         # evaluator's parent contracts upstream through non-attestation nodes to nemo_guardrail
         evaluator_step = [s for s in cb._steps if s.node_name == "evaluator"][0]
-        nemo_guardrail_id = cb._step_id_by_node["nemo_guardrail"]
-        assert nemo_guardrail_id in evaluator_step.parent_step_ids
+        nemo_guardrail_id = next(
+            s.step_id for s in cb._steps if s.node_name == "nemo_guardrail"
+        )
+        assert evaluator_step.parent_step_ids == [nemo_guardrail_id]
 
     def test_hitl_interrupt_recorded(self):  # type: ignore[no-untyped-def]
         """HITL interrupt produces a step with approval signals, 64-char hex state_hash,
@@ -314,6 +317,7 @@ class TestCallbackHandler:
             "doer_node",
             "execution_analyst",
             "evaluator",
+            "ftra_node",
             "safety_check",
         ]:
             cb.on_chain_start(node, state)
@@ -429,6 +433,262 @@ class TestLoopUnrolling:
 
 
 # ---------------------------------------------------------------------------
+# Test 4b: Executed-edge lineage (NATIVE_SCHEMA_SPEC.md §4.1 rules 2-4)
+# ---------------------------------------------------------------------------
+
+
+def _run(cb: Provider02AttestationCallback, nodes: list[str], state: dict) -> None:
+    for node in nodes:
+        cb.on_chain_start(node, state)
+        cb.on_chain_end(node, state)
+
+
+def _parents_by_name(cb: Provider02AttestationCallback) -> list[tuple[str, list[str]]]:
+    """(node_name, [parent node names]) per recorded step, in emission order."""
+    name_by_id = {s.step_id: s.node_name for s in cb._steps}
+    return [
+        (s.node_name, [name_by_id[p] for p in s.parent_step_ids]) for s in cb._steps
+    ]
+
+
+class TestExecutedLineage:
+    """parentStepIds cite only parents along edges actually traversed."""
+
+    def test_post_hitl_steps_cite_only_executed_parents(self) -> None:
+        """explainer has static candidates evaluator/safety_check, but only
+        governed_trader actually preceded it; nemo_output_rail must not reach
+        nemo_guardrail through data_analyst, which never ran."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "safety_check",
+            ],
+            _approved_state(),
+        )
+        cb.handle_hitl_interrupt(_hitl_state())
+        _run(cb, ["governed_trader", "explainer", "nemo_output_rail"], _hitl_state())
+
+        assert _parents_by_name(cb) == [
+            ("nemo_guardrail", []),
+            ("evaluator", ["nemo_guardrail"]),
+            ("safety_check", ["evaluator"]),
+            ("hitl_interrupt", ["safety_check"]),
+            ("governed_trader", ["hitl_interrupt"]),
+            ("explainer", ["governed_trader"]),
+            ("nemo_output_rail", ["explainer"]),
+        ]
+
+    @pytest.mark.parametrize("emit_approval_node", [True, False])
+    def test_hitl_step_contracts_through_approval_node(
+        self, emit_approval_node: bool
+    ) -> None:
+        """safety_check -> approval_node -> [hitl_interrupt] contracts to safety_check.
+
+        approval_node is unrecorded; callers that do not emit it (pause recorded
+        straight after safety_check) yield the same recorded chain.
+        """
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "safety_check",
+            ],
+            _approved_state(),
+        )
+        if emit_approval_node:
+            _run(cb, ["approval_node"], _hitl_state())
+        cb.handle_hitl_interrupt(_hitl_state())
+        _run(cb, ["governed_trader"], _hitl_state())
+
+        assert _parents_by_name(cb)[-3:] == [
+            ("safety_check", ["evaluator"]),
+            ("hitl_interrupt", ["safety_check"]),
+            ("governed_trader", ["hitl_interrupt"]),
+        ]
+
+    def test_deferral_path_contracts_through_defer_node(self) -> None:
+        """safety_check -> defer_node -> explainer: explainer cites safety_check."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "safety_check",
+                "defer_node",
+                "explainer",
+                "nemo_output_rail",
+            ],
+            _base_state(safety_status="DEFERRED"),
+        )
+        parents = dict(_parents_by_name(cb))
+        assert parents["explainer"] == ["safety_check"]
+        assert parents["nemo_output_rail"] == ["explainer"]
+
+    def test_ftra_block_explainer_cites_evaluator(self) -> None:
+        """evaluator -> ftra_node(BLOCKED) -> explainer contracts to evaluator."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "execution_analyst",
+                "evaluator",
+                "ftra_node",
+                "explainer",
+            ],
+            _base_state(),
+        )
+        assert dict(_parents_by_name(cb))["explainer"] == ["evaluator"]
+
+    def test_finish_routes_doer_to_output_rail(self) -> None:
+        """route_supervisor FINISH: doer_node -> nemo_output_rail is a legal edge."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            ["nemo_guardrail", "thinker_node", "doer_node", "nemo_output_rail"],
+            _base_state(),
+        )
+        assert dict(_parents_by_name(cb))["nemo_output_rail"] == ["nemo_guardrail"]
+
+    def test_evaluator_to_safety_check_without_ftra_fails_closed(self) -> None:
+        """The real graph routes evaluator -> ftra_node -> safety_check; a direct
+        evaluator -> safety_check edge no longer exists."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(cb, ["execution_analyst", "evaluator"], _base_state())
+        with pytest.raises(LineageError, match="'evaluator' -> 'safety_check'"):
+            cb.on_chain_end("safety_check", _base_state())
+
+    def test_data_analyst_path_contracts_to_entry_guardrail(self) -> None:
+        """When data_analyst does run, nemo_output_rail contracts through it."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            [
+                "nemo_guardrail",
+                "thinker_node",
+                "doer_node",
+                "data_analyst",
+                "nemo_output_rail",
+            ],
+            _base_state(),
+        )
+        assert _parents_by_name(cb) == [
+            ("nemo_guardrail", []),
+            ("nemo_output_rail", ["nemo_guardrail"]),
+        ]
+
+    def test_cbf_block_explainer_cites_safety_check_only(self) -> None:
+        """CBF fail-closed: explainer follows safety_check, not evaluator."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            ["nemo_guardrail", "thinker_node", "doer_node", "execution_analyst"],
+            _base_state(),
+        )
+        _run(
+            cb,
+            ["evaluator", "ftra_node", "safety_check", "explainer"],
+            _base_state(safety_status="BLOCKED"),
+        )
+        assert dict(_parents_by_name(cb))["explainer"] == ["safety_check"]
+
+    def test_loop_unrolling_on_full_path(self) -> None:
+        """Each evaluator iteration cites the iteration that actually preceded it."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(cb, ["nemo_guardrail", "thinker_node", "doer_node"], _base_state())
+        for i in range(3):
+            _run(cb, ["execution_analyst", "evaluator"], _base_state(loop_count=i))
+        _run(cb, ["explainer"], _base_state(loop_count=3))
+
+        evaluators = [s for s in cb._steps if s.node_name == "evaluator"]
+        guardrail = cb._steps[0]
+        assert evaluators[0].parent_step_ids == [guardrail.step_id]
+        assert evaluators[1].parent_step_ids == [evaluators[0].step_id]
+        assert evaluators[2].parent_step_ids == [evaluators[1].step_id]
+        assert cb._steps[-1].parent_step_ids == [evaluators[2].step_id]
+
+    def test_illegal_executed_edge_fails_closed(self) -> None:
+        """nemo_guardrail -> evaluator is not a parent_edges candidate: refuse it."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(cb, ["nemo_guardrail"], _base_state())
+        cb.on_chain_start("evaluator", _base_state())
+        with pytest.raises(LineageError, match="Illegal executed edge"):
+            cb.on_chain_end("evaluator", _base_state())
+        assert [s.node_name for s in cb._steps] == ["nemo_guardrail"]
+
+    def test_illegal_edge_through_unrecorded_node_fails_closed(self) -> None:
+        """Validation applies to unrecorded nodes too (doer_node after nemo_guardrail)."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(cb, ["nemo_guardrail"], _base_state())
+        with pytest.raises(LineageError, match="Illegal executed edge"):
+            cb.on_chain_end("doer_node", _base_state())
+
+    def test_hitl_interrupt_from_illegal_predecessor_fails_closed(self) -> None:
+        """hitl_interrupt may only follow safety_check."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(
+            cb,
+            ["nemo_guardrail", "thinker_node", "doer_node", "execution_analyst"],
+            _base_state(),
+        )
+        _run(cb, ["evaluator"], _base_state())
+        with pytest.raises(LineageError, match="'evaluator' -> 'hitl_interrupt'"):
+            cb.handle_hitl_interrupt(_hitl_state())
+
+    def test_declared_predecessor_that_never_ran_fails_closed(self) -> None:
+        """A legal candidate that did not execute must not be cited."""
+        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        _run(cb, ["nemo_guardrail", "thinker_node", "doer_node"], _base_state())
+        with pytest.raises(LineageError, match="has not executed"):
+            cb.on_chain_end(
+                "execution_analyst",
+                _base_state(),
+                executed_predecessors=["doer_node", "evaluator"],
+            )
+
+    def test_explicit_fan_in_includes_every_executed_predecessor(self) -> None:
+        """Genuine convergence from parallel branches cites every branch."""
+        from src.gateway.governance.seams.graph_topology import GraphTopology
+
+        topology = GraphTopology(
+            nodes=frozenset({"A", "B", "C", "D"}),
+            attestation_nodes=frozenset({"A", "B", "C", "D"}),
+            parent_edges={"A": [], "B": ["A"], "C": ["A"], "D": ["B", "C"]},
+            terminal_node="D",
+        )
+        cb = Provider02AttestationCallback(topology=topology)
+        _run(cb, ["A", "B"], {})
+        cb.on_chain_end("C", {}, executed_predecessors=["A"])
+        cb.on_chain_end("D", {}, executed_predecessors=["B", "C"])
+        assert _parents_by_name(cb) == [
+            ("A", []),
+            ("B", ["A"]),
+            ("C", ["A"]),
+            ("D", ["B", "C"]),
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Test 5: Terminal path classification
 # ---------------------------------------------------------------------------
 
@@ -518,10 +778,13 @@ class TestBundleAssembly:
 
         cb.on_chain_start("nemo_guardrail", state)
         cb.on_chain_end("nemo_guardrail", state)
-        cb.on_chain_start("thinker_node", state)
-        cb.on_chain_end("thinker_node", state)
+        for node in ("thinker_node", "doer_node", "execution_analyst"):
+            cb.on_chain_start(node, state)
+            cb.on_chain_end(node, state)
         cb.on_chain_start("evaluator", state)
         cb.on_chain_end("evaluator", _approved_state())
+        cb.on_chain_start("ftra_node", _approved_state())
+        cb.on_chain_end("ftra_node", _approved_state())
         cb.on_chain_start("safety_check", _approved_state())
         cb.on_chain_end("safety_check", _approved_state())
         cb.on_chain_start("governed_trader", _approved_state())

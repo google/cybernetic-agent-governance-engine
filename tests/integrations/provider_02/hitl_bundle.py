@@ -19,7 +19,13 @@ through the Governed Financial Advisor approval path, so the hermetic
 conformance tests, the committed ``06_hitl_approval.json`` fixture and the
 over-the-wire staging case all exercise exactly what CAGE emits:
 
-    safety_check ──► hitl_interrupt ──► governed_trader
+    safety_check ──► hitl_interrupt ──► governed_trader ──► explainer ──► nemo_output_rail
+
+(The executed sequence is ``… ftra_node → safety_check → approval_node →
+[hitl_interrupt] → governed_trader …``; ``ftra_node`` and ``approval_node`` are
+unrecorded, so lineage contracts through them.)
+
+Every ``parentStepIds`` entry is an executed edge, never a merely possible one.
 
 Regenerate the committed fixture with::
 
@@ -51,6 +57,7 @@ _PRE_INTERRUPT_NODES = (
     "doer_node",
     "execution_analyst",
     "evaluator",
+    "ftra_node",
     "safety_check",
 )
 _POST_APPROVAL_NODES = ("governed_trader", "explainer", "nemo_output_rail")
@@ -101,7 +108,11 @@ def build_hitl_approval_bundle(thread_id: str = "hitl-approval-path") -> dict[st
         cb.on_chain_start(node, pre)
         cb.on_chain_end(node, pre)
 
+    # approval_node calls interrupt(); it completes once the reviewer resumes the
+    # graph, and the HITL pause is then recorded with the approval decision.
     approved = _approved_state()
+    cb.on_chain_start("approval_node", pre)
+    cb.on_chain_end("approval_node", approved)
     cb.handle_hitl_interrupt(approved)
 
     for node in _POST_APPROVAL_NODES:
@@ -111,13 +122,82 @@ def build_hitl_approval_bundle(thread_id: str = "hitl-approval-path") -> dict[st
     return cb.get_bundle().to_dict()
 
 
+#: Actual (executed) recorded parents on the approval path, by node name. Static
+#: ``parentEdges`` candidates that did not execute (``explainer`` <- ``evaluator`` /
+#: ``safety_check``, ``nemo_output_rail`` <- ``data_analyst``) must never appear
+#: (NATIVE_SCHEMA_SPEC.md §4.1 rules 2-4).
+EXPECTED_ACTUAL_PARENTS: dict[str, tuple[str, ...]] = {
+    "nemo_guardrail": (),
+    "evaluator": ("nemo_guardrail",),
+    "safety_check": ("evaluator",),
+    "hitl_interrupt": ("safety_check",),
+    "governed_trader": ("hitl_interrupt",),
+    "explainer": ("governed_trader",),
+    "nemo_output_rail": ("explainer",),
+}
+
+
+def contracted_candidates(node: str) -> set[str]:
+    """Return the legal recorded parents of ``node`` after contraction.
+
+    Walks static ``parentEdges`` backward through unrecorded (non-attestation)
+    candidates and stops at recorded ones (NATIVE_SCHEMA_SPEC.md §2.4, §4.1).
+    """
+    topology = FINANCIAL_ADVISOR_TOPOLOGY
+    legal: set[str] = set()
+    frontier = list(topology.parent_edges.get(node, []))
+    seen: set[str] = set()
+    while frontier:
+        cur = frontier.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        if cur in topology.attestation_nodes:
+            legal.add(cur)
+        else:
+            frontier.extend(topology.parent_edges.get(cur, []))
+    return legal
+
+
+def actual_parent_violations(bundle: dict[str, Any]) -> list[str]:
+    """Return violations of the "actual parents only" rule (empty = pass).
+
+    Every ``parentStepIds`` entry must resolve to an earlier step whose node is a
+    legal contracted ``parentEdges`` candidate, and each approval-path step must
+    cite exactly its executed parents (:data:`EXPECTED_ACTUAL_PARENTS`).
+    """
+    errors: list[str] = []
+    node_by_id: dict[str, str] = {}
+    for step in bundle.get("steps", []):
+        name = step.get("nodeName", "")
+        parents = [node_by_id.get(pid) for pid in step.get("parentStepIds", [])]
+        if None in parents:
+            errors.append(f"{name}: parentStepIds cite unknown or later steps")
+        illegal = sorted(
+            {p for p in parents if p is not None} - contracted_candidates(name)
+        )
+        if illegal:
+            errors.append(f"{name}: illegal parent edge(s) {illegal} -> {name}")
+        expected = EXPECTED_ACTUAL_PARENTS.get(name)
+        if expected is not None and tuple(parents) != expected:
+            errors.append(
+                f"{name}.parentStepIds resolve to {parents}, "
+                f"expected actual parents {list(expected)}"
+            )
+        node_by_id[step.get("stepId", "")] = name
+    return errors
+
+
 def hitl_invariant_violations(bundle: dict[str, Any]) -> list[str]:
-    """Return every violation of the three HITL interop invariants (empty = pass).
+    """Return every violation of the HITL interop invariants (empty = pass).
 
     1. Every ``stateHash`` (including ``hitl_interrupt``) matches ``^[a-f0-9]{64}$``.
     2. ``hitl_interrupt`` is declared in the topology nodes and attestation nodes.
     3. Lineage is strictly causal: ``hitl_interrupt.parentStepIds == [safety_check]``
        and ``governed_trader.parentStepIds == [hitl_interrupt]``.
+    4. Actual parents only: every parent edge is legal under ``parentEdges`` and
+       each step cites only its executed parents (``explainer == [governed_trader]``,
+       ``nemo_output_rail == [explainer]``); see :func:`actual_parent_violations`.
     """
     errors: list[str] = []
     steps = bundle.get("steps", [])
@@ -161,6 +241,7 @@ def hitl_invariant_violations(bundle: dict[str, Any]) -> list[str]:
         < order.index("governed_trader")
     ):
         errors.append(f"steps not in causal order: {order}")
+    errors.extend(actual_parent_violations(bundle))
     return errors
 
 
