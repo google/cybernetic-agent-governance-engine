@@ -138,6 +138,11 @@ Tags: immutable `:<short-git-sha>` only (attested by `scripts/attest_image.sh` a
 gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
   --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
 
+# APPROVED — verify a Dockerfile change without pushing (build, smoke-import
+# the entry module as the image user, Trivy gate identical to sbom.yml)
+gcloud builds submit --config deployment/docker/cloudbuild.verify.yaml \
+  --substitutions="_DOCKERFILE=src/gateway/Dockerfile,_SMOKE_MODULE=src.gateway.server.hybrid_server" .
+
 # NEVER for GKE — architecture mismatch
 # docker build ...
 # docker-compose build && docker push ...

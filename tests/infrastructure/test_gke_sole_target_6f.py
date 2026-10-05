@@ -1374,17 +1374,28 @@ class TestImageSupplyChainAndAttestation:
     def test_cloudbuild_configs_and_scripts_sign_digests(self) -> None:
         docker_dir = REPO_ROOT / "deployment" / "docker"
         cloudbuild_files = sorted(docker_dir.glob("cloudbuild.*.yaml"))
-        assert [p.name for p in cloudbuild_files] == [
+        # Publishing configs push an image and must attest its digest.
+        publishing = [
             "cloudbuild.image.yaml",
             "cloudbuild.lula.yaml",
             "cloudbuild.vllm.yaml",
         ]
+        # Verify-only configs build and scan but must never push, so no
+        # unattested digest can reach a registry.
+        verify_only = ["cloudbuild.verify.yaml"]
+        assert [p.name for p in cloudbuild_files] == sorted(publishing + verify_only)
 
-        for cb_path in cloudbuild_files:
-            text = cb_path.read_text(encoding="utf-8")
+        for name in publishing:
+            text = (docker_dir / name).read_text(encoding="utf-8")
             assert "scripts/attest_image.sh" in text, (
-                f"{cb_path.name} must invoke scripts/attest_image.sh to sign and verify the pushed digest"
+                f"{name} must invoke scripts/attest_image.sh to sign and verify the pushed digest"
             )
+
+        for name in verify_only:
+            config = yaml.safe_load((docker_dir / name).read_text(encoding="utf-8"))
+            assert "images" not in config, f"{name} must not declare images to push"
+            for step in config["steps"]:
+                assert "push" not in step.get("args", []), f"{name} must not push"
 
         attest_script = (REPO_ROOT / "scripts" / "attest_image.sh").read_text(
             encoding="utf-8"

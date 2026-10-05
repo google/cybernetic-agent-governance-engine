@@ -14,33 +14,36 @@
 
 
 # Two-stage build. The builder stage holds the C toolchain needed by wheels
-# without a manylinux build; the runtime stage starts again from the slim base
-# and receives only the finished /app tree. gcc/g++ pull libc6-dev and
-# linux-libc-dev (kernel headers), which carried ~40 HIGH kernel CVEs in the
-# SBOM/CVE Trivy scan while serving no purpose at runtime.
+# without a manylinux build; the runtime stage starts again from the base and
+# receives only the finished /app tree, so no compiler, kernel headers or uv
+# ship in the image.
+
+# Base image: Wolfi (glibc, apk) pinned by digest. Wolfi ships no util-linux,
+# perl or ncurses in the base layer and rebuilds packages as upstream fixes land,
+# which python:3.12-slim-bookworm could not offer (POAM-2026-101). glibc keeps
+# manylinux wheels working unchanged. `python-3.12` pins the interpreter minor
+# version to match pyproject.toml (requires-python <3.13).
+# To bump the base: resolve the new digest of cgr.dev/chainguard/wolfi-base:latest
+# and update WOLFI_BASE in all three Python Dockerfiles together.
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:9c2092b053779e14c82fb50f77b37bcc38b7d2c83972352d5813280f9d035b03
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS builder
+FROM ${WOLFI_BASE} AS builder
 
 WORKDIR /app
 
-# Build toolchain only. python3-dev is not installed: it ships headers for
-# Debian's python3.11, not for the /usr/local python3.12 this image runs, and
-# dragged libpython3.11 (CVE-2025-13462) into the image.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+# Interpreter, its headers, and the build toolchain (builder only).
+RUN apk add --no-cache python-3.12 python-3.12-dev build-base
 
 # Install uv for dependency management (builder only — not shipped at runtime)
 COPY --from=ghcr.io/astral-sh/uv:0.12.2 /uv /bin/uv
 
-# Use the base image's interpreter so the venv's python symlink
-# (/usr/local/bin/python3.12) resolves identically in the runtime stage.
-ENV UV_PYTHON_DOWNLOADS=never \
+# Use the system interpreter so the venv's python symlink
+# (/usr/bin/python3.12) resolves identically in the runtime stage.
+ENV UV_PYTHON=/usr/bin/python3.12 \
+    UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy
 
 # Copy dependency definitions — both files required for uv sync --frozen
@@ -84,17 +87,16 @@ RUN uv pip install --no-deps .
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm
+FROM ${WOLFI_BASE}
 
 WORKDIR /app
 
-# Pick up any Debian security fixes published since the base image was cut.
-RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
+# Runtime interpreter plus the C++ runtime that native wheels link against.
+# `apk upgrade` picks up fixes published since the base digest was cut.
 # M-24: Run as non-root user (UID 1000) to satisfy PSA restricted policy.
-RUN useradd --no-create-home --shell /bin/false --uid 1000 appuser
+RUN apk upgrade --no-cache \
+    && apk add --no-cache python-3.12 libstdc++ libgcc tzdata \
+    && adduser -D -H -u 1000 -s /bin/false appuser
 
 COPY --from=builder --chown=appuser:appuser /app /app
 
