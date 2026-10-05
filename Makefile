@@ -185,6 +185,8 @@ test-partner:
 	@uv run pytest tests/ -m partner_integration --run-partner-integration -v
 
 ## Run Linkerd service-mesh conformance tests against a Linkerd-enabled cluster (kind or GKE)
+## Prerequisite: the governance-stack/cage-deployment ConfigMap (live runs read the region from it):
+##   envsubst '$${CAGE_DEPLOYMENT_REGION}' < deployment/k8s/cage-deployment-configmap.yaml.tpl | kubectl apply -f -
 test-mesh:
 	@echo "==> Running Linkerd service-mesh conformance tests..."
 	@SKIP_PORT_FORWARD_CHECKS=1 uv run pytest tests/integration/test_linkerd_mesh_conformance.py --run-integration -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v

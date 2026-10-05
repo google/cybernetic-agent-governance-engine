@@ -731,6 +731,14 @@ jobs:
           linkerd install --crds | kubectl apply -f -
           linkerd install | kubectl apply -f -
           linkerd check
+      - name: Provision the cage-deployment ConfigMap
+        # Live runs read the session region from this ConfigMap
+        # (tests/fixtures/deployment_region.py); render the canonical template.
+        env:
+          CAGE_DEPLOYMENT_REGION: US_FED
+        run: |
+          kubectl create namespace governance-stack
+          envsubst '${CAGE_DEPLOYMENT_REGION}' < deployment/k8s/cage-deployment-configmap.yaml.tpl | kubectl apply -f -
       - name: Run Linkerd service-mesh conformance suite
         env:
           CAGE_REQUIRE_LINKERD_CLUSTER: "1"
