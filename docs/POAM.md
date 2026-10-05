@@ -495,7 +495,7 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 **Remediation Implemented in Code (`fix/ci-test-errors`):**
 1. [`Dockerfile`](../Dockerfile), [`src/gateway/Dockerfile`](../src/gateway/Dockerfile) and [`src/compliance_bridge/Dockerfile`](../src/compliance_bridge/Dockerfile) are two-stage builds on `cgr.dev/chainguard/wolfi-base`, pinned by digest (`ARG WOLFI_BASE`). The compiler and uv stay in the builder stage. The runtime stage installs only `python-3.12`, `libstdc++`, `libgcc` and `tzdata`, runs `apk upgrade`, and contains no util-linux, perl or ncurses.
 2. The advisor image copies an explicit source allowlist instead of `COPY . .`, which had shipped local `node_modules` (5 HIGH `fast-uri` CVEs) into the image.
-3. `sbom.yml` scans all three shipped Python images with `--show-suppressed`.
+3. `sbom.yml` scans all four shipped Python images (advisor, gateway, compliance-bridge, NeMo Guardrails) with `--show-suppressed`. [`Dockerfile.nemo`](../deployment/docker/Dockerfile.nemo) moved to the same Wolfi base. It had been unscanned, ran as root, and installed an unpinned `grpcio-tools` into its runtime venv.
 4. [`cloudbuild.verify.yaml`](../deployment/docker/cloudbuild.verify.yaml) builds a Dockerfile on the GKE architecture without pushing. It smoke-imports the entry module as the image user and applies the same Trivy gate.
 5. Every `.trivyignore` entry was pruned. No suppression matched any finding in the new images.
 
@@ -505,6 +505,7 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 | governed-financial-advisor | `575e3466` | `src.governed_financial_advisor.server` ok | 0 | 0 |
 | gateway | `3e268752` | `src.gateway.server.hybrid_server` ok | 0 | 0 |
 | compliance-bridge | `1df4fe5d` | `compliance_bridge.main` ok | 0 | 0 |
+| nemo-guardrails | `82604db1` | `src.integrations.nemo.server` ok | 0 | 0 |
 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.

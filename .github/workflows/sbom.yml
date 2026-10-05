@@ -44,6 +44,7 @@ on:
     paths:
       - "src/**"
       - "Dockerfile*"
+      - "deployment/docker/Dockerfile.nemo"
       - "pyproject.toml"
       - "uv.lock"
   pull_request:
@@ -51,6 +52,7 @@ on:
     paths:
       - "src/**"
       - "Dockerfile*"
+      - "deployment/docker/Dockerfile.nemo"
       - "pyproject.toml"
       - "uv.lock"
   workflow_dispatch:
@@ -87,6 +89,9 @@ jobs:
           - name: compliance-bridge
             dockerfile: src/compliance_bridge/Dockerfile
             image_suffix: compliance-bridge
+          - name: nemo-guardrails
+            dockerfile: deployment/docker/Dockerfile.nemo
+            image_suffix: nemo-guardrails
       fail-fast: false
 
     # Expose S3-compatible storage secrets as env vars so step-level `if:`
