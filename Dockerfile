@@ -12,23 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM python:3.12-slim-bookworm
 
-# Set working directory
+# Governed financial advisor image (the GKE `governed-financial-advisor`
+# workload; the gateway and compliance-bridge images live under src/).
+#
+# Two-stage build. The builder stage holds the C toolchain and uv; the runtime
+# stage starts again from the slim base and receives only the locked venv and
+# the source tree. build-essential pulls libc6-dev and linux-libc-dev (kernel
+# headers), which carried ~40 HIGH kernel CVEs in the SBOM/CVE Trivy scan while
+# serving no purpose at runtime.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — builder
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm AS builder
+
 WORKDIR /app
-ENV PYTHONPATH=/app:/app/src
 
-# Install system dependencies
-# git is often needed for installing dependencies from git
+# Build toolchain only. git is not installed: uv.lock has no git sources.
 RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
+    gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (pip install avoids GHCR connectivity issues in Cloud Build)
-RUN pip install --no-cache-dir uv
+# Install uv for dependency management (builder only — not shipped at runtime).
+# Pinned for reproducible builds, matching src/gateway/Dockerfile.
+COPY --from=ghcr.io/astral-sh/uv:0.12.2 /uv /bin/uv
+
+# Use the base image's interpreter so the venv's python symlink
+# (/usr/local/bin/python3.12) resolves identically in the runtime stage.
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy
 
 # Create a virtual environment — uv sync always uses one
 RUN uv venv /app/.venv
@@ -48,22 +63,43 @@ COPY pyproject.toml uv.lock ./
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
 RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --extra compliance --no-install-project
 
-# Install spaCy large model via direct wheel URL (avoids CDN redirect failures)
-RUN pip install --no-cache-dir \
+# Install spaCy large model via direct wheel URL (avoids CDN redirect failures).
+# `uv pip install` targets the venv; a bare `pip` here resolved to the base
+# image's /usr/local pip and installed the model outside the venv.
+RUN uv pip install --no-cache \
     "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+
+# ---------------------------------------------------------------------------
+# Stage 2 — runtime
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+# Pick up any Debian security fixes published since the base image was cut.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user matching runAsUser: 1000 in deployment/k8s/financial-advisor.yaml.
+# Application files stay root-owned, so the process cannot modify its own code.
+RUN useradd --no-create-home --shell /bin/false --uid 1000 appuser
+
+COPY --from=builder /app/.venv /app/.venv
 
 # Copy project files
 COPY . .
 
-# Project files copied above. We run explicitly via python -m so no package installation is needed.
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH=/app:/app/src
+
+USER appuser
 
 # Expose the port (default 8080; override via --build-arg PORT=<n>)
 ARG PORT=8080
 ENV PORT=$PORT
 EXPOSE $PORT
-
-# DEBUG: Check file content
-RUN ls -R src && ls -R config
 
 # Run the server
 CMD ["python", "-m", "src.governed_financial_advisor.server"]

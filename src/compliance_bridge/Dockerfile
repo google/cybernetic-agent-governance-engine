@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM python:3.12-slim-bookworm
+
+# Two-stage build. The builder stage holds uv and resolves the locked venv;
+# the runtime stage starts again from the slim base and receives only the
+# finished /app tree, so neither uv nor any build tooling ships in the image.
+# No C toolchain is installed at all: `uv sync --no-build` below refuses
+# source builds, so gcc/libffi-dev could never be used.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — builder
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install system dependencies (needed for some C-extension wheels)
-RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv for dependency management.
+# Install uv for dependency management (builder only — not shipped at runtime).
 # Pin to a specific version to guarantee reproducible builds — never use :latest,
 # which can silently introduce breaking changes between Cloud Build runs.
 # To upgrade: bump the version here, run `uv lock` locally, and commit both files.
@@ -32,6 +34,11 @@ RUN apt-get update \
 # rustls-webpki 0.103.8, both with fixed-version CVEs (CVE-2026-31812,
 # GHSA-4w2j-m93h-cj5j, GHSA-82j2-j2ch-gfr8) flagged by the SBOM/CVE Trivy scan.
 COPY --from=ghcr.io/astral-sh/uv:0.12.2 /uv /usr/local/bin/uv
+
+# Use the base image's interpreter so the venv's python symlink
+# (/usr/local/bin/python3.12) resolves identically in the runtime stage.
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy
 
 # Copy dependency definitions — both files required for uv sync --frozen.
 # Build context must be the monorepo root so pyproject.toml and uv.lock are reachable.
@@ -48,25 +55,42 @@ COPY pyproject.toml uv.lock ./
 #   boto3 (S3-compat fallback for non-GCP targets, activated via STORAGE_BACKEND=s3),
 #   and PyYAML (?format=yaml support)
 # --extra langfuse pulls the langfuse SDK
-# Done BEFORE copying source so this heavy layer is cached across source changes.
 RUN uv sync --frozen --no-dev --no-install-project --no-build --extra compliance --extra langfuse
 
+# ---------------------------------------------------------------------------
+# Stage 2 — runtime
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+# Pick up any Debian security fixes published since the base image was cut.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user for security (mirrors GKE best practices)
+RUN useradd --no-create-home --shell /bin/false appuser
+
+# Locked virtual environment from the builder stage. Copied before the source
+# so this heavy layer is cached across source changes.
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+
 # Copy application source — all directories needed by the compliance-bridge.
-# Placed AFTER uv sync to maximise Docker layer cache reuse.
 # src/__init__.py and src/integrations/ are required because
 # src/gateway/governance/evidence/factory.py, src/gateway/governance/signer_factory.py,
 # and src/compliance_bridge/main.py lazy-import G3-allowlisted seams under
 # src.integrations.*, and since #325 EvidenceCustodian.from_env() runs at startup.
 # Keep the whole-package copy: a curated sub-list is a hidden coupling that drifts
 # each time a provider is added.
-COPY src/__init__.py        /app/src/__init__.py
-COPY src/compliance_bridge /app/compliance_bridge/
-COPY src/compliance_bridge /app/src/compliance_bridge/
-COPY src/gateway            /app/src/gateway/
-COPY src/integrations       /app/src/integrations/
-COPY config                 /app/config/
-COPY compliance             /app/compliance/
-COPY README.md              /app/README.md
+COPY --chown=appuser:appuser src/__init__.py        /app/src/__init__.py
+COPY --chown=appuser:appuser src/compliance_bridge /app/compliance_bridge/
+COPY --chown=appuser:appuser src/compliance_bridge /app/src/compliance_bridge/
+COPY --chown=appuser:appuser src/gateway            /app/src/gateway/
+COPY --chown=appuser:appuser src/integrations       /app/src/integrations/
+COPY --chown=appuser:appuser config                 /app/config/
+COPY --chown=appuser:appuser compliance             /app/compliance/
+COPY --chown=appuser:appuser README.md              /app/README.md
 
 # PYTHONPATH=/app allows both:
 #   - "compliance_bridge.main" (module at /app/compliance_bridge/)
@@ -79,12 +103,6 @@ ENV PYTHONPATH=/app
 # is not present in the image.
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
-
-# Non-root user for security (mirrors GKE best practices)
-RUN useradd --no-create-home --shell /bin/false appuser
-
-# Grant appuser ownership of workspace
-RUN chown -R appuser:appuser /app
 
 USER appuser
 

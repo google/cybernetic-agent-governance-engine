@@ -12,21 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM python:3.12-slim-bookworm
+
+# Two-stage build. The builder stage holds the C toolchain needed by wheels
+# without a manylinux build; the runtime stage starts again from the slim base
+# and receives only the finished /app tree. gcc/g++ pull libc6-dev and
+# linux-libc-dev (kernel headers), which carried ~40 HIGH kernel CVEs in the
+# SBOM/CVE Trivy scan while serving no purpose at runtime.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — builder
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install system dependencies
+# Build toolchain only. python3-dev is not installed: it ships headers for
+# Debian's python3.11, not for the /usr/local python3.12 this image runs, and
+# dragged libpython3.11 (CVE-2025-13462) into the image.
 RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for dependency management
+# Install uv for dependency management (builder only — not shipped at runtime)
 COPY --from=ghcr.io/astral-sh/uv:0.12.2 /uv /bin/uv
+
+# Use the base image's interpreter so the venv's python symlink
+# (/usr/local/bin/python3.12) resolves identically in the runtime stage.
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy
 
 # Copy dependency definitions — both files required for uv sync --frozen
 COPY pyproject.toml uv.lock ./
@@ -66,15 +81,29 @@ COPY README.md /app/README.md
 # Install the project itself so entry-point metadata exists in the image.
 RUN uv pip install --no-deps .
 
+# ---------------------------------------------------------------------------
+# Stage 2 — runtime
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+# Pick up any Debian security fixes published since the base image was cut.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# M-24: Run as non-root user (UID 1000) to satisfy PSA restricted policy.
+RUN useradd --no-create-home --shell /bin/false --uid 1000 appuser
+
+COPY --from=builder --chown=appuser:appuser /app /app
+
 # Environment Variables
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app:/app/src
 
-# M-24: Run as non-root user (UID 1000) to satisfy PSA restricted policy.
-# Create the user before chowning so the RUN layer is cached independently
-# of the source-copy layers above.
-RUN useradd --no-create-home --shell /bin/false --uid 1000 appuser \
-    && chown -R appuser:appuser /app
 USER appuser
 
 # Expose port (default 8080; override via --build-arg PORT=<n>)

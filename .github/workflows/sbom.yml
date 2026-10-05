@@ -75,9 +75,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # One leg per shipped Python image, mirroring scripts/build_images.sh.
+        # The repo-root Dockerfile is the advisor, not the gateway.
         service:
-          - name: gateway
+          - name: governed-financial-advisor
             dockerfile: Dockerfile
+            image_suffix: governed-financial-advisor
+          - name: gateway
+            dockerfile: src/gateway/Dockerfile
             image_suffix: gateway
           - name: compliance-bridge
             dockerfile: src/compliance_bridge/Dockerfile
@@ -143,12 +148,15 @@ jobs:
           STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
 
       # POAM-006: Fail if CRITICAL CVEs are found (except .trivyignore allowlist)
+      # --show-suppressed lists every .trivyignore match in the log, so stale
+      # suppressions are auditable; it does not change the exit status.
       - name: Scan for CRITICAL CVEs
         run: |
           trivy image \
             --format table \
             --severity CRITICAL,HIGH \
             --ignorefile .trivyignore \
+            --show-suppressed \
             --exit-code 1 \
             ${STEPS_TAG_OUTPUTS_IMAGE_REF}
         continue-on-error: false  # Hard fail on CRITICAL CVEs
