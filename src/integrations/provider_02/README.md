@@ -75,6 +75,16 @@ wire it up:
 the `stateHash` digest values submitted in bundles differ from those produced by
 earlier builds. The request and response *shapes* are unchanged.
 
+## HITL interop
+
+The HITL approval path (`safety_check` → `hitl_interrupt` → `governed_trader`) is
+checked hermetically by
+[`test_hitl_bundle_conformance.py`](../../../tests/integrations/provider_02/test_hitl_bundle_conformance.py)
+and over the wire by `test_tc06_hitl_approval` / `test_tc_err_04_malformed_hitl_state_hash`
+in [`test_staging_e2e.py`](../../../tests/integrations/provider_02/test_staging_e2e.py).
+For partner versions and live-run status, see
+[`HITL_INTEROP_STATUS.md`](../../../docs/partners/provider_02/nexart/HITL_INTEROP_STATUS.md).
+
 ## Configuration
 
 Placeholder endpoints only. `PROVIDER_02_API_ENDPOINT`,

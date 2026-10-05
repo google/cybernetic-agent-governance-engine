@@ -17,7 +17,7 @@
     },
     "parentEdges": {
       "type": "object",
-      "description": "Maps each node to its possible parent nodes. Keys are node names, values are arrays of parent node names.",
+      "description": "Maps each node to its possible (legal) parent nodes across all executions. Keys are node names, values are arrays of parent node names. The actual parents for one execution are recorded per step in parentStepIds, which may be a subset of these candidates.",
       "additionalProperties": {
         "type": "array",
         "items": {

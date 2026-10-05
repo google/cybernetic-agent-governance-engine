@@ -1,0 +1,172 @@
+{
+  "bundleId": "1f222907-9d1f-4e0f-8198-fac082120aa8",
+  "threadId": "hitl-approval-path",
+  "steps": [
+    {
+      "stepId": "317c7c6c-80e3-4116-bd77-a0c15daf47f9",
+      "nodeName": "nemo_guardrail",
+      "parentStepIds": [],
+      "timestampUtc": "2026-10-04T18:39:15.252951+00:00",
+      "durationMs": 0.011208001524209976,
+      "signals": {
+        "governanceSignature": "sig_pre_hitl",
+        "safetyStatus": "APPROVED",
+        "riskStatus": "APPROVED",
+        "loopCount": 0
+      },
+      "metadata": {
+        "loopIteration": 0,
+        "threadId": "hitl-approval-path"
+      },
+      "stateHash": "2c199f09f2882776a0ba8f53b8db63381a175ba12151a3592ba85d45485a71f0"
+    },
+    {
+      "stepId": "2d581b52-68ec-4924-a940-5ae695d9b416",
+      "nodeName": "evaluator",
+      "parentStepIds": [
+        "317c7c6c-80e3-4116-bd77-a0c15daf47f9"
+      ],
+      "timestampUtc": "2026-10-04T18:39:15.253024+00:00",
+      "durationMs": 0.001125037670135498,
+      "signals": {
+        "governanceSignature": "sig_pre_hitl",
+        "safetyStatus": "APPROVED",
+        "riskStatus": "APPROVED",
+        "loopCount": 0
+      },
+      "metadata": {
+        "loopIteration": 0,
+        "threadId": "hitl-approval-path"
+      },
+      "stateHash": "2c199f09f2882776a0ba8f53b8db63381a175ba12151a3592ba85d45485a71f0"
+    },
+    {
+      "stepId": "5282c023-0ccc-4b8b-be1a-4080fd87963c",
+      "nodeName": "safety_check",
+      "parentStepIds": [
+        "2d581b52-68ec-4924-a940-5ae695d9b416"
+      ],
+      "timestampUtc": "2026-10-04T18:39:15.253060+00:00",
+      "durationMs": 0.000667001586407423,
+      "signals": {
+        "governanceSignature": "sig_pre_hitl",
+        "safetyStatus": "APPROVED",
+        "riskStatus": "APPROVED",
+        "loopCount": 0
+      },
+      "metadata": {
+        "loopIteration": 0,
+        "threadId": "hitl-approval-path"
+      },
+      "stateHash": "2c199f09f2882776a0ba8f53b8db63381a175ba12151a3592ba85d45485a71f0"
+    },
+    {
+      "stepId": "41775837-857f-4bfa-99be-f304975c294c",
+      "nodeName": "hitl_interrupt",
+      "parentStepIds": [
+        "5282c023-0ccc-4b8b-be1a-4080fd87963c"
+      ],
+      "timestampUtc": "2026-10-04T18:39:15.253105+00:00",
+      "durationMs": 0.0,
+      "signals": {
+        "hitlApproval": {
+          "approved": true,
+          "reviewer": "reviewer@example.com",
+          "rationale": "Trade within acceptable parameters",
+          "timestamp": "2026-10-04T12:00:00Z"
+        },
+        "interruptType": "HITL_MANUAL_REVIEW",
+        "approvalRequired": true
+      },
+      "metadata": {
+        "threadId": "hitl-approval-path",
+        "interruptNode": "governed_trader"
+      },
+      "stateHash": "32206d0b0786a37d5208a9ce8e2cfcad275642af38b2b51677928991c0a51957"
+    },
+    {
+      "stepId": "c24649c5-ba52-4bf1-ae44-eb50fc7c526b",
+      "nodeName": "governed_trader",
+      "parentStepIds": [
+        "41775837-857f-4bfa-99be-f304975c294c"
+      ],
+      "timestampUtc": "2026-10-04T18:39:15.253253+00:00",
+      "durationMs": 0.0008750357665121555,
+      "signals": {
+        "governanceSignature": "sig_hitl_approved",
+        "safetyStatus": "APPROVED",
+        "riskStatus": "APPROVED",
+        "hitlApproval": {
+          "approved": true,
+          "reviewer": "reviewer@example.com",
+          "rationale": "Trade within acceptable parameters",
+          "timestamp": "2026-10-04T12:00:00Z"
+        },
+        "loopCount": 0
+      },
+      "metadata": {
+        "loopIteration": 0,
+        "threadId": "hitl-approval-path"
+      },
+      "stateHash": "32206d0b0786a37d5208a9ce8e2cfcad275642af38b2b51677928991c0a51957"
+    },
+    {
+      "stepId": "aa4e4aba-da81-4a4c-8038-67682384b69e",
+      "nodeName": "explainer",
+      "parentStepIds": [
+        "c24649c5-ba52-4bf1-ae44-eb50fc7c526b",
+        "2d581b52-68ec-4924-a940-5ae695d9b416",
+        "5282c023-0ccc-4b8b-be1a-4080fd87963c"
+      ],
+      "timestampUtc": "2026-10-04T18:39:15.253291+00:00",
+      "durationMs": 0.0005830079317092896,
+      "signals": {
+        "governanceSignature": "sig_hitl_approved",
+        "safetyStatus": "APPROVED",
+        "riskStatus": "APPROVED",
+        "hitlApproval": {
+          "approved": true,
+          "reviewer": "reviewer@example.com",
+          "rationale": "Trade within acceptable parameters",
+          "timestamp": "2026-10-04T12:00:00Z"
+        },
+        "loopCount": 0
+      },
+      "metadata": {
+        "loopIteration": 0,
+        "threadId": "hitl-approval-path"
+      },
+      "stateHash": "32206d0b0786a37d5208a9ce8e2cfcad275642af38b2b51677928991c0a51957"
+    },
+    {
+      "stepId": "6e33f4f8-2216-4a19-b2ce-6b1d7b027943",
+      "nodeName": "nemo_output_rail",
+      "parentStepIds": [
+        "317c7c6c-80e3-4116-bd77-a0c15daf47f9",
+        "aa4e4aba-da81-4a4c-8038-67682384b69e"
+      ],
+      "timestampUtc": "2026-10-04T18:39:15.253328+00:00",
+      "durationMs": 0.000500003807246685,
+      "signals": {
+        "governanceSignature": "sig_hitl_approved",
+        "safetyStatus": "APPROVED",
+        "riskStatus": "APPROVED",
+        "hitlApproval": {
+          "approved": true,
+          "reviewer": "reviewer@example.com",
+          "rationale": "Trade within acceptable parameters",
+          "timestamp": "2026-10-04T12:00:00Z"
+        },
+        "loopCount": 0
+      },
+      "metadata": {
+        "loopIteration": 0,
+        "threadId": "hitl-approval-path"
+      },
+      "stateHash": "32206d0b0786a37d5208a9ce8e2cfcad275642af38b2b51677928991c0a51957"
+    }
+  ],
+  "startedAt": "2026-10-04T18:39:15.252504+00:00",
+  "completedAt": "2026-10-04T18:39:15.253336+00:00",
+  "terminalPath": "happy_path"
+}

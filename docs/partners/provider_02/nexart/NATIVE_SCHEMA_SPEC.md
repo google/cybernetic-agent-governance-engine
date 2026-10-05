@@ -183,7 +183,7 @@ CAGE defines three foundational schemas for governance DAG recording:
 | Field | Type | Description |
 |-------|------|-------------|
 | `nodes` | string[] | Complete list of all node names in DAG |
-| `parentEdges` | object | Map from node name to array of parent node names |
+| `parentEdges` | object | Map from node name to its **possible** (legal) parent node names. Static, execution-independent. |
 | `terminalNode` | string | Designated success terminal node (for `happy_path` detection) |
 
 **Optional Fields:**
@@ -214,7 +214,7 @@ CAGE defines three foundational schemas for governance DAG recording:
 
 **Usage by NexArt:**
 - Validate `ProjectBundleStepEntry.nodeName` exists in `nodes` array
-- Verify `parentStepIds` conform to `parentEdges` topology
+- Verify every `parentStepIds` entry resolves to a step whose node is a legal candidate under `parentEdges` (after contraction, see §4.1). `parentStepIds` MAY be a strict subset of the candidates; it MUST NOT be required to contain all of them
 - Classify `terminalPath` by checking if final step matches `terminalNode`
 - Optionally enforce attestation checkpoints at designated `attestationNodes`
 
@@ -358,9 +358,12 @@ CAGE's governance workflow may execute intermediate nodes that are not explicitl
 
 **Contraction Rules:**
 1. **Direct Recorded Parent:** If a step's immediate parent was recorded, reference it directly in `parentStepIds`.
-2. **Unrecorded Intermediate Parent:** If a step's immediate parent was NOT recorded, traverse backward through the execution DAG to find the nearest recorded ancestor(s).
-3. **Multiple Paths:** If multiple paths exist through unrecorded intermediates to different recorded ancestors, include ALL reachable recorded ancestors in `parentStepIds` (this produces multi-parent convergence).
-4. **Topological Ordering Preservation:** The contraction MUST preserve the original DAG's reachability properties: if node A could reach node B in the full execution graph, the contracted graph MUST preserve this reachability.
+2. **Unrecorded Intermediate Parent:** If a step's immediate parent was NOT recorded, traverse backward through the edges *actually traversed in this execution* to find the nearest recorded ancestor(s).
+3. **Multiple Paths:** If this execution actually converged from several paths through unrecorded intermediates, include every recorded ancestor reached along those *executed* paths (this produces multi-parent convergence). Candidates from `parentEdges` that did not execute, or whose edge was not taken, MUST NOT be included.
+4. **Topological Ordering Preservation:** The contraction MUST preserve the reachability of the *executed* graph: if node A reached node B in this execution, the contracted graph MUST preserve this reachability. It MUST NOT add reachability that the execution did not exhibit.
+
+> [!NOTE]
+> Rules 2–4 were tightened on 2026-10-04 from static-topology wording to executed-edge wording. As of that date, the CAGE adapter still contracts over static `parentEdges` for some post-HITL steps. Its output is valid under the subset rule but over-approximates the actual parents. Conformance is tracked in [`HITL_INTEROP_STATUS.md`](HITL_INTEROP_STATUS.md).
 
 **Example Contraction:**
 ```
@@ -401,8 +404,16 @@ def validate_parent_references(bundle: AttestationBundle) -> bool:
 - Leaf nodes have no children (no other step references them as parent)
 - Terminal path classification depends on which leaf node(s) were reached
 
+**Possible vs. Actual Relationships:**
+- `GraphTopology.parentEdges` declares the **possible** parent relationships for a node across all executions.
+- `ProjectBundleStepEntry.parentStepIds` records the **actual** causal parents for one execution.
+- Example (HITL approval path): `parentEdges.governed_trader = ["safety_check", "hitl_interrupt"]`, but on the resumed approval path `governed_trader.parentStepIds = [hitl_interrupt.stepId]` only.
+- A verifier that requires `parentStepIds` to contain *every* candidate will wrongly reject valid bundles. NexArt SDK 0.4.0 did this (`MISSING_CONTRACTED_PARENT`); fixed in SDK 0.4.1 / Node 0.29.1.
+
 **NexArt Verification:**
 - NexArt MUST validate that all `parentStepIds` reference earlier steps in the `steps` array
+- NexArt MUST accept `parentStepIds` that are a subset of the legal candidates (after contraction) declared by `parentEdges`
+- NexArt MUST fail closed on illegal (not a candidate), unknown, or stale parent references
 - NexArt does NOT need to know about unrecorded intermediate nodes (they are abstracted away by contraction)
 - The contracted DAG preserves all governance-relevant execution paths
 
