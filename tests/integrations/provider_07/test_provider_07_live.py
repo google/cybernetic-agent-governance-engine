@@ -51,16 +51,8 @@ pytestmark = [
 
 def _get_live_credentials() -> tuple[str, str]:
     """Retrieve endpoint and API key from environment variables."""
-    endpoint = (
-        os.environ.get("PROVIDER_07_ENDPOINT", "")
-        .split("#")[0]
-        .strip()
-    )
-    api_key = (
-        os.environ.get("PROVIDER_07_API_KEY", "")
-        .split("#")[0]
-        .strip()
-    )
+    endpoint = os.environ.get("PROVIDER_07_ENDPOINT", "").split("#")[0].strip()
+    api_key = os.environ.get("PROVIDER_07_API_KEY", "").split("#")[0].strip()
     return endpoint, api_key
 
 
@@ -220,7 +212,9 @@ async def test_live_infer_contract_vectors(
     async with httpx.AsyncClient(timeout=15.0) as client:
         for vector in canonical_vectors:
             req_model = InferThetaInferenceRequest(**vector["request"])
-            response = await client.post(url, json=req_model.model_dump(), headers=headers)
+            response = await client.post(
+                url, json=req_model.model_dump(), headers=headers
+            )
             assert response.status_code == 200, f"Inference failed: {response.text}"
 
             resp_data = response.json()
@@ -250,7 +244,9 @@ async def test_live_infer_contract_vectors(
             p_vs = resp_model.marginal_probabilities.get("volatility_spike", 0.0)
             p_ls = resp_model.marginal_probabilities.get("liquidity_stress", 0.0)
             expected_risk = 0.5 * p_dd + 0.3 * p_vs + 0.2 * p_ls
-            assert resp_model.posterior_risk_score == pytest.approx(expected_risk, abs=1e-4)
+            assert resp_model.posterior_risk_score == pytest.approx(
+                expected_risk, abs=1e-4
+            )
 
 
 @pytest.mark.asyncio
@@ -275,7 +271,10 @@ async def test_live_adapter_step1_unsigned_mode(
             assert result.admitted is True
             assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
             assert result.findings[0].get("step1_demo_mode") is True
-            assert result.findings[0]["authority_record_id"] == "infertheta-step1-allow-unsigned"
+            assert (
+                result.findings[0]["authority_record_id"]
+                == "infertheta-step1-allow-unsigned"
+            )
         elif vector["expected_decision"] == "REFUSE":
             assert result.admitted is False
             assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
@@ -302,4 +301,3 @@ async def test_live_adapter_default_fail_closed(
         "INFERTHETA_UNKNOWN_KEY",
         "INFERTHETA_SIGNATURE_INVALID",
     )
-

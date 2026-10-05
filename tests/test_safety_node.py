@@ -250,7 +250,9 @@ class TestSafetyNodeFailClosed:
     @pytest.mark.parametrize(
         "body",
         [
-            {"verdict": "PAUSE"},  # removed verdict: a legacy gateway string is not routable
+            {
+                "verdict": "PAUSE"
+            },  # removed verdict: a legacy gateway string is not routable
             {"verdict": "DEFER"},  # DEFER without a ticket cannot be parked
             {"verdict": "approved"},
             {"verdict": "APPROVED"},  # legacy vocabulary is not routable

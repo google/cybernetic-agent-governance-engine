@@ -30,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-fakeredis = pytest.importorskip("fakeredis")
+pytest.importorskip("fakeredis")
 import fakeredis.aioredis  # noqa: E402  (after importorskip)
 
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver  # noqa: E402
@@ -42,8 +42,12 @@ from src.gateway.governance.governor.pipeline import (  # noqa: E402
     run_pipeline,
 )
 from src.gateway.governance.governor.reservation import ReservationScope  # noqa: E402
-from src.gateway.governance.governor.stages.domain_tiers import order_stages  # noqa: E402
-from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction  # noqa: E402
+from src.gateway.governance.governor.stages.domain_tiers import (
+    order_stages,  # noqa: E402
+)
+from src.gateway.governance.safety.cbf_engine import (
+    ControlBarrierFunction,  # noqa: E402
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -110,7 +114,9 @@ async def test_n_previews_leave_engine_and_redis_byte_identical(redis: Any) -> N
     engine_before = dict(vars(cbf))
     redis_before = await _redis_image(redis)
 
-    verdicts = [await cbf.verify_action("execute_trade", _TRADE) for _ in range(_PREVIEWS)]
+    verdicts = [
+        await cbf.verify_action("execute_trade", _TRADE) for _ in range(_PREVIEWS)
+    ]
     bound = await cbf.admissible_cost()
 
     assert verdicts == ["SAFE"] * _PREVIEWS
@@ -125,7 +131,9 @@ async def test_one_commit_changes_state_exactly_once(redis: Any) -> None:
     for _ in range(_PREVIEWS):
         assert await cbf.verify_action("execute_trade", _TRADE) == "SAFE"
 
-    committed, reason, magnitude = await cbf.atomic_verify_and_commit("execute_trade", _TRADE)
+    committed, reason, magnitude = await cbf.atomic_verify_and_commit(
+        "execute_trade", _TRADE
+    )
 
     assert (committed, magnitude) == (True, 10_000.0), reason
     assert float(await redis.get(_CASH_KEY)) == pytest.approx(_BALANCE - 10_000.0)
@@ -138,7 +146,9 @@ async def test_one_commit_changes_state_exactly_once(redis: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_approval_previews_through_the_pipeline_change_nothing(redis: Any) -> None:
+async def test_pending_approval_previews_through_the_pipeline_change_nothing(
+    redis: Any,
+) -> None:
     """The path a REQUIRE_APPROVAL takes: DRY_RUN previews of the cbf tier."""
     cbf = _engine()
     stages = order_stages([CBFTierPlugin(cbf)])
@@ -146,7 +156,9 @@ async def test_pending_approval_previews_through_the_pipeline_change_nothing(red
     redis_before = await _redis_image(redis)
 
     for _ in range(_PREVIEWS):
-        ctx = StageContext(action="execute_trade", params=_TRADE, profile=Profile.DRY_RUN)
+        ctx = StageContext(
+            action="execute_trade", params=_TRADE, profile=Profile.DRY_RUN
+        )
         result = await run_pipeline(stages, ctx, profile=Profile.DRY_RUN)
         assert result.violations == ()
         assert result.barrier_preview is BarrierPreview.PASS
@@ -161,7 +173,9 @@ async def test_committing_run_still_debits_once_after_previews(redis: Any) -> No
     cbf = _engine()
     stages = order_stages([CBFTierPlugin(cbf)])
     for _ in range(_PREVIEWS):
-        ctx = StageContext(action="execute_trade", params=_TRADE, profile=Profile.DRY_RUN)
+        ctx = StageContext(
+            action="execute_trade", params=_TRADE, profile=Profile.DRY_RUN
+        )
         await run_pipeline(stages, ctx, profile=Profile.DRY_RUN)
 
     async with ReservationScope() as scope:

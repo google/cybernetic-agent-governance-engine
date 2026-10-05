@@ -201,7 +201,9 @@ def _regenerate_all() -> dict[Path, str | None]:
     for name, directory in source_dirs.items():
         files = sorted(directory.rglob("*.yaml")) if directory.exists() else []
         try:
-            structures[name] = stpa_compiler.load_control_structures(files) if files else None
+            structures[name] = (
+                stpa_compiler.load_control_structures(files) if files else None
+            )
         except Exception:  # noqa: BLE001
             structures[name] = None
 
@@ -416,7 +418,9 @@ def check_freshness(
         if verbose:
             print(f"  content {verdict.value:11s} {artifact.relative_to(_REPO_ROOT)}")
         if verdict is ContentCheck.DIFFERS:
-            errors.append(_stale(artifact, "content differs from a fresh compile (sha256)"))
+            errors.append(
+                _stale(artifact, "content differs from a fresh compile (sha256)")
+            )
         elif verdict is ContentCheck.UNAVAILABLE:
             fallback.append(artifact)
     if not fallback:
@@ -424,7 +428,9 @@ def check_freshness(
     return errors + _check_order(source_files, fallback, verbose)
 
 
-def _check_order(source_files: list[Path], artifacts: list[Path], verbose: bool) -> list[str]:
+def _check_order(
+    source_files: list[Path], artifacts: list[Path], verbose: bool
+) -> list[str]:
     """Ordering fallback for artifacts the content check could not regenerate."""
     dirty = _git_dirty(source_files + _GENERATED_ARTIFACTS)
     source_times = [_git_last_commit_time(f) for f in source_files]

@@ -453,4 +453,3 @@ def test_parameter_canonicalization():
     params3 = {"nested": {"b": 2, "a": 1}, "top": "value"}
     canon3 = CageClient._canonicalize_params(params3)
     assert '{"nested":{"a":1,"b":2},"top":"value"}' == canon3
-

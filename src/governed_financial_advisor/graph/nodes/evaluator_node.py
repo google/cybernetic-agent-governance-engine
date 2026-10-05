@@ -32,6 +32,7 @@ from src.governed_financial_advisor.graph.state import AgentState
 logger = logging.getLogger("EvaluatorNode")
 tracer = trace.get_tracer("src.governed_financial_advisor.graph.nodes.evaluator_node")
 
+
 @side_effect_node(kind="api_call", external_system="opa_engine")
 async def evaluator_node(state: AgentState) -> dict[str, Any]:
     """

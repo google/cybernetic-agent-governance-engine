@@ -63,7 +63,9 @@ def load_reassessment_interval_days(path: Path = THRESHOLDS_PATH) -> float:
             f"cannot read fria.fria_reassessment_interval_days from {path}: {exc}"
         ) from exc
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise RuntimeError(f"fria.fria_reassessment_interval_days in {path} is not a number: {value!r}")
+        raise RuntimeError(
+            f"fria.fria_reassessment_interval_days in {path} is not a number: {value!r}"
+        )
     return float(value)
 
 
@@ -78,7 +80,9 @@ def registry_assessment_lookup(action: str) -> Mapping[str, Any] | None:
     """
     from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 
-    mapping = ControlRegistry().get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT) or {}
+    mapping = (
+        ControlRegistry().get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT) or {}
+    )
     assessments = mapping.get("assessments") or {}
     artefact = assessments.get(action) if isinstance(assessments, Mapping) else None
     return artefact if isinstance(artefact, Mapping) else None
@@ -136,7 +140,9 @@ def contribution(
         region=REGION,
         tiers=(tier,),
         runtime_requirements=(
-            PostureRequirement("fria_normative_provider", lambda: require_real_provider(provider)),
+            PostureRequirement(
+                "fria_normative_provider", lambda: require_real_provider(provider)
+            ),
         ),
     )
 

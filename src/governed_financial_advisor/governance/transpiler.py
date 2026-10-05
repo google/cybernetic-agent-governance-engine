@@ -281,7 +281,7 @@ class JudgeAgent:
         missing = [tok for tok in self._REGO_REQUIRED_TOKENS if tok not in code]
         if missing:
             logger.warning(
-                "JudgeAgent: Rego fragment missing required tokens: %s",
+                "JudgeAgent: Rego fragment missing required keywords: %s",
                 missing,
             )
             return False

@@ -91,7 +91,9 @@ async def verify_quarantine_receipt_sig(
     if not isinstance(sig, dict) or sig.get("alg") != "EdDSA":
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "EdDSA signature required"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "EdDSA signature required"
+            ),
         )
     kid = sig.get("kid")
     val = sig.get("value")
@@ -104,7 +106,11 @@ async def verify_quarantine_receipt_sig(
     if key_resolver is None:
         return (
             ReceiptVerification.UNVERIFIED,
-            _finding("RECEIPT_TRUST_ANCHOR_UNCONFIGURED", "WARNING", f"no manifest for kid={kid}"),
+            _finding(
+                "RECEIPT_TRUST_ANCHOR_UNCONFIGURED",
+                "WARNING",
+                f"no manifest for kid={kid}",
+            ),
         )
 
     try:
@@ -112,7 +118,9 @@ async def verify_quarantine_receipt_sig(
     except Exception as exc:
         return (
             ReceiptVerification.UNVERIFIED,
-            _finding("RECEIPT_KEY_MANIFEST_UNAVAILABLE", "WARNING", f"{type(exc).__name__}"),
+            _finding(
+                "RECEIPT_KEY_MANIFEST_UNAVAILABLE", "WARNING", f"{type(exc).__name__}"
+            ),
         )
     if pub is None:
         return (
@@ -130,7 +138,9 @@ async def verify_quarantine_receipt_sig(
     if len(sig_bytes) != _ED25519_SIGNATURE_BYTES:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "signature must be 64 bytes"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "signature must be 64 bytes"
+            ),
         )
 
     signed_body = {k: v for k, v in body.items() if k != "signature"}
@@ -140,18 +150,26 @@ async def verify_quarantine_receipt_sig(
     except InvalidSignature:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_INVALID", "TERMINAL", f"signature invalid (kid={kid})"),
+            _finding(
+                "RECEIPT_SIGNATURE_INVALID",
+                "TERMINAL",
+                f"signature invalid (kid={kid})",
+            ),
         )
     except Exception as exc:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", f"{type(exc).__name__}"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", f"{type(exc).__name__}"
+            ),
         )
 
     if signed_body.get("envelope_digest") != envelope_digest:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_ENVELOPE_MISMATCH", "TERMINAL", "envelope_digest mismatch"),
+            _finding(
+                "RECEIPT_ENVELOPE_MISMATCH", "TERMINAL", "envelope_digest mismatch"
+            ),
         )
 
     return ReceiptVerification.VERIFIED, None
@@ -171,7 +189,9 @@ class Actuator03Adapter:
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("https", "http"):
-            raise ValueError(f"[actuator_03] Unsupported endpoint scheme: {parsed.scheme!r}")
+            raise ValueError(
+                f"[actuator_03] Unsupported endpoint scheme: {parsed.scheme!r}"
+            )
         if require_signed_receipts and receipt_key_resolver is None:
             raise ValueError(
                 "[actuator_03] require_signed_receipts requires a receipt_key_resolver"
@@ -236,8 +256,7 @@ class Actuator03Adapter:
     def actuator_id(self) -> str:
         return ACTUATOR_03_ID
 
-    @property
-    def capabilities(self) -> set[ActuatorCapability]:
+    def get_capabilities(self) -> set[ActuatorCapability]:
         caps = {
             ActuatorCapability.MTLS_REQUIRED,
             ActuatorCapability.REPLAY_PROTECTED,
@@ -270,7 +289,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.REJECTED,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding("ASSERTION_SIGN_FAILED", "TERMINAL", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "ASSERTION_SIGN_FAILED",
+                        "TERMINAL",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -285,7 +308,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.REJECTED,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding("HTTP_CLIENT_UNCONFIGURED", "TERMINAL", "no mTLS client configured")
+                    _finding(
+                        "HTTP_CLIENT_UNCONFIGURED",
+                        "TERMINAL",
+                        "no mTLS client configured",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -313,7 +340,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.REJECTED,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding("DPU_CONNECT_FAILED", "TRANSIENT", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "DPU_CONNECT_FAILED",
+                        "TRANSIENT",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -327,7 +358,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.UNKNOWN,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding("DPU_TRANSPORT_INDETERMINATE", "TERMINAL", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "DPU_TRANSPORT_INDETERMINATE",
+                        "TERMINAL",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -344,7 +379,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.REJECTED,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding(f"DPU_HTTP_{resp.status_code}", "TERMINAL", f"HTTP {resp.status_code}")
+                    _finding(
+                        f"DPU_HTTP_{resp.status_code}",
+                        "TERMINAL",
+                        f"HTTP {resp.status_code}",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -359,7 +398,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.UNKNOWN,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding(f"DPU_HTTP_{resp.status_code}", "TERMINAL", f"HTTP {resp.status_code}")
+                    _finding(
+                        f"DPU_HTTP_{resp.status_code}",
+                        "TERMINAL",
+                        f"HTTP {resp.status_code}",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -376,7 +419,11 @@ class Actuator03Adapter:
                 outcome=ActuationOutcome.UNKNOWN,
                 verification=ReceiptVerification.UNVERIFIED,
                 findings=[
-                    _finding("RECEIPT_PARSE_ERROR", "TERMINAL", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "RECEIPT_PARSE_ERROR",
+                        "TERMINAL",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
@@ -402,7 +449,10 @@ class Actuator03Adapter:
                 timestamp_utc=now_utc,
             )
 
-        if self._require_signed_receipts and verification is not ReceiptVerification.VERIFIED:
+        if (
+            self._require_signed_receipts
+            and verification is not ReceiptVerification.VERIFIED
+        ):
             findings.append(
                 _finding("SIGNED_RECEIPT_REQUIRED", "TERMINAL", "receipt UNVERIFIED")
             )
@@ -422,7 +472,11 @@ class Actuator03Adapter:
         quarantined = bool(body.get("quarantined")) if isinstance(body, dict) else False
         if not quarantined or not rule_id:
             findings.append(
-                _finding("DPU_QUARANTINE_NOT_CONFIRMED", "TERMINAL", f"quarantined={quarantined}")
+                _finding(
+                    "DPU_QUARANTINE_NOT_CONFIRMED",
+                    "TERMINAL",
+                    f"quarantined={quarantined}",
+                )
             )
             return QuarantineReceipt(
                 quarantined=False,
@@ -455,7 +509,9 @@ class Actuator03Adapter:
             agent_svid=clearance.operator_urn,
             sandbox_id=str(clearance.params.get("sandbox_id", clearance.target)),
             reason=QuarantineTriggerReason.CRITICAL_CBF_BREACH,
-            violation_codes=tuple(clearance.params.get("violation_codes", ("CBF_BREACH",))),
+            violation_codes=tuple(
+                clearance.params.get("violation_codes", ("CBF_BREACH",))
+            ),
             issued_at=clearance.issued_at,
             correlation_id=clearance.correlation_id,
             governance_decision_digest=clearance.governance_decision_digest,
@@ -467,7 +523,10 @@ class Actuator03Adapter:
             accepted=q_receipt.quarantined,
             receipt_id=q_receipt.rule_id,
             session_uuid=clearance.nonce if q_receipt.quarantined else None,
-            raw_receipt={"enforcement_plane": q_receipt.enforcement_plane, "rule_id": q_receipt.rule_id}
+            raw_receipt={
+                "enforcement_plane": q_receipt.enforcement_plane,
+                "rule_id": q_receipt.rule_id,
+            }
             if q_receipt.quarantined
             else None,
             findings=q_receipt.findings,

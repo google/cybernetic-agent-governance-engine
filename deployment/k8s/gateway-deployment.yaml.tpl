@@ -38,6 +38,13 @@ spec:
             - secretRef:
                 name: advisor-secrets
           env:
+            - name: CAGE_DEPLOYMENT_REGION
+              # Single source: the cage-deployment ConfigMap (cage-deployment-configmap.yaml.tpl).
+              valueFrom:
+                configMapKeyRef:
+                  name: cage-deployment
+                  key: CAGE_DEPLOYMENT_REGION
+                  optional: false
             - name: PORT
               value: "8080"
             - name: GATEWAY_GRPC_PORT

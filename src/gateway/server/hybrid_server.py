@@ -130,6 +130,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app.state.uca_logger = UCALogger.from_env()
         logger.info("✅ Token Quota Proxy and UCA Logger pre-warmed")
     except Exception as e:
+        # 'Token Quota Proxy' is a component name; logs the startup error only.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning("⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e)
 
     # ── Production guards not owned by the governor posture check ──────────

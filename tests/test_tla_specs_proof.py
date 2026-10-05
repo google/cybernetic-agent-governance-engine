@@ -40,7 +40,9 @@ from proof.tla_pins import TLC_PINS  # noqa: E402
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-_SECTION = re.compile(r"^(SPECIFICATION|CONSTANTS?|INVARIANTS?|PROPERTIES?|CHECK_DEADLOCK)\b")
+_SECTION = re.compile(
+    r"^(SPECIFICATION|CONSTANTS?|INVARIANTS?|PROPERTIES?|CHECK_DEADLOCK)\b"
+)
 
 
 def _strip_comment(line: str) -> str:
@@ -56,8 +58,10 @@ def _cfg_sections(cfg: Path) -> dict[str, list[str]]:
             continue
         m = _SECTION.match(line)
         if m:
-            current = m.group(1).rstrip("S") if m.group(1) != "PROPERTIES" else "PROPERTY"
-            rest = line[m.end():].strip()
+            current = (
+                m.group(1).rstrip("S") if m.group(1) != "PROPERTIES" else "PROPERTY"
+            )
+            rest = line[m.end() :].strip()
             sections.setdefault(current, [])
             if rest:
                 sections[current].append(rest)
@@ -67,7 +71,10 @@ def _cfg_sections(cfg: Path) -> dict[str, list[str]]:
 
 
 def _cfg_constants(cfg: Path) -> set[str]:
-    return {entry.split("=", 1)[0].strip() for entry in _cfg_sections(cfg).get("CONSTANT", [])}
+    return {
+        entry.split("=", 1)[0].strip()
+        for entry in _cfg_sections(cfg).get("CONSTANT", [])
+    }
 
 
 def _spec_constants(spec: Path) -> set[str]:
@@ -84,7 +91,9 @@ def _spec_constants(spec: Path) -> set[str]:
 
 
 def _spec_definitions(spec: Path) -> set[str]:
-    return set(re.findall(r"^(\w+)\s*(?:\([^)]*\))?\s*==", spec.read_text(), re.MULTILINE))
+    return set(
+        re.findall(r"^(\w+)\s*(?:\([^)]*\))?\s*==", spec.read_text(), re.MULTILINE)
+    )
 
 
 PINNED = sorted(TLC_PINS)
@@ -93,7 +102,9 @@ PINNED = sorted(TLC_PINS)
 @pytest.mark.parametrize("name", PINNED)
 def test_cfg_constants_match_spec(name: str) -> None:
     pin = TLC_PINS[name]
-    assert _cfg_constants(PROOF / f"{name}.cfg") == _spec_constants(PROOF / f"{pin.spec}.tla")
+    assert _cfg_constants(PROOF / f"{name}.cfg") == _spec_constants(
+        PROOF / f"{pin.spec}.tla"
+    )
 
 
 @pytest.mark.parametrize("name", PINNED)
@@ -145,6 +156,8 @@ def test_tlc_reproduces_pin(name: str) -> None:
 
     java, jar = _tools()  # type: ignore[misc]
     pin = TLC_PINS[name]
-    states, violated, out = run_tlc(java, jar, PROOF / f"{name}.cfg", PROOF / f"{pin.spec}.tla")
+    states, violated, out = run_tlc(
+        java, jar, PROOF / f"{name}.cfg", PROOF / f"{pin.spec}.tla"
+    )
     assert "Temporal properties were violated" not in out
     assert (states, violated) == (pin.distinct_states, set(pin.violated))

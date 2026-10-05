@@ -57,12 +57,16 @@ def fetch_compliance_metrics(
     control_id: str,
 ) -> dict:  # type: ignore[type-arg]
     """Fetch current compliance metrics from the compliance-bridge service."""
-    import json
-    import urllib.request
+    from urllib.parse import urlparse
+
+    import requests
 
     url = f"{compliance_bridge_url}/v1/metrics/{control_id}"
-    with urllib.request.urlopen(url, timeout=30) as resp:  # nosec B310
-        return json.loads(resp.read())
+    if urlparse(url).scheme not in ("http", "https"):
+        raise ValueError(f"compliance_bridge_url must be http(s), got {url!r}")
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
 
 @dsl.component(base_image="python:3.12-slim")
@@ -115,26 +119,22 @@ def trigger_nemo_refinement(
     if verdict.startswith("PASS"):
         return "NO_ACTION"
 
-    import json
-    import urllib.request
+    from urllib.parse import urlparse
 
-    payload = json.dumps(
-        {
-            "control_id": control_id,
-            "verdict": verdict,
-            "source": "kfp-governance-loop",
-        }
-    ).encode()
-    req = urllib.request.Request(
-        f"{backend_url.rstrip('/')}/v1/nemo/propose-refinement",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    import requests
+
+    url = f"{backend_url.rstrip('/')}/v1/nemo/propose-refinement"
+    if urlparse(url).scheme not in ("http", "https"):
+        return f"PROPOSAL_FAILED: backend_url must be http(s), got {url!r}"
+    payload = {
+        "control_id": control_id,
+        "verdict": verdict,
+        "source": "kfp-governance-loop",
+    }
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
-            body = resp.read().decode()
-            return f"PROPOSAL_STAGED: HTTP {resp.status} — {body[:200]}"
+        resp = requests.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
+        return f"PROPOSAL_STAGED: HTTP {resp.status_code} — {resp.text[:200]}"
     except Exception as exc:
         return f"PROPOSAL_FAILED: {exc}"
 

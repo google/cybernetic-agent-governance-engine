@@ -158,7 +158,6 @@ class EvidenceVerificationError(Exception):
     """A custodied batch failed verification and must not be cited."""
 
 
-
 # ---------------------------------------------------------------------------
 # Trust anchors
 # ---------------------------------------------------------------------------
@@ -574,9 +573,7 @@ class CustodyVerifier:
             gap_expected_sequence=gap_expected,
         )
 
-    async def verify_all(
-        self, prefix: str | None = None
-    ) -> CustodyVerificationReport:
+    async def verify_all(self, prefix: str | None = None) -> CustodyVerificationReport:
         """Verify every custodied batch under ``prefix`` and chain continuity.
 
         Raises:

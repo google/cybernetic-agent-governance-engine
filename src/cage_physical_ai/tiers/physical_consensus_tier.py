@@ -130,4 +130,5 @@ class PhysicalSafetyConsensusTier(ReadOnlyTier):
             )
         ]
 
+
 PhysicalConsensusTier = PhysicalSafetyConsensusTier

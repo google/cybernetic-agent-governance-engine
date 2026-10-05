@@ -251,6 +251,8 @@ def get_redis_quota_snapshot(
             "quota_available": True,
             "quota_source": "redis",
         }
+        # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.debug(
             "[ISO-001] Token quota snapshot for agent=%s: used=%d budget=%d remaining=%d",
             agent_id,
@@ -261,6 +263,8 @@ def get_redis_quota_snapshot(
         return {"token_quota": quota_snapshot}
 
     except Exception as exc:
+        # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
             "[ISO-001] Redis token quota unavailable for agent=%s (%s: %s). "
             "REDIS_QUOTA_FAIL_CLOSED=%s",

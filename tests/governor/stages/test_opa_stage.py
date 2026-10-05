@@ -1,11 +1,13 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from src.gateway.governance.contracts import PolicyClient, Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import Profile, OpaVerdict
+from src.gateway.governance.governor.pipeline import OpaVerdict, Profile
 from src.gateway.governance.governor.stages.opa import OpaStage, decode_opa_verdict
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class MockPolicyClient:
     def __init__(self, result_to_return):
@@ -17,35 +19,35 @@ class MockPolicyClient:
         return self.result_to_return
 
 
-@pytest.mark.parametrize("raw_input, expected_verdict", [
-    # str exact matches
-    ("ALLOW", OpaVerdict.ALLOW),
-    (" ALLOW ", OpaVerdict.ALLOW),
-    ("DENY", OpaVerdict.DENY),
-    ("GOVERNANCE_VIOLATION", OpaVerdict.DENY),
-    ("MANUAL_REVIEW", OpaVerdict.MANUAL_REVIEW),
-    ("REJECT", None),
-    ("ERROR", None),
-    ("NONE", None),
-    
-    # dict matches
-    ({"allow": True}, OpaVerdict.ALLOW),
-    ({"allow": False}, OpaVerdict.DENY),
-    ({"decision": "ALLOW"}, OpaVerdict.ALLOW),
-    ({"decision": "DENY"}, OpaVerdict.DENY),
-    ({"allow": True, "decision": "DENY"}, OpaVerdict.DENY),  # decision wins
-    ({"allow": None}, None),
-    ({}, None),
-    
-    # bool matches
-    (True, OpaVerdict.ALLOW),
-    (False, OpaVerdict.DENY),
-    
-    # invalid types
-    (1, None),
-    ([], None),
-    (None, None),
-])
+@pytest.mark.parametrize(
+    "raw_input, expected_verdict",
+    [
+        # str exact matches
+        ("ALLOW", OpaVerdict.ALLOW),
+        (" ALLOW ", OpaVerdict.ALLOW),
+        ("DENY", OpaVerdict.DENY),
+        ("GOVERNANCE_VIOLATION", OpaVerdict.DENY),
+        ("MANUAL_REVIEW", OpaVerdict.MANUAL_REVIEW),
+        ("REJECT", None),
+        ("ERROR", None),
+        ("NONE", None),
+        # dict matches
+        ({"allow": True}, OpaVerdict.ALLOW),
+        ({"allow": False}, OpaVerdict.DENY),
+        ({"decision": "ALLOW"}, OpaVerdict.ALLOW),
+        ({"decision": "DENY"}, OpaVerdict.DENY),
+        ({"allow": True, "decision": "DENY"}, OpaVerdict.DENY),  # decision wins
+        ({"allow": None}, None),
+        ({}, None),
+        # bool matches
+        (True, OpaVerdict.ALLOW),
+        (False, OpaVerdict.DENY),
+        # invalid types
+        (1, None),
+        ([], None),
+        (None, None),
+    ],
+)
 def test_decode_opa_verdict(raw_input, expected_verdict):
     """Test the raw OPA response decoding logic."""
     assert decode_opa_verdict(raw_input) == expected_verdict
@@ -56,9 +58,12 @@ async def test_opa_stage_returns_empty_list_for_allow():
     """OpaStage returns no violations and the ALLOW verdict."""
     client = MockPolicyClient({"allow": True})
     stage = OpaStage(client)
-    
+
     from src.gateway.governance.governor.pipeline import StageContext
-    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 100}, profile=Profile.FULL
+    )
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert violations == []
@@ -70,9 +75,12 @@ async def test_opa_stage_returns_hard_violation_for_deny():
     """OpaStage returns a HARD violation for DENY verdict."""
     client = MockPolicyClient("DENY")
     stage = OpaStage(client)
-    
+
     from src.gateway.governance.governor.pipeline import StageContext
-    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 100}, profile=Profile.FULL
+    )
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert len(violations) == 1
@@ -86,9 +94,12 @@ async def test_opa_stage_returns_hitl_violation_for_manual_review():
     """OpaStage returns a HITL violation for MANUAL_REVIEW verdict."""
     client = MockPolicyClient("MANUAL_REVIEW")
     stage = OpaStage(client)
-    
+
     from src.gateway.governance.governor.pipeline import StageContext
-    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 100}, profile=Profile.FULL
+    )
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert len(violations) == 1
@@ -102,9 +113,12 @@ async def test_opa_stage_returns_hard_violation_for_unknown():
     """OpaStage returns a HARD violation for unknown verdicts."""
     client = MockPolicyClient("SOMETHING_ELSE")
     stage = OpaStage(client)
-    
+
     from src.gateway.governance.governor.pipeline import StageContext
-    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 100}, profile=Profile.FULL
+    )
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert len(violations) == 1
@@ -118,9 +132,12 @@ async def test_opa_stage_returns_hard_violation_on_exception():
     """OpaStage returns a HARD violation when policy evaluation raises an exception."""
     client = MockPolicyClient(RuntimeError("Connection lost"))
     stage = OpaStage(client)
-    
+
     from src.gateway.governance.governor.pipeline import StageContext
-    ctx = StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 100}, profile=Profile.FULL
+    )
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert len(violations) == 1
@@ -128,4 +145,3 @@ async def test_opa_stage_returns_hard_violation_on_exception():
     assert violations[0].kind == ViolationKind.HARD
     assert "Connection lost" in violations[0].message
     assert out.opa_verdict is None
-

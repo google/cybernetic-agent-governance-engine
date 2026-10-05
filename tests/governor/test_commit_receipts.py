@@ -57,13 +57,17 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 def _engine(applied: float) -> MagicMock:
     """CBF engine stub that reports ``applied`` as the magnitude it deducted."""
     engine = MagicMock()
-    engine.atomic_verify_and_commit = AsyncMock(return_value=(True, "COMMITTED", applied))
+    engine.atomic_verify_and_commit = AsyncMock(
+        return_value=(True, "COMMITTED", applied)
+    )
     engine.rollback_state = AsyncMock()
     engine.confirm_debit = AsyncMock(return_value=True)
     return engine
 
 
-def _token(amount_usd: float, reservation_id: str, rejected: bool = False) -> ReservationToken:
+def _token(
+    amount_usd: float, reservation_id: str, rejected: bool = False
+) -> ReservationToken:
     return ReservationToken(
         reservation_id=reservation_id,
         agent_id="agent",
@@ -89,7 +93,13 @@ def _fiscal_guard(*tokens: ReservationToken) -> MagicMock:
 class _Tier(MutatingTier):
     """Phase-2 tier double whose commit result is fully scripted."""
 
-    def __init__(self, name: str, order: int, result: tuple[list[Violation], CommitReceipt | None], log: list[str]):
+    def __init__(
+        self,
+        name: str,
+        order: int,
+        result: tuple[list[Violation], CommitReceipt | None],
+        log: list[str],
+    ):
         self._name, self._order, self._result, self.log = name, order, result, log
 
     tier_name = property(lambda self: self._name)
@@ -105,10 +115,14 @@ class _Tier(MutatingTier):
         self.log.append(f"commit:{self._name}")
         return self._result
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         self.log.append(f"confirm:{self._name}")
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         self.log.append(f"rollback:{self._name}:{receipt.magnitude}")
 
 
@@ -128,7 +142,9 @@ def _deny(tier: str) -> Violation:
         (KinematicBarrierTier, "move_arm", "velocity"),
     ],
 )
-async def test_barrier_rollback_restores_committed_magnitude_not_params(tier_cls, action, key) -> None:
+async def test_barrier_rollback_restores_committed_magnitude_not_params(
+    tier_cls, action, key
+) -> None:
     engine = _engine(applied=100.0)
     tier = tier_cls(engine)
     params = {key: 100.0}
@@ -138,7 +154,9 @@ async def test_barrier_rollback_restores_committed_magnitude_not_params(tier_cls
     # The receipt carries the ledger debit_id the commit was recorded under
     # (ADR-010), so rollback can retire exactly that entry.
     debit_id = engine.atomic_verify_and_commit.await_args.kwargs["debit_id"]
-    assert receipt == CommitReceipt(tier=tier.tier_name, magnitude=100.0, token=debit_id)
+    assert receipt == CommitReceipt(
+        tier=tier.tier_name, magnitude=100.0, token=debit_id
+    )
 
     params[key] = 5.0  # params drift after commit; rollback must not follow them
     await tier.rollback(action, params, receipt)
@@ -189,7 +207,10 @@ async def test_multi_engine_kinematic_settles_each_engine_by_its_own_debit_id() 
     first, second = _engine(applied=10.0), _engine(applied=20.0)
     tier = KinematicBarrierTier([first, second])
     _, receipt = await tier.commit("move_arm", {"velocity": 1.0})
-    ids = [e.atomic_verify_and_commit.await_args.kwargs["debit_id"] for e in (first, second)]
+    ids = [
+        e.atomic_verify_and_commit.await_args.kwargs["debit_id"]
+        for e in (first, second)
+    ]
     assert len(set(ids)) == 2
 
     await tier.confirm("move_arm", {}, receipt)
@@ -202,10 +223,14 @@ async def test_multi_engine_kinematic_settles_each_engine_by_its_own_debit_id() 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tier_cls", [CBFTierPlugin, DoseBarrierTier, KinematicBarrierTier])
+@pytest.mark.parametrize(
+    "tier_cls", [CBFTierPlugin, DoseBarrierTier, KinematicBarrierTier]
+)
 async def test_barrier_refusal_issues_no_receipt(tier_cls) -> None:
     engine = MagicMock()
-    engine.atomic_verify_and_commit = AsyncMock(return_value=(False, "UNSAFE: barrier", 0.0))
+    engine.atomic_verify_and_commit = AsyncMock(
+        return_value=(False, "UNSAFE: barrier", 0.0)
+    )
     violations, receipt = await tier_cls(engine).commit("any", {})
     assert receipt is None
     assert [v.kind for v in violations] == [ViolationKind.HARD]
@@ -215,7 +240,9 @@ async def test_barrier_refusal_issues_no_receipt(tier_cls) -> None:
 async def test_kinematic_without_engine_mutates_nothing() -> None:
     violations, receipt = await KinematicBarrierTier(cbf=None).commit("move_arm", {})
     assert receipt is None  # nothing mutated
-    assert [v.code for v in violations] == ["KINEMATIC_BARRIER_UNCONFIGURED"]  # fail closed
+    assert [v.code for v in violations] == [
+        "KINEMATIC_BARRIER_UNCONFIGURED"
+    ]  # fail closed
 
 
 @pytest.mark.asyncio
@@ -227,15 +254,25 @@ async def test_engine_reports_the_magnitude_it_deducted() -> None:
 
     fake = fakeredis.FakeRedis(decode_responses=False)
     await fake.set("safety:current_cash", "1000.0")
-    cbf = ControlBarrierFunction(invariant=CashBarrier(), cost_resolver=finance_cost_resolver, skip_epoch_seed=True)
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
     cbf.threshold_value, cbf.gamma, cbf.tracer = 0.0, 1.0, None
     redis_module = MagicMock()
     redis_module.get_raw_client.return_value = fake
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("src.gateway.governance.safety.cbf_engine.redis_client", redis_module)
-        ok, _, applied = await cbf.atomic_verify_and_commit("execute_trade", {"amount": 250.0})
-        refused, _, refused_applied = await cbf.atomic_verify_and_commit("execute_trade", {"amount": 5_000.0})
+        mp.setattr(
+            "src.gateway.governance.safety.cbf_engine.redis_client", redis_module
+        )
+        ok, _, applied = await cbf.atomic_verify_and_commit(
+            "execute_trade", {"amount": 250.0}
+        )
+        refused, _, refused_applied = await cbf.atomic_verify_and_commit(
+            "execute_trade", {"amount": 5_000.0}
+        )
 
     balance = float(await fake.get("safety:current_cash"))
     assert ok is True and applied == 250.0 == 1000.0 - balance
@@ -281,7 +318,9 @@ async def test_fiscal_concurrent_same_transaction_id_each_release_own_token() ->
 @pytest.mark.asyncio
 async def test_fiscal_rejection_issues_no_receipt() -> None:
     guard = _fiscal_guard(_token(1e9, "res-x", rejected=True))
-    violations, receipt = await FiscalTierPlugin(guard).commit("execute_trade", {"amount": 1e9})
+    violations, receipt = await FiscalTierPlugin(guard).commit(
+        "execute_trade", {"amount": 1e9}
+    )
     assert receipt is None
     assert violations[0].code == "FISCAL_LIMIT_EXCEEDED"
     guard.confirm.assert_not_awaited()
@@ -298,7 +337,9 @@ async def test_fiscal_commit_only_reserves() -> None:
     token = _token(50.0, "res-1")
     guard = _fiscal_guard(token)
 
-    violations, receipt = await FiscalTierPlugin(guard).commit("execute_trade", {"amount": 50.0})
+    violations, receipt = await FiscalTierPlugin(guard).commit(
+        "execute_trade", {"amount": 50.0}
+    )
 
     assert violations == []
     assert receipt is not None and receipt.token is token
@@ -345,24 +386,32 @@ async def test_fiscal_confirm_failure_propagates_without_releasing() -> None:
 async def test_kinematic_rollback_has_no_rollback_failed() -> None:
     engine = _engine(applied=3.5)
     stage = DomainTierStage(KinematicBarrierTier(engine))
-    ctx = StageContext(action="move_arm", params={"velocity": 3.5}, profile=Profile.FULL)
+    ctx = StageContext(
+        action="move_arm", params={"velocity": 3.5}, profile=Profile.FULL
+    )
 
     _, receipt = await stage.commit(ctx)
     failures = await rollback_pairs([(stage, receipt)], ctx)
 
     assert failures == []
-    engine.rollback_state.assert_awaited_once_with(magnitude=3.5, debit_id=receipt.token)
+    engine.rollback_state.assert_awaited_once_with(
+        magnitude=3.5, debit_id=receipt.token
+    )
 
 
 @pytest.mark.asyncio
 async def test_commit_with_violations_and_receipt_is_rolled_back() -> None:
     """A commit that mutated state and then refused must still be undone (LIFO)."""
     log: list[str] = []
-    stages = order_stages([
-        _Tier("m1", 1, ([], CommitReceipt(tier="m1", magnitude=1.0)), log),
-        _Tier("m2", 2, ([_deny("m2")], CommitReceipt(tier="m2", magnitude=2.0)), log),
-        _Tier("m3", 3, ([], CommitReceipt(tier="m3", magnitude=3.0)), log),
-    ])
+    stages = order_stages(
+        [
+            _Tier("m1", 1, ([], CommitReceipt(tier="m1", magnitude=1.0)), log),
+            _Tier(
+                "m2", 2, ([_deny("m2")], CommitReceipt(tier="m2", magnitude=2.0)), log
+            ),
+            _Tier("m3", 3, ([], CommitReceipt(tier="m3", magnitude=3.0)), log),
+        ]
+    )
     result = await run_scoped(stages, StageContext("act", {}, Profile.FULL))
 
     assert log == ["commit:m1", "commit:m2", "rollback:m2:2.0", "rollback:m1:1.0"]
@@ -374,10 +423,12 @@ async def test_commit_with_violations_and_receipt_is_rolled_back() -> None:
 @pytest.mark.asyncio
 async def test_receiptless_commit_is_not_rolled_back() -> None:
     log: list[str] = []
-    stages = order_stages([
-        _Tier("noop", 1, ([], None), log),
-        _Tier("deny", 2, ([_deny("deny")], None), log),
-    ])
+    stages = order_stages(
+        [
+            _Tier("noop", 1, ([], None), log),
+            _Tier("deny", 2, ([_deny("deny")], None), log),
+        ]
+    )
     await run_scoped(stages, StageContext("act", {}, Profile.FULL))
     assert log == ["commit:noop", "commit:deny"]
 
@@ -385,11 +436,16 @@ async def test_receiptless_commit_is_not_rolled_back() -> None:
 @pytest.mark.asyncio
 async def test_successful_pipeline_returns_outstanding_commits() -> None:
     log: list[str] = []
-    r1, r2 = CommitReceipt(tier="a", magnitude=1.0), CommitReceipt(tier="b", token="tok")
-    stages = order_stages([
-        _Tier("a", 1, ([], r1), log),
-        _Tier("b", 2, ([], r2), log),
-    ])
+    r1, r2 = (
+        CommitReceipt(tier="a", magnitude=1.0),
+        CommitReceipt(tier="b", token="tok"),
+    )
+    stages = order_stages(
+        [
+            _Tier("a", 1, ([], r1), log),
+            _Tier("b", 2, ([], r2), log),
+        ]
+    )
     result = await run_scoped(stages, StageContext("act", {}, Profile.FULL))
 
     assert result.violations == ()

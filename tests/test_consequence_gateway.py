@@ -588,9 +588,7 @@ async def test_consequence_gateway_emits_decisions_to_evidence_stream(
     sink = EvidenceStreamSink()
     sink._redis = stream_redis
     sink._running = True
-    monkeypatch.setattr(
-        "src.gateway.governance.evidence.stream._evidence_sink", sink
-    )
+    monkeypatch.setattr("src.gateway.governance.evidence.stream._evidence_sink", sink)
 
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
     token = ConsequenceToken.mint(

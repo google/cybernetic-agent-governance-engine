@@ -110,7 +110,9 @@ def test_small_balance_change_within_floor_passes(
     assert res is not None and res.is_valid
     assert res.discrepancy_detected is False
     assert res.signature != ""
-    assert read_verified_state(redis, INVARIANT_ID, signer=signer) == pytest.approx(16.0)
+    assert read_verified_state(redis, INVARIANT_ID, signer=signer) == pytest.approx(
+        16.0
+    )
     assert redis.get(FENCE_EPOCH_KEY) == "0"
 
 
@@ -165,7 +167,9 @@ async def test_delta_above_floor_and_ratio_fails_closed(
     assert read_verified_state(redis, INVARIANT_ID, signer=signer) is None
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(), cost_resolver=finance_cost_resolver, skip_epoch_seed=True
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
     )
     cbf.tracer = None
     mock_redis_mod = MagicMock()
@@ -190,7 +194,11 @@ def test_explicit_absolute_threshold_still_wins(
     signer = _signer(monkeypatch)
     redis = fakeredis.FakeRedis(decode_responses=True)
     reconciler = _reconciler(
-        baseline=10.0, snapshot=16.0, redis=redis, signer=signer, discrepancy_threshold=5.0
+        baseline=10.0,
+        snapshot=16.0,
+        redis=redis,
+        signer=signer,
+        discrepancy_threshold=5.0,
     )
     result = reconciler.reconcile(invariant_id=INVARIANT_ID)
     assert result.discrepancy_detected is True
@@ -242,7 +250,11 @@ def test_constructor_floor_overrides_config(monkeypatch: pytest.MonkeyPatch) -> 
     signer = _signer(monkeypatch)
     redis = fakeredis.FakeRedis(decode_responses=True)
     reconciler = _reconciler(
-        baseline=10.0, snapshot=16.0, redis=redis, signer=signer, discrepancy_abs_floor=0.0
+        baseline=10.0,
+        snapshot=16.0,
+        redis=redis,
+        signer=signer,
+        discrepancy_abs_floor=0.0,
     )
     result = reconciler.reconcile(invariant_id=INVARIANT_ID)
     assert result.discrepancy_detected is True
@@ -268,7 +280,9 @@ def test_env_override_applies(monkeypatch: pytest.MonkeyPatch) -> None:
         signer = _signer(monkeypatch)
         redis = fakeredis.FakeRedis(decode_responses=True)
         # baseline 100 -> snapshot 70: delta 30 > max(0.25*100, 0) = 25 -> refused.
-        reconciler = _reconciler(baseline=100.0, snapshot=70.0, redis=redis, signer=signer)
+        reconciler = _reconciler(
+            baseline=100.0, snapshot=70.0, redis=redis, signer=signer
+        )
         assert reconciler._discrepancy_ratio == pytest.approx(0.25)
         assert reconciler._discrepancy_abs_floor == pytest.approx(0.0)
         result = reconciler.reconcile(invariant_id=INVARIANT_ID)

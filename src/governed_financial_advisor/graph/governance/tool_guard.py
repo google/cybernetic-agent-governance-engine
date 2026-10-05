@@ -52,7 +52,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -61,7 +61,12 @@ from src.governed_financial_advisor.infrastructure.gateway_client import Gateway
 
 logger = logging.getLogger(__name__)
 
-NodeFn = Callable[[Any], Awaitable[dict[str, Any]]]
+
+class NodeFn(Protocol):
+    """A LangGraph node: called with the graph state (by name), returns an update."""
+
+    def __call__(self, state: Any) -> Awaitable[dict[str, Any]]: ...
+
 
 GOVERNANCE_ALLOWED = "ALLOWED"
 GOVERNANCE_DENIED = "DENIED"
@@ -111,7 +116,9 @@ def _approved_deferred_id(state: Any) -> str | None:
     return None
 
 
-def _answer_all(tool_calls: list[dict[str, Any]], reasons: dict[str, str], default: str) -> list[ToolMessage]:
+def _answer_all(
+    tool_calls: list[dict[str, Any]], reasons: dict[str, str], default: str
+) -> list[ToolMessage]:
     return [
         ToolMessage(
             content=reasons.get(str(call.get("id")), default),
@@ -196,7 +203,9 @@ def gateway_tool_guard(
                     refusals[str(call.get("id"))] = reason or "refused"
                 elif verdict.get("verdict") == GovernanceDecision.REQUIRE_APPROVAL:
                     if not approvable:
-                        refusals[str(call.get("id"))] = "gateway requires human approval"
+                        refusals[str(call.get("id"))] = (
+                            "gateway requires human approval"
+                        )
                         continue
                     deferred_ids[str(call.get("id"))] = str(verdict["deferred_id"])
                 else:
@@ -220,7 +229,10 @@ def gateway_tool_guard(
                 return {
                     "messages": _answer_all(
                         tool_calls,
-                        {k: f"Governance refused this action: {v}" for k, v in refusals.items()},
+                        {
+                            k: f"Governance refused this action: {v}"
+                            for k, v in refusals.items()
+                        },
                         "Governance refused this action: another tool call in the same batch was refused",
                     ),
                     "governance_status": GOVERNANCE_DENIED,

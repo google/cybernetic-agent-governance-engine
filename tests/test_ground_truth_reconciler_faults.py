@@ -170,7 +170,14 @@ def test_simulated_source_deterministic_seeding() -> None:
 
 
 @pytest.mark.parametrize(
-    ("domain_label", "provider_factory", "invariant", "cost_resolver", "action", "params"),
+    (
+        "domain_label",
+        "provider_factory",
+        "invariant",
+        "cost_resolver",
+        "action",
+        "params",
+    ),
     _domain_provider_specs(),
     ids=[spec[0] for spec in _domain_provider_specs()],
 )
@@ -209,7 +216,14 @@ def test_healthy_reconcile_writes_signed_verified_state(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault_mode", ALL_TEN_FAULT_MODES)
 @pytest.mark.parametrize(
-    ("domain_label", "provider_factory", "invariant", "cost_resolver", "action", "params"),
+    (
+        "domain_label",
+        "provider_factory",
+        "invariant",
+        "cost_resolver",
+        "action",
+        "params",
+    ),
     _domain_provider_specs(),
     ids=[spec[0] for spec in _domain_provider_specs()],
 )
@@ -279,9 +293,7 @@ async def test_every_fault_mode_fails_closed_across_all_domains(
 
     with (
         patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
-        patch(
-            "src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_redis
-        ),
+        patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_redis),
         patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", True),
     ):
         committed, reason, _ = await cbf.atomic_verify_and_commit(action, dict(params))
@@ -319,6 +331,5 @@ def test_tampered_redis_payload_fails_signature_verification(
     sync_redis.set(key, json.dumps(tampered))
 
     assert (
-        read_verified_state(sync_redis, "finance.cash_balance", signer=signer)
-        is None
+        read_verified_state(sync_redis, "finance.cash_balance", signer=signer) is None
     )

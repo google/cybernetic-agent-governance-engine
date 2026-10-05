@@ -225,7 +225,9 @@ class TestReconciliationDaemonFailClosedSigning:
         mock_redis.incr.return_value = 1
 
         failing_signer = MagicMock()
-        failing_signer.sign_decision.side_effect = RuntimeError("Cloud KMS HSM unreachable")
+        failing_signer.sign_decision.side_effect = RuntimeError(
+            "Cloud KMS HSM unreachable"
+        )
 
         daemon = LedgerReconciliationDaemon(
             provider=mock_provider,

@@ -72,7 +72,9 @@ class _Tier(ReadOnlyTier):
 class _Plugin:
     api_version = "2.0"
 
-    def __init__(self, name: str, domain_config: Any = None, **contribution: Any) -> None:
+    def __init__(
+        self, name: str, domain_config: Any = None, **contribution: Any
+    ) -> None:
         self.name = name
         self.domain_config = domain_config
         self._contribution = {"domain": name, **contribution}
@@ -103,7 +105,16 @@ def _barrier(invariant_id: str = "test.cash_floor", **overrides: Any) -> Invaria
 
 
 def _assemble(*plugins: Any) -> Any:
-    return assemble_governor(list(plugins), posture=_POSTURE, opa=allow_opa(), stpa_validator=clean_stpa(), flags=_FLAGS)
+    from src.gateway.governance.jurisdiction import resolve_jurisdiction
+
+    return assemble_governor(
+        list(plugins),
+        posture=_POSTURE,
+        opa=allow_opa(),
+        stpa_validator=clean_stpa(),
+        flags=_FLAGS,
+        jurisdiction=resolve_jurisdiction("US_FED"),
+    )
 
 
 # ── Rejections ────────────────────────────────────────────────────────────────
@@ -156,7 +167,9 @@ def test_rejects_duplicate_threshold_section() -> None:
 
 
 def test_rejects_missing_threshold_section() -> None:
-    with pytest.raises(GovernorAssemblyError, match="missing from governance_thresholds.json"):
+    with pytest.raises(
+        GovernorAssemblyError, match="missing from governance_thresholds.json"
+    ):
         _assemble(_Plugin("alpha", threshold_sections={"no_such_section": object}))
 
 
@@ -167,27 +180,42 @@ def test_rejects_invalid_threshold_section_schema() -> None:
         required_missing_field: float = Field(..., gt=0)
 
     with pytest.raises(GovernorAssemblyError, match="failed validation"):
-        _assemble(_Plugin("alpha", threshold_sections={"finance": _InvalidFinanceSchema}))
+        _assemble(
+            _Plugin("alpha", threshold_sections={"finance": _InvalidFinanceSchema})
+        )
 
 
 def test_rejects_ungoverned_irreversible_action(tmp_path: Any) -> None:
     registry = tmp_path / "registry.json"
-    registry.write_text('{"domain": "alpha", "terminals": {"wire": "IRREVERSIBLE_TERMINAL", "peek": "READ_ONLY"}}')
-    plugin = _Plugin("alpha", domain_config=_Registry(registry), tiers=(_Tier("t", ("other",)),))
+    registry.write_text(
+        '{"domain": "alpha", "terminals": {"wire": "IRREVERSIBLE_TERMINAL", "peek": "READ_ONLY"}}'
+    )
+    plugin = _Plugin(
+        "alpha", domain_config=_Registry(registry), tiers=(_Tier("t", ("other",)),)
+    )
     with pytest.raises(GovernorAssemblyError, match="ungoverned irreversible action"):
         _assemble(plugin)
 
 
-def test_claimed_irreversible_and_unclaimed_reversible_actions_assemble(tmp_path: Any) -> None:
+def test_claimed_irreversible_and_unclaimed_reversible_actions_assemble(
+    tmp_path: Any,
+) -> None:
     registry = tmp_path / "registry.json"
-    registry.write_text('{"domain": "alpha", "terminals": {"wire": "IRREVERSIBLE_TERMINAL", "peek": "READ_ONLY"}}')
-    plugin = _Plugin("alpha", domain_config=_Registry(registry), tiers=(_Tier("t", ("wire",)),))
+    registry.write_text(
+        '{"domain": "alpha", "terminals": {"wire": "IRREVERSIBLE_TERMINAL", "peek": "READ_ONLY"}}'
+    )
+    plugin = _Plugin(
+        "alpha", domain_config=_Registry(registry), tiers=(_Tier("t", ("wire",)),)
+    )
     assert _assemble(plugin).registered_tier_names() == ["t"]
 
 
 def test_rejects_two_contributions_filling_one_engine_slot() -> None:
     with pytest.raises(GovernorAssemblyError, match="safety_filter"):
-        _assemble(_Plugin("alpha", safety_filter=object()), _Plugin("beta", safety_filter=object()))
+        _assemble(
+            _Plugin("alpha", safety_filter=object()),
+            _Plugin("beta", safety_filter=object()),
+        )
 
 
 def test_rejects_invalid_invariant() -> None:
@@ -198,12 +226,21 @@ def test_rejects_invalid_invariant() -> None:
 
 def test_rejects_duplicate_invariant_across_domains() -> None:
     with pytest.raises(ValueError, match="duplicate invariant"):
-        _assemble(_Plugin("alpha", invariants=(_barrier(),)), _Plugin("beta", invariants=(_barrier(),)))
+        _assemble(
+            _Plugin("alpha", invariants=(_barrier(),)),
+            _Plugin("beta", invariants=(_barrier(),)),
+        )
 
 
 def test_valid_invariants_are_recorded_on_components() -> None:
-    governor = _assemble(_Plugin("alpha", invariants=(_barrier("alpha.a"),)), _Plugin("beta", invariants=(_barrier("beta.b"),)))
-    assert [i.invariant_id for i in governor.components.invariants] == ["alpha.a", "beta.b"]
+    governor = _assemble(
+        _Plugin("alpha", invariants=(_barrier("alpha.a"),)),
+        _Plugin("beta", invariants=(_barrier("beta.b"),)),
+    )
+    assert [i.invariant_id for i in governor.components.invariants] == [
+        "alpha.a",
+        "beta.b",
+    ]
 
 
 # ── Immutability ──────────────────────────────────────────────────────────────
@@ -238,7 +275,10 @@ def test_no_plugins_leaves_null_engines_and_reports_unfilled_slots() -> None:
     assert components.unfilled_slots == ("safety_filter", "consensus")
 
 
-_IRREVERSIBLE = ("execute_trade", {"symbol": "AAPL", "amount": 100.0, "confidence": 0.99})
+_IRREVERSIBLE = (
+    "execute_trade",
+    {"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
+)
 
 
 async def test_empty_governor_denies_govern() -> None:
@@ -261,23 +301,33 @@ async def test_empty_governor_denies_verify() -> None:
 
 async def test_empty_governor_denies_revalidate_post_hitl() -> None:
     with pytest.raises(GovernanceError):
-        await _assemble().revalidate_post_hitl(*_IRREVERSIBLE, approved_barrier_preview=None)
+        await _assemble().revalidate_post_hitl(
+            *_IRREVERSIBLE, approved_barrier_preview=None
+        )
 
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def test_bootstrap_registers_the_domain_overlays(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_registers_the_domain_overlays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from src.gateway.governance import constants
     from src.gateway.governance.governor.bootstrap import bootstrap_governor
 
     monkeypatch.setattr(constants, "_OVERLAY_DIRS", [])
     governor = bootstrap_governor(opa=allow_opa(), stpa_validator=clean_stpa())
-    expected = {d.resolve() for c in governor.components.contributions for d in c.compliance_overlay_dirs}
+    expected = {
+        d.resolve()
+        for c in governor.components.contributions
+        for d in c.compliance_overlay_dirs
+    }
     assert expected and expected <= set(constants._OVERLAY_DIRS)
 
 
-def test_bootstrap_refuses_unfilled_engine_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_refuses_unfilled_engine_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from src.gateway.governance import plugin_loader
     from src.gateway.governance.governor.bootstrap import bootstrap_governor
 
@@ -287,7 +337,9 @@ def test_bootstrap_refuses_unfilled_engine_slots(monkeypatch: pytest.MonkeyPatch
         bootstrap_governor(opa=allow_opa(), stpa_validator=clean_stpa())
 
 
-def test_registering_an_overlay_reloads_a_loaded_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+def test_registering_an_overlay_reloads_a_loaded_registry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
     from src.gateway.governance import constants
 
     monkeypatch.setattr(constants, "_OVERLAY_DIRS", list(constants._OVERLAY_DIRS))

@@ -27,4 +27,3 @@ __all__ = [
     "extract_field_magnitude",
     "load_critic_specs",
 ]
-

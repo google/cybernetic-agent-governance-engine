@@ -123,7 +123,11 @@ class TestDecisionVocabularyConformance:
         assert hasattr(GovernanceDecision, "REQUIRE_APPROVAL")
         # The lattice is closed: exactly these five, no PAUSE.
         assert {d.value for d in GovernanceDecision} == {
-            "ALLOW", "DENY", "DEFER", "NARROW", "REQUIRE_APPROVAL",
+            "ALLOW",
+            "DENY",
+            "DEFER",
+            "NARROW",
+            "REQUIRE_APPROVAL",
         }
 
     def test_governance_decision_values(self):

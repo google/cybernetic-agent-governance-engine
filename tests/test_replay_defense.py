@@ -120,7 +120,9 @@ class TestSequenceInSignedPayload:
         # Mock KMS signer
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
-        mock_signer.sign_decision.return_value = MagicMock(signature="test_signature", kid="reconciler-kid", algorithm="gcp_kms")
+        mock_signer.sign_decision.return_value = MagicMock(
+            signature="test_signature", kid="reconciler-kid", algorithm="gcp_kms"
+        )
 
         reconciler = ExternalLedgerReconciler(
             provider=SimulatedCashLedgerProvider(),

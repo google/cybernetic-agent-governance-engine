@@ -44,7 +44,9 @@ def test_check_dns_resolution_matching_expected_ip():
     """Verify check_dns_resolution matches the expected IP address."""
     fake_addrinfo = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("34.120.50.1", 443))]
     with patch("socket.getaddrinfo", return_value=fake_addrinfo):
-        ok, ips, msg = check_dns_resolution("gateway.example.com", expected_ip="34.120.50.1")
+        ok, ips, msg = check_dns_resolution(
+            "gateway.example.com", expected_ip="34.120.50.1"
+        )
         assert ok is True
         assert ips == ["34.120.50.1"]
         assert "correctly resolves to expected IP" in msg
@@ -54,7 +56,9 @@ def test_check_dns_resolution_mismatch_expected_ip():
     """Verify check_dns_resolution detects IP mismatch."""
     fake_addrinfo = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("34.120.50.1", 443))]
     with patch("socket.getaddrinfo", return_value=fake_addrinfo):
-        ok, ips, msg = check_dns_resolution("gateway.example.com", expected_ip="35.200.10.2")
+        ok, ips, msg = check_dns_resolution(
+            "gateway.example.com", expected_ip="35.200.10.2"
+        )
         assert ok is False
         assert ips == ["34.120.50.1"]
         assert "do not match expected IP" in msg
@@ -62,7 +66,9 @@ def test_check_dns_resolution_mismatch_expected_ip():
 
 def test_check_dns_resolution_failure():
     """Verify check_dns_resolution handles socket.gaierror gracefully."""
-    with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")):
+    with patch(
+        "socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")
+    ):
         ok, ips, msg = check_dns_resolution("nonexistent.invalid")
         assert ok is False
         assert ips == []
@@ -71,16 +77,20 @@ def test_check_dns_resolution_failure():
 
 def test_check_gcp_ssl_certificate_active():
     """Verify check_gcp_ssl_certificate parses ACTIVE status."""
-    fake_output = json.dumps({
-        "managed": {
-            "status": "ACTIVE",
-            "domainStatus": {"gateway.example.com": "ACTIVE"}
+    fake_output = json.dumps(
+        {
+            "managed": {
+                "status": "ACTIVE",
+                "domainStatus": {"gateway.example.com": "ACTIVE"},
+            }
         }
-    })
+    )
     mock_run = MagicMock(returncode=0, stdout=fake_output, stderr="")
     with patch("shutil.which", return_value="/usr/bin/gcloud"):
         with patch("subprocess.run", return_value=mock_run):
-            is_active, msg, data = check_gcp_ssl_certificate("gateway-cert", project_id="test-proj")
+            is_active, msg, data = check_gcp_ssl_certificate(
+                "gateway-cert", project_id="test-proj"
+            )
             assert is_active is True
             assert "ACTIVE" in msg
             assert data["managed"]["status"] == "ACTIVE"
@@ -88,12 +98,14 @@ def test_check_gcp_ssl_certificate_active():
 
 def test_check_gcp_ssl_certificate_provisioning():
     """Verify check_gcp_ssl_certificate detects PROVISIONING status."""
-    fake_output = json.dumps({
-        "managed": {
-            "status": "PROVISIONING",
-            "domainStatus": {"gateway.example.com": "PROVISIONING"}
+    fake_output = json.dumps(
+        {
+            "managed": {
+                "status": "PROVISIONING",
+                "domainStatus": {"gateway.example.com": "PROVISIONING"},
+            }
         }
-    })
+    )
     mock_run = MagicMock(returncode=0, stdout=fake_output, stderr="")
     with patch("shutil.which", return_value="/usr/bin/gcloud"):
         with patch("subprocess.run", return_value=mock_run):
@@ -104,12 +116,14 @@ def test_check_gcp_ssl_certificate_provisioning():
 
 def test_check_gke_managed_certificate_active():
     """Verify check_gke_managed_certificate parses Active status from Kubernetes."""
-    fake_output = json.dumps({
-        "status": {
-            "certificateStatus": "Active",
-            "domainStatus": [{"domain": "gateway.example.com", "status": "Active"}]
+    fake_output = json.dumps(
+        {
+            "status": {
+                "certificateStatus": "Active",
+                "domainStatus": [{"domain": "gateway.example.com", "status": "Active"}],
+            }
         }
-    })
+    )
     mock_run = MagicMock(returncode=0, stdout=fake_output, stderr="")
     with patch("shutil.which", return_value="/usr/bin/kubectl"):
         with patch("subprocess.run", return_value=mock_run):
@@ -117,4 +131,3 @@ def test_check_gke_managed_certificate_active():
             assert is_active is True
             assert "Active" in msg
             assert data["status"]["certificateStatus"] == "Active"
-

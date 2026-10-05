@@ -47,18 +47,19 @@ Importers need a one-line change: `symbolic_governor` → `governor`. That is 25
 ### 1.1 Contract change — [contracts.py](../src/gateway/governance/contracts.py#L190-L210)
 ```python
 class ViolationKind(StrEnum):
-    HARD = "HARD"              # non-negotiable → DENY
-    HITL = "HITL"              # human sign-off → REQUIRE_APPROVAL
+    HARD = "HARD"  # non-negotiable → DENY
+    HITL = "HITL"  # human sign-off → REQUIRE_APPROVAL
     DEFERRABLE = "DEFERRABLE"  # data starvation → DEFER
-    TRANSIENT = "TRANSIENT"    # rate limit / breaker → PAUSE
+    TRANSIENT = "TRANSIENT"  # rate limit / breaker → PAUSE
     NARROWABLE = "NARROWABLE"  # soft threshold → NARROW candidate
+
 
 @dataclass(frozen=True)
 class Violation:
     tier: str
     code: str
-    message: str               # human-readable ONLY; never parsed
-    kind: ViolationKind        # REQUIRED — no default (fail-closed by construction)
+    message: str  # human-readable ONLY; never parsed
+    kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
     standing: Mapping[str, Any] = field(default_factory=dict)
 ```
 - `recoverable` and `needs_human_review` are **removed**. `kind` replaces them, and removing them avoids having two sources of truth.
@@ -103,8 +104,13 @@ All 37 `Violation(` sites across the finance, healthcare and physical-AI tiers, 
 
 ### 1.5 `classification.py`
 ```python
-def classify(violations: Sequence[Violation], *, defer_enabled: bool, pause_enabled: bool,
-             narrow_candidate: bool) -> Classification: ...
+def classify(
+    violations: Sequence[Violation],
+    *,
+    defer_enabled: bool,
+    pause_enabled: bool,
+    narrow_candidate: bool,
+) -> Classification: ...
 ```
 - Precedence: `HARD > HITL > NARROWABLE(only if narrow_candidate) > TRANSIENT > DEFERRABLE`.
 - Disabled paths collapse to DENY.
@@ -138,14 +144,17 @@ def classify(violations: Sequence[Violation], *, defer_enabled: bool, pause_enab
 ### 2.1 Stage protocol — `pipeline.py`
 ```python
 class Stage(Protocol):
-    name: str                       # must match proof/model.py TIERS entry
-    mutating: bool                  # True → phase 2, participates in ReservationScope
+    name: str  # must match proof/model.py TIERS entry
+    mutating: bool  # True → phase 2, participates in ReservationScope
+
     async def run(self, ctx: StageContext) -> list[Violation]: ...
 
+
 class Profile(StrEnum):
-    FULL = "FULL"            # all stages
+    FULL = "FULL"  # all stages
     POST_HITL = "POST_HITL"  # {opa, cbf} (+ fiscal? — see Open Q1)
-    DRY_RUN = "DRY_RUN"      # all stages, mutating stages call evaluate-only path
+    DRY_RUN = "DRY_RUN"  # all stages, mutating stages call evaluate-only path
+
 
 @dataclass(frozen=True)
 class PipelineResult:
@@ -208,9 +217,10 @@ Target size: `governor.py` under 300 lines, no file in the package over 400.
 class ReservationScope:
     """Async context manager. Commits mutating stages; on exit without
     .seal_issued(), LIFO-rolls back every committed stage."""
+
     async def __aenter__(self) -> "ReservationScope": ...
     async def commit(self, stage: Stage, ctx: StageContext) -> list[Violation]: ...
-    def seal_issued(self, seal: str) -> None: ...   # marks success; disarms rollback
+    def seal_issued(self, seal: str) -> None: ...  # marks success; disarms rollback
     async def __aexit__(self, exc_type, exc, tb) -> bool: ...
 ```
 - **Rollback triggers:** any exception (including `BaseException` / cancellation, via `asyncio.shield` around the rollback), any violation, or exit without `seal_issued()`.

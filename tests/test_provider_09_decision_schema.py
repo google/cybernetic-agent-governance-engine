@@ -35,7 +35,9 @@ from src.gateway.governance.seams import estate
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _ROOT = Path(__file__).resolve().parent.parent
-_SCHEMA_PATH = _ROOT / "schemas" / "provider_09" / "estate_decision_response.schema.json"
+_SCHEMA_PATH = (
+    _ROOT / "schemas" / "provider_09" / "estate_decision_response.schema.json"
+)
 _FIXTURES = sorted((_ROOT / "tests" / "fixtures" / "provider_09").glob("*.json"))
 
 _SEAM_TYPES = (
@@ -71,7 +73,11 @@ def test_schema_properties_match_seam_dataclass(schema: dict, seam_type: type) -
         (estate.EnvironmentTier, "CloudOpsResourcePredicate", "environment_tier"),
         (estate.CriticalityTier, "CloudOpsResourcePredicate", "criticality_tier"),
         (estate.IaCDriftStatus, "CloudOpsResourcePredicate", "iac_drift_status"),
-        (estate.CloudOpsReversibility, "CloudOpsResourcePredicate", "reversibility_tier"),
+        (
+            estate.CloudOpsReversibility,
+            "CloudOpsResourcePredicate",
+            "reversibility_tier",
+        ),
     ],
 )
 def test_schema_enums_match_seam(
@@ -83,7 +89,9 @@ def test_schema_enums_match_seam(
 
 
 def test_status_enum_matches_seam(schema: dict) -> None:
-    assert schema["$defs"]["status"]["enum"] == [m.value for m in estate.EstateQueryStatus]
+    assert schema["$defs"]["status"]["enum"] == [
+        m.value for m in estate.EstateQueryStatus
+    ]
 
 
 def test_fixtures_present() -> None:

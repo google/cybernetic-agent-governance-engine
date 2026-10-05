@@ -201,7 +201,6 @@ def query_agent(prompt: str):
     cage_api_key = os.environ.get("CAGE_API_KEY", "")
     headers = {"Authorization": f"Bearer {cage_api_key}"} if cage_api_key else {}
 
-
     max_retries = 3
     for attempt in range(max_retries):
         try:

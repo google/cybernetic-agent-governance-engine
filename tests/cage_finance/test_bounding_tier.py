@@ -108,7 +108,9 @@ class TestBoundingContractTierPlugin:
         assert len(violations) == 1
         assert violations[0].tier == "bounding"
         assert violations[0].code == "BOUNDING_B1_HARD_BLOCK"
-        assert violations[0].kind == ViolationKind.HARD  # HARD_BLOCK → ViolationKind.HARD
+        assert (
+            violations[0].kind == ViolationKind.HARD
+        )  # HARD_BLOCK → ViolationKind.HARD
 
     @pytest.mark.asyncio
     async def test_hard_block_kind_is_hard(self):
@@ -164,7 +166,9 @@ class TestBoundingContractTierPlugin:
 
         assert len(violations) == 1
         assert violations[0].code == "BOUNDING_B3_HITL_ESCALATE"
-        assert violations[0].kind == ViolationKind.HITL  # HITL_ESCALATE → ViolationKind.HITL
+        assert (
+            violations[0].kind == ViolationKind.HITL
+        )  # HITL_ESCALATE → ViolationKind.HITL
 
     @pytest.mark.asyncio
     async def test_invalid_params_returns_violation(self):
@@ -198,7 +202,9 @@ class TestBoundingContractTierPlugin:
 
         tier = BoundingContractTierPlugin(BoundingContractRegistry({"bounding": {}}))
         assert isinstance(tier, ReadOnlyTier)
-        assert not any(hasattr(tier, hook) for hook in ("commit", "rollback", "confirm"))
+        assert not any(
+            hasattr(tier, hook) for hook in ("commit", "rollback", "confirm")
+        )
 
 
 def _b10_tier(capability: dict | Exception) -> BoundingContractTierPlugin:
@@ -208,7 +214,12 @@ def _b10_tier(capability: dict | Exception) -> BoundingContractTierPlugin:
     else:
         provider.verify_rollback_window.return_value = capability
     registry = BoundingContractRegistry(
-        {"bounding": {"enabled_contracts": ["B10"], "b10_min_rollback_window_seconds": 60}},
+        {
+            "bounding": {
+                "enabled_contracts": ["B10"],
+                "b10_min_rollback_window_seconds": 60,
+            }
+        },
         rollback_provider=provider,
     )
     return BoundingContractTierPlugin(registry)
@@ -236,10 +247,17 @@ class TestB10ClosedWindowIsHitl:
             {**_OPEN, "api_available": False},
             {**_OPEN, "max_window_seconds": 120},
         ],
-        ids=["provider_unavailable", "unsupported", "api_down", "window_over_capability"],
+        ids=[
+            "provider_unavailable",
+            "unsupported",
+            "api_down",
+            "window_over_capability",
+        ],
     )
     async def test_closed_window_is_a_hitl_violation(self, capability):
-        violations = await _b10_tier(capability).evaluate("execute_trade_bounded", _B10_PARAMS)
+        violations = await _b10_tier(capability).evaluate(
+            "execute_trade_bounded", _B10_PARAMS
+        )
         assert len(violations) == 1
         assert violations[0].code == "B10_ROLLBACK_WINDOW_CLOSED"
         assert violations[0].kind == ViolationKind.HITL
@@ -254,7 +272,9 @@ class TestB10ClosedWindowIsHitl:
 
     @pytest.mark.asyncio
     async def test_open_window_admits(self):
-        assert await _b10_tier(_OPEN).evaluate("execute_trade_bounded", _B10_PARAMS) == []
+        assert (
+            await _b10_tier(_OPEN).evaluate("execute_trade_bounded", _B10_PARAMS) == []
+        )
 
     @pytest.mark.asyncio
     async def test_tier_keeps_no_per_request_state(self):

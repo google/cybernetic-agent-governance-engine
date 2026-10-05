@@ -198,7 +198,9 @@ async def test_enforcing_posture_risk_boundary_keeps_generic_code(
 
 
 @pytest.mark.asyncio
-async def test_provider_error_denies_with_telemetry_unavailable(enforcing, stable_dowhy):
+async def test_provider_error_denies_with_telemetry_unavailable(
+    enforcing, stable_dowhy
+):
     tier = CausalTierPlugin(telemetry_provider=_Provider(exc=RuntimeError("feed down")))
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
@@ -229,7 +231,9 @@ async def test_dev_posture_empty_frame_uses_synthetic(dev, monkeypatch):
     synthetic = _frame(200)
     gk = build_finance_causal_gatekeeper()
     object.__setattr__(gk.spec, "synthetic_telemetry_factory", lambda: synthetic)
-    tier = CausalTierPlugin(causal_gatekeeper=gk, telemetry_provider=NullTelemetryProvider())
+    tier = CausalTierPlugin(
+        causal_gatekeeper=gk, telemetry_provider=NullTelemetryProvider()
+    )
 
     assert await tier.evaluate("execute_trade", PARAMS) == []
     assert len(seen) == 1 and seen[0] is synthetic
@@ -241,7 +245,9 @@ async def test_dev_posture_nonempty_frame_is_not_overridden(dev, monkeypatch):
     monkeypatch.setattr(gk_mod, "_DOWHY_AVAILABLE", True)
     gk = build_finance_causal_gatekeeper()
     object.__setattr__(gk.spec, "synthetic_telemetry_factory", factory)
-    tier = CausalTierPlugin(causal_gatekeeper=gk, telemetry_provider=_Provider(_frame(30)))
+    tier = CausalTierPlugin(
+        causal_gatekeeper=gk, telemetry_provider=_Provider(_frame(30))
+    )
 
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_INSUFFICIENT_SAMPLES
@@ -256,8 +262,12 @@ async def test_dev_posture_nonempty_frame_is_not_overridden(dev, monkeypatch):
 def test_gatekeeper_evaluate_reports_reasons(enforcing, stable_dowhy):
     gk = build_finance_causal_gatekeeper()
     assert gk.evaluate(PARAMS, None) == CausalDecision(False, REASON_NO_LIVE_TELEMETRY)
-    assert gk.evaluate(PARAMS, _frame(0)) == CausalDecision(False, REASON_NO_LIVE_TELEMETRY)
-    assert gk.evaluate(PARAMS, _frame(30)) == CausalDecision(False, REASON_INSUFFICIENT_SAMPLES)
+    assert gk.evaluate(PARAMS, _frame(0)) == CausalDecision(
+        False, REASON_NO_LIVE_TELEMETRY
+    )
+    assert gk.evaluate(PARAMS, _frame(30)) == CausalDecision(
+        False, REASON_INSUFFICIENT_SAMPLES
+    )
     assert gk.evaluate(PARAMS, _frame(60)) == CausalDecision(True, REASON_TRUSTED)
     assert gk.causal_safety_check(PARAMS, _frame(60)) is True
     assert gk.causal_safety_check(PARAMS, _frame(30)) is False
@@ -266,13 +276,17 @@ def test_gatekeeper_evaluate_reports_reasons(enforcing, stable_dowhy):
 def test_gatekeeper_evaluate_risk_boundary_reason(enforcing, stable_dowhy, monkeypatch):
     monkeypatch.setattr(gk_mod, "CAUSAL_LOCK_RISK_BOUNDARY", 0.5)
     gk = build_finance_causal_gatekeeper()
-    assert gk.evaluate(PARAMS, _frame(60)) == CausalDecision(False, REASON_RISK_BOUNDARY)
+    assert gk.evaluate(PARAMS, _frame(60)) == CausalDecision(
+        False, REASON_RISK_BOUNDARY
+    )
 
 
 @pytest.mark.asyncio
 async def test_patched_bool_check_still_maps_to_generic_code(enforcing, monkeypatch):
     """Tests that patch the module-level check keep working (bool → CHECK_FAILED)."""
-    monkeypatch.setattr(causal_tier, "causal_safety_check", MagicMock(return_value=False))
+    monkeypatch.setattr(
+        causal_tier, "causal_safety_check", MagicMock(return_value=False)
+    )
     tier = CausalTierPlugin(telemetry_provider=_Provider(_frame(60)))
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_CHECK_FAILED
@@ -302,7 +316,9 @@ def test_create_finance_tiers_prefers_explicit_provider(monkeypatch):
 
     explicit = _Provider(_frame(60))
     monkeypatch.setattr(
-        finance, "get_telemetry_provider", MagicMock(side_effect=AssertionError("unused"))
+        finance,
+        "get_telemetry_provider",
+        MagicMock(side_effect=AssertionError("unused")),
     )
     tiers = finance.create_finance_tiers(
         MagicMock(), MagicMock(), MagicMock(), telemetry_provider=explicit

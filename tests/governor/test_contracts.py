@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from dataclasses import FrozenInstanceError
+
+import pytest
 
 from proof.model import TIERS
 from src.gateway.governance.governor import (
@@ -22,12 +23,14 @@ from src.gateway.governance.governor import (
     Profile,
     StageContext,
 )
+from src.gateway.governance.governor.errors import GovernanceError as NewGovernanceError
+from src.gateway.governance.governor.governor import (
+    GovernanceError as OldGovernanceError,
+)
 from src.gateway.governance.governor.pipeline import (
     POST_HITL_READ_ONLY_STAGES,
     stage_runs_under,
 )
-from src.gateway.governance.governor.errors import GovernanceError as NewGovernanceError
-from src.gateway.governance.governor.governor import GovernanceError as OldGovernanceError
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -68,7 +71,9 @@ def test_profile_stages_match_proof_tiers():
 
     def selected(profile: Profile) -> frozenset[str]:
         return frozenset(
-            t for t in TIERS if stage_runs_under(profile, name=t, mutating=TIER_PHASE[t] == 2)
+            t
+            for t in TIERS
+            if stage_runs_under(profile, name=t, mutating=TIER_PHASE[t] == 2)
         )
 
     assert selected(Profile.FULL) == proof_tiers

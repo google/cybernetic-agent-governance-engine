@@ -214,14 +214,13 @@ def _coerce_float(value: Any) -> float:
     return parsed if math.isfinite(parsed) else 0.0
 
 
-def _settle_argv(cutoff: float, orphan_before: float | None, now: float | None) -> list[str]:
-    promote = orphan_before is not None and math.isfinite(orphan_before)
+def _settle_argv(
+    cutoff: float, orphan_before: float | None, now: float | None
+) -> list[str]:
     stamp = now if now is not None else time.time()
-    return [
-        repr(float(cutoff)),
-        repr(float(orphan_before)) if promote else "",
-        repr(float(stamp)) if promote else "",
-    ]
+    if orphan_before is None or not math.isfinite(orphan_before):
+        return [repr(float(cutoff)), "", ""]
+    return [repr(float(cutoff)), repr(float(orphan_before)), repr(float(stamp))]
 
 
 def _settled_count(res: Any, cutoff: float) -> int:
@@ -268,7 +267,10 @@ def settle_debits_sync(
     keys = _settle_keys()
     try:
         res = raw_client.eval(
-            LUA_SETTLE_DEBITS, len(keys), *keys, *_settle_argv(cutoff, orphan_before, now)
+            LUA_SETTLE_DEBITS,
+            len(keys),
+            *keys,
+            *_settle_argv(cutoff, orphan_before, now),
         )
         return _settled_count(res, cutoff)
     except Exception as exc:
@@ -289,7 +291,10 @@ async def settle_debits(
     keys = _settle_keys()
     try:
         res = client.eval(
-            LUA_SETTLE_DEBITS, len(keys), *keys, *_settle_argv(cutoff, orphan_before, now)
+            LUA_SETTLE_DEBITS,
+            len(keys),
+            *keys,
+            *_settle_argv(cutoff, orphan_before, now),
         )
         if inspect.isawaitable(res):
             res = await res
@@ -299,7 +304,9 @@ async def settle_debits(
         return 0
 
 
-async def confirm_debit(client: Any, debit_id: str, *, now: float | None = None) -> bool:
+async def confirm_debit(
+    client: Any, debit_id: str, *, now: float | None = None
+) -> bool:
     """Mark ``debit_id`` executed: move it from pending to confirmed at ``now``.
 
     Returns ``False`` if the debit is not pending (already confirmed, rolled

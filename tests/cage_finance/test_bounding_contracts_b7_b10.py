@@ -127,9 +127,7 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is True
         assert result.contract_id == "B10"
@@ -161,9 +159,7 @@ class TestContractB10RollbackWindow:
             "api_available": False,
         }
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"
@@ -200,9 +196,7 @@ class TestContractB10RollbackWindow:
             "api_available": False,  # API down
         }
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"
@@ -241,9 +235,7 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"
@@ -284,9 +276,7 @@ class TestContractB10RollbackWindow:
             "api_available": True,
         }
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"
@@ -323,9 +313,7 @@ class TestContractB10RollbackWindow:
             "Settlement provider unavailable"
         )
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"
@@ -355,9 +343,7 @@ class TestContractB10RollbackWindow:
 
         mock_provider = MagicMock()
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"
@@ -388,9 +374,7 @@ class TestContractB10RollbackWindow:
 
         mock_provider = MagicMock()
 
-        result = contract_b10_rollback_window(
-            request, thresholds, mock_provider
-        )
+        result = contract_b10_rollback_window(request, thresholds, mock_provider)
 
         assert result.admitted is False
         assert result.contract_id == "B10"

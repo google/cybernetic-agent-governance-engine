@@ -20,6 +20,10 @@ Per Phase 5 Master Plan Section 4.5 (B4) and Section 4.10 (B9).
 
 import pytest
 
+from src.cage_finance.safety.bounding.contract import (
+    BoundingContractConfig,
+    BoundingContractEnforcer,
+)
 from src.cage_finance.safety.bounding.contracts import (
     contract_b4_counterparty_concentration,
     contract_b9_jurisdiction_filter,
@@ -27,10 +31,6 @@ from src.cage_finance.safety.bounding.contracts import (
 from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,
     ContractSeverity,
-)
-from src.cage_finance.safety.bounding.contract import (
-    BoundingContractConfig,
-    BoundingContractEnforcer,
 )
 
 # Hermetic: validates bounding contracts B4, B9 in-memory.

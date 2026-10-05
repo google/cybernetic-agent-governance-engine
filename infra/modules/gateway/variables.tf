@@ -271,4 +271,9 @@ variable "evidence_stream_key" {
   }
 }
 
-
+# Name of the cage-deployment ConfigMap (modules/deployment_config). Passing
+# it (rather than hardcoding the name) makes the dependency explicit.
+variable "deployment_config_map_name" {
+  description = "ConfigMap holding CAGE_DEPLOYMENT_REGION (output of modules/deployment_config)."
+  type        = string
+}

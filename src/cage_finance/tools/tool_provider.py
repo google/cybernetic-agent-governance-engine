@@ -158,7 +158,9 @@ async def execute_trade_action(
                 approval_covers=_approval_covers_trade,
             )
         else:
-            governance_result = await enforce_governance(governor, "execute_trade", params)
+            governance_result = await enforce_governance(
+                governor, "execute_trade", params
+            )
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
 
@@ -319,7 +321,9 @@ async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) ->
     failures = await governor.settle(seal, executed=executed)
     for violation in failures:
         logger.critical(
-            "execute_trade: settlement (executed=%s) failed: %s", executed, violation.message
+            "execute_trade: settlement (executed=%s) failed: %s",
+            executed,
+            violation.message,
         )
 
 
@@ -327,7 +331,9 @@ class FinancialToolProvider(DomainToolProvider):
     def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         # The MCP schema must expose only the agent-facing parameters, so the
         # governor is bound here rather than in the signature.
-        @server.tool(name="execute_trade_action", description=execute_trade_action.__doc__)
+        @server.tool(
+            name="execute_trade_action", description=execute_trade_action.__doc__
+        )
         async def _execute_trade_tool(
             symbol: str,
             amount: float,
@@ -342,8 +348,17 @@ class FinancialToolProvider(DomainToolProvider):
             drawdown: float | None = None,
         ) -> str:
             return await execute_trade_action(
-                symbol, amount, currency, confidence, transaction_id, trader_id, trader_role, dry_run,
-                deferred_id, latency_ms, drawdown,
+                symbol,
+                amount,
+                currency,
+                confidence,
+                transaction_id,
+                trader_id,
+                trader_role,
+                dry_run,
+                deferred_id,
+                latency_ms,
+                drawdown,
                 governor=governor,
             )
 

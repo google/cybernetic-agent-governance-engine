@@ -92,7 +92,9 @@ def make_governor(
         core_stages=(
             tuple(core_stages)
             if core_stages is not None
-            else kernel_stages(opa, stpa_validator, magnitude_extractor=magnitude_extractor)
+            else kernel_stages(
+                opa, stpa_validator, magnitude_extractor=magnitude_extractor
+            )
         ),
         classifier=classifier if classifier is not None else default_classifier(),
         domain_tiers=tuple(domain_tiers),

@@ -217,4 +217,3 @@ class TestC01TradeSide:
         assert "sell" in result.lower(), (
             f"Mock broker result should mention 'sell' but got: {result}"
         )
-

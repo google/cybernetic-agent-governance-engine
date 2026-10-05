@@ -88,7 +88,9 @@ class Live:
             "/governance/validate-action", json={"action": action, "params": params}
         )
 
-    async def execute(self, params: dict[str, Any], deferred_id: str | None = None) -> str:
+    async def execute(
+        self, params: dict[str, Any], deferred_id: str | None = None
+    ) -> str:
         """Run ``execute_trade_action`` in the gateway; return its output string."""
         body = {**params, **({"deferred_id": deferred_id} if deferred_id else {})}
         resp = await self.gateway.post(
@@ -96,7 +98,9 @@ class Live:
         )
         resp.raise_for_status()
         result = resp.json()
-        return str(result.get("output") if result.get("status") == "SUCCESS" else result)
+        return str(
+            result.get("output") if result.get("status") == "SUCCESS" else result
+        )
 
     async def approve(self, deferred_id: str) -> None:
         """Record the two-operator quorum through the compliance bridge."""
@@ -120,17 +124,25 @@ async def live() -> AsyncIterator[Live]:
     missing = [name for name in _ENV if not os.environ.get(name)]
     if missing:
         pytest.fail(f"--run-e2e requires {', '.join(missing)}")
-    operators = tuple(p.strip() for p in os.environ["CAGE_E2E_OPERATOR_PRINCIPALS"].split(","))
+    operators = tuple(
+        p.strip() for p in os.environ["CAGE_E2E_OPERATOR_PRINCIPALS"].split(",")
+    )
     if len(operators) != 2 or len(set(operators)) != 2:
         pytest.fail("CAGE_E2E_OPERATOR_PRINCIPALS must name two distinct operators")
     async with (
-        httpx.AsyncClient(base_url=os.environ["CAGE_E2E_GATEWAY_URL"], timeout=_TIMEOUT) as gw,
+        httpx.AsyncClient(
+            base_url=os.environ["CAGE_E2E_GATEWAY_URL"], timeout=_TIMEOUT
+        ) as gw,
         httpx.AsyncClient(
             base_url=os.environ["CAGE_E2E_UNMESHED_GATEWAY_URL"], timeout=_TIMEOUT
         ) as unmeshed,
-        httpx.AsyncClient(base_url=os.environ["CAGE_E2E_BRIDGE_URL"], timeout=_TIMEOUT) as bridge,
+        httpx.AsyncClient(
+            base_url=os.environ["CAGE_E2E_BRIDGE_URL"], timeout=_TIMEOUT
+        ) as bridge,
     ):
-        yield Live(gw, unmeshed, bridge, os.environ["CAGE_E2E_INTERNAL_TOKEN"], operators)  # type: ignore[arg-type]
+        yield Live(
+            gw, unmeshed, bridge, os.environ["CAGE_E2E_INTERNAL_TOKEN"], operators
+        )  # type: ignore[arg-type]
 
 
 def _trade(amount: float, role: str = "junior", **extra: Any) -> dict[str, Any]:
@@ -177,7 +189,9 @@ def _jwk_to_pem(jwk: dict[str, Any]) -> bytes:
 
     if jwk["kty"] == "EC":
         curve = {"P-256": ec.SECP256R1(), "P-384": ec.SECP384R1()}[jwk["crv"]]
-        key: Any = ec.EllipticCurvePublicNumbers(_int("x"), _int("y"), curve).public_key()
+        key: Any = ec.EllipticCurvePublicNumbers(
+            _int("x"), _int("y"), curve
+        ).public_key()
     elif jwk["kty"] == "RSA":
         key = rsa.RSAPublicNumbers(_int("e"), _int("n")).public_key()
     else:
@@ -195,7 +209,9 @@ async def test_jwks_holds_only_asymmetric_keys_with_kid(live: Live) -> None:
     for jwk in keys:
         assert jwk.get("kid"), jwk
         assert jwk["kty"] in {"EC", "RSA"}, jwk  # never "oct" (HMAC)
-        assert "d" not in jwk and "k" not in jwk, "private or symmetric material published"
+        assert "d" not in jwk and "k" not in jwk, (
+            "private or symmetric material published"
+        )
 
 
 async def test_allow_envelope_verifies_by_kid_against_fetched_jwks(live: Live) -> None:
@@ -207,7 +223,9 @@ async def test_allow_envelope_verifies_by_kid_against_fetched_jwks(live: Live) -
     for jwk in (await live.gateway.get("/governance/jwks")).json()["keys"]:
         trusted.add_key(_jwk_to_pem(jwk), kid=jwk["kid"])
 
-    resp = await live.validate("check_balance", {"account_id": "e2e", "confidence": 0.99})
+    resp = await live.validate(
+        "check_balance", {"account_id": "e2e", "confidence": 0.99}
+    )
     assert resp.status_code == 200, resp.text
     envelope = resp.json()
     assert envelope["payload"]["verdict"] == "ALLOW"
@@ -248,7 +266,9 @@ async def test_s1a_small_junior_trade_allows_and_executes_once(live: Live) -> No
     assert (await live.execute(params)).startswith("EXECUTED")
 
 
-async def test_s1b_mid_junior_trade_requires_approval_for_opa_review(live: Live) -> None:
+async def test_s1b_mid_junior_trade_requires_approval_for_opa_review(
+    live: Live,
+) -> None:
     resp = await live.validate("execute_trade", _trade(7_500.0))
     body = _body(resp)
     assert body["verdict"] == "REQUIRE_APPROVAL"
@@ -301,7 +321,9 @@ async def test_s3_concurrent_replay_executes_exactly_once(live: Live) -> None:
         live.execute(params, deferred_id), live.execute(params, deferred_id)
     )
 
-    assert sorted(out.split(":", 1)[0] for out in outputs) == ["BLOCKED", "EXECUTED"], outputs
+    assert sorted(out.split(":", 1)[0] for out in outputs) == ["BLOCKED", "EXECUTED"], (
+        outputs
+    )
 
 
 # ── S4: refusal ──────────────────────────────────────────────────────────────

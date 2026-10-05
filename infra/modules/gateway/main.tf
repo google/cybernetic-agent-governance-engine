@@ -159,6 +159,20 @@ resource "kubernetes_deployment" "gateway" {
             }
           }
 
+          # Deployment jurisdiction: single source is the cage-deployment
+          # ConfigMap (modules/deployment_config). optional = false: a pod
+          # never starts without a declared region.
+          env {
+            name = "CAGE_DEPLOYMENT_REGION"
+            value_from {
+              config_map_key_ref {
+                name     = var.deployment_config_map_name
+                key      = "CAGE_DEPLOYMENT_REGION"
+                optional = false
+              }
+            }
+          }
+
           env {
             name  = "PORT"
             value = "8080"

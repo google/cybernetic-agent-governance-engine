@@ -75,10 +75,14 @@ class _Tier(MutatingTier):
             await self._commit_blocks.wait()
         return [], CommitReceipt(tier=self._name)
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         self.log.append(f"confirm:{self._name}")
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         if self._rollback_delay:
             await asyncio.sleep(self._rollback_delay)
         self.log.append(f"rollback:{self._name}")
@@ -109,7 +113,9 @@ async def test_cancel_during_second_commit_rolls_back_first() -> None:
 @pytest.mark.asyncio
 async def test_cancel_during_rollback_still_completes_every_rollback() -> None:
     log: list[str] = []
-    tiers = [_Tier(n, i, log, rollback_delay=0.02) for i, n in enumerate(["a", "b", "c"])]
+    tiers = [
+        _Tier(n, i, log, rollback_delay=0.02) for i, n in enumerate(["a", "b", "c"])
+    ]
     committed = [(DomainTierStage(t), CommitReceipt(tier=t.tier_name)) for t in tiers]
 
     task = asyncio.create_task(rollback_pairs(committed, _ctx()))
@@ -138,8 +144,12 @@ async def test_repeated_cancellation_cannot_abort_rollback() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("escape", [asyncio.CancelledError(), _Escape()], ids=["cancelled", "base"])
-async def test_base_exception_in_one_rollback_does_not_stop_others(escape: BaseException) -> None:
+@pytest.mark.parametrize(
+    "escape", [asyncio.CancelledError(), _Escape()], ids=["cancelled", "base"]
+)
+async def test_base_exception_in_one_rollback_does_not_stop_others(
+    escape: BaseException,
+) -> None:
     log: list[str] = []
     tiers = [
         _Tier("a", 1, log),

@@ -52,8 +52,8 @@ from src.gateway.governance.ftra.models import (
     FTRA_REGISTRY_UNAVAILABLE,
     FTRA_UNREGISTERED_ACTION,
     ExecutionPlan,
-    FTRAVerdict,
     FtraBoundaryResult,
+    FTRAVerdict,
     PlanStep,
     RegistryState,
     TerminalClassification,
@@ -74,7 +74,9 @@ _magnitude = extract_field_magnitude("amount")
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _write_registry(path: Path, *, envelope: dict[str, Any] | None = None, sign: bool = True) -> Path:
+def _write_registry(
+    path: Path, *, envelope: dict[str, Any] | None = None, sign: bool = True
+) -> Path:
     doc: dict[str, Any] = {
         "terminals": {
             "move_funds": "IRREVERSIBLE_TERMINAL",
@@ -112,7 +114,9 @@ def _clear(**overrides: Any) -> str | None:
     return conditional_clear_reason(**kwargs)
 
 
-def _stage(registry_path: Path, extractor: Any = _magnitude) -> tuple[FtraStage, MagicMock]:
+def _stage(
+    registry_path: Path, extractor: Any = _magnitude
+) -> tuple[FtraStage, MagicMock]:
     metrics = MagicMock()
     stage = FtraStage(metrics=metrics, magnitude_extractor=extractor)
     stage._ftra_classifier = IrreversibilityClassifier(registry_path)
@@ -120,7 +124,9 @@ def _stage(registry_path: Path, extractor: Any = _magnitude) -> tuple[FtraStage,
 
 
 async def _output(stage: FtraStage, action: str, **params: Any) -> StageOutput:
-    return await stage.run(StageContext(action=action, params=params, profile=Profile.FULL))
+    return await stage.run(
+        StageContext(action=action, params=params, profile=Profile.FULL)
+    )
 
 
 async def _run(stage: FtraStage, action: str, **params: Any) -> list[Any]:
@@ -133,39 +139,78 @@ async def _run(stage: FtraStage, action: str, **params: Any) -> list[Any]:
 @pytest.mark.parametrize(
     ("classification", "state", "code", "kind"),
     [
-        (_IRR, RegistryState.REGISTERED, FTRA_REGISTERED_IRREVERSIBLE, ViolationKind.HITL),
-        (_EXT, RegistryState.REGISTERED, FTRA_REGISTERED_EXTERNALLY_REVERSIBLE, ViolationKind.HITL),
-        (_IRR, RegistryState.UNREGISTERED, FTRA_UNREGISTERED_ACTION, ViolationKind.HITL),
-        (_IRR, RegistryState.INVALID_ENTRY, FTRA_REGISTRY_ENTRY_INVALID, ViolationKind.HITL),
-        (_IRR, RegistryState.UNAVAILABLE, FTRA_REGISTRY_UNAVAILABLE, ViolationKind.HARD),
+        (
+            _IRR,
+            RegistryState.REGISTERED,
+            FTRA_REGISTERED_IRREVERSIBLE,
+            ViolationKind.HITL,
+        ),
+        (
+            _EXT,
+            RegistryState.REGISTERED,
+            FTRA_REGISTERED_EXTERNALLY_REVERSIBLE,
+            ViolationKind.HITL,
+        ),
+        (
+            _IRR,
+            RegistryState.UNREGISTERED,
+            FTRA_UNREGISTERED_ACTION,
+            ViolationKind.HITL,
+        ),
+        (
+            _IRR,
+            RegistryState.INVALID_ENTRY,
+            FTRA_REGISTRY_ENTRY_INVALID,
+            ViolationKind.HITL,
+        ),
+        (
+            _IRR,
+            RegistryState.UNAVAILABLE,
+            FTRA_REGISTRY_UNAVAILABLE,
+            ViolationKind.HARD,
+        ),
     ],
 )
 def test_each_provenance_has_its_own_code(classification, state, code, kind) -> None:
-    result = FtraBoundaryResult.from_classification(classification, "a", registry_state=state)
+    result = FtraBoundaryResult.from_classification(
+        classification, "a", registry_state=state
+    )
     assert [(v.code, v.kind) for v in result.violations] == [(code, kind)]
     assert result.requires_hitl and not result.auto_cleared
 
 
 @pytest.mark.parametrize(
-    "state", [RegistryState.UNREGISTERED, RegistryState.INVALID_ENTRY, RegistryState.UNAVAILABLE]
+    "state",
+    [
+        RegistryState.UNREGISTERED,
+        RegistryState.INVALID_ENTRY,
+        RegistryState.UNAVAILABLE,
+    ],
 )
 def test_clear_reason_on_non_registered_raises(state) -> None:
     with pytest.raises(ValueError, match="only a registered terminal"):
-        FtraBoundaryResult.from_classification(_IRR, "a", registry_state=state, clear_reason="x")
+        FtraBoundaryResult.from_classification(
+            _IRR, "a", registry_state=state, clear_reason="x"
+        )
 
 
 def test_clear_reason_on_registered_non_terminal_raises() -> None:
     with pytest.raises(ValueError, match="only a registered terminal"):
         FtraBoundaryResult.from_classification(
-            TerminalClassification.READ_ONLY, "a",
-            registry_state=RegistryState.REGISTERED, clear_reason="x",
+            TerminalClassification.READ_ONLY,
+            "a",
+            registry_state=RegistryState.REGISTERED,
+            clear_reason="x",
         )
 
 
 def test_registered_terminal_with_clear_reason_carries_no_violation() -> None:
     result = FtraBoundaryResult.from_classification(
-        _IRR, "a", registry_state=RegistryState.REGISTERED,
-        bypassed_ftra_node=True, clear_reason="inside envelope",
+        _IRR,
+        "a",
+        registry_state=RegistryState.REGISTERED,
+        bypassed_ftra_node=True,
+        clear_reason="inside envelope",
     )
     assert result.violations == [] and result.auto_cleared and result.is_safe
     assert result.bypassed_ftra_node is False
@@ -173,19 +218,34 @@ def test_registered_terminal_with_clear_reason_carries_no_violation() -> None:
 
 def test_classifier_reports_provenance(registry: Path) -> None:
     c = IrreversibilityClassifier(registry)
-    assert c.classify_with_provenance("move_funds").registry_state is RegistryState.REGISTERED
-    assert c.classify_with_provenance("move_funds").envelope == AutonomousEnvelope(_CEILING)
+    assert (
+        c.classify_with_provenance("move_funds").registry_state
+        is RegistryState.REGISTERED
+    )
+    assert c.classify_with_provenance("move_funds").envelope == AutonomousEnvelope(
+        _CEILING
+    )
     assert c.classify_with_provenance("refund").envelope is None
     unknown = c.classify_with_provenance("nope")
-    assert (unknown.classification, unknown.registry_state) == (_IRR, RegistryState.UNREGISTERED)
+    assert (unknown.classification, unknown.registry_state) == (
+        _IRR,
+        RegistryState.UNREGISTERED,
+    )
     invalid = c.classify_with_provenance("weird")
-    assert (invalid.classification, invalid.registry_state) == (_IRR, RegistryState.INVALID_ENTRY)
+    assert (invalid.classification, invalid.registry_state) == (
+        _IRR,
+        RegistryState.INVALID_ENTRY,
+    )
 
 
 def test_unreadable_registry_is_unavailable(tmp_path: Path) -> None:
     c = IrreversibilityClassifier(tmp_path / "missing.json")
     p = c.classify_with_provenance("move_funds")
-    assert (p.classification, p.registry_state, p.envelope) == (_IRR, RegistryState.UNAVAILABLE, None)
+    assert (p.classification, p.registry_state, p.envelope) == (
+        _IRR,
+        RegistryState.UNAVAILABLE,
+        None,
+    )
 
 
 # ── the conditional-clear predicate ──────────────────────────────────────────
@@ -278,7 +338,11 @@ def test_unsigned_envelope_is_rejected(tmp_path: Path) -> None:
 )
 def test_invalid_envelope_specs_refuse_to_load(tmp_path: Path, envelope, match) -> None:
     path = tmp_path / "r.json"
-    doc = {"terminals": json.loads(_write_registry(path, sign=False).read_text())["terminals"]}
+    doc = {
+        "terminals": json.loads(_write_registry(path, sign=False).read_text())[
+            "terminals"
+        ]
+    }
     doc["autonomous_envelope"] = envelope
     doc["manifest_sha256"] = registry_digest(doc)
     path.write_text(json.dumps(doc))
@@ -372,14 +436,18 @@ async def test_stage_with_raising_extractor_clears_nothing(registry: Path) -> No
 async def test_stage_never_clears_unregistered(registry: Path) -> None:
     stage, _ = _stage(registry)
     violations = await _run(stage, "nope", amount=1.0, confidence=_HIGH)
-    assert [(v.code, v.kind) for v in violations] == [(FTRA_UNREGISTERED_ACTION, ViolationKind.HITL)]
+    assert [(v.code, v.kind) for v in violations] == [
+        (FTRA_UNREGISTERED_ACTION, ViolationKind.HITL)
+    ]
 
 
 @pytest.mark.asyncio
 async def test_stage_unavailable_registry_is_hard(tmp_path: Path) -> None:
     stage, metrics = _stage(tmp_path / "missing.json")
     violations = await _run(stage, "move_funds", amount=1.0, confidence=_HIGH)
-    assert [(v.code, v.kind) for v in violations] == [(FTRA_REGISTRY_UNAVAILABLE, ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in violations] == [
+        (FTRA_REGISTRY_UNAVAILABLE, ViolationKind.HARD)
+    ]
     metrics.ftra_boundary_check.assert_called_once_with("error")
 
 
@@ -399,26 +467,40 @@ def _plan(*steps: tuple[str, dict[str, Any]]) -> ExecutionPlan:
 
 def test_analyzer_clears_terminal_inside_envelope(registry: Path) -> None:
     analyzer = PlanGraphAnalyzer(IrreversibilityClassifier(registry), _magnitude)
-    result = analyzer.analyze(_plan(("peek", {}), ("move_funds", {"amount": 10.0})), _HIGH)
+    result = analyzer.analyze(
+        _plan(("peek", {}), ("move_funds", {"amount": 10.0})), _HIGH
+    )
     assert result.verdict is FTRAVerdict.CLEAR
     assert result.auto_cleared_terminals == ["s1"]
 
 
 def test_analyzer_never_clears_unregistered_step(registry: Path) -> None:
     analyzer = PlanGraphAnalyzer(IrreversibilityClassifier(registry), _magnitude)
-    result = analyzer.analyze(_plan(("move_funds", {"amount": 10.0}), ("nope", {"amount": 1.0})), _HIGH)
+    result = analyzer.analyze(
+        _plan(("move_funds", {"amount": 10.0}), ("nope", {"amount": 1.0})), _HIGH
+    )
     assert result.verdict is not FTRAVerdict.CLEAR
 
 
 def test_analyzer_over_ceiling_is_not_clear(registry: Path) -> None:
     analyzer = PlanGraphAnalyzer(IrreversibilityClassifier(registry), _magnitude)
-    result = analyzer.analyze(_plan(("move_funds", {"amount": _CEILING * 10}),), _HIGH)
+    result = analyzer.analyze(
+        _plan(
+            ("move_funds", {"amount": _CEILING * 10}),
+        ),
+        _HIGH,
+    )
     assert result.verdict is not FTRAVerdict.CLEAR
 
 
 def test_analyzer_without_extractor_is_unchanged(registry: Path) -> None:
     analyzer = PlanGraphAnalyzer(IrreversibilityClassifier(registry))
-    result = analyzer.analyze(_plan(("move_funds", {"amount": 10.0}),), _HIGH)
+    result = analyzer.analyze(
+        _plan(
+            ("move_funds", {"amount": 10.0}),
+        ),
+        _HIGH,
+    )
     assert result.verdict is not FTRAVerdict.CLEAR
     assert result.auto_cleared_terminals == []
 

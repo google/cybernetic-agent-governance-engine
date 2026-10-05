@@ -25,52 +25,52 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 class TestNarrowerRegistry:
     """Test suite for NarrowerRegistry."""
-    
+
     def test_empty_registry_returns_none(self):
         """Empty registry returns None when no narrowers registered."""
         registry = NarrowerRegistry()
-        
+
         violation = Violation(
             tier="fiscal",
             code="SOFT_LIMIT_EXCEEDED",
             message="Amount $50000 exceeds soft limit of $25000",
             kind=ViolationKind.NARROWABLE,
         )
-        
+
         result = registry.find_narrower(
             violation=violation,
             action="execute_trade",
             params={"amount": 50000, "symbol": "AAPL"},
         )
-        
+
         assert result is None
-    
+
     def test_registry_initialization_with_narrowers(self):
         """Registry can be initialized with a list of narrowers."""
         amount_narrower = AmountNarrower()
         registry = NarrowerRegistry(narrowers=[amount_narrower])
-        
+
         violation = Violation(
             tier="fiscal",
             code="SOFT_LIMIT_EXCEEDED",
             message="Amount $50000 exceeds soft limit of $25000",
             kind=ViolationKind.NARROWABLE,
         )
-        
+
         result = registry.find_narrower(
             violation=violation,
             action="execute_trade",
             params={"amount": 50000, "symbol": "AAPL"},
         )
-        
+
         assert result is not None
         assert isinstance(result, AmountNarrower)
-    
+
     def test_registry_register_narrower(self):
         """Registry.register() adds a narrower dynamically."""
         registry = NarrowerRegistry()
         amount_narrower = AmountNarrower()
-        
+
         # Verify initially empty
         violation = Violation(
             tier="fiscal",
@@ -78,22 +78,28 @@ class TestNarrowerRegistry:
             message="Amount $50000 exceeds soft limit of $25000",
             kind=ViolationKind.NARROWABLE,
         )
-        assert registry.find_narrower(violation, "execute_trade", {"amount": 50000}) is None
-        
+        assert (
+            registry.find_narrower(violation, "execute_trade", {"amount": 50000})
+            is None
+        )
+
         # Register narrower
         registry.register(amount_narrower)
-        
+
         # Verify now finds the narrower
-        result = registry.find_narrower(violation, "execute_trade", {"amount": 50000, "symbol": "AAPL"})
+        result = registry.find_narrower(
+            violation, "execute_trade", {"amount": 50000, "symbol": "AAPL"}
+        )
         assert result is not None
         assert isinstance(result, AmountNarrower)
-    
+
     def test_registry_returns_first_matching_narrower(self):
         """Registry returns the first narrower that can handle the violation."""
+
         class FirstNarrower:
             def can_narrow(self, violation, action, params):
                 return "amount" in params
-            
+
             def narrow(self, violation, action, params):
                 return NarrowingResult(
                     can_narrow=True,
@@ -101,11 +107,11 @@ class TestNarrowerRegistry:
                     constraints_applied=["first"],
                     narrowing_reason="First narrower",
                 )
-        
+
         class SecondNarrower:
             def can_narrow(self, violation, action, params):
                 return "amount" in params
-            
+
             def narrow(self, violation, action, params):
                 return NarrowingResult(
                     can_narrow=True,
@@ -113,59 +119,63 @@ class TestNarrowerRegistry:
                     constraints_applied=["second"],
                     narrowing_reason="Second narrower",
                 )
-        
+
         first = FirstNarrower()
         second = SecondNarrower()
         registry = NarrowerRegistry(narrowers=[first, second])
-        
+
         violation = Violation(
             tier="test",
             code="TEST_VIOLATION",
             message="Test violation",
             kind=ViolationKind.NARROWABLE,
         )
-        
+
         result = registry.find_narrower(violation, "test", {"amount": 100})
-        
+
         # Should return first matching narrower
         assert result is first
         assert result is not second
-    
+
     def test_registry_skips_non_matching_narrowers(self):
         """Registry skips narrowers that cannot handle the violation."""
+
         class NonMatchingNarrower:
             def can_narrow(self, violation, action, params):
                 return False  # Never matches
-            
+
             def narrow(self, violation, action, params):
                 raise NotImplementedError("Should not be called")
-        
+
         non_matching = NonMatchingNarrower()
         amount_narrower = AmountNarrower()
         registry = NarrowerRegistry(narrowers=[non_matching, amount_narrower])
-        
+
         violation = Violation(
             tier="fiscal",
             code="SOFT_LIMIT_EXCEEDED",
             message="Amount $50000 exceeds soft limit of $25000",
             kind=ViolationKind.NARROWABLE,
         )
-        
+
         result = registry.find_narrower(
             violation=violation,
             action="execute_trade",
             params={"amount": 50000, "symbol": "AAPL"},
         )
-        
+
         # Should skip non-matching and return amount_narrower
         assert result is amount_narrower
-    
+
     def test_registry_with_multiple_narrowers(self):
         """Registry handles multiple different narrower types."""
+
         class ScopeNarrower:
             def can_narrow(self, violation, action, params):
-                return "scope" in params and "exceeds scope" in violation.message.lower()
-            
+                return (
+                    "scope" in params and "exceeds scope" in violation.message.lower()
+                )
+
             def narrow(self, violation, action, params):
                 return NarrowingResult(
                     can_narrow=True,
@@ -173,11 +183,11 @@ class TestNarrowerRegistry:
                     constraints_applied=["scope <= read"],
                     narrowing_reason="Restricted scope to read-only",
                 )
-        
+
         amount_narrower = AmountNarrower()
         scope_narrower = ScopeNarrower()
         registry = NarrowerRegistry(narrowers=[amount_narrower, scope_narrower])
-        
+
         # Test amount violation routes to amount narrower
         amount_violation = Violation(
             tier="fiscal",
@@ -191,7 +201,7 @@ class TestNarrowerRegistry:
             {"amount": 50000},
         )
         assert isinstance(amount_result, AmountNarrower)
-        
+
         # Test scope violation routes to scope narrower
         scope_violation = Violation(
             tier="scope",
@@ -209,17 +219,17 @@ class TestNarrowerRegistry:
 
 class TestNarrowerProtocol:
     """Test suite for Narrower protocol conformance."""
-    
+
     def test_amount_narrower_conforms_to_protocol(self):
         """AmountNarrower implements the Narrower protocol."""
         narrower = AmountNarrower()
-        
+
         # Verify protocol methods exist
         assert hasattr(narrower, "can_narrow")
         assert hasattr(narrower, "narrow")
         assert callable(narrower.can_narrow)
         assert callable(narrower.narrow)
-    
+
     def test_narrowing_result_is_frozen_dataclass(self):
         """NarrowingResult is an immutable frozen dataclass."""
         result = NarrowingResult(
@@ -228,11 +238,11 @@ class TestNarrowerProtocol:
             constraints_applied=["amount <= 1000"],
             narrowing_reason="Test",
         )
-        
+
         # Verify frozen (immutable)
         with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
             result.can_narrow = False
-        
+
         # Verify fields are accessible
         assert result.can_narrow is True
         assert result.narrowed_params == {"amount": 1000}

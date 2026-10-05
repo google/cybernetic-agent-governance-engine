@@ -58,7 +58,9 @@ async def _revalidate(state: dict) -> dict:
         post_hitl_revalidate_node,
     )
 
-    forbidden = AsyncMock(side_effect=AssertionError("post-HITL node made a network call"))
+    forbidden = AsyncMock(
+        side_effect=AssertionError("post-HITL node made a network call")
+    )
     with patch.object(httpx.AsyncClient, "send", forbidden):
         return await post_hitl_revalidate_node(state)
 
@@ -215,7 +217,9 @@ class TestPostHitlRevalidateNode:
     """The advisor applies only the reviewer's slippage tolerance after approval."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("drift", [0.0, 0.67, 2.0], ids=["zero", "within", "at_limit"])
+    @pytest.mark.parametrize(
+        "drift", [0.0, 0.67, 2.0], ids=["zero", "within", "at_limit"]
+    )
     async def test_within_slippage_passes_without_network(self, drift):
         state = _base_state(
             rehydration_result={"status": "OK", "ticker": "AAPL", "drift_pct": drift},
@@ -262,7 +266,11 @@ class TestPostHitlRevalidateNode:
     async def test_skipped_rehydration_passes_to_gateway_revalidation(self):
         """Unknown drift cannot be gated here; the gateway re-validates on execution."""
         state = _base_state(
-            rehydration_result={"status": "SKIPPED", "reason": "no_ticker", "drift_pct": None},
+            rehydration_result={
+                "status": "SKIPPED",
+                "reason": "no_ticker",
+                "drift_pct": None,
+            },
             approval_decision={
                 "approved": True,
                 "reviewer": "t@x.com",
@@ -277,7 +285,9 @@ class TestPostHitlRevalidateNode:
         """The advisor has no post-HITL governance endpoint to call (POAM-2026-079)."""
         import inspect
 
-        from src.governed_financial_advisor.graph.subgraphs import governed_trader_graph as mod
+        from src.governed_financial_advisor.graph.subgraphs import (
+            governed_trader_graph as mod,
+        )
 
         source = inspect.getsource(mod.post_hitl_revalidate_node)
         assert "GatewayClient" not in source
@@ -376,7 +386,9 @@ class TestGraphTopology:
     def test_graph_contains_drift_blocked_node(self, governed_trader_graph):
         assert "drift_blocked" in governed_trader_graph.nodes
 
-    def test_graph_still_contains_executor_and_approval_nodes(self, governed_trader_graph):
+    def test_graph_still_contains_executor_and_approval_nodes(
+        self, governed_trader_graph
+    ):
         """Regression: original nodes must still be present."""
         for node in ("approval", "rejection", "executor", "tools"):
             assert node in governed_trader_graph.nodes, (

@@ -60,13 +60,19 @@ class _FakeReadOnly(_FakeBehaviour, ReadOnlyTier):
 
 
 class _FakeMutating(_FakeBehaviour, MutatingTier):
-    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list, CommitReceipt | None]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list, CommitReceipt | None]:
         return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
 
@@ -92,7 +98,9 @@ def _make_governor(classification_engine, **overrides):
 class TestFormalModelParity:
     """Verify registered tier names match the formal model's TIERS tuple."""
 
-    def test_financial_tiers_match_formal_model_subsequence(self, classification_engine):
+    def test_financial_tiers_match_formal_model_subsequence(
+        self, classification_engine
+    ):
         """Register tiers matching the formal model's financial-domain tiers.
 
         The formal model in proof/model.py defines:

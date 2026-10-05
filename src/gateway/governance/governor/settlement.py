@@ -78,7 +78,9 @@ class SettlementLedger:
             raise ValueError("hold_seconds must be positive")
         self._hold_seconds = hold_seconds
         self._clock = clock
-        self._entries: OrderedDict[str, tuple[float, tuple[HeldCommit, ...]]] = OrderedDict()
+        self._entries: OrderedDict[str, tuple[float, tuple[HeldCommit, ...]]] = (
+            OrderedDict()
+        )
         self._lock = threading.Lock()
 
     def __len__(self) -> int:

@@ -157,7 +157,9 @@ async def test_opa_error_stops_before_confidence(profile: Profile) -> None:
 
     result = await _run(stages, profile)
 
-    assert [(v.code, v.kind) for v in result.violations] == [("OPA_ERROR", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in result.violations] == [
+        ("OPA_ERROR", ViolationKind.HARD)
+    ]
     assert result.opa_verdict is None
     assert spy.seen == []
 
@@ -165,7 +167,9 @@ async def test_opa_error_stops_before_confidence(profile: Profile) -> None:
 @pytest.mark.asyncio
 @_PROFILES
 @pytest.mark.parametrize("raw", ["REJECT", {"unexpected": 1}, None, 1])
-async def test_undecodable_opa_stops_before_confidence(profile: Profile, raw: Any) -> None:
+async def test_undecodable_opa_stops_before_confidence(
+    profile: Profile, raw: Any
+) -> None:
     """(c) OPA answers something undecodable → HARD; confidence never runs."""
     stages, spy = _assembled(_Opa(raw), _stpa())
 

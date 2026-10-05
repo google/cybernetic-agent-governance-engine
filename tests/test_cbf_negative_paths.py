@@ -217,7 +217,9 @@ async def test_read_cbf_state_falls_back_when_kms_verify_raises(make_cbf):
     verified.verified_at = 1_700_000_000.0
 
     mock_signer = MagicMock()
-    mock_signer.verify_decision = MagicMock(side_effect=RuntimeError("KMS network error"))
+    mock_signer.verify_decision = MagicMock(
+        side_effect=RuntimeError("KMS network error")
+    )
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
@@ -930,7 +932,8 @@ async def test_verify_action_never_accumulates_debits(make_cbf):
         ),
     ):
         verdicts = [
-            await cbf.verify_action("execute_trade", {"amount": 10_000.0}) for _ in range(5)
+            await cbf.verify_action("execute_trade", {"amount": 10_000.0})
+            for _ in range(5)
         ]
 
     assert verdicts == ["SAFE"] * 5

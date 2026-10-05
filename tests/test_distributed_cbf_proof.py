@@ -140,7 +140,9 @@ def test_cfg_matches_spec_and_python_config(name: str) -> None:
 
     cfg = dcbf.CONFIGS[name]
     tla_bool = {"TRUE": True, "FALSE": False}
-    assert consts["AgentIDs"].strip("{}").replace(" ", "").count(",") + 1 == cfg.n_agents
+    assert (
+        consts["AgentIDs"].strip("{}").replace(" ", "").count(",") + 1 == cfg.n_agents
+    )
     assert int(consts["InitialPool"]) == dcbf.INITIAL_POOL
     assert int(consts["ReserveAmount"]) == dcbf.RESERVE_AMOUNT
     assert int(consts["MaxAgentReserve"]) == dcbf.MAX_AGENT_RESERVE
@@ -184,7 +186,9 @@ class _AlwaysNarrows:
     def can_narrow(self, violation: Violation, action: str, params: dict) -> bool:
         return True
 
-    def narrow(self, violation: Violation, action: str, params: dict) -> NarrowingResult:
+    def narrow(
+        self, violation: Violation, action: str, params: dict
+    ) -> NarrowingResult:
         return NarrowingResult(
             can_narrow=True,
             narrowed_params={"amount": 1},
@@ -229,6 +233,10 @@ def test_verdict_of_matches_classification_engine() -> None:
             )
             got = engine.classify(ctx, "act").decision.value
             want = verdict_of(
-                kinds, low_confidence=low, narrows=narrows, manual_review=manual, defer_enabled=defer
+                kinds,
+                low_confidence=low,
+                narrows=narrows,
+                manual_review=manual,
+                defer_enabled=defer,
             )
             assert got == want, (kinds, low, narrows, manual, defer)

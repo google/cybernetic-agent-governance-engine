@@ -137,7 +137,9 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
             ) from err
 
         client = Langfuse(public_key=public_key, secret_key=secret_key, host=host)
-        logger.info("[CTRL_TEL_003] LangfuseTelemetryProvider initialised (host=%s).", host)
+        logger.info(
+            "[CTRL_TEL_003] LangfuseTelemetryProvider initialised (host=%s).", host
+        )
         return cls(langfuse_client=client)
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
@@ -211,7 +213,12 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
                 )
                 return pd.DataFrame(
                     rows,
-                    columns=["market_volatility", "trade_amount", "risk_score", "timestamp"],
+                    columns=[
+                        "market_volatility",
+                        "trade_amount",
+                        "risk_score",
+                        "timestamp",
+                    ],
                 )
 
             logger.info(

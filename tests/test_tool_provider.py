@@ -175,7 +175,9 @@ class TestExecuteTradeActionRoutingSealEnforcement:
             assert "EXECUTED" in result
             assert "AAPL" in result
             # The executed trade settles its seal: reservations become permanent.
-            deps["governor"].settle.assert_awaited_once_with("valid-seal-abc123", executed=True)
+            deps["governor"].settle.assert_awaited_once_with(
+                "valid-seal-abc123", executed=True
+            )
 
     @pytest.mark.asyncio
     async def test_execute_trade_action_dry_run_requires_seal(self):

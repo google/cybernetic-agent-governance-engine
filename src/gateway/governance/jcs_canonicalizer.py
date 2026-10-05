@@ -23,12 +23,12 @@ from src.gateway.governance.vendor.jcs import canonicalize
 
 def _prepare_for_canonicalization(obj: Any) -> Any:
     """Recursively convert non-JSON-serializable objects to dicts.
-    
+
     Handles Violation dataclass instances that may appear in standing_at_refusal
     or other nested structures before JCS canonicalization.
     """
     from src.gateway.governance.contracts import Violation
-    
+
     if isinstance(obj, Violation):
         # Convert Violation to dict for JSON serialization
         return {
@@ -50,7 +50,7 @@ def jcs_canonicalize_plan(plan: dict[str, Any]) -> bytes:
 
     This replaces ad-hoc json.dumps(sort_keys=True) which is vulnerable to
     floating-point canonicalization drift between different languages (e.g. Python vs Go).
-    
+
     Preprocesses the payload to convert any Violation dataclass instances to dicts
     before canonicalization.
     """

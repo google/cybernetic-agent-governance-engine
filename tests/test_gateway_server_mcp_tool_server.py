@@ -90,7 +90,9 @@ def _mcp_import_stubs():
     }
 
 
-def _mock_governor(*, verify_result: dict | None = None, opa_decision: str = "ALLOW") -> MagicMock:
+def _mock_governor(
+    *, verify_result: dict | None = None, opa_decision: str = "ALLOW"
+) -> MagicMock:
     """A ``SymbolicGovernor``-shaped mock for ``app.state.governor``."""
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
@@ -294,13 +296,18 @@ class TestMCPToolServerFunctions:
 
         stubs = _mcp_import_stubs()
         refusal = Violation(
-            tier="cbf", code="CBF_BARRIER_VIOLATED", message="UNSAFE: bankruptcy", kind=ViolationKind.HARD
+            tier="cbf",
+            code="CBF_BARRIER_VIOLATED",
+            message="UNSAFE: bankruptcy",
+            kind=ViolationKind.HARD,
         )
         with patch.dict("sys.modules", stubs):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
 
-            mod.app.state.governor = _mock_governor(verify_result={"violations": [refusal]})
+            mod.app.state.governor = _mock_governor(
+                verify_result={"violations": [refusal]}
+            )
 
             res = await mod.simulate_governance_check("execute_trade", {"amount": 100})
             # verify() reported no classified decision: fail closed to DENY.
@@ -317,7 +324,10 @@ class TestMCPToolServerFunctions:
         from src.gateway.governance.contracts import Violation, ViolationKind
 
         hitl = Violation(
-            tier="opa", code="OPA_MANUAL_REVIEW", message="needs review", kind=ViolationKind.HITL
+            tier="opa",
+            code="OPA_MANUAL_REVIEW",
+            message="needs review",
+            kind=ViolationKind.HITL,
         )
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
@@ -421,7 +431,9 @@ class TestActivateDomainOpaHandshake:
         from src.gateway.governance.contracts import DomainConfig, PluginContribution
 
         config = DomainConfig(
-            ftra_registry_path=MagicMock(), opa_package="trade.governance", opa_required_rules=("allow",)
+            ftra_registry_path=MagicMock(),
+            opa_package="trade.governance",
+            opa_required_rules=("allow",),
         )
         tool_provider = MagicMock()
         governor = _mock_governor()
@@ -435,8 +447,14 @@ class TestActivateDomainOpaHandshake:
             import src.gateway.server.mcp_tool_server as mod
 
             with (
-                patch("src.gateway.governance.governor.bootstrap.bootstrap_governor", return_value=governor),
-                patch("src.gateway.governance.plugin_loader.active_domain_config", return_value=config),
+                patch(
+                    "src.gateway.governance.governor.bootstrap.bootstrap_governor",
+                    return_value=governor,
+                ),
+                patch(
+                    "src.gateway.governance.plugin_loader.active_domain_config",
+                    return_value=config,
+                ),
             ):
                 try:
                     outcome = asyncio.run(mod._activate_domain())
@@ -447,7 +465,9 @@ class TestActivateDomainOpaHandshake:
     def test_opa_mismatch_aborts_startup_before_install(self):
         from src.gateway.core.policy import OPAPolicyMismatchError
 
-        verify = AsyncMock(side_effect=OPAPolicyMismatchError("OPA has no module declaring package"))
+        verify = AsyncMock(
+            side_effect=OPAPolicyMismatchError("OPA has no module declaring package")
+        )
         _governor, tool_provider, mod, outcome = self._run(verify)
         assert isinstance(outcome, OPAPolicyMismatchError)
         tool_provider.register_tools.assert_not_called()

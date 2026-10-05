@@ -303,7 +303,8 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
     asyncio.run(
         fake_redis_async.set(
-            reconciled_state_key(cbf.invariant.invariant_id), fresh_result.to_redis_payload()
+            reconciled_state_key(cbf.invariant.invariant_id),
+            fresh_result.to_redis_payload(),
         )
     )
 
@@ -490,7 +491,8 @@ def test_debits_accumulate_in_ledger_within_cycle() -> None:
     asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
     asyncio.run(
         fake_redis_async.set(
-            reconciled_state_key(cbf.invariant.invariant_id), fresh_result.to_redis_payload()
+            reconciled_state_key(cbf.invariant.invariant_id),
+            fresh_result.to_redis_payload(),
         )
     )
 
@@ -514,12 +516,18 @@ def test_debits_accumulate_in_ledger_within_cycle() -> None:
         # Execute two trades against the same (unchanged) snapshot
         ok1, msg1, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
-                "execute_trade", {"amount": 100.0}, governance_signature="sig1", debit_id="d1"
+                "execute_trade",
+                {"amount": 100.0},
+                governance_signature="sig1",
+                debit_id="d1",
             )
         )
         ok2, msg2, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
-                "execute_trade", {"amount": 200.0}, governance_signature="sig2", debit_id="d2"
+                "execute_trade",
+                {"amount": 200.0},
+                governance_signature="sig2",
+                debit_id="d2",
             )
         )
     assert ok1 and ok2, (msg1, msg2)
@@ -535,7 +543,9 @@ def test_debits_accumulate_in_ledger_within_cycle() -> None:
     assert ledger["d2"]["amount"] == 200.0
     assert ledger["d1"]["snapshot_sequence"] == 1
     assert ledger["d2"]["snapshot_sequence"] == 1
-    assert float(asyncio.run(fake_redis_async.get(DEBITS_TOTAL_KEY))) == pytest.approx(300.0)
+    assert float(asyncio.run(fake_redis_async.get(DEBITS_TOTAL_KEY))) == pytest.approx(
+        300.0
+    )
     # Both commits were netted against the same reconciled scalar.
     assert float(asyncio.run(fake_redis_async.get(cbf.redis_key))) == pytest.approx(
         _RECON_BALANCE - 300.0

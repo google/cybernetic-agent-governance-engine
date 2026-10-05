@@ -87,7 +87,9 @@ async def test_opa_stage_run_leaves_instance_state_untouched() -> None:
     stage = OpaStage(_OutOfOrderPolicy())
     before = dict(vars(stage))
 
-    out = await stage.run(StageContext(action="x", params={"req": "B"}, profile=Profile.FULL))
+    out = await stage.run(
+        StageContext(action="x", params={"req": "B"}, profile=Profile.FULL)
+    )
 
     assert out.opa_verdict == OpaVerdict.MANUAL_REVIEW
     assert dict(vars(stage)) == before
@@ -107,7 +109,9 @@ async def test_ftra_stage_run_leaves_instance_state_untouched() -> None:
     results = {"A": _result("READ_ONLY"), "B": _result("REVERSIBLE")}
 
     class _Ftra(FtraStage):
-        async def _ftra_boundary_check(self, tool_name, tool_input, *, detect_bypass=True):
+        async def _ftra_boundary_check(
+            self, tool_name, tool_input, *, detect_bypass=True
+        ):
             return results[tool_input["req"]]
 
     stage = _Ftra()
@@ -129,7 +133,9 @@ async def test_interleaved_pipelines_never_observe_each_others_opa_verdict() -> 
     stages = [opa, recorder]
 
     def _ctx(req: str) -> StageContext:
-        return StageContext(action="execute_trade", params={"req": req}, profile=Profile.DRY_RUN)
+        return StageContext(
+            action="execute_trade", params={"req": req}, profile=Profile.DRY_RUN
+        )
 
     # A starts first but its OPA answer lands after B's has been decoded.
     result_a, result_b = await asyncio.gather(

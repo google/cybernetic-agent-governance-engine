@@ -100,4 +100,3 @@ def test_metrics_proxy_structure():
     data = resp.json()
     assert "error" in data["detail"] or "error" in data
     logger.info("✅ Metrics proxy structure check passed.")
-

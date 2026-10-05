@@ -49,8 +49,12 @@ _RETIRED_KSA = "financial-advisor-sa"
 _POD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}
 
 # KSAs whose GSA may hold a KMS signer role on some key.
-_SIGNING_KSAS = {"cage-gateway-sa", "cage-reconciler-sa",
-                 "cage-compliance-bridge-sa", "cage-benchmark-sa"}
+_SIGNING_KSAS = {
+    "cage-gateway-sa",
+    "cage-reconciler-sa",
+    "cage-compliance-bridge-sa",
+    "cage-benchmark-sa",
+}
 
 _ADVISOR_KSA = "cage-advisor-sa"
 _SIGNING_KEY_VARS = (
@@ -78,8 +82,20 @@ _PLACEHOLDER = re.compile(r"\$\{[A-Z0-9_]+\}")
 def _tracked(*roots: Path) -> list[Path]:
     """Tracked and new, non-ignored files (generated/ and tfstate are gitignored)."""
     out = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *(str(r.relative_to(_REPO)) for r in roots)],
-        cwd=_REPO, check=True, capture_output=True, text=True,
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            *(str(r.relative_to(_REPO)) for r in roots),
+        ],
+        cwd=_REPO,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     return [_REPO / f for f in out.split("\0") if f]
 
@@ -89,7 +105,9 @@ def _tf_sources() -> list[Path]:
 
 
 def _manifests() -> list[Path]:
-    return sorted(p for p in _tracked(_K8S) if p.name.endswith((".yaml", ".yaml.tpl", ".yml")))
+    return sorted(
+        p for p in _tracked(_K8S) if p.name.endswith((".yaml", ".yaml.tpl", ".yml"))
+    )
 
 
 def _load_docs(path: Path) -> list[dict]:
@@ -109,8 +127,8 @@ def _pod_spec(doc: dict) -> dict | None:
     if kind == "Pod":
         return spec
     if kind == "CronJob":
-        spec = ((spec.get("jobTemplate") or {}).get("spec") or {})
-    return ((spec.get("template") or {}).get("spec") or {})
+        spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+    return (spec.get("template") or {}).get("spec") or {}
 
 
 def _workloads() -> list[tuple[str, dict, dict]]:
@@ -143,12 +161,24 @@ def _declared_ksas() -> dict[tuple[str, str], dict]:
 def test_retired_shared_ksa_absent_from_infra_deployment_and_src() -> None:
     offenders = []
     for p in _tracked(_INFRA, _REPO / "deployment", _REPO / "src"):
-        if p.suffix not in {".tf", ".tfvars", ".yaml", ".yml", ".tpl", ".py", ".sh", ".md"}:
+        if p.suffix not in {
+            ".tf",
+            ".tfvars",
+            ".yaml",
+            ".yml",
+            ".tpl",
+            ".py",
+            ".sh",
+            ".md",
+        }:
             continue
         for n, line in enumerate(p.read_text(errors="ignore").splitlines(), 1):
             # Module validations name the retired KSA in order to reject it.
-            if _RETIRED_KSA in line and "!= \"financial-advisor-sa\"" not in line \
-                    and "financial-advisor-sa is retired" not in line:
+            if (
+                _RETIRED_KSA in line
+                and '!= "financial-advisor-sa"' not in line
+                and "financial-advisor-sa is retired" not in line
+            ):
                 offenders.append(f"{p.relative_to(_REPO)}:{n}")
     assert offenders == [], f"Retired shared KSA still referenced: {offenders}"
 
@@ -183,7 +213,9 @@ def test_annotated_ksas_map_one_to_one_to_their_own_gsa() -> None:
             f"{ns}/{name} is bound to a GSA it does not own: {gsa}"
         )
         gsas.setdefault(local_part, set()).add(name)
-    assert all(len(v) == 1 for v in gsas.values()), f"GSA shared by several KSAs: {gsas}"
+    assert all(len(v) == 1 for v in gsas.values()), (
+        f"GSA shared by several KSAs: {gsas}"
+    )
 
 
 def test_model_serving_pods_never_hold_a_signing_identity() -> None:
@@ -232,7 +264,9 @@ def test_no_kms_role_granted_at_keyring_or_project_scope() -> None:
         text = p.read_text()
         if re.search(r'resource\s+"google_kms_key_ring_iam_', text):
             offenders.append(f"{p.relative_to(_REPO)}: keyring-scoped IAM resource")
-        for block in re.findall(r'resource\s+"google_project_iam_[a-z_]+"[^{]*\{[^}]*\}', text, re.S):
+        for block in re.findall(
+            r'resource\s+"google_project_iam_[a-z_]+"[^{]*\{[^}]*\}', text, re.S
+        ):
             if re.search(
                 r'role\s*=\s*"roles/cloudkms\.(signer|signerVerifier|admin|publicKeyViewer|cryptoKeyEncrypterDecrypter)"',
                 block,
@@ -265,7 +299,9 @@ def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
     """§5.1: Gateway, reconciler, compliance bridge (EvidenceCustodian) and langfuse GSAs hold roles/memorystore.dbConnectionUser when IAM auth is enabled."""
     iam_tf = (_GKE / "iam.tf").read_text()
     for gsa in ("gateway", "reconciler", "compliance_bridge", "langfuse"):
-        assert f'resource "google_project_iam_member" "{gsa}_memorystore_user"' in iam_tf
+        assert (
+            f'resource "google_project_iam_member" "{gsa}_memorystore_user"' in iam_tf
+        )
     assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 4
 
 
@@ -352,7 +388,9 @@ def test_signing_key_policies_are_authoritative() -> None:
 def test_each_signing_key_has_only_its_documented_signers() -> None:
     kms_tf = (_GKE / "kms_signing.tf").read_text()
     found = {}
-    for key, signers in re.findall(r"(\w+)\s*=\s*\{\s*key\s*=[^\n]+\n\s*signers\s*=\s*\[([^\]]*)\]", kms_tf):
+    for key, signers in re.findall(
+        r"(\w+)\s*=\s*\{\s*key\s*=[^\n]+\n\s*signers\s*=\s*\[([^\]]*)\]", kms_tf
+    ):
         found[key] = set(re.findall(r"local\.(\w+)_member", signers))
     assert found == _EXPECTED_SIGNERS
 
@@ -364,13 +402,16 @@ def test_signing_keys_are_asymmetric_and_hsm_by_default() -> None:
     assert kms_tf.count('purpose  = "ASYMMETRIC_SIGN"') == len(keys)
     assert kms_tf.count('algorithm        = "EC_SIGN_P256_SHA256"') == len(keys)
     variables_tf = (_GKE / "variables.tf").read_text()
-    block = variables_tf.split('variable "kms_signing_protection_level"', 1)[1].split("\n}\n", 1)[0]
+    block = variables_tf.split('variable "kms_signing_protection_level"', 1)[1].split(
+        "\n}\n", 1
+    )[0]
     assert 'default     = "HSM"' in block
 
 
 def test_software_protection_only_in_dev_tfvars() -> None:
     offenders = [
-        p.name for p in _GKE.glob("*.tfvars")
+        p.name
+        for p in _GKE.glob("*.tfvars")
         if re.search(r'kms_signing_protection_level\s*=\s*"SOFTWARE"', p.read_text())
         and "dev" not in p.name
     ]
@@ -383,7 +424,9 @@ def test_software_protection_only_in_dev_tfvars() -> None:
 
 
 def test_advisor_ksa_has_no_cloud_identity() -> None:
-    advisor = [meta for (_, name), meta in _declared_ksas().items() if name == _ADVISOR_KSA]
+    advisor = [
+        meta for (_, name), meta in _declared_ksas().items() if name == _ADVISOR_KSA
+    ]
     assert advisor, f"{_ADVISOR_KSA} not declared"
     for meta in advisor:
         assert "iam.gke.io/gcp-service-account" not in (meta.get("annotations") or {})
@@ -412,7 +455,11 @@ def test_advisor_pods_receive_no_signing_key_variable() -> None:
                 if env.get("name") in _SIGNING_KEY_VARS:
                     offenders.append(f"{path}: {env['name']}")
     module_tf = (_INFRA / "modules" / "governed_advisor" / "main.tf").read_text()
-    offenders += [f"governed_advisor module: {v}" for v in _SIGNING_KEY_VARS if f'"{v}"' in module_tf]
+    offenders += [
+        f"governed_advisor module: {v}"
+        for v in _SIGNING_KEY_VARS
+        if f'"{v}"' in module_tf
+    ]
     assert offenders == [], f"Advisor receives a signing-key variable: {offenders}"
 
 
@@ -460,14 +507,29 @@ def test_signing_keys_never_live_in_a_secret_the_advisor_loads() -> None:
 
 
 def test_signing_key_secret_scan_detects_a_shared_secret() -> None:
-    planted = [(
-        "planted.yaml",
-        {},
-        {"containers": [{"env": [{
-            "name": "KMS_GOVERNANCE_KEY",
-            "valueFrom": {"secretKeyRef": {"name": "advisor-secrets", "key": "KMS_GOVERNANCE_KEY"}},
-        }]}]},
-    )]
+    planted = [
+        (
+            "planted.yaml",
+            {},
+            {
+                "containers": [
+                    {
+                        "env": [
+                            {
+                                "name": "KMS_GOVERNANCE_KEY",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": "advisor-secrets",
+                                        "key": "KMS_GOVERNANCE_KEY",
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                ]
+            },
+        )
+    ]
     assert _signing_key_refs_into({"advisor-secrets"}, planted) == [
         "planted.yaml: KMS_GOVERNANCE_KEY from advisor-secrets"
     ]
@@ -492,7 +554,9 @@ def test_advisor_pods_receive_no_governance_salt_or_seal_enforcement_vars() -> N
                 if env.get("name") in forbidden:
                     offenders.append(f"{path}: {env['name']}")
     module_tf = (_INFRA / "modules" / "governed_advisor" / "main.tf").read_text()
-    variables_tf = (_INFRA / "modules" / "governed_advisor" / "variables.tf").read_text()
+    variables_tf = (
+        _INFRA / "modules" / "governed_advisor" / "variables.tf"
+    ).read_text()
     offenders += [
         f"governed_advisor/main.tf: {v}" for v in forbidden if f'"{v}"' in module_tf
     ]
@@ -502,4 +566,3 @@ def test_advisor_pods_receive_no_governance_salt_or_seal_enforcement_vars() -> N
         if f'variable "{v}"' in variables_tf
     ]
     assert offenders == [], f"Advisor receives governance state variables: {offenders}"
-

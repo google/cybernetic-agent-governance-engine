@@ -170,7 +170,11 @@ class BudgetTierPlugin(MutatingTier):
         """Side-effect-free preview of commit() (DRY_RUN, or approval pending)."""
         if await self._ledger.would_accept(params["cost"]):
             return []
-        return [Violation(tier=self.tier_name, code="BUDGET_EXCEEDED", message="over budget")]
+        return [
+            Violation(
+                tier=self.tier_name, code="BUDGET_EXCEEDED", message="over budget"
+            )
+        ]
 
     async def commit(
         self, action: str, params: dict[str, Any]
@@ -178,8 +182,14 @@ class BudgetTierPlugin(MutatingTier):
         """Reserve atomically. The receipt is not None if and only if state was mutated."""
         token = await self._ledger.reserve(params["cost"])
         if token is None:
-            return [Violation(tier=self.tier_name, code="BUDGET_EXCEEDED", message="over budget")], None
-        return [], CommitReceipt(tier=self.tier_name, magnitude=params["cost"], token=token)
+            return [
+                Violation(
+                    tier=self.tier_name, code="BUDGET_EXCEEDED", message="over budget"
+                )
+            ], None
+        return [], CommitReceipt(
+            tier=self.tier_name, magnitude=params["cost"], token=token
+        )
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt

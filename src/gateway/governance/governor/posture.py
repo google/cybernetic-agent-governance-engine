@@ -86,8 +86,12 @@ def _check_tier_runtime_requirements(components: GovernorComponents) -> None:
     for tier in components.plugin_tiers:
         for module in getattr(tier, "runtime_requirements", ()):
             try:
+                # Module names come from code-declared plugin tier attributes
+                # (trusted composition-root input), never from request data.
+                # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
                 importlib.import_module(module)
-            except Exception as exc:  # e.g. dowhy failing on numpy>=2 raises non-ImportError
+            # e.g. dowhy failing on numpy>=2 raises non-ImportError
+            except Exception as exc:
                 raise RuntimeError(
                     f"tier {tier.tier_name!r} requires {module!r}, which failed to import: {exc}"
                 ) from exc
@@ -191,7 +195,9 @@ CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
 )
 
 
-def assert_production_posture(posture: DeploymentPosture, *, components: GovernorComponents) -> None:
+def assert_production_posture(
+    posture: DeploymentPosture, *, components: GovernorComponents
+) -> None:
     """Run every startup check for ``posture`` against the assembled ``components``.
 
     Raises:
@@ -209,7 +215,9 @@ def assert_production_posture(posture: DeploymentPosture, *, components: Governo
         except Exception as exc:
             failures.append((name, str(exc)))
     if not failures:
-        logger.info("startup posture %s: all %d checks passed", posture.value, len(CHECKS))
+        logger.info(
+            "startup posture %s: all %d checks passed", posture.value, len(CHECKS)
+        )
         return
     if is_enforcing(posture):
         detail = "; ".join(f"{name}: {msg}" for name, msg in failures)

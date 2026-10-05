@@ -263,8 +263,10 @@ class TestGeneratedSTPAValidator:
         assert isinstance(violations, list), "validate() must return a list"
         # UCA-1 is write_db specific — should not appear for execute_trade
         uca1_violations = [
-            v for v in violations
-            if "UCA_1" in getattr(v, "code", str(v)) or "UCA-1" in getattr(v, "code", str(v))
+            v
+            for v in violations
+            if "UCA_1" in getattr(v, "code", str(v))
+            or "UCA-1" in getattr(v, "code", str(v))
         ]
         assert len(uca1_violations) == 0, (
             f"UCA-1 must not fire for execute_trade. Violations: {uca1_violations}"
@@ -276,8 +278,10 @@ class TestGeneratedSTPAValidator:
         violations = validator.validate("write_db", {})
         assert isinstance(violations, list), "validate() must return a list"
         uca1_violations = [
-            v for v in violations
-            if "UCA_1" in getattr(v, "code", str(v)) or "UCA-1" in getattr(v, "code", str(v))
+            v
+            for v in violations
+            if "UCA_1" in getattr(v, "code", str(v))
+            or "UCA-1" in getattr(v, "code", str(v))
         ]
         assert len(uca1_violations) >= 1, (
             "UCA-1 must trigger for write_db without approval_token"
@@ -289,8 +293,10 @@ class TestGeneratedSTPAValidator:
         violations = validator.validate("write_db", {"approval_token": "signed-tok"})
         assert isinstance(violations, list), "validate() must return a list"
         uca1_violations = [
-            v for v in violations
-            if "UCA_1" in getattr(v, "code", str(v)) or "UCA-1" in getattr(v, "code", str(v))
+            v
+            for v in violations
+            if "UCA_1" in getattr(v, "code", str(v))
+            or "UCA-1" in getattr(v, "code", str(v))
         ]
         assert len(uca1_violations) == 0, (
             f"UCA-1 must not fire when approval_token is present. Got: {uca1_violations}"
@@ -309,8 +315,10 @@ class TestGeneratedSTPAValidator:
             },
         )
         uca8_violations = [
-            v for v in violations
-            if "UCA_8" in getattr(v, "code", str(v)) or "UCA-8" in getattr(v, "code", str(v))
+            v
+            for v in violations
+            if "UCA_8" in getattr(v, "code", str(v))
+            or "UCA-8" in getattr(v, "code", str(v))
         ]
         assert len(uca8_violations) >= 1, "UCA-8 must trigger when risk_assessed=False"
 
@@ -327,8 +335,10 @@ class TestGeneratedSTPAValidator:
             },
         )
         uca9_violations = [
-            v for v in violations
-            if "UCA_9" in getattr(v, "code", str(v)) or "UCA-9" in getattr(v, "code", str(v))
+            v
+            for v in violations
+            if "UCA_9" in getattr(v, "code", str(v))
+            or "UCA-9" in getattr(v, "code", str(v))
         ]
         assert len(uca9_violations) >= 1, (
             "UCA-9 must trigger when compliance_checked=False"

@@ -58,7 +58,9 @@ def _events(stream: TextIO, source: str) -> Iterator[dict[str, Any]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("files", nargs="*", type=Path, help="JSONL files (default: stdin)")
+    parser.add_argument(
+        "files", nargs="*", type=Path, help="JSONL files (default: stdin)"
+    )
     args = parser.parse_args(argv)
     events: list[dict[str, Any]] = []
     try:

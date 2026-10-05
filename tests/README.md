@@ -143,7 +143,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `layer_isolation` | Asserts the three-layer import boundary (Gate G3). |
 | `financial` | Finance domain plugin (`tests/cage_finance/`). |
 | `healthcare` | Healthcare domain plugin (`tests/cage_healthcare/`). |
-| `us_fed`, `eu_ecb`, `apac_mas` | Regional compliance posture. |
+| `us_fed`, `eu_ecb`, `apac_mas` | Regional compliance posture. Hermetic tests run under the marked region; live tests run only against a deployment in that region (see [Deployment Region](#deployment-region)). |
 | `gke` | GKE target-specific tests requiring Kubernetes primitives or cluster port-forward tunnels. |
 
 A facet marker **does not** make a test selectable by any CI gate. A test marked only
@@ -164,6 +164,19 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 If the guard rejects your module, it will print the offending node IDs and the list of
 valid selection markers. Do not work around it by excluding the file from collection.
+
+### Deployment Region
+
+[`fixtures/deployment_region.py`](fixtures/deployment_region.py) resolves one region per session:
+
+| Run | Session region | Region-marked tests |
+|---|---|---|
+| Hermetic (default) | `US_FED`, whatever the shell or `.env` exports | Run under their marked region: `CAGE_DEPLOYMENT_REGION` and `ControlRegistry` are switched for the test, then restored. |
+| Live (`--run-integration` / `--run-e2e`) | `CAGE_DEPLOYMENT_REGION` from the `cage-deployment` ConfigMap in `--cage-namespace` (default `$K8S_NAMESPACE`, else `governance-stack`). The run fails if kubectl can't read it or if an exported value disagrees. | Live tests marked for another region are skipped. |
+
+- One `pytest-logic` CI job therefore covers every region. To run one posture: `uv run pytest tests/ -m eu_ecb`.
+- A test may carry at most one region marker. For an invariant that must hold in every region, request the `each_region` fixture, which parametrizes over all jurisdictions.
+- Don't gate tests with `skipif(os.environ["CAGE_DEPLOYMENT_REGION"] ...)`: in hermetic runs the region is always `US_FED`.
 
 ---
 
@@ -210,7 +223,7 @@ Copy [`.env.example`](../.env.example) to `.env` and fill in your values.
 | `REDIS_URL`       | `redis://localhost:6379`                      | Redis for state management                         |
 | `GOVERNANCE_SALT` | _(required)_                                  | HMAC salt for the governance gateway               |
 | `K8S_NAMESPACE`   | `governance-stack`                            | Kubernetes namespace (used by `setup_test_env.sh`) |
-| `CAGE_DEPLOYMENT_REGION` | `US_FED`                             | Regional compliance profile (`US_FED` \| `EU_ECB` \| `APAC_MAS`). Required by the CAGE boot contract. |
+| `CAGE_DEPLOYMENT_REGION` | _(set by `conftest.py`)_             | Regional compliance profile (`US_FED` \| `EU_ECB` \| `APAC_MAS`). Pinned per session, so an exported value is ignored in hermetic runs and must match the deployment in live runs (see [Deployment Region](#deployment-region)). |
 
 ---
 

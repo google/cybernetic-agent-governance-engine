@@ -383,9 +383,7 @@ async def test_validate_action_returns_canonical_envelope(monkeypatch):
         return_value=True,
     ):
         transport = ASGITransport(app=governance_app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/validate-action",
                 content=body_bytes,

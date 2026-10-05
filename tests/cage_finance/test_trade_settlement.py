@@ -53,7 +53,9 @@ def _governor() -> MagicMock:
     return governor
 
 
-async def _run(governor: MagicMock, *, actuate: Any = None, verify: Any = None, **kwargs: Any) -> Any:
+async def _run(
+    governor: MagicMock, *, actuate: Any = None, verify: Any = None, **kwargs: Any
+) -> Any:
     with ExitStack() as stack:
         stack.enter_context(
             patch(
@@ -68,13 +70,23 @@ async def _run(governor: MagicMock, *, actuate: Any = None, verify: Any = None, 
                 verify or AsyncMock(),
             )
         )
-        stack.enter_context(patch("src.gateway.infrastructure.redis_client.redis_client", None))
+        stack.enter_context(
+            patch("src.gateway.infrastructure.redis_client.redis_client", None)
+        )
         if actuate is not None:
             stack.enter_context(
-                patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate)
+                patch(
+                    "src.cage_finance.tools.tool_provider._broker_actuator.actuate",
+                    actuate,
+                )
             )
         return await execute_trade_action(
-            symbol="AAPL", amount=10.0, currency="USD", confidence=0.99, governor=governor, **kwargs
+            symbol="AAPL",
+            amount=10.0,
+            currency="USD",
+            confidence=0.99,
+            governor=governor,
+            **kwargs,
         )
 
 
@@ -118,7 +130,9 @@ async def test_dry_run_releases() -> None:
 @pytest.mark.asyncio
 async def test_invalid_seal_releases() -> None:
     governor = _governor()
-    verify = AsyncMock(side_effect=SymbolicGovernorViolation("expired", action="execute_trade"))
+    verify = AsyncMock(
+        side_effect=SymbolicGovernorViolation("expired", action="execute_trade")
+    )
     result = await _run(governor, verify=verify)
     assert result.startswith("BLOCKED")
     governor.settle.assert_awaited_once_with(_SEAL, executed=False)
@@ -130,7 +144,8 @@ async def test_missing_actuator_releases() -> None:
     registry = MagicMock()
     registry.get_actuator.return_value = None
     with patch(
-        "src.cage_finance.tools.tool_provider.get_actuator_registry", return_value=registry
+        "src.cage_finance.tools.tool_provider.get_actuator_registry",
+        return_value=registry,
     ):
         with pytest.raises(SymbolicGovernorViolation, match="No actuator"):
             await _run(governor)
@@ -159,7 +174,12 @@ async def test_settlement_failures_do_not_mask_the_trade_result(caplog) -> None:
 
     governor = _governor()
     governor.settle.return_value = [
-        Violation(tier="fiscal", code="CONFIRM_FAILED", message="redis down", kind=ViolationKind.HARD)
+        Violation(
+            tier="fiscal",
+            code="CONFIRM_FAILED",
+            message="redis down",
+            kind=ViolationKind.HARD,
+        )
     ]
     result = await _run(governor, actuate=AsyncMock(return_value=_receipt(True)))
     assert result.startswith("EXECUTED")

@@ -80,11 +80,20 @@ ENTRY_POINTS = ("govern", "validate_action", "revalidate_post_hitl")
 # ── Doubles ──────────────────────────────────────────────────────────────────
 
 
-def _violations(tier: str, kind: str | None, params: dict[str, Any], sticky: bool) -> list[Violation]:
+def _violations(
+    tier: str, kind: str | None, params: dict[str, Any], sticky: bool
+) -> list[Violation]:
     """``kind`` from ``tier``, unless a narrower already clamped the params."""
     if kind is None or (params.get("narrowed") and not sticky):
         return []
-    return [Violation(tier=tier, code=f"{tier.upper()}_{kind}", message=kind, kind=ViolationKind[kind])]
+    return [
+        Violation(
+            tier=tier,
+            code=f"{tier.upper()}_{kind}",
+            message=kind,
+            kind=ViolationKind[kind],
+        )
+    ]
 
 
 class _Kernel:
@@ -132,22 +141,34 @@ class _Barrier(MutatingTier):
 
     async def commit(self, action: str, params: dict[str, Any]):
         refused = _violations("barrier", self._kind, params, self._sticky)
-        return (refused, None) if refused else ([], CommitReceipt(tier="barrier", magnitude=1.0))
+        return (
+            (refused, None)
+            if refused
+            else ([], CommitReceipt(tier="barrier", magnitude=1.0))
+        )
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         return None
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         return None
 
 
 class _Clamp:
     """Narrower double: marks the params as clamped."""
 
-    def can_narrow(self, violation: Violation, action: str, params: dict[str, Any]) -> bool:
+    def can_narrow(
+        self, violation: Violation, action: str, params: dict[str, Any]
+    ) -> bool:
         return violation.kind == ViolationKind.NARROWABLE
 
-    def narrow(self, violation: Violation, action: str, params: dict[str, Any]) -> NarrowingResult:
+    def narrow(
+        self, violation: Violation, action: str, params: dict[str, Any]
+    ) -> NarrowingResult:
         return NarrowingResult(
             can_narrow=True,
             narrowed_params={**params, "narrowed": True},
@@ -156,11 +177,22 @@ class _Clamp:
         )
 
 
-def _governor(kinds: dict[str, str], *, governed: bool = True, sticky: bool = False) -> SymbolicGovernor:
-    core = [_Kernel(name, kinds.get(name), sticky) for name in ("ftra", "stpa", "opa", "confidence")]
-    tiers = [_Check(kinds.get("domain_check"), sticky), _Barrier(kinds.get("barrier"), sticky)]
+def _governor(
+    kinds: dict[str, str], *, governed: bool = True, sticky: bool = False
+) -> SymbolicGovernor:
+    core = [
+        _Kernel(name, kinds.get(name), sticky)
+        for name in ("ftra", "stpa", "opa", "confidence")
+    ]
+    tiers = [
+        _Check(kinds.get("domain_check"), sticky),
+        _Barrier(kinds.get("barrier"), sticky),
+    ]
     classifier = ClassificationEngine(
-        NarrowerRegistry([_Clamp()]), confidence_threshold=0.70, defer_enabled=True, narrow_enabled=True
+        NarrowerRegistry([_Clamp()]),
+        confidence_threshold=0.70,
+        defer_enabled=True,
+        narrow_enabled=True,
     )
     return make_governor(
         core_stages=core, domain_tiers=tiers if governed else (), classifier=classifier
@@ -177,7 +209,9 @@ class _Recorder:
     async def publish(self, event: dict[str, Any]) -> None:
         self.events.append(event)
 
-    async def issue_seal(self, action: str, params: dict[str, Any], *, path: str) -> str:
+    async def issue_seal(
+        self, action: str, params: dict[str, Any], *, path: str
+    ) -> str:
         seal = f"seal-{len(self.seals)}"
         self.seals.append(seal)
         return seal
@@ -191,8 +225,12 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(governor_module, "issue_narrow_receipt", AsyncMock())
     monkeypatch.setattr(verdicts_module, "publish_refusal", AsyncMock())
     parked = AsyncMock(side_effect=lambda *a, **k: {"verdict": "PARKED"})
-    monkeypatch.setitem(governor_module._VERDICT_HANDLERS, GovernanceDecision.REQUIRE_APPROVAL, parked)
-    monkeypatch.setitem(governor_module._VERDICT_HANDLERS, GovernanceDecision.DEFER, parked)
+    monkeypatch.setitem(
+        governor_module._VERDICT_HANDLERS, GovernanceDecision.REQUIRE_APPROVAL, parked
+    )
+    monkeypatch.setitem(
+        governor_module._VERDICT_HANDLERS, GovernanceDecision.DEFER, parked
+    )
     return rec
 
 
@@ -204,7 +242,9 @@ async def _decide(gov: SymbolicGovernor, entry: str) -> None:
         elif entry == "validate_action":
             await gov.validate_action(ACTION, params)
         else:
-            await gov.revalidate_post_hitl(ACTION, params, approved_barrier_preview=None)
+            await gov.revalidate_post_hitl(
+                ACTION, params, approved_barrier_preview=None
+            )
     except GovernanceError:
         pass
 
@@ -266,7 +306,11 @@ async def test_every_governor_trace_is_a_model_state(recorder: _Recorder) -> Non
 async def test_narrow_whose_rerun_fails_is_a_model_denial(recorder: _Recorder) -> None:
     await _decide(_governor({"barrier": "NARROWABLE"}, sticky=True), "govern")
     [event] = recorder.events
-    assert (event["phase"], event["narrower_present"], event["clamped_params_valid"]) == (
+    assert (
+        event["phase"],
+        event["narrower_present"],
+        event["clamped_params_valid"],
+    ) == (
         "DENIED",
         True,
         False,
@@ -275,7 +319,9 @@ async def test_narrow_whose_rerun_fails_is_a_model_denial(recorder: _Recorder) -
 
 
 @pytest.mark.asyncio
-async def test_ungoverned_seal_plans_only_ungoverned_stages(recorder: _Recorder) -> None:
+async def test_ungoverned_seal_plans_only_ungoverned_stages(
+    recorder: _Recorder,
+) -> None:
     await _decide(_governor({}, governed=False), "govern")
     [event] = recorder.events
     assert event["governed"] is False and event["phase"] == "SEAL_ISSUED"
@@ -396,18 +442,24 @@ def test_check_no_direct_bind_requires_seal_present() -> None:
 
 
 def test_pending_verdict_must_be_unsealed_checking() -> None:
-    event = _event(verdict="REQUIRE_APPROVAL", phase="DENIED", seal_present=False, seal_ref=None)
+    event = _event(
+        verdict="REQUIRE_APPROVAL", phase="DENIED", seal_present=False, seal_ref=None
+    )
     assert "seal" in _rules([event])
 
 
 def test_phase2_before_phase1_is_rejected() -> None:
     plan = [["barrier", 2], ["ftra", 1], ["stpa", 1], ["opa", 1], ["confidence", 1]]
-    assert "plan" in _rules([_event(plan=plan, outcomes=[[n, "PASS"] for n, _ in plan])])
+    assert "plan" in _rules(
+        [_event(plan=plan, outcomes=[[n, "PASS"] for n, _ in plan])]
+    )
 
 
 def test_governed_run_must_plan_every_kernel_tier() -> None:
     plan = [["ftra", 1], ["stpa", 1], ["opa", 1], ["barrier", 2]]
-    assert "coverage" in _rules([_event(plan=plan, outcomes=[[n, "PASS"] for n, _ in plan])])
+    assert "coverage" in _rules(
+        [_event(plan=plan, outcomes=[[n, "PASS"] for n, _ in plan])]
+    )
 
 
 def test_ungoverned_run_must_not_plan_a_barrier() -> None:
@@ -424,7 +476,9 @@ def test_post_hitl_must_not_plan_read_only_tiers_beyond_opa() -> None:
 def test_cli_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     good = tmp_path / "good.jsonl"
     good.write_text(
-        "\n".join(json.dumps(e) for e in [_event(), {"type": "OTHER"}, {"event": _executed()}])
+        "\n".join(
+            json.dumps(e) for e in [_event(), {"type": "OTHER"}, {"event": _executed()}]
+        )
     )
     assert cli_main([str(good)]) == 0
     bad = tmp_path / "bad.jsonl"

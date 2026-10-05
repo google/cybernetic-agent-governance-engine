@@ -45,7 +45,9 @@ class TestHealthcarePlugin:
         # Verify all declarative fields
         assert barrier.invariant_id == "healthcare.serum_concentration"
         assert barrier.state_key == "safety:serum_concentration"
-        assert barrier.threshold_key == "domains.healthcare.min_therapeutic_concentration"
+        assert (
+            barrier.threshold_key == "domains.healthcare.min_therapeutic_concentration"
+        )
         assert barrier.gamma == 0.4
 
         # Verify it's data-only (no methods beyond properties)
@@ -219,37 +221,23 @@ class TestHealthcarePlugin:
         )
 
     def test_healthcare_plugin_line_count_under_500(self):
-        """Healthcare plugin is ~495 lines total (including headers, config)."""
-        import subprocess
+        """Healthcare plugin stays under 500 source lines of Python.
+
+        Counts non-blank, non-comment lines so the budget measures plugin
+        size rather than license headers or ``ruff format`` line wrapping.
+        """
         from pathlib import Path
 
         healthcare_dir = Path(__file__).parent.parent / "src" / "cage_healthcare"
 
-        result = subprocess.run(
-            [
-                "find",
-                str(healthcare_dir),
-                "-name",
-                "*.py",
-                "-exec",
-                "wc",
-                "-l",
-                "{}",
-                "+",
-            ],
-            capture_output=True,
-            text=True,
-        )
+        sloc = 0
+        for py_file in healthcare_dir.rglob("*.py"):
+            for line in py_file.read_text().splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    sloc += 1
 
-        if result.returncode == 0:
-            lines = result.stdout.strip().split("\n")
-            total_line = lines[-1]
-            total_count = int(total_line.strip().split()[0])
-
-            # Should be under 750 lines (including ground_truth.py, headers, config)
-            assert total_count < 750, (
-                f"Healthcare plugin should be <750 lines, got {total_count}"
-            )
+        assert sloc < 500, f"Healthcare plugin should be <500 SLOC, got {sloc}"
 
     @pytest.mark.asyncio
     async def test_healthcare_dose_barrier_end_to_end_via_governor(self):
@@ -302,12 +290,15 @@ class TestHealthcarePlugin:
                 AsyncMock(return_value="sealed-token"),
             ),
         ):
+            from src.gateway.governance.jurisdiction import resolve_jurisdiction
+
             governor = assemble_governor(
                 [HealthcareCagePlugin()],
                 posture=DeploymentPosture.DEV,
                 opa=allow_opa(),
                 stpa_validator=clean_stpa(),
                 flags=DecisionFlags(defer=False, narrow=False),
+                jurisdiction=resolve_jurisdiction("US_FED"),
             )
             assert len(governor._components.ground_truth_providers) == 1
             for stage in governor.stages:
@@ -343,6 +334,5 @@ class TestHealthcarePlugin:
                 },
             )
             assert any(
-                "DOSE_BARRIER_VIOLAT" in v.code
-                for v in unsafe_verify["violations"]
+                "DOSE_BARRIER_VIOLAT" in v.code for v in unsafe_verify["violations"]
             )

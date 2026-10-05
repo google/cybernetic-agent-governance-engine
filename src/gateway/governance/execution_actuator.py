@@ -124,7 +124,10 @@ async def ingest_actuation_receipt(
     """
     from src.gateway.governance.evidence.stream import get_evidence_sink
 
-    event_type = _EVENT_TYPE_BY_OUTCOME[receipt.outcome]
+    # ActuationReceipt.__post_init__ always derives an outcome; UNKNOWN is the
+    # fail-closed reading should one ever be missing.
+    outcome = receipt.outcome or ActuationOutcome.UNKNOWN
+    event_type = _EVENT_TYPE_BY_OUTCOME[outcome]
     finding_codes = [
         str(f.get("code", ""))
         for f in (receipt.findings or [])
@@ -134,7 +137,7 @@ async def ingest_actuation_receipt(
         "type": event_type,
         "controlId": "AC-3",
         "accepted": bool(receipt.accepted),
-        "outcome": receipt.outcome.value,
+        "outcome": outcome.value,
         "verification": receipt.verification.value,
         "actuator_id": actuator_id or clearance.executor_id,
         "thread_id": clearance.thread_id,

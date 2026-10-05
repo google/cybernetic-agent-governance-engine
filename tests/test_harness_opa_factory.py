@@ -28,12 +28,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.langgraph_harness import (
     OpaNodeConfig,
     create_opa_safety_node,
     create_opa_safety_router,
 )
-from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 
 pytestmark = pytest.mark.unit
 

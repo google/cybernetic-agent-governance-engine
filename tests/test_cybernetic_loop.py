@@ -49,9 +49,7 @@ from fastapi.testclient import TestClient
 def _get_server_app():
     """Import the FastAPI app with NeMo / Redis mocked out."""
     with (
-        patch(
-            "src.integrations.nemo.manager.load_rails", return_value=MagicMock()
-        ),
+        patch("src.integrations.nemo.manager.load_rails", return_value=MagicMock()),
         patch(
             "src.governed_financial_advisor.graph.graph.create_graph",
             return_value=MagicMock(),
@@ -277,7 +275,9 @@ class TestApplyRefinementProposalFlow:
     approved on the gateway (/v1/nemo/*), never on the advisor.
     """
 
-    _TRUSTED_ID = "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    _TRUSTED_ID = (
+        "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    )
 
     @pytest.fixture
     def client(self, monkeypatch):

@@ -137,7 +137,12 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
     def _p(pct: float) -> float:
         return round(s[min(int(pct / 100 * n), n - 1)], 3)
 
-    return {"p50": _p(50), "p95": _p(95), "p99": _p(99), "mean": round(statistics.mean(s), 3)}
+    return {
+        "p50": _p(50),
+        "p95": _p(95),
+        "p99": _p(99),
+        "mean": round(statistics.mean(s), 3),
+    }
 
 
 def _redis_target() -> str:
@@ -182,7 +187,9 @@ class SigningIdentity:
         return self.mode == SIGNER_KMS
 
 
-def resolve_signing_identity(*, allow_software: bool) -> tuple[SigningIdentity | None, str]:
+def resolve_signing_identity(
+    *, allow_software: bool
+) -> tuple[SigningIdentity | None, str]:
     """Pick the reconciler signing identity; never falls back silently.
 
     Returns ``(identity, description)``; ``identity`` is ``None`` when no
@@ -193,7 +200,9 @@ def resolve_signing_identity(*, allow_software: bool) -> tuple[SigningIdentity |
     if os.environ.get(trust.RECONCILER_KMS_KEY_ENV, "").strip():
         signer = trust.get_reconciler_signer()
         return (
-            SigningIdentity(SIGNER_KMS, signer, trust.get_reconciler_verifier(), native=True),
+            SigningIdentity(
+                SIGNER_KMS, signer, trust.get_reconciler_verifier(), native=True
+            ),
             f"{trust.RECONCILER_KMS_KEY_ENV} (KMS)",
         )
     if allow_software:
@@ -204,14 +213,23 @@ def resolve_signing_identity(*, allow_software: bool) -> tuple[SigningIdentity |
         )
 
         if is_enforcing(resolve_posture()):
-            raise RuntimeError("--software-signer is development-only; the posture is enforcing")
-        signer = KMSGovernanceSigner(provider=SoftwareEd25519Provider(key_id=SOFTWARE_KID))
-        verifier = trust.build_reconciler_verifier({SOFTWARE_KID: signer.get_public_key_pem()})
+            raise RuntimeError(
+                "--software-signer is development-only; the posture is enforcing"
+            )
+        signer = KMSGovernanceSigner(
+            provider=SoftwareEd25519Provider(key_id=SOFTWARE_KID)
+        )
+        verifier = trust.build_reconciler_verifier(
+            {SOFTWARE_KID: signer.get_public_key_pem()}
+        )
         return (
             SigningIdentity(SIGNER_SOFTWARE, signer, verifier, native=False),
             "software Ed25519 (development only; not evidence)",
         )
-    return None, f"{trust.RECONCILER_KMS_KEY_ENV} not set and --software-signer not given"
+    return (
+        None,
+        f"{trust.RECONCILER_KMS_KEY_ENV} not set and --software-signer not given",
+    )
 
 
 @contextlib.contextmanager
@@ -246,7 +264,9 @@ def _build_cbf() -> Any:
     return cbf
 
 
-def _build_reconciler(sync_redis: Any, signer: Any, balance: float, floor: float) -> Any:
+def _build_reconciler(
+    sync_redis: Any, signer: Any, balance: float, floor: float
+) -> Any:
     """A reconciler over a fresh simulated custodian holding ``balance``."""
     from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
     from src.gateway.governance.reconciliation.daemon import GroundTruthReconciler
@@ -285,7 +305,9 @@ def preflight_redis(sync_redis: Any, *, force: bool) -> str | None:
     from src.gateway.governance.reconciliation.daemon import FENCE_EPOCH_KEY
 
     sync_redis.ping()
-    occupied = [k for k in (CashBarrier.state_key, FENCE_EPOCH_KEY) if sync_redis.exists(k)]
+    occupied = [
+        k for k in (CashBarrier.state_key, FENCE_EPOCH_KEY) if sync_redis.exists(k)
+    ]
     if occupied and not force:
         return (
             f"Redis already holds {occupied}; this benchmark writes CBF state and "
@@ -315,28 +337,40 @@ def _span_exporter() -> Any:
         otel_trace.set_tracer_provider(provider)
         provider = otel_trace.get_tracer_provider()
     if not isinstance(provider, TracerProvider):
-        raise RuntimeError("an OpenTelemetry tracer provider without span processors is installed")
+        raise RuntimeError(
+            "an OpenTelemetry tracer provider without span processors is installed"
+        )
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     return exporter
 
 
-def measure_write_path(n: int, sync_redis: Any, identity: SigningIdentity | None) -> dict[str, Any]:
+def measure_write_path(
+    n: int, sync_redis: Any, identity: SigningIdentity | None
+) -> dict[str, Any]:
     """Run ``GroundTruthReconciler.reconcile()`` ``n`` times; read stage timings from its span."""
     if identity is None:
-        return {"skipped": "no reconciler signing identity — a signed publish cannot be timed"}
+        return {
+            "skipped": "no reconciler signing identity — a signed publish cannot be timed"
+        }
 
     from src.cage_finance.invariants import CashBarrier
 
     exporter = _span_exporter()
     cbf_floor = _build_cbf().threshold_value
     sync_redis.set(CashBarrier.state_key, repr(READ_PATH_BALANCE))
-    reconciler = _build_reconciler(sync_redis, identity.signer, READ_PATH_BALANCE, cbf_floor)
+    reconciler = _build_reconciler(
+        sync_redis, identity.signer, READ_PATH_BALANCE, cbf_floor
+    )
 
     # Warm up the KMS gRPC/TLS channel and public-key cache before timing,
     # matching _measure_approval_latency() in measure_paper_metrics.py.
     reconciler.reconcile(CashBarrier.invariant_id)
 
-    stages: dict[str, list[float]] = {"fetch_ms": [], "kms_sign_ms": [], "redis_write_ms": []}
+    stages: dict[str, list[float]] = {
+        "fetch_ms": [],
+        "kms_sign_ms": [],
+        "redis_write_ms": [],
+    }
     total_ms: list[float] = []
     failures: list[str] = []
     for _ in range(n):
@@ -345,11 +379,22 @@ def measure_write_path(n: int, sync_redis: Any, identity: SigningIdentity | None
         result = reconciler.reconcile(CashBarrier.invariant_id)
         wall_ms = (time.perf_counter() - t0) * 1000.0
         span = next(
-            (s for s in exporter.get_finished_spans() if s.name == "reconciliation.cycle"), None
+            (
+                s
+                for s in exporter.get_finished_spans()
+                if s.name == "reconciliation.cycle"
+            ),
+            None,
         )
         attrs = dict(span.attributes or {}) if span is not None else {}
-        if not result.is_valid or not result.signature or not attrs.get("reconciliation.signed"):
-            failures.append(result.error or "unsigned or missing reconciliation.cycle span")
+        if (
+            not result.is_valid
+            or not result.signature
+            or not attrs.get("reconciliation.signed")
+        ):
+            failures.append(
+                result.error or "unsigned or missing reconciliation.cycle span"
+            )
             continue
         total_ms.append(wall_ms)
         for stage in stages:
@@ -394,8 +439,13 @@ async def measure_cbf_read_overhead(
 
     self_samples, state = await _time_reads(cbf, n)
     if state.get("source") != "self_reported":
-        raise RuntimeError(f"expected the self-reported path, CBF read {state.get('source')!r}")
-    out: dict[str, Any] = {"iterations": n, "self_reported_ms": _percentiles(self_samples)}
+        raise RuntimeError(
+            f"expected the self-reported path, CBF read {state.get('source')!r}"
+        )
+    out: dict[str, Any] = {
+        "iterations": n,
+        "self_reported_ms": _percentiles(self_samples),
+    }
 
     if identity is None:
         out.update(
@@ -411,12 +461,16 @@ async def measure_cbf_read_overhead(
     )
     published = reconciler.reconcile(CashBarrier.invariant_id)
     if not (published.is_valid and published.signature):
-        raise RuntimeError(f"reconciler did not publish a signed snapshot: {published.error}")
+        raise RuntimeError(
+            f"reconciler did not publish a signed snapshot: {published.error}"
+        )
     with _cbf_trusts(identity):
         recon_samples, state = await _time_reads(cbf, n)
     _clear_snapshot(sync_redis, CashBarrier.invariant_id)
     if state.get("source") != "reconciled":
-        raise RuntimeError(f"expected the reconciled path, CBF read {state.get('source')!r}")
+        raise RuntimeError(
+            f"expected the reconciled path, CBF read {state.get('source')!r}"
+        )
 
     self_p, recon_p = out["self_reported_ms"], _percentiles(recon_samples)
     out.update(
@@ -487,7 +541,9 @@ async def measure_safety_violation_detection(
         }
     else:
         sync_redis.set(CashBarrier.state_key, repr(TRUE_CUSTODIAN_BALANCE))
-        reconciler = _build_reconciler(sync_redis, identity.signer, TRUE_CUSTODIAN_BALANCE, floor)
+        reconciler = _build_reconciler(
+            sync_redis, identity.signer, TRUE_CUSTODIAN_BALANCE, floor
+        )
         published = reconciler.reconcile(inv)
         sync_redis.set(CashBarrier.state_key, repr(INFLATED_SELF_REPORTED))
         with _cbf_trusts(identity):
@@ -613,10 +669,14 @@ def render_text(results: dict[str, Any]) -> str:
 
 def _write_outputs(results: dict[str, Any]) -> None:
     json_path = Path(
-        os.environ.get("RECONCILIATION_OUTPUT_JSON", "/tmp/cage_reconciliation_metrics.json")
+        os.environ.get(
+            "RECONCILIATION_OUTPUT_JSON", "/tmp/cage_reconciliation_metrics.json"
+        )
     )
     txt_path = Path(
-        os.environ.get("RECONCILIATION_OUTPUT_TXT", "/tmp/cage_reconciliation_metrics.txt")
+        os.environ.get(
+            "RECONCILIATION_OUTPUT_TXT", "/tmp/cage_reconciliation_metrics.txt"
+        )
     )
     json_path.write_text(json.dumps(results, indent=2, default=str))
     txt = render_text(results)
@@ -657,7 +717,9 @@ async def collect(
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="CAGE §6.3-6.5 reconciliation measurements.")
+    parser = argparse.ArgumentParser(
+        description="CAGE §6.3-6.5 reconciliation measurements."
+    )
     parser.add_argument(
         "--software-signer",
         action="store_true",
@@ -687,7 +749,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FATAL] {refusal}")
         return 1
 
-    identity, signer_desc = resolve_signing_identity(allow_software=args.software_signer)
+    identity, signer_desc = resolve_signing_identity(
+        allow_software=args.software_signer
+    )
     print(f"Redis  : {_redis_target()}")
     print(f"Signer : {signer_desc}")
     if identity is None:

@@ -695,7 +695,7 @@ class DeferQueue:
                 await pipe.execute()
 
             logger.info(
-                "[defer_queue] Parked token defer_id=%s thread_id=%s correlation_id=%s reason=%s "
+                "[defer_queue] Parked deferral defer_id=%s thread_id=%s correlation_id=%s reason=%s "
                 "confidence=%.3f ttl=%ds",
                 token.defer_id,
                 token.thread_id,
@@ -710,9 +710,11 @@ class DeferQueue:
             base_jitter_ms = 5
 
             for attempt in range(max_retries):
-                existing_token, current_status, revision = await self._read_token_with_rev(
-                    token.defer_id
-                )
+                (
+                    existing_token,
+                    current_status,
+                    revision,
+                ) = await self._read_token_with_rev(token.defer_id)
 
                 if existing_token is None:
                     # Race: key was deleted between HSETNX and now
@@ -732,7 +734,7 @@ class DeferQueue:
                     break
 
                 # Attempt CAS update
-                success, new_rev = await self._cas_update(
+                success, _new_rev = await self._cas_update(
                     token.defer_id, revision, token, "PARKED"
                 )
 
@@ -829,7 +831,7 @@ class DeferQueue:
             token.resolution = resolution
 
             # Attempt CAS update
-            success, new_rev = await self._cas_update(
+            success, _new_rev = await self._cas_update(
                 defer_id, revision, token, "RESOLVED"
             )
 
@@ -1005,7 +1007,9 @@ class DeferQueue:
         """
         token, status, _rev = await self._read_token_with_rev(defer_id)
         if token is None:
-            logger.warning("[defer_queue] consume_approval: unknown defer_id=%s", defer_id)
+            logger.warning(
+                "[defer_queue] consume_approval: unknown defer_id=%s", defer_id
+            )
             return None
         distinct_approvers = len({a.approver_urn for a in token.approvals})
         approved_params = token.opa_input_snapshot.get("params")
@@ -1013,12 +1017,18 @@ class DeferQueue:
         if token.defer_reason != DeferReason.HITL_REQUIRED:
             refusal = f"reason {token.defer_reason.value} is not an approval"
         elif status != "RESOLVED" or token.resolution != "ESCALATED":
-            refusal = f"status={status} resolution={token.resolution} is not an approval"
+            refusal = (
+                f"status={status} resolution={token.resolution} is not an approval"
+            )
         elif distinct_approvers < token.required_quorum:
             refusal = f"{distinct_approvers}/{token.required_quorum} approvals"
         elif token.opa_input_snapshot.get("action") != action:
-            refusal = f"parked for {token.opa_input_snapshot.get('action')!r}, not {action!r}"
-        elif any(a.approved_barrier_preview != token.barrier_preview for a in token.approvals):
+            refusal = (
+                f"parked for {token.opa_input_snapshot.get('action')!r}, not {action!r}"
+            )
+        elif any(
+            a.approved_barrier_preview != token.barrier_preview for a in token.approvals
+        ):
             # Every approval must have been given against the snapshot the
             # committing run will be checked against (D-H).
             refusal = (
@@ -1028,9 +1038,15 @@ class DeferQueue:
         elif not isinstance(approved_params, dict) or not covers(approved_params):
             refusal = "approved params do not cover the request"
         if refusal is not None:
-            logger.warning("[defer_queue] consume_approval refused defer_id=%s: %s", defer_id, refusal)
+            logger.warning(
+                "[defer_queue] consume_approval refused defer_id=%s: %s",
+                defer_id,
+                refusal,
+            )
             return None
-        if not await self.atomic_resolve(defer_id, expected_status="RESOLVED", new_status="CONSUMED"):
+        if not await self.atomic_resolve(
+            defer_id, expected_status="RESOLVED", new_status="CONSUMED"
+        ):
             return None  # another caller consumed it first (replay)
         return token
 
@@ -1137,7 +1153,7 @@ class DeferQueue:
                 approval_status = ApprovalStatus.PARTIAL_QUORUM
 
             # Attempt CAS update
-            success, new_rev = await self._cas_update(
+            success, _new_rev = await self._cas_update(
                 defer_id, revision, token, new_status
             )
 
@@ -1286,7 +1302,7 @@ class DeferQueue:
             if resolved:
                 count += 1
                 logger.warning(
-                    "[defer_queue] Token expired and auto-escalated: defer_id=%s "
+                    "[defer_queue] Deferral expired and auto-escalated: defer_id=%s "
                     "thread_id=%s reason=%s",
                     defer_id,
                     resolved.thread_id,
@@ -1504,7 +1520,7 @@ async def replay_evaluate(
     token, status, _rev = await queue._read_token_with_rev(defer_id)
     if token is None:
         logger.warning(
-            "[replay_evaluate] Token not found for defer_id=%s — returning NOT_FOUND.",
+            "[replay_evaluate] Deferral not found for defer_id=%s — returning NOT_FOUND.",
             defer_id,
         )
         return ReplayResult.NOT_FOUND
@@ -1544,7 +1560,7 @@ async def replay_evaluate(
             # Lost the race to another resolution (or the token vanished).
             return ReplayResult.ALREADY_RESOLVED
         logger.info(
-            "[replay_evaluate] Token ADMITTED: defer_id=%s effective_confidence=%.3f "
+            "[replay_evaluate] Deferral ADMITTED: defer_id=%s effective_confidence=%.3f "
             "threshold=%.2f",
             defer_id,
             effective_confidence,
@@ -1553,7 +1569,7 @@ async def replay_evaluate(
         return ReplayResult.ADMITTED
 
     logger.info(
-        "[replay_evaluate] Token remains PARKED: defer_id=%s effective_confidence=%.3f "
+        "[replay_evaluate] Deferral remains PARKED: defer_id=%s effective_confidence=%.3f "
         "threshold=%.2f",
         defer_id,
         effective_confidence,

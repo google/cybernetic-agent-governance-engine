@@ -20,7 +20,9 @@ except ImportError:
     pass
 
 
-def _get_deployment_replicas(deployment_name: str, namespace: str = "governance-stack") -> int | None:
+def _get_deployment_replicas(
+    deployment_name: str, namespace: str = "governance-stack"
+) -> int | None:
     try:
         res = subprocess.run(
             [
@@ -68,7 +70,9 @@ def test_redis():
         print(f"✓ Eviction Policy: {config_policy}")
         return True
     except Exception as local_err:
-        print(f"  Info: localhost:6379 not forwarded ({local_err}); checking managed Memorystore PSC via gateway pod...")
+        print(
+            f"  Info: localhost:6379 not forwarded ({local_err}); checking managed Memorystore PSC via gateway pod..."
+        )
         try:
             script_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
@@ -105,7 +109,9 @@ def test_redis():
             if res.returncode == 0:
                 print(f"✓ Managed Memorystore PSC: {res.stdout.strip()}")
                 return True
-            print(f"✗ Managed Memorystore PSC check failed: {res.stderr.strip() or res.stdout.strip()}")
+            print(
+                f"✗ Managed Memorystore PSC check failed: {res.stderr.strip() or res.stdout.strip()}"
+            )
             return False
         except Exception as e:
             print(f"✗ Redis / Memorystore connection failed: {e}")
@@ -128,7 +134,9 @@ def test_http_service(name, url, timeout=5, deployment_name=None):
         if deployment_name and os.getenv("REQUIRE_VLLM_GPUS", "0") != "1":
             replicas = _get_deployment_replicas(deployment_name)
             if replicas == 0:
-                print(f"✓ {name} scaled to 0 replicas in governance-stack (scale-to-zero GPU posture)")
+                print(
+                    f"✓ {name} scaled to 0 replicas in governance-stack (scale-to-zero GPU posture)"
+                )
                 return True
         print(f"✗ {name} failed: {e}")
         return False
@@ -141,7 +149,10 @@ def test_langfuse_auth():
         # Test with valid credentials
         response = httpx.get(
             "http://localhost:3001/api/public/projects",
-            auth=(os.getenv("LANGFUSE_PUBLIC_KEY", ""), os.getenv("LANGFUSE_SECRET_KEY", "")),
+            auth=(
+                os.getenv("LANGFUSE_PUBLIC_KEY", ""),
+                os.getenv("LANGFUSE_SECRET_KEY", ""),
+            ),
             timeout=10,
         )
         print(f"✓ Auth Status: {response.status_code}")

@@ -71,4 +71,3 @@ def test_w3c_traceparent_format():
     assert len(parts[1]) == 32  # 16 bytes hex
     assert len(parts[2]) == 16  # 8 bytes hex
     assert parts[3] == "01"
-

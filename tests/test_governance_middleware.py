@@ -355,7 +355,9 @@ class TestValidateActionEndpoint:
 class TestRevalidatePostHitlRemoved:
     """POST_HITL runs only inside execute_trade_action, never as an HTTP route."""
 
-    def test_revalidate_post_hitl_route_is_gone(self, gov_client, mock_symbolic_governor):
+    def test_revalidate_post_hitl_route_is_gone(
+        self, gov_client, mock_symbolic_governor
+    ):
         """The advisor can no longer trigger a POST_HITL run over HTTP."""
         mock_symbolic_governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
         resp = gov_client.post(
@@ -384,7 +386,9 @@ class TestEnforceApprovedGovernance:
         from src.gateway.server import governance_middleware as gm
 
         with (
-            patch("src.gateway.governance.defer_queue.open_defer_queue", new=open_queue),
+            patch(
+                "src.gateway.governance.defer_queue.open_defer_queue", new=open_queue
+            ),
             patch.object(gm, "_emit_refusal_receipt", new=emit),
         ):
             return await gm.enforce_approved_governance(
@@ -398,7 +402,9 @@ class TestEnforceApprovedGovernance:
     async def test_consumed_approval_runs_post_hitl_and_returns_seal(self):
         governor = _mock_governor()
         governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
-        queue, open_queue = self._queue(MagicMock(thread_id="thread-9", barrier_preview="PASS"))
+        queue, open_queue = self._queue(
+            MagicMock(thread_id="thread-9", barrier_preview="PASS")
+        )
         emit = AsyncMock()
 
         seal = await self._call(governor, open_queue, emit)

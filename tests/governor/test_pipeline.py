@@ -75,7 +75,14 @@ class _TierBehaviour:
 
     def _verdict(self) -> list[Violation]:
         if self._deny:
-            return [Violation(tier=self._name, code="DENY", message="denied", kind=ViolationKind.HARD)]
+            return [
+                Violation(
+                    tier=self._name,
+                    code="DENY",
+                    message="denied",
+                    kind=ViolationKind.HARD,
+                )
+            ]
         return []
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
@@ -132,7 +139,9 @@ async def test_post_hitl_runs_every_phase2_tier() -> None:
     """POST_HITL re-checks every claiming phase-2 tier, not a named subset."""
     log: list[str] = []
     stages = order_stages([_Tier("dose_barrier", phase=2, deny=True, log=log)])
-    result = await run_scoped(stages, _ctx(Profile.POST_HITL), profile=Profile.POST_HITL)
+    result = await run_scoped(
+        stages, _ctx(Profile.POST_HITL), profile=Profile.POST_HITL
+    )
     assert [v.tier for v in result.violations] == ["dose_barrier"]
     assert log == ["commit:dose_barrier"]
 
@@ -140,11 +149,13 @@ async def test_post_hitl_runs_every_phase2_tier() -> None:
 @pytest.mark.asyncio
 async def test_phase1_tiers_run_in_phase_order_then_name() -> None:
     log: list[str] = []
-    stages = order_stages([
-        _Tier("C", order=2, log=log),
-        _Tier("B", order=1, log=log),
-        _Tier("A", order=2, log=log),
-    ])
+    stages = order_stages(
+        [
+            _Tier("C", order=2, log=log),
+            _Tier("B", order=1, log=log),
+            _Tier("A", order=2, log=log),
+        ]
+    )
     await run_scoped(stages, _ctx())
     assert log == ["evaluate:B", "evaluate:A", "evaluate:C"]
 
@@ -158,11 +169,13 @@ def test_duplicate_tier_names_rejected() -> None:
 async def test_failed_commit_rolls_back_lifo_and_records_rollback_failure() -> None:
     """A failing rollback must not stop later rollbacks and must add a HARD violation."""
     log: list[str] = []
-    stages = order_stages([
-        _Tier("m1", phase=2, order=1, log=log),
-        _Tier("m2", phase=2, order=2, rollback_raises=True, log=log),
-        _Tier("m3", phase=2, order=3, deny=True, log=log),
-    ])
+    stages = order_stages(
+        [
+            _Tier("m1", phase=2, order=1, log=log),
+            _Tier("m2", phase=2, order=2, rollback_raises=True, log=log),
+            _Tier("m3", phase=2, order=3, deny=True, log=log),
+        ]
+    )
     result = await run_scoped(stages, _ctx())
 
     assert log == ["commit:m1", "commit:m2", "commit:m3", "rollback:m2", "rollback:m1"]
@@ -189,7 +202,9 @@ async def test_dry_run_never_commits() -> None:
 @pytest.mark.asyncio
 async def test_read_only_violation_blocks_mutating_stages() -> None:
     log: list[str] = []
-    stages = order_stages([_Tier("gate", deny=True, log=log), _Tier("m", phase=2, log=log)])
+    stages = order_stages(
+        [_Tier("gate", deny=True, log=log), _Tier("m", phase=2, log=log)]
+    )
     result = await run_scoped(stages, _ctx())
     assert "commit:m" not in log
     assert [v.tier for v in result.violations] == ["gate"]
@@ -214,10 +229,12 @@ async def test_phase1_claims_exception_is_hard_tier_exception() -> None:
 @pytest.mark.asyncio
 async def test_phase2_claims_exception_never_commits_and_rolls_back_earlier() -> None:
     log: list[str] = []
-    stages = order_stages([
-        _Tier("m1", phase=2, order=1, log=log),
-        _Tier("m2", phase=2, order=2, claims_raises=True, log=log),
-    ])
+    stages = order_stages(
+        [
+            _Tier("m1", phase=2, order=1, log=log),
+            _Tier("m2", phase=2, order=2, claims_raises=True, log=log),
+        ]
+    )
     result = await run_scoped(stages, _ctx())
 
     assert log == ["commit:m1", "rollback:m1"]

@@ -211,9 +211,10 @@ spec:
                 # EU_ECB: runs ISO 42001 + EU AI Act Lula manifests.
                 # APAC_MAS: runs ISO 42001 + MAS FEAT Lula manifests.
                 - name: CAGE_DEPLOYMENT_REGION
+                  # Single source: the cage-deployment ConfigMap (cage-deployment-configmap.yaml.tpl).
                   valueFrom:
-                    secretKeyRef:
-                      name: advisor-secrets
+                    configMapKeyRef:
+                      name: cage-deployment
                       key: CAGE_DEPLOYMENT_REGION
                       optional: false
               command:

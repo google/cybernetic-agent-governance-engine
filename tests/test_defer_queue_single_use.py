@@ -88,7 +88,10 @@ async def test_reinject_after_injected_is_refused(fake_redis):
     token = _token()
     await queue.park(token)
 
-    assert await replay_evaluate(queue, token.defer_id, dict(HIGH)) == ReplayResult.ADMITTED
+    assert (
+        await replay_evaluate(queue, token.defer_id, dict(HIGH))
+        == ReplayResult.ADMITTED
+    )
     first = await queue.get(token.defer_id)
 
     assert (
@@ -106,7 +109,10 @@ async def test_inject_after_quorum_approval_is_refused(fake_redis):
     defer_id = await _approved_hitl_token(queue)
     assert await _status(fake_redis, defer_id) == ("RESOLVED", "ESCALATED")
 
-    assert await replay_evaluate(queue, defer_id, dict(HIGH)) == ReplayResult.ALREADY_RESOLVED
+    assert (
+        await replay_evaluate(queue, defer_id, dict(HIGH))
+        == ReplayResult.ALREADY_RESOLVED
+    )
     assert await _status(fake_redis, defer_id) == ("RESOLVED", "ESCALATED")
 
 
@@ -119,11 +125,16 @@ async def test_inject_after_consumed_is_refused_and_approval_stays_spent(fake_re
     )
     assert consumed is not None
 
-    assert await replay_evaluate(queue, defer_id, dict(HIGH)) == ReplayResult.ALREADY_RESOLVED
+    assert (
+        await replay_evaluate(queue, defer_id, dict(HIGH))
+        == ReplayResult.ALREADY_RESOLVED
+    )
     status, _ = await _status(fake_redis, defer_id)
     assert status == "CONSUMED"
     assert (
-        await queue.consume_approval(defer_id, action="execute_trade", covers=lambda _p: True)
+        await queue.consume_approval(
+            defer_id, action="execute_trade", covers=lambda _p: True
+        )
         is None
     )
 
@@ -156,7 +167,9 @@ async def test_expire_sweep_does_not_overwrite_quorum_approval(fake_redis):
     assert await _status(fake_redis, defer_id) == ("RESOLVED", "ESCALATED")
     assert await fake_redis.zscore(_EXPIRY_ZSET, defer_id) is None
     assert (
-        await queue.consume_approval(defer_id, action="execute_trade", covers=lambda _p: True)
+        await queue.consume_approval(
+            defer_id, action="execute_trade", covers=lambda _p: True
+        )
         is not None
     )
 
@@ -192,7 +205,10 @@ async def test_inject_endpoint_maps_reinjection_to_409(fake_redis):
     queue = DeferQueue(fake_redis)
     token = _token()
     await queue.park(token)
-    assert await replay_evaluate(queue, token.defer_id, dict(HIGH)) == ReplayResult.ADMITTED
+    assert (
+        await replay_evaluate(queue, token.defer_id, dict(HIGH))
+        == ReplayResult.ADMITTED
+    )
 
     with patch("redis.asyncio.from_url", return_value=fake_redis):
         with pytest.raises(HTTPException) as exc_info:

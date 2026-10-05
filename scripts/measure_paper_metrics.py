@@ -284,7 +284,11 @@ class _BenchFinancePlugin:
         self.domain_config = FinanceCagePlugin.domain_config
         # Same overlay dir FinanceCagePlugin.contribute() declares; calling that
         # would construct Redis-backed engines, which the benchmark mocks.
-        self._overlay_dirs = (Path(sys.modules[FinanceCagePlugin.__module__].__file__).parent / "config" / "compliance",)
+        self._overlay_dirs = (
+            Path(sys.modules[FinanceCagePlugin.__module__].__file__).parent
+            / "config"
+            / "compliance",
+        )
         self._cbf, self._fiscal_guard, self._consensus = cbf, fiscal_guard, consensus
 
     def contribute(self) -> Any:
@@ -308,7 +312,9 @@ class _BenchFinancePlugin:
         tiers = tuple(
             _MockCausalTier() if t.tier_name == "causal" else t
             for t in create_finance_tiers(
-                cbf=self._cbf, fiscal_guard=self._fiscal_guard, consensus_gate=self._consensus
+                cbf=self._cbf,
+                fiscal_guard=self._fiscal_guard,
+                consensus_gate=self._consensus,
             )
         )
         return PluginContribution(
@@ -360,7 +366,9 @@ def _build_governor(
 
 def _consensus_endpoint_configured() -> bool:
     """True if any consensus critic can reach a model over the wire."""
-    if os.environ.get("VLLM_REASONING_API_BASE") or os.environ.get("VLLM_FAST_API_BASE"):
+    if os.environ.get("VLLM_REASONING_API_BASE") or os.environ.get(
+        "VLLM_FAST_API_BASE"
+    ):
         return True
     return any(
         key.startswith("CONSENSUS_") and key.endswith("_URL") and value
@@ -372,7 +380,9 @@ def _require_unmocked_env() -> None:
     """Fail closed unless every backend the unmocked governor calls is configured."""
     missing = [name for name in ("REDIS_URL", "OPA_URL") if not os.environ.get(name)]
     if not _consensus_endpoint_configured():
-        missing.append("CONSENSUS_<ROLE>_URL or VLLM_REASONING_API_BASE/VLLM_FAST_API_BASE")
+        missing.append(
+            "CONSENSUS_<ROLE>_URL or VLLM_REASONING_API_BASE/VLLM_FAST_API_BASE"
+        )
     if missing:
         raise RuntimeError(
             "--unmocked measures real backends and refuses to run without them; "
@@ -394,7 +404,9 @@ def _build_unmocked_governor() -> Any:
     _require_unmocked_env()
     os.environ.setdefault("CAGE_DOMAIN", "finance")
     if os.environ["CAGE_DOMAIN"] != "finance":
-        raise RuntimeError("--unmocked benchmarks the finance domain; set CAGE_DOMAIN=finance")
+        raise RuntimeError(
+            "--unmocked benchmarks the finance domain; set CAGE_DOMAIN=finance"
+        )
     return bootstrap_governor(flags=DecisionFlags(defer=False, narrow=False))
 
 
@@ -511,7 +523,9 @@ def _extract_span_durations(
     return durations
 
 
-async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[str, float]]:
+async def measure_governor_latency(
+    *, unmocked: bool = False
+) -> dict[str, dict[str, float]]:
     """Measure per-tier and total latency of the real approval path via OTel span harvest.
 
     Methodology:
@@ -620,7 +634,9 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
         )
         t2 = time.perf_counter()
         if not seal:
-            raise RuntimeError("latency benchmark: revalidate_post_hitl returned no seal")
+            raise RuntimeError(
+                "latency benchmark: revalidate_post_hitl returned no seal"
+            )
         return (t1 - t0) * 1000, (t2 - t1) * 1000
 
     # This script is its own entry point, so it owns the evidence sink's
@@ -635,14 +651,22 @@ async def measure_governor_latency(*, unmocked: bool = False) -> dict[str, dict[
         first = await gov.validate_action("execute_trade", dict(params))
         if first.get("verdict") == GovernanceDecision.ALLOW and unmocked:
             path["allow"] = True
-            print("  Approval path: ALLOW without HITL -> timing govern() (FULL, sealed)")
-        return await _measure_approval_latency(gov, params, exporter, _approval_path, GovernanceError)
+            print(
+                "  Approval path: ALLOW without HITL -> timing govern() (FULL, sealed)"
+            )
+        return await _measure_approval_latency(
+            gov, params, exporter, _approval_path, GovernanceError
+        )
     finally:
         await sink.stop()
 
 
 async def _measure_approval_latency(
-    gov: Any, params: dict[str, Any], exporter: Any, _approval_path: Any, GovernanceError: type[Exception]
+    gov: Any,
+    params: dict[str, Any],
+    exporter: Any,
+    _approval_path: Any,
+    GovernanceError: type[Exception],
 ) -> dict[str, dict[str, float]]:
     """Timed loops and result assembly for :func:`measure_governor_latency`."""
     tier_samples: dict[str, list[float]] = {name: [] for name in TIER_SPAN_MAP.values()}
@@ -689,7 +713,9 @@ async def _measure_approval_latency(
         except GovernanceError:
             pass
         else:
-            raise RuntimeError("latency benchmark: low-confidence govern() was not refused")
+            raise RuntimeError(
+                "latency benchmark: low-confidence govern() was not refused"
+            )
         total_rejected_samples.append((time.perf_counter() - t0) * 1000)
 
     # Build results dict
@@ -1542,10 +1568,14 @@ def _latency_table_title(unmocked: bool) -> str:
     """Table caption: the two modes measure different things and are never merged."""
     if unmocked:
         return "## Table 2b: Eight-Tier Governor Latency (over-the-wire, in-cluster)"
-    return "## Table 2: Eight-Tier Governor Latency (compute-only, in-process, mocked I/O)"
+    return (
+        "## Table 2: Eight-Tier Governor Latency (compute-only, in-process, mocked I/O)"
+    )
 
 
-def _fmt_latency_table(latency: dict[str, dict[str, float]], *, unmocked: bool = False) -> str:
+def _fmt_latency_table(
+    latency: dict[str, dict[str, float]], *, unmocked: bool = False
+) -> str:
     """Render a markdown-style latency table for the paper."""
     lines = [
         "",
@@ -2001,9 +2031,7 @@ def _REMOVED_fmt_baseline_comparison_table(
     return "\n".join(lines)
 
 
-def _fmt_live_section(
-    title: str, results: dict[str, Any], formatter: Any
-) -> str:
+def _fmt_live_section(title: str, results: dict[str, Any], formatter: Any) -> str:
     """Format a live-advisor section, or a one-line note if it was skipped."""
     if results.get("status") == "not_measured":
         return f"\n{title}: not measured ({results.get('reason', 'skipped')})\n"
@@ -2032,7 +2060,9 @@ def _write_outputs(
         "latency_runs": LATENCY_RUNS,
         "backend_url": BACKEND_URL,
         "methodology": "otel_span_harvest",
-        "latency_mode": "over_the_wire_in_cluster" if unmocked else "compute_only_mocked_io",
+        "latency_mode": "over_the_wire_in_cluster"
+        if unmocked
+        else "compute_only_mocked_io",
         "error_type_counts": merged_error_type_counts,
         "latency": latency,
         "deflection": deflection,
@@ -2075,7 +2105,9 @@ async def _async_main(*, unmocked: bool = False, latency_only: bool = False) -> 
     print("=" * 60)
     print("CAGE §6 Evaluation — Measurement Script (Phase 2 revision)")
     print("=" * 60)
-    print(f"LATENCY MODE : {'unmocked (over-the-wire)' if unmocked else 'mocked (compute-only)'}")
+    print(
+        f"LATENCY MODE : {'unmocked (over-the-wire)' if unmocked else 'mocked (compute-only)'}"
+    )
     print(f"CAGE_ENV     : {os.environ.get('CAGE_ENV', '(not set)')}")
     print(f"BACKEND_URL  : {BACKEND_URL}")
     print(f"LATENCY_RUNS : {LATENCY_RUNS}")
@@ -2101,7 +2133,9 @@ async def _async_main(*, unmocked: bool = False, latency_only: bool = False) -> 
         benign_results = measure_benign_fpr()
 
     # --- Write outputs ---
-    _write_outputs(latency_results, deflection_results, benign_results, unmocked=unmocked)
+    _write_outputs(
+        latency_results, deflection_results, benign_results, unmocked=unmocked
+    )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

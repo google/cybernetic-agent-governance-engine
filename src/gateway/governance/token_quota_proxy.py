@@ -283,6 +283,8 @@ class TokenQuotaProxy:
                 self._sha_reconcile[:8],
             )
         except Exception as exc:
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.error(
                 "TokenQuotaProxy: failed to load Lua scripts: %s — "
                 "all requests will be BLOCKED (fail-closed).",
@@ -345,6 +347,8 @@ class TokenQuotaProxy:
                 str(self._session_ttl),
             )
         except Exception as exc:
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.error(
                 "TokenQuotaProxy.check_and_increment: Redis error agent=%s err=%s "
                 "— failing CLOSED.",
@@ -377,6 +381,8 @@ class TokenQuotaProxy:
         )
 
         if quota_result.allowed:
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info(
                 "TokenQuotaProxy: ALLOWED agent=%s steps=%d/%d tokens=%d/%d",
                 agent_id,
@@ -386,6 +392,8 @@ class TokenQuotaProxy:
                 self._token_quota_max,
             )
         else:
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "TokenQuotaProxy: BLOCKED agent=%s reason=%s steps=%d/%d tokens=%d/%d",
                 agent_id,
@@ -428,6 +436,8 @@ class TokenQuotaProxy:
                 str(actual_tokens_used),
             )
             delta = actual_tokens_used - reserved_tokens
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.debug(
                 "TokenQuotaProxy.reconcile: agent=%s reserved=%d actual=%d delta=%+d",
                 agent_id,
@@ -437,6 +447,8 @@ class TokenQuotaProxy:
             )
         except Exception as exc:
             # Non-fatal: log and continue.  The block is already enforced.
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "TokenQuotaProxy.reconcile: Redis error agent=%s err=%s "
                 "— token counter may be slightly over-reserved.",
@@ -469,6 +481,8 @@ class TokenQuotaProxy:
                 tokens_key,
                 str(reserved_tokens),
             )
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info(
                 "TokenQuotaProxy.rollback: agent=%s reserved_tokens=%d rolled back",
                 agent_id,
@@ -477,6 +491,8 @@ class TokenQuotaProxy:
         except Exception as exc:
             # Non-fatal: log and continue.  The downstream failure is already
             # propagating; a rollback failure is a secondary concern.
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "TokenQuotaProxy.rollback: Redis error agent=%s err=%s "
                 "— step counter may be slightly over-counted.",
@@ -497,10 +513,14 @@ class TokenQuotaProxy:
         ]
         try:
             await self._redis.delete(*keys)
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info(
                 "TokenQuotaProxy.reset_session: agent=%s keys deleted", agent_id
             )
         except Exception as exc:
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "TokenQuotaProxy.reset_session: Redis error agent=%s err=%s",
                 agent_id,
@@ -530,6 +550,8 @@ class TokenQuotaProxy:
                 "session_ttl": self._session_ttl,
             }
         except Exception as exc:
+            # 'token' = LLM usage-token counts; logs agent id/counters/error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "TokenQuotaProxy.get_session_state: Redis error agent=%s err=%s",
                 agent_id,

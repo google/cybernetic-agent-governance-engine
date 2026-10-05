@@ -49,21 +49,30 @@ tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.nemo_node_fa
 _nemo_rails = None
 _NEMO_AVAILABLE = False
 
-def create_nemo_manager(*args, **kwargs):
+
+def create_nemo_manager(config_path: str = "config/rails") -> Any:
     from src.integrations.nemo.manager import create_nemo_manager as _create
-    return _create(*args, **kwargs)
 
-async def validate_with_nemo(*args, **kwargs):
+    return _create(config_path)
+
+
+async def validate_with_nemo(user_input: str, rails: Any) -> tuple[bool, str, bool]:
     from src.integrations.nemo.manager import validate_with_nemo as _validate
-    return await _validate(*args, **kwargs)
 
-async def verify_and_mask_output(*args, **kwargs):
+    return await _validate(user_input, rails)
+
+
+async def verify_and_mask_output(rails: Any, text: str) -> str:
     from src.integrations.nemo.manager import verify_and_mask_output as _verify
-    return await _verify(*args, **kwargs)
 
-async def validate_output_semantics(*args, **kwargs):
+    return await _verify(rails, text)
+
+
+async def validate_output_semantics(rails: Any, output_text: str) -> tuple[bool, str]:
     from src.integrations.nemo.manager import validate_output_semantics as _validate_sem
-    return await _validate_sem(*args, **kwargs)
+
+    return await _validate_sem(rails, output_text)
+
 
 _NEMO_AVAILABLE = True
 

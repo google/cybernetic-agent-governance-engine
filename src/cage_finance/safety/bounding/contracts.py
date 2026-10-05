@@ -33,6 +33,7 @@ import math
 import time
 from typing import Any
 
+from src.cage_finance.safety.bounding.contract import BoundingContractEnforcer
 from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,
     ContractResult,
@@ -42,7 +43,6 @@ from src.cage_finance.safety.bounding.providers import (
     MarketDataProvider,
     RollbackCapabilityProvider,
 )
-from src.cage_finance.safety.bounding.contract import BoundingContractEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -1205,10 +1205,14 @@ def contract_b10_rollback_window(
         )
 
     if not capability.get("supported", False):
-        return _b10_window_closed(request, "Venue does not support rollback/cancellation")
+        return _b10_window_closed(
+            request, "Venue does not support rollback/cancellation"
+        )
 
     if not capability.get("api_available", False):
-        return _b10_window_closed(request, "Venue rollback API is not currently operational")
+        return _b10_window_closed(
+            request, "Venue rollback API is not currently operational"
+        )
 
     # Validate rollback window is within venue capability (inclusive boundary)
     max_window_seconds = capability.get("max_window_seconds", 0)

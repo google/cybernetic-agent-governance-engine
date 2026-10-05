@@ -90,21 +90,14 @@ from urllib3.util.retry import Retry
 pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
-# US_FED region skip guard
+# Deployment region
 # ---------------------------------------------------------------------------
-# Tests that assert FedRAMP / NIST SP 800-53 / AI 600-1 specific control IDs
-# (e.g. "fedramp", "SC-7", "SA-11") are only meaningful for US_FED deployments.
-# EU_ECB and APAC_MAS postures use different framework mappings and must not
-# be required to satisfy US_FED jurisdictional assertions.
+# tests/conftest.py pins CAGE_DEPLOYMENT_REGION to the deployed region (read
+# from the cage-deployment ConfigMap). Tests that assert FedRAMP / NIST SP
+# 800-53 / AI 600-1 control IDs carry ``@pytest.mark.us_fed`` and are skipped
+# by the harness against EU_ECB and APAC_MAS deployments.
 
-_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-_SKIP_US_FED = pytest.mark.skipif(
-    _REGION not in ("US_FED", ""),
-    reason=(
-        f"US_FED-specific framework filter tests skipped for region {_REGION!r}. "
-        "FedRAMP/NIST SP 800-53/AI 600-1 assertions apply to US_FED only."
-    ),
-)
+_REGION = os.environ["CAGE_DEPLOYMENT_REGION"]
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -226,7 +219,6 @@ def session() -> requests.Session:
     s.mount("http://", adapter)
     s.mount("https://", adapter)
     return s
-
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +344,7 @@ class TestHealthAndDiscovery:
 # ---------------------------------------------------------------------------
 
 
-@_SKIP_US_FED
+@pytest.mark.us_fed
 class TestFrameworkFilter:
     @pytest.mark.parametrize(
         "framework,expected_subset",
@@ -1363,9 +1355,7 @@ class TestSlaAndEvalDataset:
         lf_resp = None
         for _attempt in range(10):
             try:
-                lf_resp = requests.get(
-                    api_url, auth=(lf_pk, lf_sk), timeout=15
-                )
+                lf_resp = requests.get(api_url, auth=(lf_pk, lf_sk), timeout=15)
                 if (
                     lf_resp.status_code == 200
                     and len(lf_resp.json().get("data", [])) >= 1

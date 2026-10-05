@@ -279,7 +279,7 @@ class AgentRegistryAdapter:
             return {}
         except Exception as exc:
             logger.warning(
-                "agent_registry_adapter: failed to obtain ADC token: %s — "
+                "agent_registry_adapter: ADC authentication failed: %s — "
                 "proceeding without auth headers.",
                 exc,
             )

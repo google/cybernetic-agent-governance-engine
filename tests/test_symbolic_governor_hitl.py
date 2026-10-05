@@ -22,11 +22,12 @@ C1 Fix: Post-HITL revalidation must record violations for ALL CBF refusal reason
 not just those starting with "UNSAFE".
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.gateway.governance.governor.governor import GovernanceError
+import pytest
+
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
+from src.gateway.governance.governor.governor import GovernanceError
 from tests.fixtures.governor import make_governor
 
 # Test markers per AGENTS.md
@@ -41,7 +42,7 @@ def mock_governor(classification_engine):
         mock_opa_client = MagicMock()
         mock_safety_filter = MagicMock()
         mock_consensus_engine = MagicMock()
-        
+
         # Instantiate SymbolicGovernor with mocked dependencies
         gov = make_governor(
             domain_tiers=[CBFTierPlugin(mock_safety_filter)],
@@ -55,7 +56,7 @@ def mock_governor(classification_engine):
 
 class TestC1PostHITLRevalidationFailClosed:
     """Test suite for C1: Post-HITL Revalidation Fail-Open Fix.
-    
+
     Verifies that revalidate_post_hitl() records violations for ALL CBF
     refusal reasons, not just "UNSAFE" prefix matches.
     """
@@ -147,9 +148,11 @@ class TestC1PostHITLRevalidationFailClosed:
         )
 
         # Mock generate_seal_with_evidence at the import location
-        with patch("src.gateway.governance.routing_seal.generate_seal_with_evidence") as mock_seal:
+        with patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence"
+        ) as mock_seal:
             mock_seal.return_value = "mock_seal_12345"
-            
+
             # Execute: should return a routing seal (non-empty string)
             seal = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
@@ -189,7 +192,7 @@ class TestC1PostHITLRevalidationFailClosed:
 
 class TestC2PostHITLSequentialOrdering:
     """Test suite for C2: Post-HITL Concurrent CBF/OPA Budget Leakage Fix.
-    
+
     Verifies that revalidate_post_hitl() executes OPA first (read-only), then
     CBF commit only if OPA passes. This prevents budget leakage where CBF debits
     balance even when OPA subsequently denies.
@@ -227,7 +230,10 @@ class TestC2PostHITLSequentialOrdering:
         """C2: Assert CBF is never called when OPA returns GOVERNANCE_VIOLATION."""
         # Setup: OPA returns GOVERNANCE_VIOLATION
         mock_governor.components.opa.evaluate_policy = AsyncMock(
-            return_value={"allow": "GOVERNANCE_VIOLATION", "reason": "Regulatory breach"}
+            return_value={
+                "allow": "GOVERNANCE_VIOLATION",
+                "reason": "Regulatory breach",
+            }
         )
         # Setup: CBF mock (should never be called)
         mock_governor.components.safety_filter.atomic_verify_and_commit = AsyncMock(
@@ -261,9 +267,11 @@ class TestC2PostHITLSequentialOrdering:
         )
 
         # Mock generate_seal_with_evidence
-        with patch("src.gateway.governance.routing_seal.generate_seal_with_evidence") as mock_seal:
+        with patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence"
+        ) as mock_seal:
             mock_seal.return_value = "mock_seal_c2_test"
-            
+
             # Execute
             seal = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
@@ -312,18 +320,26 @@ class TestC2PostHITLSequentialOrdering:
         async def opa_side_effect(*args, **kwargs):
             call_order.append("OPA")
             return {"allow": "ALLOW"}
-        mock_governor.components.opa.evaluate_policy = AsyncMock(side_effect=opa_side_effect)
+
+        mock_governor.components.opa.evaluate_policy = AsyncMock(
+            side_effect=opa_side_effect
+        )
 
         # Setup: CBF commits and records call
         async def cbf_side_effect(*args, **kwargs):
             call_order.append("CBF")
             return (True, "OK", 100.0)
-        mock_governor.components.safety_filter.atomic_verify_and_commit = AsyncMock(side_effect=cbf_side_effect)
+
+        mock_governor.components.safety_filter.atomic_verify_and_commit = AsyncMock(
+            side_effect=cbf_side_effect
+        )
 
         # Mock generate_seal_with_evidence
-        with patch("src.gateway.governance.routing_seal.generate_seal_with_evidence") as mock_seal:
+        with patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence"
+        ) as mock_seal:
             mock_seal.return_value = "mock_seal_order_test"
-            
+
             # Execute
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",

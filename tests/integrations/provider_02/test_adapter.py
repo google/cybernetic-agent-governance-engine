@@ -518,7 +518,9 @@ class TestExecutedLineage:
         approval_node is unrecorded; callers that do not emit it (pause recorded
         straight after safety_check) yield the same recorded chain.
         """
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             [
@@ -545,7 +547,9 @@ class TestExecutedLineage:
 
     def test_deferral_path_contracts_through_defer_node(self) -> None:
         """safety_check -> defer_node -> explainer: explainer cites safety_check."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             [
@@ -568,7 +572,9 @@ class TestExecutedLineage:
 
     def test_ftra_block_explainer_cites_evaluator(self) -> None:
         """evaluator -> ftra_node(BLOCKED) -> explainer contracts to evaluator."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             [
@@ -586,7 +592,9 @@ class TestExecutedLineage:
 
     def test_finish_routes_doer_to_output_rail(self) -> None:
         """route_supervisor FINISH: doer_node -> nemo_output_rail is a legal edge."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(
             cb,
             ["nemo_guardrail", "thinker_node", "doer_node", "nemo_output_rail"],
@@ -597,7 +605,9 @@ class TestExecutedLineage:
     def test_evaluator_to_safety_check_without_ftra_fails_closed(self) -> None:
         """The real graph routes evaluator -> ftra_node -> safety_check; a direct
         evaluator -> safety_check edge no longer exists."""
-        cb = Provider02AttestationCallback(topology=FINANCIAL_ADVISOR_TOPOLOGY)
+        cb = Provider02AttestationCallback(
+            committer=InProcessCommitter(), topology=FINANCIAL_ADVISOR_TOPOLOGY
+        )
         _run(cb, ["execution_analyst", "evaluator"], _base_state())
         with pytest.raises(LineageError, match="'evaluator' -> 'safety_check'"):
             cb.on_chain_end("safety_check", _base_state())

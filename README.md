@@ -474,7 +474,9 @@ graph.add_node("input_rail", create_nemo_guardrail_node())
 graph.add_node(
     "safety_check",
     create_opa_safety_node(
-        OpaNodeConfig(policy_action_name="execute_trade", payload_extractor=extract_trade_payload),
+        OpaNodeConfig(
+            policy_action_name="execute_trade", payload_extractor=extract_trade_payload
+        ),
         governor,
     ),
 )

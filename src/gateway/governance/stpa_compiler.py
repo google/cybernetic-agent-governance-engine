@@ -190,7 +190,9 @@ class ConditionModel(BaseModel):
     @field_validator("param_aliases", "normalize_fraction_aliases")
     @classmethod
     def _v_param_aliases(cls, v: list[str], info: ValidationInfo) -> list[str]:
-        return [_require_pattern(p, _IDENT_RE, f"condition.{info.field_name}") for p in v]
+        return [
+            _require_pattern(p, _IDENT_RE, f"condition.{info.field_name}") for p in v
+        ]
 
     @field_validator("threshold_ref")
     @classmethod
@@ -349,7 +351,9 @@ class SandboxRuleModel(BaseModel):
     """
 
     allowed_endpoints: list[str] = Field(default_factory=list)
-    allowed_http_verbs: list[HttpVerb] = Field(default_factory=lambda: ["POST"])
+    allowed_http_verbs: list[HttpVerb] = Field(
+        default_factory=lambda: list[HttpVerb](["POST"])
+    )
     allowed_mcp_methods: list[str] = Field(default_factory=list)
     allowed_binaries: list[str] = Field(default_factory=list)
     require_routing_seal: bool = True
@@ -941,7 +945,9 @@ def _composite_parts(composite: str) -> tuple[str, str, str]:
     """Split a validated composite into ``(lhs_param, threshold_ref, rhs_param)``."""
     m = _COMPOSITE_SCALED_THRESHOLD_RE.match(composite.strip())
     if m is None:  # unreachable: ConditionModel refuses any other form
-        raise ValueError(f"composite condition outside the compiled grammar: {composite!r}")
+        raise ValueError(
+            f"composite condition outside the compiled grammar: {composite!r}"
+        )
     return m.group(1), m.group(2), m.group(3)
 
 
@@ -1062,7 +1068,9 @@ def generate_python(cs: ControlStructureModel) -> str:
             else:
                 keys_tuple_str = "(" + ", ".join(f'"{k}"' for k in all_keys) + ")"
                 norm_tuple_str = (
-                    "(" + ", ".join(f'"{k}"' for k in cond.normalize_fraction_aliases) + ",)"
+                    "("
+                    + ", ".join(f'"{k}"' for k in cond.normalize_fraction_aliases)
+                    + ",)"
                     if cond.normalize_fraction_aliases
                     else "()"
                 )
@@ -1474,9 +1482,14 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             req_keys = [
                 str(p["name"] if isinstance(p, dict) else p.name)
                 for ca in cs.control_actions
-                if (ca.get("name") if isinstance(ca, dict) else ca.name) == saga.forward_action
+                if (ca.get("name") if isinstance(ca, dict) else ca.name)
+                == saga.forward_action
                 for p in (ca.get("params", []) if isinstance(ca, dict) else ca.params)
-                if (p.get("required") if isinstance(p, dict) else getattr(p, "required", False))
+                if (
+                    p.get("required")
+                    if isinstance(p, dict)
+                    else getattr(p, "required", False)
+                )
             ]
             map_keys = [
                 pm.forward_key
@@ -1911,7 +1924,6 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
         for uca in cs.unsafe_control_actions
     ]
     for action, classification in declared + from_ucas:
-
         if action in action_map:
             existing = action_map[action]
             if existing != classification:
@@ -2103,9 +2115,7 @@ def generate_sandbox_policy(cs: ControlStructureModel) -> str:
         {ca["name"] for ca in cs.control_actions if "name" in ca}
         | set(action_ucas.keys())
     )
-    ca_by_name = {
-        ca["name"]: ca for ca in cs.control_actions if "name" in ca
-    }
+    ca_by_name = {ca["name"]: ca for ca in cs.control_actions if "name" in ca}
 
     for action in all_actions:
         ucas = sorted(action_ucas.get(action, []), key=lambda u: u.id)

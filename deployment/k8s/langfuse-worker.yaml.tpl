@@ -191,7 +191,12 @@ spec:
                   key: encryption-key
             # Injected so the Langfuse worker pod can emit jurisdiction-tagged telemetry.
             - name: CAGE_DEPLOYMENT_REGION
-              value: "${CAGE_DEPLOYMENT_REGION}"
+              # Single source: the cage-deployment ConfigMap (cage-deployment-configmap.yaml.tpl).
+              valueFrom:
+                configMapKeyRef:
+                  name: cage-deployment
+                  key: CAGE_DEPLOYMENT_REGION
+                  optional: false
           livenessProbe:
             httpGet:
               path: /api/public/health

@@ -6,6 +6,9 @@ kubeconfig_path    = "~/.kube/config"
 kubeconfig_context = "production-cluster" # Specify exact context for safety
 
 # ─── Environment ──────────────────────────────────────────────────────────────
+# Deployment jurisdiction (cage-deployment ConfigMap): US_FED | EU_ECB | APAC_MAS
+cage_deployment_region = "US_FED"
+
 environment = "prod"
 namespace   = "governance-stack"
 

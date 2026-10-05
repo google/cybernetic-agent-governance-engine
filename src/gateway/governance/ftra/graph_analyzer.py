@@ -244,7 +244,10 @@ class PlanGraphAnalyzer:
                     auto_cleared.append(step_id)
                     continue
 
-            if CLASSIFICATION_SEVERITY[classification] > CLASSIFICATION_SEVERITY[gating]:
+            if (
+                CLASSIFICATION_SEVERITY[classification]
+                > CLASSIFICATION_SEVERITY[gating]
+            ):
                 gating = classification
 
         # ----------------------------------------------------------------

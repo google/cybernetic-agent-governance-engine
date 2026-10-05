@@ -120,7 +120,12 @@ spec:
 
             # --- CAGE deployment region ---
             - name: CAGE_DEPLOYMENT_REGION
-              value: "US_FED"
+              # Single source: the cage-deployment ConfigMap (cage-deployment-configmap.yaml.tpl).
+              valueFrom:
+                configMapKeyRef:
+                  name: cage-deployment
+                  key: CAGE_DEPLOYMENT_REGION
+                  optional: false
 
             # --- OpenTelemetry ---
             - name: OTEL_TRACES_EXPORTER

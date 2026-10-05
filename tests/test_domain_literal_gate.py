@@ -177,4 +177,3 @@ class TestDomainLiteralGate:
         violations = check_file(test_file)
         assert len(violations) == 1
         assert violations[0][1] == bad_literal
-

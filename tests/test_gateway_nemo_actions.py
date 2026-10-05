@@ -62,9 +62,7 @@ class TestInvokeVllmFallbackAction:
                 "src.gateway.infrastructure.telemetry_client": MagicMock(
                     genai_span=_mock_genai_span_ctx()
                 ),
-                "src.integrations.nemo.vllm_client": MagicMock(
-                    VLLMLLM=mock_vllm_llm
-                ),
+                "src.integrations.nemo.vllm_client": MagicMock(VLLMLLM=mock_vllm_llm),
                 "langchain_core.messages": MagicMock(HumanMessage=MagicMock()),
             },
         ):

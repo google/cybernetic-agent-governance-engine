@@ -60,7 +60,12 @@ async def verify_memorystore_wait(
         # Dry-run mode for offline CI
         latency_ms = 12.5
         acked = replicas
-        return True, acked, latency_ms, f"DRY-RUN: WAIT {replicas} {timeout_ms} simulated successfully."
+        return (
+            True,
+            acked,
+            latency_ms,
+            f"DRY-RUN: WAIT {replicas} {timeout_ms} simulated successfully.",
+        )
 
     import redis.asyncio as aioredis
 
@@ -72,7 +77,9 @@ async def verify_memorystore_wait(
 
         credential_provider = get_redis_credential_provider(auth_mode="iam")
 
-    password = None if credential_provider is not None else os.environ.get("REDIS_PASSWORD")
+    password = (
+        None if credential_provider is not None else os.environ.get("REDIS_PASSWORD")
+    )
 
     redis_kwargs: dict[str, Any] = {
         "host": host,
@@ -86,7 +93,11 @@ async def verify_memorystore_wait(
         "socket_timeout": 3.0,
     }
     cage_env = os.environ.get("CAGE_ENV", "prod").lower()
-    if enable_tls and not ca_cert_path and cage_env in ("dev", "development", "test", "ci", "staging"):
+    if (
+        enable_tls
+        and not ca_cert_path
+        and cage_env in ("dev", "development", "test", "ci", "staging")
+    ):
         redis_kwargs["ssl_cert_reqs"] = "none"
 
     client = aioredis.Redis(**redis_kwargs)
@@ -129,19 +140,46 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Verify Memorystore synchronous replication via WAIT command."
     )
-    parser.add_argument("--host", default=os.environ.get("REDIS_HOST", "localhost"), help="Redis host")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("REDIS_PORT", "6379")), help="Redis port")
-    parser.add_argument("--replicas", type=int, default=1, help="Expected replicas to acknowledge (default: 1)")
-    parser.add_argument("--timeout-ms", type=int, default=100, help="WAIT timeout in milliseconds (default: 100)")
+    parser.add_argument(
+        "--host", default=os.environ.get("REDIS_HOST", "localhost"), help="Redis host"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("REDIS_PORT", "6379")),
+        help="Redis port",
+    )
+    parser.add_argument(
+        "--replicas",
+        type=int,
+        default=1,
+        help="Expected replicas to acknowledge (default: 1)",
+    )
+    parser.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=100,
+        help="WAIT timeout in milliseconds (default: 100)",
+    )
     parser.add_argument("--tls", action="store_true", help="Enable TLS")
-    parser.add_argument("--ca-cert", default=os.environ.get("REDIS_CA_CERT_PATH"), help="Path to CA certificate")
-    parser.add_argument("--iam-auth", action="store_true", help="Use GCP IAM authentication")
-    parser.add_argument("--dry-run", action="store_true", help="Simulate execution without network I/O")
+    parser.add_argument(
+        "--ca-cert",
+        default=os.environ.get("REDIS_CA_CERT_PATH"),
+        help="Path to CA certificate",
+    )
+    parser.add_argument(
+        "--iam-auth", action="store_true", help="Use GCP IAM authentication"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Simulate execution without network I/O"
+    )
 
     args = parser.parse_args()
 
-    print(f"Executing Memorystore WAIT smoke test (replicas={args.replicas}, timeout={args.timeout_ms}ms)...")
-    success, acked, latency_ms, msg = asyncio.run(
+    print(
+        f"Executing Memorystore WAIT smoke test (replicas={args.replicas}, timeout={args.timeout_ms}ms)..."
+    )
+    success, _acked, latency_ms, msg = asyncio.run(
         verify_memorystore_wait(
             host=args.host,
             port=args.port,

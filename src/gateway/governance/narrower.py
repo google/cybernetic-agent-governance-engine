@@ -45,4 +45,3 @@ class NarrowerRegistry:
 
 
 __all__ = ["Narrower", "NarrowerRegistry", "NarrowingResult"]
-

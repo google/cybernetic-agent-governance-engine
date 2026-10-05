@@ -14,8 +14,8 @@
 
 """Narrower for trade amounts that exceed what the refusing tier would admit."""
 
-from collections.abc import Callable
 import math
+from collections.abc import Callable
 from typing import Any
 
 from src.gateway.governance.contracts import NarrowingResult, Violation

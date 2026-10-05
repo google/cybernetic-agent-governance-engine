@@ -69,8 +69,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups --all-extras
       - name: Run ${{ matrix.region }} posture tests
+        # The marker selects the tests; tests/conftest.py runs each of them
+        # under its region, so no CAGE_DEPLOYMENT_REGION is exported here.
         env:
-          CAGE_DEPLOYMENT_REGION: ${{ matrix.region }}
           CAGE_ENV: "test"
           OPENAI_API_KEY: "sk-dummy"
           MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"

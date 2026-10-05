@@ -24,12 +24,14 @@ import pytest
 from proof.model import (
     PLUGIN_TIER_PHASE,
     POST_HITL_READ_ONLY_TIERS,
-    PROFILE_STAGES as PROOF_PROFILES,
     PROFILES,
     TIER_PHASE,
     TIERS,
     post_hitl_runs_every_phase2_tier,
     runs_under_profile,
+)
+from proof.model import (
+    PROFILE_STAGES as PROOF_PROFILES,
 )
 from src.gateway.governance.governor.pipeline import (
     POST_HITL_READ_ONLY_STAGES,
@@ -48,11 +50,13 @@ def test_profile_names_match() -> None:
 
 @pytest.mark.parametrize("profile", list(Profile))
 @pytest.mark.parametrize(("tier", "phase"), sorted(_ALL_PHASES.items()))
-def test_production_predicate_matches_proof(profile: Profile, tier: str, phase: int) -> None:
+def test_production_predicate_matches_proof(
+    profile: Profile, tier: str, phase: int
+) -> None:
     """Every (profile, tier, phase), kernel or plugin-named, selects identically."""
-    assert stage_runs_under(profile, name=tier, mutating=phase == 2) == runs_under_profile(
-        profile.value, tier, phase
-    )
+    assert stage_runs_under(
+        profile, name=tier, mutating=phase == 2
+    ) == runs_under_profile(profile.value, tier, phase)
 
 
 def test_full_and_dry_run_run_every_tier() -> None:
@@ -75,7 +79,9 @@ def test_post_hitl_claim_holds() -> None:
 
 def test_post_hitl_skips_read_only_plugin_tiers() -> None:
     """Fail-closed scope, not fail-open: a phase-1 plugin tier is not re-run."""
-    assert not stage_runs_under(Profile.POST_HITL, name="clinical_consensus", mutating=False)
+    assert not stage_runs_under(
+        Profile.POST_HITL, name="clinical_consensus", mutating=False
+    )
 
 
 # ── Jurisdiction tiers, once per region (D-L, proof claim 10) ──────────────────
@@ -86,7 +92,10 @@ from proof.model import (  # noqa: E402
     region_profile_stages,
     region_tier_phase,
 )
-from src.gateway.governance.jurisdiction import JURISDICTIONS, resolve_jurisdiction  # noqa: E402
+from src.gateway.governance.jurisdiction import (  # noqa: E402
+    JURISDICTIONS,
+    resolve_jurisdiction,
+)
 
 
 def test_proof_and_production_know_the_same_regions() -> None:
@@ -110,7 +119,8 @@ def test_region_stage_selection_matches_proof(region: str, profile: Profile) -> 
     """Per region, the pipeline predicate selects the proof's profile set."""
     phases = region_tier_phase(region)
     selected = frozenset(
-        tier for tier, phase in phases.items()
+        tier
+        for tier, phase in phases.items()
         if stage_runs_under(profile, name=tier, mutating=phase == 2)
     )
     assert selected == region_profile_stages(region)[profile.value]
@@ -128,6 +138,8 @@ from proof.model import (  # noqa: E402
     hard_preview_denies_before_hitl,
     no_commit_under_pending_findings,
     pending_approval_outcome,
+)
+from proof.model import (
     phase2_mode as proof_phase2_mode,
 )
 from src.gateway.governance.classification_engine import (  # noqa: E402
@@ -150,7 +162,9 @@ _PENDING = [k for k in _KIND_SETS if "HITL" in k and "HARD" not in k]
 
 def _violations(tier: str, kinds: frozenset[str]) -> list[Violation]:
     return [
-        Violation(tier=tier, code=f"{tier.upper()}_{k}", message=k, kind=ViolationKind[k])
+        Violation(
+            tier=tier, code=f"{tier.upper()}_{k}", message=k, kind=ViolationKind[k]
+        )
         for k in sorted(kinds)
     ]
 
@@ -197,11 +211,15 @@ def test_violation_kinds_match() -> None:
 
 
 @pytest.mark.parametrize("profile", list(Profile))
-@pytest.mark.parametrize("kinds", _KIND_SETS, ids=lambda k: "+".join(sorted(k)) or "clean")
-def test_production_phase2_gate_matches_proof(profile: Profile, kinds: frozenset[str]) -> None:
-    assert phase2_mode(profile, [ViolationKind[k] for k in kinds]).value == proof_phase2_mode(
-        profile.value, kinds
-    )
+@pytest.mark.parametrize(
+    "kinds", _KIND_SETS, ids=lambda k: "+".join(sorted(k)) or "clean"
+)
+def test_production_phase2_gate_matches_proof(
+    profile: Profile, kinds: frozenset[str]
+) -> None:
+    assert phase2_mode(
+        profile, [ViolationKind[k] for k in kinds]
+    ).value == proof_phase2_mode(profile.value, kinds)
 
 
 def test_phase2_claims_hold() -> None:
@@ -211,7 +229,9 @@ def test_phase2_claims_hold() -> None:
 
 @pytest.mark.parametrize("profile", [Profile.DRY_RUN, Profile.FULL, Profile.POST_HITL])
 @pytest.mark.parametrize("phase1", _PENDING, ids=lambda k: "+".join(sorted(k)))
-@pytest.mark.parametrize("preview", _KIND_SETS, ids=lambda k: "+".join(sorted(k)) or "pass")
+@pytest.mark.parametrize(
+    "preview", _KIND_SETS, ids=lambda k: "+".join(sorted(k)) or "pass"
+)
 async def test_pending_approval_outcome_matches_proof(
     profile: Profile, phase1: frozenset[str], preview: frozenset[str]
 ) -> None:
@@ -238,4 +258,6 @@ async def test_pending_approval_outcome_matches_proof(
     decided = {GovernanceDecision.DENY: "DENIED"}.get(
         classification.decision, classification.decision.value
     )
-    assert (decided, result.barrier_preview.value) == pending_approval_outcome(phase1, preview)
+    assert (decided, result.barrier_preview.value) == pending_approval_outcome(
+        phase1, preview
+    )

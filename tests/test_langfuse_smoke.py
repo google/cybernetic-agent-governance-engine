@@ -200,8 +200,13 @@ def test_langfuse_trace_ingestion():
             verify_url, auth=(_pk, _sk), params=params, timeout=30
         )
 
-        if verify_resp.status_code in (400, 404) and "events_only" in verify_resp.text.lower():
-            logger.info("✅ Ingestion verified: Langfuse running in v4 events_only mode.")
+        if (
+            verify_resp.status_code in (400, 404)
+            and "events_only" in verify_resp.text.lower()
+        ):
+            logger.info(
+                "✅ Ingestion verified: Langfuse running in v4 events_only mode."
+            )
             return
 
         if verify_resp.status_code == 200:

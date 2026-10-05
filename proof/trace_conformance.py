@@ -137,7 +137,9 @@ def _plan_rules(event: Mapping[str, Any]) -> list[str]:
         problems.append(f"phase-1 tier after a phase-2 tier: {plan}")
     for name, phase in plan:
         if not runs_under_profile(str(event["profile"]), name, phase):
-            problems.append(f"{name} (phase {phase}) does not run under {event['profile']}")
+            problems.append(
+                f"{name} (phase {phase}) does not run under {event['profile']}"
+            )
     order = [name for name, _ in plan]
     ran = [str(name) for name, _ in event["outcomes"]]
     positions = [order.index(name) for name in ran if name in order]
@@ -158,7 +160,9 @@ def _coverage(event: Mapping[str, Any]) -> list[str]:
             problems.append("POST_HITL planned no phase-2 tier")
         return problems
     missing = [t for t in KERNEL_TIERS if t not in names]
-    return [f"governed {event['profile']} run did not plan {missing}"] if missing else []
+    return (
+        [f"governed {event['profile']} run did not plan {missing}"] if missing else []
+    )
 
 
 def _seal(event: Mapping[str, Any]) -> list[str]:
@@ -188,7 +192,9 @@ def check_event(event: Mapping[str, Any]) -> list[tuple[str, str]]:
     problems += [("coverage", p) for p in _coverage(event)]
     problems += [("seal", p) for p in _seal(event)]
     state = project(event)
-    abstracted = state.phase == "CHECKING" and any(r == "FAIL" for _, r in state.tier_results)
+    abstracted = state.phase == "CHECKING" and any(
+        r == "FAIL" for _, r in state.tier_results
+    )
     if not abstracted and not _in_model(event, state):
         problems.append(("reachable", f"{state} is not reachable over {_plan(event)}"))
     return problems
@@ -200,7 +206,9 @@ def check_trace(events: Iterable[Mapping[str, Any]]) -> list[Finding]:
     issued: dict[str, tuple[Mapping[str, Any], State]] = {}
     executed: set[str] = set()
     for index, event in enumerate(events):
-        findings += [Finding(index, rule, detail) for rule, detail in check_event(event)]
+        findings += [
+            Finding(index, rule, detail) for rule, detail in check_event(event)
+        ]
         if event.get("type") != TRACE_EVENT_TYPE or event.get("phase") not in PHASES:
             continue
         ref = event.get("seal_ref")
@@ -209,16 +217,24 @@ def check_trace(events: Iterable[Mapping[str, Any]]) -> list[Finding]:
         if event["phase"] != "EXECUTED" or not ref:
             continue
         if ref in executed:
-            findings.append(Finding(index, "single_use", f"seal {ref[:16]} executed twice"))
+            findings.append(
+                Finding(index, "single_use", f"seal {ref[:16]} executed twice")
+            )
             continue
         executed.add(ref)
         if ref not in issued:
-            findings.append(Finding(index, "no_direct_bind", f"seal {ref[:16]} has no issuance"))
+            findings.append(
+                Finding(index, "no_direct_bind", f"seal {ref[:16]} has no issuance")
+            )
             continue
         source, state = issued[ref]
         after = replace(state, phase="EXECUTED", seal_consumed=True)
         if not after.resolved_allow:
-            findings.append(Finding(index, "no_direct_bind", "EXECUTED without resolved ALLOW"))
+            findings.append(
+                Finding(index, "no_direct_bind", "EXECUTED without resolved ALLOW")
+            )
         elif state.phase == "SEAL_ISSUED" and not _in_model(source, after):
-            findings.append(Finding(index, "no_direct_bind", f"{after} is not reachable"))
+            findings.append(
+                Finding(index, "no_direct_bind", f"{after} is not reachable")
+            )
     return findings

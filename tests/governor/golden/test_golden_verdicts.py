@@ -35,7 +35,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.governor.golden.fixtures import SCENARIOS, Scenario, build_governor_for_scenario
+from tests.governor.golden.fixtures import (
+    SCENARIOS,
+    Scenario,
+    build_governor_for_scenario,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -57,21 +61,26 @@ async def _execute_scenario_entry_point(
     entry_point: str,
 ) -> dict[str, Any]:
     """Execute a single entry point for a scenario with deterministic mocks."""
-    with patch(
-        "src.gateway.governance.evidence.stream.is_evidence_chain_blocking",
-        return_value=False,
-    ), patch(
-        "src.gateway.governance.routing_seal.generate_seal_with_evidence",
-        new_callable=AsyncMock,
-        return_value="mock-seal-" + "a" * 32,
-    ), patch(
-        "src.gateway.governance.governor.verdicts._park_defer_context",
-        new_callable=AsyncMock,
-        return_value=("mock-defer-token", True),
-    ), patch(
-        "src.gateway.governance.governor.verdicts.publish_refusal",
-        new_callable=AsyncMock
-    ) as mock_publish_refusal:
+    with (
+        patch(
+            "src.gateway.governance.evidence.stream.is_evidence_chain_blocking",
+            return_value=False,
+        ),
+        patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+            new_callable=AsyncMock,
+            return_value="mock-seal-" + "a" * 32,
+        ),
+        patch(
+            "src.gateway.governance.governor.verdicts._park_defer_context",
+            new_callable=AsyncMock,
+            return_value=("mock-defer-token", True),
+        ),
+        patch(
+            "src.gateway.governance.governor.verdicts.publish_refusal",
+            new_callable=AsyncMock,
+        ) as mock_publish_refusal,
+    ):
         governor, collaborators = build_governor_for_scenario(scenario)
         collaborators["publish_refusal"] = mock_publish_refusal
         fn = getattr(governor, entry_point)
@@ -83,20 +92,32 @@ async def _execute_scenario_entry_point(
         try:
             # The corpus records unbound post-approval runs (no barrier snapshot);
             # approval binding (D-H) is covered by tests/test_trade_governance_e2e.py.
-            kwargs = {"approved_barrier_preview": None} if entry_point == "revalidate_post_hitl" else {}
+            kwargs = (
+                {"approved_barrier_preview": None}
+                if entry_point == "revalidate_post_hitl"
+                else {}
+            )
             res = await fn(scenario.action, scenario.params, **kwargs)
             if isinstance(res, dict):
                 if "verdict" in res:
                     v = res["verdict"]
                     outcome = v.value if hasattr(v, "value") else str(v)
                     viols = res.get("violations", [])
-                    first_violation_code = (viols[0].code if hasattr(viols[0], 'code') else str(viols[0])) if viols else None
+                    first_violation_code = (
+                        (viols[0].code if hasattr(viols[0], "code") else str(viols[0]))
+                        if viols
+                        else None
+                    )
                     seal_issued = bool(res.get("seal"))
                 else:
                     # verify entry point returns dict with 'violations'
                     viols = res.get("violations", [])
                     outcome = "ALLOW" if not viols else "DENY"
-                    first_violation_code = (viols[0].code if hasattr(viols[0], 'code') else str(viols[0])) if viols else None
+                    first_violation_code = (
+                        (viols[0].code if hasattr(viols[0], "code") else str(viols[0]))
+                        if viols
+                        else None
+                    )
                     seal_issued = False
             elif isinstance(res, str):
                 outcome = "ALLOW"
@@ -108,14 +129,27 @@ async def _execute_scenario_entry_point(
                 seal_issued = False
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             outcome = type(e).__name__
             if hasattr(e, "receipt") and getattr(e.receipt, "violations", None):
-                first_violation_code = e.receipt.violations[0].code if hasattr(e.receipt.violations[0], "code") else str(e.receipt.violations[0])
+                first_violation_code = (
+                    e.receipt.violations[0].code
+                    if hasattr(e.receipt.violations[0], "code")
+                    else str(e.receipt.violations[0])
+                )
             elif hasattr(e, "violations") and getattr(e, "violations", None):
-                first_violation_code = e.violations[0].code if hasattr(e.violations[0], "code") else str(e.violations[0])
+                first_violation_code = (
+                    e.violations[0].code
+                    if hasattr(e.violations[0], "code")
+                    else str(e.violations[0])
+                )
             elif hasattr(e, "violation") and getattr(e, "violation", None):
-                first_violation_code = e.violation.code if hasattr(e.violation, "code") else str(e.violation)
+                first_violation_code = (
+                    e.violation.code
+                    if hasattr(e.violation, "code")
+                    else str(e.violation)
+                )
             else:
                 first_violation_code = str(e)
             seal_issued = False
@@ -153,6 +187,9 @@ async def _run_all_scenarios() -> dict[str, Any]:
 
 def test_golden_verdicts(pytestconfig: pytest.Config) -> None:
     """Run golden verdict corpus against expected.json or regenerate if requested."""
+    from src.gateway.governance.constants import ControlRegistry
+
+    ControlRegistry.reconfigure("US_FED")
     regen = pytestconfig.getoption("--regen-golden", default=False)
     actual_results = asyncio.run(_run_all_scenarios())
 
@@ -236,5 +273,13 @@ def test_hard_guard_catches_name_error() -> None:
 
 def test_hard_guard_allows_legitimate_outcomes() -> None:
     """Verify that legitimate outcomes (ALLOW, DENY, GovernanceError, etc.) pass the guard."""
-    for outcome in ("ALLOW", "DENY", "DEFER", "NARROW", "REQUIRE_APPROVAL", "GovernanceError", "ValueError"):
+    for outcome in (
+        "ALLOW",
+        "DENY",
+        "DEFER",
+        "NARROW",
+        "REQUIRE_APPROVAL",
+        "GovernanceError",
+        "ValueError",
+    ):
         _check_hard_guard(outcome, "test_scenario", "validate_action")

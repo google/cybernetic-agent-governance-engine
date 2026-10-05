@@ -141,9 +141,7 @@ class TestDetectBypass:
 class TestCreateNemoManagerUnavailable:
     def test_returns_none_when_nemo_not_installed(self):
         """When _NEMOGUARDRAILS_AVAILABLE is False the factory must return None."""
-        with patch(
-            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", False
-        ):
+        with patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", False):
             from src.integrations.nemo.manager import create_nemo_manager
 
             result = create_nemo_manager()
@@ -154,9 +152,7 @@ class TestCreateNemoManagerUnavailable:
         FileNotFoundError must be raised."""
         nonexistent = str(tmp_path / "no_such_config")
         with (
-            patch(
-                "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-            ),
+            patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True),
             patch("src.integrations.nemo.manager.nest_asyncio"),
             patch("src.integrations.nemo.manager._apply_sdd_monkeypatch"),
             patch("src.integrations.nemo.manager.register_llm_provider"),
@@ -187,9 +183,7 @@ class TestValidateWithNemo:
         # NeMo returns an empty response list — rails passed through cleanly
         mock_rails.generate_async.return_value = {"response": []}
 
-        with patch(
-            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-        ):
+        with patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True):
             from src.integrations.nemo.manager import validate_with_nemo
 
             is_safe, response, deterministic = await validate_with_nemo(
@@ -211,9 +205,7 @@ class TestValidateWithNemo:
             "response": [{"content": "I cannot help with that."}]
         }
 
-        with patch(
-            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-        ):
+        with patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True):
             from src.integrations.nemo.manager import validate_with_nemo
 
             is_safe, response, _deterministic = await validate_with_nemo(
@@ -237,9 +229,7 @@ class TestVerifyInput:
         mock_rails.is_transparent_fallback = False
         mock_rails.generate_async.return_value = {"response": []}
 
-        with patch(
-            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-        ):
+        with patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True):
             from src.integrations.nemo.manager import verify_input
 
             result = await verify_input(mock_rails, "What is the NAV today?")
@@ -254,9 +244,7 @@ class TestVerifyInput:
         mock_rails.is_transparent_fallback = False
         mock_rails.generate_async.side_effect = RuntimeError("NeMo internal error")
 
-        with patch(
-            "src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True
-        ):
+        with patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True):
             from src.integrations.nemo.manager import verify_input
 
             result = await verify_input(mock_rails, "Hello")

@@ -27,6 +27,7 @@ import inspect
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry import trace
@@ -79,6 +80,9 @@ class SymbolicGovernor:
     """Immutable governor over one set of assembled components."""
 
     __slots__ = ("_components", "_settlements", "_stages")
+    _components: GovernorComponents
+    _stages: tuple[Stage, ...]
+    _settlements: SettlementLedger
 
     def __init__(self, components: GovernorComponents) -> None:
         # order_stages rejects duplicate tier names and sorts by (phase, order);
@@ -157,7 +161,13 @@ class SymbolicGovernor:
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
             if not result.violations:
-                await _trace(result, action, Profile.DRY_RUN, "validate_action", GovernanceDecision.ALLOW)
+                await _trace(
+                    result,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    GovernanceDecision.ALLOW,
+                )
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
@@ -181,7 +191,11 @@ class SymbolicGovernor:
                 ),
                 action,
             )
-            meta = {**_ftra_meta(result), **_barrier_meta(result), **classification.metadata}
+            meta = {
+                **_ftra_meta(result),
+                **_barrier_meta(result),
+                **classification.metadata,
+            }
             span.set_attribute(
                 "cage.governance.classification_decision", classification.decision.value
             )
@@ -260,7 +274,13 @@ class SymbolicGovernor:
         """
         proposal = meta.get("narrowed_params")
         if not isinstance(proposal, dict):
-            await _trace(result, action, Profile.DRY_RUN, "validate_action", GovernanceDecision.DENY)
+            await _trace(
+                result,
+                action,
+                Profile.DRY_RUN,
+                "validate_action",
+                GovernanceDecision.DENY,
+            )
             await _deny(action, params, result)
         verified = copy.deepcopy(proposal)  # the exact params the response names
         ctx = StageContext(
@@ -340,7 +360,12 @@ class SymbolicGovernor:
                 seal = await self._sealed_narrow(tool_name, sealed, result)
             else:
                 await _trace(
-                    result, tool_name, Profile.FULL, "govern", GovernanceDecision.ALLOW, seal=seal
+                    result,
+                    tool_name,
+                    Profile.FULL,
+                    "govern",
+                    GovernanceDecision.ALLOW,
+                    seal=seal,
                 )
             span.set_attribute("cage.seal_issued", True)
             span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
@@ -369,8 +394,12 @@ class SymbolicGovernor:
             action,
         )
         proposal = classification.metadata.get("narrowed_params")
-        if classification.decision != GovernanceDecision.NARROW or not isinstance(proposal, dict):
-            await _trace(result, action, Profile.FULL, "govern", GovernanceDecision.DENY)
+        if classification.decision != GovernanceDecision.NARROW or not isinstance(
+            proposal, dict
+        ):
+            await _trace(
+                result, action, Profile.FULL, "govern", GovernanceDecision.DENY
+            )
             await _deny(action, params, result)
         narrowed = copy.deepcopy(proposal)  # the exact params the seal and receipt name
 
@@ -378,11 +407,17 @@ class SymbolicGovernor:
             await issue_narrow_receipt(
                 seal,
                 narrowed,
-                constraints_applied=classification.metadata.get("constraints_applied", []),
-                narrowing_reason=str(classification.metadata.get("narrowing_reason", "")),
+                constraints_applied=classification.metadata.get(
+                    "constraints_applied", []
+                ),
+                narrowing_reason=str(
+                    classification.metadata.get("narrowing_reason", "")
+                ),
             )
 
-        ctx = StageContext(action=action, params=copy.deepcopy(narrowed), profile=Profile.FULL)
+        ctx = StageContext(
+            action=action, params=copy.deepcopy(narrowed), profile=Profile.FULL
+        )
         rerun, seal = await run_sealed(
             self.stages,
             ctx,
@@ -410,7 +445,10 @@ class SymbolicGovernor:
                 narrowed,
                 list(rerun.violations),
                 list(rerun.tier_failures),
-                {**_ftra_meta(rerun), "classification_reason": "narrow_reverification_failed"},
+                {
+                    **_ftra_meta(rerun),
+                    "classification_reason": "narrow_reverification_failed",
+                },
             )
             raise GovernanceError(
                 f"handle_deny returned without raising; refusing {action}"
@@ -456,7 +494,11 @@ class SymbolicGovernor:
                 await handle_deny(
                     action,
                     params,
-                    [_approval_drift(f"unrecognised approval snapshot {approved_barrier_preview!r}")],
+                    [
+                        _approval_drift(
+                            f"unrecognised approval snapshot {approved_barrier_preview!r}"
+                        )
+                    ],
                     [],
                     {"approved_barrier_preview": str(approved_barrier_preview)},
                 )
@@ -482,13 +524,17 @@ class SymbolicGovernor:
                 settlements=self._settlements,
             )
             if result.barrier_outcome is not None:
-                span.set_attribute("toctou.barrier_outcome", result.barrier_outcome.value)
+                span.set_attribute(
+                    "toctou.barrier_outcome", result.barrier_outcome.value
+                )
             await _trace(
                 result,
                 action,
                 Profile.POST_HITL,
                 "revalidate_post_hitl",
-                GovernanceDecision.ALLOW if seal is not None else GovernanceDecision.DENY,
+                GovernanceDecision.ALLOW
+                if seal is not None
+                else GovernanceDecision.DENY,
                 seal=seal,
             )
             if seal is None:
@@ -614,7 +660,9 @@ _UNGOVERNED_POST_HITL = Violation(
 APPROVAL_CONTEXT_DRIFT = "APPROVAL_CONTEXT_DRIFT"
 
 
-def _parse_barrier_snapshot(value: BarrierPreview | str | None) -> BarrierPreview | None:
+def _parse_barrier_snapshot(
+    value: BarrierPreview | str | None,
+) -> BarrierPreview | None:
     """The approval's barrier snapshot; ``ValueError`` if it is not PASS/FAIL/None."""
     return None if value is None else BarrierPreview(value)
 
@@ -665,7 +713,9 @@ async def _deny_drift(
 
 
 #: Decisions that park the request instead of refusing it (model phase CHECKING).
-_PENDING_DECISIONS = frozenset({GovernanceDecision.REQUIRE_APPROVAL, GovernanceDecision.DEFER})
+_PENDING_DECISIONS = frozenset(
+    {GovernanceDecision.REQUIRE_APPROVAL, GovernanceDecision.DEFER}
+)
 
 
 async def _trace(
@@ -694,7 +744,7 @@ async def _trace(
     )
 
 
-_VERDICT_HANDLERS = {
+_VERDICT_HANDLERS: dict[GovernanceDecision, Callable[..., Any]] = {
     GovernanceDecision.DENY: handle_deny,
     GovernanceDecision.REQUIRE_APPROVAL: handle_require_approval,
     GovernanceDecision.DEFER: handle_defer,

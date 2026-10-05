@@ -45,7 +45,9 @@ def assert_no_signing_identity(environ: Mapping[str, str] | None = None) -> None
     signing key, so there is no development exemption.
     """
     env = os.environ if environ is None else environ
-    present = sorted(name for name in FORBIDDEN_SIGNING_KEY_VARS if env.get(name, "").strip())
+    present = sorted(
+        name for name in FORBIDDEN_SIGNING_KEY_VARS if env.get(name, "").strip()
+    )
     if present:
         raise RuntimeError(
             "Refusing to start: the advisor must hold no signing identity "

@@ -100,9 +100,7 @@ def build_finance_causal_gatekeeper() -> CausalGatekeeper:
     return CausalGatekeeper(build_finance_causal_spec())
 
 
-def causal_safety_check(
-    params: dict[str, Any], current_telemetry: Any = None
-) -> bool:
+def causal_safety_check(params: dict[str, Any], current_telemetry: Any = None) -> bool:
     """Forwarding wrapper for causal safety check, supporting both module-level and gatekeeper patching."""
     if gatekeeper.causal_safety_check is not _DEFAULT_GATEKEEPER_CHECK:
         return gatekeeper.causal_safety_check(params, current_telemetry)
@@ -150,8 +148,14 @@ class CausalTierPlugin(ReadOnlyTier):
         try:
             telemetry = await self._fetch_telemetry()
         except Exception as exc:
-            logger.error("Causal tier: telemetry provider failed (%s) — failing closed.", exc)
-            return [self._violation(CODE_TELEMETRY_UNAVAILABLE, f"Telemetry provider failed: {exc}")]
+            logger.error(
+                "Causal tier: telemetry provider failed (%s) — failing closed.", exc
+            )
+            return [
+                self._violation(
+                    CODE_TELEMETRY_UNAVAILABLE, f"Telemetry provider failed: {exc}"
+                )
+            ]
 
         # Calling the module-level causal_safety_check function allows patching at either
         # src.cage_finance.tiers.causal_tier.causal_safety_check or

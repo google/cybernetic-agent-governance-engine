@@ -86,6 +86,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -472,12 +473,14 @@ class FiscalLimitGuard:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)
             return 0.0
 
-    async def _call(self, method: str, *args: object) -> object:
+    async def _call(self, method: str, *args: object) -> Any:
         """Run one Redis command on either client kind."""
         fn = getattr(self._redis, method)
         if self._is_async_client():
             return await fn(*args)
-        return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, *args))
+        return await asyncio.get_running_loop().run_in_executor(
+            None, functools.partial(fn, *args)
+        )
 
     async def _read_window_cents(self) -> int | None:
         """Today's spend in cents as ``reserve()`` would see it, or ``None`` if unreadable.
@@ -493,7 +496,9 @@ class FiscalLimitGuard:
             current = int(raw) if raw else 0
             if current == 0:
                 return 0
-            expired = await self._call("zrangebyscore", PENDING_KEY, "-inf", time.time())
+            expired = await self._call(
+                "zrangebyscore", PENDING_KEY, "-inf", time.time()
+            )
             for member in expired or ():
                 text = member.decode() if isinstance(member, bytes) else str(member)
                 _, cents, window = text.split("|", 2)

@@ -165,7 +165,10 @@ def test_compliance_bridge_wired_to_worm_bucket_and_object_creator_iam() -> None
     assert "oscal_s3_bucket            = module.worm_bucket.bucket_name" in cb_block
     assert 'evidence_cold_store        = "gcs"' in cb_block
     assert "evidence_cold_store_bucket = module.worm_bucket.bucket_name" in cb_block
-    assert "clickhouse_host            = module.clickhouse_operator.service_name" in cb_block
+    assert (
+        "clickhouse_host            = module.clickhouse_operator.service_name"
+        in cb_block
+    )
 
     cb_module_main = _COMPLIANCE_BRIDGE_MAIN.read_text()
     assert 'name  = "EVIDENCE_COLD_STORE"' in cb_module_main
@@ -174,7 +177,10 @@ def test_compliance_bridge_wired_to_worm_bucket_and_object_creator_iam() -> None
     assert 'name  = "CLICKHOUSE_HOST"' in cb_module_main
 
     iam_text = _GKE_IAM.read_text()
-    assert 'resource "google_storage_bucket_iam_member" "compliance_bridge_worm_creator"' in iam_text
+    assert (
+        'resource "google_storage_bucket_iam_member" "compliance_bridge_worm_creator"'
+        in iam_text
+    )
     assert "bucket = module.worm_bucket.bucket_name" in iam_text
     assert 'role   = "roles/storage.objectCreator"' in iam_text
 
@@ -236,8 +242,12 @@ def _extract_resource_block(rtype: str, name: str, text: str) -> str:
 def test_clickhouse_tiering_bucket_is_dedicated_unlocked_and_cmek() -> None:
     """§2.6: ClickHouse deletes S3-disk objects on merge/TTL, so its cold tier is NOT the WORM bucket."""
     gke_main = _GKE_MAIN.read_text()
-    bucket = _extract_resource_block("google_storage_bucket", "clickhouse_tiering", gke_main)
-    bucket = "\n".join(line for line in bucket.splitlines() if not line.lstrip().startswith("#"))
+    bucket = _extract_resource_block(
+        "google_storage_bucket", "clickhouse_tiering", gke_main
+    )
+    bucket = "\n".join(
+        line for line in bucket.splitlines() if not line.lstrip().startswith("#")
+    )
     worm = _extract_module_block("worm_bucket", gke_main)
 
     # Distinct name from the WORM bucket (and a guard precondition).
@@ -264,7 +274,11 @@ def test_clickhouse_tiering_bucket_iam_scoped_to_clickhouse_identity_only() -> N
 
     tiering_bindings = [
         m.group(0)
-        for m in re.finditer(r'resource "google_storage_bucket_iam_[a-z]+" "\w+" \{[^}]*\}', combined, re.S)
+        for m in re.finditer(
+            r'resource "google_storage_bucket_iam_[a-z]+" "\w+" \{[^}]*\}',
+            combined,
+            re.S,
+        )
         if "clickhouse_tiering" in m.group(0)
     ]
     assert tiering_bindings, "no IAM binding on the ClickHouse tiering bucket"
@@ -273,21 +287,30 @@ def test_clickhouse_tiering_bucket_iam_scoped_to_clickhouse_identity_only() -> N
         assert 'role   = "roles/storage.objectAdmin"' in binding
 
     # ClickHouse GSA never touches the WORM bucket.
-    for m in re.finditer(r'resource "google_storage_bucket_iam_[a-z]+" "\w+" \{[^}]*\}', combined, re.S):
+    for m in re.finditer(
+        r'resource "google_storage_bucket_iam_[a-z]+" "\w+" \{[^}]*\}', combined, re.S
+    ):
         if "module.worm_bucket" in m.group(0):
             assert "google_service_account.clickhouse" not in m.group(0)
 
     # No project-wide storage role that would also reach the tiering bucket.
-    for m in re.finditer(r'resource "google_project_iam_member" "\w+" \{.*?\n\}', iam_text, re.S):
-        assert "roles/storage.object" not in m.group(0) or "condition {" in m.group(0), (
-            f"Unconditioned project-wide storage role: {m.group(0)[:80]}"
-        )
+    for m in re.finditer(
+        r'resource "google_project_iam_member" "\w+" \{.*?\n\}', iam_text, re.S
+    ):
+        assert "roles/storage.object" not in m.group(0) or "condition {" in m.group(
+            0
+        ), f"Unconditioned project-wide storage role: {m.group(0)[:80]}"
 
     # ClickHouse runs as its own KSA bound 1:1 to its own GSA; HMAC key is that GSA's.
     assert 'sa_clickhouse        = "cage-clickhouse"' in iam_text
     assert 'ksa_clickhouse        = "cage-clickhouse-sa"' in iam_text
-    assert 'resource "google_service_account_iam_binding" "clickhouse_workload_identity"' in iam_text
-    hmac = _extract_resource_block("google_storage_hmac_key", "clickhouse_tiering", gke_main)
+    assert (
+        'resource "google_service_account_iam_binding" "clickhouse_workload_identity"'
+        in iam_text
+    )
+    hmac = _extract_resource_block(
+        "google_storage_hmac_key", "clickhouse_tiering", gke_main
+    )
     assert "google_service_account.clickhouse.email" in hmac
     ch_block = _extract_module_block("clickhouse_operator", gke_main)
     assert 'kubernetes_service_account.workload["clickhouse"]' in ch_block
@@ -296,11 +319,16 @@ def test_clickhouse_tiering_bucket_iam_scoped_to_clickhouse_identity_only() -> N
 def test_clickhouse_cold_tier_credentials_come_from_secret() -> None:
     """cold_gcs uses use_environment_credentials; creds must be secretKeyRef and required when active."""
     ch_op_main = _CH_OP_MAIN.read_text()
-    assert "<use_environment_credentials>true</use_environment_credentials>" in ch_op_main
+    assert (
+        "<use_environment_credentials>true</use_environment_credentials>" in ch_op_main
+    )
     assert '["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]' in ch_op_main
     assert "name = var.cold_tier_credentials_secret_name" in ch_op_main
     # Fail closed at plan time when the cold tier is on without credentials.
-    assert "!local.cold_tier_on || var.cold_tier_credentials_secret_name != \"\"" in ch_op_main
+    assert (
+        '!local.cold_tier_on || var.cold_tier_credentials_secret_name != ""'
+        in ch_op_main
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +355,11 @@ def test_clickhouse_node_pool_and_pod_scheduling_isolation() -> None:
     assert 'operator = "NotIn"' in ch_op_main
 
     # Raw K8s manifest (deployment/k8s/langfuse-db.yaml) enforces the same guards
-    docs = [d for d in yaml.safe_load_all(_LANGFUSE_DB_YAML.read_text()) if isinstance(d, dict)]
+    docs = [
+        d
+        for d in yaml.safe_load_all(_LANGFUSE_DB_YAML.read_text())
+        if isinstance(d, dict)
+    ]
     stateful_sets = [d for d in docs if d.get("kind") == "StatefulSet"]
     assert len(stateful_sets) == 1
     pod_spec = stateful_sets[0]["spec"]["template"]["spec"]
@@ -338,7 +370,9 @@ def test_clickhouse_node_pool_and_pod_scheduling_isolation() -> None:
         and t.get("value") == "clickhouse"
         and t.get("effect") == "NoSchedule"
         for t in tolerations
-    ), f"Missing workload=clickhouse:NoSchedule toleration in langfuse-db.yaml: {tolerations}"
+    ), (
+        f"Missing workload=clickhouse:NoSchedule toleration in langfuse-db.yaml: {tolerations}"
+    )
 
     terms = (
         pod_spec.get("affinity", {})
@@ -388,7 +422,9 @@ class _LockedWormColdStore(EvidenceColdStore):
         metadata: Mapping[str, str] | None = None,
     ) -> ColdStoreReceipt:
         if key in self.objects:
-            raise PermissionError(f"WORM retention lock violation: cannot overwrite {key}")
+            raise PermissionError(
+                f"WORM retention lock violation: cannot overwrite {key}"
+            )
         self.objects[key] = content
         self.metadata[key] = dict(metadata or {})
         digest = hashlib.sha256(content).hexdigest()
@@ -433,7 +469,9 @@ class _LockedWormColdStore(EvidenceColdStore):
 
 
 @pytest.mark.asyncio
-async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_bucket() -> None:
+async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_bucket() -> (
+    None
+):
     """§6 Exit Criteria: Evidence reaches the locked bucket; ClickHouse node loss causes no evidence loss.
 
     Option A custody: the gateway's EvidenceStreamSink only hash-chains and
@@ -536,8 +574,7 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
     assert batch_key.endswith(".ndjson")
 
     persisted_records = [
-        json.loads(line)
-        for line in batch_bytes.decode("utf-8").strip().splitlines()
+        json.loads(line) for line in batch_bytes.decode("utf-8").strip().splitlines()
     ]
     assert len(persisted_records) == len(events), (
         f"Expected all {len(events)} records in locked WORM bucket despite ClickHouse loss, "
@@ -551,7 +588,9 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
         assert int(record["sequence"]) == expected_seq
         assert record["prev_hash"] == prev_hash
         verification = verify_record(record, prev_hash)
-        assert verification.valid is True, f"Hash verification failed at seq {expected_seq}: {verification.error}"
+        assert verification.valid is True, (
+            f"Hash verification failed at seq {expected_seq}: {verification.error}"
+        )
         prev_hash = record["record_hash"]
 
     # 5. Durable cursor lives in "<stream_key>:custody"; a second cycle writes nothing new.

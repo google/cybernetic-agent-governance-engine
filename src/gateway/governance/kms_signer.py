@@ -444,7 +444,9 @@ class KMSGovernanceSigner:
         if not self._provider and (kms_client is not None or key_version_name):
             from src.gateway.governance.signer_factory import get_kms_provider_class
 
-            gcp_cls = get_kms_provider_class("GCPKMSProvider")
+            # The factory returns the abstract base type; the concrete GCP
+            # provider's constructor takes these keyword arguments.
+            gcp_cls: Any = get_kms_provider_class("GCPKMSProvider")
             self._provider = gcp_cls(
                 key_version_name=key_version_name, kms_client=kms_client
             )
@@ -880,6 +882,8 @@ class KMSGovernanceSigner:
         ``HMAC_SHA256_FALLBACK`` / ``HS256`` / software providers when posture
         is enforcing (Defect K3).
         """
+        record_kid: str | None
+        record_alg: str | None
         if isinstance(decision_or_record, SignedRecord):
             payload = decision_or_record.payload
             sig_hex = (

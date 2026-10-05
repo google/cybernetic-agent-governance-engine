@@ -77,7 +77,9 @@ async def test_live_discovery_endpoint() -> None:
     endpoint, _ = _get_live_config()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(endpoint)
-        assert resp.status_code == 200, f"Discovery failed: {resp.status_code} {resp.text}"
+        assert resp.status_code == 200, (
+            f"Discovery failed: {resp.status_code} {resp.text}"
+        )
         data = resp.json()
         assert data.get("provider") == "verdict.systems"
         assert "regions" in data

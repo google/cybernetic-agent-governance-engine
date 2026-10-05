@@ -111,10 +111,14 @@ class FriaTier(ReadOnlyTier):
             ("reassessment_interval_days", reassessment_interval_days),
             ("gate_timeout_seconds", gate_timeout_seconds),
         ):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not (
-                math.isfinite(value) and value > 0
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not (math.isfinite(value) and value > 0)
             ):
-                raise ValueError(f"FriaTier: {name} must be a positive finite number, got {value!r}")
+                raise ValueError(
+                    f"FriaTier: {name} must be a positive finite number, got {value!r}"
+                )
         self._provider = provider
         self._region = region
         self._lookup = assessment_lookup
@@ -140,9 +144,13 @@ class FriaTier(ReadOnlyTier):
                 timeout=self._timeout,
             )
         except asyncio.TimeoutError:
-            return [self._unavailable(f"validate_fria timed out after {self._timeout:.1f}s")]
+            return [
+                self._unavailable(f"validate_fria timed out after {self._timeout:.1f}s")
+            ]
         except Exception as exc:
-            return [self._unavailable(f"validate_fria raised {type(exc).__name__}: {exc}")]
+            return [
+                self._unavailable(f"validate_fria raised {type(exc).__name__}: {exc}")
+            ]
         if result.error:
             return [self._unavailable(f"provider reported an error: {result.error}")]
         if result.admitted:
@@ -152,10 +160,17 @@ class FriaTier(ReadOnlyTier):
             # only for callers that present one; it is not on the governor's
             # ALLOW path (decision D2, POAM-2026-089).
             return []
-        hold = next((f for f in result.findings if f.get("needs_human_review") is True), None)
+        hold = next(
+            (f for f in result.findings if f.get("needs_human_review") is True), None
+        )
         if hold is not None:
-            detail = hold.get("message") or "provider escalated the assessment to a human reviewer"
-            return [self._violation(CODE_HOLD, ViolationKind.HITL, f"FRIA hold: {detail}")]
+            detail = (
+                hold.get("message")
+                or "provider escalated the assessment to a human reviewer"
+            )
+            return [
+                self._violation(CODE_HOLD, ViolationKind.HITL, f"FRIA hold: {detail}")
+            ]
         return [
             self._violation(
                 CODE_REJECTED,
@@ -207,4 +222,6 @@ class FriaTier(ReadOnlyTier):
 
     def _violation(self, code: str, kind: ViolationKind, detail: str) -> Violation:
         # The [CTRL_…] prefix lets refusal payloads resolve the control's citation.
-        return Violation(tier=FRIA_TIER_NAME, code=code, message=f"[{_CONTROL}] {detail}", kind=kind)
+        return Violation(
+            tier=FRIA_TIER_NAME, code=code, message=f"[{_CONTROL}] {detail}", kind=kind
+        )

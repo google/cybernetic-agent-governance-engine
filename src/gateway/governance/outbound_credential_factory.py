@@ -78,6 +78,8 @@ class NullCredentialProvider:
 
     async def get_token(self, target_url: str) -> BearerToken:
         """Return synthetic token for local development."""
+        # Class name + target URL only; the placeholder value is not logged.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning(
             "NullCredentialProvider: Returning synthetic token for target_url=%s. "
             "This is intended for local development only.",
@@ -149,7 +151,9 @@ def get_outbound_credential_provider() -> OutboundCredentialProvider:
         )
         _PROVIDER_INSTANCE = NullCredentialProvider()
     else:
-        logger.info("Detected platform: %s. Loading credential provider.", _DETECTED_PLATFORM)
+        logger.info(
+            "Detected platform: %s. Loading credential provider.", _DETECTED_PLATFORM
+        )
         _PROVIDER_INSTANCE = _load_provider(_DETECTED_PLATFORM)
 
     return _PROVIDER_INSTANCE

@@ -392,7 +392,9 @@ class TestOPAClientInit:
     )
     def test_non_base_or_missing_opa_url_fails_closed(self, opa_url) -> None:
         """A path in OPA_URL could point the kernel at another domain's policy."""
-        client = self._make_client(opa_url)  # construction never raises (import-time singleton)
+        client = self._make_client(
+            opa_url
+        )  # construction never raises (import-time singleton)
         with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
             _ = client.target_url
         with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
@@ -520,14 +522,24 @@ def _module(package: str, *rules: str, ref_style: bool = False) -> dict:
         {"ref": [{"type": "var", "value": r}]} if ref_style else {"name": r}
         for r in rules
     ]
-    return {"id": f"{package}.rego", "ast": {"package": {"path": path}, "rules": [{"head": h} for h in heads]}}
+    return {
+        "id": f"{package}.rego",
+        "ast": {"package": {"path": path}, "rules": [{"head": h} for h in heads]},
+    }
 
 
 @pytest.mark.local
 class TestOPAClientVerifyDomainPolicy:
     """OPAClient.verify_domain_policy() — startup package/rule handshake."""
 
-    def _client_returning(self, payload=None, *, status: int = 200, exc: Exception | None = None, token: str = ""):
+    def _client_returning(
+        self,
+        payload=None,
+        *,
+        status: int = 200,
+        exc: Exception | None = None,
+        token: str = "",
+    ):
         with patch("src.gateway.core.policy.Config") as mock_cfg:
             mock_cfg.OPA_URL = "http://localhost:8181"
             mock_cfg.OPA_AUTH_TOKEN = token
@@ -536,29 +548,44 @@ class TestOPAClientVerifyDomainPolicy:
         response.status_code = status
         response.json = MagicMock(return_value=payload)
         if status >= 400:
-            response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("err", request=MagicMock(), response=response))
+            response.raise_for_status = MagicMock(
+                side_effect=httpx.HTTPStatusError(
+                    "err", request=MagicMock(), response=response
+                )
+            )
         else:
             response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
-        mock_http.get = AsyncMock(side_effect=exc) if exc else AsyncMock(return_value=response)
+        mock_http.get = (
+            AsyncMock(side_effect=exc) if exc else AsyncMock(return_value=response)
+        )
         return client, mock_http
 
     @pytest.mark.asyncio
     async def test_passes_when_package_and_rules_loaded(self) -> None:
-        client, http = self._client_returning({"result": [_module("trade.governance", "allow", "allowed_roles")]})
+        client, http = self._client_returning(
+            {"result": [_module("trade.governance", "allow", "allowed_roles")]}
+        )
         with patch.object(client, "_get_client", return_value=http):
             await client.verify_domain_policy("trade.governance", ("allow",))
         assert http.get.call_args[0][0] == "http://localhost:8181/v1/policies"
 
     @pytest.mark.asyncio
     async def test_opa_1x_ref_style_heads_recognised(self) -> None:
-        client, http = self._client_returning({"result": [_module("trade.governance", "allow", ref_style=True)]})
+        client, http = self._client_returning(
+            {"result": [_module("trade.governance", "allow", ref_style=True)]}
+        )
         with patch.object(client, "_get_client", return_value=http):
             await client.verify_domain_policy("trade.governance", ("allow",))
 
     @pytest.mark.asyncio
     async def test_rules_unioned_across_modules_of_one_package(self) -> None:
-        payload = {"result": [_module("trade.governance", "allow"), _module("trade.governance", "reasons")]}
+        payload = {
+            "result": [
+                _module("trade.governance", "allow"),
+                _module("trade.governance", "reasons"),
+            ]
+        }
         client, http = self._client_returning(payload)
         with patch.object(client, "_get_client", return_value=http):
             await client.verify_domain_policy("trade.governance", ("allow", "reasons"))
@@ -566,23 +593,41 @@ class TestOPAClientVerifyDomainPolicy:
     @pytest.mark.asyncio
     async def test_other_domains_package_only_fails_closed(self) -> None:
         """Healthcare policy loaded, finance domain active → refuse."""
-        client, http = self._client_returning({"result": [_module("dosing.governance", "allow")]})
+        client, http = self._client_returning(
+            {"result": [_module("dosing.governance", "allow")]}
+        )
         with patch.object(client, "_get_client", return_value=http):
-            with pytest.raises(OPAPolicyMismatchError, match="no module declaring package 'trade.governance'"):
+            with pytest.raises(
+                OPAPolicyMismatchError,
+                match="no module declaring package 'trade.governance'",
+            ):
                 await client.verify_domain_policy("trade.governance", ("allow",))
 
     @pytest.mark.asyncio
     async def test_prefix_package_does_not_match(self) -> None:
-        client, http = self._client_returning({"result": [_module("trade", "allow"), _module("trade.governance.v2", "allow")]})
+        client, http = self._client_returning(
+            {
+                "result": [
+                    _module("trade", "allow"),
+                    _module("trade.governance.v2", "allow"),
+                ]
+            }
+        )
         with patch.object(client, "_get_client", return_value=http):
-            with pytest.raises(OPAPolicyMismatchError, match="no module declaring package"):
+            with pytest.raises(
+                OPAPolicyMismatchError, match="no module declaring package"
+            ):
                 await client.verify_domain_policy("trade.governance", ("allow",))
 
     @pytest.mark.asyncio
     async def test_missing_required_rule_fails_closed(self) -> None:
-        client, http = self._client_returning({"result": [_module("trade.governance", "allowed_roles")]})
+        client, http = self._client_returning(
+            {"result": [_module("trade.governance", "allowed_roles")]}
+        )
         with patch.object(client, "_get_client", return_value=http):
-            with pytest.raises(OPAPolicyMismatchError, match=r"lacks required rules \['allow'\]"):
+            with pytest.raises(
+                OPAPolicyMismatchError, match=r"lacks required rules \['allow'\]"
+            ):
                 await client.verify_domain_policy("trade.governance", ("allow",))
 
     @pytest.mark.asyncio
@@ -599,7 +644,9 @@ class TestOPAClientVerifyDomainPolicy:
             with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
                 await client.verify_domain_policy("trade.governance", ("allow",))
 
-    @pytest.mark.parametrize("payload", [{}, {"result": None}, {"result": ["not-a-module"]}, []])
+    @pytest.mark.parametrize(
+        "payload", [{}, {"result": None}, {"result": ["not-a-module"]}, []]
+    )
     @pytest.mark.asyncio
     async def test_malformed_payload_fails_closed(self, payload) -> None:
         client, http = self._client_returning(payload)
@@ -618,10 +665,15 @@ class TestOPAClientVerifyDomainPolicy:
 
     @pytest.mark.asyncio
     async def test_auth_header_included_when_token_set(self) -> None:
-        client, http = self._client_returning({"result": [_module("trade.governance", "allow")]}, token="my-secret-token")
+        client, http = self._client_returning(
+            {"result": [_module("trade.governance", "allow")]}, token="my-secret-token"
+        )
         with patch.object(client, "_get_client", return_value=http):
             await client.verify_domain_policy("trade.governance", ("allow",))
-        assert http.get.call_args[1]["headers"]["Authorization"] == "Bearer my-secret-token"
+        assert (
+            http.get.call_args[1]["headers"]["Authorization"]
+            == "Bearer my-secret-token"
+        )
 
 
 # ===========================================================================

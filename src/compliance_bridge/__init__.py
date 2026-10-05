@@ -33,8 +33,17 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
     failing in environments where langfuse is not installed (pure unit tests).
     """
     import importlib
+    import pkgutil
+
+    # Allowlist: only direct submodules shipped inside this package may be
+    # resolved, so an attribute name can never become an arbitrary import.
+    submodules = {m.name for m in pkgutil.iter_modules(__path__)}
+    if name not in submodules:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     try:
+        # `name` is constrained to the on-disk submodule allowlist above.
+        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
         module = importlib.import_module(f"src.compliance_bridge.{name}")
         # Cache on the package so subsequent accesses are fast (no re-import).
         globals()[name] = module

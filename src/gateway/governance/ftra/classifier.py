@@ -146,7 +146,9 @@ def _parse_envelope(
 ) -> dict[str, AutonomousEnvelope]:
     """Validate the ``autonomous_envelope`` block; raise ValueError on anything off."""
     if not isinstance(raw_envelope, dict):
-        raise ValueError(f"FTRA registry at {path}: '{_ENVELOPE_KEY}' must be an object.")
+        raise ValueError(
+            f"FTRA registry at {path}: '{_ENVELOPE_KEY}' must be an object."
+        )
     envelopes: dict[str, AutonomousEnvelope] = {}
     for action, spec in raw_envelope.items():
         raw_class = terminals.get(action)
@@ -460,7 +462,8 @@ class IrreversibilityClassifier:
                 action_name,
             )
             return ClassificationProvenance(
-                TerminalClassification.IRREVERSIBLE_TERMINAL, RegistryState.INVALID_ENTRY
+                TerminalClassification.IRREVERSIBLE_TERMINAL,
+                RegistryState.INVALID_ENTRY,
             )
 
         return ClassificationProvenance(

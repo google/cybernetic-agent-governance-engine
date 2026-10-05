@@ -46,9 +46,7 @@ from redis.credentials import CredentialProvider
 logger = logging.getLogger(__name__)
 
 # GCP metadata server endpoint for OAuth2 access tokens
-GCP_METADATA_TOKEN_ENDPOINT = (
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
-)
+GCP_METADATA_TOKEN_ENDPOINT = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 
 # Safety margin before expiry (5 minutes in seconds)
 TOKEN_EXPIRY_MARGIN_SECONDS = 300
@@ -89,8 +87,12 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
                 expiry = time.time() + expires_in
                 return token, expiry
         except Exception as exc:
+            # Logs the fetch error only; the IAM access token is never logged.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.debug("GCP metadata server token fetch failed: %s", exc)
-            raise RuntimeError(f"GCP metadata server token fetch failed: {exc}") from exc
+            raise RuntimeError(
+                f"GCP metadata server token fetch failed: {exc}"
+            ) from exc
 
     def _fetch_token_from_adc(self) -> tuple[str, float]:
         """Fetch access token from Application Default Credentials."""
@@ -111,6 +113,8 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
             )
             return credentials.token, expiry
         except Exception as exc:
+            # Logs the fetch error only; the IAM access token is never logged.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.debug("GCP ADC token fetch failed: %s", exc)
             raise RuntimeError(f"GCP ADC token fetch failed: {exc}") from exc
 
@@ -123,9 +127,8 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
 
         now = time.time()
         with self._lock:
-            if (
-                self._cached_token is not None
-                and now < (self._cached_expiry - TOKEN_EXPIRY_MARGIN_SECONDS)
+            if self._cached_token is not None and now < (
+                self._cached_expiry - TOKEN_EXPIRY_MARGIN_SECONDS
             ):
                 return self._cached_token
 
@@ -141,6 +144,8 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
                 except RuntimeError as adc_exc:
                     cage_env = os.environ.get("CAGE_ENV", "").lower()
                     if cage_env in ("dev", "development", "test", "ci"):
+                        # Logs the environment name only; no token value is logged.
+                        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                         logger.warning(
                             "GCP IAM credentials unavailable in %s environment; using simulated dev token",
                             cage_env,
@@ -153,8 +158,10 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
                             "neither metadata server nor ADC succeeded."
                         ) from adc_exc
 
-            self._cached_token = token
-            self._cached_expiry = expiry
+            # Process-wide cache: assign on the class, not the instance.
+            cls = type(self)
+            cls._cached_token = token
+            cls._cached_expiry = expiry
             return token
 
     def get_credentials(self) -> tuple[str, str]:

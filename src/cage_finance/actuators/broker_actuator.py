@@ -305,7 +305,9 @@ class BrokerActuator:
             # Step 6: Journal the fill with the custodian so ground truth
             # settles it. The debit equals the CBF cost by construction
             # (same resolver), and the clearance nonce keys the entry.
-            fill_amount = finance_cost_resolver(clearance.action, dict(clearance.params))
+            fill_amount = finance_cost_resolver(
+                clearance.action, dict(clearance.params)
+            )
             if fill_amount > 0.0:
                 try:
                     await asyncio.to_thread(

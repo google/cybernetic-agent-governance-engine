@@ -42,9 +42,7 @@ _MANIFEST = (
 
 def _worker() -> dict:
     docs = [d for d in yaml.safe_load_all(_MANIFEST.read_text()) if d]
-    (worker,) = [
-        d for d in docs if d["metadata"]["name"] == "reconciliation-worker"
-    ]
+    (worker,) = [d for d in docs if d["metadata"]["name"] == "reconciliation-worker"]
     return worker
 
 

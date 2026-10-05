@@ -60,9 +60,13 @@ def load_domain_plugin(domain: str | None = None) -> CagePlugin:
     matches = [ep for ep in available if ep.name == name]
     if not matches:
         known = sorted({ep.name for ep in available})
-        raise RuntimeError(f"{DOMAIN_ENV_VAR}={name!r} matches no registered plugin; known: {known}")
+        raise RuntimeError(
+            f"{DOMAIN_ENV_VAR}={name!r} matches no registered plugin; known: {known}"
+        )
     if len(matches) > 1:
-        raise RuntimeError(f"{DOMAIN_ENV_VAR}={name!r} matches {len(matches)} entry points; must be unique")
+        raise RuntimeError(
+            f"{DOMAIN_ENV_VAR}={name!r} matches {len(matches)} entry points; must be unique"
+        )
 
     try:
         plugin_cls = matches[0].load()
@@ -92,15 +96,21 @@ def domain_config_of(plugin: CagePlugin) -> DomainConfig:
         paths["causal_graph_path"] = config.causal_graph_path
     for field_name, path in paths.items():
         if not path.is_absolute():
-            raise RuntimeError(f"domain {plugin.name!r}: {field_name} must be absolute, got {path}")
+            raise RuntimeError(
+                f"domain {plugin.name!r}: {field_name} must be absolute, got {path}"
+            )
         if not path.is_file():
-            raise RuntimeError(f"domain {plugin.name!r}: {field_name} does not exist: {path}")
+            raise RuntimeError(
+                f"domain {plugin.name!r}: {field_name} does not exist: {path}"
+            )
     if not _REGO_PACKAGE.fullmatch(config.opa_package):
         raise RuntimeError(
             f"domain {plugin.name!r}: opa_package must be a dotted Rego package, got {config.opa_package!r}"
         )
     rules = config.opa_required_rules
-    if not rules or not all(isinstance(r, str) and _REGO_IDENT.fullmatch(r) for r in rules):
+    if not rules or not all(
+        isinstance(r, str) and _REGO_IDENT.fullmatch(r) for r in rules
+    ):
         raise RuntimeError(
             f"domain {plugin.name!r}: opa_required_rules must be a non-empty tuple of rule names, got {rules!r}"
         )

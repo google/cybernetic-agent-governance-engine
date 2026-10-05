@@ -69,7 +69,11 @@ class _Plugin:
 
 def _assemble(*plugins: Any) -> SymbolicGovernor:
     return assemble_governor(
-        list(plugins), posture=DeploymentPosture.TEST, opa=allow_opa(), stpa_validator=clean_stpa(), flags=_FLAGS
+        list(plugins),
+        posture=DeploymentPosture.TEST,
+        opa=allow_opa(),
+        stpa_validator=clean_stpa(),
+        flags=_FLAGS,
     )
 
 
@@ -79,7 +83,9 @@ def test_valid_barrier_is_recorded_on_components() -> None:
 
 
 def test_v1_duplicate_invariant_id_within_one_domain_is_rejected() -> None:
-    with pytest.raises(ValueError, match="duplicate invariant registration: test.serum"):
+    with pytest.raises(
+        ValueError, match="duplicate invariant registration: test.serum"
+    ):
         _assemble(_Plugin("alpha", _Barrier(), _Barrier(state_key="safety:other")))
 
 
@@ -111,23 +117,36 @@ def test_v4_gamma_out_of_range_is_rejected(gamma: float) -> None:
 
 
 def test_v4_gamma_upper_bound_is_inclusive() -> None:
-    assert len(_assemble(_Plugin("alpha", replace(_Barrier(), gamma=1.0))).components.invariants) == 1
+    assert (
+        len(
+            _assemble(
+                _Plugin("alpha", replace(_Barrier(), gamma=1.0))
+            ).components.invariants
+        )
+        == 1
+    )
 
 
 def test_one_invalid_invariant_rejects_the_whole_assembly() -> None:
     """A valid domain does not survive alongside an invalid one: no partial governor."""
     with pytest.raises(ValueError, match="gamma"):
-        _assemble(_Plugin("alpha", _Barrier()), _Plugin("beta", _Barrier("beta.x", gamma=0.0)))
+        _assemble(
+            _Plugin("alpha", _Barrier()), _Plugin("beta", _Barrier("beta.x", gamma=0.0))
+        )
 
 
 def test_real_finance_barrier_is_validated_and_recorded() -> None:
     governor = _assemble(FinanceCagePlugin())
-    assert [i.invariant_id for i in governor.components.invariants] == ["finance.cash_balance"]
+    assert [i.invariant_id for i in governor.components.invariants] == [
+        "finance.cash_balance"
+    ]
 
 
 def test_real_healthcare_barriers_validate_against_real_thresholds() -> None:
     governor = _assemble(HealthcareCagePlugin())
-    assert [i.invariant_id for i in governor.components.invariants] == ["healthcare.serum_concentration"]
+    assert [i.invariant_id for i in governor.components.invariants] == [
+        "healthcare.serum_concentration"
+    ]
 
 
 def test_real_physical_ai_barriers_validate_against_real_thresholds() -> None:
@@ -155,6 +174,8 @@ def test_invariant_colliding_with_a_real_plugin_barrier_fails_closed() -> None:
     "field", ["min_separation_distance_mm", "max_velocity_mm_s", "max_joint_torque_nm"]
 )
 @pytest.mark.parametrize("value", [0.0, -1.0])
-def test_physical_ai_thresholds_reject_non_positive_limits(field: str, value: float) -> None:
+def test_physical_ai_thresholds_reject_non_positive_limits(
+    field: str, value: float
+) -> None:
     with pytest.raises(ValidationError):
         PhysicalAIThresholds(**{field: value})

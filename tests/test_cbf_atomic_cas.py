@@ -53,8 +53,13 @@ def mock_redis_client():
 @pytest.fixture
 def cbf_instance(mock_redis_client, mock_raw_client):
     """CBF instance with mocked Redis for testing."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             cbf = ControlBarrierFunction(
                 invariant=CashBarrier(),
                 cost_resolver=finance_cost_resolver,
@@ -65,10 +70,17 @@ def cbf_instance(mock_redis_client, mock_raw_client):
 
 
 @pytest.mark.asyncio
-async def test_sequential_operations_pass(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_sequential_operations_pass(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Multiple sequential debits work when fence epoch increments monotonically."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             # Mock ground truth resolution
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
@@ -103,10 +115,17 @@ async def test_sequential_operations_pass(cbf_instance, mock_redis_client, mock_
 
 
 @pytest.mark.asyncio
-async def test_concurrent_race_prevented(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_concurrent_race_prevented(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Simulate two concurrent requests; only one succeeds due to CAS protection."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             # Both requests read fence_epoch=1 from reconciliation
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
@@ -117,7 +136,7 @@ async def test_concurrent_race_prevented(cbf_instance, mock_redis_client, mock_r
 
             # Request A executes first: fence=1 → 2 (succeeds)
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 2]
-            committed_a, msg_a, _ = await cbf_instance.atomic_verify_and_commit(
+            committed_a, _msg_a, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed_a is True
@@ -136,14 +155,21 @@ async def test_concurrent_race_prevented(cbf_instance, mock_redis_client, mock_r
             assert committed_b is False
             assert "Fence epoch regression" in msg_b
             # Accept either Python-side regression check or Lua-side CAS check
-            assert ("1 < 2" in msg_b or "expected 1, got 2" in msg_b)
+            assert "1 < 2" in msg_b or "expected 1, got 2" in msg_b
 
 
 @pytest.mark.asyncio
-async def test_fence_regression_rejected(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_fence_regression_rejected(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Stale fence epoch causes rejection (failover or replay attack)."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             # Normal commit: fence=5 → 6
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
@@ -179,10 +205,17 @@ async def test_fence_regression_rejected(cbf_instance, mock_redis_client, mock_r
 
 
 @pytest.mark.asyncio
-async def test_balance_exactly_equal_to_cost(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_balance_exactly_equal_to_cost(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Boundary case: balance exactly equals cost (h_next = 0, should pass)."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             # Balance = 1000, cost = 1000, min_cash = 0 → h_next = 0 (passes >= 0 check)
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
@@ -199,10 +232,17 @@ async def test_balance_exactly_equal_to_cost(cbf_instance, mock_redis_client, mo
 
 
 @pytest.mark.asyncio
-async def test_negative_balance_prevented(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_negative_balance_prevented(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """h_next < 0 is rejected (bankruptcy protection)."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             # Balance = 900, cost = 1000, min_cash = 0 → h_next = -100 (fails)
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
@@ -225,10 +265,17 @@ async def test_negative_balance_prevented(cbf_instance, mock_redis_client, mock_
 
 
 @pytest.mark.asyncio
-async def test_missing_fence_key_handled(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_missing_fence_key_handled(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Missing fence key defaults to 0 (initial state)."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             # Fence key missing (nil) → defaults to 0
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
@@ -247,10 +294,17 @@ async def test_missing_fence_key_handled(cbf_instance, mock_redis_client, mock_r
 
 
 @pytest.mark.asyncio
-async def test_lua_script_execution_error(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_lua_script_execution_error(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Malformed data handled gracefully (Lua script error propagation)."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
                     100000.0,
@@ -267,10 +321,17 @@ async def test_lua_script_execution_error(cbf_instance, mock_redis_client, mock_
 
 
 @pytest.mark.asyncio
-async def test_successful_commit_increments_fence(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_successful_commit_increments_fence(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """Verify fence monotonicity: successful commit increments fence epoch."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
                     100000.0,
@@ -279,7 +340,7 @@ async def test_successful_commit_increments_fence(cbf_instance, mock_redis_clien
             )
             # Lua script increments fence: 10 → 11
             mock_raw_client.evalsha.return_value = [1, "COMMITTED", "99000.0", 11]
-            committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
+            committed, _msg, _ = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
             )
             assert committed is True
@@ -290,10 +351,17 @@ async def test_successful_commit_increments_fence(cbf_instance, mock_redis_clien
 
 
 @pytest.mark.asyncio
-async def test_failed_verification_no_fence_increment(cbf_instance, mock_redis_client, mock_raw_client):
+async def test_failed_verification_no_fence_increment(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
     """UNSAFE (CBF violation) doesn't increment fence — read-only operation."""
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client):
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+    with patch(
+        "src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_client
+    ):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             cbf_instance._resolve_ground_truth_balance = AsyncMock(
                 return_value=(
                     100.0,
@@ -321,7 +389,7 @@ async def test_failed_verification_no_fence_increment(cbf_instance, mock_redis_c
 async def test_cas_protects_against_time_of_check_to_time_of_use():
     """
     Integration test: Verify CAS prevents TOCTOU exploitation.
-    
+
     Scenario:
     1. Request A reads fence=1
     2. Request B reads fence=1 (concurrent)
@@ -329,12 +397,15 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
     4. Request B attempts commit with stale expected_fence=1
     5. Lua CAS rejects B because current_fence=2 ≠ expected_fence=1
     """
-    with patch("src.gateway.governance.safety.cbf_engine.redis_client") as mock_redis:
+    with patch("src.gateway.governance.safety.cbf_engine.redis_client"):
         mock_raw_client = MagicMock()
         mock_raw_client.evalsha = AsyncMock()
         mock_raw_client.script_load = AsyncMock(return_value="sha_cas")
 
-        with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ):
             cbf = ControlBarrierFunction(
                 invariant=CashBarrier(),
                 cost_resolver=finance_cost_resolver,
@@ -371,4 +442,4 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
             assert committed_b is False
             assert "Fence epoch regression" in msg_b
             # Accept either Python-side regression check or Lua-side CAS check
-            assert ("1 < 2" in msg_b or "expected 1, got 2" in msg_b)
+            assert "1 < 2" in msg_b or "expected 1, got 2" in msg_b

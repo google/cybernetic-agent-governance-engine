@@ -259,7 +259,11 @@ class TestExternalLedgerReconcilerHappyPath:
         reconciler = self._make_reconciler(r)
 
         mock_signer = MagicMock()
-        mock_signer.sign_decision.return_value = MagicMock(signature="hex-signature-0xdeadbeef", kid="reconciler-kid", algorithm="gcp_kms")
+        mock_signer.sign_decision.return_value = MagicMock(
+            signature="hex-signature-0xdeadbeef",
+            kid="reconciler-kid",
+            algorithm="gcp_kms",
+        )
         mock_signer.is_kms_active = True
 
         with patch(

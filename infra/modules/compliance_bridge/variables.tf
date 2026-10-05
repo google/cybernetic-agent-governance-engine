@@ -129,23 +129,6 @@ variable "evidence_kms_key" {
   sensitive   = true
 }
 
-# CAGE_DEPLOYMENT_REGION selects which jurisdictional compliance framework
-# controls (US_FED/NIST/FedRAMP, EU_ECB/EU AI Act, APAC_MAS/MAS FEAT) are
-# exposed by GET /v1/controls and GET /v1/metrics/summary. Without this,
-# get_control_meta("") only returns universal ISO 42001 controls, silently
-# under-reporting jurisdictional compliance posture. Must match the region
-# passed to the gateway and governed_advisor modules (via advisor-secrets).
-variable "cage_deployment_region" {
-  description = "Deployment jurisdiction: US_FED, EU_ECB, or APAC_MAS. Controls which compliance framework controls are exposed."
-  type        = string
-  default     = "US_FED"
-
-  validation {
-    condition     = contains(["US_FED", "EU_ECB", "APAC_MAS"], var.cage_deployment_region)
-    error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS."
-  }
-}
-
 variable "service_account_name" {
   description = "Kubernetes ServiceAccount the pods run as. Must be this workload's own KSA, bound 1:1 to its own GSA (POAM-2026-079). No default: a missing identity fails the plan."
   type        = string
@@ -303,3 +286,9 @@ variable "redis_auth_mode" {
   default     = ""
 }
 
+# Name of the cage-deployment ConfigMap (modules/deployment_config). Passing
+# it (rather than hardcoding the name) makes the dependency explicit.
+variable "deployment_config_map_name" {
+  description = "ConfigMap holding CAGE_DEPLOYMENT_REGION (output of modules/deployment_config)."
+  type        = string
+}

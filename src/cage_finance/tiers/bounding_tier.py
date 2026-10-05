@@ -157,7 +157,8 @@ class BoundingContractTierPlugin(ReadOnlyTier):
 
         return Violation(
             tier=self.tier_name,
-            code=result.code or f"BOUNDING_{result.contract_id}_{result.severity.value}",
+            code=result.code
+            or f"BOUNDING_{result.contract_id}_{result.severity.value}",
             message=message,
             kind=kind,
         )

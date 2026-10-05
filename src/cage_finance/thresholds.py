@@ -82,7 +82,7 @@ class BoundingThresholds(BaseModel):
         default=75.0,
         ge=0.0,
         le=100.0,
-        description="B5 — Maximum volatility percentile (0–100).",
+        description="B5 — Maximum volatility percentile (0-100).",
     )
     volatility_window_days: int = Field(
         default=30,

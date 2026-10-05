@@ -87,9 +87,7 @@ def _build_authclaim_patterns(
 ) -> tuple[tuple[str, re.Pattern[str]], ...]:
     """Compile the authorization-claim pattern categories for ``verbs``."""
     verb_alt = _compile_verb_alternation(verbs)
-    action_verb_alt = _compile_verb_alternation(
-        verbs - {"approve", "authorize"}
-    )
+    action_verb_alt = _compile_verb_alternation(verbs - {"approve", "authorize"})
 
     return (
         (
@@ -270,8 +268,8 @@ def detect_authorization_claim(
 
 
 __all__ = [
-    "AuthClaimDetectionResult",
     "DEFAULT_EXECUTION_VERBS",
+    "AuthClaimDetectionResult",
     "detect_authorization_claim",
     "get_authclaim_categories",
 ]

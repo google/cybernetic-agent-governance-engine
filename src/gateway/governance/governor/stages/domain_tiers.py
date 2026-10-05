@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager
 from typing import Any
 
@@ -101,7 +101,7 @@ class DomainTierStage(Stage):
 
     def claims(self, ctx: StageContext) -> bool:
         """Delegate to the tier.  Exceptions propagate; ``run_pipeline`` fails closed."""
-        return self.tier.claims_action(ctx.action, ctx.params)
+        return self.tier.claims_action(ctx.action, dict(ctx.params))
 
     def _span(self, hook: str) -> AbstractContextManager[trace.Span]:
         return tracer.start_as_current_span(
@@ -116,13 +116,17 @@ class DomainTierStage(Stage):
         """DRY_RUN stand-in for commit(): the tier's side-effect-free evaluate()."""
         return await self._guarded(self.tier.evaluate, ctx, "preview")
 
-    async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
+    async def commit(
+        self, ctx: StageContext
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         """Phase 2: commit the tier.  Fail-closed: a raise mutates nothing by contract."""
-        if not isinstance(self.tier, MutatingTier):  # unreachable: the pipeline commits mutating stages only
+        if not isinstance(
+            self.tier, MutatingTier
+        ):  # unreachable: the pipeline commits mutating stages only
             raise TypeError(f"read-only tier {self.name!r} cannot commit")
         with self._span("commit") as span:
             try:
-                result = await self.tier.commit(ctx.action, ctx.params)
+                result = await self.tier.commit(ctx.action, dict(ctx.params))
             except Exception as exc:
                 span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
                 span.set_attribute(ATTR_VIOLATION_COUNT, 1)
@@ -141,25 +145,35 @@ class DomainTierStage(Stage):
         """The sealed action was carried out: make the reservation permanent."""
         await self._settle_hook("confirm", ctx, receipt)
 
-    async def _settle_hook(self, hook: str, ctx: StageContext, receipt: CommitReceipt) -> None:
-        if not isinstance(self.tier, MutatingTier):  # unreachable: only commits issue receipts
-            raise TypeError(f"read-only tier {self.name!r} holds no reservation to {hook}")
+    async def _settle_hook(
+        self, hook: str, ctx: StageContext, receipt: CommitReceipt
+    ) -> None:
+        if not isinstance(
+            self.tier, MutatingTier
+        ):  # unreachable: only commits issue receipts
+            raise TypeError(
+                f"read-only tier {self.name!r} holds no reservation to {hook}"
+            )
         call = self.tier.rollback if hook == "rollback" else self.tier.confirm
         with self._span(hook) as span:
             try:
-                await call(ctx.action, ctx.params, receipt)
+                await call(ctx.action, dict(ctx.params), receipt)
             except BaseException as exc:
                 span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
                 raise
             span.set_attribute(ATTR_VIOLATION_COUNT, 0)
 
-    def _checked_commit_result(self, result: Any) -> tuple[list[Violation], CommitReceipt | None]:
+    def _checked_commit_result(
+        self, result: Any
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         """Enforce the ``(list[Violation], CommitReceipt | None)`` commit contract.
 
         A malformed result is a HARD violation.  A well-formed receipt found in
         a malformed result is kept so the pipeline still undoes its mutation.
         """
-        pair = result if isinstance(result, tuple) and len(result) == 2 else (None, None)
+        pair = (
+            result if isinstance(result, tuple) and len(result) == 2 else (None, None)
+        )
         violations, receipt = pair
         receipt_ok = receipt is None or isinstance(receipt, CommitReceipt)
         if isinstance(violations, list) and receipt_ok:
@@ -176,11 +190,16 @@ class DomainTierStage(Stage):
             )
         ], (receipt if isinstance(receipt, CommitReceipt) else None)
 
-    async def _guarded(self, call, ctx: StageContext, hook: str) -> list[Violation]:
+    async def _guarded(
+        self,
+        call: Callable[[str, dict[str, Any]], Awaitable[list[Violation]]],
+        ctx: StageContext,
+        hook: str,
+    ) -> list[Violation]:
         """Invoke a read-only tier hook; any exception becomes a HARD violation (fail-closed)."""
         with self._span(hook) as span:
             try:
-                violations = await call(ctx.action, ctx.params)
+                violations = await call(ctx.action, dict(ctx.params))
             except Exception as exc:
                 span.set_attribute(ATTR_EXCEPTION, type(exc).__name__)
                 violations = [self._exception_violation("tier execution", exc)]
@@ -209,7 +228,9 @@ def order_stages(tiers: Sequence[GovernanceTier]) -> tuple[DomainTierStage, ...]
     seen: set[str] = set()
     for t in tiers:
         if t.tier_name in seen:
-            raise ValueError(f"duplicate tier registration at construction: {t.tier_name}")
+            raise ValueError(
+                f"duplicate tier registration at construction: {t.tier_name}"
+            )
         seen.add(t.tier_name)
     sorted_tiers = sorted(tiers, key=lambda t: (t.phase, t.order, t.tier_name))
     return tuple(DomainTierStage(t) for t in sorted_tiers)

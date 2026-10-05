@@ -193,6 +193,8 @@ class ConsequenceGateway:
         try:
             claims = ConsequenceToken.verify(token, signer=self._signer)
         except ConsequenceTokenError as exc:
+            # Logs the verifier's error reason; never the token itself.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning("[ConsequenceGateway] Token verification failed: %s", exc)
             return await self._emit_evaluation(
                 ConsequenceEvaluation(

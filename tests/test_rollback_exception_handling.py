@@ -79,9 +79,11 @@ class TestRollbackLifoOrder:
     """Verify rollback happens in LIFO order (reverse of commit)."""
 
     @pytest.mark.asyncio
-    async def test_rollback_reverses_commit_order(self, mock_governor_with_tiers, classification_engine):
+    async def test_rollback_reverses_commit_order(
+        self, mock_governor_with_tiers, classification_engine
+    ):
         """D6 FIX VERIFICATION: rollback must happen in LIFO order."""
-        gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
+        _gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
         committed = [tier_a, tier_b, tier_c]
         execution_order = []
@@ -120,10 +122,10 @@ class TestRollbackExceptionIsolation:
 
     @pytest.mark.asyncio
     async def test_one_tier_failure_does_not_stop_others(
-        self, mock_governor_with_tiers
-    , classification_engine):
+        self, mock_governor_with_tiers, classification_engine
+    ):
         """D6 FIX VERIFICATION: exception in one tier's rollback must not stop others."""
-        gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
+        _gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
         committed = [tier_a, tier_b, tier_c]
 
@@ -144,9 +146,11 @@ class TestRollbackExceptionIsolation:
         assert "RuntimeError" in violations[0].message
 
     @pytest.mark.asyncio
-    async def test_multiple_tier_failures_all_recorded(self, mock_governor_with_tiers, classification_engine):
+    async def test_multiple_tier_failures_all_recorded(
+        self, mock_governor_with_tiers, classification_engine
+    ):
         """D6 FIX VERIFICATION: multiple rollback failures are all recorded."""
-        gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
+        _gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
         committed = [tier_a, tier_b, tier_c]
 
@@ -176,10 +180,10 @@ class TestRollbackFailClosedSemantics:
 
     @pytest.mark.asyncio
     async def test_partial_rollback_failure_still_blocks_action(
-        self, mock_governor_with_tiers
-    , classification_engine):
+        self, mock_governor_with_tiers, classification_engine
+    ):
         """D6 FIX VERIFICATION: action must be blocked even if rollback fails."""
-        gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
+        _gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
         committed = [tier_a, tier_b, tier_c]
 
@@ -192,6 +196,7 @@ class TestRollbackFailClosedSemantics:
         assert len(violations) == 1
         assert violations[0].code == "ROLLBACK_FAILED"
         from src.gateway.governance.contracts import ViolationKind
+
         assert violations[0].kind == ViolationKind.HARD
 
 
@@ -200,10 +205,10 @@ class TestRollbackViolationStructure:
 
     @pytest.mark.asyncio
     async def test_rollback_violation_contains_tier_name(
-        self, mock_governor_with_tiers
-    , classification_engine):
+        self, mock_governor_with_tiers, classification_engine
+    ):
         """D6 FIX VERIFICATION: ROLLBACK_FAILED violation must include tier name."""
-        gov, _tier_a, tier_b, _tier_c = mock_governor_with_tiers
+        _gov, _tier_a, tier_b, _tier_c = mock_governor_with_tiers
 
         committed = [tier_b]
         tier_b.rollback.side_effect = RuntimeError("Rollback error")
@@ -220,10 +225,10 @@ class TestRollbackViolationStructure:
 
     @pytest.mark.asyncio
     async def test_successful_rollback_produces_no_violations(
-        self, mock_governor_with_tiers
-    , classification_engine):
+        self, mock_governor_with_tiers, classification_engine
+    ):
         """D6 FIX VERIFICATION: successful rollback must not produce violations."""
-        gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
+        _gov, tier_a, tier_b, tier_c = mock_governor_with_tiers
 
         committed = [tier_a, tier_b, tier_c]
 
@@ -243,6 +248,7 @@ async def _rollback(committed):
     from src.gateway.governance.governor.pipeline import Profile, StageContext
     from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
     from tests.governor.scope_helpers import rollback_pairs
+
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
     return await rollback_pairs(
         [(DomainTierStage(t), _receipt(t)) for t in committed], ctx
@@ -252,4 +258,5 @@ async def _rollback(committed):
 def _receipt(tier):
     """Deterministic per-tier receipt so assertions can name exactly what was undone."""
     from src.gateway.governance.contracts import CommitReceipt
+
     return CommitReceipt(tier=tier.tier_name, magnitude=1.0)

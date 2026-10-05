@@ -14,10 +14,12 @@
 
 import dataclasses
 import logging
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
+
+from opentelemetry import trace
 
 from src.gateway.governance.contracts import (
     CommitReceipt,
@@ -26,8 +28,6 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.governor.reservation import ReservationScope
-
-from opentelemetry import trace
 
 tracer = trace.get_tracer(__name__)
 
@@ -100,17 +100,31 @@ class Stage(Protocol):
 
     async def run(self, ctx: StageContext) -> list[Violation] | StageOutput: ...
 
-    # Mutating stages only: side-effect-free stand-in for commit() (Phase2Mode.PREVIEW).
-    async def preview(self, ctx: StageContext) -> list[Violation]: ...
+    # The four hooks below belong to mutating stages only. ``run_pipeline``
+    # never calls them on a stage with ``mutating = False``; the defaults make
+    # that contract explicit (and keep read-only subclasses concrete).
 
-    # Mutating stages only.  The receipt is not None iff state was mutated.
-    async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]: ...
+    # Side-effect-free stand-in for commit() (Phase2Mode.PREVIEW).
+    async def preview(self, ctx: StageContext) -> list[Violation]:
+        raise TypeError(f"read-only stage {self.name!r} has no preview()")
 
-    # Mutating stages only: undo exactly what ``receipt`` records.
-    async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None: ...
+    # The receipt is not None iff state was mutated.
+    async def commit(
+        self, ctx: StageContext
+    ) -> tuple[list[Violation], CommitReceipt | None]:
+        raise TypeError(f"read-only stage {self.name!r} cannot commit")
 
-    # Mutating stages only: the sealed action ran; make ``receipt`` permanent.
-    async def confirm(self, ctx: StageContext, receipt: CommitReceipt) -> None: ...
+    # Undo exactly what ``receipt`` records.
+    async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None:
+        raise TypeError(
+            f"read-only stage {self.name!r} holds no reservation to roll back"
+        )
+
+    # The sealed action ran; make ``receipt`` permanent.
+    async def confirm(self, ctx: StageContext, receipt: CommitReceipt) -> None:
+        raise TypeError(
+            f"read-only stage {self.name!r} holds no reservation to confirm"
+        )
 
 
 class Phase2Mode(StrEnum):
@@ -228,9 +242,13 @@ def _check_scope(profile: Profile, scope: ReservationScope | None) -> None:
     """Mutating profiles need a scope to own their commits; DRY_RUN never gets one."""
     if profile == Profile.DRY_RUN:
         if scope is not None:
-            raise ValueError("DRY_RUN never commits; it must not receive a ReservationScope")
+            raise ValueError(
+                "DRY_RUN never commits; it must not receive a ReservationScope"
+            )
     elif scope is None:
-        raise ValueError(f"profile {profile} commits phase-2 stages and requires a ReservationScope")
+        raise ValueError(
+            f"profile {profile} commits phase-2 stages and requires a ReservationScope"
+        )
 
 
 async def run_pipeline(
@@ -251,7 +269,7 @@ async def run_pipeline(
     """
     _check_scope(profile, scope)
     span = trace.get_current_span()
-    
+
     # a. Select the stages that run under this profile (stage_runs_under).
     profile_stages = []
     claimed_domains = []
@@ -261,7 +279,7 @@ async def run_pipeline(
     claim_failures: dict[int, Violation] = {}
 
     for s in stages:
-        is_domain_tier = hasattr(s, "claims")
+        claims: Callable[[StageContext], bool] | None = getattr(s, "claims", None)
         # Structural, never by name: domain tiers carry plugin-chosen names
         # (e.g. "dose_barrier"), and a name filter would silently skip them.
         if not stage_runs_under(
@@ -269,9 +287,9 @@ async def run_pipeline(
         ):
             continue
 
-        if is_domain_tier:
+        if claims is not None:
             try:
-                claimed = getattr(s, "claims")(ctx)
+                claimed = claims(ctx)
             except Exception as exc:
                 claim_failures[id(s)] = _claims_failure(s, exc)
                 claimed = True
@@ -279,9 +297,9 @@ async def run_pipeline(
                 claimed_domains.append(s)
         else:
             profile_stages.append(s)
-            
+
     is_governed = len(claimed_domains) > 0
-    
+
     if not is_governed:
         span.set_attribute("governance.governed", False)
         # f. Ungoverned actions: run UNGOVERNED_STAGES only
@@ -289,17 +307,24 @@ async def run_pipeline(
     else:
         span.set_attribute("governance.governed", True)
         profile_stages.extend(claimed_domains)
-        
+
     def read_only_sort_key(s: Stage) -> tuple[int, str]:
-        if s.name == "ftra": return (0, s.name)
-        if s.name == "stpa": return (1, s.name)
-        if s.name == "opa": return (2, s.name)
-        if s.name == "confidence": return (3, s.name)
-        return (4, "")  # domain tiers: stable sort keeps order_stages() (phase, order, name)
-        
+        if s.name == "ftra":
+            return (0, s.name)
+        if s.name == "stpa":
+            return (1, s.name)
+        if s.name == "opa":
+            return (2, s.name)
+        if s.name == "confidence":
+            return (3, s.name)
+        return (
+            4,
+            "",
+        )  # domain tiers: stable sort keeps order_stages() (phase, order, name)
+
     read_only = [s for s in profile_stages if not getattr(s, "mutating", False)]
     read_only.sort(key=read_only_sort_key)
-    
+
     mutating = [s for s in profile_stages if getattr(s, "mutating", False)]
     plan = tuple((s.name, 1) for s in read_only) + tuple((s.name, 2) for s in mutating)
 
@@ -308,7 +333,7 @@ async def run_pipeline(
     tier_failures: list[GovernanceTierFailure] = []
     committed_stages: list[str] = []
     current_ctx = ctx
-    
+
     ftra_result: FtraBoundaryResult | None = None
     opa_verdict: OpaVerdict | None = None
 
@@ -317,11 +342,13 @@ async def run_pipeline(
             return StageOutput(violations=(claim_failures[id(stage)],))
         return as_stage_output(await stage.run(stage_ctx))
 
-    async def commit_stage(scope: ReservationScope, stage: Stage, stage_ctx: StageContext) -> list[Violation]:
+    async def commit_stage(
+        scope: ReservationScope, stage: Stage, stage_ctx: StageContext
+    ) -> list[Violation]:
         if id(stage) in claim_failures:
             return [claim_failures[id(stage)]]
         return await scope.commit(stage, stage_ctx)
-    
+
     # b. Read-only stages
     for stage in read_only:
         output = await run_stage(stage, current_ctx)
@@ -338,12 +365,12 @@ async def run_pipeline(
 
         if stage_violations:
             violations.extend(stage_violations)
-            
+
         hard_violations = [v for v in stage_violations if v.kind == ViolationKind.HARD]
         if hard_violations:
             # Stop at the first HARD violation
             break
-            
+
     # c. Phase 2, gated on the kinds phase 1 reported (phase2_mode).
     mode = phase2_mode(profile, (v.kind for v in violations))
     span.set_attribute("governance.phase2_mode", mode.value)
@@ -355,14 +382,18 @@ async def run_pipeline(
         # Nothing is committed (DRY_RUN, or a request that cannot be sealed
         # now), so nothing to roll back.  ``scope`` stays untouched: a run_sealed
         # caller sees no commits and refuses the seal on the violations.
-        preview_violations, preview_failures, preview_outcomes = await _preview_mutating(
-            mutating, current_ctx, claim_failures
-        )
+        (
+            preview_violations,
+            preview_failures,
+            preview_outcomes,
+        ) = await _preview_mutating(mutating, current_ctx, claim_failures)
         outcomes.extend(preview_outcomes)
         violations.extend(preview_violations)
         tier_failures.extend(preview_failures)
         if mutating:
-            barrier_preview = BarrierPreview.FAIL if preview_violations else BarrierPreview.PASS
+            barrier_preview = (
+                BarrierPreview.FAIL if preview_violations else BarrierPreview.PASS
+            )
             barrier_outcome = barrier_preview
             span.set_attribute("governance.barrier_preview", barrier_preview.value)
     elif mode == Phase2Mode.COMMIT:
@@ -401,7 +432,9 @@ async def run_pipeline(
     )
 
 
-def _tier_failure(stage: Stage, stage_violations: list[Violation]) -> GovernanceTierFailure:
+def _tier_failure(
+    stage: Stage, stage_violations: list[Violation]
+) -> GovernanceTierFailure:
     return GovernanceTierFailure(
         tier=stage.name,
         control_id=stage_violations[0].code,
@@ -432,12 +465,14 @@ async def _preview_mutating(
         if id(stage) in claim_failures:
             stage_violations = [claim_failures[id(stage)]]
         elif preview is None:
-            stage_violations = [Violation(
-                tier=stage.name,
-                code="PREVIEW_UNAVAILABLE",
-                message=f"{stage.name} cannot be previewed; dry run cannot vouch for it",
-                kind=ViolationKind.HARD,
-            )]
+            stage_violations = [
+                Violation(
+                    tier=stage.name,
+                    code="PREVIEW_UNAVAILABLE",
+                    message=f"{stage.name} cannot be previewed; dry run cannot vouch for it",
+                    kind=ViolationKind.HARD,
+                )
+            ]
         else:
             stage_violations = await preview(ctx)
         outcomes.append((stage.name, _outcome(stage_violations)))

@@ -140,12 +140,12 @@ def test_engine_has_no_pause_knob():
 def test_narrowable_with_narrower_available_returns_narrow():
     """Narrowable violations with registered narrower return NARROW."""
     from src.gateway.governance.narrower import NarrowingResult
-    
+
     # Create a test narrower class
     class TestNarrower:
         def can_narrow(self, violation, action, params):
             return action == "test_action"
-        
+
         def narrow(self, violation, action, params):
             return NarrowingResult(
                 can_narrow=True,
@@ -153,7 +153,7 @@ def test_narrowable_with_narrower_available_returns_narrow():
                 constraints_applied=["test"],
                 narrowing_reason="Test narrowing",
             )
-    
+
     registry = NarrowerRegistry()
     registry.register(TestNarrower())
 
@@ -187,7 +187,7 @@ def test_narrowable_with_narrower_available_returns_narrow():
 
 def test_narrowable_without_narrower_returns_deny():
     """Narrowable violations without registered narrower fall back to DENY.
-    
+
     When narrow_enabled=True but no narrower is registered, or when
     narrow_enabled=False, NARROWABLE violations fall through to default_deny.
     """
@@ -249,7 +249,7 @@ def test_deferrable_with_low_confidence_returns_defer():
 
 def test_deferrable_with_high_confidence_returns_deny():
     """Deferrable violations with confidence above threshold fall back to DENY.
-    
+
     High-confidence deferrables don't trigger the DEFER path and fall through
     to the default DENY decision.
     """
@@ -282,7 +282,7 @@ def test_deferrable_with_high_confidence_returns_deny():
 
 def test_default_fallback_returns_deny():
     """Violations that don't match specific routing rules fall back to DENY.
-    
+
     When defer_enabled=False, even low-confidence DEFERRABLE violations
     will fall through to the default_deny path.
     """
@@ -348,6 +348,7 @@ def test_multiple_violations_prioritize_hard():
     assert result.decision == GovernanceDecision.DENY
     assert result.metadata["classification_reason"] == "hard_violation"
 
+
 def test_string_input_raises_typeerror():
     """Passing a string violation raises TypeError."""
     engine = ClassificationEngine(
@@ -362,8 +363,10 @@ def test_string_input_raises_typeerror():
         params={},
     )
     import pytest
+
     with pytest.raises(TypeError, match="classify.. received string violation"):
         engine.classify(context, "test_action")
+
 
 def test_adversarial_messages_do_not_override_hard_kind():
     """HARD violations whose message contains softer keywords still yield DENY."""
@@ -417,8 +420,12 @@ class _ClampToBound:
         )
 
 
-def _v(kind: ViolationKind, tier: str = "fiscal", bound: float | None = None) -> Violation:
-    return Violation(tier=tier, code=f"{tier.upper()}_X", message="", kind=kind, bound=bound)
+def _v(
+    kind: ViolationKind, tier: str = "fiscal", bound: float | None = None
+) -> Violation:
+    return Violation(
+        tier=tier, code=f"{tier.upper()}_X", message="", kind=kind, bound=bound
+    )
 
 
 def _ctx(violations, opa_decision=None):
@@ -444,7 +451,9 @@ def test_narrow_resolves_the_tightest_bound_first():
     tight = _v(ViolationKind.NARROWABLE, "cap_b", bound=3_000.0)
     unbounded = _v(ViolationKind.NARROWABLE, "cap_c")
 
-    result = _engine(narrower).classify(_ctx([unbounded, loose, tight]), "execute_trade")
+    result = _engine(narrower).classify(
+        _ctx([unbounded, loose, tight]), "execute_trade"
+    )
 
     assert result.decision == GovernanceDecision.NARROW
     assert result.metadata["narrowed_params"]["amount"] == 3_000.0
@@ -464,8 +473,13 @@ def test_narrower_returning_none_falls_through_to_deny():
 
 @pytest.mark.parametrize("opa_decision", [None, "MANUAL_REVIEW"])
 def test_require_approval_carries_a_hint_when_the_rest_is_narrowable(opa_decision):
-    violations = [_v(ViolationKind.HITL, "ftra"), _v(ViolationKind.NARROWABLE, bound=10_000.0)]
-    result = _engine(_ClampToBound()).classify(_ctx(violations, opa_decision), "execute_trade")
+    violations = [
+        _v(ViolationKind.HITL, "ftra"),
+        _v(ViolationKind.NARROWABLE, bound=10_000.0),
+    ]
+    result = _engine(_ClampToBound()).classify(
+        _ctx(violations, opa_decision), "execute_trade"
+    )
 
     assert result.decision == GovernanceDecision.REQUIRE_APPROVAL
     assert result.metadata["narrow_hint"]["narrowed_params"]["amount"] == 10_000.0
@@ -475,11 +489,17 @@ def test_require_approval_carries_a_hint_when_the_rest_is_narrowable(opa_decisio
     "violations",
     [
         [_v(ViolationKind.HITL, "ftra")],  # nothing to narrow
-        [_v(ViolationKind.HITL, "ftra"), _v(ViolationKind.NARROWABLE, bound=1.0), _v(ViolationKind.DEFERRABLE, "conf")],
+        [
+            _v(ViolationKind.HITL, "ftra"),
+            _v(ViolationKind.NARROWABLE, bound=1.0),
+            _v(ViolationKind.DEFERRABLE, "conf"),
+        ],
     ],
     ids=["hitl-only", "mixed-non-narrowable"],
 )
-def test_require_approval_offers_no_hint_unless_every_other_finding_is_narrowable(violations):
+def test_require_approval_offers_no_hint_unless_every_other_finding_is_narrowable(
+    violations,
+):
     narrower = _ClampToBound()
     result = _engine(narrower).classify(_ctx(violations), "execute_trade")
     assert result.decision == GovernanceDecision.REQUIRE_APPROVAL
@@ -489,7 +509,12 @@ def test_require_approval_offers_no_hint_unless_every_other_finding_is_narrowabl
 
 def test_require_approval_offers_no_hint_when_narrowing_is_disabled():
     narrower = _ClampToBound()
-    violations = [_v(ViolationKind.HITL, "ftra"), _v(ViolationKind.NARROWABLE, bound=1.0)]
-    result = _engine(narrower, narrow_enabled=False).classify(_ctx(violations), "execute_trade")
+    violations = [
+        _v(ViolationKind.HITL, "ftra"),
+        _v(ViolationKind.NARROWABLE, bound=1.0),
+    ]
+    result = _engine(narrower, narrow_enabled=False).classify(
+        _ctx(violations), "execute_trade"
+    )
     assert "narrow_hint" not in result.metadata
     assert narrower.asked == []

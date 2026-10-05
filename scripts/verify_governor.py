@@ -77,7 +77,9 @@ async def main() -> int:
     stpa.validate.return_value = []
 
     posture = resolve_posture()
-    governor = assemble_governor([_ProbePlugin()], posture=posture, opa=opa, stpa_validator=stpa)
+    governor = assemble_governor(
+        [_ProbePlugin()], posture=posture, opa=opa, stpa_validator=stpa
+    )
     assert_production_posture(posture, components=governor.components)
 
     failures = 0
@@ -86,7 +88,9 @@ async def main() -> int:
         passed = not result["violations"]
         ok = passed is expect_pass
         failures += not ok
-        print(f"{'✅' if ok else '❌'} confidence={confidence}: {'admissible' if passed else 'refused'}")
+        print(
+            f"{'✅' if ok else '❌'} confidence={confidence}: {'admissible' if passed else 'refused'}"
+        )
     return 1 if failures else 0
 
 

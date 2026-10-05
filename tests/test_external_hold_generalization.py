@@ -155,6 +155,7 @@ async def test_external_hold_dlq_routing_fires_on_expiry():
 
     async def _hget(key, field):
         import json
+
         if field == "token":
             return json.dumps(token.model_dump()).encode()
         elif field == "status":
@@ -165,6 +166,7 @@ async def test_external_hold_dlq_routing_fires_on_expiry():
 
     async def _hmget(key, *fields):
         import json
+
         # Return 3-tuple: (token, status, rev)
         return (json.dumps(token.model_dump()).encode(), "PARKED", "0")
 
@@ -172,7 +174,7 @@ async def test_external_hold_dlq_routing_fires_on_expiry():
     redis_mock.hget = _hget
     redis_mock.hmget = _hmget
     redis_mock.zrem = AsyncMock()
-    
+
     # Lua script support for CAS operations
     redis_mock.script_load = AsyncMock(return_value="mock-sha")
     redis_mock.evalsha = AsyncMock(return_value=[1, "1"])  # success, new_rev

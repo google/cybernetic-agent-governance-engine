@@ -58,14 +58,18 @@ def get_redis_credential_provider(
         CredentialProvider implementation if IAM authentication is enabled, else None.
     """
     effective_iam = (
-        auth_mode.lower() == "iam" if auth_mode is not None else is_redis_iam_auth_enabled()
+        auth_mode.lower() == "iam"
+        if auth_mode is not None
+        else is_redis_iam_auth_enabled()
     )
 
     if not effective_iam:
         return None
 
     # Function-scope lazy import of Layer 3 GCP integration (allowlisted under Gate G3)
-    logger.info("Initializing GCP IAM Credential Provider for Memorystore authentication")
+    logger.info(
+        "Initializing GCP IAM Credential Provider for Memorystore authentication"
+    )
     from src.integrations.gcp.redis_credential_provider import (
         GcpRedisIamCredentialProvider,
     )

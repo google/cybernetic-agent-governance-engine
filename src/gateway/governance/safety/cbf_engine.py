@@ -167,7 +167,11 @@ async def _get_raw_redis(r: Any) -> Any:
     """Extract raw redis client from wrapper or mock."""
     if r is None:
         return None
-    if _is_mock(r) and "get_raw_client" not in getattr(r, "__dict__", {}) and "get_raw_client" not in getattr(r, "_mock_children", {}):
+    if (
+        _is_mock(r)
+        and "get_raw_client" not in getattr(r, "__dict__", {})
+        and "get_raw_client" not in getattr(r, "_mock_children", {})
+    ):
         return r
     getter = getattr(r, "get_raw_client", None)
     if callable(getter):
@@ -182,6 +186,7 @@ def _is_mock(obj: Any) -> bool:
     """Helper to detect unittest.mock objects safely without breaking normal runtime."""
     try:
         import unittest.mock
+
         return isinstance(obj, (unittest.mock.NonCallableMock, unittest.mock.Mock))
     except ImportError:
         return False
@@ -540,9 +545,7 @@ return {1, status, tostring(restored), new_epoch}
             next_state = current_state - cost
             h_next = self.evaluate_barrier(next_state)
             required_h_next = (1.0 - self.gamma) * h_t
-            step_safe = not (
-                cost > 0 and (h_next < required_h_next or h_next < 0)
-            )
+            step_safe = not (cost > 0 and (h_next < required_h_next or h_next < 0))
             records.append(
                 {
                     "step": idx,
@@ -591,9 +594,10 @@ return {1, status, tostring(restored), new_epoch}
             )
             if (
                 is_mock_sync
-                and hasattr(sync_redis_client, "get")
-                and "side_effect" in getattr(sync_redis_client.get, "__dict__", {})
-                and sync_redis_client.get.side_effect is not None
+                and getattr(
+                    getattr(sync_redis_client, "get", None), "side_effect", None
+                )
+                is not None
             ):
                 query_hwm = True
 
@@ -670,9 +674,7 @@ return {1, status, tostring(restored), new_epoch}
             logger.error("Redis client unavailable — cannot bootstrap CBF state.")
             return
         if await redis_client.get(self.redis_key) is None:
-            await redis_client.set(
-                self.redis_key, str(self._initial_state_scalar())
-            )
+            await redis_client.set(self.redis_key, str(self._initial_state_scalar()))
         client = await _get_raw_redis(redis_client)
         if client is not None:
             epoch_raw = await client.get(_REDIS_KEY_FENCE_EPOCH)
@@ -749,7 +751,12 @@ return {1, status, tostring(restored), new_epoch}
         if _CURRENT_FENCE_EPOCH_GAUGE is not None:
             _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
 
-        if client is not None and current_epoch > 0 and hasattr(client, "eval") and not _is_mock(client):
+        if (
+            client is not None
+            and current_epoch > 0
+            and hasattr(client, "eval")
+            and not _is_mock(client)
+        ):
             try:
                 eval_res = client.eval(
                     "local cur = tonumber(redis.call('GET', KEYS[1]) or '0'); "
@@ -782,7 +789,9 @@ return {1, status, tostring(restored), new_epoch}
         target_client = client
         if target_client is None:
             if redis_client is None:
-                logger.warning("Redis client unavailable — cannot execute WAIT command.")
+                logger.warning(
+                    "Redis client unavailable — cannot execute WAIT command."
+                )
                 return False
 
             raw_client_getter = getattr(redis_client, "get_raw_client", None)
@@ -982,9 +991,10 @@ return {1, status, tostring(restored), new_epoch}
                                 else:
                                     fence_epoch = await self._get_fence_epoch()
                                     if _FENCE_EPOCH_ENABLED:
-                                        epoch_valid, epoch_reason = (
-                                            await self._check_fence_epoch(fence_epoch)
-                                        )
+                                        (
+                                            epoch_valid,
+                                            epoch_reason,
+                                        ) = await self._check_fence_epoch(fence_epoch)
                                         if not epoch_valid:
                                             return {
                                                 "state_scalar": None,
@@ -999,9 +1009,10 @@ return {1, status, tostring(restored), new_epoch}
                             else:
                                 fence_epoch = await self._get_fence_epoch()
                                 if _FENCE_EPOCH_ENABLED:
-                                    epoch_valid, epoch_reason = (
-                                        await self._check_fence_epoch(fence_epoch)
-                                    )
+                                    (
+                                        epoch_valid,
+                                        epoch_reason,
+                                    ) = await self._check_fence_epoch(fence_epoch)
                                     if not epoch_valid:
                                         return {
                                             "state_scalar": None,
@@ -1097,9 +1108,7 @@ return {1, status, tostring(restored), new_epoch}
         raw_state = results[0]
         raw_epoch = results[1]
         current_state = (
-            float(raw_state)
-            if raw_state is not None
-            else self._initial_state_scalar()
+            float(raw_state) if raw_state is not None else self._initial_state_scalar()
         )
         current_epoch = int(raw_epoch) if raw_epoch is not None else 0
 
@@ -1331,7 +1340,10 @@ return {1, status, tostring(restored), new_epoch}
         offer). A snapshot only: narrowed params are re-verified.
         """
         state = await self._read_cbf_state_atomic()
-        if state.get("current_cash") is None or state.get("source") == "epoch_regression":
+        if (
+            state.get("current_cash") is None
+            or state.get("source") == "epoch_regression"
+        ):
             return None
         h_t = self.evaluate_barrier(float(state["current_cash"]))
         bound = h_t - max((1.0 - self.gamma) * h_t, 0.0)
@@ -1352,9 +1364,7 @@ return {1, status, tostring(restored), new_epoch}
                     await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
                     current = (
-                        float(raw)
-                        if raw is not None
-                        else self._initial_state_scalar()
+                        float(raw) if raw is not None else self._initial_state_scalar()
                     )
                     new_balance = current - cost
                     pipe.multi()
@@ -1413,7 +1423,9 @@ return {1, status, tostring(restored), new_epoch}
         target_client = client
         if target_client is None:
             if redis_client is None:
-                raise RuntimeError("Redis client unavailable — cannot rollback CBF state.")
+                raise RuntimeError(
+                    "Redis client unavailable — cannot rollback CBF state."
+                )
             target_client = await _get_raw_redis(redis_client)
 
         if target_client is None:
@@ -1472,14 +1484,14 @@ return {1, status, tostring(restored), new_epoch}
                 async with pipe_ctx as pipe:
                     ledgered = bool(debit_id) and hasattr(pipe, "hget")
                     if ledgered:
-                        await pipe.watch(self.redis_key, DEBITS_KEY, DEBITS_ROLLED_BACK_KEY)
+                        await pipe.watch(
+                            self.redis_key, DEBITS_KEY, DEBITS_ROLLED_BACK_KEY
+                        )
                     else:
                         await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
                     current = (
-                        float(raw)
-                        if raw is not None
-                        else self._initial_state_scalar()
+                        float(raw) if raw is not None else self._initial_state_scalar()
                     )
                     restore = float(magnitude)
                     if ledgered:
@@ -1547,7 +1559,9 @@ return {1, status, tostring(restored), new_epoch}
         target_client = client
         if target_client is None:
             if redis_client is None:
-                raise RuntimeError("Redis client unavailable — cannot confirm CBF debit.")
+                raise RuntimeError(
+                    "Redis client unavailable — cannot confirm CBF debit."
+                )
             target_client = await _get_raw_redis(redis_client)
         if target_client is None:
             raise RuntimeError("Redis client unavailable — cannot confirm CBF debit.")
@@ -1709,7 +1723,9 @@ return {1, status, tostring(restored), new_epoch}
                         _mrm_meta = ControlRegistry().get_mapping(
                             GovernanceControl.TRADITIONAL_MRM_VALIDATION
                         )
-                        span.set_attribute("governance.control_id", _mrm_meta["internal_id"])
+                        span.set_attribute(
+                            "governance.control_id", _mrm_meta["internal_id"]
+                        )
                         span.set_attribute(
                             "governance.framework", _mrm_meta["primary_framework"]
                         )
@@ -1768,7 +1784,9 @@ return {1, status, tostring(restored), new_epoch}
     ) -> list:
         if self._lua_sha is None:
             load_res = client.script_load(self.LUA_ATOMIC_CBF)
-            self._lua_sha = await load_res if inspect.isawaitable(load_res) else load_res
+            self._lua_sha = (
+                await load_res if inspect.isawaitable(load_res) else load_res
+            )
 
         try:
             return await run_evalsha_fn()

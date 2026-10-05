@@ -55,7 +55,10 @@ def make_mock_entry_point(name, plugin_instance=None, raise_exc=None):
 
 @pytest.fixture
 def entry_points():
-    eps = [make_mock_entry_point("finance", FakePlugin("finance")), make_mock_entry_point("other", FakePlugin("other"))]
+    eps = [
+        make_mock_entry_point("finance", FakePlugin("finance")),
+        make_mock_entry_point("other", FakePlugin("other")),
+    ]
     with patch("importlib.metadata.entry_points", return_value=eps):
         yield eps
 
@@ -78,7 +81,9 @@ def test_resolve_domain_unset_or_blank_fails_closed(monkeypatch, value):
         resolve_domain()
 
 
-@pytest.mark.parametrize("value", ["finance,healthcare", "finance healthcare", "finance,"])
+@pytest.mark.parametrize(
+    "value", ["finance,healthcare", "finance healthcare", "finance,"]
+)
 def test_resolve_domain_more_than_one_fails_closed(monkeypatch, value):
     monkeypatch.setenv("CAGE_DOMAIN", value)
     with pytest.raises(RuntimeError, match="more than one domain"):
@@ -118,7 +123,9 @@ def test_ambiguous_entry_points_fail_closed():
 
 
 def test_plugin_import_failure_propagates():
-    ep = make_mock_entry_point("finance", raise_exc=ImportError("Failed to load module"))
+    ep = make_mock_entry_point(
+        "finance", raise_exc=ImportError("Failed to load module")
+    )
     with patch("importlib.metadata.entry_points", return_value=[ep]):
         with pytest.raises(ImportError):
             load_domain_plugin("finance")
@@ -144,7 +151,9 @@ def test_incompatible_api_version_fails_closed():
 def test_complete_domain_config_is_returned(tmp_path):
     registry = tmp_path / "registry.json"
     registry.write_text("{}")
-    config = DomainConfig(ftra_registry_path=registry, opa_package=_PKG, opa_required_rules=_RULES)
+    config = DomainConfig(
+        ftra_registry_path=registry, opa_package=_PKG, opa_required_rules=_RULES
+    )
     assert domain_config_of(FakePlugin("x", domain_config=config)) is config
 
 
@@ -155,14 +164,20 @@ def test_missing_domain_config_fails_closed():
 
 def test_relative_path_fails_closed():
     config = DomainConfig(
-        ftra_registry_path=Path("config/ftra/terminal_registry.json"), opa_package=_PKG, opa_required_rules=_RULES
+        ftra_registry_path=Path("config/ftra/terminal_registry.json"),
+        opa_package=_PKG,
+        opa_required_rules=_RULES,
     )
     with pytest.raises(RuntimeError, match="must be absolute"):
         domain_config_of(FakePlugin("x", domain_config=config))
 
 
 def test_missing_registry_file_fails_closed(tmp_path):
-    config = DomainConfig(ftra_registry_path=tmp_path / "absent.json", opa_package=_PKG, opa_required_rules=_RULES)
+    config = DomainConfig(
+        ftra_registry_path=tmp_path / "absent.json",
+        opa_package=_PKG,
+        opa_required_rules=_RULES,
+    )
     with pytest.raises(RuntimeError, match="ftra_registry_path does not exist"):
         domain_config_of(FakePlugin("x", domain_config=config))
 
@@ -180,11 +195,16 @@ def test_missing_causal_graph_file_fails_closed(tmp_path):
         domain_config_of(FakePlugin("x", domain_config=config))
 
 
-@pytest.mark.parametrize("package", ["", "trade/governance", "trade.", ".trade", "data.trade governance", "1trade"])
+@pytest.mark.parametrize(
+    "package",
+    ["", "trade/governance", "trade.", ".trade", "data.trade governance", "1trade"],
+)
 def test_malformed_opa_package_fails_closed(tmp_path, package):
     registry = tmp_path / "registry.json"
     registry.write_text("{}")
-    config = DomainConfig(ftra_registry_path=registry, opa_package=package, opa_required_rules=_RULES)
+    config = DomainConfig(
+        ftra_registry_path=registry, opa_package=package, opa_required_rules=_RULES
+    )
     with pytest.raises(RuntimeError, match="opa_package must be a dotted Rego package"):
         domain_config_of(FakePlugin("x", domain_config=config))
 
@@ -193,8 +213,12 @@ def test_malformed_opa_package_fails_closed(tmp_path, package):
 def test_empty_or_malformed_opa_rules_fail_closed(tmp_path, rules):
     registry = tmp_path / "registry.json"
     registry.write_text("{}")
-    config = DomainConfig(ftra_registry_path=registry, opa_package=_PKG, opa_required_rules=rules)
-    with pytest.raises(RuntimeError, match="opa_required_rules must be a non-empty tuple"):
+    config = DomainConfig(
+        ftra_registry_path=registry, opa_package=_PKG, opa_required_rules=rules
+    )
+    with pytest.raises(
+        RuntimeError, match="opa_required_rules must be a non-empty tuple"
+    ):
         domain_config_of(FakePlugin("x", domain_config=config))
 
 
@@ -210,7 +234,13 @@ def test_finance_is_runnable_and_declares_existing_config():
 def test_finance_opa_package_matches_its_shipped_rego():
     """The declared package is the one finance's own Rego file defines."""
     config = domain_config_of(load_domain_plugin("finance"))
-    rego = Path(__file__).resolve().parents[1] / "src" / "cage_finance" / "opa" / "trade_governance.rego"
+    rego = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "cage_finance"
+        / "opa"
+        / "trade_governance.rego"
+    )
     source = rego.read_text()
     assert f"package {config.opa_package}\n" in source
     for rule in config.opa_required_rules:
@@ -222,7 +252,13 @@ def test_healthcare_is_runnable_and_declares_existing_config():
     config = domain_config_of(load_domain_plugin("healthcare"))
     assert config.ftra_registry_path.is_file()
     assert config.causal_graph_path is not None and config.causal_graph_path.is_file()
-    rego = Path(__file__).resolve().parents[1] / "src" / "cage_healthcare" / "opa" / "dosing_governance.rego"
+    rego = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "cage_healthcare"
+        / "opa"
+        / "dosing_governance.rego"
+    )
     source = rego.read_text()
     assert f"package {config.opa_package}\n" in source
     for rule in config.opa_required_rules:

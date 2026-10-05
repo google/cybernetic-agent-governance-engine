@@ -264,12 +264,8 @@ def create_opa_safety_router(
     Both target node names are required keyword arguments; no domain-specific
     defaults are provided.
     """
-    resolved_approved = (
-        approved_target if approved_target is not None else allow_target
-    )
-    resolved_blocked = (
-        blocked_target if blocked_target is not None else deny_target
-    )
+    resolved_approved = approved_target if approved_target is not None else allow_target
+    resolved_blocked = blocked_target if blocked_target is not None else deny_target
     if not resolved_approved or not resolved_blocked:
         raise TypeError(
             "create_opa_safety_router() requires both approved_target (or allow_target) "

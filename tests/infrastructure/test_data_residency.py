@@ -17,19 +17,22 @@ tests/infrastructure/test_data_residency.py
 ===========================================
 EU_ECB data-residency gate tests.
 
-These tests assert that all GCS storage paths and bucket references are
-confined to the ``europe-west1`` region when ``CAGE_DEPLOYMENT_REGION``
-is set to ``EU_ECB``.  They are skipped automatically for all other
-deployment regions.
+Two classes:
 
-Run manually against an EU_ECB posture:
+- ``TestEUECBResidencyArtifacts`` (``local``): repository artifacts for the
+  EU_ECB posture (tfvars, baseline) reference ``europe-west1`` only. Runs in
+  every hermetic session, pinned to EU_ECB by its region marker.
+- ``TestEUECBDeployedResidency`` (``integration``): GCS paths and buckets of a
+  live deployment are confined to ``europe-west1``. Runs only when the
+  deployment's ``cage-deployment`` ConfigMap sets EU_ECB:
 
-    CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/infrastructure/ -v -m eu_ecb
+    uv run pytest tests/infrastructure/ -v -m eu_ecb --run-integration
 
 Marks
 -----
-- ``eu_ecb``  : EU_ECB region-specific test
-- ``local``   : safe to run with no live services (CI default)
+- ``eu_ecb``      : EU_ECB region-specific test
+- ``local``       : safe to run with no live services (CI default)
+- ``integration`` : needs a live EU_ECB deployment
 """
 
 from __future__ import annotations
@@ -37,20 +40,6 @@ from __future__ import annotations
 import os
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Module-level skip guard — entire module is skipped unless EU_ECB is active
-# ---------------------------------------------------------------------------
-
-_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
-
-_SKIP_NON_EU = pytest.mark.skipif(
-    _REGION != "EU_ECB",
-    reason=(
-        f"EU_ECB data-residency tests skipped for region {_REGION!r}. "
-        "Set CAGE_DEPLOYMENT_REGION=EU_ECB to run."
-    ),
-)
 
 # ---------------------------------------------------------------------------
 # Known non-EU region substrings — any bucket/path containing these is a
@@ -104,24 +93,17 @@ def _assert_eu_region(value: str, label: str) -> None:
 
 
 @pytest.mark.eu_ecb
-@pytest.mark.local
-@_SKIP_NON_EU
-class TestEUECBDataResidency:
-    """Gate tests for EU_ECB data-residency compliance (GDPR Art. 44 / MAS TRM §4.2)."""
+@pytest.mark.integration
+class TestEUECBDeployedResidency:
+    """Gate tests for EU_ECB data-residency compliance (GDPR Art. 44 / MAS TRM §4.2).
+
+    Checks the environment of a live EU_ECB deployment run. The harness
+    skips this class unless the deployment's ``cage-deployment`` ConfigMap
+    sets ``CAGE_DEPLOYMENT_REGION=EU_ECB``.
+    """
 
     # ------------------------------------------------------------------
-    # 1. Deployment region identity
-    # ------------------------------------------------------------------
-
-    def test_cage_deployment_region_is_eu_ecb(self) -> None:
-        """CAGE_DEPLOYMENT_REGION must be exactly 'EU_ECB' in this posture."""
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
-        assert region == "EU_ECB", (
-            f"Expected CAGE_DEPLOYMENT_REGION='EU_ECB', got {region!r}"
-        )
-
-    # ------------------------------------------------------------------
-    # 2. GCS storage path residency
+    # 1. GCS storage path residency
     # ------------------------------------------------------------------
 
     def test_gcs_storage_paths_are_eu_region(self) -> None:
@@ -172,7 +154,7 @@ class TestEUECBDataResidency:
         )
 
     # ------------------------------------------------------------------
-    # 3. COLD_TIER_BUCKET residency
+    # 2. COLD_TIER_BUCKET residency
     # ------------------------------------------------------------------
 
     def test_cold_tier_bucket_does_not_reference_non_eu_region(self) -> None:
@@ -201,7 +183,7 @@ class TestEUECBDataResidency:
             _assert_eu_region(bucket, "COLD_TIER_BUCKET")
 
     # ------------------------------------------------------------------
-    # 4. OSCAL_S3_BUCKET residency
+    # 3. OSCAL_S3_BUCKET residency
     # ------------------------------------------------------------------
 
     def test_oscal_s3_bucket_does_not_reference_non_eu_region(self) -> None:
@@ -226,8 +208,14 @@ class TestEUECBDataResidency:
         ):
             _assert_eu_region(bucket, "OSCAL_S3_BUCKET")
 
+
+@pytest.mark.eu_ecb
+@pytest.mark.local
+class TestEUECBResidencyArtifacts:
+    """Repository artifacts (tfvars, baselines) for the EU_ECB posture."""
+
     # ------------------------------------------------------------------
-    # 5. Terraform tfvars residency (eu-dev / eu-prod)
+    # 4. Terraform tfvars residency (eu-dev / eu-prod)
     # ------------------------------------------------------------------
 
     def test_eu_dev_tfvars_references_europe_west1(self) -> None:
@@ -255,7 +243,7 @@ class TestEUECBDataResidency:
         )
 
     # ------------------------------------------------------------------
-    # 6. EU_ECB baseline config residency
+    # 5. EU_ECB baseline config residency
     # ------------------------------------------------------------------
 
     def test_eu_ecb_baseline_config_references_europe_west1(self) -> None:

@@ -37,7 +37,10 @@ import pytest
 
 from src.gateway.governance.consensus.engine import extract_field_magnitude
 from src.gateway.governance.contracts import ViolationKind
-from src.gateway.governance.ftra.classifier import IrreversibilityClassifier, rehash_registry
+from src.gateway.governance.ftra.classifier import (
+    IrreversibilityClassifier,
+    rehash_registry,
+)
 from src.gateway.governance.ftra.models import FTRA_REGISTERED_IRREVERSIBLE
 from src.gateway.governance.governor.pipeline import Profile, StageContext, StageOutput
 from src.gateway.governance.governor.stages.ftra import FtraStage
@@ -93,7 +96,9 @@ async def _run(registry: Path, extractor: Any, params: dict[str, Any]) -> StageO
     stage = FtraStage(metrics=MagicMock(), magnitude_extractor=extractor)
     stage._ftra_classifier = IrreversibilityClassifier(registry)
     ctx = StageContext(
-        action="move_funds", params={**params, "confidence": _HIGH}, profile=Profile.FULL
+        action="move_funds",
+        params={**params, "confidence": _HIGH},
+        profile=Profile.FULL,
     )
     return await stage.run(ctx)
 

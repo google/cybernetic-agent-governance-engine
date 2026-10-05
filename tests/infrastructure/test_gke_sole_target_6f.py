@@ -87,7 +87,6 @@ class TestCloudRunEliminated:
         )
 
 
-
 # ============================================================================
 # 2. Posture Matrix & Regional Prod vs Zonal Dev/Staging (§1.1)
 # ============================================================================
@@ -96,13 +95,20 @@ class TestCloudRunEliminated:
 class TestPostureMatrixAndTopology:
     """Verify §1.1 posture matrix across GKE module and target tfvars."""
 
-    def test_cluster_location_is_regional_in_prod_and_zonal_in_dev_staging(self) -> None:
+    def test_cluster_location_is_regional_in_prod_and_zonal_in_dev_staging(
+        self,
+    ) -> None:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         assert "cluster_location = local.is_regional ? var.region : var.zone" in main_tf
-        assert 'var.regional_cluster != null ? var.regional_cluster : (var.environment == "prod")' in main_tf
+        assert (
+            'var.regional_cluster != null ? var.regional_cluster : (var.environment == "prod")'
+            in main_tf
+        )
         assert "location = local.cluster_location" in main_tf
 
-    def test_dataplane_v2_and_fqdn_network_policy_default_true_in_module_and_target(self) -> None:
+    def test_dataplane_v2_and_fqdn_network_policy_default_true_in_module_and_target(
+        self,
+    ) -> None:
         for vars_path in (
             GKE_CLUSTER_MODULE_DIR / "variables.tf",
             GKE_TARGET_DIR / "variables.tf",
@@ -118,14 +124,20 @@ class TestPostureMatrixAndTopology:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         assert "datapath_provider" in main_tf
         assert "ADVANCED_DATAPATH" in main_tf
-        assert "enable_fqdn_network_policy = var.enable_dataplane_v2 && var.enable_fqdn_network_policy" in main_tf
+        assert (
+            "enable_fqdn_network_policy = var.enable_dataplane_v2 && var.enable_fqdn_network_policy"
+            in main_tf
+        )
         assert "release_channel" in main_tf
         assert "channel = var.release_channel" in main_tf
         assert "min_master_version = var.min_master_version" in main_tf
 
     def test_cluster_dns_provider_forbids_CoreDNS(self) -> None:
         vars_tf = (GKE_CLUSTER_MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
-        assert 'contains(["PROVIDER_UNSPECIFIED", "CLOUD_DNS"], var.cluster_dns_provider)' in vars_tf
+        assert (
+            'contains(["PROVIDER_UNSPECIFIED", "CLOUD_DNS"], var.cluster_dns_provider)'
+            in vars_tf
+        )
 
     @pytest.mark.parametrize(
         "tfvars_name,expected_env,expected_regional",
@@ -192,7 +204,9 @@ class TestNodePoolsAndAntiSpotAffinity:
             'resource "google_container_node_pool" "gpu_nodes"',
             'resource "google_container_node_pool" "clickhouse_nodes"',
         ):
-            assert pool_resource in main_tf, f"Missing node pool resource: {pool_resource}"
+            assert pool_resource in main_tf, (
+                f"Missing node pool resource: {pool_resource}"
+            )
         for pool_label in (
             'pool-name        = "gpu-l4"',
             'pool-name     = "general"',
@@ -204,8 +218,12 @@ class TestNodePoolsAndAntiSpotAffinity:
     def test_gpu_l4_and_clickhouse_pools_are_never_spot(self) -> None:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         gpu_start = main_tf.index('resource "google_container_node_pool" "gpu_nodes"')
-        ch_start = main_tf.index('resource "google_container_node_pool" "clickhouse_nodes"')
-        extra_start = main_tf.index('resource "google_container_node_pool" "extra_pools"')
+        ch_start = main_tf.index(
+            'resource "google_container_node_pool" "clickhouse_nodes"'
+        )
+        extra_start = main_tf.index(
+            'resource "google_container_node_pool" "extra_pools"'
+        )
         gpu_block = main_tf[gpu_start:ch_start]
         ch_block = main_tf[ch_start:extra_start]
 
@@ -221,7 +239,9 @@ class TestNodePoolsAndAntiSpotAffinity:
     def test_gpu_node_pool_enables_gcfs_image_streaming(self) -> None:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         gpu_start = main_tf.index('resource "google_container_node_pool" "gpu_nodes"')
-        ch_start = main_tf.index('resource "google_container_node_pool" "clickhouse_nodes"')
+        ch_start = main_tf.index(
+            'resource "google_container_node_pool" "clickhouse_nodes"'
+        )
         gpu_block = main_tf[gpu_start:ch_start]
 
         assert re.search(r"gcfs_config\s*\{\s*enabled\s*=\s*true\s*\}", gpu_block), (
@@ -238,7 +258,9 @@ class TestNodePoolsAndAntiSpotAffinity:
 
     def test_general_spot_pool_only_in_staging_with_spot_taint(self) -> None:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
-        spot_start = main_tf.index('resource "google_container_node_pool" "general_spot_nodes"')
+        spot_start = main_tf.index(
+            'resource "google_container_node_pool" "general_spot_nodes"'
+        )
         gpu_start = main_tf.index('resource "google_container_node_pool" "gpu_nodes"')
         spot_block = main_tf[spot_start:gpu_start]
 
@@ -260,13 +282,14 @@ class TestNodePoolsAndAntiSpotAffinity:
         # 1. Gateway Deployment
         gw_docs = _load_yaml_docs(K8S_DIR / "gateway.yaml")
         gw_deploy = next(
-            d for d in gw_docs
-            if d.get("kind") == "Deployment" and d.get("metadata", {}).get("name") == "gateway"
+            d
+            for d in gw_docs
+            if d.get("kind") == "Deployment"
+            and d.get("metadata", {}).get("name") == "gateway"
         )
-        gw_terms = (
-            gw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
-            ["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
-        )
+        gw_terms = gw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
+            "requiredDuringSchedulingIgnoredDuringExecution"
+        ]["nodeSelectorTerms"]
         assert any(
             expr.get("key") == "cloud.google.com/gke-spot"
             and expr.get("operator") == "NotIn"
@@ -278,21 +301,23 @@ class TestNodePoolsAndAntiSpotAffinity:
         # 2. Reconciliation Worker Deployment (continuous loop; see manifest header)
         rw_docs = _load_yaml_docs(K8S_DIR / "reconciliation-worker.yaml")
         rw_deploy = next(
-            d for d in rw_docs
+            d
+            for d in rw_docs
             if d.get("kind") == "Deployment"
             and d.get("metadata", {}).get("name") == "reconciliation-worker"
         )
-        rw_terms = (
-            rw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
-            ["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
-        )
+        rw_terms = rw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
+            "requiredDuringSchedulingIgnoredDuringExecution"
+        ]["nodeSelectorTerms"]
         assert any(
             expr.get("key") == "cloud.google.com/gke-spot"
             and expr.get("operator") == "NotIn"
             and "true" in expr.get("values", [])
             for term in rw_terms
             for expr in term.get("matchExpressions", [])
-        ), "reconciliation-worker Deployment must enforce cloud.google.com/gke-spot NotIn ['true']"
+        ), (
+            "reconciliation-worker Deployment must enforce cloud.google.com/gke-spot NotIn ['true']"
+        )
 
     def test_gateway_terraform_module_enforces_anti_spot_node_affinity(self) -> None:
         gateway_tf = (GATEWAY_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
@@ -353,26 +378,22 @@ class TestNodePoolsAndAntiSpotAffinity:
                     f"{var_name} in {vars_path} must validate <= {max_bound}"
                 )
 
-        example_tfvars = (
-            GKE_TARGET_DIR / "terraform.auto.tfvars.example"
-        ).read_text(encoding="utf-8")
+        example_tfvars = (GKE_TARGET_DIR / "terraform.auto.tfvars.example").read_text(
+            encoding="utf-8"
+        )
         assert 'gpu_node_pool_machine_type = "g2-standard-8"' in example_tfvars
         assert "g2-standard-4" not in example_tfvars
 
         def _eval_cpu_valid(val: str) -> bool:
             if not re.match(r"^[0-9]+(\.[0-9]+)?m?$", val):
                 return False
-            millicores = (
-                float(val[:-1]) if val.endswith("m") else float(val) * 1000.0
-            )
+            millicores = float(val[:-1]) if val.endswith("m") else float(val) * 1000.0
             return 0 < millicores <= 7910
 
         def _eval_mem_valid(val: str) -> bool:
             if not re.match(r"^[0-9]+(Mi|Gi)$", val):
                 return False
-            mib = (
-                int(val[:-2]) * 1024 if val.endswith("Gi") else int(val[:-2])
-            )
+            mib = int(val[:-2]) * 1024 if val.endswith("Gi") else int(val[:-2])
             return 0 < mib <= 28928
 
         # Valid g2-standard-8 quantities pass
@@ -454,12 +475,14 @@ def _evaluate_pod_egress(
 ) -> bool:
     """Simulate GKE Dataplane V2 + FQDNNetworkPolicy egress evaluation (fail-closed)."""
     matching_netpols = [
-        np for np in network_policies
+        np
+        for np in network_policies
         if _selector_matches(np.get("spec", {}).get("podSelector", {}), pod_labels)
         and "Egress" in np.get("spec", {}).get("policyTypes", [])
     ]
     matching_fqdnpols = [
-        fp for fp in fqdn_policies
+        fp
+        for fp in fqdn_policies
         if _selector_matches(fp.get("spec", {}).get("podSelector", {}), pod_labels)
         and "Egress" in fp.get("spec", {}).get("policyTypes", [])
     ]
@@ -471,7 +494,8 @@ def _evaluate_pod_egress(
         for rule in np.get("spec", {}).get("egress", []):
             ports_spec = rule.get("ports", [])
             port_ok = any(
-                int(p.get("port", -1)) == port and p.get("protocol", "TCP").upper() == protocol.upper()
+                int(p.get("port", -1)) == port
+                and p.get("protocol", "TCP").upper() == protocol.upper()
                 for p in ports_spec
             )
             if not port_ok:
@@ -479,7 +503,9 @@ def _evaluate_pod_egress(
 
             for to_peer in rule.get("to", []):
                 if "ipBlock" in to_peer and dest_ip is not None and dest_fqdn is None:
-                    cidr = ipaddress.ip_network(to_peer["ipBlock"]["cidr"], strict=False)
+                    cidr = ipaddress.ip_network(
+                        to_peer["ipBlock"]["cidr"], strict=False
+                    )
                     ip_obj = ipaddress.ip_address(dest_ip)
                     except_cidrs = [
                         ipaddress.ip_network(ex, strict=False)
@@ -488,12 +514,17 @@ def _evaluate_pod_egress(
                     if ip_obj in cidr and not any(ip_obj in ex for ex in except_cidrs):
                         return True
 
-                if ("podSelector" in to_peer or "namespaceSelector" in to_peer) and dest_pod_labels is not None:
+                if (
+                    "podSelector" in to_peer or "namespaceSelector" in to_peer
+                ) and dest_pod_labels is not None:
                     req_pod = to_peer.get("podSelector", {}).get("matchLabels", {})
                     req_ns = to_peer.get("namespaceSelector", {}).get("matchLabels", {})
-                    pod_match = all(dest_pod_labels.get(k) == v for k, v in req_pod.items())
+                    pod_match = all(
+                        dest_pod_labels.get(k) == v for k, v in req_pod.items()
+                    )
                     ns_match = all(
-                        (dest_namespace_labels or {}).get(k) == v for k, v in req_ns.items()
+                        (dest_namespace_labels or {}).get(k) == v
+                        for k, v in req_ns.items()
                     )
                     if pod_match and ns_match:
                         return True
@@ -528,7 +559,9 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
             "trivy-egress-fqdn.yaml",
         ],
     )
-    def test_no_cilium_network_policy_or_l7_rules_in_manifests(self, manifest_name: str) -> None:
+    def test_no_cilium_network_policy_or_l7_rules_in_manifests(
+        self, manifest_name: str
+    ) -> None:
         path = CILIUM_DIR / manifest_name
         raw = path.read_text(encoding="utf-8")
         docs = _load_yaml_docs(path)
@@ -547,7 +580,9 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
                 for rule in doc.get("spec", {}).get("egress", []):
                     for to_peer in rule.get("to", []):
                         for fqdn in to_peer.get("fqdns", []):
-                            assert re.match(r"^(\*\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$", fqdn), (
+                            assert re.match(
+                                r"^(\*\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$", fqdn
+                            ), (
                                 f"Invalid FQDN pattern {fqdn!r} in {manifest_name}: "
                                 "only exact FQDNs or single-label prefix wildcards (*.domain.tld) are valid"
                             )
@@ -580,18 +615,27 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
                         )
                         for peer in to_peers:
                             if "ipBlock" in peer:
-                                assert peer["ipBlock"]["cidr"] == "169.254.169.254/32", (
+                                assert (
+                                    peer["ipBlock"]["cidr"] == "169.254.169.254/32"
+                                ), (
                                     f"Port 53 ipBlock in {policy_file.name} must only target "
                                     f"GKE NodeLocal DNSCache / Cloud DNS (169.254.169.254/32), got {peer['ipBlock']['cidr']}"
                                 )
                             else:
                                 assert (
-                                    peer.get("podSelector", {}).get("matchLabels", {}).get("k8s-app")
+                                    peer.get("podSelector", {})
+                                    .get("matchLabels", {})
+                                    .get("k8s-app")
                                     == "kube-dns"
-                                ), f"Port 53 podSelector in {policy_file.name} must target k8s-app: kube-dns"
+                                ), (
+                                    f"Port 53 podSelector in {policy_file.name} must target k8s-app: kube-dns"
+                                )
 
     def test_memorystore_psc_ipblock_replaces_redis_stack_pod_selector(self) -> None:
-        for manifest_name in ("egress-lockdown.yaml", "reconciliation-worker-egress.yaml"):
+        for manifest_name in (
+            "egress-lockdown.yaml",
+            "reconciliation-worker-egress.yaml",
+        ):
             raw = (CILIUM_DIR / manifest_name).read_text(encoding="utf-8")
             assert "redis-stack" not in raw, (
                 f"{manifest_name} must not reference legacy in-cluster redis-stack pod"
@@ -604,12 +648,22 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
                 for rule in np.get("spec", {}).get("egress", [])
                 if any(int(p.get("port", -1)) == 6379 for p in rule.get("ports", []))
             ]
-            assert redis_rules, f"{manifest_name} must include a port 6379 egress rule for Memorystore PSC"
+            assert redis_rules, (
+                f"{manifest_name} must include a port 6379 egress rule for Memorystore PSC"
+            )
             for rule in redis_rules:
-                ip_blocks = [peer["ipBlock"]["cidr"] for peer in rule.get("to", []) if "ipBlock" in peer]
-                assert ip_blocks, f"Port 6379 rule in {manifest_name} must use an ipBlock for Memorystore PSC"
+                ip_blocks = [
+                    peer["ipBlock"]["cidr"]
+                    for peer in rule.get("to", [])
+                    if "ipBlock" in peer
+                ]
+                assert ip_blocks, (
+                    f"Port 6379 rule in {manifest_name} must use an ipBlock for Memorystore PSC"
+                )
 
-    def test_reconciliation_worker_egress_enforcement_probe_allows_and_blocks(self) -> None:
+    def test_reconciliation_worker_egress_enforcement_probe_allows_and_blocks(
+        self,
+    ) -> None:
         """Fail-closed behavioral verification of reconciliation-worker egress policies:
         - Allows `cloudkms.googleapis.com:443` and Memorystore PSC `:6379`
         - Blocks `storage.googleapis.com:443` (not in reconciliation-worker allowlist)
@@ -626,48 +680,90 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
         }
 
         # 1. Allowed FQDN: cloudkms.googleapis.com:443
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_fqdn="cloudkms.googleapis.com", port=443
-        ) is True
+        assert (
+            _evaluate_pod_egress(
+                netpols,
+                fqdnpols,
+                worker_labels,
+                dest_fqdn="cloudkms.googleapis.com",
+                port=443,
+            )
+            is True
+        )
 
         # 2. Allowed Memorystore PSC IP CIDR (10.128.0.0/20): 10.128.0.50:6379
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_ip="10.128.0.50", port=6379
-        ) is True
+        assert (
+            _evaluate_pod_egress(
+                netpols, fqdnpols, worker_labels, dest_ip="10.128.0.50", port=6379
+            )
+            is True
+        )
 
         # 3. Allowed DNS: kube-system kube-dns and 169.254.169.254:53
-        assert _evaluate_pod_egress(
-            netpols,
-            fqdnpols,
-            worker_labels,
-            dest_pod_labels={"k8s-app": "kube-dns"},
-            dest_namespace_labels={"kubernetes.io/metadata.name": "kube-system"},
-            port=53,
-            protocol="UDP",
-        ) is True
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_ip="169.254.169.254", port=53, protocol="UDP"
-        ) is True
+        assert (
+            _evaluate_pod_egress(
+                netpols,
+                fqdnpols,
+                worker_labels,
+                dest_pod_labels={"k8s-app": "kube-dns"},
+                dest_namespace_labels={"kubernetes.io/metadata.name": "kube-system"},
+                port=53,
+                protocol="UDP",
+            )
+            is True
+        )
+        assert (
+            _evaluate_pod_egress(
+                netpols,
+                fqdnpols,
+                worker_labels,
+                dest_ip="169.254.169.254",
+                port=53,
+                protocol="UDP",
+            )
+            is True
+        )
 
         # 4. Fail-closed: storage.googleapis.com:443 is NOT in reconciliation-worker's allowlist
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_fqdn="storage.googleapis.com", port=443
-        ) is False
+        assert (
+            _evaluate_pod_egress(
+                netpols,
+                fqdnpols,
+                worker_labels,
+                dest_fqdn="storage.googleapis.com",
+                port=443,
+            )
+            is False
+        )
 
         # 5. Fail-closed: unapproved external FQDN example.com:443 is blocked
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_fqdn="example.com", port=443
-        ) is False
+        assert (
+            _evaluate_pod_egress(
+                netpols, fqdnpols, worker_labels, dest_fqdn="example.com", port=443
+            )
+            is False
+        )
 
         # 6. Fail-closed: direct IP literal connect on 443 (bypassing DNS) is blocked
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_ip="142.250.80.46", port=443
-        ) is False
+        assert (
+            _evaluate_pod_egress(
+                netpols, fqdnpols, worker_labels, dest_ip="142.250.80.46", port=443
+            )
+            is False
+        )
 
         # 7. Fail-closed: external DNS exfiltration to 8.8.8.8:53 is blocked
-        assert _evaluate_pod_egress(
-            netpols, fqdnpols, worker_labels, dest_ip="8.8.8.8", port=53, protocol="UDP"
-        ) is False
+        assert (
+            _evaluate_pod_egress(
+                netpols,
+                fqdnpols,
+                worker_labels,
+                dest_ip="8.8.8.8",
+                port=53,
+                protocol="UDP",
+            )
+            is False
+        )
 
     def test_network_policy_spec_hash_triggers_workload_rollout_restart(self) -> None:
         netpol_tf = (GKE_TARGET_DIR / "network_policy.tf").read_text(encoding="utf-8")
@@ -678,14 +774,19 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
         assert "network_policy_spec_hash = sha256(jsonencode(" in netpol_tf
         assert "network_policy_hash = local.network_policy_spec_hash" in main_tf
         assert '"cage.io/network-policy-hash" = var.network_policy_hash' in gateway_tf
-        assert 'resource "terraform_data" "network_policy_workload_rollout"' in netpol_tf
+        assert (
+            'resource "terraform_data" "network_policy_workload_rollout"' in netpol_tf
+        )
 
         # Verify deterministic hash sensitivity: mutating an FQDN allowlist changes the rollout hash
         assert "cloudkms.googleapis.com" in vars_tf
-        mutated_vars = vars_tf.replace("cloudkms.googleapis.com", "storage.googleapis.com")
-        assert hashlib.sha256(vars_tf.encode()).hexdigest() != hashlib.sha256(
-            mutated_vars.encode()
-        ).hexdigest()
+        mutated_vars = vars_tf.replace(
+            "cloudkms.googleapis.com", "storage.googleapis.com"
+        )
+        assert (
+            hashlib.sha256(vars_tf.encode()).hexdigest()
+            != hashlib.sha256(mutated_vars.encode()).hexdigest()
+        )
 
 
 # ============================================================================
@@ -696,7 +797,9 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
 class TestPerimeterControls:
     """Verify §5.4 perimeter wiring in `infra/targets/gcp-gke/perimeter.tf`."""
 
-    def test_perimeter_tf_wires_vpc_binauthz_vpcsc_cloud_armor_and_cloud_dns(self) -> None:
+    def test_perimeter_tf_wires_vpc_binauthz_vpcsc_cloud_armor_and_cloud_dns(
+        self,
+    ) -> None:
         perimeter_tf = (GKE_TARGET_DIR / "perimeter.tf").read_text(encoding="utf-8")
 
         # 1. VPC & Private Google Access module
@@ -704,12 +807,20 @@ class TestPerimeterControls:
         assert 'source = "../../modules/vpc_network"' in perimeter_tf
 
         # 2. Binary Authorization policy & attestor
-        assert 'resource "google_binary_authorization_policy" "cluster_policy"' in perimeter_tf
+        assert (
+            'resource "google_binary_authorization_policy" "cluster_policy"'
+            in perimeter_tf
+        )
         assert 'evaluation_mode         = "REQUIRE_ATTESTATION"' in perimeter_tf
-        assert 'enforcement_mode        = "ENFORCED_BLOCK_AND_AUDIT_LOG"' in perimeter_tf
+        assert (
+            'enforcement_mode        = "ENFORCED_BLOCK_AND_AUDIT_LOG"' in perimeter_tf
+        )
 
         # 3. VPC Service Controls perimeter covering storage, bigquery, container, secretmanager, cloudkms, sqladmin, redis
-        assert 'resource "google_access_context_manager_service_perimeter" "cage_perimeter"' in perimeter_tf
+        assert (
+            'resource "google_access_context_manager_service_perimeter" "cage_perimeter"'
+            in perimeter_tf
+        )
         for restricted_svc in (
             "storage.googleapis.com",
             "bigquery.googleapis.com",
@@ -726,7 +837,9 @@ class TestPerimeterControls:
             )
 
         # 4. Cloud Armor WAF security policy & BackendConfig
-        assert 'resource "google_compute_security_policy" "gateway_armor"' in perimeter_tf
+        assert (
+            'resource "google_compute_security_policy" "gateway_armor"' in perimeter_tf
+        )
         assert "sqli-stable" in perimeter_tf
         assert "xss-stable" in perimeter_tf
         assert "rate_based_ban" in perimeter_tf
@@ -741,10 +854,7 @@ class TestPerimeterControls:
         docs = _load_yaml_docs(K8S_DIR / "ingress.yaml")
         backend_configs = [d for d in docs if d.get("kind") == "BackendConfig"]
         assert len(backend_configs) == 1
-        assert (
-            backend_configs[0]["spec"]["securityPolicy"]["name"]
-            == "cage-waf-policy"
-        )
+        assert backend_configs[0]["spec"]["securityPolicy"]["name"] == "cage-waf-policy"
 
 
 # ============================================================================
@@ -755,11 +865,13 @@ class TestPerimeterControls:
 class TestOSCALStep6fCompliance:
     """Verify OSCAL SC-7 narrative and Tier 3 commercial retail-banking ledger responsibility."""
 
-    def test_oscal_sc7_describes_fqdn_network_policy_and_drops_l7_http_method_claim(self) -> None:
+    def test_oscal_sc7_describes_fqdn_network_policy_and_drops_l7_http_method_claim(
+        self,
+    ) -> None:
         ssp_doc = yaml.safe_load(OSCAL_SSP_PATH.read_text(encoding="utf-8"))
-        impl_reqs = (
-            ssp_doc["system-security-plan"]["control-implementation"]["implemented-requirements"]
-        )
+        impl_reqs = ssp_doc["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
         sc7 = next(req for req in impl_reqs if req["control-id"] == "sc-7")
         desc = sc7["description"]
 
@@ -770,7 +882,9 @@ class TestOSCALStep6fCompliance:
         assert "L7 HTTP method" not in desc
         assert "HTTP method filtering" not in desc
 
-    def test_oscal_ssp_records_tier3_commercial_ledger_customer_responsibility(self) -> None:
+    def test_oscal_ssp_records_tier3_commercial_ledger_customer_responsibility(
+        self,
+    ) -> None:
         from src.gateway.governance.oscal_ssp_exporter import (
             TIER3_COMMERCIAL_LEDGER_CUSTOMER_RESPONSIBILITY,
         )
@@ -811,7 +925,9 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
             if p.is_file() and ".git" not in p.parts and ".venv" not in p.parts
         ]
         assert dockerfiles, "Expected to find Dockerfiles in repository"
-        token_directive_re = re.compile(r"^\s*(?:ENV|ARG)\s+[^\n]*TOKEN", re.IGNORECASE | re.MULTILINE)
+        token_directive_re = re.compile(
+            r"^\s*(?:ENV|ARG)\s+[^\n]*TOKEN", re.IGNORECASE | re.MULTILINE
+        )
         for df in dockerfiles:
             content = df.read_text(encoding="utf-8")
             match = token_directive_re.search(content)
@@ -836,10 +952,12 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
             )
 
     def test_cloudbuild_and_build_scripts_do_not_pass_hf_token(self) -> None:
-        cb_vllm = (REPO_ROOT / "deployment" / "docker" / "cloudbuild.vllm.yaml").read_text(
+        cb_vllm = (
+            REPO_ROOT / "deployment" / "docker" / "cloudbuild.vllm.yaml"
+        ).read_text(encoding="utf-8")
+        build_sh = (REPO_ROOT / "scripts" / "build_images.sh").read_text(
             encoding="utf-8"
         )
-        build_sh = (REPO_ROOT / "scripts" / "build_images.sh").read_text(encoding="utf-8")
         deploy_sh = (REPO_ROOT / "deploy_all.sh").read_text(encoding="utf-8")
         load_env_sh = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
 
@@ -855,17 +973,23 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
     ) -> None:
         gke_main = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
         gke_vars = (GKE_TARGET_DIR / "variables.tf").read_text(encoding="utf-8")
-        vllm_mod_main = (REPO_ROOT / "infra" / "modules" / "vllm_inference" / "main.tf").read_text(
-            encoding="utf-8"
-        )
+        vllm_mod_main = (
+            REPO_ROOT / "infra" / "modules" / "vllm_inference" / "main.tf"
+        ).read_text(encoding="utf-8")
         vllm_mod_vars = (
             REPO_ROOT / "infra" / "modules" / "vllm_inference" / "variables.tf"
         ).read_text(encoding="utf-8")
 
         # 1. Invalid loader name gcs_filesystem is gone; runai_streamer is used
         assert "gcs_filesystem" not in gke_main
-        assert 'can(regex("^gs://", var.model_fast)) ? "runai_streamer" : "auto"' in gke_main
-        assert 'can(regex("^gs://", var.model_reasoning)) ? "runai_streamer" : "auto"' in gke_main
+        assert (
+            'can(regex("^gs://", var.model_fast)) ? "runai_streamer" : "auto"'
+            in gke_main
+        )
+        assert (
+            'can(regex("^gs://", var.model_reasoning)) ? "runai_streamer" : "auto"'
+            in gke_main
+        )
 
         # 2. vllm_command passes --served-model-name $SERVED_MODEL_NAME and --load-format $VLLM_LOAD_FORMAT
         assert "--served-model-name $SERVED_MODEL_NAME" in gke_main
@@ -882,7 +1006,10 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
 
         # 4. Default model_fast and model_reasoning in gcp-gke variables.tf and all posture tfvars are gs:// paths
         assert 'default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"' in gke_vars
-        assert 'default     = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"' in gke_vars
+        assert (
+            'default     = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"'
+            in gke_vars
+        )
         assert 'variable "served_model_fast"' in gke_vars
         assert 'variable "served_model_reasoning"' in gke_vars
 
@@ -913,7 +1040,9 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
         assert "manifest = each.value" in netpol_tf
 
         # 2. Terraform defines vllm_egress_l3_l4 and vllm_egress_fqdn
-        assert 'resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4"' in netpol_tf
+        assert (
+            'resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4"' in netpol_tf
+        )
         assert "vllm_egress_fqdn = {" in netpol_tf
         assert '"169.254.169.254/32"' in netpol_tf
         assert '"169.254.169.252/32"' in netpol_tf
@@ -928,54 +1057,120 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
             pod_labels = {"app": app_label, "component": "vllm-inference"}
 
             # Allowed: DNS to kube-dns and 169.254.169.254:53
-            assert _evaluate_pod_egress(
-                netpols,
-                fqdnpols,
-                pod_labels,
-                dest_pod_labels={"k8s-app": "kube-dns"},
-                dest_namespace_labels={"kubernetes.io/metadata.name": "kube-system"},
-                port=53,
-                protocol="UDP",
-            ) is True
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_ip="169.254.169.254", port=53, protocol="UDP"
-            ) is True
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_pod_labels={"k8s-app": "kube-dns"},
+                    dest_namespace_labels={
+                        "kubernetes.io/metadata.name": "kube-system"
+                    },
+                    port=53,
+                    protocol="UDP",
+                )
+                is True
+            )
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_ip="169.254.169.254",
+                    port=53,
+                    protocol="UDP",
+                )
+                is True
+            )
 
             # Allowed: GKE Workload Identity metadata server (169.254.169.254:80 and 169.254.169.252:988)
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_ip="169.254.169.254", port=80, protocol="TCP"
-            ) is True
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_ip="169.254.169.252", port=988, protocol="TCP"
-            ) is True
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_ip="169.254.169.254",
+                    port=80,
+                    protocol="TCP",
+                )
+                is True
+            )
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_ip="169.254.169.252",
+                    port=988,
+                    protocol="TCP",
+                )
+                is True
+            )
 
             # Allowed: GCS and OAuth2 token exchange over HTTPS (443)
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_fqdn="storage.googleapis.com", port=443
-            ) is True
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_fqdn="oauth2.googleapis.com", port=443
-            ) is True
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_fqdn="storage.googleapis.com",
+                    port=443,
+                )
+                is True
+            )
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_fqdn="oauth2.googleapis.com",
+                    port=443,
+                )
+                is True
+            )
 
             # Fail-closed: Hugging Face Hub and arbitrary external FQDNs are blocked
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_fqdn="huggingface.co", port=443
-            ) is False
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_fqdn="cdn-lfs.huggingface.co", port=443
-            ) is False
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_fqdn="example.com", port=443
-            ) is False
+            assert (
+                _evaluate_pod_egress(
+                    netpols, fqdnpols, pod_labels, dest_fqdn="huggingface.co", port=443
+                )
+                is False
+            )
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_fqdn="cdn-lfs.huggingface.co",
+                    port=443,
+                )
+                is False
+            )
+            assert (
+                _evaluate_pod_egress(
+                    netpols, fqdnpols, pod_labels, dest_fqdn="example.com", port=443
+                )
+                is False
+            )
 
             # Fail-closed: direct IP literal on 443 and external DNS 8.8.8.8:53 are blocked
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_ip="142.250.80.46", port=443
-            ) is False
-            assert _evaluate_pod_egress(
-                netpols, fqdnpols, pod_labels, dest_ip="8.8.8.8", port=53, protocol="UDP"
-            ) is False
-
+            assert (
+                _evaluate_pod_egress(
+                    netpols, fqdnpols, pod_labels, dest_ip="142.250.80.46", port=443
+                )
+                is False
+            )
+            assert (
+                _evaluate_pod_egress(
+                    netpols,
+                    fqdnpols,
+                    pod_labels,
+                    dest_ip="8.8.8.8",
+                    port=53,
+                    protocol="UDP",
+                )
+                is False
+            )
 
 
 # ============================================================================
@@ -986,7 +1181,7 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
 def _extract_image_digests_block(variables_tf: str) -> str:
     """Return the HCL block for `variable "image_digests"` in `variables.tf`."""
     marker = 'variable "image_digests"'
-    assert marker in variables_tf, "variable \"image_digests\" missing from variables.tf"
+    assert marker in variables_tf, 'variable "image_digests" missing from variables.tf'
     start = variables_tf.index(marker)
     next_var = variables_tf.find('\nvariable "', start + len(marker))
     return variables_tf[start:] if next_var == -1 else variables_tf[start:next_var]
@@ -1002,7 +1197,7 @@ def _evaluate_image_digests_validation(
     block = _extract_image_digests_block(variables_tf)
     regex_matches = re.findall(r'regex\("([^"]+)",\s*ref\)', block)
     assert len(regex_matches) >= 2, (
-        "Expected digest and :latest regex(..., ref) in variable \"image_digests\" validation"
+        'Expected digest and :latest regex(..., ref) in variable "image_digests" validation'
     )
     # Unescape HCL string double-backslashes (e.g. `\\s` -> `\s`)
     digest_regex = re.compile(regex_matches[0].replace(r"\\", "\\"))
@@ -1035,11 +1230,17 @@ class TestImageSupplyChainAndAttestation:
         for path in [main_tf, *sorted(docker_dir.rglob("*"))]:
             if not path.is_file():
                 continue
-            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
                 if ":latest" in line:
-                    offending.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+                    offending.append(
+                        f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
+                    )
 
-        assert not offending, f"Mutable :latest image references found:\n" + "\n".join(offending)
+        assert not offending, "Mutable :latest image references found:\n" + "\n".join(
+            offending
+        )
 
     def test_image_digests_validation_rejects_tag_only_reference_when_binauthz_enabled(
         self,
@@ -1048,7 +1249,7 @@ class TestImageSupplyChainAndAttestation:
         block = _extract_image_digests_block(variables_tf)
 
         assert "!var.enable_binary_authorization" in block
-        assert ':latest(@|$)' in block
+        assert ":latest(@|$)" in block
 
         # Extract default map entries from variable "image_digests"
         default_entries = dict(
@@ -1138,7 +1339,9 @@ class TestImageSupplyChainAndAttestation:
             'var.image_digests["langfuse-worker"]',
             'var.image_digests["cloud-sql-proxy"]',
         ):
-            assert key in main_tf, f"Expected {key} to be wired in infra/targets/gcp-gke/main.tf"
+            assert key in main_tf, (
+                f"Expected {key} to be wired in infra/targets/gcp-gke/main.tf"
+            )
 
     def test_binauthz_attestor_wired_to_asymmetric_kms_key_without_third_party_whitelists(
         self,
@@ -1147,7 +1350,9 @@ class TestImageSupplyChainAndAttestation:
         perimeter_tf = (GKE_TARGET_DIR / "perimeter.tf").read_text(encoding="utf-8")
 
         assert 'resource "google_kms_crypto_key" "binauthz_attestor"' in kms_tf
-        assert 'data "google_kms_crypto_key_version" "binauthz_attestor"' in perimeter_tf
+        assert (
+            'data "google_kms_crypto_key_version" "binauthz_attestor"' in perimeter_tf
+        )
         assert "pkix_public_key" in perimeter_tf
         assert (
             "data.google_kms_crypto_key_version.binauthz_attestor[0].public_key[0].pem"
@@ -1190,20 +1395,24 @@ class TestImageSupplyChainAndAttestation:
         )
         assert "${IMAGE_REPO}@${DIGEST}" in attest_script
 
-        build_script = (REPO_ROOT / "scripts" / "build_images.sh").read_text(encoding="utf-8")
+        build_script = (REPO_ROOT / "scripts" / "build_images.sh").read_text(
+            encoding="utf-8"
+        )
         assert "deployment/docker/cloudbuild.image.yaml" in build_script
         assert ":latest" not in build_script
 
-        mirror_script = (REPO_ROOT / "scripts" / "mirror_and_attest_images.sh").read_text(
-            encoding="utf-8"
-        )
+        mirror_script = (
+            REPO_ROOT / "scripts" / "mirror_and_attest_images.sh"
+        ).read_text(encoding="utf-8")
         assert "scripts/attest_image.sh" in mirror_script
         assert "THIRD_PARTY_IMAGES=(" in mirror_script
 
     def test_lula_si2_validates_actual_terraform_deployments_and_digests(self) -> None:
         lula_si2_path = REPO_ROOT / "compliance" / "lula" / "lula-validation-si2.yaml"
         doc = yaml.safe_load(lula_si2_path.read_text(encoding="utf-8"))
-        lula_desc = doc["component-definition"]["back-matter"]["resources"][0]["description"]
+        lula_desc = doc["component-definition"]["back-matter"]["resources"][0][
+            "description"
+        ]
         lula_spec = yaml.safe_load(lula_desc)
         rego = lula_spec["provider"]["opa-spec"]["rego"]
 

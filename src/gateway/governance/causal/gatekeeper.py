@@ -48,6 +48,7 @@ import json
 import logging
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -428,7 +429,7 @@ def validate_causal_ordering(
     return True
 
 
-def _extract_numeric_param(params: dict[str, Any], key: str) -> float | None:
+def _extract_numeric_param(params: Mapping[str, Any], key: str) -> float | None:
     """Extract a finite float value from ``params[key]`` or return ``None``."""
     if not key or key not in params:
         return None
@@ -453,13 +454,9 @@ def _spec_from_config(causal_config: dict[str, Any]) -> CausalSpec | None:
     outcome_col = str(causal_config.get("outcome", "")).strip()
     if not graph_dot or not treatment_col or not outcome_col:
         return None
-    treatment_param = str(
-        causal_config.get("treatment_param", treatment_col)
-    ).strip()
+    treatment_param = str(causal_config.get("treatment_param", treatment_col)).strip()
     context_key = str(causal_config.get("context_key", "")).strip()
-    scale = float(
-        causal_config.get("normalization_scale", CAUSAL_NORMALIZATION_SCALE)
-    )
+    scale = float(causal_config.get("normalization_scale", CAUSAL_NORMALIZATION_SCALE))
     return CausalSpec(
         graph_dot=graph_dot,
         treatment_col=treatment_col,
@@ -592,7 +589,11 @@ class CausalGatekeeper:
             )
             return CausalDecision(False, REASON_DOWHY_UNAVAILABLE)
 
-        if not self.spec.graph_dot or not self.spec.treatment_col or not self.spec.outcome_col:
+        if (
+            not self.spec.graph_dot
+            or not self.spec.treatment_col
+            or not self.spec.outcome_col
+        ):
             logger.warning(
                 "causal_safety_check: incomplete CausalSpec — failing closed"
             )
@@ -681,7 +682,8 @@ class CausalGatekeeper:
             else str(params.get("action_type", params.get("action", "unknown")))
         )
         try:
-            context_val = str(self.spec.context_extractor(params))
+            extractor = self.spec.context_extractor
+            context_val = str(extractor(params)) if extractor is not None else "unknown"
         except Exception:
             context_val = "unknown"
         return (
@@ -773,9 +775,7 @@ class CausalGatekeeper:
             if n_samples < min_samples:
                 mrm_span.set_attribute("causal.samples_available", n_samples)
                 mrm_span.set_attribute("causal.min_samples_required", min_samples)
-                mrm_span.set_attribute(
-                    "causal.result", "insufficient_data_fail_closed"
-                )
+                mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
                 logger.warning(
                     "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
                     "failing closed (action BLOCKED).",
@@ -883,9 +883,7 @@ class CausalGatekeeper:
                     new_effect,
                     CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
                 )
-                tel_span.set_attribute(
-                    "causal.lock_reason", "placebo_effect_magnitude"
-                )
+                tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
                 tel_span.set_attribute(
                     "causal.lock_effect_magnitude_threshold",
                     CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
@@ -900,23 +898,19 @@ class CausalGatekeeper:
 
     def _within_risk_boundary(self, beta: float | None, treatment_value: float) -> bool:
         """Return whether this request's predicted risk stays within the boundary."""
-        if not _is_positive_finite(beta):
+        if beta is None or not _is_positive_finite(beta):
             return False
         norm_scale = (
             self.spec.normalization_scale
             if self.spec.normalization_scale > 0
             else CAUSAL_NORMALIZATION_SCALE
         )
-        estimated_risk = min(
-            1.0, max(0.0, 0.5 + beta * treatment_value / norm_scale)
-        )
+        estimated_risk = min(1.0, max(0.0, 0.5 + beta * treatment_value / norm_scale))
         with tracer.start_as_current_span(
             "causal_gatekeeper.risk_boundary"
         ) as risk_span:
             risk_span.set_attribute("causal.estimated_risk", estimated_risk)
-            risk_span.set_attribute(
-                "causal.risk_boundary", CAUSAL_LOCK_RISK_BOUNDARY
-            )
+            risk_span.set_attribute("causal.risk_boundary", CAUSAL_LOCK_RISK_BOUNDARY)
             if estimated_risk > CAUSAL_LOCK_RISK_BOUNDARY:
                 logger.warning(
                     "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary "
@@ -925,9 +919,7 @@ class CausalGatekeeper:
                     estimated_risk,
                     CAUSAL_LOCK_RISK_BOUNDARY,
                 )
-                risk_span.set_attribute(
-                    "causal.lock_reason", "risk_boundary_exceeded"
-                )
+                risk_span.set_attribute("causal.lock_reason", "risk_boundary_exceeded")
                 return False
         return True
 

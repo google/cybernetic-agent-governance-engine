@@ -103,12 +103,20 @@ class _ConcretePolicyClient:
 
     def __init__(self, allow_all: bool = True) -> None:
         self._allow_all = allow_all
+        self.closed = False
 
-    async def evaluate(self, policy_path: str, input_data: dict) -> dict:
-        return {"result": {"allow": self._allow_all}}
+    async def evaluate_policy(
+        self, input_data: dict[str, Any], current_latency_ms: float = 0.0
+    ) -> str:
+        return "ALLOW" if self._allow_all else "DENY"
 
-    async def check_allowed(self, policy_path: str, input_data: dict) -> bool:
-        return self._allow_all
+    async def verify_domain_policy(
+        self, package: str, required_rules: tuple[str, ...]
+    ) -> None:
+        return None
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class _ConcreteCausalGatekeeper:
@@ -184,7 +192,9 @@ class TestSafetyFilterRuntimeBehavior:
         )
         assert ok is True, f"Expected committed, got ok={ok!r} reason={reason!r}"
         assert reason == "COMMITTED", f"Expected 'COMMITTED', got {reason!r}"
-        assert magnitude == 500.0, f"Expected applied magnitude 500.0, got {magnitude!r}"
+        assert magnitude == 500.0, (
+            f"Expected applied magnitude 500.0, got {magnitude!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_atomic_verify_and_commit_deducts_balance(self) -> None:
@@ -301,43 +311,27 @@ class TestConsensusProviderRuntimeBehavior:
 class TestPolicyClientRuntimeBehavior:
     """Runtime tests for the PolicyClient Protocol contract."""
 
-    @pytest.mark.asyncio
-    async def test_evaluate_returns_dict(self) -> None:
-        """evaluate() must return a dict."""
-        pc = _ConcretePolicyClient(allow_all=True)
-        result = await pc.evaluate("trade/governance", {"input": {"amount": 1000}})
-        assert isinstance(result, dict), (
-            f"evaluate() must return a dict, got {type(result)}"
-        )
+    def test_opa_client_satisfies_protocol(self) -> None:
+        """The production OPAClient structurally implements PolicyClient."""
+        from src.gateway.core.policy import OPAClient
+        from src.gateway.governance.contracts import PolicyClient
+
+        assert isinstance(OPAClient(package="test.governance"), PolicyClient)
+        assert isinstance(_ConcretePolicyClient(), PolicyClient)
 
     @pytest.mark.asyncio
-    async def test_check_allowed_returns_bool(self) -> None:
-        """check_allowed() must return a bool."""
-        pc = _ConcretePolicyClient(allow_all=True)
-        result = await pc.check_allowed("trade/governance", {"input": {}})
-        assert isinstance(result, bool), (
-            f"check_allowed() must return a bool, got {type(result)}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_check_allowed_false_when_policy_denies(self) -> None:
-        """check_allowed() must return False when policy denies."""
-        pc = _ConcretePolicyClient(allow_all=False)
-        result = await pc.check_allowed("trade/governance", {"input": {}})
-        assert result is False, (
-            f"Expected False from deny-all policy client, got {result}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_evaluate_and_check_allowed_are_consistent(self) -> None:
-        """evaluate() and check_allowed() must agree on the allow decision."""
-        for allow in (True, False):
+    async def test_evaluate_policy_returns_verdict_string(self) -> None:
+        """evaluate_policy() returns one of the OPA verdict strings."""
+        for allow, expected in ((True, "ALLOW"), (False, "DENY")):
             pc = _ConcretePolicyClient(allow_all=allow)
-            eval_result = await pc.evaluate("trade/governance", {})
-            allowed = await pc.check_allowed("trade/governance", {})
-            assert allowed == eval_result["result"]["allow"], (
-                f"evaluate() and check_allowed() must be consistent for allow={allow}"
-            )
+            assert await pc.evaluate_policy({"amount": 1000}) == expected
+
+    @pytest.mark.asyncio
+    async def test_close_releases_client(self) -> None:
+        """close() is awaitable and idempotent for callers."""
+        pc = _ConcretePolicyClient()
+        await pc.close()
+        assert pc.closed is True
 
 
 # ---------------------------------------------------------------------------

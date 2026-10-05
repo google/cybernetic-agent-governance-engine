@@ -39,14 +39,16 @@ class STAMP_UCA:
     """
 
     id: str
-    category: str  # "Not Provided", "Unsafe Action", "Wrong Timing", "Duration Too Long"
+    category: (
+        str  # "Not Provided", "Unsafe Action", "Wrong Timing", "Duration Too Long"
+    )
     description: str
     hazard_link: str  # Link to High-Level Hazard (e.g., H-1: Financial Loss)
     detection_pattern: str  # Pseudo-code or Regex for the Evaluator
 
 
 __all__ = [
+    "STAMP_UCA",
     "Constraint",
     "KnowledgeGraphValidator",
-    "STAMP_UCA",
 ]

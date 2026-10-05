@@ -125,7 +125,8 @@ class PolicyAdvisorBridge:
                 status="PARKED_FOR_HITL",
                 decision=decision,
                 defer_id=defer_id,
-                reason=verdict.reason or "Parked in DeferQueue for WebAuthn HITL approval",
+                reason=verdict.reason
+                or "Parked in DeferQueue for WebAuthn HITL approval",
             )
 
         return PolicyAdvisorOutcome(

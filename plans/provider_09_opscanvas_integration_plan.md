@@ -100,6 +100,7 @@ class IaCDriftStatus(str, Enum):
 
 class CloudOpsReversibility(str, Enum):
     """Direct mapping to FTRA TerminalClassification."""
+
     READ_ONLY = "READ_ONLY"
     REVERSIBLE = "REVERSIBLE"
     EXTERNALLY_REVERSIBLE = "EXTERNALLY_REVERSIBLE"
@@ -108,35 +109,57 @@ class CloudOpsReversibility(str, Enum):
 
 class CloudOpsResourcePredicate(BaseModel):
     """Deterministic, typed CloudOps predicate returned by OpsCanvas over MCP."""
-    
-    resource_urn: str = Field(..., description="Canonical URN (e.g. gcp:cloudrun:us-central1:gateway)")
-    resource_type: str = Field(..., description="e.g. compute.instance, run.service, sql.database")
-    
+
+    resource_urn: str = Field(
+        ..., description="Canonical URN (e.g. gcp:cloudrun:us-central1:gateway)"
+    )
+    resource_type: str = Field(
+        ..., description="e.g. compute.instance, run.service, sql.database"
+    )
+
     # 1. Topology & Blast Radius
-    is_load_bearing: bool = Field(..., description="True if actively serving live production ingress/traffic")
-    direct_dependents_count: int = Field(ge=0, description="Number of direct upstream callers")
-    transitive_dependency_depth: int = Field(ge=0, description="Max depth of transitive dependency chain")
-    has_failover_redundancy: bool = Field(..., description="True if HA/failover replica is active")
-    active_network_flows_last_1h: int = Field(ge=0, description="Observed network flows in the last hour")
-    
+    is_load_bearing: bool = Field(
+        ..., description="True if actively serving live production ingress/traffic"
+    )
+    direct_dependents_count: int = Field(
+        ge=0, description="Number of direct upstream callers"
+    )
+    transitive_dependency_depth: int = Field(
+        ge=0, description="Max depth of transitive dependency chain"
+    )
+    has_failover_redundancy: bool = Field(
+        ..., description="True if HA/failover replica is active"
+    )
+    active_network_flows_last_1h: int = Field(
+        ge=0, description="Observed network flows in the last hour"
+    )
+
     # 2. Classification & Governance
     environment_tier: EnvironmentTier = Field(...)
     criticality_tier: CriticalityTier = Field(...)
-    owner_team_urn: str = Field(..., description="URN of the responsible engineering squad")
-    
+    owner_team_urn: str = Field(
+        ..., description="URN of the responsible engineering squad"
+    )
+
     # 3. State & Drift
     managed_by_terraform: bool = Field(...)
     iac_drift_status: IaCDriftStatus = Field(...)
     last_iac_commit_hash: str | None = Field(default=None)
-    
+
     # 4. FTRA Reversibility
     reversibility_tier: CloudOpsReversibility = Field(...)
-    estimated_blast_radius_score: float = Field(ge=0.0, le=1.0, description="Composite risk metric [0, 1]")
-    compensating_rollback_action: str | None = Field(default=None, description="Automated recovery action")
-    
+    estimated_blast_radius_score: float = Field(
+        ge=0.0, le=1.0, description="Composite risk metric [0, 1]"
+    )
+    compensating_rollback_action: str | None = Field(
+        default=None, description="Automated recovery action"
+    )
+
     # 5. Provenance Anchor
     snapshot_id: str = Field(..., description="OpsCanvas immutable snapshot ID")
-    snapshot_hash: str = Field(..., pattern=r"^sha256:[a-f0-9]{64}$", description="Content-addressed root hash")
+    snapshot_hash: str = Field(
+        ..., pattern=r"^sha256:[a-f0-9]{64}$", description="Content-addressed root hash"
+    )
     evaluated_at_utc: str = Field(..., description="ISO 8601 evaluation timestamp")
 ```
 

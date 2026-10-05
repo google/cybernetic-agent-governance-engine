@@ -110,7 +110,7 @@ class TestIsoControlMapSingleSource:
 
         # Both should return equivalent maps for the current region
         # _get_iso_control_map reads from CAGE_DEPLOYMENT_REGION env var
-        current_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+        current_region = os.environ["CAGE_DEPLOYMENT_REGION"]
         canonical = get_iso_control_map(current_region)
         lf_map = _get_iso_control_map()
         assert canonical == lf_map, (

@@ -57,7 +57,9 @@ class SimulatedCashLedgerProvider(GroundTruthProvider):
     ) -> None:
         if initial_scalar is None:
             env_val = os.environ.get("RECONCILIATION_STUB_BALANCE_USD")
-            initial_scalar = float(env_val) if env_val is not None else CashBarrier.initial_state
+            initial_scalar = (
+                float(env_val) if env_val is not None else CashBarrier.initial_state
+            )
         self.invariant_id = invariant_id
         self.state_key = state_key
         self.account_id = account_id

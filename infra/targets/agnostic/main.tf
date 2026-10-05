@@ -138,6 +138,16 @@ module "langfuse" {
   depends_on = [module.postgres]
 }
 
+# ─── Deployment Jurisdiction ──────────────────────────────────────────────────
+# Single source of CAGE_DEPLOYMENT_REGION for every workload.
+
+module "deployment_config" {
+  source = "../../modules/deployment_config"
+
+  namespace              = module.namespace.name
+  cage_deployment_region = var.cage_deployment_region
+}
+
 # ─── Deploy Compliance Bridge ──────────────────────────────────────────────────
 
 # Own KSA per workload (POAM-2026-079). No cloud identity annotation: the
@@ -165,6 +175,8 @@ module "compliance_bridge" {
   image                = var.compliance_bridge_image
   langfuse_host        = module.langfuse.web_url
   replicas             = var.enable_high_availability ? 2 : 1
+
+  deployment_config_map_name = module.deployment_config.config_map_name
 
   depends_on = [module.langfuse]
 }

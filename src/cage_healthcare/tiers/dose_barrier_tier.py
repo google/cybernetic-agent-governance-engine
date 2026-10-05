@@ -70,7 +70,11 @@ class DoseBarrierTier(MutatingTier):
         if self.cbf is None:
             return [self._unconfigured()]
         return await preview_barrier(
-            self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
+            self.cbf,
+            tier=self.tier_name,
+            code="DOSE_BARRIER_VIOLATED",
+            action=action,
+            params=params,
         )
 
     async def commit(
@@ -79,7 +83,11 @@ class DoseBarrierTier(MutatingTier):
         if self.cbf is None:
             return [self._unconfigured()], None
         return await commit_barrier(
-            self.cbf, tier=self.tier_name, code="DOSE_BARRIER_VIOLATED", action=action, params=params
+            self.cbf,
+            tier=self.tier_name,
+            code="DOSE_BARRIER_VIOLATED",
+            action=action,
+            params=params,
         )
 
     async def rollback(

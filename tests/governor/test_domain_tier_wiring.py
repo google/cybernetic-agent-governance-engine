@@ -68,17 +68,27 @@ class _StubTier(ReadOnlyTier):
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self._deny:
-            return [Violation(tier=self._name, code="STUB_DENY", message="deny", kind=ViolationKind.HARD)]
+            return [
+                Violation(
+                    tier=self._name,
+                    code="STUB_DENY",
+                    message="deny",
+                    kind=ViolationKind.HARD,
+                )
+            ]
         return []
 
 
 def _assemble(*plugins: Any) -> SymbolicGovernor:
+    from src.gateway.governance.jurisdiction import resolve_jurisdiction
+
     return assemble_governor(
         list(plugins),
         posture=DeploymentPosture.TEST,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
         flags=DecisionFlags(defer=False, narrow=False),
+        jurisdiction=resolve_jurisdiction("US_FED"),
     )
 
 
@@ -117,7 +127,9 @@ async def test_constructed_tier_blocks() -> None:
     domain_stages = [s for s in governor.stages if isinstance(s, DomainTierStage)]
 
     async with ReservationScope() as scope:
-        result = await run_pipeline(domain_stages, _ctx("stub_action"), profile=Profile.FULL, scope=scope)
+        result = await run_pipeline(
+            domain_stages, _ctx("stub_action"), profile=Profile.FULL, scope=scope
+        )
 
     assert [v.code for v in result.violations] == ["STUB_DENY"]
 
@@ -145,7 +157,9 @@ def test_duplicate_tier_name_is_rejected_at_construction() -> None:
         (PhysicalAICagePlugin, {"kinematic_barrier", "physical_safety_consensus"}),
     ],
 )
-def test_each_plugin_contributes_its_tiers_into_the_pipeline(plugin_cls, expected) -> None:
+def test_each_plugin_contributes_its_tiers_into_the_pipeline(
+    plugin_cls, expected
+) -> None:
     governor = _assemble(plugin_cls())
     assert set(_domain_stage_names(governor)) == expected
 
@@ -167,7 +181,9 @@ async def test_kinematic_barrier_without_cbf_refuses(hook: str) -> None:
     out = await getattr(tier, hook)("dispatch_trajectory", {})
     violations, receipt = (out, None) if hook == "evaluate" else out
     assert receipt is None  # nothing mutated
-    assert [(v.code, v.kind) for v in violations] == [("KINEMATIC_BARRIER_UNCONFIGURED", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in violations] == [
+        ("KINEMATIC_BARRIER_UNCONFIGURED", ViolationKind.HARD)
+    ]
 
 
 @pytest.mark.asyncio
@@ -183,7 +199,11 @@ async def test_physical_ai_plugin_denies_governed_action_end_to_end() -> None:
     mock_redis_mod = MagicMock(get_raw_client=MagicMock(return_value=fake_redis))
 
     governor = _assemble(PhysicalAICagePlugin())
-    kinematic = [s for s in governor.stages if isinstance(s, DomainTierStage) and s.name == "kinematic_barrier"]
+    kinematic = [
+        s
+        for s in governor.stages
+        if isinstance(s, DomainTierStage) and s.name == "kinematic_barrier"
+    ]
     ctx = StageContext(
         action="dispatch_trajectory",
         params={"target_velocity_mm_s": 5000.0},
@@ -195,12 +215,12 @@ async def test_physical_ai_plugin_denies_governed_action_end_to_end() -> None:
         patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_redis),
     ):
         async with ReservationScope() as scope:
-            result = await run_pipeline(kinematic, ctx, profile=Profile.FULL, scope=scope)
+            result = await run_pipeline(
+                kinematic, ctx, profile=Profile.FULL, scope=scope
+            )
 
     assert {
         "KINEMATIC_BARRIER_VIOLATED",
         "KINEMATIC_BARRIER_VIOLATION",
         "KINEMATIC_BARRIER_UNCONFIGURED",
-    } & {
-        v.code for v in result.violations
-    }
+    } & {v.code for v in result.violations}

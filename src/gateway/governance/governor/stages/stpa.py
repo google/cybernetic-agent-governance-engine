@@ -20,7 +20,7 @@ import time
 from opentelemetry import trace
 
 from src.gateway.governance.contracts import Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import Stage, StageContext, Profile
+from src.gateway.governance.governor.pipeline import Profile, Stage, StageContext
 from src.gateway.governance.stpa_validator import STPAValidator
 
 logger = logging.getLogger(__name__)
@@ -57,19 +57,24 @@ class StpaStage(Stage):
                 stpa_violations = self.validator.validate(ctx.action, check_params)
             except Exception as exc:
                 stpa_span.record_exception(exc)
-                stpa_span.set_attribute("governance.stage.latency_ms", round((time.perf_counter() - _t0) * 1000, 2))
+                stpa_span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t0) * 1000, 2),
+                )
                 return [
                     Violation(
                         tier="stpa",
                         code="STPA_ERROR",
                         message=f"STPA Validator Failed: {exc}",
-                        kind=ViolationKind.HARD
+                        kind=ViolationKind.HARD,
                     )
                 ]
 
             violations = [_as_hard(v) for v in stpa_violations]
             promoted = [
-                v.code for v, raw in zip(violations, stpa_violations) if raw.kind != v.kind
+                v.code
+                for v, raw in zip(violations, stpa_violations, strict=True)
+                if raw.kind != v.kind
             ]
             if promoted:
                 logger.warning(

@@ -53,6 +53,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 class _StubSigner:
+    @property
+    def is_kms_active(self) -> bool:
+        return False  # software stub, never a KMS key
+
     def sign_raw(self, message: bytes) -> bytes:
         return hashlib.sha256(message).digest() * 2
 
@@ -357,7 +361,10 @@ class TestSealProfile:
         [
             (None, "ROUTING_SEAL_MISSING"),
             ("", "ROUTING_SEAL_MISSING"),
-            ("65f0a1b2.execute-trade." + "a" * 64 + "." + "b" * 64, "ROUTING_SEAL_NOT_JWS"),
+            (
+                "65f0a1b2.execute-trade." + "a" * 64 + "." + "b" * 64,
+                "ROUTING_SEAL_NOT_JWS",
+            ),
             ("not a jws", "ROUTING_SEAL_NOT_JWS"),
             ("a.b.c\nX-Injected: 1", "ROUTING_SEAL_NOT_JWS"),
         ],
@@ -392,9 +399,10 @@ class TestSealProfile:
         assert _STUB_SEAL.encode() not in request.content
         assert "routing_seal" not in clearance.to_dict()
         assert _STUB_SEAL not in repr(clearance)
-        assert request.headers["x-cage-envelope-digest"] == hashlib.sha256(
-            jcs_canonicalize_plan(clearance.to_dict())
-        ).hexdigest()
+        assert (
+            request.headers["x-cage-envelope-digest"]
+            == hashlib.sha256(jcs_canonicalize_plan(clearance.to_dict())).hexdigest()
+        )
 
     @pytest.mark.asyncio
     async def test_brokered_headers_cannot_shadow_cage_headers(self) -> None:
@@ -468,7 +476,9 @@ class TestSealProfile:
         tampered = {**envelope["params"], "rows": "[1, 2]"}
         assert (
             hashlib.sha256(
-                jcs_canonicalize_plan({"action": envelope["action"], "params": tampered})
+                jcs_canonicalize_plan(
+                    {"action": envelope["action"], "params": tampered}
+                )
             ).hexdigest()
             != claims["action_hash"]
         )

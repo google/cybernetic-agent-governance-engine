@@ -87,7 +87,9 @@ def seal(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_mutation_of_caller_dict_does_not_reach_seal(seal: AsyncMock) -> None:
+async def test_concurrent_mutation_of_caller_dict_does_not_reach_seal(
+    seal: AsyncMock,
+) -> None:
     params = {"amount": 10.0, "agent_id": "agent-1"}
     holder = _ConcurrentMutator(params)
     gov = make_governor(core_stages=order_stages([holder]))

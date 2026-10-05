@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from openshell_provider_cage.models import PolicyProposal
 from openshell_provider_cage.ocsf import scrub_credentials
 from openshell_provider_cage.provider import CagePolicyProvider
@@ -43,9 +42,14 @@ class TestCagePolicyProvider:
     """Tests for CagePolicyProvider evaluating proposals against CAGE."""
 
     @pytest.mark.asyncio
-    async def test_evaluate_allows_clean_proposal(self, proposal: PolicyProposal) -> None:
+    async def test_evaluate_allows_clean_proposal(
+        self, proposal: PolicyProposal
+    ) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            assert request.headers["l5d-client-id"] == "spiffe://cluster.local/ns/cage/sa/openshell"
+            assert (
+                request.headers["l5d-client-id"]
+                == "spiffe://cluster.local/ns/cage/sa/openshell"
+            )
             return httpx.Response(
                 200,
                 json={
@@ -70,7 +74,9 @@ class TestCagePolicyProvider:
         await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_evaluate_parks_require_approval_proposal(self, proposal: PolicyProposal) -> None:
+    async def test_evaluate_parks_require_approval_proposal(
+        self, proposal: PolicyProposal
+    ) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -95,7 +101,9 @@ class TestCagePolicyProvider:
         await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_evaluate_detects_quarantine_on_hard_denial(self, proposal: PolicyProposal) -> None:
+    async def test_evaluate_detects_quarantine_on_hard_denial(
+        self, proposal: PolicyProposal
+    ) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 403,
@@ -125,7 +133,9 @@ class TestCagePolicyProvider:
         await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_evaluate_fails_closed_on_network_error(self, proposal: PolicyProposal) -> None:
+    async def test_evaluate_fails_closed_on_network_error(
+        self, proposal: PolicyProposal
+    ) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("Connection refused by gateway")
 

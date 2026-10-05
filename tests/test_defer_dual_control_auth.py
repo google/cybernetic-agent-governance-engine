@@ -289,7 +289,9 @@ class TestDeferInjectBypassProtection:
             approvals=[approval_1],
         )
         token_json_1 = token_with_1_approval.model_dump_json()
-        mock_redis.hmget = AsyncMock(return_value=(token_json_1, "PARTIALLY_APPROVED", "1"))
+        mock_redis.hmget = AsyncMock(
+            return_value=(token_json_1, "PARTIALLY_APPROVED", "1")
+        )
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=_make_mock_pipe())
@@ -318,7 +320,9 @@ class TestDeferInjectBypassProtection:
             approvals=[approval_1, approval_2],
         )
         token_json_2 = token_with_2_approvals.model_dump_json()
-        mock_redis.hmget = AsyncMock(return_value=(token_json_2, "PARTIALLY_APPROVED", "2"))
+        mock_redis.hmget = AsyncMock(
+            return_value=(token_json_2, "PARTIALLY_APPROVED", "2")
+        )
         mock_redis.watch = AsyncMock()
         mock_redis.unwatch = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=_make_mock_pipe())
@@ -388,7 +392,9 @@ class TestDeferInjectBypassProtection:
 
         # Mock Redis for partial approval state
         token_json_partial = token.model_dump_json()
-        mock_redis.hmget = AsyncMock(return_value=(token_json_partial, "PARTIALLY_APPROVED", "1"))
+        mock_redis.hmget = AsyncMock(
+            return_value=(token_json_partial, "PARTIALLY_APPROVED", "1")
+        )
 
         # Verify status-gate blocks injection when partial approvals exist
         # (simulating endpoint's 403 PARTIAL_APPROVALS_EXIST logic)

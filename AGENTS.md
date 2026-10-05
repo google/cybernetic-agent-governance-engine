@@ -294,6 +294,11 @@ Always launch parallel test suites with `--dist loadscope` to isolate modules ac
 ### Pytest Marker Contract (fail-closed)
 Every collected test must carry at least one selection marker (`local`, `unit`, `integration`, `live_external`, `partner_integration`, `chaos`, `load`). Unmarked tests abort collection in CI via `tests/conftest.py`. Default for hermetic tests: `pytestmark = [pytest.mark.unit, pytest.mark.local]`.
 
+### Deployment Region in Tests (fail-closed)
+Region resolution lives in [`tests/fixtures/deployment_region.py`](tests/fixtures/deployment_region.py):
+- **Hermetic runs** are pinned to `US_FED`. An exported `CAGE_DEPLOYMENT_REGION` is ignored. A test marked `us_fed` / `eu_ecb` / `apac_mas` runs under that region (env + `ControlRegistry`), so one job covers every region. Use the `each_region` fixture for cross-region invariants. Never `skipif` on the shell region.
+- **Live runs** (`--run-integration` / `--run-e2e`) read the region from the `cage-deployment` ConfigMap (`--cage-namespace`, default `governance-stack`). The run fails if the ConfigMap can't be read or if it contradicts an exported `CAGE_DEPLOYMENT_REGION`. Live tests marked for another region are skipped.
+
 ### Live GKE Cluster & Staging Runbooks
 > **Live Cluster Testing:** For staging port-forwarding, GKE tunnel concurrency rules, and POAM-024 validation, refer to [`docs/operations/GKE_TEST_RUNBOOK.md`](docs/operations/GKE_TEST_RUNBOOK.md).
 

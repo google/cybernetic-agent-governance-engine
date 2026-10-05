@@ -194,6 +194,8 @@ class ConsequenceToken:
         try:
             signature_bytes = signer.sign_raw(signing_input)
         except Exception as exc:
+            # 'ConsequenceToken' is the class name; logs masked ids or the error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.error(
                 "[ConsequenceToken] Minting failed: KMS signing error: %s", exc
             )
@@ -205,6 +207,8 @@ class ConsequenceToken:
         token = f"{header_b64}.{payload_b64}.{signature_b64}"
 
         # Never log the full token (security requirement)
+        # 'ConsequenceToken' is the class name; logs masked ids or the error only.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info(
             "[ConsequenceToken] Minted token for rec=%s, sub=%s, ttl=%ds",
             rec[:8] + "****",  # Mask rec
@@ -277,6 +281,8 @@ class ConsequenceToken:
         # Validate typ header (should be JWT)
         header_typ = header.get("typ", "")
         if header_typ.upper() not in ("JWT", ""):
+            # 'ConsequenceToken' is the class name; logs masked ids or the error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "[ConsequenceToken] Unexpected typ header: %s (expected JWT)",
                 header_typ,
@@ -346,6 +352,8 @@ class ConsequenceToken:
             raise ConsequenceTokenError(f"Invalid claim type: {exc}") from exc
 
         # Never log the full claims (security requirement)
+        # 'ConsequenceToken' is the class name; logs masked ids or the error only.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.debug(
             "[ConsequenceToken] Verified token for rec=%s, sub=%s",
             claims.rec[:8] + "****",

@@ -72,7 +72,10 @@ def _strictly_resolved_kernel_controls() -> set[GovernanceControl]:
 
 def test_scan_finds_the_cbf_control() -> None:
     # Guards the scanner itself: an AST shape change must not empty the set.
-    assert GovernanceControl.TRADITIONAL_MRM_VALIDATION in _strictly_resolved_kernel_controls()
+    assert (
+        GovernanceControl.TRADITIONAL_MRM_VALIDATION
+        in _strictly_resolved_kernel_controls()
+    )
 
 
 @pytest.mark.parametrize("region", sorted(SUPPORTED_REGIONS))

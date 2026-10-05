@@ -158,7 +158,7 @@ PROFILES = ("FULL", "POST_HITL", "DRY_RUN")
 # Pipeline phase per tier: phase 2 tiers mutate (reserve barrier headroom or
 # budget) and so must re-check after a human approves (TOCTOU). Phase 1 tiers
 # are read-only.
-TIER_PHASE: dict[str, int] = {tier: 1 for tier in TIERS} | {"cbf": 2, "fiscal": 2}
+TIER_PHASE: dict[str, int] = dict.fromkeys(TIERS, 1) | {"cbf": 2, "fiscal": 2}
 
 # Plugin-named phase-2 tiers (not in TIERS: they do not add proof states, but
 # the POST_HITL predicate must cover them). E.g. healthcare's ``dose_barrier``
@@ -184,7 +184,9 @@ def runs_under_profile(profile: str, tier: str, phase: int) -> bool:
 
 
 PROFILE_STAGES: dict[str, frozenset[str]] = {
-    profile: frozenset(t for t in TIERS if runs_under_profile(profile, t, TIER_PHASE[t]))
+    profile: frozenset(
+        t for t in TIERS if runs_under_profile(profile, t, TIER_PHASE[t])
+    )
     for profile in PROFILES
 }
 
@@ -232,13 +234,17 @@ def region_tiers(region: str) -> tuple[str, ...]:
 
 
 def region_tier_phase(region: str) -> dict[str, int]:
-    return TIER_PHASE | {t: JURISDICTION_TIER_PHASE[t] for t in JURISDICTION_TIERS[region]}
+    return TIER_PHASE | {
+        t: JURISDICTION_TIER_PHASE[t] for t in JURISDICTION_TIERS[region]
+    }
 
 
 def region_profile_stages(region: str) -> dict[str, frozenset[str]]:
     phases = region_tier_phase(region)
     return {
-        profile: frozenset(t for t in region_tiers(region) if runs_under_profile(profile, t, phases[t]))
+        profile: frozenset(
+            t for t in region_tiers(region) if runs_under_profile(profile, t, phases[t])
+        )
         for profile in PROFILES
     }
 
@@ -246,7 +252,9 @@ def region_profile_stages(region: str) -> dict[str, frozenset[str]]:
 def jurisdiction_tiers_are_read_only() -> bool:
     """Claim: every jurisdiction tier is phase 1."""
     return all(
-        JURISDICTION_TIER_PHASE[t] == 1 for tiers in JURISDICTION_TIERS.values() for t in tiers
+        JURISDICTION_TIER_PHASE[t] == 1
+        for tiers in JURISDICTION_TIERS.values()
+        for t in tiers
     )
 
 
@@ -259,7 +267,9 @@ def jurisdiction_keeps_post_hitl_set() -> bool:
         if stages["POST_HITL"] != PROFILE_STAGES["POST_HITL"]:
             return False
         phases = region_tier_phase(region) | PLUGIN_TIER_PHASE
-        if not all(runs_under_profile("POST_HITL", t, p) for t, p in phases.items() if p == 2):
+        if not all(
+            runs_under_profile("POST_HITL", t, p) for t, p in phases.items() if p == 2
+        ):
             return False
         # FULL and DRY_RUN run the region's obligations: no seal skips them.
         if not set(JURISDICTION_TIERS[region]) <= stages["FULL"] & stages["DRY_RUN"]:
@@ -388,7 +398,9 @@ def verdict_lattice_holds() -> bool:
     verdict (ALLOW, NARROW) never coexists with a HARD, HITL or DEFERRABLE
     finding; ALLOW iff no findings."""
     for kinds, low, nar, mr, de in _verdict_inputs():
-        v = verdict_of(kinds, low_confidence=low, narrows=nar, manual_review=mr, defer_enabled=de)
+        v = verdict_of(
+            kinds, low_confidence=low, narrows=nar, manual_review=mr, defer_enabled=de
+        )
         if "HARD" in kinds and v != "DENY":
             return False
         if v == "DEFER" and not ("DEFERRABLE" in kinds and low):
@@ -458,11 +470,15 @@ class State:
 
     def all_profile_tiers_passed(self) -> bool:
         required_tiers = PROFILE_STAGES[self.profile]
-        return all(dict(self.tier_results).get(t, "PENDING") == "PASS" for t in required_tiers)
+        return all(
+            dict(self.tier_results).get(t, "PENDING") == "PASS" for t in required_tiers
+        )
 
     def any_profile_tier_failed(self) -> bool:
         required_tiers = PROFILE_STAGES[self.profile]
-        return any(dict(self.tier_results).get(t, "PENDING") == "FAIL" for t in required_tiers)
+        return any(
+            dict(self.tier_results).get(t, "PENDING") == "FAIL" for t in required_tiers
+        )
 
     def is_allow_variant(self) -> bool:
         """True if this state represents an ALLOW decision (SEAL_ISSUED, EXECUTED, NARROW)."""
@@ -511,7 +527,11 @@ def gated_transitions(state: State) -> Iterator[State]:
     elif state.phase == "CHECKING":
         results = dict(state.tier_results)
         required_tiers = PROFILE_STAGES[state.profile]
-        pending_tiers = [t for t in TIERS if t in required_tiers and results.get(t, "PENDING") == "PENDING"]
+        pending_tiers = [
+            t
+            for t in TIERS
+            if t in required_tiers and results.get(t, "PENDING") == "PENDING"
+        ]
 
         if not pending_tiers:
             if state.profile != "DRY_RUN":
@@ -531,12 +551,14 @@ def gated_transitions(state: State) -> Iterator[State]:
             for outcome in ("PASS", "FAIL"):
                 new_results = dict(state.tier_results)
                 new_results[next_tier] = outcome
-                new_tier_results = tuple((t, new_results.get(t, "PENDING")) for t in TIERS)
+                new_tier_results = tuple(
+                    (t, new_results.get(t, "PENDING")) for t in TIERS
+                )
 
                 if outcome == "FAIL":
                     # Fail-closed optimization: if a tier fails, we either NARROW or DENIED
                     # NARROW requires narrower_present=True and clamped_params_valid=True
-                    
+
                     # 1. Deny (no narrower, or clamped params invalid)
                     yield State(
                         phase="DENIED",
@@ -638,6 +660,7 @@ def gated_transitions(state: State) -> Iterator[State]:
             clamped_params_valid=state.clamped_params_valid,
         )
 
+
 def ungated_transitions(state: State) -> Iterator[State]:
     """Generate successor states under the UNGATED (direct-bind) architecture.
 
@@ -658,8 +681,8 @@ def ungated_transitions(state: State) -> Iterator[State]:
             seal_present=False,
             resolved_allow=False,
             profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+            narrower_present=False,
+            clamped_params_valid=False,
         )
 
     elif state.phase == "CHECKING":
@@ -674,8 +697,8 @@ def ungated_transitions(state: State) -> Iterator[State]:
                     seal_present=False,
                     resolved_allow=False,
                     profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+                    narrower_present=False,
+                    clamped_params_valid=False,
                 )
             else:
                 # Direct-bind shortcut: skip SEAL_ISSUED, go straight to EXECUTED
@@ -687,8 +710,8 @@ def ungated_transitions(state: State) -> Iterator[State]:
                     seal_present=False,
                     resolved_allow=False,  # ← authority never resolved
                     profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+                    narrower_present=False,
+                    clamped_params_valid=False,
                 )
         else:
             next_tier = pending_tiers[0]
@@ -704,8 +727,8 @@ def ungated_transitions(state: State) -> Iterator[State]:
                         seal_present=False,
                         resolved_allow=False,
                         profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+                        narrower_present=False,
+                        clamped_params_valid=False,
                     )
                 else:
                     yield State(
@@ -714,8 +737,8 @@ def ungated_transitions(state: State) -> Iterator[State]:
                         seal_present=False,
                         resolved_allow=False,
                         profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+                        narrower_present=False,
+                        clamped_params_valid=False,
                     )
 
     elif state.phase == "SEAL_ISSUED":
@@ -726,8 +749,8 @@ def ungated_transitions(state: State) -> Iterator[State]:
             seal_present=True,
             resolved_allow=True,
             profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+            narrower_present=False,
+            clamped_params_valid=False,
         )
 
 
@@ -753,7 +776,11 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
     elif state.phase == "CHECKING":
         results = dict(state.tier_results)
         required_tiers = PROFILE_STAGES[state.profile]
-        pending_tiers = [t for t in TIERS if t in required_tiers and results.get(t, "PENDING") == "PENDING"]
+        pending_tiers = [
+            t
+            for t in TIERS
+            if t in required_tiers and results.get(t, "PENDING") == "PENDING"
+        ]
 
         if not pending_tiers:
             if state.any_profile_tier_failed():
@@ -799,7 +826,9 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
             for outcome in ("PASS", "FAIL"):
                 new_results = dict(state.tier_results)
                 new_results[next_tier] = outcome
-                new_tier_results = tuple((t, new_results.get(t, "PENDING")) for t in TIERS)
+                new_tier_results = tuple(
+                    (t, new_results.get(t, "PENDING")) for t in TIERS
+                )
 
                 if outcome == "FAIL":
                     yield State(
@@ -864,6 +893,7 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
             clamped_params_valid=False,
         )
 
+
 def enumerate_reachable(
     transition_fn,
     start: State | None = None,
@@ -902,7 +932,9 @@ def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
         counterexample is the first violating state (or None if holds=True).
     """
     for state in states:
-        if state.phase == "EXECUTED" and not (state.resolved_allow and state.seal_present):
+        if state.phase == "EXECUTED" and not (
+            state.resolved_allow and state.seal_present
+        ):
             return False, state
     return True, None
 
@@ -926,7 +958,9 @@ def enumerate_region(region: str, transition_fn=None) -> set[State]:
         TIERS, TIER_PHASE, PROFILE_STAGES = saved
 
 
-_REACHABLE_OVER_CACHE: dict[tuple[tuple[tuple[str, int], ...], str], frozenset[State]] = {}
+_REACHABLE_OVER_CACHE: dict[
+    tuple[tuple[tuple[str, int], ...], str], frozenset[State]
+] = {}
 
 
 def reachable_over(plan: tuple[tuple[str, int], ...], profile: str) -> frozenset[State]:
@@ -1064,7 +1098,9 @@ def main() -> None:
                     tier_results=new_tier_results,
                     seal_present=False,
                     resolved_allow=False,
-                    profile=state.profile, narrower_present=state.narrower_present, clamped_params_valid=state.clamped_params_valid,
+                    profile=state.profile,
+                    narrower_present=state.narrower_present,
+                    clamped_params_valid=state.clamped_params_valid,
                 )
                 return
         yield from gated_transitions(state)
@@ -1117,8 +1153,8 @@ def main() -> None:
                     seal_present=False,
                     resolved_allow=False,  # ← VIOLATION: No seal → no resolution
                     profile="FULL",
-        narrower_present=False,
-        clamped_params_valid=False,
+                    narrower_present=False,
+                    clamped_params_valid=False,
                     seal_consumed=False,
                     seal_expired=False,
                 )
@@ -1158,7 +1194,9 @@ def main() -> None:
         f"{narrow_ok}"
     )
     lattice_ok = verdict_lattice_holds()
-    print(f"  Verdict lattice (only ALLOW/NARROW seal; HARD always denies): {lattice_ok}")
+    print(
+        f"  Verdict lattice (only ALLOW/NARROW seal; HARD always denies): {lattice_ok}"
+    )
 
     # Verify profile ALLOW property
     # under every profile, an ALLOW (SEAL_ISSUED) requires every tier in that profile to PASS.
@@ -1168,8 +1206,12 @@ def main() -> None:
 
     # Negative case: a profile whose tier FAILs never yields ALLOW
     # i.e., no SEAL_ISSUED state has any_profile_tier_failed() == True
-    profile_fail_blocks = all(not s.any_profile_tier_failed() for s in seal_issued_states)
-    print(f"  No SEAL_ISSUED states have any failed profile tier: {profile_fail_blocks}")
+    profile_fail_blocks = all(
+        not s.any_profile_tier_failed() for s in seal_issued_states
+    )
+    print(
+        f"  No SEAL_ISSUED states have any failed profile tier: {profile_fail_blocks}"
+    )
 
     # Every phase the model can reach is one the runtime can name: no state
     # outside PHASES exists (there is no PAUSE).
@@ -1230,8 +1272,12 @@ def main() -> None:
         "PROOF FAILED: I-6 narrow_valid violated by a reachable NARROW state!"
     )
     assert lattice_ok, "PROOF FAILED: verdict lattice violated!"
-    assert profile_allow_valid, "PROOF FAILED: SEAL_ISSUED requires all profile tiers to pass!"
-    assert profile_fail_blocks, "PROOF FAILED: SEAL_ISSUED state with failed profile tier!"
+    assert profile_allow_valid, (
+        "PROOF FAILED: SEAL_ISSUED requires all profile tiers to pass!"
+    )
+    assert profile_fail_blocks, (
+        "PROOF FAILED: SEAL_ISSUED state with failed profile tier!"
+    )
 
     assert phases_closed, "PROOF FAILED: a reachable state has a phase outside PHASES!"
     assert not ungated_narrow_holds, (
@@ -1248,14 +1294,24 @@ def main() -> None:
         "misreports the barrier preview!"
     )
     for region, (_count, holds, sealed_ok) in region_results.items():
-        assert holds, f"PROOF FAILED: {region} jurisdiction model violates No-Direct-Bind!"
-        assert sealed_ok, f"PROOF FAILED: {region} issues a seal without its jurisdiction tiers!"
-    assert region_results["US_FED"][0] == region_results["APAC_MAS"][0] == len(gated_states), (
-        "PROOF FAILED: a region without obligations changed the state space!"
-    )
+        assert holds, (
+            f"PROOF FAILED: {region} jurisdiction model violates No-Direct-Bind!"
+        )
+        assert sealed_ok, (
+            f"PROOF FAILED: {region} issues a seal without its jurisdiction tiers!"
+        )
+    assert (
+        region_results["US_FED"][0]
+        == region_results["APAC_MAS"][0]
+        == len(gated_states)
+    ), "PROOF FAILED: a region without obligations changed the state space!"
     assert read_only, "PROOF FAILED: a jurisdiction tier is not phase 1!"
-    assert post_hitl_unchanged, "PROOF FAILED: a jurisdiction tier changes the POST_HITL set!"
-    assert universal_after == len(gated_states), "PROOF FAILED: regional enumeration leaked!"
+    assert post_hitl_unchanged, (
+        "PROOF FAILED: a jurisdiction tier changes the POST_HITL set!"
+    )
+    assert universal_after == len(gated_states), (
+        "PROOF FAILED: regional enumeration leaked!"
+    )
 
     print("✅ All assertions passed.")
     print()

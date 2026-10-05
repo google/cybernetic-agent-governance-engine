@@ -29,7 +29,7 @@ from typing import Any
 try:
     from prometheus_client import REGISTRY, CollectorRegistry, Counter
 except ImportError:  # pragma: no cover - exercised only without prometheus_client
-    REGISTRY = None
+    REGISTRY = None  # type: ignore[assignment]
     CollectorRegistry = Any  # type: ignore[misc, assignment]
     Counter = None  # type: ignore[misc, assignment]
 

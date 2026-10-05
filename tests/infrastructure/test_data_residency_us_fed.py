@@ -38,24 +38,9 @@ Marks
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Region-aware skip guard (mirrors the EU_ECB pattern in test_data_residency.py)
-# ---------------------------------------------------------------------------
-
-_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
-
-_SKIP_NON_US_FED = pytest.mark.skipif(
-    _REGION not in ("US_FED", ""),
-    reason=(
-        f"US_FED data-residency tests skipped for region {_REGION!r}. "
-        "Set CAGE_DEPLOYMENT_REGION=US_FED (or leave unset) to run."
-    ),
-)
 
 # Paths under test
 _THRESHOLDS_DIR = pathlib.Path("config/thresholds")
@@ -83,7 +68,6 @@ def _load_json(path: pathlib.Path) -> dict:
 
 @pytest.mark.us_fed
 @pytest.mark.local
-@_SKIP_NON_US_FED
 class TestUSFEDDataResidency:
     """Gate tests for US_FED configuration and data-residency compliance."""
 

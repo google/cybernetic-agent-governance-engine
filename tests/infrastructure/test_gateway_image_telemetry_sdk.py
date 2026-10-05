@@ -39,12 +39,16 @@ _MANIFESTS = [
     _REPO / "deployment" / "k8s" / "gateway-deployment.yaml.tpl",
     _REPO / "infra" / "modules" / "gateway" / "main.tf",
 ]
-_REMOTE = re.compile(r"CAGE_TELEMETRY_PROVIDER[\"']?\s*\n?\s*(?:value\s*[:=]\s*)[\"']remote[\"']")
+_REMOTE = re.compile(
+    r"CAGE_TELEMETRY_PROVIDER[\"']?\s*\n?\s*(?:value\s*[:=]\s*)[\"']remote[\"']"
+)
 
 
 def _synced_extras() -> set[str]:
     text = _DOCKERFILE.read_text()
-    sync_lines = [line for line in text.splitlines() if line.strip().startswith("RUN uv sync")]
+    sync_lines = [
+        line for line in text.splitlines() if line.strip().startswith("RUN uv sync")
+    ]
     assert sync_lines, "src/gateway/Dockerfile has no `uv sync` step"
     return {m for line in sync_lines for m in re.findall(r"--extra\s+(\S+)", line)}
 

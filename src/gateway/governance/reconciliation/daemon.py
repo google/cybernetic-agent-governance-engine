@@ -29,7 +29,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -55,6 +55,12 @@ from src.gateway.governance.seams.ground_truth import (
     RedisLedgerJournal,
     SimulatedSource,
 )
+
+
+async def _awaited(awaitable: Awaitable[Any]) -> Any:
+    """Wrap any awaitable in a coroutine so ``asyncio.run`` accepts it."""
+    return await awaitable
+
 
 logger = logging.getLogger("cage.reconciliation")
 
@@ -190,8 +196,9 @@ class ReconciliationResult:
 class LedgerProvider(Protocol):
     """Legacy protocol alias for ground-truth providers."""
 
-    def fetch_balance(self, account_id: str) -> ReconciliationResult:
-        ...  # pragma: no cover
+    def fetch_balance(
+        self, account_id: str
+    ) -> ReconciliationResult: ...  # pragma: no cover
 
 
 SIM_LEDGER_BACKEND_ENV = "CAGE_SIM_LEDGER_BACKEND"
@@ -221,7 +228,9 @@ def simulated_journal_from_env(client: Any, invariant_id: str) -> LedgerJournal 
     if backend == "memory":
         return None
     if backend != "redis":
-        raise ValueError(f"{SIM_LEDGER_BACKEND_ENV} must be 'memory' or 'redis', got {backend!r}")
+        raise ValueError(
+            f"{SIM_LEDGER_BACKEND_ENV} must be 'memory' or 'redis', got {backend!r}"
+        )
     if client is None:
         raise RuntimeError(f"{SIM_LEDGER_BACKEND_ENV}=redis requires a Redis client")
     return RedisLedgerJournal(client, invariant_id)
@@ -306,9 +315,7 @@ class GroundTruthReconciler:
         signer: Any | None = None,
         *,
         providers: (
-            Mapping[str, GroundTruthProvider]
-            | Sequence[GroundTruthProvider]
-            | None
+            Mapping[str, GroundTruthProvider] | Sequence[GroundTruthProvider] | None
         ) = None,
         max_staleness_s: float | None = None,
         max_clock_skew_s: float = 5.0,
@@ -681,7 +688,7 @@ class GroundTruthReconciler:
                                 "Async provider requires fetch_snapshot_sync inside running event loop"
                             )
                     else:
-                        snap = asyncio.run(snap)
+                        snap = asyncio.run(_awaited(snap))
 
         if isinstance(snap, ReconciliationResult):
             return snap, False
@@ -741,9 +748,7 @@ class GroundTruthReconciler:
 
             t_fetch_start = time.monotonic()
             try:
-                result, is_snapshot = self._fetch_from_provider(
-                    target_provider, inv_id
-                )
+                result, is_snapshot = self._fetch_from_provider(target_provider, inv_id)
             except Exception as exc:
                 self._failure_count += 1
                 self._invalidate_redis_verified_state(inv_id)
@@ -826,9 +831,7 @@ class GroundTruthReconciler:
                 self._failure_count += 1
                 self._increment_fence_epoch()
                 self._invalidate_redis_verified_state(result.invariant_id)
-                result.error = (
-                    f"Ground-truth scalar {scalar} is below barrier floor {barrier_floor}"
-                )
+                result.error = f"Ground-truth scalar {scalar} is below barrier floor {barrier_floor}"
                 _set_span_attr("reconciliation.error", result.error)
                 return result
 
@@ -837,8 +840,7 @@ class GroundTruthReconciler:
                     result.invariant_id, target_provider
                 )
                 is_flagged_spike = bool(
-                    result.raw_response
-                    and result.raw_response.get("discrepancy_spike")
+                    result.raw_response and result.raw_response.get("discrepancy_spike")
                 )
                 if baseline is not None or is_flagged_spike:
                     # Settlement-aware (ADR-010 §6): the self-reported state
@@ -886,9 +888,7 @@ class GroundTruthReconciler:
 
             # 5. Monotonic sequence number (§2.10 R-04 replay defense)
             if is_snapshot and result.sequence > 0:
-                last_seq = self._last_sequence_by_invariant.get(
-                    result.invariant_id, 0
-                )
+                last_seq = self._last_sequence_by_invariant.get(result.invariant_id, 0)
                 if result.sequence <= last_seq:
                     self._failure_count += 1
                     self._invalidate_redis_verified_state(result.invariant_id)
@@ -896,9 +896,7 @@ class GroundTruthReconciler:
                         f"Non-advancing sequence {result.sequence} <= {last_seq}"
                     )
                     return result
-                self._last_sequence_by_invariant[result.invariant_id] = (
-                    result.sequence
-                )
+                self._last_sequence_by_invariant[result.invariant_id] = result.sequence
 
             if REPLAY_DEFENSE_ENABLED and self._redis is not None:
                 try:

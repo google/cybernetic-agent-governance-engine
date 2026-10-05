@@ -123,7 +123,9 @@ def check_identity_enforcement(gateway_url: str) -> bool:
 
     # ── U-15: unauthenticated call to a gated route must be refused ─────────
     url = f"{gateway_url}{_GOVERNANCE_VALIDATE_PATH}"
-    print(f"  [U-15] POST {_GOVERNANCE_VALIDATE_PATH} (no workload identity) → expect 403 ...")
+    print(
+        f"  [U-15] POST {_GOVERNANCE_VALIDATE_PATH} (no workload identity) → expect 403 ..."
+    )
     try:
         resp = requests.post(
             url,

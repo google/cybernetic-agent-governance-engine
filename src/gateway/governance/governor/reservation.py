@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
 class HeldCommit(NamedTuple):
     """One phase-2 commit: the stage, the context it ran under, its receipt."""
 
@@ -111,12 +110,14 @@ class ReservationScope:
             violations, receipt = await stage.commit(ctx)
         except Exception as exc:
             logger.exception("stage %s commit raised", stage.name)
-            return [Violation(
-                tier=stage.name,
-                code="TIER_EXCEPTION",
-                message=f"Exception in commit: {type(exc).__name__}: {exc}",
-                kind=ViolationKind.HARD,
-            )]
+            return [
+                Violation(
+                    tier=stage.name,
+                    code="TIER_EXCEPTION",
+                    message=f"Exception in commit: {type(exc).__name__}: {exc}",
+                    kind=ViolationKind.HARD,
+                )
+            ]
         if receipt is not None:
             self._commits.append(HeldCommit(stage, ctx, receipt))
         return list(violations)
@@ -130,7 +131,9 @@ class ReservationScope:
         """
         self._require_open("seal_issued")
         if not isinstance(seal, str) or not seal:
-            raise ValueError("seal_issued() requires the issued seal; rollback stays armed")
+            raise ValueError(
+                "seal_issued() requires the issued seal; rollback stays armed"
+            )
         self._sealed = True
         return tuple(self._commits)
 
@@ -155,7 +158,8 @@ class ReservationScope:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
+        # Never suppresses: an exception inside the scope always propagates.
         self._exited = True
         if self._sealed:
             return False
@@ -165,15 +169,21 @@ class ReservationScope:
         detail = "; ".join(v.message for v in failures)
         if exc is None or isinstance(exc, Exception):
             raise GovernanceError(f"[ROLLBACK_FAILED] {detail}") from exc
-        logger.critical("rollback failed while %s propagated: %s", type(exc).__name__, detail)
+        logger.critical(
+            "rollback failed while %s propagated: %s", type(exc).__name__, detail
+        )
         exc.add_note(f"[ROLLBACK_FAILED] {detail}")
         return False
 
     def _require_open(self, operation: str) -> None:
         if not self._entered or self._exited:
-            raise RuntimeError(f"ReservationScope.{operation}() called outside 'async with'")
+            raise RuntimeError(
+                f"ReservationScope.{operation}() called outside 'async with'"
+            )
         if self._sealed:
-            raise RuntimeError(f"ReservationScope.{operation}() called after seal_issued()")
+            raise RuntimeError(
+                f"ReservationScope.{operation}() called after seal_issued()"
+            )
 
 
 async def shielded_settle(
@@ -217,15 +227,17 @@ async def _settle_each(
             await getattr(stage, hook)(ctx, receipt)
         except BaseException as exc:
             logger.exception("stage %s %s FAILED", stage.name, hook)
-            failures.append(Violation(
-                tier=stage.name,
-                code=f"{hook.upper()}_FAILED",
-                message=(
-                    f"{hook} of {stage.name} failed: {type(exc).__name__} — "
-                    "resource state may be inconsistent; manual reconciliation required"
-                ),
-                kind=ViolationKind.HARD,
-            ))
+            failures.append(
+                Violation(
+                    tier=stage.name,
+                    code=f"{hook.upper()}_FAILED",
+                    message=(
+                        f"{hook} of {stage.name} failed: {type(exc).__name__} — "
+                        "resource state may be inconsistent; manual reconciliation required"
+                    ),
+                    kind=ViolationKind.HARD,
+                )
+            )
             if escaped is None and not isinstance(exc, Exception):
                 escaped = exc
     return failures, escaped

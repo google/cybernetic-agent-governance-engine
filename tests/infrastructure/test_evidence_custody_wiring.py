@@ -91,7 +91,9 @@ def _block(text: str, header: str) -> str:
 def _tf_env(text: str) -> dict[str, str]:
     """Map env var name -> raw value expression for every env block in ``text``."""
     out: dict[str, str] = {}
-    for m in re.finditer(r'name\s*=\s*"([A-Z][A-Z0-9_]+)"\s*\n\s*(value(?:_from)?)\s*=?\s*([^\n]*)', text):
+    for m in re.finditer(
+        r'name\s*=\s*"([A-Z][A-Z0-9_]+)"\s*\n\s*(value(?:_from)?)\s*=?\s*([^\n]*)', text
+    ):
         out[m.group(1)] = m.group(3).strip() if m.group(2) == "value" else "value_from"
     # dynamic "env" blocks: name  = "X" / value = var.x inside content {}
     return out
@@ -106,7 +108,11 @@ def _tf_attr(block: str, attr: str) -> str:
 def _load_manifest(path: Path) -> list[dict]:
     text = path.read_text()
     if path.name.endswith(".tpl"):
-        text = re.sub(r"\$\{[A-Z0-9_]+(:-[^}]*)?\}", "placeholder", _PLACEHOLDER_LINE.sub("", text))
+        text = re.sub(
+            r"\$\{[A-Z0-9_]+(:-[^}]*)?\}",
+            "placeholder",
+            _PLACEHOLDER_LINE.sub("", text),
+        )
     return [d for d in yaml.safe_load_all(text) if isinstance(d, dict)]
 
 
@@ -133,8 +139,10 @@ def test_evidence_stream_locals_point_at_governance_instance() -> None:
     assert url, "local.evidence_stream_redis_url not defined"
     assert "module.memorystore_governance.primary_endpoint_ip" in url.group(1)
     assert "memorystore_app" not in url.group(1)
-    assert re.search(r'^\s*evidence_stream_redis_db\s*=\s*1\s*$', main_tf, re.M)
-    assert re.search(r'^\s*evidence_stream_key\s*=\s*"cage:evidence:stream"\s*$', main_tf, re.M)
+    assert re.search(r"^\s*evidence_stream_redis_db\s*=\s*1\s*$", main_tf, re.M)
+    assert re.search(
+        r'^\s*evidence_stream_key\s*=\s*"cage:evidence:stream"\s*$', main_tf, re.M
+    )
     # Governance instance runs cluster mode disabled, so db 1 is addressable.
     gov = _block(main_tf, 'module "memorystore_governance"')
     assert 'mode          = "CLUSTER_DISABLED"' in gov
@@ -143,8 +151,13 @@ def test_evidence_stream_locals_point_at_governance_instance() -> None:
 @pytest.mark.parametrize("module_name", ["gateway", "compliance_bridge"])
 def test_gateway_and_bridge_receive_identical_stream_contract(module_name: str) -> None:
     block = _block(_GKE_MAIN.read_text(), f'module "{module_name}"')
-    assert _tf_attr(block, "evidence_stream_redis_url") == "local.evidence_stream_redis_url"
-    assert _tf_attr(block, "evidence_stream_redis_db") == "local.evidence_stream_redis_db"
+    assert (
+        _tf_attr(block, "evidence_stream_redis_url")
+        == "local.evidence_stream_redis_url"
+    )
+    assert (
+        _tf_attr(block, "evidence_stream_redis_db") == "local.evidence_stream_redis_db"
+    )
     assert _tf_attr(block, "evidence_stream_key") == "local.evidence_stream_key"
     assert _tf_attr(block, "enable_redis_tls") == "var.enable_memorystore_tls"
     assert (
@@ -159,7 +172,9 @@ def test_modules_export_stream_contract_env(module_file: Path) -> None:
     env = _tf_env(module_file.read_text())
     assert env.get("EVIDENCE_STREAM_ENABLED") == '"true"'
     assert env.get("EVIDENCE_STREAM_REDIS_URL") == "var.evidence_stream_redis_url"
-    assert env.get("EVIDENCE_STREAM_REDIS_DB") == "tostring(var.evidence_stream_redis_db)"
+    assert (
+        env.get("EVIDENCE_STREAM_REDIS_DB") == "tostring(var.evidence_stream_redis_db)"
+    )
     assert env.get("EVIDENCE_STREAM_KEY") == "var.evidence_stream_key"
     assert env.get("REDIS_TLS") == "tostring(var.enable_redis_tls)"
     assert env.get("REDIS_CA_CERT_PATH") == '"/etc/cage/tls/redis/ca.pem"'
@@ -167,7 +182,9 @@ def test_modules_export_stream_contract_env(module_file: Path) -> None:
 
 
 @pytest.mark.parametrize("vars_file", [_GATEWAY_VARS, _BRIDGE_VARS])
-def test_modules_declare_redis_ca_pem_and_retire_redis_ca_cert_path(vars_file: Path) -> None:
+def test_modules_declare_redis_ca_pem_and_retire_redis_ca_cert_path(
+    vars_file: Path,
+) -> None:
     text = vars_file.read_text()
     block = _block(text, 'variable "redis_ca_pem"')
     assert "type        = string" in block
@@ -181,7 +198,9 @@ def test_no_terraform_file_references_dangling_redis_ca_cert_path() -> None:
         for p in (_REPO / "infra").rglob("*.tf")
         if "redis_ca_cert_path" in p.read_text()
     ]
-    assert offenders == [], f"Dangling redis_ca_cert_path still referenced in: {offenders}"
+    assert offenders == [], (
+        f"Dangling redis_ca_cert_path still referenced in: {offenders}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -221,17 +240,25 @@ def test_modules_own_redis_ca_configmap_mount_annotation_and_revision_limit(
     )
     assert vol_match, f"{module_file}: missing redis-ca dynamic volume"
     assert 'name = "redis-ca"' in vol_match.group(1)
-    assert "name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name" in vol_match.group(1)
+    assert (
+        "name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name"
+        in vol_match.group(1)
+    )
 
 
 def test_gke_target_guards_non_empty_managed_server_ca_when_tls_enabled() -> None:
     main_tf = _GKE_MAIN.read_text()
-    assert "!var.enable_memorystore_tls || length(module.memorystore_governance.managed_server_ca) > 0" in main_tf
+    assert (
+        "!var.enable_memorystore_tls || length(module.memorystore_governance.managed_server_ca) > 0"
+        in main_tf
+    )
 
 
 def test_lula_sc8_asserts_redis_ca_pinning() -> None:
     doc = yaml.safe_load(_LULA_SC8.read_text(encoding="utf-8"))
-    lula_desc = doc["component-definition"]["back-matter"]["resources"][0]["description"]
+    lula_desc = doc["component-definition"]["back-matter"]["resources"][0][
+        "description"
+    ]
     lula_spec = yaml.safe_load(lula_desc)
     rego = lula_spec["provider"]["opa-spec"]["rego"]
 
@@ -273,7 +300,9 @@ def test_gateway_target_block_has_no_custody_inputs() -> None:
 
 def test_gateway_gsa_holds_no_worm_bucket_iam() -> None:
     iam = _GKE_IAM.read_text()
-    for m in re.finditer(r'resource "google_storage_bucket_iam_member" "(\w+)" \{[^}]*\}', iam, re.S):
+    for m in re.finditer(
+        r'resource "google_storage_bucket_iam_member" "(\w+)" \{[^}]*\}', iam, re.S
+    ):
         if "module.worm_bucket" in m.group(0):
             assert "google_service_account.gateway" not in m.group(0), m.group(1)
 
@@ -293,7 +322,10 @@ def test_gateway_manifests_are_producer_only(manifest: str) -> None:
 
 
 def test_bridge_gsa_can_connect_to_governance_memorystore() -> None:
-    block = _block(_GKE_IAM.read_text(), 'resource "google_project_iam_member" "compliance_bridge_memorystore_user"')
+    block = _block(
+        _GKE_IAM.read_text(),
+        'resource "google_project_iam_member" "compliance_bridge_memorystore_user"',
+    )
     assert 'role    = "roles/memorystore.dbConnectionUser"' in block
     assert "google_service_account.compliance_bridge.email" in block
     assert "var.enable_memorystore_iam_auth" in block
@@ -302,13 +334,20 @@ def test_bridge_gsa_can_connect_to_governance_memorystore() -> None:
 def test_bridge_storage_iam_is_bucket_scoped_only() -> None:
     """A project-wide storage grant would also reach the ClickHouse tiering bucket."""
     iam = _GKE_IAM.read_text()
-    for m in re.finditer(r'resource "google_project_iam_member" "(\w+)" \{.*?\n\}', iam, re.S):
+    for m in re.finditer(
+        r'resource "google_project_iam_member" "(\w+)" \{.*?\n\}', iam, re.S
+    ):
         if "google_service_account.compliance_bridge" in m.group(0):
-            assert "roles/storage." not in m.group(0), f"{m.group(1)} grants project-wide storage"
+            assert "roles/storage." not in m.group(0), (
+                f"{m.group(1)} grants project-wide storage"
+            )
 
 
 def test_bridge_network_policy_allows_governance_psc() -> None:
-    block = _block(_GKE_NETPOL.read_text(), 'resource "kubernetes_network_policy_v1" "compliance_bridge_egress_l3_l4"')
+    block = _block(
+        _GKE_NETPOL.read_text(),
+        'resource "kubernetes_network_policy_v1" "compliance_bridge_egress_l3_l4"',
+    )
     assert 'app = "compliance-bridge"' in block
     assert "cidr = var.memorystore_governance_psc_cidr" in block
     assert 'port     = "6379"' in block
@@ -320,15 +359,22 @@ def test_bridge_fqdn_policy_allows_gcs_and_kms() -> None:
     block = _block(netpol, "compliance_bridge_egress_fqdn = ")
     assert 'app = "compliance-bridge"' in block
     assert "var.compliance_bridge_egress_allowed_fqdns" in block
-    variables = _block((_GKE / "variables.tf").read_text(), 'variable "compliance_bridge_egress_allowed_fqdns"')
+    variables = _block(
+        (_GKE / "variables.tf").read_text(),
+        'variable "compliance_bridge_egress_allowed_fqdns"',
+    )
     for fqdn in ("storage.googleapis.com", "cloudkms.googleapis.com"):
         assert f'"{fqdn}"' in variables
 
 
 def test_manifest_bridge_egress_allowlist_covers_redis() -> None:
     docs = _load_manifest(_K8S / "network-policy-hardening.yaml")
-    policy = next(d for d in docs if d["metadata"]["name"] == "compliance-bridge-egress-allowlist")
-    ports = {p["port"] for rule in policy["spec"]["egress"] for p in rule.get("ports", [])}
+    policy = next(
+        d for d in docs if d["metadata"]["name"] == "compliance-bridge-egress-allowlist"
+    )
+    ports = {
+        p["port"] for rule in policy["spec"]["egress"] for p in rule.get("ports", [])
+    }
     assert 6379 in ports
 
 
@@ -338,20 +384,31 @@ def test_manifest_bridge_egress_allowlist_covers_redis() -> None:
 
 
 def _sink_env_names() -> set[str]:
-    return set(re.findall(r'os\.environ\.get\("(CLICKHOUSE_[A-Z_]+)"', _CH_SINK.read_text()))
+    return set(
+        re.findall(r'os\.environ\.get\("(CLICKHOUSE_[A-Z_]+)"', _CH_SINK.read_text())
+    )
 
 
 def test_bridge_module_clickhouse_env_matches_sink_and_schema() -> None:
     env = _tf_env(_BRIDGE_MOD.read_text())
     sink_names = _sink_env_names()
-    for name in ("CLICKHOUSE_ENABLED", "CLICKHOUSE_USERNAME", "CLICKHOUSE_DATABASE", "CLICKHOUSE_PASSWORD"):
+    for name in (
+        "CLICKHOUSE_ENABLED",
+        "CLICKHOUSE_USERNAME",
+        "CLICKHOUSE_DATABASE",
+        "CLICKHOUSE_PASSWORD",
+    ):
         assert name in sink_names, f"clickhouse_sink.py no longer reads {name}"
         assert name in env, f"compliance_bridge module does not set {name}"
     assert env["CLICKHOUSE_PASSWORD"] == "value_from"  # secretKeyRef, never a literal
 
-    schema_db = re.search(r"CREATE DATABASE IF NOT EXISTS (\w+);", _CH_SCHEMA.read_text()).group(1)
+    schema_db = re.search(
+        r"CREATE DATABASE IF NOT EXISTS (\w+);", _CH_SCHEMA.read_text()
+    ).group(1)
     assert schema_db == "cage_evidence"
-    assert f'default     = "{schema_db}"' in _block(_BRIDGE_VARS.read_text(), 'variable "clickhouse_database"')
+    assert f'default     = "{schema_db}"' in _block(
+        _BRIDGE_VARS.read_text(), 'variable "clickhouse_database"'
+    )
     bridge = _block(_GKE_MAIN.read_text(), 'module "compliance_bridge"')
     assert _tf_attr(bridge, "clickhouse_database") == f'"{schema_db}"'
 
@@ -367,11 +424,19 @@ def test_bridge_module_keeps_cold_store_and_custody_interval() -> None:
         "OSCAL_REQUIRE_VERIFIED_CUSTODY",
     ):
         assert name in env
-    assert env["EVIDENCE_CUSTODY_INTERVAL_S"] == "tostring(var.evidence_custody_interval_s)"
-    assert env["EVIDENCE_VERIFY_INTERVAL_S"] == "tostring(var.evidence_verify_interval_s)"
+    assert (
+        env["EVIDENCE_CUSTODY_INTERVAL_S"]
+        == "tostring(var.evidence_custody_interval_s)"
+    )
+    assert (
+        env["EVIDENCE_VERIFY_INTERVAL_S"] == "tostring(var.evidence_verify_interval_s)"
+    )
     assert env["EVIDENCE_VERIFY_PREFIX"] == "var.evidence_verify_prefix"
     bridge = _block(_GKE_MAIN.read_text(), 'module "compliance_bridge"')
-    assert _tf_attr(bridge, "evidence_cold_store_bucket") == "module.worm_bucket.bucket_name"
+    assert (
+        _tf_attr(bridge, "evidence_cold_store_bucket")
+        == "module.worm_bucket.bucket_name"
+    )
     assert _tf_attr(bridge, "evidence_verify_interval_s") == "300"
 
 
@@ -382,15 +447,26 @@ def test_evidence_kms_key_description_has_no_hmac_fallback() -> None:
     assert "unsigned" in block
 
 
-@pytest.mark.parametrize("gateway_manifest,bridge_manifest", [
-    ("gateway.yaml", "compliance-bridge.yaml"),
-    ("gateway-deployment.yaml.tpl", "compliance-bridge-deployment.yaml.tpl"),
-])
-def test_manifest_bridge_reads_the_gateway_stream(gateway_manifest: str, bridge_manifest: str) -> None:
+@pytest.mark.parametrize(
+    "gateway_manifest,bridge_manifest",
+    [
+        ("gateway.yaml", "compliance-bridge.yaml"),
+        ("gateway-deployment.yaml.tpl", "compliance-bridge-deployment.yaml.tpl"),
+    ],
+)
+def test_manifest_bridge_reads_the_gateway_stream(
+    gateway_manifest: str, bridge_manifest: str
+) -> None:
     gw = _container_env(_K8S / gateway_manifest, "gateway")
     br = _container_env(_K8S / bridge_manifest, "compliance-bridge")
-    for name in ("EVIDENCE_STREAM_REDIS_URL", "EVIDENCE_STREAM_REDIS_DB", "EVIDENCE_STREAM_KEY"):
-        assert gw[name] == br[name], f"{name} drifts between {gateway_manifest} and {bridge_manifest}"
+    for name in (
+        "EVIDENCE_STREAM_REDIS_URL",
+        "EVIDENCE_STREAM_REDIS_DB",
+        "EVIDENCE_STREAM_KEY",
+    ):
+        assert gw[name] == br[name], (
+            f"{name} drifts between {gateway_manifest} and {bridge_manifest}"
+        )
     assert br["EVIDENCE_STREAM_ENABLED"]["value"] == "true"
     assert br["EVIDENCE_CUSTODY_INTERVAL_S"]["value"] == "60"
     assert br["EVIDENCE_VERIFY_INTERVAL_S"]["value"] == "300"
@@ -415,9 +491,17 @@ def test_deleted_evidence_env_vars_are_not_set_anywhere() -> None:
     offenders = []
     for root in (_REPO / "infra", _K8S):
         for path in root.rglob("*"):
-            if path.is_file() and path.suffix in {".tf", ".tfvars", ".yaml", ".tpl", ".yml"}:
+            if path.is_file() and path.suffix in {
+                ".tf",
+                ".tfvars",
+                ".yaml",
+                ".tpl",
+                ".yml",
+            }:
                 text = path.read_text(errors="ignore")
-                offenders += [f"{path.relative_to(_REPO)}: {n}" for n in _DELETED_ENV if n in text]
+                offenders += [
+                    f"{path.relative_to(_REPO)}: {n}" for n in _DELETED_ENV if n in text
+                ]
     assert offenders == [], f"Deleted evidence env vars still set: {offenders}"
 
 
@@ -427,11 +511,11 @@ def test_deleted_evidence_env_vars_are_not_set_anywhere() -> None:
 
 
 def test_forbidden_env_detector_fails_on_leak() -> None:
-    leaking = '''
+    leaking = """
           env {
             name  = "EVIDENCE_KMS_KEY"
             value = var.evidence_kms_key
           }
-'''
+"""
     env = _tf_env(leaking)
     assert [n for n in _GATEWAY_FORBIDDEN_ENV if n in env] == ["EVIDENCE_KMS_KEY"]

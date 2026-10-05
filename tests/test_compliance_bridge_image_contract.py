@@ -39,9 +39,7 @@ _COMPLIANCE_BRIDGE_DIR = _REPO_ROOT / "src" / "compliance_bridge"
 _EVIDENCE_FACTORY = (
     _REPO_ROOT / "src" / "gateway" / "governance" / "evidence" / "factory.py"
 )
-_SIGNER_FACTORY = (
-    _REPO_ROOT / "src" / "gateway" / "governance" / "signer_factory.py"
-)
+_SIGNER_FACTORY = _REPO_ROOT / "src" / "gateway" / "governance" / "signer_factory.py"
 
 _COPY_INSTRUCTION = re.compile(r"^\s*COPY\s+(?:--\S+\s+)*(\S+)\s+(\S+)\s*$")
 
@@ -106,9 +104,7 @@ def _collect_imported_src_packages() -> set[str]:
                         if node.level > 1
                         else rel_parent_parts
                     )
-                    rel_mod = ".".join(
-                        base + ([node.module] if node.module else [])
-                    )
+                    rel_mod = ".".join(base + ([node.module] if node.module else []))
                     modules.append(rel_mod)
                     for alias in node.names:
                         modules.append(f"{rel_mod}.{alias.name}")
@@ -168,18 +164,14 @@ def test_contract_check_fails_when_copied_package_is_missing() -> None:
     required_packages = _collect_imported_src_packages()
 
     broken_no_integrations = "\n".join(
-        line
-        for line in dockerfile_text.splitlines()
-        if "src/integrations" not in line
+        line for line in dockerfile_text.splitlines() if "src/integrations" not in line
     )
     assert _missing_dockerfile_src_packages(
         broken_no_integrations, required_packages
     ) == {"integrations"}
 
     broken_no_init = "\n".join(
-        line
-        for line in dockerfile_text.splitlines()
-        if "src/__init__.py" not in line
+        line for line in dockerfile_text.splitlines() if "src/__init__.py" not in line
     )
     assert _missing_dockerfile_src_packages(broken_no_init, required_packages) == {
         "__init__.py"
@@ -203,9 +195,7 @@ def test_compliance_extra_includes_google_cloud_kms_for_evidence_signer() -> Non
     compliance_deps: list[str] = pyproject["project"]["optional-dependencies"][
         "compliance"
     ]
-    assert any(
-        dep.startswith("google-cloud-kms") for dep in compliance_deps
-    ), (
+    assert any(dep.startswith("google-cloud-kms") for dep in compliance_deps), (
         "pyproject.toml [project.optional-dependencies].compliance must include "
         f"google-cloud-kms for compliance-bridge KMS signing; got: {compliance_deps}"
     )

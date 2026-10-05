@@ -297,7 +297,8 @@ class TestAdapterReceiptVerification:
 
     async def test_replayed_receipt_for_another_order_is_indeterminate(self) -> None:
         receipt = await _adapter(
-            lambda d: (200, _sign(_body(digest="e" * 64))), receipt_key_resolver=_RESOLVER
+            lambda d: (200, _sign(_body(digest="e" * 64))),
+            receipt_key_resolver=_RESOLVER,
         ).actuate(_clearance())
         assert receipt.outcome is ActuationOutcome.UNKNOWN
         assert receipt.verification is ReceiptVerification.INVALID

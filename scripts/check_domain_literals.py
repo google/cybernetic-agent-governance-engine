@@ -67,7 +67,9 @@ class DomainLiteralChecker(ast.NodeVisitor):
     """AST visitor that collects string literals outside of docstrings."""
 
     def __init__(
-        self, filepath: Path, forbidden_literals: set[str] | frozenset[str] = FORBIDDEN_LITERALS
+        self,
+        filepath: Path,
+        forbidden_literals: set[str] | frozenset[str] = FORBIDDEN_LITERALS,
     ):
         self.filepath = filepath
         self.forbidden_literals = forbidden_literals

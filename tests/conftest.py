@@ -65,7 +65,12 @@ os.environ.setdefault("CAGE_DOMAIN", "finance")
 os.environ.setdefault(
     "GOVERNANCE_SALT", "dev-only-insecure-placeholder-not-for-production-use"
 )
-os.environ.setdefault("CAGE_DEPLOYMENT_REGION", "LOCAL")
+# Import-time default only; pytest_configure pins the session region
+# (tests/fixtures/deployment_region.py) before any test runs. The shell's own
+# value is kept so a live run can refuse an export that contradicts the
+# deployment.
+_EXPORTED_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION")
+os.environ.setdefault("CAGE_DEPLOYMENT_REGION", "US_FED")
 os.environ.setdefault("LANGFUSE_POSTURE_DRY_RUN", "true")
 os.environ.setdefault(
     "CMEK_KEY_RESOURCE_NAME",
@@ -77,6 +82,8 @@ os.environ.setdefault(
 )
 
 import pytest
+
+from tests.fixtures.deployment_region import REGION_MARKERS
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
 os.environ.setdefault("LANGSMITH_TRACING", "false")
@@ -209,6 +216,16 @@ def pytest_configure(config: pytest.Config) -> None:
     # Ensure auth tokens are loaded from .env for integration tests
     _ensure_env_loaded()
 
+    # One region for the whole session: US_FED for hermetic runs, the
+    # deployment's ConfigMap value for live runs (fails closed on mismatch).
+    _region = _pin_session_region(config)
+    _region_locations = {
+        "US_FED": "us-central1",
+        "EU_ECB": "europe-west1",
+        "APAC_MAS": "asia-southeast1",
+    }
+    os.environ["GOOGLE_CLOUD_LOCATION"] = _region_locations[_region]
+
     _setdefault("BACKEND_URL", "http://localhost:18080")
     _setdefault("GATEWAY_URL", "http://localhost:8080")
     _setdefault("LANGFUSE_HOST", "http://localhost:3001")
@@ -233,14 +250,6 @@ def pytest_configure(config: pytest.Config) -> None:
     # which is unreachable from the developer workstation — always override to localhost.
     # OPA_URL is a base URL; the decision package comes from the active
     # domain's DomainConfig.opa_package.
-    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-    _region_locations = {
-        "US_FED": "us-central1",
-        "EU_ECB": "europe-west1",
-        "APAC_MAS": "asia-southeast1",
-    }
-    if _region in _region_locations:
-        os.environ["GOOGLE_CLOUD_LOCATION"] = _region_locations[_region]
     _setdefault(
         "OPA_URL",
         os.environ.get("OPA_URL_TEST_OVERRIDE", "http://localhost:8181"),
@@ -372,22 +381,89 @@ def reset_kms_signer_for_tests():
 
 # ── ControlRegistry region isolation ───────────────────────────────────────────
 
+_SESSION_REGION = pytest.StashKey[str]()
 
-@pytest.fixture(autouse=True)
-def restore_control_registry_region():
-    """Undo a test's ``ControlRegistry.reconfigure(region)``.
 
-    The active region selects the jurisdiction contribution at governor
-    assembly (``resolve_jurisdiction``): a registry left on ``EU_ECB`` would
-    give every later governor on this worker the ``fria`` tier.
+def _pin_session_region(config: pytest.Config) -> str:
+    """Resolve the session region once (controller) and export it.
+
+    xdist workers inherit the controller's environment, so they reuse the
+    exported value rather than querying the cluster again.
     """
     from src.gateway.governance.constants import ControlRegistry
+    from tests.fixtures.deployment_region import (
+        DEFAULT_NAMESPACE,
+        REGION_ENV_VAR,
+        DeploymentRegionError,
+        is_live_run,
+        resolve_session_region,
+    )
+
+    if hasattr(config, "workerinput"):
+        region = os.environ[REGION_ENV_VAR]
+    else:
+        try:
+            region = resolve_session_region(
+                live=is_live_run(config),
+                namespace=config.getoption("--cage-namespace") or DEFAULT_NAMESPACE,
+                env_region=_EXPORTED_REGION,
+            )
+        except DeploymentRegionError as exc:
+            raise pytest.UsageError(f"Deployment region: {exc}") from exc
+    os.environ[REGION_ENV_VAR] = region
+    config.stash[_SESSION_REGION] = region
+    # A registry loaded at import time may hold the shell's region.
+    if ControlRegistry._instance is not None:
+        ControlRegistry.reconfigure(region)
+    return region
+
+
+@pytest.fixture(autouse=True)
+def control_registry_region(request: pytest.FixtureRequest, monkeypatch):
+    """Run each test under its region and undo any region change afterwards.
+
+    A hermetic test marked ``us_fed`` / ``eu_ecb`` / ``apac_mas`` runs under
+    that region (env + ``ControlRegistry``); everything else runs under the
+    session region. The active region selects the jurisdiction contribution at
+    governor assembly (``resolve_jurisdiction``): a registry left on
+    ``EU_ECB`` would give every later governor on this worker the ``fria``
+    tier, so the prior state is always restored.
+    """
+    from src.gateway.governance.constants import ControlRegistry
+    from tests.fixtures.deployment_region import REGION_ENV_VAR, region_pin
 
     # Class attribute: reading it never instantiates (loads) the singleton.
+    was_loaded = ControlRegistry._instance is not None
     region = ControlRegistry._active_region
+    pinned = region_pin(request.node)
+    if pinned is not None:
+        monkeypatch.setenv(REGION_ENV_VAR, pinned)
+        if was_loaded:
+            ControlRegistry.reconfigure(pinned)
     yield
-    if ControlRegistry._instance is not None and ControlRegistry._active_region != region:
-        ControlRegistry.reconfigure(region)
+    if ControlRegistry._instance is not None:
+        if not was_loaded:
+            ControlRegistry.reset_for_testing()
+        elif ControlRegistry._active_region != region:
+            ControlRegistry.reconfigure(region)
+
+
+@pytest.fixture(params=sorted(REGION_MARKERS.values()))
+def each_region(request: pytest.FixtureRequest, monkeypatch) -> str:
+    """Parametrize a hermetic test over every jurisdiction region.
+
+    For cross-region invariants. The region is applied to the environment and
+    ``ControlRegistry``; ``control_registry_region`` restores the prior state.
+    ``tests/test_deployment_region.py`` keeps ``REGION_MARKERS`` equal to
+    ``JURISDICTIONS``.
+    """
+    from src.gateway.governance.constants import ControlRegistry
+    from tests.fixtures.deployment_region import REGION_ENV_VAR
+
+    region: str = request.param
+    monkeypatch.setenv(REGION_ENV_VAR, region)
+    ControlRegistry.reconfigure(region)
+    return region
 
 
 # ── Redis WAIT command mock (fakeredis compatibility) ──────────────────────────
@@ -511,6 +587,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Run live end-to-end tests marked with @pytest.mark.e2e (require a deployed gateway).",
     )
     parser.addoption(
+        "--cage-namespace",
+        default=os.environ.get("K8S_NAMESPACE", "governance-stack"),
+        help=(
+            "Namespace of the CAGE deployment under test. Live runs "
+            "(--run-integration / --run-e2e) read the session region from its "
+            "cage-deployment ConfigMap."
+        ),
+    )
+    parser.addoption(
         "--regen-golden",
         action="store_true",
         default=False,
@@ -596,7 +681,12 @@ def _assert_selection_markers(items: list[pytest.Item]) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Enforce the selection-marker contract, then auto-skip opt-in test classes."""
+    """Enforce the selection-marker contract, then auto-skip opt-in test classes.
+
+    Live (integration / e2e) tests marked for a region other than the deployed
+    one are skipped; hermetic region-marked tests are pinned to their region by
+    the ``control_registry_region`` fixture instead.
+    """
     # Fail-closed guard runs FIRST: an unmarked item must not be maskable by a
     # skip marker applied later in this same hook.
     _assert_selection_markers(items)
@@ -632,7 +722,14 @@ def pytest_collection_modifyitems(
         reason="Live e2e test — requires a deployed gateway. Pass --run-e2e to enable."
     )
 
+    from tests.fixtures.deployment_region import live_region_mismatch, marked_region
+
+    session_region = config.stash[_SESSION_REGION]
+
     for item in items:
+        marked_region(item)  # fail closed on ambiguous region markers
+        if (reason := live_region_mismatch(item, session_region)) is not None:
+            item.add_marker(pytest.mark.skip(reason=reason))
         if "integration" in item.keywords and not run_integration:
             item.add_marker(skip_integration)
         if "live_external" in item.keywords and not run_live_external:

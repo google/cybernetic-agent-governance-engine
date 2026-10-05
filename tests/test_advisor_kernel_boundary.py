@@ -107,7 +107,13 @@ def test_boundary_scan_detects_a_forbidden_import(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "var", ["KMS_GOVERNANCE_KEY", "RECONCILER_KMS_KEY", "AWS_KMS_KEY_ID", "AZURE_KMS_KEY_NAME"]
+    "var",
+    [
+        "KMS_GOVERNANCE_KEY",
+        "RECONCILER_KMS_KEY",
+        "AWS_KMS_KEY_ID",
+        "AZURE_KMS_KEY_NAME",
+    ],
 )
 def test_identity_guard_refuses_any_signing_key_variable(var: str) -> None:
     from src.governed_financial_advisor.infrastructure.identity_guard import (
@@ -115,7 +121,9 @@ def test_identity_guard_refuses_any_signing_key_variable(var: str) -> None:
     )
 
     with pytest.raises(RuntimeError, match=var):
-        assert_no_signing_identity({var: "projects/p/locations/l/keyRings/r/cryptoKeys/k"})
+        assert_no_signing_identity(
+            {var: "projects/p/locations/l/keyRings/r/cryptoKeys/k"}
+        )
 
 
 def test_identity_guard_passes_without_signing_keys() -> None:
@@ -129,10 +137,13 @@ def test_identity_guard_passes_without_signing_keys() -> None:
 def test_advisor_lifespan_runs_identity_guard_and_no_governor() -> None:
     tree = ast.parse((_ADVISOR / "server.py").read_text())
     lifespan = next(
-        n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan"
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan"
     )
     calls = [
-        n.func.id for n in ast.walk(lifespan)
+        n.func.id
+        for n in ast.walk(lifespan)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
     ]
     assert calls.index("assert_no_signing_identity") < calls.index("create_graph")
@@ -148,7 +159,10 @@ def test_advisor_lifespan_runs_identity_guard_and_no_governor() -> None:
     ("state", "expected"),
     [
         ({"evaluation_result": {"verdict": "APPROVED"}}, "ftra_node"),
-        ({"evaluation_result": {"verdict": "REJECTED"}, "loop_count": 1}, "execution_analyst"),
+        (
+            {"evaluation_result": {"verdict": "REJECTED"}, "loop_count": 1},
+            "execution_analyst",
+        ),
         ({"evaluation_result": {"verdict": "REJECTED"}, "loop_count": 3}, "explainer"),
         ({"evaluation_result": None}, "execution_analyst"),
     ],
@@ -206,10 +220,17 @@ async def test_validate_action_returns_require_approval_with_deferred_id() -> No
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
         return httpx.Response(
-            200, json={"verdict": "REQUIRE_APPROVAL", "deferred_id": "d-1", "violations": []}
+            200,
+            json={
+                "verdict": "REQUIRE_APPROVAL",
+                "deferred_id": "d-1",
+                "violations": [],
+            },
         )
 
-    result = await _client_with(handler).validate_action("execute_trade", {"amount": 1.0})
+    result = await _client_with(handler).validate_action(
+        "execute_trade", {"amount": 1.0}
+    )
 
     assert result["verdict"] == "REQUIRE_APPROVAL"
     assert result["deferred_id"] == "d-1"
@@ -234,15 +255,25 @@ async def test_validate_action_unwraps_allow_envelope() -> None:
 @pytest.mark.parametrize(
     "response",
     [
-        httpx.Response(403, json={"verdict": "DENIED", "violations": ["CBF Violation"]}),
+        httpx.Response(
+            403, json={"verdict": "DENIED", "violations": ["CBF Violation"]}
+        ),
         httpx.Response(200, json={"verdict": "DENIED"}),
         httpx.Response(200, json={"verdict": "APPROVED"}),
         httpx.Response(200, json={"verdict": "REQUIRE_APPROVAL"}),
         httpx.Response(200, json={}),
     ],
-    ids=["denied_403", "denied_200", "legacy_approved", "approval_without_token", "no_verdict"],
+    ids=[
+        "denied_403",
+        "denied_200",
+        "legacy_approved",
+        "approval_without_token",
+        "no_verdict",
+    ],
 )
-async def test_validate_action_without_routable_verdict_raises(response: httpx.Response) -> None:
+async def test_validate_action_without_routable_verdict_raises(
+    response: httpx.Response,
+) -> None:
     client = _client_with(lambda request: response)
     with pytest.raises(PermissionError):
         await client.validate_action("execute_trade", {})
@@ -276,7 +307,9 @@ def _tools_client():
 def test_execute_trade_forwards_to_gateway_execute_trade_action() -> None:
     from src.governed_financial_advisor.tools import api
 
-    gateway = AsyncMock(return_value={"status": "SUCCESS", "output": "EXECUTED: AAPL x 5.0"})
+    gateway = AsyncMock(
+        return_value={"status": "SUCCESS", "output": "EXECUTED: AAPL x 5.0"}
+    )
     params = {"symbol": "AAPL", "amount": 5.0, "currency": "USD", "confidence": 0.99}
     with patch.object(api._gateway_client, "execute_tool", gateway):
         resp = _tools_client().post(
@@ -286,7 +319,9 @@ def test_execute_trade_forwards_to_gateway_execute_trade_action() -> None:
     assert resp.json() == {"status": "SUCCESS", "output": "EXECUTED: AAPL x 5.0"}
     tool_name, forwarded = gateway.await_args.args
     assert tool_name == "execute_trade_action"
-    assert {k: forwarded[k] for k in ("symbol", "amount", "currency", "confidence")} == params
+    assert {
+        k: forwarded[k] for k in ("symbol", "amount", "currency", "confidence")
+    } == params
 
 
 @pytest.mark.parametrize(
@@ -297,14 +332,23 @@ def test_execute_trade_forwards_to_gateway_execute_trade_action() -> None:
         ("simulate_governance_check", "simulate_governance_check"),
     ],
 )
-def test_gateway_tool_error_is_not_reported_as_success(tool: str, gateway_tool: str) -> None:
+def test_gateway_tool_error_is_not_reported_as_success(
+    tool: str, gateway_tool: str
+) -> None:
     from src.governed_financial_advisor.tools import api
 
     gateway = AsyncMock(return_value={"status": "ERROR", "error": "seal invalid"})
-    params = {"symbol": "AAPL", "amount": 5.0, "currency": "USD", "confidence": 0.99,
-              "action": "execute_trade"}
+    params = {
+        "symbol": "AAPL",
+        "amount": 5.0,
+        "currency": "USD",
+        "confidence": 0.99,
+        "action": "execute_trade",
+    }
     with patch.object(api._gateway_client, "execute_tool", gateway):
-        resp = _tools_client().post("/tools/execute", json={"tool_name": tool, "params": params})
+        resp = _tools_client().post(
+            "/tools/execute", json={"tool_name": tool, "params": params}
+        )
 
     assert resp.json()["status"] == "ERROR"
     assert gateway.await_args.args[0] == gateway_tool
@@ -317,7 +361,10 @@ def test_gateway_unreachable_is_an_error() -> None:
     with patch.object(api._gateway_client, "execute_tool", gateway):
         resp = _tools_client().post(
             "/tools/execute",
-            json={"tool_name": "evaluate_policy", "params": {"action": "execute_trade"}},
+            json={
+                "tool_name": "evaluate_policy",
+                "params": {"action": "execute_trade"},
+            },
         )
 
     assert resp.json()["status"] == "ERROR"
@@ -339,7 +386,8 @@ def test_gateway_tools_execute_reaches_plugin_registered_tool() -> None:
     mod.mcp.tool(name="plugin_probe_poam079")(plugin_probe)
     with patch.object(mod, "_check_rate_limit", AsyncMock(return_value=True)):
         resp = TestClient(mod.app).post(
-            "/tools/execute", json={"tool_name": "plugin_probe_poam079", "params": {"x": 3}}
+            "/tools/execute",
+            json={"tool_name": "plugin_probe_poam079", "params": {"x": 3}},
         )
 
     assert resp.json() == {"status": "SUCCESS", "output": "probe:3"}
@@ -355,13 +403,20 @@ def test_verify_seal_rejects_unknown_kid_without_signer_fallback() -> None:
 
     from src.gateway.governance import routing_seal
 
-    header = base64.urlsafe_b64encode(
-        json.dumps({"alg": "ES256", "typ": "JWT", "kid": "unknown-kid"}).encode()
-    ).rstrip(b"=").decode()
+    header = (
+        base64.urlsafe_b64encode(
+            json.dumps({"alg": "ES256", "typ": "JWT", "kid": "unknown-kid"}).encode()
+        )
+        .rstrip(b"=")
+        .decode()
+    )
     seal = f"{header}.e30.c2ln"
     signer = MagicMock()
     with (
-        patch("src.gateway.governance.jwks.get_verification_key_for_jwt", return_value=None),
+        patch(
+            "src.gateway.governance.jwks.get_verification_key_for_jwt",
+            return_value=None,
+        ),
         patch.object(routing_seal, "get_governance_signer", return_value=signer),
         pytest.raises(routing_seal.SymbolicGovernorViolation, match="unknown kid"),
     ):
@@ -380,7 +435,10 @@ def test_envelope_verify_rejects_unknown_kid_without_signer_fallback() -> None:
     signer = MagicMock()
     with (
         patch("src.gateway.governance.jwks.get_jwks", return_value=jwks),
-        patch("src.gateway.governance.kms_signer.get_governance_signer", return_value=signer),
+        patch(
+            "src.gateway.governance.kms_signer.get_governance_signer",
+            return_value=signer,
+        ),
     ):
         assert GovernanceEnvelopeBuilder().verify(envelope) is False
 

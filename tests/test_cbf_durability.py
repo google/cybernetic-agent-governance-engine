@@ -94,8 +94,13 @@ class TestFenceEpochHighWaterMark:
         # Pod 2 initializes fresh with last_seen_epoch = 0
         cbf_finance._last_seen_epoch = 0
 
-        with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
-            with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async
+        ):
+            with patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ):
                 is_valid, reason = await cbf_finance._check_fence_epoch(5)
 
         assert is_valid is False
@@ -110,8 +115,13 @@ class TestFenceEpochHighWaterMark:
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH_HWM, "5")
         cbf_finance._last_seen_epoch = 5
 
-        with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
-            with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async
+        ):
+            with patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ):
                 # Advance to 8
                 is_valid, _ = await cbf_finance._check_fence_epoch(8)
                 assert is_valid is True
@@ -129,9 +139,13 @@ class TestFenceEpochHighWaterMark:
         """On startup, if Redis live epoch < HWM, _last_seen_epoch seeds from HWM."""
         sync_mock = MagicMock()
         sync_mock._has_hwm = True
-        sync_mock.get.side_effect = lambda k: "3" if k == _REDIS_KEY_FENCE_EPOCH else "9"
+        sync_mock.get.side_effect = lambda k: (
+            "3" if k == _REDIS_KEY_FENCE_EPOCH else "9"
+        )
 
-        with patch("src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_mock):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_mock
+        ):
             cbf = ControlBarrierFunction(
                 invariant=CashBarrier(),
                 cost_resolver=finance_cost_resolver,
@@ -147,7 +161,11 @@ class TestFenceEpochHighWaterMark:
 
 
 async def _seed_debit(r, debit_id: str, amount: float, submitted_at: float) -> None:
-    await r.hset(DEBITS_KEY, debit_id, json.dumps({"amount": amount, "submitted_at": submitted_at}))
+    await r.hset(
+        DEBITS_KEY,
+        debit_id,
+        json.dumps({"amount": amount, "submitted_at": submitted_at}),
+    )
     await r.zadd(DEBITS_BY_TIME_KEY, {debit_id: submitted_at})
     await r.incrbyfloat(DEBITS_TOTAL_KEY, amount)
 
@@ -174,13 +192,25 @@ class TestAtomicDebitInLua:
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH_HWM, "1")
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                fake_redis_async,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                100000.0,
-                {"source": "reconciliation", "sequence": 7, "fence_epoch": 1},
-            ))),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        100000.0,
+                        {"source": "reconciliation", "sequence": 7, "fence_epoch": 1},
+                    )
+                ),
+            ),
         ):
             committed, _msg, cost = await cbf_finance.atomic_verify_and_commit(
                 "execute_trade",
@@ -199,7 +229,9 @@ class TestAtomicDebitInLua:
         assert entry["snapshot_sequence"] == 7
         assert entry["submitted_at"] == pytest.approx(time.time(), abs=5.0)
         # A commit enters the pending set; only confirm() makes it settleable.
-        assert await fake_redis_async.zscore(DEBITS_PENDING_KEY, "debit-item2") == pytest.approx(entry["submitted_at"])
+        assert await fake_redis_async.zscore(
+            DEBITS_PENDING_KEY, "debit-item2"
+        ) == pytest.approx(entry["submitted_at"])
         assert await fake_redis_async.zscore(DEBITS_BY_TIME_KEY, "debit-item2") is None
         assert await _total(fake_redis_async) == pytest.approx(1000.0)
         # Governance signature still lands in the audit ledger.
@@ -216,17 +248,30 @@ class TestAtomicDebitInLua:
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                fake_redis_async,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                50000.0,
-                {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
-            ))),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        50000.0,
+                        {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
+                    )
+                ),
+            ),
         ):
             # Cost of $60,000 breaches the $50,000 threshold
             committed, msg, _cost = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"symbol": "AAPL", "shares": 600, "price": 100.0, "amount": 60000.0}
+                "execute_trade",
+                {"symbol": "AAPL", "shares": 600, "price": 100.0, "amount": 60000.0},
             )
 
         assert committed is False
@@ -249,14 +294,29 @@ class TestSelfReportedLiveRead:
     async def _commit(self, r, cbf, python_read: float):
         with (
             patch("src.gateway.governance.safety.cbf_engine.redis_client", r),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=r)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=r),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
-            patch.object(cbf, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                python_read,
-                {"source": "self_reported", "mode": "self_reported", "fence_epoch": 1},
-            ))),
+            patch.object(
+                cbf,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        python_read,
+                        {
+                            "source": "self_reported",
+                            "mode": "self_reported",
+                            "fence_epoch": 1,
+                        },
+                    )
+                ),
+            ),
         ):
-            return await cbf.atomic_verify_and_commit("execute_trade", dict(self._TRADE))
+            return await cbf.atomic_verify_and_commit(
+                "execute_trade", dict(self._TRADE)
+            )
 
     @pytest.mark.asyncio
     async def test_stale_python_read_is_ignored(self, fake_redis_async, cbf_finance):
@@ -264,7 +324,9 @@ class TestSelfReportedLiveRead:
         await fake_redis_async.set(cbf_finance.redis_key, "20000.0")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
-        committed, msg, _ = await self._commit(fake_redis_async, cbf_finance, python_read=100000.0)
+        committed, msg, _ = await self._commit(
+            fake_redis_async, cbf_finance, python_read=100000.0
+        )
 
         assert committed is False and "UNSAFE" in msg, msg
         assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 20000.0
@@ -274,10 +336,14 @@ class TestSelfReportedLiveRead:
     async def test_unset_state_key_uses_the_seed(self, fake_redis_async, cbf_finance):
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
-        committed, msg, _ = await self._commit(fake_redis_async, cbf_finance, python_read=100000.0)
+        committed, msg, _ = await self._commit(
+            fake_redis_async, cbf_finance, python_read=100000.0
+        )
 
         assert committed is True, msg
-        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(70000.0)
+        assert float(
+            await fake_redis_async.get(cbf_finance.redis_key)
+        ) == pytest.approx(70000.0)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("lua", [True, False], ids=["lua", "watch_fallback"])
@@ -293,13 +359,17 @@ class TestSelfReportedLiveRead:
             "src.gateway.governance.safety.cbf_engine._is_mock",
             (lambda _obj: False) if lua else (lambda _obj: True),
         ):
-            await cbf_finance.rollback_state(1000.0, debit_id="lost", client=fake_redis_async)
+            await cbf_finance.rollback_state(
+                1000.0, debit_id="lost", client=fake_redis_async
+            )
             assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 5000.0
             assert int(await fake_redis_async.get(_REDIS_KEY_FENCE_EPOCH)) == 4
             assert await fake_redis_async.hexists(DEBITS_ROLLED_BACK_KEY, "lost")
             assert await fake_redis_async.get(DEBITS_TOTAL_KEY) is None
 
-            await cbf_finance.rollback_state(1000.0, debit_id="lost", client=fake_redis_async)
+            await cbf_finance.rollback_state(
+                1000.0, debit_id="lost", client=fake_redis_async
+            )
             assert float(await fake_redis_async.get(cbf_finance.redis_key)) == 5000.0
             assert int(await fake_redis_async.get(_REDIS_KEY_FENCE_EPOCH)) == 4
 
@@ -317,9 +387,13 @@ class TestSelfReportedLiveRead:
             (lambda _obj: False) if lua else (lambda _obj: True),
         ):
             # The caller's magnitude is ignored; the ledger is authoritative.
-            await cbf_finance.rollback_state(1000.0, debit_id="d1", client=fake_redis_async)
+            await cbf_finance.rollback_state(
+                1000.0, debit_id="d1", client=fake_redis_async
+            )
 
-        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(5750.0)
+        assert float(
+            await fake_redis_async.get(cbf_finance.redis_key)
+        ) == pytest.approx(5750.0)
         assert await _ledger(fake_redis_async) == {}
         assert await _total(fake_redis_async) == pytest.approx(0.0)
 
@@ -333,7 +407,9 @@ class TestSettlementBasedDebitPruning:
     """Debits are pruned by settlement cutoff, never by count or snapshot sequence."""
 
     @pytest.mark.asyncio
-    async def test_settle_prunes_only_debits_at_or_before_cutoff(self, fake_redis_async):
+    async def test_settle_prunes_only_debits_at_or_before_cutoff(
+        self, fake_redis_async
+    ):
         """Debits submitted <= cutoff are settled; later ones survive and the total is re-derived."""
         for i, amount in enumerate((100.0, 200.0, 300.0, 400.0), start=1):
             await _seed_debit(fake_redis_async, f"d{i}", amount, submitted_at=float(i))
@@ -351,7 +427,9 @@ class TestSettlementBasedDebitPruning:
         fakeredis = pytest.importorskip("fakeredis")
         sync_redis = fakeredis.FakeRedis(decode_responses=True)
         for debit_id, amount, ts in (("a", 50.0, 10.0), ("b", 75.0, 11.0)):
-            sync_redis.hset(DEBITS_KEY, debit_id, json.dumps({"amount": amount, "submitted_at": ts}))
+            sync_redis.hset(
+                DEBITS_KEY, debit_id, json.dumps({"amount": amount, "submitted_at": ts})
+            )
             sync_redis.zadd(DEBITS_BY_TIME_KEY, {debit_id: ts})
         sync_redis.set(DEBITS_TOTAL_KEY, "125.0")
 
@@ -368,7 +446,9 @@ class TestSettlementBasedDebitPruning:
         pipe = fake_redis_async.pipeline()
         for i in range(1050):
             debit_id = f"d{i}"
-            pipe.hset(DEBITS_KEY, debit_id, json.dumps({"amount": 1.0, "submitted_at": now}))
+            pipe.hset(
+                DEBITS_KEY, debit_id, json.dumps({"amount": 1.0, "submitted_at": now})
+            )
             pipe.zadd(DEBITS_BY_TIME_KEY, {debit_id: now})
         pipe.set(DEBITS_TOTAL_KEY, "1050.0")
         await pipe.execute()
@@ -381,22 +461,42 @@ class TestSettlementBasedDebitPruning:
         # Publish the snapshot the metadata claims to have verified so the
         # script's generation check (ADR-010) sees matching bytes.
         snapshot = ReconciliationResult(
-            source="reconciliation", state_scalar=100000.0, verified_at=now,
-            signature="valid_sig", kms_key_id="reconciler-kid",
-            signing_algorithm="gcp_kms", ttl_seconds=300, sequence=10,
+            source="reconciliation",
+            state_scalar=100000.0,
+            verified_at=now,
+            signature="valid_sig",
+            kms_key_id="reconciler-kid",
+            signing_algorithm="gcp_kms",
+            ttl_seconds=300,
+            sequence=10,
         )
         payload = snapshot.to_redis_payload()
         await fake_redis_async.set(snapshot_key, payload)
         metadata = {
-            "source": "reconciled", "mode": "reconciled", "state_scalar": 100000.0,
-            "raw_payload": payload, "sequence": 10, "verified_at": now, "fence_epoch": 1,
+            "source": "reconciled",
+            "mode": "reconciled",
+            "state_scalar": 100000.0,
+            "raw_payload": payload,
+            "sequence": 10,
+            "verified_at": now,
+            "fence_epoch": 1,
         }
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                fake_redis_async,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(100000.0 - 1050.0, metadata))),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(return_value=(100000.0 - 1050.0, metadata)),
+            ),
         ):
             # Effective balance is 100000 - 1050 = 98950 (floor 1000, gamma 0.5):
             # the largest admissible cost is 48975, so 49000 must be refused ...
@@ -406,14 +506,18 @@ class TestSettlementBasedDebitPruning:
             assert denied is False and "UNSAFE" in reason, reason
             # ... while a small trade still clears.
             committed, reason, _ = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"shares": 1, "price": 50.0, "amount": 50.0}, debit_id="fresh"
+                "execute_trade",
+                {"shares": 1, "price": 50.0, "amount": 50.0},
+                debit_id="fresh",
             )
             assert committed is True, reason
 
         # 1051 outstanding debits: nothing was truncated, the total tracks them all.
         assert await fake_redis_async.hlen(DEBITS_KEY) == 1051
         assert await _total(fake_redis_async) == pytest.approx(1100.0)
-        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(98900.0)
+        assert float(
+            await fake_redis_async.get(cbf_finance.redis_key)
+        ) == pytest.approx(98900.0)
 
 
 # ---------------------------------------------------------------------------
@@ -434,8 +538,13 @@ class TestRollbackDebitRemoval:
         await _seed_debit(fake_redis_async, "other", 250.0, submitted_at=1.0)
         await _seed_debit(fake_redis_async, "sig-rb-debit", 1000.0, submitted_at=2.0)
 
-        with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
-            with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async
+        ):
+            with patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ):
                 await cbf_finance.rollback_state(
                     1000.0,
                     governance_signature="sig-rb",
@@ -461,22 +570,40 @@ class TestRollbackDebitRemoval:
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                fake_redis_async,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
             # Pinned: tests/test_fence_epoch.py reloads cbf_engine with the flag
             # off, and the strict rollback only runs when fence epochs are on.
-            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                100000.0,
-                {"source": "reconciliation", "sequence": 3, "fence_epoch": 1},
-            ))),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        100000.0,
+                        {"source": "reconciliation", "sequence": 3, "fence_epoch": 1},
+                    )
+                ),
+            ),
             # Simulate WAIT failure (e.g. replica timeout)
-            patch.object(cbf_finance, "_sync_to_replicas", AsyncMock(return_value=False)),
+            patch.object(
+                cbf_finance, "_sync_to_replicas", AsyncMock(return_value=False)
+            ),
         ):
             committed, msg, _ = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}, governance_signature="sig-fail"
+                "execute_trade",
+                {"symbol": "AAPL", "shares": 10, "price": 100.0},
+                governance_signature="sig-fail",
             )
 
         assert committed is False
@@ -486,7 +613,9 @@ class TestRollbackDebitRemoval:
         assert await _ledger(fake_redis_async) == {}
         assert await fake_redis_async.zcard(DEBITS_BY_TIME_KEY) == 0
         assert await _total(fake_redis_async) == pytest.approx(0.0)
-        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(100000.0)
+        assert float(
+            await fake_redis_async.get(cbf_finance.redis_key)
+        ) == pytest.approx(100000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -498,13 +627,13 @@ class TestPinnedConnection:
     """Verifies that EVALSHA and WAIT execute on one pinned connection."""
 
     @pytest.mark.asyncio
-    async def test_evalsha_and_wait_use_same_pinned_client(
-        self, cbf_finance
-    ):
+    async def test_evalsha_and_wait_use_same_pinned_client(self, cbf_finance):
         """atomic_verify_and_commit must pin a connection and run both EVALSHA and WAIT on it."""
         mock_raw_client = MagicMock()
         mock_pinned_client = MagicMock()
-        mock_pinned_client.evalsha = AsyncMock(return_value=[1, "COMMITTED", "99000.0", 2])
+        mock_pinned_client.evalsha = AsyncMock(
+            return_value=[1, "COMMITTED", "99000.0", 2]
+        )
         mock_pinned_client.script_load = AsyncMock(return_value="mock_sha")
         mock_pinned_client.execute_command = AsyncMock(return_value=1)
         mock_pinned_client.aclose = AsyncMock()
@@ -513,16 +642,28 @@ class TestPinnedConnection:
         mock_raw_client.client = MagicMock(return_value=mock_pinned_client)
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_raw_client),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client", mock_raw_client
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=mock_raw_client),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                100000.0,
-                {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
-            ))),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        100000.0,
+                        {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
+                    )
+                ),
+            ),
         ):
             committed, _msg, _ = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0}
+                "execute_trade",
+                {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0},
             )
 
         assert committed is True
@@ -530,6 +671,9 @@ class TestPinnedConnection:
         assert mock_pinned_client.evalsha.called
         assert mock_pinned_client.execute_command.called
         # And neither on mock_raw_client directly
-        assert not hasattr(mock_raw_client.evalsha, "called") or not mock_raw_client.evalsha.called
+        assert (
+            not hasattr(mock_raw_client.evalsha, "called")
+            or not mock_raw_client.evalsha.called
+        )
         # Pinned client was closed/released
         assert mock_pinned_client.aclose.called

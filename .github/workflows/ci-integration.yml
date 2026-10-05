@@ -69,8 +69,14 @@ jobs:
           cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
           location: ${{ secrets.GKE_CLUSTER_LOCATION }}
       - name: Run integration tests
+        # --run-integration makes tests/conftest.py read the session region
+        # from the cage-deployment ConfigMap in this namespace (fails closed if
+        # unreadable) and skip live tests marked for any other region.
+        env:
+          K8S_NAMESPACE: ${{ inputs.namespace }}
         run: |
           uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "integration or slow" \
+            --run-integration \
             --no-cov --tb=short -q \
             --timeout=300 \
             -x

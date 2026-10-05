@@ -55,7 +55,9 @@ class JurisdictionContribution:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tiers", tuple(self.tiers))
-        object.__setattr__(self, "runtime_requirements", tuple(self.runtime_requirements))
+        object.__setattr__(
+            self, "runtime_requirements", tuple(self.runtime_requirements)
+        )
         for tier in self.tiers:
             if not isinstance(tier, ReadOnlyTier):
                 raise TypeError(

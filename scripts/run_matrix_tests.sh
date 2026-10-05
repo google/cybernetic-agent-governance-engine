@@ -116,13 +116,15 @@ header "Phase 0 — Universal ISO 42001 Gates"
 PHASE0_FAILURES=0
 
 # ---------------------------------------------------------------------------
-# Phase: Pytest unit tests (region-scoped, -m local)
+# Phase: Pytest unit tests (region-scoped, -m "local and <region marker>")
 # Runs before Lula/OPA checks so fast unit failures surface first.
+# tests/conftest.py runs each region-marked hermetic test under its own region,
+# so the marker alone selects and configures the posture under test.
 # ---------------------------------------------------------------------------
-echo "=== Phase: Pytest unit tests (CAGE_DEPLOYMENT_REGION=${CAGE_REGION}) ==="
+REGION_MARKER="$(echo "${CAGE_REGION}" | tr '[:upper:]' '[:lower:]')"
+echo "=== Phase: Pytest unit tests (-m \"local and ${REGION_MARKER}\") ==="
 mkdir -p pytest-results
-CAGE_DEPLOYMENT_REGION="${CAGE_REGION}" \
-  uv run pytest tests/ -m local \
+uv run pytest tests/ -m "local and ${REGION_MARKER}" \
     --tb=short -q \
     --junitxml="pytest-results/pytest-${CAGE_REGION}-${CAGE_ENV}.xml" \
   || { echo "Pytest failed for region ${CAGE_REGION}"; exit 1; }
@@ -270,7 +272,9 @@ case "${CAGE_REGION}" in
 
       RESIDENCY_TEST="tests/infrastructure/test_data_residency.py"
       if [[ -f "${RESIDENCY_TEST}" ]]; then
-        if uv run pytest "${RESIDENCY_TEST}" --region=europe-west1 -v; then
+        # Live check: the harness reads the deployed region from the
+        # cage-deployment ConfigMap and fails closed unless it is EU_ECB.
+        if uv run pytest "${RESIDENCY_TEST}" -m eu_ecb --run-integration -v; then
           success "Gate 1.2 passed — EU data residency confirmed"
         else
           error "Gate 1.2 FAILED — EU data residency validation"

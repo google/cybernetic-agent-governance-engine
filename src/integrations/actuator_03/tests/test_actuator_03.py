@@ -52,6 +52,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 class _StubSigner:
+    @property
+    def is_kms_active(self) -> bool:
+        return False  # software stub, never a KMS key
+
     def sign_raw(self, message: bytes) -> bytes:
         return hashlib.sha256(message).digest() * 2
 
@@ -308,8 +312,6 @@ class TestLayer1QuarantineBackends:
             == "CAGE_INFERENCE_PROXY_SVID"
         )
         assert (
-            await is_workload_quarantined(
-                thread_id="thread-breach-99", agent_svid=svid
-            )
+            await is_workload_quarantined(thread_id="thread-breach-99", agent_svid=svid)
             is True
         )
