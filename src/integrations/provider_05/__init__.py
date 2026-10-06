@@ -19,6 +19,10 @@ Implements the Three Uncomputable Axioms integration:
   - Axiom 1 (Policy Legitimacy / Blueprint) — Provider05BlueprintProvider
   - Axiom 2 (Identity Genesis / Key) — Provider05KeyProvider
   - Axiom 3 (Substrate Integrity / Physics) — Provider05PhysicsProvider
+
+and the institutional warrant source for the kernel ``WarrantSource`` seam:
+  - VeipWarrantSource (the warrant model and verifier live in
+    ``src.gateway.governance.warrant``)
 """
 
 from src.integrations.provider_05.blueprint_provider import Provider05BlueprintProvider
@@ -30,15 +34,7 @@ from src.integrations.provider_05.client import (
 )
 from src.integrations.provider_05.key_provider import Provider05KeyProvider
 from src.integrations.provider_05.physics_provider import Provider05PhysicsProvider
-from src.integrations.provider_05.warrant import (
-    RelianceStatus,
-    StandingVerificationResult,
-    Warrant,
-    WarrantScope,
-    WarrantStandingVerifier,
-    WarrantStatus,
-    bind_warrant_to_attestation,
-)
+from src.integrations.provider_05.warrant_source import VeipWarrantSource
 
 __all__ = [
     "AdmissibilityGrant",
@@ -46,13 +42,7 @@ __all__ = [
     "Provider05Client",
     "Provider05KeyProvider",
     "Provider05PhysicsProvider",
-    "RelianceStatus",
     "RiskAcceptanceRecord",
-    "StandingVerificationResult",
     "SubstrateAttestation",
-    "Warrant",
-    "WarrantScope",
-    "WarrantStandingVerifier",
-    "WarrantStatus",
-    "bind_warrant_to_attestation",
+    "VeipWarrantSource",
 ]

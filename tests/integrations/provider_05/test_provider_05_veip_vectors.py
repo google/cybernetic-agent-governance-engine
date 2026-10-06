@@ -16,7 +16,7 @@
 VEIP v0.1 six-vector interoperability suite.
 
 Runs the VEIP-supplied vectors (CAGE_VEIP_v0.1_6_Test_Vectors, Aug 2026) through
-the production ``WarrantStandingVerifier``. The declared digests are the values
+the kernel ``WarrantStandingVerifier``. The declared digests are the values
 VEIP published, pinned as literals: a change to canonicalization, field
 spelling or scope shape on either side breaks interop and fails here.
 
@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-from src.integrations.provider_05 import (
+from src.gateway.governance.warrant import (
     RelianceStatus,
     Warrant,
     WarrantStandingVerifier,

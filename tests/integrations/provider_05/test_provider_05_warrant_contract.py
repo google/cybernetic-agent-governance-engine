@@ -15,8 +15,10 @@
 """
 Unit tests for CAGE x Provider 05 Warrant Contract v0.1.
 
-Validates the frozen boundary, 11-field schema, standing verification failure
-semantics, and the first falsifiable test for min_trade_confidence = 0.97:
+Runs the first falsifiable test for min_trade_confidence = 0.97 through the
+seeded ``VeipWarrantSource`` and the kernel verifier. The schema and
+failure-matrix tests are vendor-neutral and live in
+``tests/governance/test_warrant_kernel.py``.
   - Test A: ACTIVE warrant -> norm eligible -> ALLOW -> seal with warrant digest.
   - Test B: REVOKED warrant -> norm ineligible for reliance.
   - Test C: EXPECTED failure -> DEFER (no Routing Seal, no fabricated hard DENY).
@@ -24,9 +26,7 @@ semantics, and the first falsifiable test for min_trade_confidence = 0.97:
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
-from typing import Any
 
 import pytest
 
@@ -35,8 +35,7 @@ from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     GovernanceEnvelopeBuilder,
 )
-from src.integrations.provider_05 import (
-    Provider05Client,
+from src.gateway.governance.warrant import (
     RelianceStatus,
     Warrant,
     WarrantScope,
@@ -44,6 +43,7 @@ from src.integrations.provider_05 import (
     WarrantStatus,
     bind_warrant_to_attestation,
 )
+from src.integrations.provider_05 import VeipWarrantSource
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
@@ -74,146 +74,16 @@ def sample_warrant() -> Warrant:
     )
 
 
-def test_warrant_canonicalization_and_digest(sample_warrant: Warrant) -> None:
-    """Verify deterministic RFC 8785 JCS canonicalization and SHA-256 digest."""
-    canon_bytes = sample_warrant.to_canonical_bytes()
-    assert isinstance(canon_bytes, bytes)
-
-    digest = sample_warrant.compute_digest()
-    assert isinstance(digest, str)
-    assert len(digest) == 64
-    assert digest == sample_warrant.digest
-
-    # Verify deterministic digest matching direct SHA-256 over canonical bytes
-    assert hashlib.sha256(canon_bytes).hexdigest() == digest
-
-    # Verify all 11 fields are present in the canonical dict
-    d = sample_warrant.to_canonical_dict()
-    assert len(d) == 11
-    assert d["warrant_id"] == "warrant-provider05-2026-001"
-    assert d["norm_id"] == "confidence.min_trade_confidence"
-    assert d["status"] == "ACTIVE"
-
-
-def test_warrant_standing_verification_valid(sample_warrant: Warrant) -> None:
-    """Verify active warrant passes standing check within valid window and scope."""
-    context = {
-        "action": "execute_trade",
-        "actor": "urn:actuator01:op:test_operator",
-        "system": "cage-gateway",
-        "jurisdiction": "EU_ECB",
-        "governing_version": "cage-policy-2.1.0",
-    }
-    eval_time = datetime(2026, 8, 22, 12, 0, 0, tzinfo=timezone.utc)
-    result = WarrantStandingVerifier.verify_standing(
-        sample_warrant, context=context, now=eval_time
-    )
-
-    assert result.eligible is True
-    assert result.reliance_status == RelianceStatus.ELIGIBLE
-    assert result.warrant_id == sample_warrant.warrant_id
-    assert result.warrant_digest == sample_warrant.digest
-    assert "verified and active" in result.reason
-
-
-def test_warrant_standing_failure_matrix(sample_warrant: Warrant) -> None:
-    """Verify all 6 failure states correctly yield reliance ineligibility."""
-    context = {
-        "action": "execute_trade",
-        "system": "cage-gateway",
-        "jurisdiction": "EU_ECB",
-        "governing_version": "cage-policy-2.1.0",
-    }
-    eval_time = datetime(2026, 8, 22, 12, 0, 0, tzinfo=timezone.utc)
-
-    # 1. MISSING
-    res_missing = WarrantStandingVerifier.verify_standing(None, context=context)
-    assert res_missing.eligible is False
-    assert res_missing.reliance_status == RelianceStatus.INELIGIBLE_MISSING
-
-    # 2. EXPIRED (time past valid_until)
-    late_time = datetime(2027, 1, 15, 0, 0, 0, tzinfo=timezone.utc)
-    res_expired = WarrantStandingVerifier.verify_standing(
-        sample_warrant, context=context, now=late_time
-    )
-    assert res_expired.eligible is False
-    assert res_expired.reliance_status == RelianceStatus.INELIGIBLE_EXPIRED
-
-    # 3. REVOKED
-    revoked_warrant = Warrant.issue(
-        warrant_id=sample_warrant.warrant_id,
-        norm_id=sample_warrant.norm_id,
-        issuing_authority=sample_warrant.issuing_authority,
-        authority_basis=sample_warrant.authority_basis,
-        scope=sample_warrant.scope,
-        valid_from=sample_warrant.valid_from,
-        valid_until=sample_warrant.valid_until,
-        governing_version=sample_warrant.governing_version,
-        status=WarrantStatus.REVOKED,
-        revocation_ref="Emergency Risk Notice #912",
-        residual_risk_ref=sample_warrant.residual_risk_ref,
-    )
-    res_revoked = WarrantStandingVerifier.verify_standing(
-        revoked_warrant, context=context, now=eval_time
-    )
-    assert res_revoked.eligible is False
-    assert res_revoked.reliance_status == RelianceStatus.INELIGIBLE_REVOKED
-    assert "Emergency Risk Notice #912" in res_revoked.reason
-
-    # 4. OUT_OF_SCOPE
-    out_scope_ctx = {
-        "action": "unauthorized_wire_action",
-        "jurisdiction": "EU_ECB",
-        "governing_version": "cage-policy-2.1.0",
-    }
-    res_scope = WarrantStandingVerifier.verify_standing(
-        sample_warrant, context=out_scope_ctx, now=eval_time
-    )
-    assert res_scope.eligible is False
-    assert res_scope.reliance_status == RelianceStatus.INELIGIBLE_OUT_OF_SCOPE
-
-    # 5. VERSION_MISMATCH
-    wrong_ver_ctx = {
-        "action": "execute_trade",
-        "jurisdiction": "EU_ECB",
-        "governing_version": "cage-policy-9.9.9",
-    }
-    res_ver = WarrantStandingVerifier.verify_standing(
-        sample_warrant, context=wrong_ver_ctx, now=eval_time
-    )
-    assert res_ver.eligible is False
-    assert res_ver.reliance_status == RelianceStatus.INELIGIBLE_VERSION_MISMATCH
-
-    # 6. UNRESOLVED (Tampered digest)
-    tampered_warrant = Warrant(
-        warrant_id=sample_warrant.warrant_id,
-        norm_id=sample_warrant.norm_id,
-        issuing_authority=sample_warrant.issuing_authority,
-        authority_basis=sample_warrant.authority_basis,
-        scope=sample_warrant.scope,
-        valid_from=sample_warrant.valid_from,
-        valid_until=sample_warrant.valid_until,
-        governing_version=sample_warrant.governing_version,
-        status=WarrantStatus.ACTIVE,
-        digest="bad_digest_00000000000000000000000000000000000000000000000000000000",
-    )
-    res_unresolved = WarrantStandingVerifier.verify_standing(
-        tampered_warrant, context=context, now=eval_time
-    )
-    assert res_unresolved.eligible is False
-    assert res_unresolved.reliance_status == RelianceStatus.INELIGIBLE_UNRESOLVED
-
-
 @pytest.mark.asyncio
 async def test_falsifiable_test_a_active_warrant_allows_and_seals(
     sample_warrant: Warrant,
 ) -> None:
     """Test A - ACTIVE: Valid warrant attached -> CAGE evaluates 0.97 and seals evidence with warrant digest."""
-    client = Provider05Client()
-    client.seed_warrant(sample_warrant)
+    source = VeipWarrantSource()
+    source.seed(sample_warrant)
 
     # 1. Query warrant from Provider 05
-    warrant = await client.get_warrant("confidence.min_trade_confidence")
+    warrant = await source.fetch("confidence.min_trade_confidence")
     assert warrant is not None
 
     context = {
@@ -234,10 +104,13 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
 
     # 3. Bind warrant to evidence record in GovernanceEnvelope.
     # UNVERIFIED: the digest proves consistency, not issuer identity (v0.2).
-    att = bind_warrant_to_attestation(warrant, standing)
+    att = bind_warrant_to_attestation(
+        warrant, standing, provider_name=source.provider_name
+    )
     assert att.attestation_type == "WARRANT"
     assert att.status == AttestationStatus.UNVERIFIED.value
     assert att.attested_at == EVAL_TIME.isoformat()
+    assert att.provider_name == "provider_05_warrant"
     assert att.metadata["warrant_id"] == warrant.warrant_id
     assert att.metadata["warrant_digest"] == warrant.digest
     assert att.metadata["reliance_status"] == "ELIGIBLE"
@@ -283,11 +156,11 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
         residual_risk_ref=sample_warrant.residual_risk_ref,
     )
 
-    client = Provider05Client()
-    client.seed_warrant(revoked_warrant)
+    source = VeipWarrantSource()
+    source.seed(revoked_warrant)
 
     # Query warrant
-    warrant = await client.get_warrant("confidence.min_trade_confidence")
+    warrant = await source.fetch("confidence.min_trade_confidence")
     assert warrant is not None
     assert warrant.status == WarrantStatus.REVOKED
 
@@ -326,26 +199,11 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
 
     # Bind ineligible standing into the audit trail / evidence envelope.
     # Never DENIED: ineligibility is not an institutional verdict.
-    att = bind_warrant_to_attestation(warrant, standing)
+    att = bind_warrant_to_attestation(
+        warrant, standing, provider_name=source.provider_name
+    )
     assert att.status == AttestationStatus.UNVERIFIED.value
     assert att.status != AttestationStatus.DENIED.value
     assert att.metadata["reliance_status"] == "INELIGIBLE_REVOKED"
     assert "Board Resolution 2026-08-22" in att.metadata["reason"]
     assert att.metadata["revocation_ref"].startswith("Board Resolution 2026-08-22")
-
-
-def test_binding_refuses_foreign_standing_result(sample_warrant: Warrant) -> None:
-    """Evidence must bind a warrant only to its own standing result."""
-    other = Warrant.issue(
-        **{**sample_warrant.to_canonical_dict(), "warrant_id": "other"}
-    )
-    context = {
-        "action": "execute_trade",
-        "jurisdiction": "EU_ECB",
-        "governing_version": "cage-policy-2.1.0",
-    }
-    standing = WarrantStandingVerifier.verify_standing(
-        other, context=context, now=EVAL_TIME
-    )
-    with pytest.raises(ValueError, match="does not belong"):
-        bind_warrant_to_attestation(sample_warrant, standing)
