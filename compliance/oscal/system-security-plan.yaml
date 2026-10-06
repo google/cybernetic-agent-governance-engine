@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-04T05:19:17Z'
+    last-modified: '2026-10-06T23:42:42Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1027,13 +1027,23 @@ system-security-plan:
           text: Routing seal tied to evidence chain
     - uuid: g7000005-0000-4000-8000-000000000005
       control-id: cm-6
-      description: 'Configuration settings are managed via a Pydantic validation singleton
-        (src/gateway/governance/singletons.py) loading governance_thresholds.json
-        and safety_params.json. Pydantic schema enforcement prevents invalid configuration
-        values from being applied at runtime. Kubernetes ConfigMaps and Cloud Secret
-        Manager provide the configuration injection mechanism. IaC (Terraform) manages
-        all infrastructure configuration in version-controlled HCL, enforcing reproducible
-        configuration baselines per the CIS Kubernetes Benchmark.
+      description: 'Governance configuration settings are loaded once per process
+        by load_and_validate_thresholds() (src/gateway/governance/schemas/thresholds.py)
+        from config/governance_thresholds.json. Since commit ecca70b9 the loader deep-merges
+        the domains object of the deployment region''s config/thresholds/{REGION}_BASELINE.json
+        onto the global domains sections (src/gateway/governance/schemas/regional_overlay.py),
+        so every reader of THRESHOLDS.domains sees the region''s effective values.
+        The overlay fails closed: a missing or malformed regional file, a regional
+        section with no global counterpart, or a value that changes shape aborts startup.
+        The domain plugin schema (src/cage_finance/thresholds.py) validates the merged
+        section at governor assembly, so an unknown or invalid regional key fails
+        assembly, and assemble_governor() (src/gateway/governance/governor/assembly.py)
+        refuses to assemble when the thresholds region differs from the jurisdiction
+        region. For US_FED the regional overlay sets only domains.finance.confidence.min_trade_confidence
+        = 0.95, equal to the universal confidence band, so US_FED effective values
+        are the global values. Kubernetes ConfigMaps and Cloud Secret Manager provide
+        the configuration injection mechanism. IaC (Terraform) manages infrastructure
+        configuration in version-controlled HCL.
 
         '
       props:
@@ -1044,10 +1054,11 @@ system-security-plan:
       by-components:
       - component-uuid: e5000001-0000-4000-8000-000000000001
         uuid: h8000005-0000-4000-8000-000000000006
-        description: 'governance_thresholds.json loaded via Pydantic singleton ensures
-          all configuration values are validated against schema before application.
-          Changes require PR review and CI validation per docs/CHANGE_MANAGEMENT_PROCESS.md.
-          Lula validation: compliance/lula/lula-validation-cm6.yaml.
+        description: 'governance_thresholds.json and the regional baseline overlay
+          are validated before any governor is assembled; tests/governor/test_regional_overlay.py
+          observes each fail-closed path. Changes require PR review and CI validation.
+          Lula validation: compliance/lula/lula-validation-cm6.yaml (asserts that
+          the threshold ConfigMaps are deployed; it does not assert threshold values).
 
           '
         implementation-status:
@@ -1275,7 +1286,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 11\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-04T05:19:17Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-06T23:42:42Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1316,7 +1327,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-04T05:19:17Z'
+        value: '2026-10-06T23:42:42Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

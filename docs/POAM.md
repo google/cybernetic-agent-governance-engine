@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-10-01
+**Last Updated:** 2026-10-06
 
 ---
 
@@ -84,6 +84,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-098 | AU-10 / AC-3 / SI-10 | Partner actuation receipts are not yet signed. The code side is remediated in `9c68a6e8` and `72574529`: [`ActuationReceipt`](../src/gateway/governance/seams/actuation.py) has a three-valued outcome (an `UNKNOWN` receipt settles as executed and is never retried), the kernel [`dispatch_actuation()`](../src/gateway/governance/execution_actuator.py) is the only writer of actuation evidence, and [`verify_partner_receipt()`](../src/integrations/actuator_01/receipt_verifier.py) checks a detached Ed25519 signature against a key resolved by `kid` (`INVALID` forces `UNKNOWN`). The signature format is a CAGE-proposed extension that the actuator_01 partner has not adopted, so live receipts are recorded as `UNVERIFIED`. Closure requires partner adoption, an over-the-wire conformance test against the partner sandbox, and `ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS` enabled in enforcing postures. Residual duplication: `Provider07JwksClient` has not moved to the shared [`Ed25519KeyManifestClient`](../src/integrations/trust/key_manifest.py) | Moderate | 2026-12-31 |
 | POAM-2026-100 | SI-10 / AU-10 | Evidence data integrity: the `PIISanitizer` SWIFT/BIC pattern matched any eight- or eleven-character upper-case token, so governance verdicts and states such as `APPROVED`, `REJECTED` and `ESCALATE` were redacted to `[REDACTED_SWIFT]` before hashing in the evidence stream. Records lost their verdicts, and events differing only in such a word produced identical payloads. Remediated in code on `fix/pii-swift-false-positive`: a BIC is redacted only with a contextual cue (`BIC`/`SWIFT` label or BIC/SWIFT dict key) and a valid ISO 3166-1 alpha-2 country code ([`pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py)); property test over all upper-case literals in `src/` ([`test_pii_sanitizer_bic.py`](../tests/test_pii_sanitizer_bic.py)). Records written before the fix stay verifiable but keep the redaction. See [`EVIDENCE_CHAIN.md` §4.4](architecture/EVIDENCE_CHAIN.md). Remains Open pending merge SHA | High | 2026-10-15 |
 | POAM-2026-101 | RA-5 / SI-2 | `python:3.12-slim-bookworm` OS-package CVEs with no Debian fix kept the SBOM/CVE gate red: util-linux CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410, OpenSSL CVE-2026-84782, and 39 `linux-libc-dev` kernel-header CVEs; `.trivyignore` held expired suppressions (review dates 2026-09-05, 2026-09-08). Remediated on `fix/ci-test-errors`: advisor, gateway and compliance-bridge images are two-stage builds on a digest-pinned Wolfi base with no compiler or util-linux at runtime, and `.trivyignore` is empty. Cloud Build verification on 2026-10-05 ([`cloudbuild.verify.yaml`](../deployment/docker/cloudbuild.verify.yaml), builds `575e3466`, `3e268752`, `1df4fe5d`) found 0 HIGH/CRITICAL and 0 suppressed findings. Remains Open pending merge SHA and green SBOM/CVE legs on `main` | Moderate | 2026-11-15 |
+| POAM-2026-103 | SI-10 / CM-6 | FIN-1 `domains.finance.stpa.max_sell_portfolio_fraction` (global 0.10, EU_ECB 0.08, APAC_MAS 0.09) is declared, regionally overlaid and schema-validated ([`thresholds.py`](../src/cage_finance/thresholds.py)), but no runtime rule reads it in any region. [`uca_rules.py`](../src/cage_finance/stpa/uca_rules.py) enforces only UCA-2/FIN-2 (latency), UCA-5 and UCA-6; the `FIN-1` constraint in [`ontology.py`](../src/cage_finance/ontology.py) is a different rule (sell amount ≤ holdings) with the same ID. Found 2026-10-06 while verifying POAM-2026-102 | Moderate | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -181,6 +182,7 @@ The following findings have been remediated and verified via Lula validation and
 | POAM-2026-095 | SC-13 / SC-12 / IA-5 | ✅ **CLOSED — Asymmetric routing seals round-trip; kid is required.** `generate_seal()` wrote a provider label into the JWS `alg` header and KMS ECDSA signatures stayed DER-encoded, so no asymmetric seal could verify. A seal with no `kid` also fell back to the single published key. The header now carries `signer.jose_alg`, [`KMSGovernanceSigner.sign_jws()`](../src/gateway/governance/kms_signer.py) converts DER to raw R‖S, the EC allow-list is ES256/384/512, and [`jwks.py`](../src/gateway/governance/jwks.py) fails closed without a `kid`. Evidence: [`tests/test_routing_seal_asymmetric_roundtrip.py`](../tests/test_routing_seal_asymmetric_roundtrip.py). `make test-fast` on the branch: 6203 passed, 107 skipped, 0 failed; OSCAL SSP export + [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) (50 passed) on 2026-10-03. Lula: no assertion references the affected resources. Remediation commits on `fix/paper-verify-findings`: `9c68a6e8`. Squash SHA: record on merge. | 2026-10-03 |
 | POAM-2026-096 | CA-7 / SI-10 | ✅ **CLOSED — Reconciler cadence keeps verified state alive; floor branch never writes state.** The reconciler ran as a 5-minute CronJob against a 300 s verified-state TTL, so the state expired between runs. Its discrepancy-floor branch also overwrote the CBF state key. [`reconciliation-worker.yaml`](../deployment/k8s/reconciliation-worker.yaml) is now a single-replica Deployment in loop mode (60 s poll), `run_loop()` in [`daemon.py`](../src/gateway/governance/reconciliation/daemon.py) refuses to start when the TTL is under 2× the poll interval, and the floor branch only counts, fences and invalidates. Evidence: [`tests/test_reconciliation_worker_manifest.py`](../tests/test_reconciliation_worker_manifest.py), [`tests/test_reconciliation_discrepancy_floor.py`](../tests/test_reconciliation_discrepancy_floor.py). `make test-fast` on the branch: 6203 passed, 107 skipped, 0 failed; OSCAL SSP export + [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) (50 passed) on 2026-10-03. Lula: no assertion references the affected resources. Remediation commits on `fix/paper-verify-findings`: `9c68a6e8`. Squash SHA: record on merge. | 2026-10-03 |
 | POAM-2026-097 | SI-10 / SC-23 | ✅ **CLOSED — Ground-truth sequence check is atomic and fails closed.** The CBF replay check read the last sequence and wrote the new one in separate calls, and a Redis error let the check pass. [`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py) now does one Lua compare-and-advance (reject regressions, accept an equal re-read) and treats a Redis error as a violation. Evidence: [`tests/test_replay_defense.py`](../tests/test_replay_defense.py). `make test-fast` on the branch: 6203 passed, 107 skipped, 0 failed; OSCAL SSP export + [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) (50 passed) on 2026-10-03. Lula: no assertion references the affected resources. Remediation commits on `fix/paper-verify-findings`: `9c68a6e8`. Squash SHA: record on merge. | 2026-10-03 |
+| POAM-2026-102 | CM-6 / `CTRL_AGT_001` | ✅ **CLOSED — Regional finance limits are enforced.** Before `ecca70b9` (#417) the EU_ECB and APAC_MAS `config/thresholds/{REGION}_BASELINE.json` finance values (trade-confidence floor 0.97 / 0.96, CBF gamma, drawdown limit, consensus threshold, STPA UCA-5/UCA-6/FIN-2 limits) were declared but not read; every region ran on the global values. `ecca70b9` applies the baseline `domains` object as a fail-closed overlay ([`regional_overlay.py`](../src/gateway/governance/schemas/regional_overlay.py)), adds [`TradeConfidenceTier`](../src/cage_finance/tiers/trade_confidence_tier.py), and refuses assembly on a thresholds/jurisdiction region mismatch ([`assembly.py`](../src/gateway/governance/governor/assembly.py)). FIN-1 residual tracked as POAM-2026-103. Lula: not run (see detail section). Remediation commit: `ecca70b9`. | 2026-10-06 |
 
 ---
 
@@ -509,6 +511,59 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
+
+### POAM-2026-102: Regional Finance Limits Declared but Not Enforced (EU_ECB, APAC_MAS)
+
+**Control:** NIST SP 800-53 CM-6, `CTRL_AGT_001` (agentic confidence floor)
+**Risk Level:** High
+**Status:** Closed
+**Date Opened:** 2026-10-06 (recorded at remediation; the gap predates it)
+**Date Closed:** 2026-10-06
+**Remediation Commit:** `ecca70b9` (#417, `feat(governance)!: enforce regional finance limits via domain overlay`)
+
+**Description:**
+[`EU_ECB_BASELINE.json`](../config/thresholds/EU_ECB_BASELINE.json) and [`APAC_MAS_BASELINE.json`](../config/thresholds/APAC_MAS_BASELINE.json) declared tighter finance limits than the global [`governance_thresholds.json`](../config/governance_thresholds.json), and the EU_ECB and APAC_MAS SSPs cited those files. No loader read them, so every region ran on the global (US_FED) values. The EU_ECB 0.97 and APAC_MAS 0.96 trade-confidence floors, CBF gamma, drawdown limit, consensus threshold and STPA limits were not enforced.
+
+**Remediation (merged in `ecca70b9`):**
+1. `load_and_validate_thresholds()` ([`thresholds.py`](../src/gateway/governance/schemas/thresholds.py)) deep-merges the region's baseline `domains` object onto the global `domains` sections ([`regional_overlay.py`](../src/gateway/governance/schemas/regional_overlay.py)). A missing or malformed regional file, a regional section with no global counterpart, or a value that changes shape aborts startup.
+2. The finance schema ([`src/cage_finance/thresholds.py`](../src/cage_finance/thresholds.py)) validates the merged section at governor assembly, so an unknown or invalid regional key fails assembly.
+3. [`assemble_governor()`](../src/gateway/governance/governor/assembly.py) refuses to assemble when the thresholds region differs from the jurisdiction region.
+4. [`plugin.py`](../src/cage_finance/plugin.py) builds `CashBarrier(gamma=...)`, the bounding contracts (B2 `drawdown.limit`) and [`TradeConfidenceTier`](../src/cage_finance/tiers/trade_confidence_tier.py) from the effective section. [`consensus_tier.py`](../src/cage_finance/tiers/consensus_tier.py) and [`uca_rules.py`](../src/cage_finance/stpa/uca_rules.py) (UCA-2/FIN-2, UCA-5, UCA-6) resolve the same effective values.
+
+Effective values at `ecca70b9`:
+
+| Key (`domains.finance.`) | US_FED | EU_ECB | APAC_MAS |
+|---|---|---|---|
+| `confidence.min_trade_confidence` | 0.95 | 0.97 | 0.96 |
+| `cbf.gamma` | 0.5 | 0.6 | 0.55 |
+| `drawdown.limit` | 0.05 | 0.04 | 0.045 |
+| `consensus.threshold_usd` | 10000.0 | 7500.0 | 8500.0 |
+| `stpa.uca5_drawdown_threshold_pct` | 4.5 | 3.5 | 4.0 |
+| `stpa.uca6_max_order_volume_fraction` | 0.01 | 0.005 | 0.008 |
+| `stpa.max_latency_ms` (FIN-2) | 200.0 | 150.0 | 175.0 |
+
+**Verification (2026-10-06):**
+1. [`tests/governor/test_regional_overlay.py`](../tests/governor/test_regional_overlay.py), [`tests/cage_finance/test_trade_confidence_tier.py`](../tests/cage_finance/test_trade_confidence_tier.py) and [`tests/governor/test_jurisdiction_wiring.py`](../tests/governor/test_jurisdiction_wiring.py) pass. They observe each fail-closed path and the effective values per region.
+2. OSCAL: `cm-6` and `ctrl-agt-001` implemented requirements were added to [`system-security-plan-eu-ecb.yaml`](../compliance/oscal/system-security-plan-eu-ecb.yaml) and [`system-security-plan-apac-mas.yaml`](../compliance/oscal/system-security-plan-apac-mas.yaml). The US_FED `cm-6` statement in [`system-security-plan.yaml`](../compliance/oscal/system-security-plan.yaml) was corrected; it had cited a `singletons.py` that does not exist. `uv run python -m src.gateway.governance.oscal_ssp_exporter export` (default discovery) compiled, and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) passed (50 tests).
+3. **Lula: not run.** The `lula` CLI is not installed in the verification environment. No EU_ECB or APAC_MAS cluster exists; the only staging cluster is US_FED (`us-central1`). [`lula-validation-mas-trm-s6.yaml`](../compliance/lula/lula-validation-mas-trm-s6.yaml) asserts a compliance-bridge endpoint (`/v1/compliance/mas/trm-s6`) that is not implemented (APAC-MAS-TRM-001), so it cannot pass in any environment yet. [`lula-validation-cm6.yaml`](../compliance/lula/lula-validation-cm6.yaml) asserts that the threshold ConfigMaps exist, not their values. No Lula manifest change was required: no Kubernetes resource was added, removed or renamed. Closure rests on the tests and the OSCAL export above.
+
+**Residual:** FIN-1 (`stpa.max_sell_portfolio_fraction`) has no runtime reader in any region. It is tracked separately as POAM-2026-103 and is not claimed as enforced in OSCAL.
+
+### POAM-2026-103: FIN-1 Portfolio Sell-Fraction Limit Has No Runtime Reader
+
+**Control:** NIST SI-10, CM-6
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-10-06
+**Target Closure:** 2026-12-31
+
+**Description:**
+`domains.finance.stpa.max_sell_portfolio_fraction` (global 0.10, EU_ECB 0.08, APAC_MAS 0.09) is declared in the threshold files, overlaid by region and validated by the finance schema. FIN-1 in [`trade_hazards.yaml`](../src/cage_finance/config/stpa/trade_hazards.yaml) (`sell_percentage <= stpa.max_sell_portfolio_fraction`, scope `execute_sell`) has no Python or Rego rule reading it. [`uca_rules.py`](../src/cage_finance/stpa/uca_rules.py) implements UCA-2/FIN-2, UCA-5 and UCA-6 only. The `FIN-1` constraint in [`ontology.py`](../src/cage_finance/ontology.py) is a different rule (sell amount ≤ holdings) that shares the ID. The `ecca70b9` commit message lists FIN-1 among the newly enforced limits; that holds for the configured value but not for enforcement.
+
+**Remediation Plan:**
+1. Add a FIN-1 rule that resolves `domains.finance.stpa.max_sell_portfolio_fraction` and fails closed on a missing portfolio value, or remove the key and the constraint if FIN-1 is out of scope.
+2. Resolve the duplicate `FIN-1` ID between `trade_hazards.yaml` and `ontology.py`.
+3. Add a test that observes a sell above the regional fraction being refused in each region.
 
 ### POAM-2026-085: Causal Gatekeeper Cache Bypassed the Risk Boundary
 
