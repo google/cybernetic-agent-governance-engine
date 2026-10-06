@@ -48,10 +48,13 @@ from src.integrations.provider_05 import (
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 
+EVAL_TIME = datetime(2026, 8, 22, 12, 0, 0, tzinfo=timezone.utc)
+
+
 @pytest.fixture
 def sample_warrant() -> Warrant:
     """Fixture providing an active warrant for min_trade_confidence = 0.97."""
-    return Warrant(
+    return Warrant.issue(
         warrant_id="warrant-provider05-2026-001",
         norm_id="confidence.min_trade_confidence",
         issuing_authority="Risk Oversight Committee (EU_ECB)",
@@ -137,7 +140,7 @@ def test_warrant_standing_failure_matrix(sample_warrant: Warrant) -> None:
     assert res_expired.reliance_status == RelianceStatus.INELIGIBLE_EXPIRED
 
     # 3. REVOKED
-    revoked_warrant = Warrant(
+    revoked_warrant = Warrant.issue(
         warrant_id=sample_warrant.warrant_id,
         norm_id=sample_warrant.norm_id,
         issuing_authority=sample_warrant.issuing_authority,
@@ -161,6 +164,7 @@ def test_warrant_standing_failure_matrix(sample_warrant: Warrant) -> None:
     out_scope_ctx = {
         "action": "unauthorized_wire_action",
         "jurisdiction": "EU_ECB",
+        "governing_version": "cage-policy-2.1.0",
     }
     res_scope = WarrantStandingVerifier.verify_standing(
         sample_warrant, context=out_scope_ctx, now=eval_time
@@ -217,7 +221,9 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
         "jurisdiction": "EU_ECB",
         "governing_version": "cage-policy-2.1.0",
     }
-    standing = WarrantStandingVerifier.verify_standing(warrant, context=context)
+    standing = WarrantStandingVerifier.verify_standing(
+        warrant, context=context, now=EVAL_TIME
+    )
     assert standing.eligible is True
     assert standing.reliance_status == RelianceStatus.ELIGIBLE
 
@@ -226,13 +232,16 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
     target_threshold = 0.97
     assert model_confidence >= target_threshold
 
-    # 3. Bind warrant to evidence record in GovernanceEnvelope
+    # 3. Bind warrant to evidence record in GovernanceEnvelope.
+    # UNVERIFIED: the digest proves consistency, not issuer identity (v0.2).
     att = bind_warrant_to_attestation(warrant, standing)
     assert att.attestation_type == "WARRANT"
-    assert att.status == AttestationStatus.VERIFIED.value
+    assert att.status == AttestationStatus.UNVERIFIED.value
+    assert att.attested_at == EVAL_TIME.isoformat()
     assert att.metadata["warrant_id"] == warrant.warrant_id
     assert att.metadata["warrant_digest"] == warrant.digest
     assert att.metadata["reliance_status"] == "ELIGIBLE"
+    assert att.metadata["residual_risk_ref"] == "RRR-2026-08-01-A1"
 
     builder = GovernanceEnvelopeBuilder()
     envelope = builder.build_unsigned(
@@ -260,7 +269,7 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
     Test C: No alternative eligible norm -> DEFER (no Routing Seal, no fabricated hard DENY).
     """
     # Create revoked variant of the same warrant
-    revoked_warrant = Warrant(
+    revoked_warrant = Warrant.issue(
         warrant_id=sample_warrant.warrant_id,
         norm_id=sample_warrant.norm_id,
         issuing_authority=sample_warrant.issuing_authority,
@@ -287,13 +296,17 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
         "jurisdiction": "EU_ECB",
         "governing_version": "cage-policy-2.1.0",
     }
-    standing = WarrantStandingVerifier.verify_standing(warrant, context=context)
+    standing = WarrantStandingVerifier.verify_standing(
+        warrant, context=context, now=EVAL_TIME
+    )
 
     # Test B Assertion: 0.97 becomes ineligible for reliance
     assert standing.eligible is False
     assert standing.reliance_status == RelianceStatus.INELIGIBLE_REVOKED
 
-    # Test C Enforcement Simulation:
+    # Test C — contract-level simulation only. The verifier is not yet wired
+    # into the governor pipeline; the end-to-end DEFER/no-seal assertion
+    # belongs to the Phase 3 integration test.
     # When reliance is ineligible and no alternative warranted norm exists:
     # The decision must drop to DEFER (Parked in DeferQueue).
     # It must NOT emit an approved Routing Seal, and must NOT fabricate a hard DENY.
@@ -311,8 +324,28 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
     assert governance_decision != GovernanceDecision.DENY
     assert routing_seal_emitted is False
 
-    # Bind ineligible standing into the audit trail / evidence envelope
+    # Bind ineligible standing into the audit trail / evidence envelope.
+    # Never DENIED: ineligibility is not an institutional verdict.
     att = bind_warrant_to_attestation(warrant, standing)
-    assert att.status == AttestationStatus.DENIED.value
+    assert att.status == AttestationStatus.UNVERIFIED.value
+    assert att.status != AttestationStatus.DENIED.value
     assert att.metadata["reliance_status"] == "INELIGIBLE_REVOKED"
     assert "Board Resolution 2026-08-22" in att.metadata["reason"]
+    assert att.metadata["revocation_ref"].startswith("Board Resolution 2026-08-22")
+
+
+def test_binding_refuses_foreign_standing_result(sample_warrant: Warrant) -> None:
+    """Evidence must bind a warrant only to its own standing result."""
+    other = Warrant.issue(
+        **{**sample_warrant.to_canonical_dict(), "warrant_id": "other"}
+    )
+    context = {
+        "action": "execute_trade",
+        "jurisdiction": "EU_ECB",
+        "governing_version": "cage-policy-2.1.0",
+    }
+    standing = WarrantStandingVerifier.verify_standing(
+        other, context=context, now=EVAL_TIME
+    )
+    with pytest.raises(ValueError, match="does not belong"):
+        bind_warrant_to_attestation(sample_warrant, standing)

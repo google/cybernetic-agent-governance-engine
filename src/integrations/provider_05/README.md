@@ -27,7 +27,11 @@
 | [`Provider05PhysicsProvider`](physics_provider.py) | `provider_05-physics` | `PHYSICS` | Axiom 3 — Substrate Integrity: vTPM status and eBPF anomaly count for the host node |
 
 A fourth `attestation_type`, `WARRANT`, is emitted by
-[`bind_warrant_to_attestation()`](warrant.py:364) in the warrant module.
+[`bind_warrant_to_attestation()`](warrant.py:387) in the warrant module. Its
+status is always `UNVERIFIED`: the declared digest proves the warrant is
+internally consistent, not who issued it (issuer signatures are v0.2). Reliance
+eligibility travels in `metadata["reliance_status"]`; an ineligible warrant is
+never emitted as `DENIED`, because ineligibility is not an institutional verdict.
 
 ## Verdict vocabulary
 
@@ -45,7 +49,7 @@ emit `ExternalAttestation` entries carrying a status from the shared
 
 ### Warrant vocabularies
 
-The warrant module ([`warrant.py`](warrant.py:53)) carries two further enums,
+The warrant module ([`warrant.py`](warrant.py:71)) carries two further enums,
 distinct from `AttestationStatus`:
 
 - `WarrantStatus` — `ACTIVE`, `SUSPENDED`, `REVOKED`

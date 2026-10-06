@@ -29,13 +29,29 @@ Governing Rule:
 Precision:
   CAGE verifies the supplied warrant object is authentic, current, applicable,
   and eligible for reliance; it does not establish the underlying institutional truth.
+
+Fail-closed invariants (v0.1):
+  - CAGE never computes a warrant's declared digest on the issuer's behalf. A
+    warrant without a declared digest is UNRESOLVED; only ``Warrant.issue()``
+    (the issuer-side helper used by fixtures and seeded stores) computes one.
+  - A scope must declare all four dimensions (actions, actors, systems,
+    jurisdictions). CAGE never infers a missing dimension as ``"*"``.
+  - The evaluation context must carry ``action``, ``jurisdiction`` and
+    ``governing_version``; absence is UNRESOLVED, never "in scope".
+  - ``Warrant`` and ``WarrantScope`` are immutable, so state cannot change
+    between verification and evidence binding.
+
+Known v0.1 limitation:
+  The digest proves the warrant is internally consistent, not who issued it.
+  Issuer signature verification against a ``kid``-resolved trust anchor is a
+  v0.2 item, so warrant attestations are emitted as ``UNVERIFIED``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -47,6 +63,9 @@ from src.gateway.governance.governance_envelope import (
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("cage.integrations.provider_05.warrant")
+
+SCOPE_DIMENSIONS: tuple[str, ...] = ("actions", "actors", "systems", "jurisdictions")
+REQUIRED_CONTEXT_KEYS: tuple[str, ...] = ("action", "jurisdiction", "governing_version")
 
 
 class WarrantStatus(str, Enum):
@@ -69,49 +88,66 @@ class RelianceStatus(str, Enum):
     INELIGIBLE_UNRESOLVED = "INELIGIBLE_UNRESOLVED"
 
 
-@dataclass
+@dataclass(frozen=True)
 class WarrantScope:
-    """Applicability scope where warrant reliance is valid."""
+    """Applicability scope where warrant reliance is valid.
 
-    actions: list[str] = field(default_factory=lambda: ["*"])
-    actors: list[str] = field(default_factory=lambda: ["*"])
-    systems: list[str] = field(default_factory=lambda: ["*"])
-    jurisdictions: list[str] = field(default_factory=lambda: ["*"])
+    All four dimensions are required. ``"*"`` must be declared explicitly by
+    the issuer; it is never assumed.
+    """
+
+    actions: tuple[str, ...]
+    actors: tuple[str, ...]
+    systems: tuple[str, ...]
+    jurisdictions: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for dim in SCOPE_DIMENSIONS:
+            object.__setattr__(self, dim, tuple(getattr(self, dim)))
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> WarrantScope | None:
+        """Build a scope from its wire form, or ``None`` if malformed."""
+        if not all(isinstance(raw.get(dim), list | tuple) for dim in SCOPE_DIMENSIONS):
+            return None
+        return cls(**{dim: raw[dim] for dim in SCOPE_DIMENSIONS})
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "actions": sorted(self.actions),
-            "actors": sorted(self.actors),
-            "systems": sorted(self.systems),
-            "jurisdictions": sorted(self.jurisdictions),
-        }
+        return {dim: sorted(getattr(self, dim)) for dim in SCOPE_DIMENSIONS}
 
     def contains(
         self,
-        action: str | None = None,
+        action: str,
+        jurisdiction: str,
         actor: str | None = None,
         system: str | None = None,
-        jurisdiction: str | None = None,
     ) -> bool:
-        """Check whether given execution attributes fall within this scope."""
-        if action and "*" not in self.actions and action not in self.actions:
-            return False
-        if actor and "*" not in self.actors and actor not in self.actors:
-            return False
-        if system and "*" not in self.systems and system not in self.systems:
-            return False
-        if (
-            jurisdiction
-            and "*" not in self.jurisdictions
-            and jurisdiction not in self.jurisdictions
-        ):
-            return False
-        return True
+        """Check whether given execution attributes fall within this scope.
+
+        ``action`` and ``jurisdiction`` are mandatory. ``actor`` and ``system``
+        are checked only when the context supplies them; the v0.1 vectors do
+        not carry them (open question for v0.2).
+        """
+
+        def _admits(values: tuple[str, ...], item: str | None) -> bool:
+            return item is None or "*" in values or item in values
+
+        return (
+            _admits(self.actions, action)
+            and _admits(self.jurisdictions, jurisdiction)
+            and _admits(self.actors, actor)
+            and _admits(self.systems, system)
+        )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Warrant:
-    """11-field frozen Provider 05 Warrant contract representation (v0.1)."""
+    """11-field frozen Provider 05 Warrant contract representation (v0.1).
+
+    ``scope`` holds a ``WarrantScope`` when well-formed, or the raw dict when
+    a dimension is missing; the verifier treats the latter as UNRESOLVED.
+    ``digest`` is the issuer-declared value and is never back-filled.
+    """
 
     warrant_id: str
     norm_id: str
@@ -127,17 +163,26 @@ class Warrant:
     digest: str = ""
 
     def __post_init__(self) -> None:
-        if isinstance(self.status, str):
-            self.status = WarrantStatus(self.status.upper())
-        if isinstance(self.scope, dict) and not isinstance(self.scope, WarrantScope):
-            self.scope = WarrantScope(
-                actions=self.scope.get("actions", ["*"]),
-                actors=self.scope.get("actors", ["*"]),
-                systems=self.scope.get("systems", ["*"]),
-                jurisdictions=self.scope.get("jurisdictions", ["*"]),
-            )
-        if not self.digest:
-            self.digest = self.compute_digest()
+        if isinstance(self.status, str) and not isinstance(self.status, WarrantStatus):
+            try:
+                object.__setattr__(self, "status", WarrantStatus(self.status.upper()))
+            except ValueError:
+                pass  # Unrecognised status: kept verbatim, verifier yields UNRESOLVED.
+        if isinstance(self.scope, dict):
+            parsed = WarrantScope.from_dict(self.scope)
+            if parsed is not None:
+                object.__setattr__(self, "scope", parsed)
+
+    @classmethod
+    def issue(cls, **fields: Any) -> Warrant:
+        """Issuer-side constructor: build a warrant and declare its digest.
+
+        Intended for the seeded store and test fixtures, which stand in for
+        the VEIP issuer. CAGE's verification path never calls this.
+        """
+        fields.pop("digest", None)
+        draft = cls(**fields)
+        return cls(**{**fields, "digest": draft.compute_digest()})
 
     def to_canonical_dict(self) -> dict[str, Any]:
         """Produce the dictionary of fields 1-11 for JCS canonicalization."""
@@ -171,19 +216,18 @@ class Warrant:
         return hashlib.sha256(self.to_canonical_bytes()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Full representation including digest."""
-        d = self.to_canonical_dict()
-        d["digest"] = self.digest or self.compute_digest()
-        return d
+        """Full representation including the declared digest."""
+        return {**self.to_canonical_dict(), "digest": self.digest}
 
 
-@dataclass
+@dataclass(frozen=True)
 class StandingVerificationResult:
     """Result of CAGE verifying a warrant's standing."""
 
     eligible: bool
     reliance_status: RelianceStatus
     reason: str
+    evaluated_at: str
     warrant: Warrant | None = None
     warrant_id: str = ""
     warrant_digest: str = ""
@@ -193,6 +237,7 @@ class StandingVerificationResult:
             "eligible": self.eligible,
             "reliance_status": self.reliance_status.value,
             "reason": self.reason,
+            "evaluated_at": self.evaluated_at,
             "warrant_id": self.warrant_id,
             "warrant_digest": self.warrant_digest,
         }
@@ -201,12 +246,14 @@ class StandingVerificationResult:
 class WarrantStandingVerifier:
     """CAGE verifier for checking standing and reliance eligibility of warrants.
 
-    Performs 5-point validation:
-      1. Cryptographic Integrity: recomputed JCS digest matches warrant.digest.
-      2. Status Check: status is ACTIVE (not REVOKED or SUSPENDED).
-      3. Currency Check: current time falls strictly within [valid_from, valid_until].
-      4. Version Check: governing_version matches context or expected runtime baseline.
-      5. Scope Check: action/actor/system/jurisdiction fall within warrant.scope.
+    Check order (first failure wins):
+      0. Presence: a warrant was supplied (else MISSING).
+      1. Context: action, jurisdiction and governing_version are supplied.
+      2. Integrity: a digest is declared and equals the recomputed JCS digest.
+      3. Status: ACTIVE (REVOKED -> REVOKED; SUSPENDED/unknown -> UNRESOLVED).
+      4. Currency: evaluation time within [valid_from, valid_until].
+      5. Version: governing_version equals the runtime governing version.
+      6. Scope: well-formed four-dimension scope admits the context.
     """
 
     @classmethod
@@ -218,161 +265,159 @@ class WarrantStandingVerifier:
     ) -> StandingVerificationResult:
         """Evaluate standing and return reliance eligibility."""
         context = context or {}
+        current_time = now or datetime.now(timezone.utc)
+        evaluated_at = current_time.isoformat()
 
-        # 1. Missing check
         if warrant is None:
             return StandingVerificationResult(
                 eligible=False,
                 reliance_status=RelianceStatus.INELIGIBLE_MISSING,
                 reason="Warrant is missing; cannot ground reliance on norm",
+                evaluated_at=evaluated_at,
             )
 
-        w_id = warrant.warrant_id
-        w_digest = warrant.digest
+        def _ineligible(
+            status: RelianceStatus, reason: str
+        ) -> StandingVerificationResult:
+            return StandingVerificationResult(
+                eligible=False,
+                reliance_status=status,
+                reason=reason,
+                evaluated_at=evaluated_at,
+                warrant=warrant,
+                warrant_id=warrant.warrant_id,
+                warrant_digest=warrant.digest,
+            )
 
-        # 2. Cryptographic integrity check
+        # 1. Context completeness
+        missing_keys = [k for k in REQUIRED_CONTEXT_KEYS if not context.get(k)]
+        if missing_keys:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                f"Evaluation context missing required keys: {missing_keys}",
+            )
+
+        # 2. Cryptographic integrity
+        if not warrant.digest:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                "Warrant carries no declared digest; integrity cannot be established",
+            )
         computed_digest = warrant.compute_digest()
-        if warrant.digest and warrant.digest != computed_digest:
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
-                reason=f"Cryptographic digest mismatch: declared {warrant.digest[:16]}... vs computed {computed_digest[:16]}...",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+        if warrant.digest != computed_digest:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                f"Cryptographic digest mismatch: declared {warrant.digest[:16]}... "
+                f"vs computed {computed_digest[:16]}...",
             )
 
-        # 3. Status check
+        # 3. Status
         if warrant.status == WarrantStatus.REVOKED:
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_REVOKED,
-                reason=f"Warrant revoked: {warrant.revocation_ref or 'revocation basis recorded'}",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_REVOKED,
+                f"Warrant revoked: {warrant.revocation_ref or 'revocation basis recorded'}",
             )
-
         if warrant.status == WarrantStatus.SUSPENDED:
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
-                reason=f"Warrant suspended: {warrant.revocation_ref or 'suspension active'}",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                f"Warrant suspended: {warrant.revocation_ref or 'suspension active'}",
             )
-
         if warrant.status != WarrantStatus.ACTIVE:
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
-                reason=f"Warrant has unrecognised status: {warrant.status}",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                f"Warrant has unrecognised status: {warrant.status}",
             )
 
-        # 4. Currency / Temporal check
-        current_time = now or datetime.now(timezone.utc)
+        # 4. Currency
         try:
             from_dt = datetime.fromisoformat(warrant.valid_from.replace("Z", "+00:00"))
             until_dt = datetime.fromisoformat(
                 warrant.valid_until.replace("Z", "+00:00")
             )
-            if current_time < from_dt or current_time > until_dt:
-                return StandingVerificationResult(
-                    eligible=False,
-                    reliance_status=RelianceStatus.INELIGIBLE_EXPIRED,
-                    reason=f"Warrant temporal window invalid: current {current_time.isoformat()} outside [{warrant.valid_from}, {warrant.valid_until}]",
-                    warrant=warrant,
-                    warrant_id=w_id,
-                    warrant_digest=w_digest,
-                )
-        except Exception as dt_exc:
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
-                reason=f"Invalid ISO 8601 temporal format: {dt_exc}",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+            out_of_window = current_time < from_dt or current_time > until_dt
+        except (TypeError, ValueError) as dt_exc:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                f"Invalid temporal comparison: {dt_exc}",
+            )
+        if out_of_window:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_EXPIRED,
+                f"Warrant temporal window invalid: current {evaluated_at} outside "
+                f"[{warrant.valid_from}, {warrant.valid_until}]",
             )
 
-        # 5. Version check
-        expected_version = context.get("governing_version") or context.get(
-            "policy_version"
-        )
-        if expected_version and warrant.governing_version != expected_version:
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_VERSION_MISMATCH,
-                reason=f"Governing version mismatch: expected {expected_version} vs warrant {warrant.governing_version}",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+        # 5. Version
+        expected_version = context["governing_version"]
+        if warrant.governing_version != expected_version:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_VERSION_MISMATCH,
+                f"Governing version mismatch: expected {expected_version} "
+                f"vs warrant {warrant.governing_version}",
             )
 
-        # 6. Scope check
-        scope_obj = (
-            warrant.scope
-            if isinstance(warrant.scope, WarrantScope)
-            else WarrantScope(
-                actions=warrant.scope.get("actions", ["*"]),
-                actors=warrant.scope.get("actors", ["*"]),
-                systems=warrant.scope.get("systems", ["*"]),
-                jurisdictions=warrant.scope.get("jurisdictions", ["*"]),
+        # 6. Scope
+        if not isinstance(warrant.scope, WarrantScope):
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                f"Warrant scope malformed; all of {list(SCOPE_DIMENSIONS)} are required",
             )
-        )
-        if not scope_obj.contains(
-            action=context.get("action"),
-            actor=context.get("actor") or context.get("operator_urn"),
+        if not warrant.scope.contains(
+            action=context["action"],
+            jurisdiction=context["jurisdiction"],
+            actor=context.get("actor"),
             system=context.get("system"),
-            jurisdiction=context.get("jurisdiction")
-            or context.get("deployment_region"),
         ):
-            return StandingVerificationResult(
-                eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_OUT_OF_SCOPE,
-                reason=f"Context ({context}) is outside warrant scope ({scope_obj.to_dict()})",
-                warrant=warrant,
-                warrant_id=w_id,
-                warrant_digest=w_digest,
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_OUT_OF_SCOPE,
+                f"Context ({context}) is outside warrant scope ({warrant.scope.to_dict()})",
             )
 
-        # All checks pass
         return StandingVerificationResult(
             eligible=True,
             reliance_status=RelianceStatus.ELIGIBLE,
             reason="Warrant standing verified and active; norm eligible for reliance",
+            evaluated_at=evaluated_at,
             warrant=warrant,
-            warrant_id=w_id,
-            warrant_digest=w_digest,
+            warrant_id=warrant.warrant_id,
+            warrant_digest=warrant.digest,
         )
 
 
 def bind_warrant_to_attestation(
     warrant: Warrant, standing: StandingVerificationResult
 ) -> ExternalAttestation:
-    """Create an ExternalAttestation binding the warrant into a GovernanceEnvelope."""
-    status_str = (
-        AttestationStatus.VERIFIED.value
-        if standing.eligible
-        else AttestationStatus.DENIED.value
-    )
+    """Create an ExternalAttestation binding the warrant into a GovernanceEnvelope.
+
+    The attestation status is always ``UNVERIFIED``: the digest proves internal
+    consistency, not issuer identity (signature verification is v0.2). Reliance
+    eligibility is carried in ``metadata["reliance_status"]``; an ineligible
+    warrant is never expressed as ``DENIED``, which would read as an
+    institutional verdict and contradict the governing rule.
+    """
+    if (
+        standing.warrant_id != warrant.warrant_id
+        or standing.warrant_digest != warrant.digest
+    ):
+        raise ValueError(
+            "Standing result does not belong to this warrant; refusing to bind evidence"
+        )
     return ExternalAttestation(
         attestation_type="WARRANT",
-        status=status_str,
+        status=AttestationStatus.UNVERIFIED.value,
         receipt_id=warrant.warrant_id,
-        attested_at=warrant.valid_from,
+        attested_at=standing.evaluated_at,
         provider_name="provider_05_warrant",
         metadata={
             "warrant_id": warrant.warrant_id,
             "warrant_digest": warrant.digest,
             "norm_id": warrant.norm_id,
+            "governing_version": warrant.governing_version,
             "reliance_status": standing.reliance_status.value,
             "reason": standing.reason,
             "issuing_authority": warrant.issuing_authority,
             "authority_basis": warrant.authority_basis,
+            "revocation_ref": warrant.revocation_ref,
+            "residual_risk_ref": warrant.residual_risk_ref,
         },
     )
