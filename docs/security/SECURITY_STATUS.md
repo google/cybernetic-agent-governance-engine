@@ -136,7 +136,7 @@ The following weaknesses are documented in [`compliance/us_fed/POAM_US_FED.md`](
 | Framework / Obligation | Status | Notes |
 | ---------------------- | ------ | ----- |
 | **EU AI Act Art. 6 + Annex III §5(b)** — High-Risk AI classification | 🟡 Partial | 6 controls mapped in `EU_ECB_BASELINE.json`; EU AI Office registration pending |
-| **EU AI Act Art. 9** — Risk management system | 🟡 Partial | Min. agentic confidence raised to 0.97; formal risk management documentation pending |
+| **EU AI Act Art. 9** — Risk management system | 🟡 Partial | Trade confidence floor 0.97 enforced by the finance `trade_confidence` tier (`config/thresholds/EU_ECB_BASELINE.json` → `domains.finance.confidence.min_trade_confidence`); formal risk management documentation pending |
 | **EU AI Act Art. 10** — Data governance | 🟡 Partial | Presidio PII masking active; data governance documentation pending |
 | **EU AI Act Art. 12** — Record-keeping | 🟡 Partial | OTel + Langfuse audit trail active; GDPR-compliant retention schedule pending |
 | **EU AI Act Art. 14** — Human oversight | ✅ Implemented | HITL gate (`interrupt_before=["governed_trader"]`); TOCTOU remediation active |

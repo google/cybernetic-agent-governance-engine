@@ -49,7 +49,7 @@ async def test_do_verify_action_rejects_invalid_amount() -> None:
     """The read-only barrier returns a non-SAFE result for negative / NaN / inf
     amounts, and still returns SAFE for a valid positive trade."""
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -86,7 +86,7 @@ async def test_atomic_verify_rejects_invalid_amount_without_mutating_balance() -
     await fake_redis.set("safety:current_cash", "100000.0")
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

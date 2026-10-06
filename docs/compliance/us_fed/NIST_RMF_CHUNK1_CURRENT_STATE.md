@@ -198,7 +198,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 - CBF: `min_cash_balance: 1000.0`, `gamma: 0.5`
 - Drawdown limit: `0.05` (5%)
 - STPA: UCA-5 threshold 4.5%, UCA-6 max order fraction 1%, max sell fraction 10%, max latency 200 ms
-- Confidence: `min_trade_confidence: 0.95` (`EU_ECB` elevates to 0.97)
+- Confidence: `domains.finance.confidence.min_trade_confidence: 0.95`; the regional overlay in `config/thresholds/{REGION}_BASELINE.json` raises it to 0.96 (`APAC_MAS`) and 0.97 (`EU_ECB`), enforced for trade execution by `src/cage_finance/tiers/trade_confidence_tier.py`
 - Consensus: `threshold_usd: 10000.0`
 - Tier-1 keywords: 14 bypass/injection phrases
 
@@ -206,7 +206,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 
 **OPA Rego policies** (active): Three policy packages in use:
 
-- `system.authz` (`deployment/system_authz.rego`): Identity-based allow, confidence thresholds (0.95 default; 0.97 for `EU_ECB`)
+- `system.authz` (`deployment/system_authz.rego`): Identity-based allow, trade confidence floor 0.95 in every region (the stricter `EU_ECB` / `APAC_MAS` floors are enforced by the finance `trade_confidence` tier, not by Rego)
 - `trade.governance` (`src/cage_finance/opa/trade_governance.rego`): RBAC-based limits (junior ≤ $5k/$10k, senior ≤ $500k/$1M), risk-profile rules, prompt-injection detection
 - `finance.generated` (`src/governed_financial_advisor/governance/policy/generated_rules.rego`): Auto-generated from transpiler — DENY slippage (MARKET order > 1% daily volume) and drawdown (BUY with drawdown > 4.5%). **Note:** This file has been purged from the active repository; the consolidated canonical policy is `trade_governance.rego`.
 

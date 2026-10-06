@@ -43,9 +43,19 @@ class TestCashBarrierDeclaration:
         """The threshold_key must match config/governance_thresholds.json path."""
         assert CashBarrier.threshold_key == "domains.finance.cbf.min_cash_balance"
 
-    def test_gamma_default_is_0_5(self):
-        """The gamma parameter (CBF time step coefficient) must match THRESHOLDS."""
-        assert CashBarrier.gamma == 0.5
+    def test_gamma_has_no_default(self):
+        """gamma comes from the region's effective domains.finance.cbf.gamma, never
+        from a hardcoded default that could diverge from the thresholds."""
+        with pytest.raises(TypeError):
+            CashBarrier()  # type: ignore[call-arg]
+
+    def test_plugin_barrier_gamma_matches_effective_threshold(self):
+        """The plugin builds the barrier with the effective cbf.gamma."""
+        from src.cage_finance.plugin import FinanceCagePlugin
+        from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
+        (barrier,) = FinanceCagePlugin().contribute().invariants
+        assert barrier.gamma == THRESHOLDS.resolve("domains.finance.cbf.gamma")
 
 
 class TestFinanceCostResolver:

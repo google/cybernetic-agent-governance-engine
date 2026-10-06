@@ -53,7 +53,7 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # W1 (Post-v3): Mandatory invariant with custom gamma
-    invariant = replace(CashBarrier(), gamma=_GAMMA)
+    invariant = replace(CashBarrier(gamma=0.5), gamma=_GAMMA)
 
     # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
     cbf = ControlBarrierFunction(
@@ -382,7 +382,7 @@ async def test_verify_action_non_trade_action_is_always_safe():
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # Create CBF with gamma=0.9 immutably
-    invariant = replace(CashBarrier(), gamma=0.9)
+    invariant = replace(CashBarrier(gamma=0.5), gamma=0.9)
     cbf = ControlBarrierFunction(
         invariant=invariant,
         cost_resolver=finance_cost_resolver,
@@ -422,7 +422,7 @@ async def test_verify_action_drawdown_violation_returns_unsafe():
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # Create CBF with gamma=0.1 so at most 10% of barrier margin h_t may be consumed
-    invariant = replace(CashBarrier(), gamma=0.1)
+    invariant = replace(CashBarrier(gamma=0.5), gamma=0.1)
     cbf = ControlBarrierFunction(
         invariant=invariant,
         cost_resolver=finance_cost_resolver,
@@ -469,7 +469,7 @@ async def test_verify_action_trade_at_exact_floor_is_safe():
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # Create CBF with gamma=1.0 immutably (required_h_next = 0)
-    invariant = replace(CashBarrier(), gamma=1.0)
+    invariant = replace(CashBarrier(gamma=0.5), gamma=1.0)
     cbf = ControlBarrierFunction(
         invariant=invariant,
         cost_resolver=finance_cost_resolver,
@@ -510,7 +510,7 @@ async def test_verify_action_trade_below_floor_returns_unsafe():
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # Create CBF with gamma=1.0 immutably
-    invariant = replace(CashBarrier(), gamma=1.0)
+    invariant = replace(CashBarrier(gamma=0.5), gamma=1.0)
     cbf = ControlBarrierFunction(
         invariant=invariant,
         cost_resolver=finance_cost_resolver,
@@ -549,7 +549,7 @@ async def test_update_state_retries_on_watch_error():
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     # Create CBF with gamma immutably
-    invariant = replace(CashBarrier(), gamma=_GAMMA)
+    invariant = replace(CashBarrier(gamma=0.5), gamma=_GAMMA)
     cbf = ControlBarrierFunction(
         invariant=invariant,
         cost_resolver=finance_cost_resolver,
@@ -878,7 +878,7 @@ def test_get_h_returns_correct_barrier_value(balance, min_cash, expected_h):
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -963,7 +963,7 @@ class TestFenceEpochColdStartFailClosed:
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction(
-                    invariant=CashBarrier(),
+                    invariant=CashBarrier(gamma=0.5),
                     cost_resolver=finance_cost_resolver,
                 )
 
@@ -996,7 +996,7 @@ class TestFenceEpochColdStartFailClosed:
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction(
-                    invariant=CashBarrier(),
+                    invariant=CashBarrier(gamma=0.5),
                     cost_resolver=finance_cost_resolver,
                 )
 
@@ -1024,7 +1024,7 @@ class TestFenceEpochColdStartFailClosed:
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction(
-                    invariant=CashBarrier(),
+                    invariant=CashBarrier(gamma=0.5),
                     cost_resolver=finance_cost_resolver,
                 )
 
@@ -1050,7 +1050,7 @@ class TestFenceEpochColdStartFailClosed:
             patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
             )
 
@@ -1086,7 +1086,7 @@ class TestFenceEpochColdStartFailClosed:
             from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
                 skip_epoch_seed=True,
             )
@@ -1116,7 +1116,7 @@ class TestFenceEpochColdStartFailClosed:
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction(
-                    invariant=CashBarrier(),
+                    invariant=CashBarrier(gamma=0.5),
                     cost_resolver=finance_cost_resolver,
                 )
 

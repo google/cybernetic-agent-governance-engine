@@ -184,7 +184,15 @@ def test_eu_governor_runs_fria_once_in_phase_one_after_causal() -> None:
     governor = _assemble(jurisdiction=eu_ai_act.contribution(provider=_FakeProvider()))  # type: ignore[arg-type]
     names = _domain_stage_names(governor)
     assert names.count("fria") == 1
-    assert names == ["bounding", "consensus", "causal", "fria", "cbf", "fiscal"]
+    assert names == [
+        "trade_confidence",
+        "bounding",
+        "consensus",
+        "causal",
+        "fria",
+        "cbf",
+        "fiscal",
+    ]
     fria = next(
         s
         for s in governor.stages

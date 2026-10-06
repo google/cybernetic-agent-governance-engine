@@ -91,7 +91,7 @@ Alert thresholds are drawn from [`config/governance_thresholds.json`](../../conf
 | `stpa.uca6_max_order_volume_fraction` | 1% daily volume     | SI-4, CM-6        | Order size exceeds 1% of daily trading volume                 | Automated order rejection; audit log                     |
 | `stpa.max_sell_portfolio_fraction`    | 10%                 | CM-6, AC-3        | Sell order > 10% of portfolio total                           | Block + escalate to System Owner within 4h               |
 | `stpa.max_latency_ms`                 | 200 ms              | SI-4, SC-5        | Round-trip latency > 200ms                                    | Governance middleware degraded-mode alert                |
-| `confidence.min_trade_confidence`     | 0.95 (95%)          | SR 11-7, SA-11    | Model confidence < 95% → trade blocked                        | Blocked trade logged; weekly ISSO review                 |
+| `domains.finance.confidence.min_trade_confidence` | 0.95 (US_FED); 0.96 APAC_MAS; 0.97 EU_ECB | SR 11-7, SA-11    | Trade confidence below the regional floor → approval or deferral | Blocked trade logged; weekly ISSO review                 |
 | `consensus.threshold_usd`             | $10,000             | AC-3, CM-6        | Trade > $10k → multi-agent consensus required                 | Consensus check enforced; failure → block                |
 | **CVE Severity: CRITICAL**            | Any                 | RA-5, SI-2        | pip-audit or Trivy CRITICAL finding                           | Immediate: ISSO notified; POA&M entry created within 24h |
 | **CVE Severity: HIGH**                | Any                 | RA-5, SI-2        | pip-audit or Trivy HIGH finding                               | Within 72h: ISSO triage; POA&M updated                   |

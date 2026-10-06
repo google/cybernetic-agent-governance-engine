@@ -651,7 +651,10 @@ class InvariantModel(Protocol):
     def threshold_key(self) -> str:
         """THRESHOLDS lookup path for the floor value.
 
-        Resolved from config/thresholds/{REGION}_BASELINE.json at runtime.
+        Resolved against the active region's effective thresholds: the global
+        ``domains.<section>`` of config/governance_thresholds.json with the
+        ``domains`` overlay of config/thresholds/{REGION}_BASELINE.json applied
+        (``schemas/regional_overlay.py``).
         Example: 'domains.example.min_resource_floor', 'domains.healthcare.min_therapeutic_concentration'
         """
         ...

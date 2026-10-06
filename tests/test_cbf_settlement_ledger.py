@@ -233,7 +233,7 @@ def _build_world(
         pending_debit_max_age_seconds=pending_max_age_s,
     )
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

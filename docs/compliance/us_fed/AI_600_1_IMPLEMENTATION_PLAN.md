@@ -115,7 +115,7 @@ ATO under SR 26-2.
    - Authorized action space (read-only market data, advisory text generation, no direct
      trade execution)
    - Human oversight boundaries (consensus threshold USD 10,000 per
-     `config/thresholds/US_FED_BASELINE.json` → `consensus.threshold_usd`)
+     `config/governance_thresholds.json` → `domains.finance.consensus.threshold_usd`)
    - Inter-agent trust model (CAGE gateway is sole trusted orchestrator; no peer-to-peer
      agent calls without routing seal verification)
    - Scope limitation enforcement mechanism (`src/gateway/governance/routing_seal.py`)
@@ -278,7 +278,7 @@ Langfuse confabulation scorer active in dev; SBOM uploaded to GCS in prod CI.
 **POAM**: AI600-001 | **AI 600-1 ref**: §2.1 Confabulation | **Control**: CTRL_AGT_001
 
 **Current state**: `CTRL_AGT_001` enforces `confidence ≥ 0.95` at the gateway layer
-(`config/thresholds/US_FED_BASELINE.json` → `confidence.min_score`). However, there is
+(`config/governance_thresholds.json` → `confidence.agent_threshold`). However, there is
 no Langfuse scorer that records confabulation events for audit purposes.
 
 **Dev tasks**:
@@ -579,7 +579,7 @@ keyword-based attacks but not semantic injection patterns.
 **Controls**: `ConsensusEngine`, consensus threshold USD 10,000
 
 **Current state**: `ConsensusEngine` (`src/gateway/governance/consensus/engine.py`) enforces
-the USD 10,000 consensus threshold from `config/thresholds/US_FED_BASELINE.json`.
+the USD 10,000 consensus threshold from `config/governance_thresholds.json` (`domains.finance.consensus.threshold_usd`; `US_FED` does not override it).
 However, there is no formal human-in-the-loop (HITL) escalation path — when the
 threshold is exceeded, the request is blocked but not routed to a human reviewer.
 

@@ -85,6 +85,11 @@ env:
 
 1. Create `config/compliance/{REGION_CODE}_BASELINE.json` using an existing profile as a template.
 2. Create `config/thresholds/{REGION_CODE}_BASELINE.json` with regional quantitative values.
+   Domain thresholds go under `domains.<section>` (e.g. `domains.finance.cbf.gamma`): the
+   kernel deep-merges them onto the global section of `config/governance_thresholds.json`
+   at load ([`regional_overlay.py`](../../src/gateway/governance/schemas/regional_overlay.py))
+   and the domain's schema validates the result at governor assembly, so an unknown key
+   fails startup. Keys starting with `_` are annotations.
 3. Add the region code to `SUPPORTED_REGIONS` in
    [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py).
 4. Update `_EU_LEGACY_CITATION_OVERRIDE` in

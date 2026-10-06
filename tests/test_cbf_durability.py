@@ -66,7 +66,7 @@ def fake_redis_async():
 def cbf_finance():
     """CBF instance configured with CashBarrier."""
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -147,7 +147,7 @@ class TestFenceEpochHighWaterMark:
             "src.gateway.governance.safety.cbf_engine.sync_redis_client", sync_mock
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
                 skip_epoch_seed=False,
             )

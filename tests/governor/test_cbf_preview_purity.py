@@ -59,7 +59,7 @@ _PREVIEWS = 5  # an accumulating preview would refuse from the 3rd on ($30k / $1
 
 def _engine() -> ControlBarrierFunction:
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

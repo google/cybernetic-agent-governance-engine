@@ -61,7 +61,7 @@ def cbf_instance(mock_redis_client, mock_raw_client):
             AsyncMock(return_value=mock_raw_client),
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
                 skip_epoch_seed=True,
             )
@@ -407,7 +407,7 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
             AsyncMock(return_value=mock_raw_client),
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
                 skip_epoch_seed=True,
             )

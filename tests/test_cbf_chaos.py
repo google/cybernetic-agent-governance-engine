@@ -59,7 +59,7 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

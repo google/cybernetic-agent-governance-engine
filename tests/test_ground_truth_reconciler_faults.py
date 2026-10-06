@@ -85,7 +85,7 @@ def _domain_provider_specs() -> list[tuple[str, Any, Any, Any, str, dict[str, An
         (
             "finance_cash",
             lambda: SimulatedCashLedgerProvider(seed=42),
-            CashBarrier(),
+            CashBarrier(gamma=0.5),
             finance_cost_resolver,
             "execute_trade",
             {"amount": 500.0},

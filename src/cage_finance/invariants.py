@@ -38,16 +38,18 @@ class CashBarrier:
     This class only declares the parameters.
 
     Implements the InvariantModel protocol from src.gateway.governance.contracts.
+
+    ``gamma`` has no default: the plugin passes the region's effective
+    ``domains.finance.cbf.gamma`` (``load_finance_thresholds().cbf.gamma``), so
+    the barrier enforces the same decay rate the thresholds declare.
     """
 
+    gamma: float
     invariant_id: str = "finance.cash_balance"
     state_key: str = "safety:current_cash"
     threshold_key: str = "domains.finance.cbf.min_cash_balance"
-    gamma: float = 0.5
     initial_state: float = 100_000.0
-    requires_external_ground_truth: bool = (
-        True  # Must match domains.finance.cbf.gamma — asserted at registration
-    )
+    requires_external_ground_truth: bool = True
 
 
 def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
