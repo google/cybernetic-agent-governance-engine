@@ -986,13 +986,16 @@ adapter directory.
 
 ---
 
-### 7.1 `POST {base}/validate/fria` — Provider 01 Synchronous Gate
+### 7.1 `POST {base}/cage/validate` — Provider 01 Synchronous Gate
 
 **Base URL:** `https://api.example.com/normative` (placeholder,
 `CAGE_NORMATIVE_ENDPOINT`)
-**Auth:** `Authorization: Bearer <key>`
+**Path:** `/cage/validate` (`CAGE_NORMATIVE_VALIDATE_PATH`, cut over from legacy
+`/validate/fria` in Phase 3 v0.2; sends 37-field `CageAuthorityDetermineRequest`)
+**Auth:** `Authorization: Bearer <key>` (plus optional
+`X-Serverless-Authorization: Bearer <token>` from `CAGE_NORMATIVE_GCP_ID_TOKEN`)
 **Timeout:** 5s default (`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`)
-**Adapter:** [`provider_01/provider.py`](../src/integrations/provider_01/provider.py:323)
+**Adapter:** [`provider_01/provider.py`](../src/integrations/provider_01/provider.py:352)
 
 Every 200 response **must** include a top-level `decision`. The vocabulary is
 `ALLOW` / `REFUSE` / `ESCALATE`, matched case-insensitively.
@@ -1001,7 +1004,7 @@ Every 200 response **must** include a top-level `decision`. The vocabulary is
 |---|---|---|---|
 | `ALLOW` | `true` | `CONSEQUENCE_TOKEN` (`info`) | ConsequenceToken JWS minted |
 | `REFUSE` | `false` | `FLOWSIGNAL_REFUSE` (`blocked`) | Hard deny |
-| `ESCALATE` | `false` | `FLOWSIGNAL_HOLD` (`review`) | `needs_human_review: true` → `DeferQueue` |
+| `ESCALATE` | `false` | `EXTERNAL_HOLD` (`review`) | `needs_human_review: true` → `DeferQueue` |
 | Unrecognized | `false` | `PARSE_ERROR` (`blocked`) | Fail-closed |
 | *(absent)* | `false` | `cage.endpoint_error` (`blocked`) | Fail-closed |
 
