@@ -304,8 +304,6 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
     }
 
     # Invoke natively
-    result = await governed_trader_graph.ainvoke(  # type: ignore[call-overload]  # config dict is passed as RunnableConfig-compatible dict; LangGraph overloads require RunnableConfig type
-        subgraph_state, {"recursion_limit": 10}
-    )
+    result = await subgraph.ainvoke(subgraph_state, {"recursion_limit": 10})
 
     return {"messages": result["messages"]}

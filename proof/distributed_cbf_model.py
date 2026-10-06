@@ -180,7 +180,11 @@ def write_reject(s: State, a: int, cfg: Config) -> State | None:
     if s.read_epoch[a] == 0:
         return None
     cas_ok = (not cfg.fenced) or s.fence_epoch == s.read_epoch[a]
-    if cas_ok and s.fence_epoch < MAX_FENCE_EPOCH and s.available_balance >= RESERVE_AMOUNT:
+    if (
+        cas_ok
+        and s.fence_epoch < MAX_FENCE_EPOCH
+        and s.available_balance >= RESERVE_AMOUNT
+    ):
         return None
     return s._replace(read_epoch=_set(s.read_epoch, a, 0))
 
@@ -238,7 +242,9 @@ def _replica_current(s: State) -> bool:
 def replicate(s: State, cfg: Config) -> State | None:
     if _replica_current(s):
         return None
-    return s._replace(rep_balance=s.available_balance, rep_epoch=s.fence_epoch, rep_ledger=s.ledger)
+    return s._replace(
+        rep_balance=s.available_balance, rep_epoch=s.fence_epoch, rep_ledger=s.ledger
+    )
 
 
 def stale_failover(s: State, cfg: Config) -> State | None:
@@ -285,7 +291,10 @@ def actuatable(s: State, a: int, cfg: Config) -> int:
 
 
 def sp1_no_double_spend(s: State, cfg: Config) -> bool:
-    return s.spent + sum(actuatable(s, a, cfg) for a in range(cfg.n_agents)) <= INITIAL_POOL
+    return (
+        s.spent + sum(actuatable(s, a, cfg) for a in range(cfg.n_agents))
+        <= INITIAL_POOL
+    )
 
 
 def sp2_no_overcommit(s: State, cfg: Config) -> bool:
@@ -295,7 +304,10 @@ def sp2_no_overcommit(s: State, cfg: Config) -> bool:
 
 
 def sp4_epoch_monotonic(before: State, after: State) -> bool:
-    return after.fence_epoch >= before.fence_epoch or after.stale_failovers > before.stale_failovers
+    return (
+        after.fence_epoch >= before.fence_epoch
+        or after.stale_failovers > before.stale_failovers
+    )
 
 
 @dataclass(frozen=True)
@@ -333,7 +345,9 @@ def check(cfg: Config) -> Result:
         prev, label = parent[cur]  # type: ignore[misc]
         trace.append(label)
         cur = prev
-    return Result(len(parent), first_violation is None, sp2_ok, sp4_ok, tuple(reversed(trace)))
+    return Result(
+        len(parent), first_violation is None, sp2_ok, sp4_ok, tuple(reversed(trace))
+    )
 
 
 # ---------------------------------------------------------------------------

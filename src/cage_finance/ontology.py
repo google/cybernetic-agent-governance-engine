@@ -189,7 +189,7 @@ class TradingKnowledgeGraph:
 
 
 __all__ = [
-    "Constraint",
     "STAMP_UCA",
+    "Constraint",
     "TradingKnowledgeGraph",
 ]

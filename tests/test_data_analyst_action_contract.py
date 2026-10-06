@@ -136,20 +136,24 @@ def _finance_structure() -> stpa_compiler.ControlStructureModel:
 
 
 def test_control_action_classification_reaches_the_registry() -> None:
-    terminals = json.loads(stpa_compiler.generate_terminal_registry(_finance_structure()))[
-        "terminals"
-    ]
+    terminals = json.loads(
+        stpa_compiler.generate_terminal_registry(_finance_structure())
+    )["terminals"]
     assert terminals["market_analysis"] == "READ_ONLY"
 
 
 def test_uca_classification_wins_when_more_restrictive() -> None:
     cs = _finance_structure()
     actions = [
-        {**ca, "terminal_classification": "READ_ONLY"} if ca.get("name") == "execute_trade" else ca
+        {**ca, "terminal_classification": "READ_ONLY"}
+        if ca.get("name") == "execute_trade"
+        else ca
         for ca in cs.control_actions
     ]
     terminals = json.loads(
-        stpa_compiler.generate_terminal_registry(cs.model_copy(update={"control_actions": actions}))
+        stpa_compiler.generate_terminal_registry(
+            cs.model_copy(update={"control_actions": actions})
+        )
     )["terminals"]
     assert terminals["execute_trade"] == "IRREVERSIBLE_TERMINAL"
 

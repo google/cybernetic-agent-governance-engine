@@ -40,4 +40,8 @@ FROM nginxinc/nginx-unprivileged:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 8080
 
+# Pin the runtime user explicitly (numeric UID so runAsNonRoot can verify it)
+# instead of relying on the base image's implicit default.
+USER 101
+
 CMD ["nginx", "-g", "daemon off;"]

@@ -74,4 +74,6 @@ def assert_nothing_committed(result: PipelineResult) -> None:
     """A refused run must leave nothing committed; commits are made only when clean."""
     if result.commits:
         stages = ", ".join(stage.name for stage, _ in result.commits)
-        raise GovernanceError(f"[UNROLLED_COMMIT] refused run left commits outstanding: {stages}")
+        raise GovernanceError(
+            f"[UNROLLED_COMMIT] refused run left commits outstanding: {stages}"
+        )

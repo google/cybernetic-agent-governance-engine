@@ -83,6 +83,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-094 | SI-10 / CA-7 / `CTRL_MRM_004` | The causal tier has no live world-model feed outside dev/test/ci, so it denies every `execute_trade` in enforcing postures. The 2026-10-03 staging benchmark (`docs/paper/measurements/2026-10-03-5aa1a65f/`) recorded all 4 benign trade prompts as refused, first with `CAUSAL_TELEMETRY_UNAVAILABLE`. [`LangfuseTelemetryProvider`](../src/integrations/telemetry_langfuse/provider.py) called `Langfuse.fetch_traces`, which SDK v3 removed (fixed in #387), and then aborted on the first trace whose `input` was a string (fixed in #389). With both fixed, the provider reads live traces in the gateway pod (verified 2026-10-03 at `c43c41be`), but 0 of them carry the causal columns. The tier therefore still denies with `CAUSAL_TELEMETRY_UNAVAILABLE` (1 to 49 rows would give `CAUSAL_INSUFFICIENT_SAMPLES`), because nothing produces the rows the model needs. `amount` is real. `market_volatility` comes only from [`StubMarketDataProvider`](../src/cage_finance/safety/bounding/providers.py) (a constant 0.15). No component observes a post-trade `risk_score` outcome. The deny is correct fail-closed bootstrap behaviour (POAM-2026-088). The gap is the missing Tier 2 data source: a deterministically seeded, fault-injectable market-data and outcome backend. Emitting the system's own risk formula as the outcome would make DoWhy validate the model against itself, so that is not a remediation | Moderate | 2026-12-31 |
 | POAM-2026-098 | AU-10 / AC-3 / SI-10 | Partner actuation receipts are not yet signed. The code side is remediated in `9c68a6e8` and `72574529`: [`ActuationReceipt`](../src/gateway/governance/seams/actuation.py) has a three-valued outcome (an `UNKNOWN` receipt settles as executed and is never retried), the kernel [`dispatch_actuation()`](../src/gateway/governance/execution_actuator.py) is the only writer of actuation evidence, and [`verify_partner_receipt()`](../src/integrations/actuator_01/receipt_verifier.py) checks a detached Ed25519 signature against a key resolved by `kid` (`INVALID` forces `UNKNOWN`). The signature format is a CAGE-proposed extension that the actuator_01 partner has not adopted, so live receipts are recorded as `UNVERIFIED`. Closure requires partner adoption, an over-the-wire conformance test against the partner sandbox, and `ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS` enabled in enforcing postures. Residual duplication: `Provider07JwksClient` has not moved to the shared [`Ed25519KeyManifestClient`](../src/integrations/trust/key_manifest.py) | Moderate | 2026-12-31 |
 | POAM-2026-100 | SI-10 / AU-10 | Evidence data integrity: the `PIISanitizer` SWIFT/BIC pattern matched any eight- or eleven-character upper-case token, so governance verdicts and states such as `APPROVED`, `REJECTED` and `ESCALATE` were redacted to `[REDACTED_SWIFT]` before hashing in the evidence stream. Records lost their verdicts, and events differing only in such a word produced identical payloads. Remediated in code on `fix/pii-swift-false-positive`: a BIC is redacted only with a contextual cue (`BIC`/`SWIFT` label or BIC/SWIFT dict key) and a valid ISO 3166-1 alpha-2 country code ([`pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py)); property test over all upper-case literals in `src/` ([`test_pii_sanitizer_bic.py`](../tests/test_pii_sanitizer_bic.py)). Records written before the fix stay verifiable but keep the redaction. See [`EVIDENCE_CHAIN.md` §4.4](architecture/EVIDENCE_CHAIN.md). Remains Open pending merge SHA | High | 2026-10-15 |
+| POAM-2026-101 | RA-5 / SI-2 | `python:3.12-slim-bookworm` OS-package CVEs with no Debian fix kept the SBOM/CVE gate red: util-linux CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410, OpenSSL CVE-2026-84782, and 39 `linux-libc-dev` kernel-header CVEs; `.trivyignore` held expired suppressions (review dates 2026-09-05, 2026-09-08). Remediated on `fix/ci-test-errors`: advisor, gateway and compliance-bridge images are two-stage builds on a digest-pinned Wolfi base with no compiler or util-linux at runtime, and `.trivyignore` is empty. Cloud Build verification on 2026-10-05 ([`cloudbuild.verify.yaml`](../deployment/docker/cloudbuild.verify.yaml), builds `575e3466`, `3e268752`, `1df4fe5d`) found 0 HIGH/CRITICAL and 0 suppressed findings. Remains Open pending merge SHA and green SBOM/CVE legs on `main` | Moderate | 2026-11-15 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -479,6 +480,35 @@ From `v2.0.0-dev.1` (commit `1902c92`, 2026-06-01) until `refactor/fria-jurisdic
 
 **Remaining Closure Criteria:**
 1. Merge `fix/pii-swift-false-positive`; record the merge commit SHA and the actual merge date here.
+
+### POAM-2026-101: Base-Image CVEs Without a Debian Fix
+
+**Control:** NIST RA-5, SI-2
+**Risk Level:** Moderate
+**Status:** Open (remediated in `fix/ci-test-errors`, pending merge)
+**Date Opened:** 2026-10-05
+**Target Closure:** 2026-11-15
+
+**Description:**
+The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on HIGH findings in the Debian 12 OS layer of `python:3.12-slim-bookworm`. On 2026-10-05 the gateway leg reported 73 findings (44 unique CVEs) and the compliance-bridge leg 34 (5 unique). All had Trivy status `affected` and no Fixed Version, so the build-time `apt-get upgrade` could not remove them. 39 came from `linux-libc-dev` (kernel headers pulled in by the C toolchain). The other five were util-linux CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410 and OpenSSL CVE-2026-84782 (DTLS). Separately, `.trivyignore` held about 40 suppressions whose review dates (2026-09-05, 2026-09-08) had passed, and `sbom.yml` scanned the repo-root advisor Dockerfile under the name `gateway`, so `src/gateway/Dockerfile` was never scanned.
+
+**Remediation Implemented in Code (`fix/ci-test-errors`):**
+1. [`Dockerfile`](../Dockerfile), [`src/gateway/Dockerfile`](../src/gateway/Dockerfile) and [`src/compliance_bridge/Dockerfile`](../src/compliance_bridge/Dockerfile) are two-stage builds on `cgr.dev/chainguard/wolfi-base`, pinned by digest (`ARG WOLFI_BASE`). The compiler and uv stay in the builder stage. The runtime stage installs only `python-3.12`, `libstdc++`, `libgcc` and `tzdata`, runs `apk upgrade`, and contains no util-linux, perl or ncurses.
+2. The advisor image copies an explicit source allowlist instead of `COPY . .`, which had shipped local `node_modules` (5 HIGH `fast-uri` CVEs) into the image.
+3. `sbom.yml` scans all four shipped Python images (advisor, gateway, compliance-bridge, NeMo Guardrails) with `--show-suppressed`. [`Dockerfile.nemo`](../deployment/docker/Dockerfile.nemo) moved to the same Wolfi base. It had been unscanned, ran as root, and installed an unpinned `grpcio-tools` into its runtime venv.
+4. [`cloudbuild.verify.yaml`](../deployment/docker/cloudbuild.verify.yaml) builds a Dockerfile on the GKE architecture without pushing. It smoke-imports the entry module as the image user and applies the same Trivy gate.
+5. Every `.trivyignore` entry was pruned. No suppression matched any finding in the new images.
+
+**Verification (2026-10-05, Cloud Build):**
+| Image | Build | Smoke import | Trivy HIGH/CRITICAL | Suppressed matches |
+|---|---|---|---|---|
+| governed-financial-advisor | `575e3466` | `src.governed_financial_advisor.server` ok | 0 | 0 |
+| gateway | `3e268752` | `src.gateway.server.hybrid_server` ok | 0 | 0 |
+| compliance-bridge | `1df4fe5d` | `compliance_bridge.main` ok | 0 | 0 |
+| nemo-guardrails | `82604db1` | `src.integrations.nemo.server` ok | 0 | 0 |
+
+**Remaining Closure Criteria:**
+1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
 
 ### POAM-2026-085: Causal Gatekeeper Cache Bypassed the Risk Boundary
 

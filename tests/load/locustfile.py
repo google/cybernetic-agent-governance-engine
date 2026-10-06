@@ -134,7 +134,9 @@ class GovernanceUser(HttpUser):
                     data = response.json()
                     # ALLOW / NARROW arrive wrapped in a signed envelope whose
                     # payload carries the verdict; other verdicts are bare.
-                    verdict = data.get("verdict") or data.get("payload", {}).get("verdict", "")
+                    verdict = data.get("verdict") or data.get("payload", {}).get(
+                        "verdict", ""
+                    )
                     if verdict in _VERDICTS_200:
                         if verdict == "REQUIRE_APPROVAL":
                             events.request.fire(

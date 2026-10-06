@@ -70,29 +70,43 @@ def _make_classification_engine(
 
 def _make_violations(violation_strings: list[str]) -> list[Violation]:
     """Helper to create Violation objects from strings.
-    
+
     Maps violation strings to appropriate ViolationKind based on content.
     """
     violations = []
     for v_str in violation_strings:
         # Determine kind based on violation string content
-        if any(marker in v_str for marker in ["STPA", "UCA-", "CBF", "OPA Denied", "Fiscal Limit Pre-Reservation REJECTED"]):
+        if any(
+            marker in v_str
+            for marker in [
+                "STPA",
+                "UCA-",
+                "CBF",
+                "OPA Denied",
+                "Fiscal Limit Pre-Reservation REJECTED",
+            ]
+        ):
             kind = ViolationKind.HARD
         elif any(marker in v_str for marker in ["Manual Review", "[CTRL_OPA_001]"]):
             kind = ViolationKind.HITL
-        elif any(marker in v_str for marker in ["Amount exceeds", "Scope exceeds", "Date range exceeds"]):
+        elif any(
+            marker in v_str
+            for marker in ["Amount exceeds", "Scope exceeds", "Date range exceeds"]
+        ):
             kind = ViolationKind.NARROWABLE
         elif "Confidence Violation" in v_str or "POAM-TIER2" in v_str:
             kind = ViolationKind.DEFERRABLE
         else:
             kind = ViolationKind.HARD  # Default to hard for unknown
-        
-        violations.append(Violation(
-            tier="test_tier",
-            code="TEST-001",
-            message=v_str,
-            kind=kind,
-        ))
+
+        violations.append(
+            Violation(
+                tier="test_tier",
+                code="TEST-001",
+                message=v_str,
+                kind=kind,
+            )
+        )
     return violations
 
 
@@ -109,7 +123,7 @@ class TestClassifyViolationDeny:
         engine = _make_classification_engine(narrower_registry)
         violation_strs = ["UCA-7: Unsafe Control Action detected"]
         violations = _make_violations(violation_strs)
-        
+
         context = ClassificationContext(
             violations=violations,
             confidence=0.99,
@@ -117,9 +131,9 @@ class TestClassifyViolationDeny:
             policy_ambiguous=False,
             params={},
         )
-        
+
         result = engine.classify(context, "test_action")
-        
+
         assert result.decision == GovernanceDecision.DENY
         assert result.metadata["classification_reason"] == "hard_violation"
         assert not result.metadata["deferrable"]
@@ -127,8 +141,10 @@ class TestClassifyViolationDeny:
     def test_cbf_violations_return_deny(self, narrower_registry):
         """CBF cash barrier violations MUST always result in DENY."""
         engine = _make_classification_engine(narrower_registry)
-        violations = _make_violations(["Safety Violation (RBC/CBF): cash barrier exceeded"])
-        
+        violations = _make_violations(
+            ["Safety Violation (RBC/CBF): cash barrier exceeded"]
+        )
+
         context = ClassificationContext(
             violations=violations,
             confidence=0.99,
@@ -136,9 +152,9 @@ class TestClassifyViolationDeny:
             policy_ambiguous=False,
             params={},
         )
-        
+
         result = engine.classify(context, "test_action")
-        
+
         assert result.decision == GovernanceDecision.DENY
         assert not result.metadata["deferrable"]
 
@@ -146,7 +162,7 @@ class TestClassifyViolationDeny:
         """Explicit OPA DENY violation MUST result in DENY."""
         engine = _make_classification_engine(narrower_registry)
         violations = _make_violations(["[CTRL_OPA_005] OPA Denied Action"])
-        
+
         context = ClassificationContext(
             violations=violations,
             confidence=0.99,
@@ -154,17 +170,19 @@ class TestClassifyViolationDeny:
             policy_ambiguous=False,
             params={},
         )
-        
+
         result = engine.classify(context, "test_action")
-        
+
         assert result.decision == GovernanceDecision.DENY
         assert not result.metadata["deferrable"]
 
     def test_fiscal_limit_rejection_returns_deny(self, narrower_registry):
         """Fiscal Limit Pre-Reservation REJECTED is a hard violation."""
         engine = _make_classification_engine(narrower_registry)
-        violations = _make_violations(["Fiscal Limit Pre-Reservation REJECTED: amount exceeds daily cap"])
-        
+        violations = _make_violations(
+            ["Fiscal Limit Pre-Reservation REJECTED: amount exceeds daily cap"]
+        )
+
         context = ClassificationContext(
             violations=violations,
             confidence=0.99,
@@ -172,9 +190,9 @@ class TestClassifyViolationDeny:
             policy_ambiguous=False,
             params={},
         )
-        
+
         result = engine.classify(context, "test_action")
-        
+
         assert result.decision == GovernanceDecision.DENY
 
 
@@ -189,7 +207,9 @@ class TestClassifyViolationDefer:
     def test_low_confidence_soft_violations_return_defer(self, narrower_registry):
         """Low confidence + soft violations → DEFER (when enabled)."""
         engine = _make_classification_engine(narrower_registry, defer_enabled=True)
-        violations = _make_violations(["Confidence Violation: score 0.55 < threshold 0.95"])
+        violations = _make_violations(
+            ["Confidence Violation: score 0.55 < threshold 0.95"]
+        )
 
         context = ClassificationContext(
             violations=violations,
@@ -208,7 +228,9 @@ class TestClassifyViolationDefer:
     def test_defer_disabled_falls_back_to_deny(self, narrower_registry):
         """When defer_enabled=False, DEFER candidates fall back to DENY."""
         engine = _make_classification_engine(narrower_registry, defer_enabled=False)
-        violations = _make_violations(["Confidence Violation: score 0.55 < threshold 0.95"])
+        violations = _make_violations(
+            ["Confidence Violation: score 0.55 < threshold 0.95"]
+        )
 
         context = ClassificationContext(
             violations=violations,
@@ -249,16 +271,20 @@ class TestClassifyViolationRequireApproval:
         assert result.decision == GovernanceDecision.REQUIRE_APPROVAL
         assert not result.metadata["deferrable"]
 
-    def test_opa_manual_review_decision_returns_require_approval(self, narrower_registry):
+    def test_opa_manual_review_decision_returns_require_approval(
+        self, narrower_registry
+    ):
         """OPA decision MANUAL_REVIEW → REQUIRE_APPROVAL (even with DEFERRABLE violations)."""
         engine = _make_classification_engine(narrower_registry)
         # Use a DEFERRABLE violation to show OPA MANUAL_REVIEW takes precedence
-        violations = [Violation(
-            tier="opa_tier",
-            code="OPA-MANUAL",
-            message="Policy requires manual review",
-            kind=ViolationKind.DEFERRABLE,
-        )]
+        violations = [
+            Violation(
+                tier="opa_tier",
+                code="OPA-MANUAL",
+                message="Policy requires manual review",
+                kind=ViolationKind.DEFERRABLE,
+            )
+        ]
 
         context = ClassificationContext(
             violations=violations,
@@ -275,12 +301,14 @@ class TestClassifyViolationRequireApproval:
     def test_hitl_violation_returns_require_approval(self, narrower_registry):
         """HITL violations → REQUIRE_APPROVAL."""
         engine = _make_classification_engine(narrower_registry)
-        violations = [Violation(
-            tier="test_tier",
-            code="TEST-001",
-            message="Human-in-the-loop required",
-            kind=ViolationKind.HITL,
-        )]
+        violations = [
+            Violation(
+                tier="test_tier",
+                code="TEST-001",
+                message="Human-in-the-loop required",
+                kind=ViolationKind.HITL,
+            )
+        ]
 
         context = ClassificationContext(
             violations=violations,

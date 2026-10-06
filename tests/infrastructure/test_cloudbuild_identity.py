@@ -43,8 +43,14 @@ def test_cloudbuild_service_account_and_build_grants_declared() -> None:
 
     # Three build-time IAM bindings on google_service_account.cloudbuild
     assert 'resource "google_project_iam_member" "cloudbuild_log_writer"' in iam_tf
-    assert 'resource "google_project_iam_member" "cloudbuild_artifactregistry_writer"' in iam_tf
-    assert 'resource "google_storage_bucket_iam_member" "cloudbuild_source_viewer"' in iam_tf
+    assert (
+        'resource "google_project_iam_member" "cloudbuild_artifactregistry_writer"'
+        in iam_tf
+    )
+    assert (
+        'resource "google_storage_bucket_iam_member" "cloudbuild_source_viewer"'
+        in iam_tf
+    )
     assert 'bucket = "${var.project_id}_cloudbuild"' in iam_tf
 
     # Note occurrences viewer & project occurrences editor required for binauthz sign-and-create + list
@@ -52,7 +58,9 @@ def test_cloudbuild_service_account_and_build_grants_declared() -> None:
         'resource "google_container_analysis_note_iam_member" "cloudbuild_note_occurrences_viewer"'
         in perimeter_tf
     )
-    assert 'role    = "roles/containeranalysis.notes.occurrences.viewer"' in perimeter_tf
+    assert (
+        'role    = "roles/containeranalysis.notes.occurrences.viewer"' in perimeter_tf
+    )
     assert (
         'resource "google_project_iam_member" "cloudbuild_occurrences_editor"'
         in perimeter_tf
@@ -83,7 +91,9 @@ def test_no_tf_file_contains_legacy_cloudbuild_gserviceaccount() -> None:
     )
 
 
-def test_every_cloudbuild_yaml_declares_service_account_and_cloud_logging_only() -> None:
+def test_every_cloudbuild_yaml_declares_service_account_and_cloud_logging_only() -> (
+    None
+):
     for deleted in (
         "cloudbuild.advisor.yaml",
         "cloudbuild.compliance.yaml",
@@ -97,11 +107,17 @@ def test_every_cloudbuild_yaml_declares_service_account_and_cloud_logging_only()
         )
 
     cloudbuild_files = sorted(DOCKER_DIR.glob("cloudbuild.*.yaml"))
-    assert [p.name for p in cloudbuild_files] == [
+    # Every config runs as the dedicated identity. Only publishing configs push
+    # and attest; cloudbuild.verify.yaml builds and scans without pushing (its
+    # no-push invariant lives in test_gke_sole_target_6f).
+    publishing = {
         "cloudbuild.image.yaml",
         "cloudbuild.lula.yaml",
         "cloudbuild.vllm.yaml",
-    ]
+    }
+    assert [p.name for p in cloudbuild_files] == sorted(
+        publishing | {"cloudbuild.verify.yaml"}
+    )
 
     for cb_path in cloudbuild_files:
         doc = yaml.safe_load(cb_path.read_text(encoding="utf-8"))
@@ -109,13 +125,15 @@ def test_every_cloudbuild_yaml_declares_service_account_and_cloud_logging_only()
         assert (
             sa
             == "projects/$PROJECT_ID/serviceAccounts/cage-cloudbuild-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com"
-        ), f"{cb_path.name} must declare dedicated cage-cloudbuild serviceAccount (got {sa!r})"
+        ), (
+            f"{cb_path.name} must declare dedicated cage-cloudbuild serviceAccount (got {sa!r})"
+        )
         options = doc.get("options") or {}
         assert options.get("logging") == "CLOUD_LOGGING_ONLY", (
             f"{cb_path.name} must set options.logging: CLOUD_LOGGING_ONLY"
         )
         text = cb_path.read_text(encoding="utf-8")
-        assert "scripts/attest_image.sh" in text, (
+        assert cb_path.name not in publishing or "scripts/attest_image.sh" in text, (
             f"{cb_path.name} must delegate attestation to scripts/attest_image.sh"
         )
         assert "_SHORT_SHA" not in (doc.get("substitutions") or {}), (
@@ -168,7 +186,9 @@ def test_build_images_refuses_outside_git_checkout(tmp_path: Path) -> None:
     assert "refusing to build outside a git checkout" in res.stderr
 
 
-def test_attest_image_fails_closed_when_attestation_list_is_empty(tmp_path: Path) -> None:
+def test_attest_image_fails_closed_when_attestation_list_is_empty(
+    tmp_path: Path,
+) -> None:
     attest_script = SCRIPTS_DIR / "attest_image.sh"
 
     # 1. Refuses mutable :latest tag

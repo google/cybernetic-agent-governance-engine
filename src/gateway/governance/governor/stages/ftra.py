@@ -64,13 +64,14 @@ class FtraStage(Stage):
         metrics: GovernorMetrics | None = None,
         magnitude_extractor: MagnitudeExtractor | None = None,
     ) -> None:
-        self._ftra_classifier = None
+        self._ftra_classifier: Any = None  # lazily built IrreversibilityClassifier
         self._metrics = metrics if metrics is not None else governor_metrics()
         self._magnitude_extractor = magnitude_extractor
 
     def _get_ftra_classifier(self) -> Any:
         if self._ftra_classifier is None:
             from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
+
             self._ftra_classifier = IrreversibilityClassifier()
         return self._ftra_classifier
 
@@ -197,7 +198,7 @@ class FtraStage(Stage):
                             tier="ftra",
                             code="FTRA_ERROR",
                             message=f"FTRA Boundary Check: Error classifying action '{tool_name}' — failing closed to IRREVERSIBLE_TERMINAL. Error: {exc}",
-                            kind=ViolationKind.HARD
+                            kind=ViolationKind.HARD,
                         )
                     ],
                     bypassed_ftra_node=True,

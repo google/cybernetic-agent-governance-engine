@@ -51,9 +51,7 @@ from src.gateway.governance.seams.outbound_credential import BearerToken
 logger = logging.getLogger(__name__)
 
 # GCP metadata server endpoint for OIDC ID tokens
-METADATA_SERVER_ENDPOINT = (
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
-)
+METADATA_SERVER_ENDPOINT = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
 
 # Default token TTL: 55 minutes (allowing 5-minute safety margin before 1-hour expiry)
 DEFAULT_TOKEN_TTL_SECONDS = 3300
@@ -82,7 +80,9 @@ class GcpOidcCredentialProvider:
         self._cache_lock = threading.Lock()
 
     @classmethod
-    def from_env(cls, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> "GcpOidcCredentialProvider":
+    def from_env(
+        cls, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS
+    ) -> "GcpOidcCredentialProvider":
         """
         Create provider from environment (no configuration needed for GCP metadata server).
 
@@ -125,6 +125,8 @@ class GcpOidcCredentialProvider:
         # Check cache first (fast path, read-only lock not needed for atomic dict reads)
         cached_token = self._cache.get(target_url)
         if cached_token is not None and not cached_token.is_expired:
+            # Logs the audience URL only; the OIDC token value is never logged.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.debug("Using cached OIDC token for audience=%s", target_url)
             return cached_token
 
@@ -133,10 +135,17 @@ class GcpOidcCredentialProvider:
             # Double-check cache after acquiring lock (another thread may have updated)
             cached_token = self._cache.get(target_url)
             if cached_token is not None and not cached_token.is_expired:
-                logger.debug("Using cached OIDC token for audience=%s (cache hit after lock)", target_url)
+                # Logs the audience URL only; the OIDC token value is never logged.
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+                logger.debug(
+                    "Using cached OIDC token for audience=%s (cache hit after lock)",
+                    target_url,
+                )
                 return cached_token
 
             # Mint fresh token from metadata server
+            # Logs the audience URL only; the OIDC token value is never logged.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info("Minting fresh OIDC token for audience=%s", target_url)
             fresh_token = await self._mint_token(audience=target_url)
             self._cache[target_url] = fresh_token
@@ -190,11 +199,17 @@ class GcpOidcCredentialProvider:
         # Response is raw JWT string (not JSON-wrapped)
         token_string = response.text.strip()
         if not token_string:
-            raise RuntimeError(f"GCP metadata server returned empty token for audience={audience}")
+            raise RuntimeError(
+                f"GCP metadata server returned empty token for audience={audience}"
+            )
 
         # Calculate expiry (current time + TTL)
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._token_ttl_seconds)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=self._token_ttl_seconds
+        )
 
+        # Logs the audience URL only; the OIDC token value is never logged.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info(
             "Minted OIDC token for audience=%s (expires_at=%s)",
             audience,

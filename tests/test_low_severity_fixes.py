@@ -398,7 +398,9 @@ class TestL7_DeferQueueCorrelationID:
             defer_reason=DeferReason.EXTERNAL_VALIDATION,
             correlation_id="resolve-correlation-789",
         )
-        mock_redis.hmget = AsyncMock(return_value=(token_with_corr.model_dump_json(), "PARKED", "0"))
+        mock_redis.hmget = AsyncMock(
+            return_value=(token_with_corr.model_dump_json(), "PARKED", "0")
+        )
         mock_pipe = AsyncMock()
         mock_pipe.execute = AsyncMock(return_value=[None, None])
         mock_redis.pipeline = MagicMock(return_value=mock_pipe)
@@ -437,7 +439,9 @@ class TestL7_DeferQueueCorrelationID:
         mock_redis.unwatch = AsyncMock()
 
         # Return 3-tuple: (token, status, rev)
-        mock_redis.hmget = AsyncMock(return_value=(token_with_corr.model_dump_json(), "PARKED", "0"))
+        mock_redis.hmget = AsyncMock(
+            return_value=(token_with_corr.model_dump_json(), "PARKED", "0")
+        )
         mock_pipe = AsyncMock()
         mock_pipe.execute = AsyncMock(return_value=[None, None])
         mock_redis.pipeline = MagicMock(return_value=mock_pipe)

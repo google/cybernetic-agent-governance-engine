@@ -53,8 +53,12 @@ _RAW_GATEWAYS = [
     _REPO / "deployment" / "k8s" / "gateway.yaml.tpl",
 ]
 
-ADVISOR_IDENTITY = "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
-GATEWAY_IDENTITY = "cage-gateway-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+ADVISOR_IDENTITY = (
+    "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+)
+GATEWAY_IDENTITY = (
+    "cage-gateway-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+)
 
 # Served versions in Linkerd edge-26.9.3 (linkerd-crds chart).
 _SERVED = {
@@ -100,7 +104,9 @@ def gateway_policy_violations(docs: list[dict]) -> list[str]:
     problems: list[str] = []
     exact = open_route_paths(_by(docs, "HTTPRoute", "gateway-open"))
     if exact != set(OPEN_EXACT_PATHS):
-        problems.append(f"open exact paths {sorted(exact)} != app {sorted(OPEN_EXACT_PATHS)}")
+        problems.append(
+            f"open exact paths {sorted(exact)} != app {sorted(OPEN_EXACT_PATHS)}"
+        )
 
     gated = _by(docs, "HTTPRoute", "gateway-gated")
     matches = [m for r in gated["spec"]["rules"] for m in r["matches"]]
@@ -108,13 +114,19 @@ def gateway_policy_violations(docs: list[dict]) -> list[str]:
         problems.append(f"gated route must be exactly PathPrefix '/', got {matches}")
 
     policy = _by(docs, "AuthorizationPolicy", "gateway-gated")
-    if policy["spec"]["targetRef"] != {"group": "policy.linkerd.io", "kind": "HTTPRoute", "name": "gateway-gated"}:
+    if policy["spec"]["targetRef"] != {
+        "group": "policy.linkerd.io",
+        "kind": "HTTPRoute",
+        "name": "gateway-gated",
+    }:
         problems.append(f"gateway-gated policy targets {policy['spec']['targetRef']}")
     refs = policy["spec"]["requiredAuthenticationRefs"]
     if [r["kind"] for r in refs] != ["MeshTLSAuthentication"]:
         problems.append(f"gated route must require mesh identity only, got {refs}")
     else:
-        identities = set(_by(docs, "MeshTLSAuthentication", refs[0]["name"])["spec"]["identities"])
+        identities = set(
+            _by(docs, "MeshTLSAuthentication", refs[0]["name"])["spec"]["identities"]
+        )
         if identities != {ADVISOR_IDENTITY}:
             problems.append(f"gated identities {sorted(identities)} != {{advisor}}")
     return problems
@@ -123,7 +135,9 @@ def gateway_policy_violations(docs: list[dict]) -> list[str]:
 def served_version_violations(text: str) -> list[str]:
     """Linkerd policy objects whose apiVersion edge-26.9.3 does not serve."""
     out = []
-    for version, kind in re.findall(r"apiVersion:\s*policy\.linkerd\.io/(\w+)\s*\nkind:\s*(\w+)", text):
+    for version, kind in re.findall(
+        r"apiVersion:\s*policy\.linkerd\.io/(\w+)\s*\nkind:\s*(\w+)", text
+    ):
         if kind in _SERVED and version not in _SERVED[kind]:
             out.append(f"{kind} policy.linkerd.io/{version}")
     return out
@@ -148,11 +162,17 @@ def test_open_route_allows_any_network_only_for_open_paths() -> None:
     docs = _docs(_RAW_POLICY)
     policy = _by(docs, "AuthorizationPolicy", "gateway-open")
     assert policy["spec"]["targetRef"]["name"] == "gateway-open"
-    assert [r["kind"] for r in policy["spec"]["requiredAuthenticationRefs"]] == ["NetworkAuthentication"]
+    assert [r["kind"] for r in policy["spec"]["requiredAuthenticationRefs"]] == [
+        "NetworkAuthentication"
+    ]
     network_policies = [
-        d for d in docs
+        d
+        for d in docs
         if d["kind"] == "AuthorizationPolicy"
-        and any(r["kind"] == "NetworkAuthentication" for r in d["spec"]["requiredAuthenticationRefs"])
+        and any(
+            r["kind"] == "NetworkAuthentication"
+            for r in d["spec"]["requiredAuthenticationRefs"]
+        )
     ]
     assert [p["metadata"]["name"] for p in network_policies] == ["gateway-open"]
 
@@ -160,7 +180,10 @@ def test_open_route_allows_any_network_only_for_open_paths() -> None:
 @pytest.mark.parametrize("path", _RAW_GATEWAYS, ids=lambda p: p.name)
 def test_raw_gateway_trusts_exactly_the_policy_identities(path: Path) -> None:
     text = path.read_text()
-    values = re.findall(r"- name: CAGE_TRUSTED_CLIENT_IDENTITIES\n(?:\s*#.*\n)*\s*value: \"([^\"]+)\"", text)
+    values = re.findall(
+        r"- name: CAGE_TRUSTED_CLIENT_IDENTITIES\n(?:\s*#.*\n)*\s*value: \"([^\"]+)\"",
+        text,
+    )
     assert values == [ADVISOR_IDENTITY]
     assert all(_LINKERD_IDENTITY.match(v) for v in values[0].split(","))
 
@@ -173,8 +196,14 @@ def test_raw_gateway_has_no_ingress_hmac_secret(path: Path) -> None:
 
 
 def test_all_linkerd_objects_use_served_api_versions() -> None:
-    sources = list((_REPO / "deployment").rglob("*.yaml")) + list((_REPO / "infra").rglob("templates/*.yaml"))
-    bad = {str(p.relative_to(_REPO)): v for p in sources if (v := served_version_violations(p.read_text()))}
+    sources = list((_REPO / "deployment").rglob("*.yaml")) + list(
+        (_REPO / "infra").rglob("templates/*.yaml")
+    )
+    bad = {
+        str(p.relative_to(_REPO)): v
+        for p in sources
+        if (v := served_version_violations(p.read_text()))
+    }
     assert bad == {}
 
 
@@ -192,11 +221,11 @@ def test_chart_open_paths_match_app_policy() -> None:
 
 def test_chart_gates_everything_else_to_mesh_identities() -> None:
     template = (_CHART / "templates" / "policy.yaml").read_text()
-    gated = template[template.index("name: gateway-gated"):]
+    gated = template[template.index("name: gateway-gated") :]
     assert re.search(r"type: PathPrefix\s*\n\s*value: /\s*\n", gated)
     # The gated AuthorizationPolicy only exists when identities are given, so
     # an empty list leaves the catch-all route with no policy: deny all.
-    auth = template[template.index("{{- if .Values.trustedIdentities }}"):]
+    auth = template[template.index("{{- if .Values.trustedIdentities }}") :]
     assert "kind: MeshTLSAuthentication" in auth
     assert "name: gateway-gated" in auth
     assert "NetworkAuthentication" not in auth
@@ -214,8 +243,14 @@ def test_gke_target_trusts_only_the_advisor_and_meshes_the_namespace() -> None:
     text = _GKE_MAIN.read_text()
     block = re.search(r"trusted_client_identities = \[(.*?)\]", text, re.S)
     assert block is not None
-    entries = [e.strip().rstrip(",") for e in block.group(1).splitlines() if e.strip() and not e.strip().startswith("#")]
-    assert entries == ['"${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}"']
+    entries = [
+        e.strip().rstrip(",")
+        for e in block.group(1).splitlines()
+        if e.strip() and not e.strip().startswith("#")
+    ]
+    assert entries == [
+        '"${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}"'
+    ]
     assert '"linkerd.io/inject" = "enabled"' in text
     assert "routing_seal_secret" not in text
 
@@ -225,7 +260,10 @@ def test_no_ca_private_key_is_generated_by_terraform() -> None:
     offenders = [
         str(p.relative_to(_REPO))
         for p in (_REPO / "infra").rglob("*.tf")
-        if re.search(r'resource\s+"tls_(private_key|self_signed_cert|locally_signed_cert)"', p.read_text())
+        if re.search(
+            r'resource\s+"tls_(private_key|self_signed_cert|locally_signed_cert)"',
+            p.read_text(),
+        )
     ]
     assert offenders == []
 
@@ -234,7 +272,10 @@ def test_mesh_trust_anchor_lives_in_cas() -> None:
     text = (_MESH_MODULE / "main.tf").read_text()
     assert 'resource "google_privateca_certificate_authority" "mesh_root"' in text
     assert 'type                     = "SELF_SIGNED"' in text
-    assert "identityTrustAnchorsPEM = google_privateca_certificate_authority.mesh_root.pem_ca_certificates[0]" in text
+    assert (
+        "identityTrustAnchorsPEM = google_privateca_certificate_authority.mesh_root.pem_ca_certificates[0]"
+        in text
+    )
     assert 'issuer     = { scheme = "kubernetes.io/tls" }' in text
     # The CAS issuer identity may request certificates, nothing more.
     assert 'role    = "roles/privateca.certificateRequester"' in text
@@ -243,13 +284,30 @@ def test_mesh_trust_anchor_lives_in_cas() -> None:
 
 def test_no_ingress_hmac_secret_in_infra() -> None:
     tracked = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "infra"],
-        cwd=_REPO, check=True, capture_output=True, text=True,
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "infra",
+        ],
+        cwd=_REPO,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.split("\0")
     offenders = [
-        f for f in tracked
-        if f and (_REPO / f).is_file()
-        and re.search(r"routing_seal_secret|CAGE_ROUTING_SEAL_SECRET", (_REPO / f).read_text(errors="ignore"))
+        f
+        for f in tracked
+        if f
+        and (_REPO / f).is_file()
+        and re.search(
+            r"routing_seal_secret|CAGE_ROUTING_SEAL_SECRET",
+            (_REPO / f).read_text(errors="ignore"),
+        )
     ]
     assert offenders == []
 
@@ -270,18 +328,25 @@ def test_detects_an_extra_open_path() -> None:
         _by(docs, "HTTPRoute", "gateway-open")["spec"]["rules"][0]["matches"].append(
             {"path": {"type": "Exact", "value": "/mcp/sse"}}
         )
-    assert any("open exact paths" in p for p in gateway_policy_violations(_mutated(add_open)))
+
+    assert any(
+        "open exact paths" in p for p in gateway_policy_violations(_mutated(add_open))
+    )
 
 
 @pytest.mark.parametrize("method", [None, "GET"])
 def test_detects_any_open_prefix(method: str | None) -> None:
     """A PathPrefix on the open route, with or without a method, is refused:
     the gateway opens exact paths only."""
+
     def add_prefix(docs):
         match = {"path": {"type": "PathPrefix", "value": "/governance/"}}
         if method:
             match["method"] = method
-        _by(docs, "HTTPRoute", "gateway-open")["spec"]["rules"][0]["matches"].append(match)
+        _by(docs, "HTTPRoute", "gateway-open")["spec"]["rules"][0]["matches"].append(
+            match
+        )
+
     with pytest.raises(AssertionError, match="open route may only hold"):
         gateway_policy_violations(_mutated(add_prefix))
 
@@ -291,23 +356,43 @@ def test_detects_a_narrowed_gated_route() -> None:
         _by(docs, "HTTPRoute", "gateway-gated")["spec"]["rules"][0]["matches"] = [
             {"path": {"type": "PathPrefix", "value": "/governance/"}}
         ]
-    assert any("gated route must be exactly" in p for p in gateway_policy_violations(_mutated(narrow)))
+
+    assert any(
+        "gated route must be exactly" in p
+        for p in gateway_policy_violations(_mutated(narrow))
+    )
 
 
 def test_detects_an_extra_trusted_identity() -> None:
     def widen(docs):
-        _by(docs, "MeshTLSAuthentication", "gateway-trusted-clients")["spec"]["identities"].append(GATEWAY_IDENTITY)
-    assert any("gated identities" in p for p in gateway_policy_violations(_mutated(widen)))
+        _by(docs, "MeshTLSAuthentication", "gateway-trusted-clients")["spec"][
+            "identities"
+        ].append(GATEWAY_IDENTITY)
+
+    assert any(
+        "gated identities" in p for p in gateway_policy_violations(_mutated(widen))
+    )
 
 
 def test_detects_network_auth_on_the_gated_route() -> None:
     def open_up(docs):
-        _by(docs, "AuthorizationPolicy", "gateway-gated")["spec"]["requiredAuthenticationRefs"] = [
-            {"group": "policy.linkerd.io", "kind": "NetworkAuthentication", "name": "gateway-any-network"}
+        _by(docs, "AuthorizationPolicy", "gateway-gated")["spec"][
+            "requiredAuthenticationRefs"
+        ] = [
+            {
+                "group": "policy.linkerd.io",
+                "kind": "NetworkAuthentication",
+                "name": "gateway-any-network",
+            }
         ]
-    assert any("mesh identity only" in p for p in gateway_policy_violations(_mutated(open_up)))
+
+    assert any(
+        "mesh identity only" in p for p in gateway_policy_violations(_mutated(open_up))
+    )
 
 
 def test_detects_an_unserved_authorization_policy_version() -> None:
     planted = "apiVersion: policy.linkerd.io/v1beta2\nkind: AuthorizationPolicy\n"
-    assert served_version_violations(planted) == ["AuthorizationPolicy policy.linkerd.io/v1beta2"]
+    assert served_version_violations(planted) == [
+        "AuthorizationPolicy policy.linkerd.io/v1beta2"
+    ]

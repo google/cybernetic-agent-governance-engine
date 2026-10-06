@@ -27,6 +27,7 @@ Per Section 3 (Architecture):
 import logging
 from typing import Any
 
+from src.cage_finance.safety.bounding.contract import BoundingContractEnforcer
 from src.cage_finance.safety.bounding.contracts import (
     contract_b1_max_notional,
     contract_b2_drawdown_breaker,
@@ -48,7 +49,6 @@ from src.cage_finance.safety.bounding.providers import (
     MarketDataProvider,
     RollbackCapabilityProvider,
 )
-from src.cage_finance.safety.bounding.contract import BoundingContractEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,7 @@ class BoundingContractRegistry:
             self.enabled_contracts,
         )
 
-    def evaluate_all(
-        self, request: BoundedTradeRequest
-    ) -> list[ContractResult]:
+    def evaluate_all(self, request: BoundedTradeRequest) -> list[ContractResult]:
         """Evaluate every enabled contract in order (B1, B2, ..., B10).
 
         Stops at the first HARD_BLOCK failure (fail-fast).  A closed B10

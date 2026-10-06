@@ -57,7 +57,9 @@ def provider() -> GcpOidcCredentialProvider:
 
 
 @pytest.mark.asyncio
-async def test_token_minting_success(provider: GcpOidcCredentialProvider, mock_jwt_token: str) -> None:
+async def test_token_minting_success(
+    provider: GcpOidcCredentialProvider, mock_jwt_token: str
+) -> None:
     """Test 1: Token minting succeeds when metadata server returns valid JWT."""
     target_url = "https://downstream.example.com"
 
@@ -84,12 +86,18 @@ async def test_token_minting_success(provider: GcpOidcCredentialProvider, mock_j
         assert token.authorization_header == f"Bearer {mock_jwt_token}"
 
         # Verify expiry is ~55 minutes in the future
-        expected_expiry = datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_TOKEN_TTL_SECONDS)
-        assert abs((token.expires_at - expected_expiry).total_seconds()) < 5  # Allow 5-second tolerance
+        expected_expiry = datetime.now(timezone.utc) + timedelta(
+            seconds=DEFAULT_TOKEN_TTL_SECONDS
+        )
+        assert (
+            abs((token.expires_at - expected_expiry).total_seconds()) < 5
+        )  # Allow 5-second tolerance
 
 
 @pytest.mark.asyncio
-async def test_token_caching(provider: GcpOidcCredentialProvider, mock_jwt_token: str) -> None:
+async def test_token_caching(
+    provider: GcpOidcCredentialProvider, mock_jwt_token: str
+) -> None:
     """Test 2: Same URL returns cached token without second metadata server request."""
     target_url = "https://downstream.example.com"
 
@@ -114,7 +122,9 @@ async def test_token_caching(provider: GcpOidcCredentialProvider, mock_jwt_token
 
 
 @pytest.mark.asyncio
-async def test_audience_scoping(provider: GcpOidcCredentialProvider, mock_jwt_token: str) -> None:
+async def test_audience_scoping(
+    provider: GcpOidcCredentialProvider, mock_jwt_token: str
+) -> None:
     """Test 3: Different target URLs mint different tokens (audience-scoped)."""
     url1 = "https://service-a.example.com"
     url2 = "https://service-b.example.com"
@@ -144,7 +154,7 @@ async def test_audience_scoping(provider: GcpOidcCredentialProvider, mock_jwt_to
 async def test_cache_expiry_triggers_refresh(mock_jwt_token: str) -> None:
     """Test 4: Expired cached token triggers fresh mint from metadata server."""
     target_url = "https://downstream.example.com"
-    
+
     # Use very short TTL (1 second) to test expiry behavior
     provider = GcpOidcCredentialProvider(token_ttl_seconds=1)
 
@@ -162,7 +172,8 @@ async def test_cache_expiry_triggers_refresh(mock_jwt_token: str) -> None:
         # Manually expire the token by updating cache entry
         expired_token = BearerToken(
             token=token1.token,
-            expires_at=datetime.now(timezone.utc) - timedelta(seconds=10),  # 10 seconds ago
+            expires_at=datetime.now(timezone.utc)
+            - timedelta(seconds=10),  # 10 seconds ago
             audience=target_url,
         )
         provider._cache[target_url] = expired_token
@@ -184,7 +195,9 @@ async def test_metadata_server_unreachable(provider: GcpOidcCredentialProvider) 
 
     with respx.mock:
         # Simulate network error (connection refused)
-        respx.get(METADATA_SERVER_ENDPOINT).mock(side_effect=httpx.ConnectError("Connection refused"))
+        respx.get(METADATA_SERVER_ENDPOINT).mock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
 
         # Verify that get_token raises RuntimeError
         with pytest.raises(RuntimeError, match="Failed to reach GCP metadata server"):
@@ -208,13 +221,17 @@ async def test_metadata_server_http_error(provider: GcpOidcCredentialProvider) -
 
 
 @pytest.mark.asyncio
-async def test_metadata_server_empty_response(provider: GcpOidcCredentialProvider) -> None:
+async def test_metadata_server_empty_response(
+    provider: GcpOidcCredentialProvider,
+) -> None:
     """Test 5c: Metadata server returns empty token raises RuntimeError."""
     target_url = "https://downstream.example.com"
 
     with respx.mock:
         # Simulate empty response
-        respx.get(METADATA_SERVER_ENDPOINT).mock(return_value=httpx.Response(200, text=""))
+        respx.get(METADATA_SERVER_ENDPOINT).mock(
+            return_value=httpx.Response(200, text="")
+        )
 
         # Verify that get_token raises RuntimeError
         with pytest.raises(RuntimeError, match="returned empty token"):

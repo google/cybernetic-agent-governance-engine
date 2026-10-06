@@ -94,7 +94,9 @@ class TestGcpRedisIamCredentialProvider:
                     "_fetch_token_from_adc",
                     side_effect=RuntimeError("ADC missing"),
                 ):
-                    with pytest.raises(RuntimeError, match="Unable to obtain GCP IAM token"):
+                    with pytest.raises(
+                        RuntimeError, match="Unable to obtain GCP IAM token"
+                    ):
                         provider.get_credentials()
 
 

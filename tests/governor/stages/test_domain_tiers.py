@@ -68,11 +68,13 @@ def mutating_tier():
 @pytest.fixture
 def ctx():
     from src.gateway.governance.governor.pipeline import Profile
+
     return StageContext(
         action="execute_trade",
         params={"amount": 100},
         profile=Profile.FULL,
     )
+
 
 def test_domain_tier_stage_init(mock_tier, mutating_tier):
     stage = DomainTierStage(mutating_tier)
@@ -80,10 +82,12 @@ def test_domain_tier_stage_init(mock_tier, mutating_tier):
     assert stage.mutating is True
     assert DomainTierStage(mock_tier).mutating is False
 
+
 def test_claims_success(mock_tier, ctx):
     stage = DomainTierStage(mock_tier)
     assert stage.claims(ctx) is True
     mock_tier.claims_action.assert_called_once_with("execute_trade", {"amount": 100})
+
 
 def test_claims_exception_propagates_and_leaves_no_state(mock_tier, ctx):
     """The stage is shared across requests: it must not latch a claims failure.
@@ -99,6 +103,7 @@ def test_claims_exception_propagates_and_leaves_no_state(mock_tier, ctx):
         stage.claims(ctx)
     assert vars(stage) == before
 
+
 @pytest.mark.asyncio
 async def test_run_phase_1_success(mock_tier, ctx):
     stage = DomainTierStage(mock_tier)
@@ -107,11 +112,13 @@ async def test_run_phase_1_success(mock_tier, ctx):
     assert violations == []
     mock_tier.evaluate.assert_called_once_with("execute_trade", {"amount": 100})
 
+
 @pytest.mark.asyncio
 async def test_read_only_stage_cannot_commit(mock_tier, ctx):
     stage = DomainTierStage(mock_tier)
     with pytest.raises(TypeError, match="cannot commit"):
         await stage.commit(ctx)
+
 
 @pytest.mark.asyncio
 async def test_run_phase_2_is_read_only(mutating_tier, ctx):
@@ -121,6 +128,7 @@ async def test_run_phase_2_is_read_only(mutating_tier, ctx):
     assert violations == []
     mutating_tier.evaluate.assert_called_once_with("execute_trade", {"amount": 100})
     mutating_tier.commit.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_commit_phase_2_returns_receipt(mutating_tier, ctx):
@@ -132,6 +140,7 @@ async def test_commit_phase_2_returns_receipt(mutating_tier, ctx):
     mutating_tier.commit.assert_called_once_with("execute_trade", {"amount": 100})
     mutating_tier.evaluate.assert_not_called()
 
+
 @pytest.mark.asyncio
 async def test_commit_exception_fails_closed_without_receipt(mutating_tier, ctx):
     mutating_tier.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
@@ -139,8 +148,11 @@ async def test_commit_exception_fails_closed_without_receipt(mutating_tier, ctx)
 
     violations, receipt = await stage.commit(ctx)
     assert receipt is None
-    assert [(v.code, v.kind) for v in violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in violations] == [
+        ("TIER_EXCEPTION", ViolationKind.HARD)
+    ]
     assert "commit failed" in violations[0].message
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [[], None, ([], "not-a-receipt"), ("x", None)])
@@ -151,10 +163,15 @@ async def test_commit_malformed_result_fails_closed(mutating_tier, ctx, bad):
 
     violations, receipt = await stage.commit(ctx)
     assert receipt is None
-    assert [(v.code, v.kind) for v in violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in violations] == [
+        ("TIER_EXCEPTION", ViolationKind.HARD)
+    ]
+
 
 @pytest.mark.asyncio
-async def test_commit_malformed_violations_keeps_receipt_for_rollback(mutating_tier, ctx):
+async def test_commit_malformed_violations_keeps_receipt_for_rollback(
+    mutating_tier, ctx
+):
     receipt = CommitReceipt(tier="test_tier", magnitude=1.0)
     mutating_tier.commit = AsyncMock(return_value=("not-a-list", receipt))
     stage = DomainTierStage(mutating_tier)
@@ -162,6 +179,7 @@ async def test_commit_malformed_violations_keeps_receipt_for_rollback(mutating_t
     violations, kept = await stage.commit(ctx)
     assert kept is receipt
     assert violations[0].code == "TIER_EXCEPTION"
+
 
 @pytest.mark.asyncio
 async def test_run_exception(mock_tier, ctx):
@@ -174,14 +192,18 @@ async def test_run_exception(mock_tier, ctx):
     assert "Eval failed" in violations[0].message
     assert violations[0].kind == ViolationKind.HARD
 
+
 @pytest.mark.asyncio
 async def test_rollback_forwards_receipt(mutating_tier, ctx):
     stage = DomainTierStage(mutating_tier)
     receipt = CommitReceipt(tier="test_tier", magnitude=7.0)
 
     await stage.rollback(ctx, receipt)
-    mutating_tier.rollback.assert_called_once_with("execute_trade", {"amount": 100}, receipt)
+    mutating_tier.rollback.assert_called_once_with(
+        "execute_trade", {"amount": 100}, receipt
+    )
     mutating_tier.confirm.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_confirm_forwards_receipt(mutating_tier, ctx):
@@ -189,8 +211,11 @@ async def test_confirm_forwards_receipt(mutating_tier, ctx):
     receipt = CommitReceipt(tier="test_tier", magnitude=7.0)
 
     await stage.confirm(ctx, receipt)
-    mutating_tier.confirm.assert_called_once_with("execute_trade", {"amount": 100}, receipt)
+    mutating_tier.confirm.assert_called_once_with(
+        "execute_trade", {"amount": 100}, receipt
+    )
     mutating_tier.rollback.assert_not_called()
+
 
 def test_order_stages():
     t1 = _mutating_mock("b", order=10)

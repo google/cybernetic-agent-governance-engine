@@ -68,12 +68,27 @@ class TestAmountNarrower:
             kind=ViolationKind.NARROWABLE,
         )
 
-        assert narrower.can_narrow(violation, "execute_trade", {"symbol": "AAPL"}) is False
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": None}) is False
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": "not-a-num"}) is False
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": True}) is False
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": float("nan")}) is False
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": float("inf")}) is False
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"symbol": "AAPL"}) is False
+        )
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": None}) is False
+        )
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": "not-a-num"})
+            is False
+        )
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": True}) is False
+        )
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": float("nan")})
+            is False
+        )
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": float("inf")})
+            is False
+        )
 
     def test_can_narrow_rejects_when_amount_already_within_limit(self):
         """Narrower refuses to narrow when amount <= limit."""
@@ -85,8 +100,14 @@ class TestAmountNarrower:
             message="Soft limit",
             kind=ViolationKind.NARROWABLE,
         )
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": 25000.0}) is False
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": 10000.0}) is False
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": 25000.0})
+            is False
+        )
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": 10000.0})
+            is False
+        )
         assert narrower.narrow(violation, "execute_trade", {"amount": 25000.0}) is None
 
     def test_can_narrow_rejects_nonpositive_limit(self):
@@ -99,7 +120,10 @@ class TestAmountNarrower:
             message="Soft limit",
             kind=ViolationKind.NARROWABLE,
         )
-        assert narrower.can_narrow(violation, "execute_trade", {"amount": 50000.0}) is False
+        assert (
+            narrower.can_narrow(violation, "execute_trade", {"amount": 50000.0})
+            is False
+        )
         assert narrower.narrow(violation, "execute_trade", {"amount": 50000.0}) is None
 
     def test_narrow_clamps_amount_to_99_percent_of_limit(self):
@@ -187,7 +211,9 @@ class TestAmountNarrowerBoundHint:
 
     def test_clamps_exactly_to_the_bound_not_99_percent_of_the_threshold(self):
         narrower = AmountNarrower(limit_resolver=25_000.0)
-        result = narrower.narrow(_bounded(3_000.0), "execute_trade", {"amount": 4_000.0})
+        result = narrower.narrow(
+            _bounded(3_000.0), "execute_trade", {"amount": 4_000.0}
+        )
         assert result is not None
         assert result.narrowed_params == {"amount": 3_000.0}
         assert result.constraints_applied == ["amount <= 3000.0"]
@@ -196,7 +222,9 @@ class TestAmountNarrowerBoundHint:
     def test_bound_above_the_threshold_still_wins(self):
         # The tier admits $40k; the threshold ($25k) is not consulted.
         narrower = AmountNarrower(limit_resolver=25_000.0)
-        result = narrower.narrow(_bounded(40_000.0), "execute_trade", {"amount": 50_000.0})
+        result = narrower.narrow(
+            _bounded(40_000.0), "execute_trade", {"amount": 50_000.0}
+        )
         assert result is not None and result.narrowed_params["amount"] == 40_000.0
 
     @pytest.mark.parametrize(
@@ -204,7 +232,9 @@ class TestAmountNarrowerBoundHint:
         [(1234.57, 1234.57), (1234.579, 1234.57), (0.29, 0.29)],
     )
     def test_floors_to_the_cent_so_it_never_exceeds_the_bound(self, bound, expected):
-        result = AmountNarrower().narrow(_bounded(bound), "execute_trade", {"amount": 9_999.0})
+        result = AmountNarrower().narrow(
+            _bounded(bound), "execute_trade", {"amount": 9_999.0}
+        )
         assert result is not None
         assert result.narrowed_params["amount"] == expected
         assert result.narrowed_params["amount"] <= bound
@@ -213,12 +243,21 @@ class TestAmountNarrowerBoundHint:
     def test_a_bound_below_one_cent_means_nothing_fits_and_no_fallback(self, bound):
         # Fail closed: the threshold ($25k) would "fit" $24,750 — never offered.
         narrower = AmountNarrower(limit_resolver=25_000.0)
-        assert narrower.can_narrow(_bounded(bound), "execute_trade", {"amount": 50_000.0}) is False
-        assert narrower.narrow(_bounded(bound), "execute_trade", {"amount": 50_000.0}) is None
+        assert (
+            narrower.can_narrow(_bounded(bound), "execute_trade", {"amount": 50_000.0})
+            is False
+        )
+        assert (
+            narrower.narrow(_bounded(bound), "execute_trade", {"amount": 50_000.0})
+            is None
+        )
 
     def test_amount_already_within_the_bound_is_not_narrowed(self):
         narrower = AmountNarrower()
-        assert narrower.can_narrow(_bounded(3_000.0), "execute_trade", {"amount": 3_000.0}) is False
+        assert (
+            narrower.can_narrow(_bounded(3_000.0), "execute_trade", {"amount": 3_000.0})
+            is False
+        )
 
     def test_no_bound_falls_back_to_the_threshold(self):
         result = AmountNarrower(limit_resolver=25_000.0).narrow(

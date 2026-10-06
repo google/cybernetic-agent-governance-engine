@@ -209,12 +209,15 @@ class TestPhysicalAIPlugin:
                 AsyncMock(return_value="sealed-token"),
             ),
         ):
+            from src.gateway.governance.jurisdiction import resolve_jurisdiction
+
             governor = assemble_governor(
                 [PhysicalAICagePlugin()],
                 posture=DeploymentPosture.DEV,
                 opa=allow_opa(),
                 stpa_validator=clean_stpa(),
                 flags=DecisionFlags(defer=False, narrow=False),
+                jurisdiction=resolve_jurisdiction("US_FED"),
             )
             assert len(governor._components.ground_truth_providers) == 3
             for stage in governor.stages:

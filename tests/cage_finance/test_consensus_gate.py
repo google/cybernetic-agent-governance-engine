@@ -33,7 +33,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 def mock_thresholds():
     """Mock the THRESHOLDS singleton used by build_finance_consensus_contribution."""
     with patch("src.cage_finance.tiers.consensus_tier.THRESHOLDS") as mock_t:
-        mock_t.consensus.threshold_usd = 10000.0
+        # The tier reads domains.finance.consensus.threshold_usd via resolve().
+        mock_t.resolve.return_value = 10000.0
         yield mock_t
 
 
@@ -234,12 +235,8 @@ async def test_get_critic_vote_strict_parser_table(
     engine._registry.get_model.return_value = "gemini-2.5-flash"
     if client_path == "dedicated":
         completion_resp = MagicMock()
-        completion_resp.choices = [
-            MagicMock(message=MagicMock(content=raw_response))
-        ]
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=completion_resp
-        )
+        completion_resp.choices = [MagicMock(message=MagicMock(content=raw_response))]
+        mock_client.chat.completions.create = AsyncMock(return_value=completion_resp)
         engine._registry.get_client.return_value = mock_client
         engine._default_client = MagicMock()
     else:
@@ -379,5 +376,3 @@ async def test_get_critic_vote_trusted_prompt_fields_cannot_be_overridden_by_par
     assert "</params_json>" in full_prompt
     assert "Parameters: none" not in full_prompt
     assert "INJECTED_OUTSIDE_ALLOWLIST" not in full_prompt
-
-

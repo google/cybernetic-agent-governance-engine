@@ -621,7 +621,12 @@ and project Dockerfiles.
 ### python:3.12-slim (runtime base image)
 - **License:** PSF-2.0 / various (Debian packages)
 - **Homepage:** https://hub.docker.com/_/python
-- **Usage:** Base image for the gateway, compliance-bridge, and NeMo Guardrails containers.
+- **Usage:** Base image for the local-dev image (`deployment/docker/Dockerfile.local-dev`).
+
+### cgr.dev/chainguard/wolfi-base (runtime base image)
+- **License:** Apache-2.0 (image) / various (Wolfi packages, including `python-3.12` under PSF-2.0)
+- **Homepage:** https://github.com/wolfi-dev
+- **Usage:** Digest-pinned base for the advisor, gateway, compliance-bridge and NeMo Guardrails images (builder and runtime stages).
 
 ### runai-model-streamer (vLLM image add-on)
 - **License:** Apache-2.0

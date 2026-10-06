@@ -519,8 +519,7 @@ class TestCitabilityAndOscalExport:
         props = {p["name"]: p["value"] for p in result_entry["props"]}
         assert props["evidence-custody-verified-batches"] == "2"
         assert (
-            props["evidence-custody-chain-head"]
-            == report.verified[-1].last_record_hash
+            props["evidence-custody-chain-head"] == report.verified[-1].last_record_hash
         )
         assert props["evidence-custody-key-id"] == KID
         links = result_entry["links"]
@@ -553,9 +552,7 @@ class TestCitabilityAndOscalExport:
             )
 
     @pytest.mark.asyncio
-    async def test_unsigned_only_archive_is_not_citable(
-        self, server, store, provider
-    ):
+    async def test_unsigned_only_archive_is_not_citable(self, server, store, provider):
         from src.compliance_bridge.evidence_verifier import EvidenceVerificationError
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
 
@@ -708,8 +705,7 @@ class TestFromEnvAndScheduler:
             assert verifier.last_report is not None
             assert verifier.last_report.citable is True
             assert (
-                ev.VERIFICATION_RUNS_TOTAL.labels(outcome="ok")._value.get()
-                > before_ok
+                ev.VERIFICATION_RUNS_TOTAL.labels(outcome="ok")._value.get() > before_ok
             )
             assert ev.VERIFIED_BATCHES._value.get() == 2.0
             assert ev.VERIFICATION_FAILURES._value.get() == 0.0
@@ -831,8 +827,7 @@ class TestComplianceBridgeEndpoints:
                 resp_env = client.get("/v1/oscal/assessment-results")
                 assert resp_env.status_code == 409
                 assert (
-                    resp_env.json()["detail"]["error"]
-                    == "EVIDENCE_CUSTODY_UNVERIFIED"
+                    resp_env.json()["detail"]["error"] == "EVIDENCE_CUSTODY_UNVERIFIED"
                 )
 
                 # 4. ColdStoreError fails closed with 503
@@ -842,8 +837,7 @@ class TestComplianceBridgeEndpoints:
                 )
                 assert resp_503.status_code == 503
                 assert (
-                    resp_503.json()["detail"]["error"]
-                    == "EVIDENCE_STORE_UNAVAILABLE"
+                    resp_503.json()["detail"]["error"] == "EVIDENCE_STORE_UNAVAILABLE"
                 )
 
     def test_lifespan_enforcing_fails_closed_when_verifier_unconfigured(
@@ -874,5 +868,3 @@ class TestComplianceBridgeEndpoints:
         ):
             with TestClient(app):
                 pass
-
-

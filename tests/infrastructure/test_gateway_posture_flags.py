@@ -47,7 +47,9 @@ def test_gateway_module_declares_posture_variables() -> None:
         "governance_redis_replica_count",
     ]
     for var_name in expected_vars:
-        assert f'variable "{var_name}"' in vars_text, f"Missing variable '{var_name}' in gateway/variables.tf"
+        assert f'variable "{var_name}"' in vars_text, (
+            f"Missing variable '{var_name}' in gateway/variables.tf"
+        )
 
 
 def test_gateway_module_wires_posture_env_vars() -> None:
@@ -61,7 +63,9 @@ def test_gateway_module_wires_posture_env_vars() -> None:
         "CAGE_RECONCILIATION_REPLAY_DEFENSE",
     ]
     for env_name in expected_envs:
-        assert f'name  = "{env_name}"' in main_text, f"Missing env var '{env_name}' in gateway/main.tf"
+        assert f'name  = "{env_name}"' in main_text, (
+            f"Missing env var '{env_name}' in gateway/main.tf"
+        )
 
 
 def test_gateway_precondition_enforces_replica_invariant() -> None:

@@ -143,7 +143,13 @@ def test_artifact_committed_later_but_differing_is_stale(gate) -> None:
     source.write_text("hazards: [h1]\n")
     _git(repo, "commit", "-qam", "edit source", date="2026-01-02T12:00:00+00:00")
     artifact.write_text("# Generated: 2000-01-01T00:00:00+00:00\n# hand edit\n")
-    _git(repo, "commit", "-qam", "unrelated artifact edit", date="2026-01-03T12:00:00+00:00")
+    _git(
+        repo,
+        "commit",
+        "-qam",
+        "unrelated artifact edit",
+        date="2026-01-03T12:00:00+00:00",
+    )
 
     errors = module.check_freshness(
         regenerated={artifact: "# Generated: 2026-01-03T00:00:00+00:00\n# from h1\n"}
@@ -155,10 +161,14 @@ def test_artifact_committed_later_but_differing_is_stale(gate) -> None:
 
 def test_volatile_stamps_are_masked_before_hashing(gate) -> None:
     module, *_ = gate
-    a = '# Generated: 2000-01-01T00:00:00+00:00\n{"generated_at": "2000-01-01T00:00:00Z",' \
+    a = (
+        '# Generated: 2000-01-01T00:00:00+00:00\n{"generated_at": "2000-01-01T00:00:00Z",'
         ' "issued_at": "2000-01-01T00:00:00Z", "expires_at": "2001-01-01T00:00:00Z"}\n'
-    b = '# Generated: 2026-10-01T14:00:00.1+00:00\n{"generated_at": "2026-10-01T14:00:00Z",' \
+    )
+    b = (
+        '# Generated: 2026-10-01T14:00:00.1+00:00\n{"generated_at": "2026-10-01T14:00:00Z",'
         ' "issued_at": "2026-10-01T14:00:00Z", "expires_at": "2027-10-01T14:00:00Z"}\n'
+    )
     assert module.content_digest(a) == module.content_digest(b)
     assert module.content_digest(a) != module.content_digest(a + "rule\n")
 
@@ -173,7 +183,8 @@ def test_unregenerable_artifact_falls_back_to_commit_order(gate) -> None:
 
 
 @pytest.mark.skipif(
-    _load_gate()._ruff_binary() is None, reason="ruff formats the generated Python targets"
+    _load_gate()._ruff_binary() is None,
+    reason="ruff formats the generated Python targets",
 )
 def test_every_committed_artifact_matches_a_fresh_compile() -> None:
     """The recipes are right: every real artifact regenerates byte-identically."""

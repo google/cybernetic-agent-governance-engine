@@ -39,7 +39,7 @@ from src.gateway.governance.narrower import NarrowerRegistry
 @dataclass(frozen=True)
 class ClassificationContext:
     """Context required for violation classification."""
-    
+
     violations: list[Violation]
     confidence: float
     opa_decision: str | None
@@ -50,18 +50,18 @@ class ClassificationContext:
 @dataclass(frozen=True)
 class ClassificationResult:
     """Result of classification with decision and metadata."""
-    
+
     decision: GovernanceDecision
     metadata: dict[str, Any]
 
 
 class ClassificationEngine:
     """Standalone classification engine for governance decisions.
-    
+
     Routes violations to DENY, DEFER, NARROW, or REQUIRE_APPROVAL based on
     ViolationKind, confidence thresholds, and registered narrowers.
     """
-    
+
     def __init__(
         self,
         narrower_registry: NarrowerRegistry,
@@ -73,14 +73,14 @@ class ClassificationEngine:
         self._confidence_threshold = confidence_threshold
         self._defer_enabled = defer_enabled
         self._narrow_enabled = narrow_enabled
-    
+
     def classify(
         self,
         context: ClassificationContext,
         action: str,
     ) -> ClassificationResult:
         """Classify violations to a governance decision.
-        
+
         Classification priority (fail-closed):
           1. HARD violations → DENY
           2. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
@@ -96,10 +96,12 @@ class ClassificationEngine:
 
         for v in context.violations:
             if isinstance(v, str):
-                raise TypeError(f"classify() received string violation instead of Violation object: {v}")
+                raise TypeError(
+                    f"classify() received string violation instead of Violation object: {v}"
+                )
 
         normalized_violations = context.violations
-        
+
         # Step 1: Check for HARD violations (always DENY)
         if any(v.kind == ViolationKind.HARD for v in normalized_violations):
             return ClassificationResult(
@@ -109,7 +111,7 @@ class ClassificationEngine:
                     "deferrable": False,
                 },
             )
-        
+
         # Step 2: OPA MANUAL_REVIEW → REQUIRE_APPROVAL
         if context.opa_decision == "MANUAL_REVIEW":
             return self._require_approval("opa_manual_review", context, action)
@@ -117,7 +119,7 @@ class ClassificationEngine:
         # Step 3: HITL violations → REQUIRE_APPROVAL
         if any(v.kind == ViolationKind.HITL for v in normalized_violations):
             return self._require_approval("hitl_required", context, action)
-        
+
         # Step 4: NARROW only if EVERY violation is NARROWABLE and a narrower
         # proposes clamped params (proof/model.py NARROW conditions (a), (b)).
         # A mixed set falls through (fail closed).  The proposal is NOT an
@@ -127,7 +129,9 @@ class ClassificationEngine:
             v.kind == ViolationKind.NARROWABLE for v in normalized_violations
         )
         if all_narrowable and self._narrow_enabled:
-            result = self.propose_narrowing(normalized_violations, action, context.params)
+            result = self.propose_narrowing(
+                normalized_violations, action, context.params
+            )
             if result is not None:
                 return ClassificationResult(
                     decision=GovernanceDecision.NARROW,
@@ -139,7 +143,7 @@ class ClassificationEngine:
                         "narrowing_reason": result.narrowing_reason,
                     },
                 )
-        
+
         # Step 5: DEFERRABLE violations + low confidence → DEFER
         deferrable_violations = [
             v for v in normalized_violations if v.kind == ViolationKind.DEFERRABLE
@@ -155,7 +159,7 @@ class ClassificationEngine:
                         "threshold": self._confidence_threshold,
                     },
                 )
-        
+
         # Step 6: Default fallback → DENY
         return ClassificationResult(
             decision=GovernanceDecision.DENY,
@@ -202,7 +206,10 @@ class ClassificationEngine:
         advisory; ``SymbolicGovernor.validate_action`` keeps it only if a
         DRY_RUN over the clamped params reports only HITL findings.
         """
-        metadata: dict[str, Any] = {"classification_reason": reason, "deferrable": False}
+        metadata: dict[str, Any] = {
+            "classification_reason": reason,
+            "deferrable": False,
+        }
         others = [v for v in context.violations if v.kind != ViolationKind.HITL]
         if (
             self._narrow_enabled

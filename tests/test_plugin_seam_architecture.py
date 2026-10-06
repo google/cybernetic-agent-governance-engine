@@ -76,7 +76,9 @@ class TestOverlayRegistry:
             for path in overlay_dirs
             if "cage_finance" in str(path) and "compliance" in str(path)
         ]
-        assert finance_overlays, "Finance plugin contributes no compliance overlay directory"
+        assert finance_overlays, (
+            "Finance plugin contributes no compliance overlay directory"
+        )
         assert all(path.is_dir() for path in finance_overlays)
 
 

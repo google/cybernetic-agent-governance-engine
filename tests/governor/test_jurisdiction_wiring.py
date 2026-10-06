@@ -48,14 +48,17 @@ from src.gateway.governance.governor.assembly import (
 )
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
-from src.gateway.governance.governor.posture import PostureViolation, assert_production_posture
+from src.gateway.governance.governor.posture import (
+    PostureViolation,
+    assert_production_posture,
+)
 from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
 from src.gateway.governance.jurisdiction import (
     JURISDICTIONS,
     JurisdictionContribution,
+    eu_ai_act,
     resolve_jurisdiction,
 )
-from src.gateway.governance.jurisdiction import eu_ai_act
 from src.gateway.governance.jurisdiction.eu_ai_act.fria_tier import (
     CODE_HOLD,
     CODE_REJECTED,
@@ -101,7 +104,9 @@ class _FakeProvider:
             raise self.exc
         return self.result
 
-    async def submit_evidence(self, receipt: dict[str, Any]) -> Any:  # pragma: no cover - unused
+    async def submit_evidence(
+        self, receipt: dict[str, Any]
+    ) -> Any:  # pragma: no cover - unused
         raise NotImplementedError
 
 
@@ -117,7 +122,9 @@ def _tier(
     return FriaTier(
         provider,  # type: ignore[arg-type]
         region="EU_ECB",
-        assessment_lookup=_lookup({"execute_trade": _FRESH} if artefacts is None else artefacts),
+        assessment_lookup=_lookup(
+            {"execute_trade": _FRESH} if artefacts is None else artefacts
+        ),
         reassessment_interval_days=kwargs.pop("interval", 365),
         gate_timeout_seconds=kwargs.pop("timeout", 0.05),
         clock=lambda: _NOW,
@@ -125,7 +132,9 @@ def _tier(
     )
 
 
-def _assemble(*, jurisdiction: JurisdictionContribution | None = None) -> SymbolicGovernor:
+def _assemble(
+    *, jurisdiction: JurisdictionContribution | None = None
+) -> SymbolicGovernor:
     return assemble_governor(
         [FinanceCagePlugin()],
         posture=DeploymentPosture.TEST,
@@ -164,6 +173,7 @@ def test_non_eu_governor_has_no_fria_tier(region: str) -> None:
 
 def test_default_test_region_resolves_without_fria() -> None:
     """The hermetic default (LOCAL → US_FED fallback) assembles no fria tier."""
+    ControlRegistry.reconfigure("LOCAL")
     governor = _assemble()
     assert governor.components.jurisdiction is not None
     assert governor.components.jurisdiction.region == "US_FED"
@@ -175,7 +185,11 @@ def test_eu_governor_runs_fria_once_in_phase_one_after_causal() -> None:
     names = _domain_stage_names(governor)
     assert names.count("fria") == 1
     assert names == ["bounding", "consensus", "causal", "fria", "cbf", "fiscal"]
-    fria = next(s for s in governor.stages if isinstance(s, DomainTierStage) and s.name == "fria")
+    fria = next(
+        s
+        for s in governor.stages
+        if isinstance(s, DomainTierStage) and s.name == "fria"
+    )
     assert fria.mutating is False
     # The domain view stays domain-only; the jurisdiction tier is separate.
     assert "fria" not in [t.tier_name for t in governor.domain_tiers]
@@ -185,7 +199,10 @@ def test_reconfigure_reports_the_region_it_loaded() -> None:
     """Regression: reconfigure() used to reset active_region to the default."""
     ControlRegistry.reconfigure("EU_ECB")  # restored by the conftest fixture
     assert ControlRegistry().active_region == "EU_ECB"
-    assert ControlRegistry().get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT) is not None
+    assert (
+        ControlRegistry().get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT)
+        is not None
+    )
 
 
 def test_eu_region_resolves_to_fria_through_control_registry() -> None:
@@ -211,16 +228,24 @@ def test_jurisdiction_tiers_must_be_read_only() -> None:
         def claims_action(self, action: str, params: dict[str, Any]) -> bool:
             return True
 
-        async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        async def evaluate(
+            self, action: str, params: dict[str, Any]
+        ) -> list[Violation]:
             return []
 
-        async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], CommitReceipt | None]:
+        async def commit(
+            self, action: str, params: dict[str, Any]
+        ) -> tuple[list[Violation], CommitReceipt | None]:
             return [], None
 
-        async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        async def rollback(
+            self, action: str, params: dict[str, Any], receipt: CommitReceipt
+        ) -> None:
             pass
 
-        async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+        async def confirm(
+            self, action: str, params: dict[str, Any], receipt: CommitReceipt
+        ) -> None:
             pass
 
     with pytest.raises(TypeError, match="must be read-only"):
@@ -247,7 +272,9 @@ def test_fria_tier_name_collision_with_a_domain_tier_is_rejected() -> None:
         def claims_action(self, action: str, params: dict[str, Any]) -> bool:
             return False
 
-        async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+        async def evaluate(
+            self, action: str, params: dict[str, Any]
+        ) -> list[Violation]:
             return []
 
     components = GovernorComponents(
@@ -276,11 +303,16 @@ def test_universal_kernel_prose_does_not_mention_fria() -> None:
     """Outside the jurisdiction package (and the normative seam), FRIA is not a kernel concept."""
     root = _REPO / "src/gateway/governance"
     allowed = (root / "jurisdiction", root / "seams")
-    allowed_names = {"normative_provider.py", "normative_provider_daemon.py", "constants.py"}
+    allowed_names = {
+        "normative_provider.py",
+        "normative_provider_daemon.py",
+        "constants.py",
+    }
     offenders = [
         f"{path.relative_to(_REPO)}:{n}"
         for path in sorted(root.rglob("*.py"))
-        if not any(path.is_relative_to(a) for a in allowed) and path.name not in allowed_names
+        if not any(path.is_relative_to(a) for a in allowed)
+        and path.name not in allowed_names
         for n, line in enumerate(path.read_text().splitlines(), 1)
         if re.search(r"fria", line, re.IGNORECASE)
     ]
@@ -295,7 +327,10 @@ async def test_admitted_assessment_passes_and_always_consults_the_provider() -> 
     provider = _FakeProvider(ValidationResult(admitted=True))
     tier = _tier(provider)
     # A confident model does not skip the provider: there is no fast path.
-    assert await tier.evaluate("execute_trade", {"confidence": 0.99, "thread_id": "t-1"}) == []
+    assert (
+        await tier.evaluate("execute_trade", {"confidence": 0.99, "thread_id": "t-1"})
+        == []
+    )
     assert len(provider.calls) == 1
     payload = provider.calls[0]
     assert payload["action"] == "execute_trade"
@@ -307,7 +342,10 @@ async def test_admitted_assessment_passes_and_always_consults_the_provider() -> 
 @pytest.mark.asyncio
 async def test_human_review_finding_is_a_hitl_hold() -> None:
     provider = _FakeProvider(
-        ValidationResult(admitted=False, findings=[{"needs_human_review": True, "message": "Annex III"}])
+        ValidationResult(
+            admitted=False,
+            findings=[{"needs_human_review": True, "message": "Annex III"}],
+        )
     )
     [violation] = await _tier(provider).evaluate("execute_trade", {})
     assert (violation.code, violation.kind) == (CODE_HOLD, ViolationKind.HITL)
@@ -317,7 +355,9 @@ async def test_human_review_finding_is_a_hitl_hold() -> None:
 
 @pytest.mark.asyncio
 async def test_refusal_without_review_is_hard() -> None:
-    provider = _FakeProvider(ValidationResult(admitted=False, findings=[{"rule": "art27"}]))
+    provider = _FakeProvider(
+        ValidationResult(admitted=False, findings=[{"rule": "art27"}])
+    )
     [violation] = await _tier(provider).evaluate("execute_trade", {})
     assert (violation.code, violation.kind) == (CODE_REJECTED, ViolationKind.HARD)
 
@@ -342,8 +382,18 @@ async def test_unavailable_provider_fails_closed(provider: _FakeProvider) -> Non
     ("artefacts", "reason"),
     [
         ({}, "no FRIA artefact"),
-        ({"execute_trade": {"assessed_at": (_NOW - timedelta(days=366)).isoformat()}}, "older than"),
-        ({"execute_trade": {"assessed_at": (_NOW + timedelta(days=1)).isoformat()}}, "future"),
+        (
+            {
+                "execute_trade": {
+                    "assessed_at": (_NOW - timedelta(days=366)).isoformat()
+                }
+            },
+            "older than",
+        ),
+        (
+            {"execute_trade": {"assessed_at": (_NOW + timedelta(days=1)).isoformat()}},
+            "future",
+        ),
         ({"execute_trade": {"assessed_at": "2026-09-01T00:00:00"}}, "no timezone"),
         ({"execute_trade": {"assessed_at": "last spring"}}, "not ISO-8601"),
         ({"execute_trade": {"assessor": "dpo"}}, "not ISO-8601"),
@@ -400,12 +450,16 @@ def test_invalid_gate_timeout_is_refused() -> None:
 
 def test_default_tier_claims_every_action_and_a_classifier_narrows() -> None:
     assert _tier(_FakeProvider()).claims_action("anything", {}) is True
-    narrowed = _tier(_FakeProvider(), claims=lambda action, params: action == "execute_trade")
+    narrowed = _tier(
+        _FakeProvider(), claims=lambda action, params: action == "execute_trade"
+    )
     assert narrowed.claims_action("execute_trade", {}) is True
     assert narrowed.claims_action("get_quote", {}) is False
 
 
-def test_reassessment_interval_comes_from_the_eu_thresholds_baseline(tmp_path: pathlib.Path) -> None:
+def test_reassessment_interval_comes_from_the_eu_thresholds_baseline(
+    tmp_path: pathlib.Path,
+) -> None:
     assert eu_ai_act.load_reassessment_interval_days() == 365
     missing = tmp_path / "EU_ECB_BASELINE.json"
     missing.write_text('{"fria": {}}')
@@ -420,6 +474,7 @@ def test_invalid_gate_timeout_env_is_refused(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_registry_lookup_finds_nothing_outside_eu() -> None:
+    ControlRegistry.reconfigure("US_FED")
     assert ControlRegistry().active_region != "EU_ECB"
     assert eu_ai_act.registry_assessment_lookup("execute_trade") is None
 
@@ -463,8 +518,12 @@ def defer_redis(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 @pytest.mark.asyncio
 async def test_fria_hold_parks_an_approval_token(defer_redis: Any) -> None:
-    provider = _FakeProvider(ValidationResult(admitted=False, findings=[{"needs_human_review": True}]))
-    result = await _fria_only_governor(provider).validate_action("execute_trade", {"amount": 10})
+    provider = _FakeProvider(
+        ValidationResult(admitted=False, findings=[{"needs_human_review": True}])
+    )
+    result = await _fria_only_governor(provider).validate_action(
+        "execute_trade", {"amount": 10}
+    )
     assert result["verdict"] == "REQUIRE_APPROVAL"
     assert result["deferred_id"]
     async with defer_queue_mod.open_defer_queue() as queue:
@@ -475,14 +534,18 @@ async def test_fria_hold_parks_an_approval_token(defer_redis: Any) -> None:
 @pytest.mark.asyncio
 async def test_fria_provider_timeout_denies_with_a_receipt(defer_redis: Any) -> None:
     with pytest.raises(GovernanceError) as exc:
-        await _fria_only_governor(_FakeProvider(hang=True)).validate_action("execute_trade", {"amount": 10})
+        await _fria_only_governor(_FakeProvider(hang=True)).validate_action(
+            "execute_trade", {"amount": 10}
+        )
     assert exc.value.receipt is not None
     assert "CTRL_FRIA_006" in str(exc.value)
 
 
 @pytest.mark.asyncio
 async def test_admitted_fria_allows(defer_redis: Any) -> None:
-    result = await _fria_only_governor(_FakeProvider()).validate_action("execute_trade", {"amount": 10})
+    result = await _fria_only_governor(_FakeProvider()).validate_action(
+        "execute_trade", {"amount": 10}
+    )
     assert result["verdict"] == "ALLOW"
 
 
@@ -511,12 +574,16 @@ def healthy(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier())
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
     monkeypatch.setenv(
-        "KMS_GOVERNANCE_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/cage-gateway-seal-signer"
+        "KMS_GOVERNANCE_KEY",
+        "projects/p/locations/l/keyRings/r/cryptoKeys/cage-gateway-seal-signer",
     )
     monkeypatch.setenv(
-        "RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/cage-reconciler-snapshot-signer"
+        "RECONCILER_KMS_KEY",
+        "projects/p/locations/l/keyRings/r/cryptoKeys/cage-reconciler-snapshot-signer",
     )
-    monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
+    monkeypatch.setattr(
+        "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False
+    )
     return monkeypatch
 
 
@@ -530,23 +597,33 @@ def _eu_components(provider: Any, posture: DeploymentPosture) -> GovernorCompone
     )
 
 
-def test_enforcing_eu_posture_refuses_the_stub_provider(healthy: pytest.MonkeyPatch) -> None:
+def test_enforcing_eu_posture_refuses_the_stub_provider(
+    healthy: pytest.MonkeyPatch,
+) -> None:
     components = _eu_components(StubNormativeProvider(), DeploymentPosture.PRODUCTION)
-    with pytest.raises(PostureViolation, match="jurisdiction_requirements.*fria_normative_provider"):
+    with pytest.raises(
+        PostureViolation, match="jurisdiction_requirements.*fria_normative_provider"
+    ):
         assert_production_posture(DeploymentPosture.PRODUCTION, components=components)
 
 
-def test_enforcing_eu_posture_accepts_a_real_provider(healthy: pytest.MonkeyPatch) -> None:
+def test_enforcing_eu_posture_accepts_a_real_provider(
+    healthy: pytest.MonkeyPatch,
+) -> None:
     components = _eu_components(_FakeProvider(), DeploymentPosture.PRODUCTION)
     assert_production_posture(DeploymentPosture.PRODUCTION, components=components)
 
 
-def test_permissive_eu_posture_logs_but_starts_on_the_stub(healthy: pytest.MonkeyPatch) -> None:
+def test_permissive_eu_posture_logs_but_starts_on_the_stub(
+    healthy: pytest.MonkeyPatch,
+) -> None:
     components = _eu_components(StubNormativeProvider(), DeploymentPosture.DEV)
     assert_production_posture(DeploymentPosture.DEV, components=components)
 
 
-def test_non_eu_posture_has_no_jurisdiction_requirement(healthy: pytest.MonkeyPatch) -> None:
+def test_non_eu_posture_has_no_jurisdiction_requirement(
+    healthy: pytest.MonkeyPatch,
+) -> None:
     components = GovernorComponents(
         opa=allow_opa(),
         core_stages=(),

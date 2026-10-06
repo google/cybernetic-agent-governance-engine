@@ -183,7 +183,9 @@ async def _explain_worker() -> None:
             # ?explain=full. Config is re-read here (not cached) so test
             # overrides work.
             base_url, uds_path = _opa_endpoint()
-            explain_url = f"{base_url}{_decision_path(_active_opa_package())}?explain=full"
+            explain_url = (
+                f"{base_url}{_decision_path(_active_opa_package())}?explain=full"
+            )
             if uds_path:
                 transport = httpx.AsyncHTTPTransport(uds=uds_path)
             else:
@@ -355,7 +357,9 @@ def _opa_endpoint() -> tuple[str, str | None]:
     if parsed.scheme == "http+unix":
         return "http://localhost", urllib.parse.unquote(parsed.netloc)
     if parsed.scheme not in ("http", "https"):
-        raise RuntimeError(f"FAIL-CLOSED: OPA_URL scheme must be http, https or http+unix, got {parsed.scheme!r}")
+        raise RuntimeError(
+            f"FAIL-CLOSED: OPA_URL scheme must be http, https or http+unix, got {parsed.scheme!r}"
+        )
     return f"{parsed.scheme}://{parsed.netloc}", None
 
 
@@ -381,7 +385,9 @@ def _rules_in_package(modules: list[dict[str, Any]], package: str) -> set[str] |
     rules: set[str] = set()
     for module in modules:
         ast = module.get("ast") or {}
-        path = [term.get("value") for term in (ast.get("package") or {}).get("path", [])]
+        path = [
+            term.get("value") for term in (ast.get("package") or {}).get("path", [])
+        ]
         if path != target:
             continue
         found = True
@@ -418,11 +424,15 @@ class OPAClient:
             self._endpoint = _opa_endpoint()
         except RuntimeError as exc:
             self._endpoint_error = exc
-            logger.error("OPAClient misconfigured; every OPA call will fail closed: %s", exc)
+            logger.error(
+                "OPAClient misconfigured; every OPA call will fail closed: %s", exc
+            )
 
     def _resolve_endpoint(self) -> tuple[str, str | None]:
         if self._endpoint is None:
-            raise self._endpoint_error or RuntimeError("FAIL-CLOSED: OPA endpoint unresolved")
+            raise self._endpoint_error or RuntimeError(
+                "FAIL-CLOSED: OPA endpoint unresolved"
+            )
         return self._endpoint
 
     @property
@@ -471,13 +481,15 @@ class OPAClient:
             )
         return self._http_client
 
-    async def close(self):  # type: ignore[no-untyped-def]
+    async def close(self) -> None:
         """Close the pooled httpx client and release connections."""
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
             self._http_client = None
 
-    async def verify_domain_policy(self, package: str, required_rules: tuple[str, ...]) -> None:
+    async def verify_domain_policy(
+        self, package: str, required_rules: tuple[str, ...]
+    ) -> None:
         """Fail closed unless OPA has ``package`` loaded with every required rule.
 
         Lists ``GET {base}/v1/policies`` and inspects each module's parsed AST,
@@ -493,18 +505,28 @@ class OPAClient:
             headers = {}
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
-            response = await self._get_client().get(f"{base}/v1/policies", headers=headers, timeout=5.0)
+            response = await self._get_client().get(
+                f"{base}/v1/policies", headers=headers, timeout=5.0
+            )
             response.raise_for_status()
             modules = response.json()["result"]
             defined = _rules_in_package(modules, package)
         except Exception as exc:
-            raise OPAPolicyMismatchError(f"cannot verify OPA package {package!r}: {exc}") from exc
+            raise OPAPolicyMismatchError(
+                f"cannot verify OPA package {package!r}: {exc}"
+            ) from exc
         if defined is None:
-            raise OPAPolicyMismatchError(f"OPA has no module declaring package {package!r}")
+            raise OPAPolicyMismatchError(
+                f"OPA has no module declaring package {package!r}"
+            )
         missing = sorted(set(required_rules) - defined)
         if missing:
-            raise OPAPolicyMismatchError(f"OPA package {package!r} lacks required rules {missing}")
-        logger.info("✅ OPA package %s verified (rules: %s)", package, ", ".join(required_rules))
+            raise OPAPolicyMismatchError(
+                f"OPA package {package!r} lacks required rules {missing}"
+            )
+        logger.info(
+            "✅ OPA package %s verified (rules: %s)", package, ", ".join(required_rules)
+        )
 
     async def evaluate_policy(
         self, input_data: dict[str, Any], current_latency_ms: float = 0.0

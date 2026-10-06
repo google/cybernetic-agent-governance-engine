@@ -245,7 +245,9 @@ class TestRemoteTelemetryProviderFromCredentials:
 
     def test_import_error_raises_configuration_error(self):
         """If the SDK is not installed, construction must fail closed (AW-8)."""
-        with patch("builtins.__import__", side_effect=_selective_import_error("langfuse")):
+        with patch(
+            "builtins.__import__", side_effect=_selective_import_error("langfuse")
+        ):
             with pytest.raises(ConfigurationError, match="package is required"):
                 RemoteTelemetryProvider.from_credentials(**_CREDS)
 
@@ -298,11 +300,16 @@ class TestGetTelemetryProviderFactory:
                 get_telemetry_provider()
 
     def test_factory_remote_passes_telemetry_credentials(self):
-        env = {**_env_without("CAGE_TELEMETRY_PROVIDER"), "CAGE_TELEMETRY_PROVIDER": "remote"}
+        env = {
+            **_env_without("CAGE_TELEMETRY_PROVIDER"),
+            "CAGE_TELEMETRY_PROVIDER": "remote",
+        }
         env.update({**_CRED_ENV, "TELEMETRY_HOST": _CREDS["host"] + "/"})
         client_cls = MagicMock()
         with patch.dict(os.environ, env, clear=True):
-            with patch.dict("sys.modules", {"langfuse": MagicMock(Langfuse=client_cls)}):
+            with patch.dict(
+                "sys.modules", {"langfuse": MagicMock(Langfuse=client_cls)}
+            ):
                 provider = get_telemetry_provider()
         assert isinstance(provider, RemoteTelemetryProvider)
         client_cls.assert_called_once_with(**_CREDS)  # trailing slash stripped
@@ -324,18 +331,31 @@ class TestGetTelemetryProviderFactory:
 
     @pytest.mark.parametrize("cage_env", ["staging", "production", "local"])
     def test_factory_unset_under_enforcing_posture_raises(self, cage_env):
-        env = {**_env_without("CAGE_TELEMETRY_PROVIDER"), "CAGE_ENV": cage_env, **_CRED_ENV}
+        env = {
+            **_env_without("CAGE_TELEMETRY_PROVIDER"),
+            "CAGE_ENV": cage_env,
+            **_CRED_ENV,
+        }
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ConfigurationError, match="CAGE_TELEMETRY_PROVIDER must be set"):
+            with pytest.raises(
+                ConfigurationError, match="CAGE_TELEMETRY_PROVIDER must be set"
+            ):
                 get_telemetry_provider()
 
     def test_factory_unset_permissive_without_credentials_is_null(self):
-        env = {**_env_without("CAGE_TELEMETRY_PROVIDER", *_CRED_ENV), "CAGE_ENV": "test"}
+        env = {
+            **_env_without("CAGE_TELEMETRY_PROVIDER", *_CRED_ENV),
+            "CAGE_ENV": "test",
+        }
         with patch.dict(os.environ, env, clear=True):
             assert isinstance(get_telemetry_provider(), NullTelemetryProvider)
 
     def test_factory_unset_permissive_with_credentials_is_remote(self):
-        env = {**_env_without("CAGE_TELEMETRY_PROVIDER"), "CAGE_ENV": "dev", **_CRED_ENV}
+        env = {
+            **_env_without("CAGE_TELEMETRY_PROVIDER"),
+            "CAGE_ENV": "dev",
+            **_CRED_ENV,
+        }
         with patch.dict(os.environ, env, clear=True):
             with patch.dict("sys.modules", {"langfuse": MagicMock()}):
                 assert isinstance(get_telemetry_provider(), RemoteTelemetryProvider)
@@ -541,7 +561,9 @@ def test_provider_uses_the_installed_langfuse_sdk_api(monkeypatch) -> None:
 
     pytest.importorskip("langfuse")
     # Other tests stub ``langfuse`` in sys.modules; check the installed SDK.
-    for name in [n for n in sys.modules if n == "langfuse" or n.startswith("langfuse.")]:
+    for name in [
+        n for n in sys.modules if n == "langfuse" or n.startswith("langfuse.")
+    ]:
         if not isinstance(sys.modules[name], types.ModuleType):
             monkeypatch.delitem(sys.modules, name)
     langfuse = importlib.import_module("langfuse")

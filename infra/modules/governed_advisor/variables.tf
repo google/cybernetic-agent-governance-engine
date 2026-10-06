@@ -164,3 +164,10 @@ variable "service_account_name" {
     error_message = "service_account_name must name the workload's own KSA; the shared financial-advisor-sa is retired (POAM-2026-079)."
   }
 }
+
+# Name of the cage-deployment ConfigMap (modules/deployment_config). Passing
+# it (rather than hardcoding the name) makes the dependency explicit.
+variable "deployment_config_map_name" {
+  description = "ConfigMap holding CAGE_DEPLOYMENT_REGION (output of modules/deployment_config)."
+  type        = string
+}

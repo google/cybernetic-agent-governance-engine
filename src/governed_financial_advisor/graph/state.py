@@ -82,7 +82,9 @@ class AgentState(TypedDict):
         "DEFERRED",
         "HARD_PAUSE_BUDGET_EXCEEDED",
     ]
-    governance_signature: str | None  # Gateway-signed envelope signature from safety_check (the advisor signs nothing)
+    governance_signature: (
+        str | None
+    )  # Gateway-signed envelope signature from safety_check (the advisor signs nothing)
 
     # User Profile
     risk_attitude: str | None

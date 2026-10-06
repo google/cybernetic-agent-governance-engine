@@ -114,14 +114,18 @@ async def verify_supervisor_receipt(
     if not isinstance(sig, dict) or sig.get("alg") != "EdDSA":
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "EdDSA signature required"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "EdDSA signature required"
+            ),
         )
     kid = sig.get("kid")
     val = sig.get("value")
     if not isinstance(kid, str) or not kid or not isinstance(val, str) or not val:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "signature kid/value missing"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "signature kid/value missing"
+            ),
         )
 
     if key_resolver is None:
@@ -156,12 +160,18 @@ async def verify_supervisor_receipt(
     except (binascii.Error, ValueError):
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "signature is not base64url"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "signature is not base64url"
+            ),
         )
     if len(sig_bytes) != _ED25519_SIGNATURE_BYTES:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "Ed25519 signature must be 64 bytes"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED",
+                "TERMINAL",
+                "Ed25519 signature must be 64 bytes",
+            ),
         )
 
     signed_body = {k: v for k, v in body.items() if k != "signature"}
@@ -171,18 +181,30 @@ async def verify_supervisor_receipt(
     except InvalidSignature:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_INVALID", "TERMINAL", f"signature invalid (kid={kid})"),
+            _finding(
+                "RECEIPT_SIGNATURE_INVALID",
+                "TERMINAL",
+                f"signature invalid (kid={kid})",
+            ),
         )
     except Exception as exc:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", f"canonicalization failed: {type(exc).__name__}"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED",
+                "TERMINAL",
+                f"canonicalization failed: {type(exc).__name__}",
+            ),
         )
 
     if signed_body.get("envelope_digest") != envelope_digest:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_ENVELOPE_MISMATCH", "TERMINAL", "receipt bound to different envelope_digest"),
+            _finding(
+                "RECEIPT_ENVELOPE_MISMATCH",
+                "TERMINAL",
+                "receipt bound to different envelope_digest",
+            ),
         )
 
     return ReceiptVerification.VERIFIED, None
@@ -203,7 +225,9 @@ class Actuator02Adapter:
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("https", "http"):
-            raise ValueError(f"[actuator_02] Unsupported endpoint scheme: {parsed.scheme!r}")
+            raise ValueError(
+                f"[actuator_02] Unsupported endpoint scheme: {parsed.scheme!r}"
+            )
         if require_signed_receipts and receipt_key_resolver is None:
             raise ValueError(
                 "[actuator_02] require_signed_receipts requires a receipt_key_resolver"
@@ -274,8 +298,7 @@ class Actuator02Adapter:
     def actuator_id(self) -> str:
         return ACTUATOR_02_ID
 
-    @property
-    def capabilities(self) -> set[ActuatorCapability]:
+    def get_capabilities(self) -> set[ActuatorCapability]:
         if self._receipt_key_resolver is not None:
             return set(_CAPABILITIES)
         return _CAPABILITIES - {ActuatorCapability.SIGNED_RECEIPTS}
@@ -302,7 +325,12 @@ class Actuator02Adapter:
                 outcome=ActuationOutcome.REJECTED,
             )
 
-        if clearance.executor_id not in (ACTUATOR_02_ID, "a02", "openshell", "actuator_01"):
+        if clearance.executor_id not in (
+            ACTUATOR_02_ID,
+            "a02",
+            "openshell",
+            "actuator_01",
+        ):
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
@@ -423,7 +451,11 @@ class Actuator02Adapter:
         # Brokered credentials never carry CAGE protocol headers: drop any
         # X-CAGE-* name (case-insensitively) so none can shadow the seal.
         headers.update(
-            {k: v for k, v in broker_headers.items() if not k.lower().startswith("x-cage-")}
+            {
+                k: v
+                for k, v in broker_headers.items()
+                if not k.lower().startswith("x-cage-")
+            }
         )
         headers[ROUTING_SEAL_HEADER] = seal
         headers[SEAL_PROFILE_HEADER] = SEAL_PROFILE
@@ -435,7 +467,11 @@ class Actuator02Adapter:
                 session_uuid=None,
                 raw_receipt=None,
                 findings=[
-                    _finding("HTTP_CLIENT_UNCONFIGURED", "TERMINAL", "no mTLS client configured")
+                    _finding(
+                        "HTTP_CLIENT_UNCONFIGURED",
+                        "TERMINAL",
+                        "no mTLS client configured",
+                    )
                 ],
                 retryable=False,
                 envelope_digest=envelope_digest,
@@ -456,7 +492,11 @@ class Actuator02Adapter:
                 session_uuid=None,
                 raw_receipt=None,
                 findings=[
-                    _finding("SUPERVISOR_CONNECT_FAILED", "TRANSIENT", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "SUPERVISOR_CONNECT_FAILED",
+                        "TRANSIENT",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 retryable=True,
                 envelope_digest=envelope_digest,
@@ -470,7 +510,11 @@ class Actuator02Adapter:
                 session_uuid=None,
                 raw_receipt=None,
                 findings=[
-                    _finding("SUPERVISOR_TRANSPORT_INDETERMINATE", "TERMINAL", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "SUPERVISOR_TRANSPORT_INDETERMINATE",
+                        "TERMINAL",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 retryable=False,
                 envelope_digest=envelope_digest,
@@ -526,7 +570,11 @@ class Actuator02Adapter:
                 session_uuid=None,
                 raw_receipt=None,
                 findings=[
-                    _finding("RECEIPT_PARSE_ERROR", "TERMINAL", f"{type(exc).__name__}: {exc}")
+                    _finding(
+                        "RECEIPT_PARSE_ERROR",
+                        "TERMINAL",
+                        f"{type(exc).__name__}: {exc}",
+                    )
                 ],
                 retryable=False,
                 envelope_digest=envelope_digest,
@@ -545,7 +593,9 @@ class Actuator02Adapter:
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=body.get("receipt_id") if isinstance(body, dict) else None,
-                session_uuid=body.get("session_uuid") if isinstance(body, dict) else None,
+                session_uuid=body.get("session_uuid")
+                if isinstance(body, dict)
+                else None,
                 raw_receipt=body if isinstance(body, dict) else None,
                 findings=findings,
                 retryable=False,
@@ -555,7 +605,10 @@ class Actuator02Adapter:
                 verification=ReceiptVerification.INVALID,
             )
 
-        if self._require_signed_receipts and verification is not ReceiptVerification.VERIFIED:
+        if (
+            self._require_signed_receipts
+            and verification is not ReceiptVerification.VERIFIED
+        ):
             findings.append(
                 _finding(
                     "SIGNED_RECEIPT_REQUIRED",
@@ -566,7 +619,9 @@ class Actuator02Adapter:
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=body.get("receipt_id") if isinstance(body, dict) else None,
-                session_uuid=body.get("session_uuid") if isinstance(body, dict) else None,
+                session_uuid=body.get("session_uuid")
+                if isinstance(body, dict)
+                else None,
                 raw_receipt=body if isinstance(body, dict) else None,
                 findings=findings,
                 retryable=False,
@@ -578,7 +633,9 @@ class Actuator02Adapter:
 
         receipt_id = body.get("receipt_id") if isinstance(body, dict) else None
         session_uuid = body.get("session_uuid") if isinstance(body, dict) else None
-        status_str = str(body.get("status", "")).upper() if isinstance(body, dict) else ""
+        status_str = (
+            str(body.get("status", "")).upper() if isinstance(body, dict) else ""
+        )
         if status_str not in ("ACCEPTED", "OK", "EXECUTED") or not receipt_id:
             findings.append(
                 _finding(

@@ -127,7 +127,9 @@ async def verify_partner_receipt(
     try:
         signature_bytes = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     except (binascii.Error, ValueError):
-        return _invalid("RECEIPT_SIGNATURE_MALFORMED", "signature value is not base64url")
+        return _invalid(
+            "RECEIPT_SIGNATURE_MALFORMED", "signature value is not base64url"
+        )
     if len(signature_bytes) != _ED25519_SIGNATURE_BYTES:
         return _invalid(
             "RECEIPT_SIGNATURE_MALFORMED",
@@ -139,10 +141,13 @@ async def verify_partner_receipt(
         message = RECEIPT_SIGNATURE_DOMAIN_TAG + jcs_canonicalize_plan(signed_body)
         public_key.verify(signature_bytes, message)
     except InvalidSignature:
-        return _invalid("RECEIPT_SIGNATURE_INVALID", f"signature does not verify (kid={kid})")
+        return _invalid(
+            "RECEIPT_SIGNATURE_INVALID", f"signature does not verify (kid={kid})"
+        )
     except Exception as exc:
         return _invalid(
-            "RECEIPT_SIGNATURE_MALFORMED", f"receipt not canonicalizable: {type(exc).__name__}"
+            "RECEIPT_SIGNATURE_MALFORMED",
+            f"receipt not canonicalizable: {type(exc).__name__}",
         )
 
     if signed_body.get("envelope_digest") != envelope_digest:

@@ -171,13 +171,15 @@ export CAGE_DEPLOYMENT_REGION=EU_ECB      # + GDPR, DORA, EU AI Act, MiFID II
 export CAGE_DEPLOYMENT_REGION=APAC_MAS    # + MAS Notice 655, FEAT principles, MAS TRM
 ```
 
-Verify the posture loaded correctly:
+Verify each posture's profile. The test harness runs every region-marked test under its own region, so no export is needed. See [`tests/README.md`](../tests/README.md#deployment-region).
 
 ```bash
-CAGE_DEPLOYMENT_REGION=US_FED   uv run pytest tests/ -m us_fed -v
-CAGE_DEPLOYMENT_REGION=EU_ECB   uv run pytest tests/ -m eu_ecb -v
-CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/ -m apac_mas -v
+uv run pytest tests/ -m us_fed -v
+uv run pytest tests/ -m eu_ecb -v
+uv run pytest tests/ -m apac_mas -v
 ```
+
+On Kubernetes, the region is set once per deployment in the `cage-deployment` ConfigMap, and every workload reads it from there.
 
 Each posture resolves thresholds from `config/thresholds/<REGION>_BASELINE.json` and control profiles from `config/compliance/<REGION>_BASELINE.json`. **To add a jurisdiction of your own**, create those two files following the existing schema, add region Rego under `config/opa/` and Lula assertions under `compliance/lula/`, ship a `<REGION>_OVERLAY.json` in each active plugin, and set `CAGE_DEPLOYMENT_REGION=<REGION>`. No Python changes are required. See [`docs/compliance/REGION_GUARD_AUDIT.md`](compliance/REGION_GUARD_AUDIT.md).
 

@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from src.cage_finance.plugin import FinanceCagePlugin
 from src.gateway.governance.contracts import Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import Profile, StageContext
@@ -93,7 +95,9 @@ async def test_stpa_validator_custom_uca_rule_fails_closed_on_predicate_error():
 async def test_stpa_stage_promotes_non_hard_findings_to_hard(kind):
     """A UCA is never routable to a human: any non-HARD kind becomes HARD."""
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
-    finding = Violation(tier="stpa", code="STPA_UCA_X", message="uca", kind=kind, bound=5.0)
+    finding = Violation(
+        tier="stpa", code="STPA_UCA_X", message="uca", kind=kind, bound=5.0
+    )
     validator = MagicMock()
     validator.validate.return_value = [finding]
     stage = StpaStage(validator=validator)
@@ -101,14 +105,22 @@ async def test_stpa_stage_promotes_non_hard_findings_to_hard(kind):
     violations = await stage.run(ctx)
 
     assert violations == [
-        Violation(tier="stpa", code="STPA_UCA_X", message="uca", kind=ViolationKind.HARD, bound=5.0)
+        Violation(
+            tier="stpa",
+            code="STPA_UCA_X",
+            message="uca",
+            kind=ViolationKind.HARD,
+            bound=5.0,
+        )
     ]
 
 
 @pytest.mark.asyncio
 async def test_stpa_stage_keeps_hard_findings_identical():
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
-    finding = Violation(tier="stpa", code="STPA_UCA_Y", message="uca", kind=ViolationKind.HARD)
+    finding = Violation(
+        tier="stpa", code="STPA_UCA_Y", message="uca", kind=ViolationKind.HARD
+    )
     validator = MagicMock()
     validator.validate.return_value = [finding]
     stage = StpaStage(validator=validator)

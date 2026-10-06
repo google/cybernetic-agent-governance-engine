@@ -361,7 +361,9 @@ def test_ftra_tier_can_fail_and_block_execution() -> None:
     # Verify FTRA failures exist and lead to DENIED
     assert ftra_failed, "expected states where FTRA fails"
     for state in ftra_failed:
-        assert state.phase in ("DENIED", "NARROW"), "FTRA failure must lead to DENIED or NARROW phase"
+        assert state.phase in ("DENIED", "NARROW"), (
+            "FTRA failure must lead to DENIED or NARROW phase"
+        )
         if state.phase == "DENIED":
             assert not state.seal_present, "FTRA DENIED must not issue seal"
             assert not state.resolved_allow, "FTRA DENIED must not set resolvedAllow"

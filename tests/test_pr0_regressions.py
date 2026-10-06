@@ -57,13 +57,15 @@ def mock_ftra_safe():
 
 
 @pytest.mark.asyncio
-async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe, classification_engine):
+async def test_c1_cbf_reconciliation_unavailable_blocks(
+    mock_ftra_safe, classification_engine
+):
     """
     C1: Verify CBF reconciliation unavailable (Redis unreachable) blocks execution.
-    
+
     When CBF returns (False, "RECONCILIATION_UNAVAILABLE: ..."), the govern()
     method must raise GovernanceError and include the CBF refusal in the receipt.
-    
+
     This prevents the fail-open vulnerability where network failures could bypass
     the safety constraint verification.
     """
@@ -104,17 +106,20 @@ async def test_c1_cbf_reconciliation_unavailable_blocks(mock_ftra_safe, classifi
 
     # Verify the error message contains the CBF refusal
     error_message = str(exc_info.value)
-    assert "RECONCILIATION_UNAVAILABLE" in error_message or "Redis unreachable" in error_message
+    assert (
+        "RECONCILIATION_UNAVAILABLE" in error_message
+        or "Redis unreachable" in error_message
+    )
 
 
 @pytest.mark.asyncio
 async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe, classification_engine):
     """
     C2: Verify OPA DENY verdict skips CBF commit (no budget leakage).
-    
+
     When OPA returns "DENY", the governor must NOT call CBF's atomic_verify_and_commit,
     preventing budget leakage where CBF debits balance but OPA later denies the action.
-    
+
     This verifies the Phase 1/Phase 2 pipeline ordering fix: all read-only checks
     (OPA) must complete before any state mutations (CBF).
     """
@@ -123,9 +128,7 @@ async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe, classification_engin
 
     # Mock CBF as a spy to verify it was NEVER called
     safety_filter = AsyncMock()
-    safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(True, "SAFE", 0.0)
-    )
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -164,10 +167,10 @@ async def test_c2_opa_deny_skips_cbf_commit(mock_ftra_safe, classification_engin
 async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe, classification_engine):
     """
     H2: Verify OPA unknown/typo verdicts fail-closed (deny execution).
-    
+
     When OPA returns an unexpected verdict like "UNKNOWN_VERDICT", the governor
     must fail-closed by raising GovernanceError and NOT allow execution.
-    
+
     This prevents the fail-open vulnerability where typos or malformed responses
     could bypass governance checks.
     """
@@ -175,9 +178,7 @@ async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe, classification_engi
     opa_client.evaluate_policy.return_value = "UNKNOWN_VERDICT"
 
     safety_filter = AsyncMock()
-    safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(True, "SAFE", 0.0)
-    )
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -218,13 +219,13 @@ async def test_h2_opa_unknown_verdict_denies(mock_ftra_safe, classification_engi
 async def test_h3_confidence_nan_blocks(mock_ftra_safe, classification_engine):
     """
     H3: Verify NaN confidence scores fail-closed (block execution).
-    
+
     When params contains confidence=float('nan'), the governor must detect this
     invalid value and raise an error (GovernanceError or ValueError from JCS).
-    
+
     This prevents the fail-open vulnerability where NaN values could bypass
     numeric threshold comparisons (NaN < threshold evaluates to False in Python).
-    
+
     Note: The JCS canonicalizer cannot serialize NaN values, so the error may
     be raised either during validation (GovernanceError) or during receipt
     creation (ValueError). Both are acceptable fail-closed behaviors.
@@ -233,9 +234,7 @@ async def test_h3_confidence_nan_blocks(mock_ftra_safe, classification_engine):
     opa_client.evaluate_policy.return_value = "ALLOW"
 
     safety_filter = AsyncMock()
-    safety_filter.atomic_verify_and_commit = AsyncMock(
-        return_value=(True, "SAFE", 0.0)
-    )
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}

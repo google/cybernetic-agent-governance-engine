@@ -47,7 +47,6 @@ def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
 
-
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)

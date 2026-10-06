@@ -19,7 +19,6 @@ verification, no fence-epoch. This is pure data — the kernel compiles it
 into the atomic Redis Lua hop.
 """
 
-
 import math
 from typing import Any
 
@@ -58,7 +57,9 @@ def healthcare_cost_resolver(action_name: str, payload: dict[str, Any]) -> float
         payload.get("dose_mg", payload.get("dose", payload.get("amount", 0.0))),
     )
     if isinstance(raw, bool):
-        raise ValueError(f"Invalid clinical dose {raw!r}: bool is not a valid numeric dose")
+        raise ValueError(
+            f"Invalid clinical dose {raw!r}: bool is not a valid numeric dose"
+        )
     value = float(raw)
     if not math.isfinite(value) or value < 0.0:
         raise ValueError(

@@ -112,7 +112,10 @@ print("BARE_KERNEL_PORTABILITY_VERIFIED")
 
     @pytest.mark.asyncio
     async def test_bare_kernel_evaluates_deny_offline(
-        self, hermetic_network_guard: None, monkeypatch: pytest.MonkeyPatch, classification_engine
+        self,
+        hermetic_network_guard: None,
+        monkeypatch: pytest.MonkeyPatch,
+        classification_engine,
     ) -> None:
         """Verify kernel evaluates a governance request and returns DENY without network calls."""
         monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")

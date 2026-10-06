@@ -139,7 +139,9 @@ def test_plugin_seam_imports_are_kernel_only():
     cage_import_pattern = re.compile(r"cage_\w+")
 
     missing = [m for m in seam_modules if not (repo_root / m).exists()]
-    assert not missing, f"Seam modules listed here no longer exist (update the list): {missing}"
+    assert not missing, (
+        f"Seam modules listed here no longer exist (update the list): {missing}"
+    )
 
     violations = []
     for module_path in seam_modules:

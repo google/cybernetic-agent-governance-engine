@@ -239,7 +239,9 @@ class ActuationReceipt:
     def __post_init__(self) -> None:
         if self.outcome is None:
             self.outcome = (
-                ActuationOutcome.ACCEPTED if self.accepted else ActuationOutcome.REJECTED
+                ActuationOutcome.ACCEPTED
+                if self.accepted
+                else ActuationOutcome.REJECTED
             )
         if self.accepted != (self.outcome is ActuationOutcome.ACCEPTED):
             raise ValueError(

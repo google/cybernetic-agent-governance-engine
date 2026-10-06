@@ -25,7 +25,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    CommitReceipt,
+    MutatingTier,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -85,10 +90,14 @@ class _Tier(MutatingTier):
             raise self._commit_raises
         return [], CommitReceipt(tier=self._name, magnitude=float(self._order))
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         self.log.append(f"confirm:{self._name}")
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         assert receipt.tier == self._name
         if self._rollback_delay:
             await asyncio.sleep(self._rollback_delay)
@@ -113,7 +122,11 @@ def _ctx(profile: Profile = Profile.FULL) -> StageContext:
 
 
 async def _call(gov: SymbolicGovernor, entry_point: str) -> Any:
-    kwargs = {"approved_barrier_preview": None} if entry_point == "revalidate_post_hitl" else {}
+    kwargs = (
+        {"approved_barrier_preview": None}
+        if entry_point == "revalidate_post_hitl"
+        else {}
+    )
     return await getattr(gov, entry_point)("act", {}, **kwargs)
 
 
@@ -129,7 +142,9 @@ def seal(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entry_point", ENTRY_POINTS)
-async def test_seal_failure_rolls_back_every_commit_lifo(entry_point: str, seal: AsyncMock) -> None:
+async def test_seal_failure_rolls_back_every_commit_lifo(
+    entry_point: str, seal: AsyncMock
+) -> None:
     log: list[str] = []
     seal.side_effect = RuntimeError("KMS unavailable")
 
@@ -170,7 +185,9 @@ async def test_validate_action_neither_commits_nor_seals(
 
 
 @pytest.mark.asyncio
-async def test_timeout_between_commit_and_seal_awaits_every_rollback(seal: AsyncMock) -> None:
+async def test_timeout_between_commit_and_seal_awaits_every_rollback(
+    seal: AsyncMock,
+) -> None:
     log: list[str] = []
 
     async def slow_seal(*args: Any, **kwargs: Any) -> str:
@@ -178,7 +195,10 @@ async def test_timeout_between_commit_and_seal_awaits_every_rollback(seal: Async
         return "never"
 
     seal.side_effect = slow_seal
-    tiers = [_Tier("cbf", 1, log, rollback_delay=0.02), _Tier("fiscal", 2, log, rollback_delay=0.02)]
+    tiers = [
+        _Tier("cbf", 1, log, rollback_delay=0.02),
+        _Tier("fiscal", 2, log, rollback_delay=0.02),
+    ]
 
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(_governor(tiers).govern("act", {}), timeout=0.01)
@@ -187,7 +207,9 @@ async def test_timeout_between_commit_and_seal_awaits_every_rollback(seal: Async
 
 
 @pytest.mark.asyncio
-async def test_cancellation_during_seal_propagates_after_rollback(seal: AsyncMock) -> None:
+async def test_cancellation_during_seal_propagates_after_rollback(
+    seal: AsyncMock,
+) -> None:
     log: list[str] = []
     sealing = asyncio.Event()
 
@@ -207,7 +229,9 @@ async def test_cancellation_during_seal_propagates_after_rollback(seal: AsyncMoc
 
 
 @pytest.mark.asyncio
-async def test_cancellation_during_second_of_three_commits_rolls_back_first(seal: AsyncMock) -> None:
+async def test_cancellation_during_second_of_three_commits_rolls_back_first(
+    seal: AsyncMock,
+) -> None:
     log: list[str] = []
     second = _Tier("b", 2, log, commit_blocks=asyncio.Event())
     gov = _governor([_Tier("a", 1, log), second, _Tier("c", 3, log)])
@@ -223,7 +247,9 @@ async def test_cancellation_during_second_of_three_commits_rolls_back_first(seal
 
 
 @pytest.mark.asyncio
-async def test_seal_failure_plus_rollback_failure_raises_governance_error(seal: AsyncMock) -> None:
+async def test_seal_failure_plus_rollback_failure_raises_governance_error(
+    seal: AsyncMock,
+) -> None:
     log: list[str] = []
     seal_error = RuntimeError("KMS unavailable")
     seal.side_effect = seal_error
@@ -244,9 +270,13 @@ async def test_refused_run_with_outstanding_commits_is_hard_and_rolled_back(
     log: list[str] = []
     stage = DomainTierStage(_Tier("cbf", 1, log))
 
-    async def leaky_pipeline(stages: Any, ctx: StageContext, *, profile: Profile, scope: ReservationScope):
+    async def leaky_pipeline(
+        stages: Any, ctx: StageContext, *, profile: Profile, scope: ReservationScope
+    ):
         await scope.commit(stage, ctx)
-        deny = Violation(tier="opa", code="DENY", message="denied", kind=ViolationKind.HARD)
+        deny = Violation(
+            tier="opa", code="DENY", message="denied", kind=ViolationKind.HARD
+        )
         return PipelineResult((deny,), (), None, None, (), commits=scope.commits)
 
     monkeypatch.setattr(sealing_module, "run_pipeline", leaky_pipeline)
@@ -258,7 +288,9 @@ async def test_refused_run_with_outstanding_commits_is_hard_and_rolled_back(
 
 
 @pytest.mark.asyncio
-async def test_verify_creates_no_scope_and_never_commits(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_verify_creates_no_scope_and_never_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def no_scope(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("verify() must not create a ReservationScope")
 
@@ -278,7 +310,9 @@ async def test_verify_creates_no_scope_and_never_commits(monkeypatch: pytest.Mon
 async def test_mutating_profile_without_scope_is_rejected(profile: Profile) -> None:
     log: list[str] = []
     with pytest.raises(ValueError, match="requires a ReservationScope"):
-        await run_pipeline(order_stages(_two_tiers(log)), _ctx(profile), profile=profile)
+        await run_pipeline(
+            order_stages(_two_tiers(log)), _ctx(profile), profile=profile
+        )
     assert log == []
 
 
@@ -288,7 +322,10 @@ async def test_dry_run_with_scope_is_rejected() -> None:
     async with ReservationScope() as scope:
         with pytest.raises(ValueError, match="DRY_RUN never commits"):
             await run_pipeline(
-                order_stages(_two_tiers(log)), _ctx(Profile.DRY_RUN), profile=Profile.DRY_RUN, scope=scope
+                order_stages(_two_tiers(log)),
+                _ctx(Profile.DRY_RUN),
+                profile=Profile.DRY_RUN,
+                scope=scope,
             )
     assert log == []
 
@@ -312,13 +349,19 @@ async def test_plain_exit_without_seal_rolls_back_lifo() -> None:
 @pytest.mark.asyncio
 async def test_one_failing_rollback_does_not_stop_the_others() -> None:
     log: list[str] = []
-    tiers = [_Tier("a", 1, log), _Tier("b", 2, log, rollback_raises=RuntimeError("boom")), _Tier("c", 3, log)]
+    tiers = [
+        _Tier("a", 1, log),
+        _Tier("b", 2, log, rollback_raises=RuntimeError("boom")),
+        _Tier("c", 3, log),
+    ]
     async with ReservationScope() as scope:
         await _commit_all(scope, tiers)
         failures = await scope.rollback()
 
     assert log[3:] == ["rollback:c", "rollback:b", "rollback:a"]
-    assert [(v.tier, v.code, v.kind) for v in failures] == [("b", "ROLLBACK_FAILED", ViolationKind.HARD)]
+    assert [(v.tier, v.code, v.kind) for v in failures] == [
+        ("b", "ROLLBACK_FAILED", ViolationKind.HARD)
+    ]
 
 
 @pytest.mark.asyncio
@@ -326,7 +369,9 @@ async def test_rollback_failure_on_plain_exit_raises_governance_error() -> None:
     log: list[str] = []
     with pytest.raises(GovernanceError, match=r"\[ROLLBACK_FAILED\]"):
         async with ReservationScope() as scope:
-            await _commit_all(scope, _two_tiers(log, rollback_raises=RuntimeError("boom")))
+            await _commit_all(
+                scope, _two_tiers(log, rollback_raises=RuntimeError("boom"))
+            )
 
 
 @pytest.mark.asyncio
@@ -334,7 +379,9 @@ async def test_rollback_failure_during_cancellation_keeps_cancellation() -> None
     log: list[str] = []
     with pytest.raises(asyncio.CancelledError) as info:
         async with ReservationScope() as scope:
-            await _commit_all(scope, _two_tiers(log, rollback_raises=RuntimeError("boom")))
+            await _commit_all(
+                scope, _two_tiers(log, rollback_raises=RuntimeError("boom"))
+            )
             raise asyncio.CancelledError
     assert any("[ROLLBACK_FAILED]" in note for note in info.value.__notes__)
     assert log[2:] == ["rollback:fiscal", "rollback:cbf"]
@@ -421,4 +468,6 @@ async def test_raising_commit_is_hard_tier_exception_and_not_recorded() -> None:
     async with ReservationScope() as scope:
         violations = await scope.commit(_RaisingStage(), _ctx())
         assert scope.commits == ()
-    assert [(v.tier, v.code, v.kind) for v in violations] == [("kernel", "TIER_EXCEPTION", ViolationKind.HARD)]
+    assert [(v.tier, v.code, v.kind) for v in violations] == [
+        ("kernel", "TIER_EXCEPTION", ViolationKind.HARD)
+    ]

@@ -74,9 +74,7 @@ def verify_receipt_digest(receipt: dict[str, Any]) -> bool:
 
         # Step 1: Create canonical copy omitting receiptDigest and signature
         canonical_receipt = {
-            k: v
-            for k, v in receipt.items()
-            if k not in ("receiptDigest", "signature")
+            k: v for k, v in receipt.items() if k not in ("receiptDigest", "signature")
         }
 
         # Step 2: Canonicalize via RFC 8785 JCS
@@ -143,9 +141,7 @@ def verify_receipt_signature(
 
         # Step 1: Create canonical copy omitting receiptDigest and signature
         canonical_receipt = {
-            k: v
-            for k, v in receipt.items()
-            if k not in ("receiptDigest", "signature")
+            k: v for k, v in receipt.items() if k not in ("receiptDigest", "signature")
         }
 
         # Step 2: Canonicalize via RFC 8785 JCS

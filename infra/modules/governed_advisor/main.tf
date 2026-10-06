@@ -75,6 +75,20 @@ resource "kubernetes_deployment" "governed_advisor" {
             }
           }
 
+          # Deployment jurisdiction: single source is the cage-deployment
+          # ConfigMap (modules/deployment_config). optional = false: a pod
+          # never starts without a declared region.
+          env {
+            name = "CAGE_DEPLOYMENT_REGION"
+            value_from {
+              config_map_key_ref {
+                name     = var.deployment_config_map_name
+                key      = "CAGE_DEPLOYMENT_REGION"
+                optional = false
+              }
+            }
+          }
+
           env {
             name  = "PORT"
             value = "8080"
@@ -194,7 +208,7 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = "none"
           }
           env {
-            name  = "OTEL_EXPORTER_OTLP_ENDPOINT"
+            name = "OTEL_EXPORTER_OTLP_ENDPOINT"
             # Langfuse v3 native OTLP ingestion — no separate OTel Collector deployed.
             value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000/api/public/otel/v1/traces"
           }

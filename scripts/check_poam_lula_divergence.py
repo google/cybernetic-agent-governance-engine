@@ -23,6 +23,10 @@ A "corresponding" file is one whose name contains the normalised control ID
 For compound controls such as "SC-4 / SI-2", ANY of the listed controls
 having a Lula file is sufficient to consider the finding covered.
 
+A finding whose fix is not observable by a Lula assertion (code-level
+invariants such as Redis Lua scripts) is covered instead by the pytest
+evidence listed for it in CODE_EVIDENCE_FINDINGS; every listed file must exist.
+
 Exit codes:
     0 — all closed findings have a corresponding Lula assertion file
     1 — one or more closed findings lack a corresponding Lula assertion file
@@ -57,6 +61,32 @@ NON_TESTABLE_CONTROLS = {
     "external",
 }
 
+# Closed findings whose fix lives in code paths a Lula (Kubernetes resource)
+# assertion cannot observe — Redis Lua scripts, ledger arithmetic, telemetry
+# decoding. Each maps to the pytest modules cited as closure evidence in
+# docs/POAM.md. Scoped per finding, never per control: the same control ID
+# (e.g. SC-23) is Lula-testable for mesh/session findings. Fail-closed: a
+# finding is uncovered if any listed evidence file does not exist.
+CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
+    # Settlement-aware CBF debit ledger + discrepancy floor (ADR-010).
+    "POAM-2026-087": (
+        "tests/test_cbf_settlement_ledger.py",
+        "tests/test_reconciliation_discrepancy_floor.py",
+    ),
+    # Causal tier evaluates live telemetry and denies on decode failure.
+    "POAM-2026-088": (
+        "tests/test_causal_tier_telemetry.py",
+        "tests/test_telemetry_provider.py",
+    ),
+    # Only debits confirmed after execution settle.
+    "POAM-2026-092": (
+        "tests/test_cbf_settlement_ledger.py",
+        "tests/governor/test_commit_receipts.py",
+    ),
+    # Atomic, fail-closed ground-truth sequence check in the CBF Lua script.
+    "POAM-2026-097": ("tests/test_replay_defense.py",),
+}
+
 CONTROL_ALIASES: dict[str, list[str]] = {
     "a84": ["tqp007", "iso001-token-quota", "flowsignal"],
     "iso42001": ["a52", "a53", "a92", "tqp007", "iso001-token-quota", "flowsignal"],
@@ -70,11 +100,12 @@ def normalise_control(raw: str) -> str:
     """Normalise a control ID to the suffix used in Lula filenames.
 
     Examples:
-        "SC-4"   → "sc4"
-        "AI-600" → "ai600"
-        "A.5.2"  → "a52"
+        "SC-4"            → "sc4"
+        "AI-600"          → "ai600"
+        "A.5.2"           → "a52"
+        "`CTRL_MRM_004`"  → "ctrlmrm004"  (Markdown code span, underscores)
     """
-    return re.sub(r"[\s.\-/]", "", raw).lower()
+    return re.sub(r"[\s.\-/_`]", "", raw).lower()
 
 
 def parse_closed_findings(poam_text: str) -> list[dict]:
@@ -180,6 +211,19 @@ def find_matching_lula_stems(controls: list[str], lula_stems: set[str]) -> list[
     return list(set(matched))
 
 
+def missing_code_evidence(
+    finding_id: str, repo_root: Path = Path(".")
+) -> list[str] | None:
+    """Evidence files listed for ``finding_id`` that do not exist.
+
+    Returns ``None`` when the finding has no code-evidence entry.
+    """
+    evidence = CODE_EVIDENCE_FINDINGS.get(finding_id)
+    if evidence is None:
+        return None
+    return [path for path in evidence if not (repo_root / path).is_file()]
+
+
 def main() -> int:
     if not POAM_PATH.exists():
         print(f"ERROR: {POAM_PATH} not found.", file=sys.stderr)
@@ -198,10 +242,20 @@ def main() -> int:
     print()
 
     covered: list[dict] = []
+    code_covered: list[dict] = []
     uncovered: list[dict] = []
     skipped: list[dict] = []
 
     for finding in closed_findings:
+        missing = missing_code_evidence(finding["id"])
+        if missing is not None:
+            if missing:
+                finding["missing_evidence"] = missing
+                uncovered.append(finding)
+            else:
+                code_covered.append(finding)
+            continue
+
         controls = split_controls(finding["control"])
         ctrl_norms = [normalise_control(c) for c in controls]
 
@@ -229,6 +283,14 @@ def main() -> int:
 
     print()
     print("=" * 70)
+    print("CODE-EVIDENCE findings (fix not observable by Lula; pytest evidence)")
+    print("=" * 70)
+    for f in code_covered:
+        files = ", ".join(CODE_EVIDENCE_FINDINGS[f["id"]])
+        print(f"  🧪 {f['id']:25s}  ctrl={f['control']!r:30s}  → {files}")
+
+    print()
+    print("=" * 70)
     print("SKIPPED findings (non-testable / structural controls)")
     print("=" * 70)
     for f in skipped:
@@ -240,24 +302,31 @@ def main() -> int:
     print("=" * 70)
     if uncovered:
         for f in uncovered:
-            print(f"  ❌ {f['id']:25s}  ctrl={f['control']!r}")
+            note = ""
+            if f.get("missing_evidence"):
+                note = f"  missing evidence: {', '.join(f['missing_evidence'])}"
+            print(f"  ❌ {f['id']:25s}  ctrl={f['control']!r}{note}")
     else:
         print("  (none)")
 
     print()
     print(
-        f"Summary: {len(covered)} covered, {len(skipped)} skipped, "
+        f"Summary: {len(covered)} covered, {len(code_covered)} code-evidence, "
+        f"{len(skipped)} skipped, "
         f"{len(uncovered)} uncovered out of {len(closed_findings)} closed findings."
     )
 
     if uncovered:
         print(
             "\nACTION REQUIRED: Add Lula assertion files for the uncovered findings above,",
-            "\nor add the control ID to NON_TESTABLE_CONTROLS if it is structural.",
+            "\nadd the control ID to NON_TESTABLE_CONTROLS if it is structural,",
+            "\nor list the finding's pytest evidence in CODE_EVIDENCE_FINDINGS.",
         )
         return 1
 
-    print("\nOK: all closed POAM findings have a corresponding Lula assertion file.")
+    print(
+        "\nOK: every closed POAM finding has Lula or code evidence (or is non-testable)."
+    )
     return 0
 
 

@@ -31,6 +31,7 @@ on:
     paths:
       - 'docs/POAM.md'
       - 'compliance/lula/**'
+      - 'scripts/check_poam_lula_divergence.py'
 
 # Default least-privilege permissions for every job in this workflow.
 permissions:

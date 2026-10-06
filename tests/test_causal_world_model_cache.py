@@ -274,9 +274,7 @@ class TestCachePolicyBoundaries:
         gatekeeper = CausalGatekeeper(_spec())
         assert _check(gatekeeper, _SMALL) is True  # warms the synthetic entry
         fake_dowhy.beta = -1.0
-        assert (
-            _check(gatekeeper, _SMALL, current_telemetry=_fresh_telemetry()) is False
-        )
+        assert _check(gatekeeper, _SMALL, current_telemetry=_fresh_telemetry()) is False
 
     def test_exception_path_is_not_cached(
         self, fake_dowhy: _FakeDoWhy, redis_store: fakeredis.FakeRedis

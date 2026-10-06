@@ -138,7 +138,9 @@ def proxy_deps(monkeypatch):
     nemo_safe = MagicMock(is_safe=True, reason="")
 
     # Mock workload identity extractor to return the advisor Linkerd identity
-    mock_client_id = "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    mock_client_id = (
+        "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    )
     monkeypatch.setattr(
         "src.gateway.server.workload_identity.extract_client_identity",
         lambda scope: mock_client_id,
@@ -148,7 +150,9 @@ def proxy_deps(monkeypatch):
     monkeypatch.setattr(_mod, "ac_keyword_scan", MagicMock(return_value=False))
     monkeypatch.setattr(_mod, "_get_token_quota_proxy", lambda: quota_proxy)
     monkeypatch.setattr(_mod, "_get_uca_logger", lambda: uca_logger)
-    monkeypatch.setattr("src.integrations.nemo.manager.verify_input", AsyncMock(return_value=nemo_safe))
+    monkeypatch.setattr(
+        "src.integrations.nemo.manager.verify_input", AsyncMock(return_value=nemo_safe)
+    )
     monkeypatch.setattr(
         "src.integrations.nemo.manager.verify_and_mask_output",
         AsyncMock(side_effect=lambda _rails, text: text),
@@ -337,10 +341,11 @@ async def test_quota_exceeded_calls_uca_logger(proxy_deps):
 async def test_nemo_block_returns_403(proxy_deps, monkeypatch):
     """When NeMo verify_input blocks, the endpoint returns 403."""
     app = proxy_deps["app"]
-    mod = proxy_deps["module"]
     blocked_result = MagicMock(is_safe=False, reason="test-block-reason")
-    monkeypatch.setattr("src.integrations.nemo.manager.verify_input", AsyncMock(return_value=blocked_result)
-)
+    monkeypatch.setattr(
+        "src.integrations.nemo.manager.verify_input",
+        AsyncMock(return_value=blocked_result),
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -472,7 +477,9 @@ async def test_output_content_passed_through_nemo_filter(proxy_deps, monkeypatch
         masked_calls.append(text)
         return text
 
-    monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _capture_mask)
+    monkeypatch.setattr(
+        "src.integrations.nemo.manager.verify_and_mask_output", _capture_mask
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -687,7 +694,9 @@ async def test_tool_call_arguments_filtered_by_nemo(proxy_deps, monkeypatch):
         filtered_args.append(text)
         return text.replace("PII-123", "REDACTED")
 
-    monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _capture_tool_mask)
+    monkeypatch.setattr(
+        "src.integrations.nemo.manager.verify_and_mask_output", _capture_tool_mask
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

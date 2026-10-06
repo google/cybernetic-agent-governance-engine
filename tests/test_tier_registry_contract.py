@@ -62,7 +62,11 @@ def test_symbolic_governor_accepts_only_assembled_components() -> None:
     """
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
-    params = [p for p in inspect.signature(SymbolicGovernor.__init__).parameters if p != "self"]
+    params = [
+        p
+        for p in inspect.signature(SymbolicGovernor.__init__).parameters
+        if p != "self"
+    ]
     assert params == ["components"]
 
 
@@ -77,7 +81,9 @@ def test_governor_components_default_safety_filter_denies() -> None:
     from src.gateway.governance.governor.assembly import GovernorComponents
     from src.gateway.governance.null_components import NullSafetyFilter
 
-    components = GovernorComponents(opa=MagicMock(), core_stages=(), classifier=MagicMock())
+    components = GovernorComponents(
+        opa=MagicMock(), core_stages=(), classifier=MagicMock()
+    )
     assert isinstance(components.safety_filter, NullSafetyFilter)
     assert "safety_filter" in components.unfilled_slots
     verdict = asyncio.run(components.safety_filter.verify_action("any_action", {}))
@@ -93,7 +99,9 @@ def test_governor_components_default_consensus_rejects() -> None:
     from src.gateway.governance.governor.assembly import GovernorComponents
     from src.gateway.governance.null_components import NullConsensusProvider
 
-    components = GovernorComponents(opa=MagicMock(), core_stages=(), classifier=MagicMock())
+    components = GovernorComponents(
+        opa=MagicMock(), core_stages=(), classifier=MagicMock()
+    )
     assert isinstance(components.consensus, NullConsensusProvider)
     assert "consensus" in components.unfilled_slots
 
@@ -108,7 +116,9 @@ def test_symbolic_governor_requires_context_at_initialization() -> None:
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
     init_params = inspect.signature(SymbolicGovernor.__init__).parameters
-    assert "context" not in init_params, "context must not be a parameter to SymbolicGovernor.__init__"
+    assert "context" not in init_params, (
+        "context must not be a parameter to SymbolicGovernor.__init__"
+    )
 
     govern_params = inspect.signature(SymbolicGovernor.govern).parameters
     assert "tool_name" in govern_params
@@ -117,13 +127,23 @@ def test_symbolic_governor_requires_context_at_initialization() -> None:
 
 def test_tier_registration_requires_callable_with_predictable_signature() -> None:
     """Tiers declare the read-only hooks; only mutating tiers declare commit/rollback/confirm."""
-    from src.gateway.governance.contracts import GovernanceTier, MutatingTier, ReadOnlyTier
+    from src.gateway.governance.contracts import (
+        GovernanceTier,
+        MutatingTier,
+        ReadOnlyTier,
+    )
 
     for method_name in ("claims_action", "evaluate"):
-        assert hasattr(GovernanceTier, method_name), f"GovernanceTier must declare {method_name}"
+        assert hasattr(GovernanceTier, method_name), (
+            f"GovernanceTier must declare {method_name}"
+        )
     for method_name in ("commit", "rollback", "confirm"):
-        assert method_name in MutatingTier.__abstractmethods__, f"MutatingTier must require {method_name}"
-        assert not hasattr(ReadOnlyTier, method_name), f"ReadOnlyTier must not declare {method_name}"
+        assert method_name in MutatingTier.__abstractmethods__, (
+            f"MutatingTier must require {method_name}"
+        )
+        assert not hasattr(ReadOnlyTier, method_name), (
+            f"ReadOnlyTier must not declare {method_name}"
+        )
 
 
 def test_domain_plugins_must_not_import_from_kernel() -> None:
@@ -134,10 +154,14 @@ def test_domain_plugins_must_not_import_from_kernel() -> None:
     for p in Path(LAYER_1_GATEWAY).rglob("*.py"):
         if "__pycache__" not in str(p):
             violations.extend(check_file_boundaries(p))
-    assert not violations, f"Gate G3 import boundary violations detected in kernel: {violations}"
+    assert not violations, (
+        f"Gate G3 import boundary violations detected in kernel: {violations}"
+    )
 
 
-def test_governor_initialization_creates_empty_tier_registry(classification_engine) -> None:
+def test_governor_initialization_creates_empty_tier_registry(
+    classification_engine,
+) -> None:
     """A governor built with domain_tiers=() has no domain tiers."""
     from tests.fixtures.governor import make_governor
 
@@ -154,7 +178,9 @@ def test_ftra_must_execute_before_other_tiers() -> None:
     """FTRA (Tier 0.5) must execute before all other governance tiers in formal model."""
     import proof.model as model
 
-    assert model.TIERS[0] == "ftra", "FTRA (Tier 0.5) must be the first tier in execution order"
+    assert model.TIERS[0] == "ftra", (
+        "FTRA (Tier 0.5) must be the first tier in execution order"
+    )
 
 
 def test_cbf_and_opa_may_execute_concurrently() -> None:
@@ -168,13 +194,13 @@ def test_cbf_and_opa_may_execute_concurrently() -> None:
 def test_consensus_tier_requires_multi_agent_context() -> None:
     """Consensus tier (Tier 5) pluggable implementation is available."""
     from unittest.mock import MagicMock
+
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
     tier = ConsensusTierPlugin(consensus=MagicMock())
     assert tier.tier_name == "consensus"
     assert tier.phase == 1
     assert tier.order == 5
-
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +254,7 @@ def test_finance_domain_plugin_registers_fiscal_tier() -> None:
     registration and execution.
     """
     from unittest.mock import MagicMock
+
     from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 
     plugin = FiscalTierPlugin(guard=MagicMock())
@@ -235,7 +262,9 @@ def test_finance_domain_plugin_registers_fiscal_tier() -> None:
     assert plugin.phase == 2
     assert plugin.order == 4
     assert plugin.claims_action("execute_trade", {"amount": 100.0}) is True
-    assert plugin.claims_action("execute_trade", {"amount": 0.0}) is False  # claims by cost
+    assert (
+        plugin.claims_action("execute_trade", {"amount": 0.0}) is False
+    )  # claims by cost
     assert plugin.claims_action("prescribe_medication", {}) is False
 
 
@@ -252,6 +281,7 @@ def test_healthcare_domain_plugin_registers_dosage_tier() -> None:
     registration and execution.
     """
     from unittest.mock import MagicMock
+
     from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 
     plugin = DoseBarrierTier(cbf=MagicMock())
@@ -291,7 +321,8 @@ def test_any_tier_failure_must_block_execution() -> None:
 
     states = model.enumerate_reachable(model.gated_transitions)
     denied_from_tier = [
-        s for s in states
+        s
+        for s in states
         if s.phase == "DENIED" and any(r == "FAIL" for _, r in s.tier_results)
     ]
     assert len(denied_from_tier) > 0
@@ -313,6 +344,7 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     Enforcement: run_pipeline() via SymbolicGovernor.verify().
     """
     from unittest.mock import MagicMock
+
     from src.gateway.governance.contracts import ReadOnlyTier
     from tests.fixtures.governor import make_governor
 
@@ -343,6 +375,7 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     assert violations[0].tier == "broken_tier"
     assert violations[0].code == "TIER_EXCEPTION"
     from src.gateway.governance.contracts import ViolationKind
+
     assert violations[0].kind == ViolationKind.HARD
 
 
@@ -358,6 +391,7 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     """
     import asyncio
     from unittest.mock import MagicMock
+
     from src.gateway.governance.contracts import ReadOnlyTier
     from tests.fixtures.governor import make_governor
 
@@ -389,6 +423,7 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     assert violations[0].code == "TIER_EXCEPTION"
     assert "TimeoutError" in violations[0].message
     from src.gateway.governance.contracts import ViolationKind
+
     assert violations[0].kind == ViolationKind.HARD
 
 
@@ -406,12 +441,11 @@ def test_every_tier_must_emit_evidence_artifact() -> None:
     Rationale: Evidence chain provides audit trail for compliance
     validation (NIST SP 800-53 AU-2, AU-3).
     """
-    import dataclasses
-    from src.gateway.governance.governor.governor import Violation
     from src.gateway.governance.evidence.stream import (
-        EvidenceRecord,
         EvidenceCommitResult,
+        EvidenceRecord,
     )
+    from src.gateway.governance.governor.governor import Violation
 
     assert dataclasses.is_dataclass(Violation)
     assert dataclasses.is_dataclass(EvidenceRecord)
@@ -429,13 +463,13 @@ def test_evidence_artifacts_must_be_immutable() -> None:
 
     Enforcement: @dataclass(frozen=True) on evidence dataclasses and receipts.
     """
-    from src.gateway.governance.evidence.stream import EvidenceCommitResult
-    from src.gateway.governance.evidence.cold_store import ColdStoreReceipt
     from src.gateway.governance.contracts import RefusalReceipt
+    from src.gateway.governance.evidence.cold_store import ColdStoreReceipt
+    from src.gateway.governance.evidence.stream import EvidenceCommitResult
 
-    assert getattr(EvidenceCommitResult, "__dataclass_params__").frozen is True
-    assert getattr(ColdStoreReceipt, "__dataclass_params__").frozen is True
-    assert getattr(RefusalReceipt, "__dataclass_params__").frozen is True
+    assert EvidenceCommitResult.__dataclass_params__.frozen is True
+    assert ColdStoreReceipt.__dataclass_params__.frozen is True
+    assert RefusalReceipt.__dataclass_params__.frozen is True
 
 
 def test_evidence_chain_must_preserve_temporal_order() -> None:
@@ -447,8 +481,10 @@ def test_evidence_chain_must_preserve_temporal_order() -> None:
     Rationale: Temporal order enables causality analysis and replay
     debugging (which tier blocked the action, and when).
     """
-    import dataclasses
-    from src.gateway.governance.evidence.stream import EvidenceRecord, EvidenceCommitResult
+    from src.gateway.governance.evidence.stream import (
+        EvidenceCommitResult,
+        EvidenceRecord,
+    )
 
     fields_record = {f.name for f in dataclasses.fields(EvidenceRecord)}
     assert "timestamp" in fields_record
@@ -513,6 +549,7 @@ def test_no_hardcoded_domain_verbs_in_kernel() -> None:
     Enforcement: Code review + Gate G6 check via scripts/check_domain_literals.py.
     """
     from pathlib import Path
+
     import scripts.check_domain_literals as cdl
 
     gateway_dir = Path("src/gateway")
@@ -567,6 +604,7 @@ async def _run_tiers(gov, action, params, *, phase):
     """Run one phase of gov's domain tiers through the real pipeline."""
     from src.gateway.governance.governor.pipeline import Profile, StageContext
     from tests.governor.scope_helpers import run_scoped
+
     stages = [s for s in gov.stages if hasattr(s, "claims") and s.tier.phase == phase]
     ctx = StageContext(action=action, params=params, profile=Profile.FULL)
     result = await run_scoped(stages, ctx)

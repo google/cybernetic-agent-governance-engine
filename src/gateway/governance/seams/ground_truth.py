@@ -172,7 +172,9 @@ class RedisLedgerJournal:
         return value if math.isfinite(value) else 0.0
 
     def record(self, *, debit_id: str, amount: float, submitted_at: float) -> None:
-        member = json.dumps({"debit_id": debit_id, "amount": float(amount)}, sort_keys=True)
+        member = json.dumps(
+            {"debit_id": debit_id, "amount": float(amount)}, sort_keys=True
+        )
         self._raw().zadd(self.key, {member: float(submitted_at)})
 
     def settled_total(self, through: float) -> float:
@@ -226,15 +228,15 @@ class SimulatedSource:
         self.barrier_floor = float(barrier_floor)
         self.source_id = source_id
         resolved_seed = (
-            seed
-            if seed is not None
-            else int(os.environ.get("CAGE_SIM_SEED", "42"))
+            seed if seed is not None else int(os.environ.get("CAGE_SIM_SEED", "42"))
         )
         self.seed = resolved_seed
         self._rng = random.Random(resolved_seed)  # noqa: S311 - deterministic simulation RNG
         self._jitter_amplitude = float(jitter_amplitude or drift_sigma)
         self._sequence: int = 0
-        self.journal: LedgerJournal = journal if journal is not None else InMemoryLedgerJournal()
+        self.journal: LedgerJournal = (
+            journal if journal is not None else InMemoryLedgerJournal()
+        )
         self.settlement_lag_s = float(settlement_lag_s)
         self._fault_mode: FaultMode = FaultMode.NONE
         self._stalled_settled_through: float | None = None
@@ -259,7 +261,9 @@ class SimulatedSource:
 
     def settled_scalar(self, now: float) -> float:
         """Scalar a custodian would report at ``now``: only settled debits applied."""
-        return self.initial_scalar - self.journal.settled_total(self.settled_through_at(now))
+        return self.initial_scalar - self.journal.settled_total(
+            self.settled_through_at(now)
+        )
 
     def inject_fault(self, mode: FaultMode | str) -> None:
         """Configure the source to emit ``mode`` on subsequent fetches."""
@@ -284,7 +288,9 @@ class SimulatedSource:
         Returns the ``debit_id`` the entry was journaled under.
         """
         if not math.isfinite(magnitude) or magnitude < 0.0:
-            raise ValueError(f"Debit magnitude must be finite and non-negative, got {magnitude!r}")
+            raise ValueError(
+                f"Debit magnitude must be finite and non-negative, got {magnitude!r}"
+            )
         ts = time.time() if submitted_at is None else float(submitted_at)
         if not math.isfinite(ts):
             raise ValueError("submitted_at must be finite")
@@ -418,11 +424,7 @@ class SimulatedSource:
             )
 
         if mode == FaultMode.SCALAR_BELOW_BARRIER:
-            below = (
-                self.barrier_floor * 0.25
-                if self.barrier_floor > 0.0
-                else -1.0
-            )
+            below = self.barrier_floor * 0.25 if self.barrier_floor > 0.0 else -1.0
             meta["below_barrier"] = True
             return GroundTruthSnapshot(
                 invariant_id=self.invariant_id,

@@ -43,7 +43,9 @@ class CagePolicyProvider:
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("http", "https"):
-            raise ValueError(f"Invalid CAGE gateway endpoint URL scheme: {parsed.scheme!r}")
+            raise ValueError(
+                f"Invalid CAGE gateway endpoint URL scheme: {parsed.scheme!r}"
+            )
         self._endpoint = endpoint.rstrip("/")
         self._client_identity = client_identity
         self._timeout = timeout
@@ -111,7 +113,9 @@ class CagePolicyProvider:
                     rejected=False,
                     decision=verdict,
                     defer_id=data.get("deferred_id") or data.get("defer_token"),
-                    rejection_reason=data.get("classification_reason", "Dual-control approval required"),
+                    rejection_reason=data.get(
+                        "classification_reason", "Dual-control approval required"
+                    ),
                     violations=[str(v) for v in data.get("violations", [])],
                     metadata=data,
                 )
@@ -122,8 +126,14 @@ class CagePolicyProvider:
         except Exception:
             body = {"message": resp.text}
 
-        quarantined = bool(body.get("quarantined") or (body.get("payload") or {}).get("quarantined"))
-        reason = body.get("message") or body.get("error") or "Rejected by STERA hard constraint"
+        quarantined = bool(
+            body.get("quarantined") or (body.get("payload") or {}).get("quarantined")
+        )
+        reason = (
+            body.get("message")
+            or body.get("error")
+            or "Rejected by STERA hard constraint"
+        )
         violations = body.get("violations") or [reason]
 
         return PolicyEvaluationOutcome(

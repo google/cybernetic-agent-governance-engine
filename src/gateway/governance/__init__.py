@@ -40,17 +40,20 @@ def __getattr__(name: str) -> object:  # noqa: N807
     Note: ``unittest.mock.patch("src.gateway.governance.causal_gatekeeper.X")``
     triggers a ``getattr(module, "causal_gatekeeper")`` call, which correctly
     reaches this function and loads the submodule before patching its attribute.
+
+    Every import target and every ``globals()`` key below is a string literal,
+    so the set of names this hook can resolve is closed (the ``__all__``
+    entries); any other name raises ``AttributeError``.
     """
     if name in ("GovernanceError", "SymbolicGovernor"):
         try:
             from .governor.errors import GovernanceError
             from .governor.governor import SymbolicGovernor
-
-            globals()["GovernanceError"] = GovernanceError
-            globals()["SymbolicGovernor"] = SymbolicGovernor
         except ImportError:
-            pass
-        return globals().get(name)
+            return None
+        globals()["GovernanceError"] = GovernanceError
+        globals()["SymbolicGovernor"] = SymbolicGovernor
+        return GovernanceError if name == "GovernanceError" else SymbolicGovernor
 
     if name == "langgraph_harness":
         try:
@@ -61,20 +64,26 @@ def __getattr__(name: str) -> object:  # noqa: N807
             # causing infinite recursion (RecursionError). importlib.import_module
             # loads the submodule directly via sys.modules, sidestepping the
             # package attribute lookup entirely.
-            langgraph_harness = importlib.import_module(f"{__name__}.langgraph_harness")
-            globals()["langgraph_harness"] = langgraph_harness
-            return langgraph_harness
+            langgraph_harness = importlib.import_module(
+                ".langgraph_harness", __package__
+            )
         except ImportError:
             return None
+        globals()["langgraph_harness"] = langgraph_harness
+        return langgraph_harness
 
     if name in ("causal_gatekeeper", "causal_safety_check"):
         try:
-            causal_gatekeeper = importlib.import_module(f"{__name__}.causal.gatekeeper")
-            causal_safety_check = causal_gatekeeper.causal_safety_check
-            globals()["causal_gatekeeper"] = causal_gatekeeper
-            globals()["causal_safety_check"] = causal_safety_check
+            causal_gatekeeper = importlib.import_module(
+                ".causal.gatekeeper", __package__
+            )
         except ImportError:
-            pass
-        return globals().get(name)
+            return None
+        causal_safety_check = causal_gatekeeper.causal_safety_check
+        globals()["causal_gatekeeper"] = causal_gatekeeper
+        globals()["causal_safety_check"] = causal_safety_check
+        if name == "causal_gatekeeper":
+            return causal_gatekeeper
+        return causal_safety_check
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

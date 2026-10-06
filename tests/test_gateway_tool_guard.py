@@ -46,7 +46,11 @@ Handler = Callable[[httpx.Request], httpx.Response]
 
 _ALLOW = {"verdict": "ALLOW", "violations": [], "latency_ms": 1.0}
 _NARROW = {"verdict": "NARROW", "violations": [], "narrowed_params": {"amount": 50.0}}
-_REQUIRE_APPROVAL = {"verdict": "REQUIRE_APPROVAL", "deferred_id": "d-1", "violations": []}
+_REQUIRE_APPROVAL = {
+    "verdict": "REQUIRE_APPROVAL",
+    "deferred_id": "d-1",
+    "violations": [],
+}
 
 
 @pytest.fixture
@@ -114,9 +118,7 @@ class TestGuardApproval:
         bodies = [json.loads(r.content) for r in seen]
         assert {b["params"]["symbol"] for b in bodies} == {"AAPL", "MSFT"}
         assert all(b["action"] == "execute_trade" for b in bodies)
-        assert all(
-            b["params"]["tool_name"] == "execute_trade_action" for b in bodies
-        )
+        assert all(b["params"]["tool_name"] == "execute_trade_action" for b in bodies)
 
     @pytest.mark.asyncio
     async def test_no_tool_calls_does_not_run_node(self, gateway) -> None:
@@ -153,7 +155,8 @@ class TestGuardFailClosed:
             pytest.param(
                 # PAUSE was removed from GovernanceDecision; a gateway that still
                 # says it is speaking a vocabulary the advisor does not route on.
-                lambda r: httpx.Response(200, json={"verdict": "PAUSE"}), id="legacy-pause"
+                lambda r: httpx.Response(200, json={"verdict": "PAUSE"}),
+                id="legacy-pause",
             ),
             pytest.param(
                 lambda r: httpx.Response(
@@ -204,9 +207,7 @@ class TestGuardFailClosed:
         gateway(fail)
         spy = _SpyNode()
 
-        result = await gateway_tool_guard("market_analysis")(spy)(
-            _state(_call("t1"))
-        )
+        result = await gateway_tool_guard("market_analysis")(spy)(_state(_call("t1")))
 
         assert spy.calls == 0
         assert result["governance_status"] == "DENIED"
@@ -249,7 +250,9 @@ class TestGuardNarrow:
 
 class TestGuardRequireApproval:
     @pytest.mark.asyncio
-    async def test_single_call_parks_for_approval_without_running(self, gateway) -> None:
+    async def test_single_call_parks_for_approval_without_running(
+        self, gateway
+    ) -> None:
         gateway(lambda r: httpx.Response(200, json=_REQUIRE_APPROVAL))
         spy = _SpyNode()
 
@@ -268,7 +271,9 @@ class TestGuardRequireApproval:
     async def test_approval_in_multi_call_batch_refuses(self, gateway) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             symbol = json.loads(request.content)["params"]["symbol"]
-            return httpx.Response(200, json=_REQUIRE_APPROVAL if symbol == "BIG" else _ALLOW)
+            return httpx.Response(
+                200, json=_REQUIRE_APPROVAL if symbol == "BIG" else _ALLOW
+            )
 
         gateway(handler)
         spy = _SpyNode()
@@ -282,7 +287,9 @@ class TestGuardRequireApproval:
         assert "deferred_id" not in result
 
     @pytest.mark.asyncio
-    async def test_model_supplied_deferred_id_is_not_sent_to_validate(self, gateway) -> None:
+    async def test_model_supplied_deferred_id_is_not_sent_to_validate(
+        self, gateway
+    ) -> None:
         seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
         spy = _SpyNode()
         call = _call("t1")
@@ -304,7 +311,9 @@ class TestGuardApprovedResume:
         }
 
     @pytest.mark.asyncio
-    async def test_approved_forwards_deferred_id_without_revalidating(self, gateway) -> None:
+    async def test_approved_forwards_deferred_id_without_revalidating(
+        self, gateway
+    ) -> None:
         seen = gateway(lambda r: httpx.Response(500))
         spy = _SpyNode()
 
@@ -335,7 +344,9 @@ class TestGuardApprovedResume:
         assert result["deferred_id"] is None
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("approved", [False, None, "true"], ids=["rejected", "none", "truthy-str"])
+    @pytest.mark.parametrize(
+        "approved", [False, None, "true"], ids=["rejected", "none", "truthy-str"]
+    )
     async def test_non_true_approval_revalidates(self, gateway, approved) -> None:
         seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
         spy = _SpyNode()

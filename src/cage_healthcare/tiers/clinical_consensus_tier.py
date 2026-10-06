@@ -17,10 +17,21 @@
 from pathlib import Path
 from typing import Any
 
-from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS, HIGH_STAKES_CLINICAL_ACTIONS
-from src.gateway.governance.consensus import ConsensusGate, extract_field_magnitude, load_critic_specs
+from src.cage_healthcare.constants import (
+    HEALTHCARE_GOVERNED_ACTIONS,
+    HIGH_STAKES_CLINICAL_ACTIONS,
+)
+from src.gateway.governance.consensus import (
+    ConsensusGate,
+    extract_field_magnitude,
+    load_critic_specs,
+)
 from src.gateway.governance.contracts import (
-    ConsensusContribution, CriticSpec, ReadOnlyTier, Violation, ViolationKind,
+    ConsensusContribution,
+    CriticSpec,
+    ReadOnlyTier,
+    Violation,
+    ViolationKind,
 )
 
 _CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
@@ -62,15 +73,29 @@ class ClinicalConsensusTier(ReadOnlyTier):
         return 5
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action in HEALTHCARE_GOVERNED_ACTIONS or action in HIGH_STAKES_CLINICAL_ACTIONS
+        return (
+            action in HEALTHCARE_GOVERNED_ACTIONS
+            or action in HIGH_STAKES_CLINICAL_ACTIONS
+        )
 
-    def _reject(self, message: str, kind: ViolationKind = ViolationKind.HARD) -> list[Violation]:
-        return [Violation(tier=self.tier_name, code="CLINICAL_CONSENSUS_REJECTED", message=message, kind=kind)]
+    def _reject(
+        self, message: str, kind: ViolationKind = ViolationKind.HARD
+    ) -> list[Violation]:
+        return [
+            Violation(
+                tier=self.tier_name,
+                code="CLINICAL_CONSENSUS_REJECTED",
+                message=message,
+                kind=kind,
+            )
+        ]
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.consensus_engine is None:
             return self._reject("Clinical consensus engine is not configured")
-        result = await self.consensus_engine.check_consensus(action_type=action, params=params)
+        result = await self.consensus_engine.check_consensus(
+            action_type=action, params=params
+        )
         if not isinstance(result, dict):
             return self._reject("Invalid clinical consensus result payload")
         status = result.get("status")

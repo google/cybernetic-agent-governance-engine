@@ -100,6 +100,6 @@ def test_workload_isolation_separation() -> None:
 def test_primary_endpoint_only_exported() -> None:
     """Pitfall guard: Memorystore module must export only primary endpoint, no read replicas."""
     valkey_outputs_text = _VALKEY_OUTPUTS.read_text()
-    assert "output \"primary_endpoint_ip\"" in valkey_outputs_text
+    assert 'output "primary_endpoint_ip"' in valkey_outputs_text
     assert "read_replica" not in valkey_outputs_text
     assert "replica_endpoint" not in valkey_outputs_text

@@ -108,7 +108,9 @@ def create_test_receipt(
     # Sign with test private key
     private_key = get_test_private_key()
     signature_bytes = private_key.sign(payload_bytes)
-    signature_value = base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+    signature_value = (
+        base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+    )
 
     # Compute receiptDigest
     receipt_digest = hashlib.sha256(payload_bytes).hexdigest()
@@ -207,8 +209,12 @@ class TestEd25519SignatureVerification:
         original_sig = receipt["signature"]["value"]
         sig_bytes = bytearray(base64.urlsafe_b64decode(original_sig + "=="))
         sig_bytes[0] ^= 0xFF  # guaranteed to differ from the original
-        tampered_sig = base64.urlsafe_b64encode(bytes(sig_bytes)).decode("ascii").rstrip("=")
-        assert tampered_sig != original_sig, "XOR tamper must produce a different signature"
+        tampered_sig = (
+            base64.urlsafe_b64encode(bytes(sig_bytes)).decode("ascii").rstrip("=")
+        )
+        assert tampered_sig != original_sig, (
+            "XOR tamper must produce a different signature"
+        )
         receipt["signature"]["value"] = tampered_sig
 
         # Signature verification should fail
@@ -300,6 +306,7 @@ class TestAdapterReceiptVerification:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -338,6 +345,7 @@ class TestAdapterReceiptVerification:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -384,6 +392,7 @@ class TestAdapterReceiptVerification:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -433,6 +442,7 @@ class TestAdapterReceiptVerification:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -478,6 +488,7 @@ class TestAdapterReceiptVerification:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -531,6 +542,7 @@ class TestTrustAnchorInvariant:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response

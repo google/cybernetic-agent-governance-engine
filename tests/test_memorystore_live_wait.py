@@ -50,7 +50,7 @@ async def test_wait_smoke_test_with_mocked_client() -> None:
     mock_client.aclose = AsyncMock()
 
     with patch("redis.asyncio.Redis", return_value=mock_client):
-        success, acked, latency_ms, msg = await verify_memorystore_wait(
+        success, acked, _latency_ms, msg = await verify_memorystore_wait(
             host="10.0.0.10",
             port=6379,
             replicas=1,
@@ -93,4 +93,6 @@ async def test_wait_smoke_test_live_cluster() -> None:
 
     assert success is True, f"Live WAIT smoke test failed: {msg}"
     assert acked >= 1, f"Expected >= 1 replica, got {acked}"
-    assert latency_ms <= 100.0, f"WAIT latency {latency_ms:.2f} ms exceeded 100 ms budget"
+    assert latency_ms <= 100.0, (
+        f"WAIT latency {latency_ms:.2f} ms exceeded 100 ms budget"
+    )

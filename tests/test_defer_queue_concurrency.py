@@ -170,7 +170,9 @@ async def test_concurrent_approvals_do_not_lose_an_approval(redis_clients):
     try:
         barrier = asyncio.Barrier(2)
         result_a, result_b = await asyncio.gather(
-            _approve_interleaved(client_a, defer_id, "urn:cage:operator:alice", barrier),
+            _approve_interleaved(
+                client_a, defer_id, "urn:cage:operator:alice", barrier
+            ),
             _approve_interleaved(client_b, defer_id, "urn:cage:operator:bob", barrier),
         )
 

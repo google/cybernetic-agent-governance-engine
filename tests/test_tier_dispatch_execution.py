@@ -116,14 +116,20 @@ class _MutatingTracking(OrderTrackingTier, MutatingTier):
         # Phase 2 commit - log execution and check for violations
         return self._record(action), None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
 
-def tracking_tier(tier_name: str, phase: int, order: int, **kwargs: Any) -> OrderTrackingTier:
+def tracking_tier(
+    tier_name: str, phase: int, order: int, **kwargs: Any
+) -> OrderTrackingTier:
     """Build a read-only (phase 1) or mutating (phase 2) order-tracking tier."""
     kind = _ReadOnlyTracking if phase == 1 else _MutatingTracking
     return kind(tier_name, order, **kwargs)
@@ -139,7 +145,9 @@ class TestTierDispatchOrdering:
         OrderTrackingTier.execution_log.clear()
 
     @pytest.mark.asyncio
-    async def test_tiers_execute_in_ascending_order_priority(self, classification_engine) -> None:
+    async def test_tiers_execute_in_ascending_order_priority(
+        self, classification_engine
+    ) -> None:
         """Tiers with lower order values execute first."""
         # Create governor with tiers in arbitrary order
         gov = make_governor(
@@ -159,7 +167,9 @@ class TestTierDispatchOrdering:
         ]
 
     @pytest.mark.asyncio
-    async def test_phase_filter_only_executes_matching_phase(self, classification_engine) -> None:
+    async def test_phase_filter_only_executes_matching_phase(
+        self, classification_engine
+    ) -> None:
         """Only tiers matching the requested phase execute."""
         gov = make_governor(
             tracking_tier("phase1_tier", phase=1, order=100),
@@ -189,7 +199,9 @@ class TestTierDispatchOrdering:
         assert executed_tiers == ["claiming_tier"]
 
     @pytest.mark.asyncio
-    async def test_violations_aggregated_across_tiers(self, classification_engine) -> None:
+    async def test_violations_aggregated_across_tiers(
+        self, classification_engine
+    ) -> None:
         """When a tier returns violations, execution stops and violations are returned.
 
         With the v3.0 architecture, run_pipeline() returns early on first violation
@@ -227,7 +239,9 @@ class TestTierDispatchPhaseIsolation:
         OrderTrackingTier.execution_log.clear()
 
     @pytest.mark.asyncio
-    async def test_phase1_and_phase2_execute_independently(self, classification_engine) -> None:
+    async def test_phase1_and_phase2_execute_independently(
+        self, classification_engine
+    ) -> None:
         """Phase 1 and phase 2 tiers execute in separate calls."""
         gov = make_governor(
             tracking_tier("p1_tier", phase=1, order=100),
@@ -246,7 +260,9 @@ class TestTierDispatchPhaseIsolation:
         assert OrderTrackingTier.execution_log == [("p2_tier", "test_action")]
 
     @pytest.mark.asyncio
-    async def test_multiple_phase1_tiers_sorted_by_order(self, classification_engine) -> None:
+    async def test_multiple_phase1_tiers_sorted_by_order(
+        self, classification_engine
+    ) -> None:
         """Multiple phase 1 tiers execute in ascending order priority."""
         gov = make_governor(
             tracking_tier("p1_c", phase=1, order=300),
@@ -265,6 +281,7 @@ async def _run_tiers(gov, action, params, *, phase):
     """Run one phase of gov's domain tiers through the real pipeline."""
     from src.gateway.governance.governor.pipeline import Profile, StageContext
     from tests.governor.scope_helpers import run_scoped
+
     stages = [s for s in gov.stages if hasattr(s, "claims") and s.tier.phase == phase]
     ctx = StageContext(action=action, params=params, profile=Profile.FULL)
     result = await run_scoped(stages, ctx)

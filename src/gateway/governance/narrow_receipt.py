@@ -57,7 +57,9 @@ async def issue_narrow_receipt(
     from src.gateway.infrastructure.redis_client import redis_client
 
     if redis_client is None:
-        raise GovernanceError("[NARROW_RECEIPT_UNAVAILABLE] no Redis client for the NARROW receipt")
+        raise GovernanceError(
+            "[NARROW_RECEIPT_UNAVAILABLE] no Redis client for the NARROW receipt"
+        )
     payload = json.dumps(
         {
             "narrowed_params": narrowed_params,
@@ -69,7 +71,9 @@ async def issue_narrow_receipt(
         default=str,
     )
     try:
-        await redis_client.setex(narrow_receipt_key(seal), NARROW_RECEIPT_TTL_SECONDS, payload)
+        await redis_client.setex(
+            narrow_receipt_key(seal), NARROW_RECEIPT_TTL_SECONDS, payload
+        )
     except Exception as exc:
         raise GovernanceError(
             f"[NARROW_RECEIPT_UNAVAILABLE] could not store the NARROW receipt: {type(exc).__name__}"

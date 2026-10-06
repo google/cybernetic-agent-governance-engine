@@ -64,14 +64,22 @@ class CBFTierPlugin(MutatingTier):
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); spends no barrier headroom."""
         return await preview_barrier(
-            self.cbf, tier=self.tier_name, code="CBF_BARRIER_VIOLATED", action=action, params=params
+            self.cbf,
+            tier=self.tier_name,
+            code="CBF_BARRIER_VIOLATED",
+            action=action,
+            params=params,
         )
 
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
         return await commit_barrier(
-            self.cbf, tier=self.tier_name, code="CBF_BARRIER_VIOLATED", action=action, params=params
+            self.cbf,
+            tier=self.tier_name,
+            code="CBF_BARRIER_VIOLATED",
+            action=action,
+            params=params,
         )
 
     async def rollback(

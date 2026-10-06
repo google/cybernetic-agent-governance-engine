@@ -60,7 +60,8 @@ class TestTelemetryAttributesGoldenTable:
             == "telemetry.trace.metadata.current_node"
         )
         assert (
-            attributes.TRACE_METADATA_MCP_SERVER == "telemetry.trace.metadata.mcp_server"
+            attributes.TRACE_METADATA_MCP_SERVER
+            == "telemetry.trace.metadata.mcp_server"
         )
         assert (
             attributes.TRACE_METADATA_GOVERNANCE_ACTION

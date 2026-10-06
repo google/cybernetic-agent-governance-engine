@@ -41,13 +41,16 @@ import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
+
+if TYPE_CHECKING:
+    from .evidence_verifier import CustodyVerifier
 
 # Langfuse is imported lazily to avoid loading google.protobuf at module
 # corrupting the protobuf package for compliance_bridge tests that run later.
@@ -866,7 +869,7 @@ def _build_cer_index() -> CERIndex | None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_evidence_verifier():
+def _resolve_evidence_verifier() -> CustodyVerifier:
     """Return the active CustodyVerifier or construct one from environment."""
     from .evidence_custodian import EvidenceCustodyConfigError
     from .evidence_verifier import CustodyVerifier
@@ -1471,7 +1474,7 @@ async def list_defer_pending(
             }
         )
     except Exception as exc:
-        logger.warning("[defer/pending] Failed to fetch pending tokens: %s", exc)
+        logger.warning("[defer/pending] Failed to fetch pending deferrals: %s", exc)
         raise HTTPException(
             status_code=503,
             detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
@@ -1559,7 +1562,7 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning("[defer/status] Failed to fetch token status: %s", exc)
+        logger.warning("[defer/status] Failed to fetch deferral status: %s", exc)
         raise HTTPException(
             status_code=503,
             detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
@@ -1770,7 +1773,8 @@ async def defer_inject(
         if resolved is None:
             # Edge case: token was resolved but immediately expired/removed
             logger.warning(
-                "[defer/inject] Token admitted but not found for metadata: %s", defer_id
+                "[defer/inject] Deferral admitted but not found for metadata: %s",
+                defer_id,
             )
             # Still return success since replay_evaluate admitted it
             resolved_timestamp = ""

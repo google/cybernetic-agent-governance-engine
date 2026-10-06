@@ -70,7 +70,9 @@ def exporter(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
 
 @pytest.fixture
 def ctx() -> StageContext:
-    return StageContext(action="execute_trade", params={"amount": 100}, profile=Profile.FULL)
+    return StageContext(
+        action="execute_trade", params={"amount": 100}, profile=Profile.FULL
+    )
 
 
 def _tier(name: str, phase: int) -> MagicMock:
@@ -82,7 +84,9 @@ def _tier(name: str, phase: int) -> MagicMock:
     tier.claims_action.return_value = True
     tier.evaluate = AsyncMock(return_value=[])
     if phase == 2:
-        tier.commit = AsyncMock(return_value=([], CommitReceipt(tier=name, magnitude=100.0)))
+        tier.commit = AsyncMock(
+            return_value=([], CommitReceipt(tier=name, magnitude=100.0))
+        )
         tier.rollback = AsyncMock()
         tier.confirm = AsyncMock()
     return tier

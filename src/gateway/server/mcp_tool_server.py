@@ -171,16 +171,24 @@ async def _activate_domain() -> SymbolicGovernor:
 
     governor = bootstrap_governor()
     config = active_domain_config()
-    await governor.components.opa.verify_domain_policy(config.opa_package, config.opa_required_rules)
-    _install_contributions(governor)  # after the handshake: never half-activate a domain
+    await governor.components.opa.verify_domain_policy(
+        config.opa_package, config.opa_required_rules
+    )
+    _install_contributions(
+        governor
+    )  # after the handshake: never half-activate a domain
     app.state.governor = governor
-    logger.info("✅ Domain activated (startup readiness check passed): %s", governor.registered_tier_names())
+    logger.info(
+        "✅ Domain activated (startup readiness check passed): %s",
+        governor.registered_tier_names(),
+    )
     return governor
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     from src.integrations.nemo.manager import initialize_rails
+
     # 1. Tracing bootstrap (Phase 5.1)
     setup_tracing()
 
@@ -424,6 +432,7 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
 async def verify_content_safety(text: str) -> str:
     """Verify safety of a given text using NeMo Guardrails."""
     from src.integrations.nemo.manager import validate_with_nemo
+
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
         return "ERROR: NeMo rails not initialised."

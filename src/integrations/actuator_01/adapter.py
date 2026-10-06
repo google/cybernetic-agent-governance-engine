@@ -390,18 +390,19 @@ class Actuator01Adapter:
                     tool_name=clearance.action,
                     scope=None,
                 )
-                # Security: Mask credentials in logs
-                masked_keys = {
-                    k: f"{v[:8]}****" if v else "****" for k, v in extra_headers.items()
-                }
+                # Security: never log header values (not even a prefix) —
+                # only which auth headers the broker supplied.
                 logger.info(
-                    "[actuator_01/adapter] Credentials fetched for action=%s svid=%s headers=%s",
+                    "[actuator_01/adapter] Outbound auth headers fetched for "
+                    "action=%s svid=%s header_names=%s",
                     clearance.action,
                     agent_svid[:20] + "..." if len(agent_svid) > 20 else agent_svid,
-                    masked_keys,
+                    sorted(extra_headers),
                 )
             except Exception as exc:
                 # Fail-closed: Credential broker failures block execution
+                # Component name + broker error; no credential value is logged.
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                 logger.error("[actuator_01/adapter] Credential broker failed: %s", exc)
                 return ActuationReceipt(
                     accepted=False,

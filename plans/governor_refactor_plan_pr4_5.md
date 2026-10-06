@@ -65,12 +65,15 @@ P5 (domain vocabulary in Layer 1) is handled by PR 4b.
 @dataclass(frozen=True)
 class GovernorComponents:
     opa: PolicyClient
-    stpa_rules: tuple[UcaRule, ...]              # contributed by domains (§4b.9)
+    stpa_rules: tuple[UcaRule, ...]  # contributed by domains (§4b.9)
     core_stages: tuple[Stage, ...]
     domain_tiers: tuple[GovernanceTierPlugin, ...]
     narrowers: tuple[Narrower, ...] = ()
 
-def assemble_governor(plugins: Sequence[CagePlugin], *, posture: DeploymentPosture) -> SymbolicGovernor:
+
+def assemble_governor(
+    plugins: Sequence[CagePlugin], *, posture: DeploymentPosture
+) -> SymbolicGovernor:
     """Single composition root. Collects contributions from every plugin,
     rejects slot collisions, then constructs an immutable governor."""
 ```
@@ -91,21 +94,27 @@ Every semantic slot exists in 4a, so that 4b fills them without changing the ass
 ```python
 @dataclass(frozen=True)
 class PluginContribution:
-    domain: str                                            # "finance", "healthcare", "physical_ai"
+    domain: str  # "finance", "healthcare", "physical_ai"
     tiers: tuple[GovernanceTierPlugin, ...] = ()
-    uca_rules: tuple[UcaRule, ...] = ()                    # §4b.9
-    narrowers: tuple[Narrower, ...] = ()                   # §4b.6
-    threshold_sections: Mapping[str, type[BaseModel]] = {} # §4b.7  key = section name under domains.<domain>
-    execution_verbs: frozenset[str] = frozenset()          # §4b.13
-    standing_projector: StandingProjector | None = None    # §4b.16 (A9)
-    ground_truth_providers: Mapping[str, GroundTruthProvider] = {}  # §4b.2  key = invariant_id (simulated in CAGE)
-    registered_actions: frozenset[str] = frozenset()       # feeds Gate G3 rule 1 (§4b.17)
+    uca_rules: tuple[UcaRule, ...] = ()  # §4b.9
+    narrowers: tuple[Narrower, ...] = ()  # §4b.6
+    threshold_sections: Mapping[
+        str, type[BaseModel]
+    ] = {}  # §4b.7  key = section name under domains.<domain>
+    execution_verbs: frozenset[str] = frozenset()  # §4b.13
+    standing_projector: StandingProjector | None = None  # §4b.16 (A9)
+    ground_truth_providers: Mapping[
+        str, GroundTruthProvider
+    ] = {}  # §4b.2  key = invariant_id (simulated in CAGE)
+    registered_actions: frozenset[str] = frozenset()  # feeds Gate G3 rule 1 (§4b.17)
 ```
 4a ships these fields with empty defaults. Finance, healthcare and physical-AI still hand over only their tiers; 4b fills in the rest.
 
 ### 4a.3 Explicit startup posture — `governor/posture.py`
 ```python
-def assert_production_posture(posture: DeploymentPosture, *, components: GovernorComponents) -> None:
+def assert_production_posture(
+    posture: DeploymentPosture, *, components: GovernorComponents
+) -> None:
     """Called once from the app lifespan, never at import time."""
 ```
 - It absorbs the import-time guards (P1) and `assert_safe_operational_state()`. All of them derive from `env_posture.resolve_posture()` only, which fixes P2.
@@ -174,8 +183,14 @@ File: [`safety/cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py)
 
 ```python
 class ControlBarrierFunction:
-    def __init__(self, invariant: InvariantModel, cost_resolver: CostResolver,
-                 *, ground_truth: GroundTruthReader | None, skip_epoch_seed: bool = False): ...
+    def __init__(
+        self,
+        invariant: InvariantModel,
+        cost_resolver: CostResolver,
+        *,
+        ground_truth: GroundTruthReader | None,
+        skip_epoch_seed: bool = False,
+    ): ...
 ```
 
 **Required args.** `invariant` and `cost_resolver` are required. `ground_truth` is keyword-only and has no default: callers must pass `None` explicitly to mean self-reported.
@@ -285,11 +300,19 @@ File: [`consensus/engine.py`](../src/gateway/governance/consensus/engine.py)
 class CriticSpec:
     role: str
     system_instruction: str
-    prompt_template: str            # formatted with {role}, {action}, {context}
+    prompt_template: str  # formatted with {role}, {action}, {context}
+
 
 class ConsensusGate:
-    def __init__(self, critics: Sequence[CriticSpec], *, render_context: ContextRenderer,
-                 magnitude_of: MagnitudeResolver, threshold: float, registry: ConsensusModelRegistry | None = None): ...
+    def __init__(
+        self,
+        critics: Sequence[CriticSpec],
+        *,
+        render_context: ContextRenderer,
+        magnitude_of: MagnitudeResolver,
+        threshold: float,
+        registry: ConsensusModelRegistry | None = None,
+    ): ...
 ```
 
 **Delete:**
@@ -315,12 +338,15 @@ class CausalSpec:
     graph_dot: str
     treatment: str
     outcome: str
-    treatment_of: Callable[[Mapping[str, Any]], float | None]   # None ⇒ fail closed
+    treatment_of: Callable[[Mapping[str, Any]], float | None]  # None ⇒ fail closed
     regime_of: Callable[[Mapping[str, Any]], str]
     normalization_scale: float
 
+
 class CausalGatekeeper:
-    def __init__(self, spec: CausalSpec, *, telemetry: TelemetryProvider, cache: RedisLike | None): ...
+    def __init__(
+        self, spec: CausalSpec, *, telemetry: TelemetryProvider, cache: RedisLike | None
+    ): ...
     async def check(self, action: str, params: Mapping[str, Any]) -> CausalVerdict: ...
 ```
 

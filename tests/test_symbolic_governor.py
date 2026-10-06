@@ -179,7 +179,9 @@ async def test_symbolic_governor_opa_fail(mock_ftra_safe, classification_engine)
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_opa_governance_violation(mock_ftra_safe, classification_engine):
+async def test_symbolic_governor_opa_governance_violation(
+    mock_ftra_safe, classification_engine
+):
     """A GOVERNANCE_VIOLATION verdict from OPA must block like DENY, not fall through."""
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "GOVERNANCE_VIOLATION"
@@ -243,7 +245,9 @@ async def test_symbolic_governor_opa_governance_violation_non_governed_action(
 
 
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe, classification_engine):
+async def test_revalidate_post_hitl_opa_governance_violation(
+    mock_ftra_safe, classification_engine
+):
     """Post-HITL revalidation must not issue a seal on a GOVERNANCE_VIOLATION verdict."""
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "GOVERNANCE_VIOLATION"
@@ -262,13 +266,17 @@ async def test_revalidate_post_hitl_opa_governance_violation(mock_ftra_safe, cla
     params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
 
     with pytest.raises(GovernanceError) as excinfo:
-        await governor.revalidate_post_hitl("execute_trade", params, approved_barrier_preview=None)
+        await governor.revalidate_post_hitl(
+            "execute_trade", params, approved_barrier_preview=None
+        )
 
     assert "CTRL_OPA_005" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
-async def test_violation_payload_contains_legacy_citation(mock_ftra_safe, classification_engine):
+async def test_violation_payload_contains_legacy_citation(
+    mock_ftra_safe, classification_engine
+):
     """Structured payload preserves legacy_citation for SIEM backward-compatibility.
 
     The GovernanceError message itself must NOT contain 'SR 26-2' (framework
@@ -413,7 +421,9 @@ class TestSymbolicGovernorDefer:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -445,7 +455,9 @@ class TestSymbolicGovernorDefer:
         assert "defer_token" in result or "defer_id" in result
 
     @pytest.mark.asyncio
-    async def test_defer_includes_defer_token(self, monkeypatch, mock_ftra_safe, classification_engine):
+    async def test_defer_includes_defer_token(
+        self, monkeypatch, mock_ftra_safe, classification_engine
+    ):
         """DEFER verdict includes a defer_token UUID for tracking."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("CONFIDENCE_DEFER_FLOOR", "0.70")
@@ -455,7 +467,9 @@ class TestSymbolicGovernorDefer:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -524,7 +538,9 @@ class TestSymbolicGovernorNarrow:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -563,7 +579,9 @@ class TestSymbolicGovernorNarrow:
         assert result["original_params"]["amount"] == 150000
 
     @pytest.mark.asyncio
-    async def test_narrow_clamps_amount_to_max(self, monkeypatch, classification_engine):
+    async def test_narrow_clamps_amount_to_max(
+        self, monkeypatch, classification_engine
+    ):
         """NARROW correctly clamps amount to max_allowed.
 
         This test verifies the narrowing constraint is correctly applied
@@ -580,7 +598,9 @@ class TestSymbolicGovernorNarrow:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -617,7 +637,9 @@ class TestSymbolicGovernorNarrow:
         assert result["narrowed_params"]["amount"] == 100000
 
     @pytest.mark.asyncio
-    async def test_narrow_restricts_scope_to_allowed(self, monkeypatch, classification_engine):
+    async def test_narrow_restricts_scope_to_allowed(
+        self, monkeypatch, classification_engine
+    ):
         """NARROW correctly filters scope to allowed operations.
 
         This test verifies that unauthorized scopes are removed from the
@@ -634,7 +656,9 @@ class TestSymbolicGovernorNarrow:
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -707,14 +731,18 @@ class TestValidateActionDecisionRouting:
     """
 
     @pytest.mark.asyncio
-    async def test_allow_decision_returns_no_seal(self, mock_ftra_safe, classification_engine):
+    async def test_allow_decision_returns_no_seal(
+        self, mock_ftra_safe, classification_engine
+    ):
         """ALLOW from validate_action routes only: no seal, nothing committed."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -742,14 +770,18 @@ class TestValidateActionDecisionRouting:
         safety_filter.atomic_verify_and_commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_deny_decision_raises_governance_error(self, mock_ftra_safe, classification_engine):
+    async def test_deny_decision_raises_governance_error(
+        self, mock_ftra_safe, classification_engine
+    ):
         """DENY verdict raises GovernanceError with violation details."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "DENY"
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -773,14 +805,18 @@ class TestValidateActionDecisionRouting:
         assert "CTRL_OPA_005" in str(excinfo.value) or "OPA" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_require_approval_decision_returns_verdict(self, mock_ftra_safe, classification_engine):
+    async def test_require_approval_decision_returns_verdict(
+        self, mock_ftra_safe, classification_engine
+    ):
         """REQUIRE_APPROVAL verdict returns result dict (not exception)."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "MANUAL_REVIEW"
 
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
-        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE", 0.0))
+        safety_filter.atomic_verify_and_commit = AsyncMock(
+            return_value=(True, "SAFE", 0.0)
+        )
 
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -846,7 +882,9 @@ class TestPipelineReorderZeroBudgetLeakage:
             yield mock
 
     @pytest.mark.asyncio
-    async def test_consensus_rejection_does_not_debit_cbf_balance(self, mock_ftra_safe, classification_engine):
+    async def test_consensus_rejection_does_not_debit_cbf_balance(
+        self, mock_ftra_safe, classification_engine
+    ):
         """Consensus rejection must NOT debit CBF balance (zero budget leakage).
 
         Before the fix, CBF ran concurrently with OPA and committed balance
@@ -908,7 +946,9 @@ class TestPipelineReorderZeroBudgetLeakage:
         # confirming that governance rejected due to consensus.
 
     @pytest.mark.asyncio
-    async def test_causal_rejection_does_not_debit_cbf_balance(self, mock_ftra_safe, classification_engine):
+    async def test_causal_rejection_does_not_debit_cbf_balance(
+        self, mock_ftra_safe, classification_engine
+    ):
         """Causal gatekeeper rejection must NOT debit CBF balance.
 
         Similar to consensus test: causal gatekeeper runs in Phase 1 (read-only),
@@ -954,7 +994,9 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert "CAUSAL_CHECK_FAILED" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_opa_rejection_runs_before_cbf(self, mock_ftra_safe, classification_engine):
+    async def test_opa_rejection_runs_before_cbf(
+        self, mock_ftra_safe, classification_engine
+    ):
         """OPA rejection in Phase 1.1 prevents CBF from running in Phase 2.
 
         With the pipeline reorder, OPA runs in Phase 1.1 (read-only), and
@@ -997,7 +1039,9 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert cbf_called is False, "CBF should not run when OPA rejects in Phase 1"
 
     @pytest.mark.asyncio
-    async def test_phase2_cbf_rollback_on_fiscal_rejection(self, mock_ftra_safe, classification_engine):
+    async def test_phase2_cbf_rollback_on_fiscal_rejection(
+        self, mock_ftra_safe, classification_engine
+    ):
         """If fiscal reservation fails after CBF commits, CBF must be rolled back.
 
         This tests the compensation logic between Phase 2 mutations.
@@ -1072,17 +1116,22 @@ class TestPipelineReorderZeroBudgetLeakage:
         assert cbf_rollback_called is True, (
             "CBF must be rolled back when fiscal rejects after CBF commit"
         )
-        assert rolled_back_magnitude == 100.0, "rollback must restore the committed magnitude"
+        assert rolled_back_magnitude == 100.0, (
+            "rollback must restore the committed magnitude"
+        )
+
 
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification_engine):
+async def test_revalidate_post_hitl_fiscal_denial(
+    mock_ftra_safe, classification_engine
+):
     """Fiscal limits are checked during post-HITL revalidation and can deny the request."""
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
     safety_filter = AsyncMock()
     safety_filter.atomic_verify_and_commit.return_value = (True, "SAFE", 0.0)
-    
+
     from src.gateway.governance.contracts import MutatingTier, Violation, ViolationKind
 
     fiscal_tier = MagicMock(spec=MutatingTier)  # async hooks become AsyncMocks
@@ -1092,14 +1141,17 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
     fiscal_tier.claims_action.return_value = True
     fiscal_tier.evaluate.return_value = []
     # Mock fiscal commit returning a violation (budget exceeded)
-    fiscal_tier.commit.return_value = ([
-        Violation(
-            tier="fiscal",
-            code="FISCAL_LIMIT_EXCEEDED",
-            message="Daily fiscal limit exceeded.",
-            kind=ViolationKind.NARROWABLE,
-        )
-    ], None)
+    fiscal_tier.commit.return_value = (
+        [
+            Violation(
+                tier="fiscal",
+                code="FISCAL_LIMIT_EXCEEDED",
+                message="Daily fiscal limit exceeded.",
+                kind=ViolationKind.NARROWABLE,
+            )
+        ],
+        None,
+    )
 
     governor = make_governor(
         opa=opa_client,
@@ -1112,6 +1164,8 @@ async def test_revalidate_post_hitl_fiscal_denial(mock_ftra_safe, classification
     params = {"amount": 10000000, "symbol": "AAPL"}
 
     with pytest.raises(GovernanceError) as excinfo:
-        await governor.revalidate_post_hitl("execute_trade", params, approved_barrier_preview=None)
+        await governor.revalidate_post_hitl(
+            "execute_trade", params, approved_barrier_preview=None
+        )
 
     assert "Daily fiscal limit exceeded" in str(excinfo.value)

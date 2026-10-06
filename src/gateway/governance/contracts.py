@@ -22,11 +22,11 @@ import hashlib
 import math
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -147,9 +147,10 @@ class RefusalReceipt:
 
 class ViolationKind(StrEnum):
     """Classification of violation severity and disposition.
-    
+
     Precedence: HARD > HITL > NARROWABLE > DEFERRABLE
     """
+
     HARD = "hard"
     HITL = "hitl"
     DEFERRABLE = "deferrable"
@@ -265,7 +266,6 @@ class Narrower(Protocol):
     ) -> NarrowingResult | None:
         """Compute narrowed parameters that resolve the violation."""
         ...
-
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +545,9 @@ class PluginContribution:
     consensus: "ConsensusProvider | ConsensusContribution | None" = None
     tool_provider: "DomainToolProvider | None" = None
     compliance_overlay_dirs: tuple[Path, ...] = ()
-    background_tasks: Mapping[str, Callable[[], Awaitable[None]]] = field(default_factory=dict)
+    background_tasks: Mapping[str, Callable[[], Coroutine[Any, Any, None]]] = field(
+        default_factory=dict
+    )
     rail_providers: tuple[Any, ...] = ()
 
 
@@ -811,52 +813,38 @@ class ConsensusProvider(Protocol):
         ...
 
 
+@runtime_checkable
 class PolicyClient(Protocol):
-    """
-    Protocol for an OPA (Open Policy Agent) HTTP client.
+    """Protocol for the OPA (Open Policy Agent) client the kernel calls.
 
-    Abstracts the OPA HTTP client for testability — any object implementing
-    these two async methods is a valid PolicyClient, regardless of whether it
-    uses HTTP, a Unix domain socket, or a test double.
-
-    Structural subtyping note: OPAClient in src/gateway/core/policy.py is
-    structurally compatible with this Protocol — it implements both
-    ``evaluate_policy`` (mapped to ``evaluate``) and ``check_allowed`` via
-    its ``evaluate_policy`` return value.  See the comment below the class.
+    These are exactly the members the gateway uses: ``OpaStage`` and the MCP
+    tool server call ``evaluate_policy``; server startup calls
+    ``verify_domain_policy`` and shutdown calls ``close``.
+    :class:`src.gateway.core.policy.OPAClient` implements it structurally; any
+    transport (HTTP, Unix socket, test double) with these members is valid.
     """
 
-    async def evaluate(self, policy_path: str, input_data: dict) -> dict:
-        """
-        Evaluate an OPA policy and return the full result dict.
-
-        Args:
-            policy_path: OPA policy path / rule reference (e.g. "domain/governance").
-            input_data:  Arbitrary input document forwarded to OPA as ``{"input": ...}``.
+    async def evaluate_policy(
+        self, input_data: dict[str, Any], current_latency_ms: float = 0.0
+    ) -> str:
+        """Evaluate the domain's OPA decision for ``input_data``.
 
         Returns:
-            The parsed JSON response body from OPA (typically contains a ``"result"`` key).
+            The verdict string (``"ALLOW"``, ``"DENY"`` or ``"MANUAL_REVIEW"``).
+            Implementations fail closed: an unreachable or erroring policy
+            engine yields ``"DENY"``.
         """
         ...
 
-    async def check_allowed(self, policy_path: str, input_data: dict) -> bool:
-        """
-        Evaluate an OPA policy and return a simple boolean allow/deny decision.
-
-        Args:
-            policy_path: OPA policy path / rule reference.
-            input_data:  Arbitrary input document forwarded to OPA.
-
-        Returns:
-            True if the policy allows the action, False otherwise.
-        """
+    async def verify_domain_policy(
+        self, package: str, required_rules: tuple[str, ...]
+    ) -> None:
+        """Raise unless ``package`` is loaded and defines every rule in ``required_rules``."""
         ...
 
-
-# Structural compatibility note:
-# OPAClient (src/gateway/core/policy.py) exposes ``evaluate_policy(input_data, ...)``
-# which covers the semantics of both ``evaluate`` and ``check_allowed`` above.
-# Because Python Protocols use structural subtyping (PEP 544), a thin adapter
-# or a subclass that adds the two method names is sufficient for full compatibility.
+    async def close(self) -> None:
+        """Release transport resources (pooled connections)."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -925,7 +913,6 @@ class CausalGatekeeper(Protocol):
         ...
 
 
-
 @runtime_checkable
 class ResourceGuard(Protocol):
     """
@@ -975,4 +962,3 @@ class ResourceGuard(Protocol):
 
 from src.gateway.governance.stpa_validator import UcaRule
 from src.gateway.governance.types import ReservationToken
-

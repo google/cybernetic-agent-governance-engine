@@ -218,9 +218,7 @@ def load_critic_specs(path: Path) -> tuple[CriticSpec, ...]:
             raise ValueError(
                 f"Invalid critic specification in {path}: 'context_keys' must be a sequence of strings"
             )
-        context_keys = tuple(
-            str(k).strip() for k in raw_context_keys if str(k).strip()
-        )
+        context_keys = tuple(str(k).strip() for k in raw_context_keys if str(k).strip())
         specs.append(
             CriticSpec(
                 role=role,
@@ -492,9 +490,7 @@ class ConsensusGate:
                     )
                     return "ERROR"
                 choices = getattr(response, "choices", None)
-                raw_content = (
-                    choices[0].message.content if choices else None
-                )
+                raw_content = choices[0].message.content if choices else None
             else:
                 try:
                     raw_content = await asyncio.wait_for(
@@ -751,4 +747,3 @@ class ConsensusGate:
 
 # Backward-compatibility alias for external consumers
 ConsensusEngine = ConsensusGate
-

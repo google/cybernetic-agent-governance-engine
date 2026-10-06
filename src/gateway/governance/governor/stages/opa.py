@@ -17,8 +17,12 @@ from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import PolicyClient, Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import OpaVerdict, StageContext, StageOutput
-
+from src.gateway.governance.governor.pipeline import (
+    OpaVerdict,
+    Stage,
+    StageContext,
+    StageOutput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +30,9 @@ _OPA_CTRL = GovernanceControl.OPA_POLICY_ENFORCEMENT.value
 
 
 def _opa_framework() -> str:
-    return ControlRegistry().get_mapping(GovernanceControl.OPA_POLICY_ENFORCEMENT)["primary_framework"]
-
+    return ControlRegistry().get_mapping(GovernanceControl.OPA_POLICY_ENFORCEMENT)[
+        "primary_framework"
+    ]
 
 
 def decode_opa_verdict(raw: object) -> OpaVerdict | None:
@@ -56,7 +61,7 @@ def decode_opa_verdict(raw: object) -> OpaVerdict | None:
             decision = raw["allow"]
         else:
             return None
-        
+
         if isinstance(decision, bool):
             return OpaVerdict.ALLOW if decision else OpaVerdict.DENY
         return decode_opa_verdict(decision)
@@ -67,7 +72,7 @@ def decode_opa_verdict(raw: object) -> OpaVerdict | None:
     return None
 
 
-class OpaStage:
+class OpaStage(Stage):
     """
     Evaluates the action against the Open Policy Agent (OPA).
 
@@ -84,19 +89,22 @@ class OpaStage:
 
     async def run(self, ctx: StageContext) -> StageOutput:
         opa_payload = {**ctx.params, "action": ctx.action, "tool_input": ctx.params}
-        
+
         try:
-            client_any: Any = self.opa_client
-            raw_result = await client_any.evaluate_policy(opa_payload)
+            raw_result = await self.opa_client.evaluate_policy(opa_payload)
             verdict = decode_opa_verdict(raw_result)
         except Exception as e:
             logger.error("OPA error: %s", e)
-            return StageOutput(violations=(Violation(
-                tier="governance",
-                code="OPA_ERROR",
-                message=f"[{_OPA_CTRL}] OPA policy evaluation failed: {e}",
-                kind=ViolationKind.HARD
-            ),))
+            return StageOutput(
+                violations=(
+                    Violation(
+                        tier="governance",
+                        code="OPA_ERROR",
+                        message=f"[{_OPA_CTRL}] OPA policy evaluation failed: {e}",
+                        kind=ViolationKind.HARD,
+                    ),
+                )
+            )
 
         return StageOutput(
             violations=tuple(_violations_for(verdict, raw_result)),
@@ -109,24 +117,30 @@ def _violations_for(verdict: OpaVerdict | None, raw_result: object) -> list[Viol
         return []
 
     if verdict == OpaVerdict.DENY:
-        return [Violation(
-            tier="governance",
-            code="OPA_DENY",
-            message=f"[{_OPA_CTRL}] {_opa_framework()} Violation: OPA Denied Action.",
-            kind=ViolationKind.HARD
-        )]
+        return [
+            Violation(
+                tier="governance",
+                code="OPA_DENY",
+                message=f"[{_OPA_CTRL}] {_opa_framework()} Violation: OPA Denied Action.",
+                kind=ViolationKind.HARD,
+            )
+        ]
 
     if verdict == OpaVerdict.MANUAL_REVIEW:
-        return [Violation(
-            tier="governance",
-            code="OPA_MANUAL_REVIEW",
-            message=f"[{_OPA_CTRL}] {_opa_framework()} Check: Manual Review Required.",
-            kind=ViolationKind.HITL
-        )]
+        return [
+            Violation(
+                tier="governance",
+                code="OPA_MANUAL_REVIEW",
+                message=f"[{_OPA_CTRL}] {_opa_framework()} Check: Manual Review Required.",
+                kind=ViolationKind.HITL,
+            )
+        ]
 
-    return [Violation(
-        tier="governance",
-        code="OPA_UNKNOWN_VERDICT",
-        message=f"[{_OPA_CTRL}] OPA Policy Violation: Unexpected verdict '{raw_result}'",
-        kind=ViolationKind.HARD
-    )]
+    return [
+        Violation(
+            tier="governance",
+            code="OPA_UNKNOWN_VERDICT",
+            message=f"[{_OPA_CTRL}] OPA Policy Violation: Unexpected verdict '{raw_result}'",
+            kind=ViolationKind.HARD,
+        )
+    ]

@@ -133,9 +133,7 @@ def torque_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
     )
 
 
-def physical_cost_resolver(
-    action_name: str, payload: dict[str, Any]
-) -> float:
+def physical_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
     if action_name not in ("dispatch_trajectory", "actuate_joint"):
         return 0.0
 

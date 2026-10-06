@@ -117,7 +117,11 @@ async def test_output_rail_masks_a_person_name(monkeypatch) -> None:
     monkeypatch.setattr(f, "get_nemo_rails", lambda: object())
     node = f.create_nemo_output_rail_node()
     out = await node(
-        {"messages": [AIMessage(content="Dear John Smith, here is your plan.", id="a1")]}
+        {
+            "messages": [
+                AIMessage(content="Dear John Smith, here is your plan.", id="a1")
+            ]
+        }
     )
     (replacement,) = out["messages"]
     assert "John Smith" not in replacement.content

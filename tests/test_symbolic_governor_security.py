@@ -26,12 +26,12 @@ Covers:
      - SymbolicGovernor awaits release() on violation after reservation
 """
 
-
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from tests.fixtures.governor import make_governor
 
 pytestmark = pytest.mark.unit
@@ -98,12 +98,12 @@ def _make_governor(fiscal_limit_guard=None, classification_engine=None):
         bypassed_ftra_node=False,
     )
     from src.gateway.governance.governor.stages.ftra import FtraStage
+
     for stage in governor.stages:
         if isinstance(stage, FtraStage):
             stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
 
     return governor
-
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +137,15 @@ def healthy_probes(monkeypatch):
     monkeypatch.setattr(posture_mod, "_signer", lambda: _Signer())
     monkeypatch.setattr(posture_mod, "_redis", lambda: _Redis())
     monkeypatch.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier())
-    monkeypatch.setenv("KMS_GOVERNANCE_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/gateway")
-    monkeypatch.setenv("RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler")
-    monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
+    monkeypatch.setenv(
+        "KMS_GOVERNANCE_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/gateway"
+    )
+    monkeypatch.setenv(
+        "RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler"
+    )
+    monkeypatch.setattr(
+        "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False
+    )
     monkeypatch.delenv("CBF_FAIL_OPEN", raising=False)
     return monkeypatch
 
@@ -147,7 +153,9 @@ def healthy_probes(monkeypatch):
 def _assert_posture(posture):
     from src.gateway.governance.governor.posture import assert_production_posture
 
-    assert_production_posture(posture, components=make_governor(posture=posture).components)
+    assert_production_posture(
+        posture, components=make_governor(posture=posture).components
+    )
 
 
 def test_raises_in_production_when_reconciliation_provider_unset(healthy_probes):
@@ -161,13 +169,19 @@ def test_raises_in_production_when_reconciliation_provider_unset(healthy_probes)
 
 
 @pytest.mark.parametrize("posture_name", ["DEV", "TEST", "CI"])
-def test_non_production_stub_logs_critical_without_raising(healthy_probes, posture_name, caplog):
+def test_non_production_stub_logs_critical_without_raising(
+    healthy_probes, posture_name, caplog
+):
     from src.gateway.governance.env_posture import DeploymentPosture
 
     healthy_probes.setenv("RECONCILIATION_PROVIDER", "stub")
     with caplog.at_level("CRITICAL"):
         _assert_posture(DeploymentPosture[posture_name])
-    critical = [json.loads(r.getMessage()) for r in caplog.records if r.levelno == logging.CRITICAL]
+    critical = [
+        json.loads(r.getMessage())
+        for r in caplog.records
+        if r.levelno == logging.CRITICAL
+    ]
     assert [r["check"] for r in critical] == ["reconciliation_provider"]
     assert "POAM-023" in critical[0]["detail"]
 

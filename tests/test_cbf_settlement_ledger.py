@@ -441,7 +441,9 @@ async def test_unconfirmed_debit_is_never_settled_however_late_the_actuator_runs
         # (now - skew) is before the confirm stamp: the debit is counted twice
         # for one skew window, which errs toward less headroom.
         snap = world.reconcile()
-        assert snap is not None and snap.state_scalar == pytest.approx(INITIAL - 10_000.0)
+        assert snap is not None and snap.state_scalar == pytest.approx(
+            INITIAL - 10_000.0
+        )
         assert debit_id in world.ledger()
         assert await world.headroom() == pytest.approx(
             _max_admissible(INITIAL - 20_000.0)

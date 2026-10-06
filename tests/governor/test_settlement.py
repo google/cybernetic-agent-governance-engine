@@ -68,20 +68,30 @@ class _Tier(MutatingTier):
         if self._refuse:
             from src.gateway.governance.contracts import ViolationKind
 
-            return [Violation(tier=self._name, code="NO", message="no", kind=ViolationKind.HARD)], None
+            return [
+                Violation(
+                    tier=self._name, code="NO", message="no", kind=ViolationKind.HARD
+                )
+            ], None
         return [], CommitReceipt(tier=self._name)
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         self.log.append(f"confirm:{self._name}")
         if self._confirm_raises is not None:
             raise self._confirm_raises
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         self.log.append(f"rollback:{self._name}")
 
 
 def _governor(tiers: list[MutatingTier], classifier: Any = None) -> SymbolicGovernor:
-    return make_governor(core_stages=(), domain_tiers=tiers, classifier=classifier or MagicMock())
+    return make_governor(
+        core_stages=(), domain_tiers=tiers, classifier=classifier or MagicMock()
+    )
 
 
 @pytest.fixture
@@ -139,14 +149,24 @@ async def test_settlements_are_per_seal(seals: AsyncMock) -> None:
     second = await gov.govern("act", {})
     await gov.settle(second, executed=False)
     await gov.settle(first, executed=True)
-    assert log == ["commit:fiscal", "commit:fiscal", "rollback:fiscal", "confirm:fiscal"]
+    assert log == [
+        "commit:fiscal",
+        "commit:fiscal",
+        "rollback:fiscal",
+        "confirm:fiscal",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_confirm_failure_is_reported_and_others_still_confirm(seals: AsyncMock) -> None:
+async def test_confirm_failure_is_reported_and_others_still_confirm(
+    seals: AsyncMock,
+) -> None:
     log: list[str] = []
     gov = _governor(
-        [_Tier("cbf", 1, log, confirm_raises=RuntimeError("redis down")), _Tier("fiscal", 2, log)]
+        [
+            _Tier("cbf", 1, log, confirm_raises=RuntimeError("redis down")),
+            _Tier("fiscal", 2, log),
+        ]
     )
     seal = await gov.govern("act", {})
     failures = await gov.settle(seal, executed=True)
@@ -183,7 +203,9 @@ async def test_refused_run_holds_nothing(seals: AsyncMock) -> None:
     log: list[str] = []
     classifier = MagicMock()
     classifier.classify.return_value = MagicMock(decision="DENY", metadata={})
-    gov = _governor([_Tier("cbf", 1, log), _Tier("fiscal", 2, log, refuse=True)], classifier)
+    gov = _governor(
+        [_Tier("cbf", 1, log), _Tier("fiscal", 2, log, refuse=True)], classifier
+    )
     with pytest.raises(GovernanceError):
         await gov.govern("act", {})
     assert len(gov._settlements) == 0
@@ -256,14 +278,20 @@ async def fiscal() -> Any:
     from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 
     guard = FiscalLimitGuard(
-        fakeredis.FakeRedis(decode_responses=True), daily_cap_usd=1_000.0, reservation_ttl=300
+        fakeredis.FakeRedis(decode_responses=True),
+        daily_cap_usd=1_000.0,
+        reservation_ttl=300,
     )
-    tier = FiscalTierPlugin(guard, cost_resolver=lambda action, params: float(params["amount"]))
+    tier = FiscalTierPlugin(
+        guard, cost_resolver=lambda action, params: float(params["amount"])
+    )
     return guard, _governor([tier])
 
 
 @pytest.mark.asyncio
-async def test_fiscal_executed_trade_is_confirmed_and_never_reclaimed(seals, fiscal) -> None:
+async def test_fiscal_executed_trade_is_confirmed_and_never_reclaimed(
+    seals, fiscal
+) -> None:
     guard, gov = fiscal
     seal = await gov.govern("execute_trade", {"amount": 400})
     await gov.settle(seal, executed=True)

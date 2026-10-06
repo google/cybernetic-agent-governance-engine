@@ -43,7 +43,12 @@ from src.gateway.governance.governor.assembly import DecisionFlags, assemble_gov
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.stages.ftra import FtraStage
-from tests.fixtures.governor import allow_opa, clean_stpa, default_classifier, make_governor
+from tests.fixtures.governor import (
+    allow_opa,
+    clean_stpa,
+    default_classifier,
+    make_governor,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -81,16 +86,22 @@ def test_malformed_cost_raises_in_claims(make, amount) -> None:
 @pytest.mark.parametrize("make", _TIERS)
 async def test_malformed_cost_becomes_hard_tier_exception(make) -> None:
     stages = order_stages([make()])
-    ctx = StageContext(action="execute_trade", params={"amount": -5.0}, profile=Profile.DRY_RUN)
+    ctx = StageContext(
+        action="execute_trade", params={"amount": -5.0}, profile=Profile.DRY_RUN
+    )
     result = await run_pipeline(stages, ctx, profile=Profile.DRY_RUN)
-    assert [(v.code, v.kind) for v in result.violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in result.violations] == [
+        ("TIER_EXCEPTION", ViolationKind.HARD)
+    ]
 
 
 @pytest.mark.parametrize("make", _TIERS)
 def test_cost_resolver_is_injectable(make) -> None:
     tier = make()
     tier._cost = lambda action, params: 3.0 if action == "dispense" else 0.0  # noqa: SLF001
-    assert tier.claims_action("dispense", {}) and not tier.claims_action("execute_trade", {"amount": 9.0})
+    assert tier.claims_action("dispense", {}) and not tier.claims_action(
+        "execute_trade", {"amount": 9.0}
+    )
 
 
 # ── _is_governed_action fails closed ─────────────────────────────────────────

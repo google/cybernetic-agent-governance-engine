@@ -340,9 +340,13 @@ def posture_probes(monkeypatch):
 
     monkeypatch.setattr(posture_mod, "_redis", lambda: _HealthyRedis())
     monkeypatch.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier())
-    monkeypatch.setenv("RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler")
+    monkeypatch.setenv(
+        "RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler"
+    )
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
-    monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
+    monkeypatch.setattr(
+        "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False
+    )
 
     def use_signer(signer):
         monkeypatch.setattr(posture_mod, "_signer", lambda: signer)
@@ -377,7 +381,8 @@ def test_hmac_fallback_signer_is_permitted_but_logged_in_permissive_posture(
     checks = [
         json.loads(r.getMessage())["check"]
         for r in caplog.records
-        if r.levelno == logging.CRITICAL and "CAGE_POSTURE_CHECK_FAILED" in r.getMessage()
+        if r.levelno == logging.CRITICAL
+        and "CAGE_POSTURE_CHECK_FAILED" in r.getMessage()
     ]
     assert checks == ["kms_signing_mode"]
 
@@ -394,7 +399,10 @@ def test_hmac_fallback_signer_refuses_enforcing_posture(posture_probes, posture_
     posture = DeploymentPosture[posture_name]
     posture_probes(_make_signer(kms_client=None, key_version_name=""))
 
-    with pytest.raises(PostureViolation, match="kms_signing_mode: governance signer is in HMAC fallback mode"):
+    with pytest.raises(
+        PostureViolation,
+        match="kms_signing_mode: governance signer is in HMAC fallback mode",
+    ):
         assert_production_posture(posture, components=_components(posture))
 
 
@@ -411,7 +419,9 @@ def test_kms_active_signer_passes_kms_signing_mode_check(posture_probes):
     kms_signing_mode(_components(DeploymentPosture.PRODUCTION))  # must not raise
 
 
-def test_hmac_fallback_refused_when_posture_comes_from_environment_fallback(posture_probes):
+def test_hmac_fallback_refused_when_posture_comes_from_environment_fallback(
+    posture_probes,
+):
     """With CAGE_ENV unset, ENVIRONMENT=production resolves an enforcing posture
     and the HMAC-fallback signer is refused."""
     from src.gateway.governance.env_posture import (

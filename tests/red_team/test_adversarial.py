@@ -54,7 +54,9 @@ def mock_consensus_engine():
 
 
 @pytest.fixture
-def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine, classification_engine):
+def symbolic_governor(
+    mock_opa_client, mock_safety_filter, mock_consensus_engine, classification_engine
+):
     from src.gateway.governance.ftra.models import FtraBoundaryResult
 
     stpa_validator = (
@@ -82,6 +84,7 @@ def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine
         bypassed_ftra_node=False,
     )
     from src.gateway.governance.governor.stages.ftra import FtraStage
+
     for stage in governor.stages:
         if isinstance(stage, FtraStage):
             stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)

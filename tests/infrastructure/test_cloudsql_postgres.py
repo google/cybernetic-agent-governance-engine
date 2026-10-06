@@ -128,17 +128,29 @@ def test_langfuse_stack_uses_cloudsql_proxy_sidecar() -> None:
     assert '"--structured-logs"' in langfuse_main
 
     # Localhost connection URL for IAM authentication
-    assert "postgresql://${local.encoded_iam_user}:unused@127.0.0.1:5432/" in langfuse_main
+    assert (
+        "postgresql://${local.encoded_iam_user}:unused@127.0.0.1:5432/" in langfuse_main
+    )
     assert "sslmode=disable" in langfuse_main
 
     # GKE target passes Cloud SQL parameters to langfuse module
     gke_main = _GKE_MAIN.read_text()
     lf_block = _extract_module_block("langfuse", gke_main)
     assert "enable_cloudsql_proxy    = true" in lf_block
-    assert "cloudsql_connection_name = module.cloudsql_postgres.connection_name" in lf_block
-    assert "cloudsql_iam_user        = module.cloudsql_postgres.iam_user_name" in lf_block
-    assert "cloudsql_database_name   = module.cloudsql_postgres.database_name" in lf_block
-    assert 'service_account_name     = kubernetes_service_account.workload["langfuse"].metadata[0].name' in lf_block
+    assert (
+        "cloudsql_connection_name = module.cloudsql_postgres.connection_name"
+        in lf_block
+    )
+    assert (
+        "cloudsql_iam_user        = module.cloudsql_postgres.iam_user_name" in lf_block
+    )
+    assert (
+        "cloudsql_database_name   = module.cloudsql_postgres.database_name" in lf_block
+    )
+    assert (
+        'service_account_name     = kubernetes_service_account.workload["langfuse"].metadata[0].name'
+        in lf_block
+    )
 
 
 def test_no_static_db_password_anywhere() -> None:
@@ -161,19 +173,28 @@ def test_langfuse_workload_identity_and_iam_grants() -> None:
 
     # GSA defined
     assert 'resource "google_service_account" "langfuse"' in iam_text
-    assert 'account_id   = local.sa_langfuse' in iam_text
+    assert "account_id   = local.sa_langfuse" in iam_text
 
     # Roles granted: Cloud SQL Client and Instance User
     assert 'resource "google_project_iam_member" "langfuse_cloudsql_client"' in iam_text
     assert 'role    = "roles/cloudsql.client"' in iam_text
-    assert 'resource "google_project_iam_member" "langfuse_cloudsql_instance_user"' in iam_text
+    assert (
+        'resource "google_project_iam_member" "langfuse_cloudsql_instance_user"'
+        in iam_text
+    )
     assert 'role    = "roles/cloudsql.instanceUser"' in iam_text
 
     # Authoritative Workload Identity binding
-    assert 'resource "google_service_account_iam_binding" "langfuse_workload_identity"' in iam_text
+    assert (
+        'resource "google_service_account_iam_binding" "langfuse_workload_identity"'
+        in iam_text
+    )
 
     # No KMS signing role on Langfuse
-    assert "google_service_account.langfuse" not in (_REPO / "infra/targets/gcp-gke/kms_signing.tf").read_text()
+    assert (
+        "google_service_account.langfuse"
+        not in (_REPO / "infra/targets/gcp-gke/kms_signing.tf").read_text()
+    )
 
 
 def test_k8s_manifests_include_cloudsql_proxy_sidecar() -> None:

@@ -294,6 +294,7 @@ def test_no_cer_index_preserves_legacy_behavior():
 def test_build_cer_index_from_env_vars(monkeypatch):
     """_build_cer_index parses PROVIDER_02_CER_URIS_JSON and disclosure policies."""
     import json
+
     from src.compliance_bridge.main import _build_cer_index
 
     # Case 1: Not configured

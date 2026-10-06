@@ -152,7 +152,10 @@ async def rollback_barrier(cbf: BarrierEngine, receipt: CommitReceipt) -> None:
     the amount it ledgered under that id (falling back to ``magnitude`` only
     if the entry has already settled) and ignores a repeated rollback.
     """
-    await cbf.rollback_state(magnitude=receipt.magnitude, debit_id=receipt.token)
+    # A barrier commit always records its magnitude (commit_barrier); 0.0 is
+    # only the restore amount if the ledger entry has already settled.
+    magnitude = receipt.magnitude if receipt.magnitude is not None else 0.0
+    await cbf.rollback_state(magnitude=magnitude, debit_id=receipt.token)
 
 
 async def confirm_barrier(cbf: BarrierEngine, receipt: CommitReceipt) -> None:

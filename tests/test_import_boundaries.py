@@ -434,7 +434,10 @@ class TestKernelAstPurityRules:
             ),
             ("class S3LedgerSnapshotProvider:\n    pass\n", "S3LedgerSnapshotProvider"),
             ("class StubLedgerProvider:\n    pass\n", "StubLedgerProvider"),
-            ("def generate_mock_telemetry():\n    return []\n", "generate_mock_telemetry"),
+            (
+                "def generate_mock_telemetry():\n    return []\n",
+                "generate_mock_telemetry",
+            ),
         ],
     )
     def test_rule3_rejects_forbidden_kernel_definitions(
@@ -473,4 +476,3 @@ class TestKernelAstPurityRules:
         violations = check_file_boundaries(test_file)
         assert len(violations) == 1
         assert expected_vendor in violations[0].rule_violated
-

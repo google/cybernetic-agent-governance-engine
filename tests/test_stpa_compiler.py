@@ -625,16 +625,16 @@ class TestPythonGeneratedLessThanFiniteness:
     def test_nan_yields_violation(self) -> None:
         v = self._make_validator()
         result = v.validate("check_signal", {"signal_strength": float("nan")})
-        assert any("Non-finite" in getattr(msg, "message", str(msg)) for msg in result), (
-            f"Expected non-finite violation, got: {result}"
-        )
+        assert any(
+            "Non-finite" in getattr(msg, "message", str(msg)) for msg in result
+        ), f"Expected non-finite violation, got: {result}"
 
     def test_inf_yields_violation(self) -> None:
         v = self._make_validator()
         result = v.validate("check_signal", {"signal_strength": float("inf")})
-        assert any("Non-finite" in getattr(msg, "message", str(msg)) for msg in result), (
-            f"Expected non-finite violation, got: {result}"
-        )
+        assert any(
+            "Non-finite" in getattr(msg, "message", str(msg)) for msg in result
+        ), f"Expected non-finite violation, got: {result}"
 
     def test_neg_inf_yields_violation(self) -> None:
         v = self._make_validator()
@@ -644,9 +644,7 @@ class TestPythonGeneratedLessThanFiniteness:
             or "UCA_LT1" in getattr(msg, "code", str(msg))
             or "UCA-LT1" in getattr(msg, "code", str(msg))
             for msg in result
-        ), (
-            f"Expected violation, got: {result}"
-        )
+        ), f"Expected violation, got: {result}"
 
     def test_valid_below_threshold_triggers(self) -> None:
         v = self._make_validator()
@@ -712,7 +710,10 @@ class TestCompositeGrammar:
     def test_opa_enforces_the_composite(self) -> None:
         rego = generate_opa(self._cs(self._SCALED))
         assert "input.daily_vol > 0" not in rego
-        assert "input.order_size > input._thresholds.stpa_max_fraction * input.daily_vol" in rego
+        assert (
+            "input.order_size > input._thresholds.stpa_max_fraction * input.daily_vol"
+            in rego
+        )
         assert "placeholder" not in rego and "    false" not in rego
 
     def test_python_enforces_the_composite(self) -> None:
@@ -723,19 +724,39 @@ class TestCompositeGrammar:
 
     def test_shipped_finance_composite_compiles(self) -> None:
         cs = load_control_structure(_FINANCE_YAML_PATH)
-        composites = [u.condition.composite for u in cs.unsafe_control_actions if u.condition.composite]
+        composites = [
+            u.condition.composite
+            for u in cs.unsafe_control_actions
+            if u.condition.composite
+        ]
         assert composites, "UCA-6 should use the scaled-threshold composite"
 
     def test_composite_fails_closed_on_zero_negative_nan_or_missing_rhs(self) -> None:
         from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
 
         v = GeneratedSTPAValidator()
-        assert v._check_uca_6("execute_trade", {"order_size": 100, "daily_vol": 0}) is not None
-        assert v._check_uca_6("execute_trade", {"order_size": 0, "daily_vol": -10}) is not None
-        assert v._check_uca_6("execute_trade", {"order_size": float("nan"), "daily_vol": 1000}) is not None
+        assert (
+            v._check_uca_6("execute_trade", {"order_size": 100, "daily_vol": 0})
+            is not None
+        )
+        assert (
+            v._check_uca_6("execute_trade", {"order_size": 0, "daily_vol": -10})
+            is not None
+        )
+        assert (
+            v._check_uca_6(
+                "execute_trade", {"order_size": float("nan"), "daily_vol": 1000}
+            )
+            is not None
+        )
         assert v._check_uca_6("execute_trade", {"order_size": 100}) is not None
-        assert v._check_uca_6("execute_trade", {"order_size": 0, "daily_vol": 0}) is None
-        assert v._check_uca_6("execute_trade", {"order_size": 10, "daily_vol": 10_000}) is None
+        assert (
+            v._check_uca_6("execute_trade", {"order_size": 0, "daily_vol": 0}) is None
+        )
+        assert (
+            v._check_uca_6("execute_trade", {"order_size": 10, "daily_vol": 10_000})
+            is None
+        )
 
 
 class TestSandboxPolicyGeneration:
@@ -765,14 +786,20 @@ class TestSandboxPolicyGeneration:
         with pytest.raises(ValueError):
             ControlStructureModel(**raw)
 
-    def test_generate_sandbox_policy_emits_valid_yaml_and_precredentials_seal(self) -> None:
+    def test_generate_sandbox_policy_emits_valid_yaml_and_precredentials_seal(
+        self,
+    ) -> None:
         from src.gateway.governance.stpa_compiler import generate_sandbox_policy
 
         raw = yaml.safe_load(_MINIMAL_YAML)
         raw["unsafe_control_actions"][0]["enforcement"] = ["opa", "sandbox"]
-        raw["unsafe_control_actions"][0]["terminal_classification"] = "IRREVERSIBLE_TERMINAL"
+        raw["unsafe_control_actions"][0]["terminal_classification"] = (
+            "IRREVERSIBLE_TERMINAL"
+        )
         raw["unsafe_control_actions"][0]["sandbox_rule"] = {
-            "allowed_endpoints": ["https://cage-gateway.internal/v1/mcp/tools/call/do_thing"],
+            "allowed_endpoints": [
+                "https://cage-gateway.internal/v1/mcp/tools/call/do_thing"
+            ],
             "allowed_http_verbs": ["POST"],
             "allowed_mcp_methods": ["tools/call:do_thing"],
             "allowed_binaries": ["/usr/bin/python3"],
@@ -791,7 +818,10 @@ class TestSandboxPolicyGeneration:
         assert pol["terminal_classification"] == "IRREVERSIBLE_TERMINAL"
         assert doc["credential_broker_rules"][0]["phase"] == "PreCredentials"
         assert doc["credential_broker_rules"][0]["seal_header"] == "X-CAGE-Routing-Seal"
-        assert "CAGE_DO_THING_CREDENTIAL" in doc["credential_broker_rules"][0]["credential_placeholders"]
+        assert (
+            "CAGE_DO_THING_CREDENTIAL"
+            in doc["credential_broker_rules"][0]["credential_placeholders"]
+        )
 
     def test_compile_openshell_alias_target(self) -> None:
         raw = yaml.safe_load(_MINIMAL_YAML)

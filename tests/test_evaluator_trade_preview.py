@@ -55,7 +55,12 @@ _TRADE_STEP = {
     "action": "execute_trade",
     "description": "Buy $500 of AAPL at market price",
     # A model-written step may assert a role; it must not reach the gateway.
-    "parameters": {"symbol": "AAPL", "amount": 500, "currency": "USD", "trader_role": "senior"},
+    "parameters": {
+        "symbol": "AAPL",
+        "amount": 500,
+        "currency": "USD",
+        "trader_role": "senior",
+    },
 }
 
 
@@ -63,7 +68,12 @@ def _plan(*steps: dict[str, Any]) -> dict[str, Any]:
     return {
         "rationale": "Moderate investor, long horizon; small single-tranche entry.",
         "steps": [
-            {"id": "s1", "action": "check_market_status", "description": "open?", "parameters": {"symbol": "AAPL"}},
+            {
+                "id": "s1",
+                "action": "check_market_status",
+                "description": "open?",
+                "parameters": {"symbol": "AAPL"},
+            },
             *steps,
         ],
     }
@@ -72,9 +82,15 @@ def _plan(*steps: dict[str, Any]) -> dict[str, Any]:
 def _install_dry_run(monkeypatch, verdict: str) -> list[tuple[str, dict[str, Any]]]:
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def fake(target_tool: str, target_params: dict[str, Any], risk_profile: str = "Medium"):
+    async def fake(
+        target_tool: str, target_params: dict[str, Any], risk_profile: str = "Medium"
+    ):
         calls.append((target_tool, target_params))
-        return {"verdict": verdict, "message": f"dry run {verdict}", "opa_results": None}
+        return {
+            "verdict": verdict,
+            "message": f"dry run {verdict}",
+            "opa_results": None,
+        }
 
     monkeypatch.setattr(evaluator_mod, "simulate_governance_check", fake)
     return calls
@@ -103,7 +119,11 @@ def test_trade_params_reject_a_non_numeric_amount() -> None:
 
 
 def test_proceed_verdicts() -> None:
-    assert {v.value for v in PROCEED_VERDICTS} == {"ALLOW", "NARROW", "REQUIRE_APPROVAL"}
+    assert {v.value for v in PROCEED_VERDICTS} == {
+        "ALLOW",
+        "NARROW",
+        "REQUIRE_APPROVAL",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -120,11 +140,17 @@ async def test_dry_run_previews_the_canonical_trade(monkeypatch) -> None:
     [(tool, params)] = calls
     assert tool == TRADE_ACTION
     assert params["trader_role"] == DEFAULT_TRADER_ROLE
-    assert (params["symbol"], params["amount"], params["currency"]) == ("AAPL", 500.0, "USD")
+    assert (params["symbol"], params["amount"], params["currency"]) == (
+        "AAPL",
+        500.0,
+        "USD",
+    )
 
 
 @pytest.mark.asyncio
-async def test_trade_like_step_names_are_previewed_as_the_registered_action(monkeypatch) -> None:
+async def test_trade_like_step_names_are_previewed_as_the_registered_action(
+    monkeypatch,
+) -> None:
     calls = _install_dry_run(monkeypatch, "ALLOW")
     step = {**_TRADE_STEP, "action": "buy_stock"}
 
@@ -148,10 +174,14 @@ async def test_trade_like_step_names_are_previewed_as_the_registered_action(monk
 async def test_verdict_routing(monkeypatch, verdict, approved, needs_approval) -> None:
     _install_dry_run(monkeypatch, verdict)
 
-    out = await evaluator_mod.evaluator_node({"execution_plan_output": _plan(_TRADE_STEP)})
+    out = await evaluator_mod.evaluator_node(
+        {"execution_plan_output": _plan(_TRADE_STEP)}
+    )
 
     assert out["risk_status"] == ("APPROVED" if approved else "REJECTED_REVISE")
-    assert out["evaluation_result"]["verdict"] == ("APPROVED" if approved else "REJECTED")
+    assert out["evaluation_result"]["verdict"] == (
+        "APPROVED" if approved else "REJECTED"
+    )
     assert out["evaluation_result"]["requires_approval"] is needs_approval
 
 
@@ -176,14 +206,18 @@ async def test_safety_gate_submits_the_same_payload(monkeypatch) -> None:
     seen: dict[str, Any] = {}
 
     class _Client:
-        async def validate_action(self, *, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        async def validate_action(
+            self, *, action: str, params: dict[str, Any]
+        ) -> dict[str, Any]:
             seen.update(action=action, params=params)
             return {"verdict": GovernanceDecision.ALLOW, "envelope_id": "e1"}
 
     monkeypatch.setattr(safety_mod, "GatewayClient", _Client)
     plan = {"action": "execute_trade", **_TRADE_STEP["parameters"]}
 
-    out = await safety_mod.safety_check_node({"execution_plan_output": plan, "consecutive_denials": 0})
+    out = await safety_mod.safety_check_node(
+        {"execution_plan_output": plan, "consecutive_denials": 0}
+    )
 
     assert out["safety_status"] == "APPROVED"
     assert seen["action"] == TRADE_ACTION
@@ -202,7 +236,11 @@ def test_planner_read_only_steps_are_registered(action) -> None:
     # check_balance. An unregistered step is IRREVERSIBLE_TERMINAL to FTRA,
     # which parked every trade plan for a human regardless of the trade.
     assert action in REGISTERED_ACTIONS
-    runtime = _load_registry_document(_REPO / "config" / "ftra" / "terminal_registry.json")
+    runtime = _load_registry_document(
+        _REPO / "config" / "ftra" / "terminal_registry.json"
+    )
     assert runtime.terminals[action] == "READ_ONLY"
-    generated = json.loads((_REPO / "src/cage_finance/stpa/terminal_registry.json").read_text())
+    generated = json.loads(
+        (_REPO / "src/cage_finance/stpa/terminal_registry.json").read_text()
+    )
     assert generated["terminals"][action] == "READ_ONLY"

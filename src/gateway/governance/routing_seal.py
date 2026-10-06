@@ -141,6 +141,7 @@ def _require_evidence_binding() -> bool:
 def _is_unbound(record_hash: Any) -> bool:
     return not record_hash or str(record_hash).lower() in _NO_EVIDENCE_SENTINELS
 
+
 # ---------------------------------------------------------------------------
 # Feature flag: Seal strict mode - prevents HMAC downgrade attacks
 # ---------------------------------------------------------------------------
@@ -677,13 +678,28 @@ def seal_nonce(seal: str) -> str:
         return hashlib.sha256(seal.encode()).hexdigest()
     try:
         # Parse only: callers act on the nonce only after verify_seal().
-        claims = pyjwt.decode(seal, options={"verify_signature": False})
+        claims = _unverified_claims(seal)
     except Exception as exc:
         raise SymbolicGovernorViolation(f"failed to extract nonce: {exc}") from exc
     nonce = claims.get("nonce")
     if not isinstance(nonce, str) or not nonce:
         raise SymbolicGovernorViolation("seal missing nonce for replay protection")
     return nonce
+
+
+def _unverified_claims(seal: str) -> dict[str, Any]:
+    """Parse a JWT seal's claims WITHOUT checking its signature.
+
+    The single place where seal claims are read unverified. Callers use the
+    result only as a lookup key or sizing hint (nonce, record_hash, exp for
+    Redis TTLs); no authorisation decision is ever taken on it. Every trust
+    decision goes through :func:`verify_seal`, which verifies the signature
+    against a ``kid``-resolved key from the JWKS trust anchor.
+    """
+    # Metadata parse only; the signature is verified in verify_seal() before use.
+    # nosemgrep: python.jwt.security.unverified-jwt-decode.unverified-jwt-decode
+    claims: dict[str, Any] = pyjwt.decode(seal, options={"verify_signature": False})
+    return claims
 
 
 def _is_jwt_seal(seal: str) -> bool:
@@ -953,7 +969,7 @@ def extract_record_hash(seal: str) -> str | None:
             # happens in verify_seal() via KMS public key validation. This pattern prevents
             # double-verification overhead while maintaining security boundaries.
             # See: verify_seal() for signature verification logic.
-            claims = pyjwt.decode(seal, options={"verify_signature": False})
+            claims = _unverified_claims(seal)
             return claims.get("record_hash")
         except Exception:
             return None
@@ -1035,6 +1051,9 @@ async def _atomic_burn_nonce(
     # Note: We compute SHA1 of the script to match Redis's script SHA
     import hashlib as _hashlib
 
+    # SHA1 is mandated by the Redis EVALSHA protocol as the script-cache key;
+    # it carries no security property here (usedforsecurity=False).
+    # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
     _ATOMIC_BURN_NONCE_SHA = _hashlib.sha1(
         _ATOMIC_BURN_NONCE_LUA.encode(), usedforsecurity=False
     ).hexdigest()
@@ -1248,7 +1267,7 @@ def _seal_remaining_ttl(seal: str) -> int:
     """
     try:
         if _is_jwt_seal(seal):
-            claims = pyjwt.decode(seal, options={"verify_signature": False})
+            claims = _unverified_claims(seal)
             return int(claims.get("exp", 0)) - int(time.time())
         return int(seal.split(".", 1)[0], 16) - int(time.time())
     except Exception:

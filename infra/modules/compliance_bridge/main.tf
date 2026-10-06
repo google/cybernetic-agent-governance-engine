@@ -104,6 +104,20 @@ resource "kubernetes_deployment" "compliance_bridge" {
             }
           }
 
+          # Deployment jurisdiction: single source is the cage-deployment
+          # ConfigMap (modules/deployment_config). optional = false: a pod
+          # never starts without a declared region.
+          env {
+            name = "CAGE_DEPLOYMENT_REGION"
+            value_from {
+              config_map_key_ref {
+                name     = var.deployment_config_map_name
+                key      = "CAGE_DEPLOYMENT_REGION"
+                optional = false
+              }
+            }
+          }
+
           env {
             name  = "PORT"
             value = "3001"
@@ -124,16 +138,6 @@ resource "kubernetes_deployment" "compliance_bridge" {
           env {
             name  = "ENVIRONMENT"
             value = var.cage_env
-          }
-
-          # CAGE_DEPLOYMENT_REGION controls which jurisdictional compliance
-          # framework controls (US_FED/NIST/FedRAMP, EU_ECB/EU AI Act,
-          # APAC_MAS/MAS FEAT) are exposed by GET /v1/controls and
-          # GET /v1/metrics/summary. Must match the region configured for
-          # the gateway and governed_advisor modules.
-          env {
-            name  = "CAGE_DEPLOYMENT_REGION"
-            value = var.cage_deployment_region
           }
 
           env {

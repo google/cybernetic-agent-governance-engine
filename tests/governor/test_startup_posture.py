@@ -46,7 +46,9 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 _PROD = DeploymentPosture.PRODUCTION
 _DEV = DeploymentPosture.DEV
 _GATEWAY_KEY = "projects/p/locations/l/keyRings/r/cryptoKeys/cage-gateway-seal-signer"
-_RECONCILER_KEY = "projects/p/locations/l/keyRings/r/cryptoKeys/cage-reconciler-snapshot-signer"
+_RECONCILER_KEY = (
+    "projects/p/locations/l/keyRings/r/cryptoKeys/cage-reconciler-snapshot-signer"
+)
 
 
 class _Signer:
@@ -60,7 +62,12 @@ class _Signer:
 
 
 class _Verifier:
-    def __init__(self, kids: tuple[str, ...] = ("projects/p/cryptoKeys/reconciler/cryptoKeyVersions/1",)) -> None:
+    def __init__(
+        self,
+        kids: tuple[str, ...] = (
+            "projects/p/cryptoKeys/reconciler/cryptoKeyVersions/1",
+        ),
+    ) -> None:
         self.trust_anchor_kids = kids
 
 
@@ -94,7 +101,9 @@ def healthy(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
     monkeypatch.setenv("KMS_GOVERNANCE_KEY", _GATEWAY_KEY)
     monkeypatch.setenv("RECONCILER_KMS_KEY", _RECONCILER_KEY)
-    monkeypatch.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False)
+    monkeypatch.setattr(
+        "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False
+    )
     return monkeypatch
 
 
@@ -109,31 +118,61 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("check", "breakage"),
     [
-        ("kms_signing_mode", lambda mp: mp.setattr(posture_mod, "_signer", lambda: _Signer(kms=False))),
-        ("kms_ready", lambda mp: mp.setattr(posture_mod, "_signer", lambda: _Signer(ready=False))),
-        ("redis_ready", lambda mp: mp.setattr(posture_mod, "_redis", lambda: _Redis(up=False))),
-        ("reconciliation_provider", lambda mp: mp.setenv("RECONCILIATION_PROVIDER", "stub")),
-        ("governance_salt", lambda mp: mp.setattr("src.gateway.governance.routing_seal._USING_DEFAULT_SALT", True)),
+        (
+            "kms_signing_mode",
+            lambda mp: mp.setattr(posture_mod, "_signer", lambda: _Signer(kms=False)),
+        ),
+        (
+            "kms_ready",
+            lambda mp: mp.setattr(posture_mod, "_signer", lambda: _Signer(ready=False)),
+        ),
+        (
+            "redis_ready",
+            lambda mp: mp.setattr(posture_mod, "_redis", lambda: _Redis(up=False)),
+        ),
+        (
+            "reconciliation_provider",
+            lambda mp: mp.setenv("RECONCILIATION_PROVIDER", "stub"),
+        ),
+        (
+            "governance_salt",
+            lambda mp: mp.setattr(
+                "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", True
+            ),
+        ),
         ("reconciler_trust_anchor.*unset", lambda mp: mp.delenv("RECONCILER_KMS_KEY")),
         (
             "reconciler_trust_anchor.*gateway signing key",
-            lambda mp: mp.setenv("RECONCILER_KMS_KEY", _GATEWAY_KEY + "/cryptoKeyVersions/2"),
+            lambda mp: mp.setenv(
+                "RECONCILER_KMS_KEY", _GATEWAY_KEY + "/cryptoKeyVersions/2"
+            ),
         ),
         (
             "reconciler_trust_anchor.*no reconciler public key",
-            lambda mp: mp.setattr(posture_mod, "_reconciler_verifier", lambda: _Verifier(kids=())),
+            lambda mp: mp.setattr(
+                posture_mod, "_reconciler_verifier", lambda: _Verifier(kids=())
+            ),
         ),
     ],
 )
-def test_each_violation_refuses_production(healthy: pytest.MonkeyPatch, check: str, breakage: Any) -> None:
+def test_each_violation_refuses_production(
+    healthy: pytest.MonkeyPatch, check: str, breakage: Any
+) -> None:
     breakage(healthy)
     with pytest.raises(PostureViolation, match=check):
         assert_production_posture(_PROD, components=_components())
 
 
-def test_missing_tier_runtime_requirement_refuses_production(healthy: pytest.MonkeyPatch) -> None:
-    with pytest.raises(PostureViolation, match="tier_runtime_requirements.*cage_module_that_does_not_exist"):
-        assert_production_posture(_PROD, components=_components(domain_tiers=(_NeedsTier(),)))
+def test_missing_tier_runtime_requirement_refuses_production(
+    healthy: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(
+        PostureViolation,
+        match="tier_runtime_requirements.*cage_module_that_does_not_exist",
+    ):
+        assert_production_posture(
+            _PROD, components=_components(domain_tiers=(_NeedsTier(),))
+        )
 
 
 def test_all_failures_are_reported_together(healthy: pytest.MonkeyPatch) -> None:
@@ -141,7 +180,9 @@ def test_all_failures_are_reported_together(healthy: pytest.MonkeyPatch) -> None
     healthy.setenv("RECONCILIATION_PROVIDER", "stub")
     with pytest.raises(PostureViolation) as exc:
         assert_production_posture(_PROD, components=_components())
-    assert "redis_ready" in str(exc.value) and "reconciliation_provider" in str(exc.value)
+    assert "redis_ready" in str(exc.value) and "reconciliation_provider" in str(
+        exc.value
+    )
 
 
 def test_hmac_fallback_raises_in_production(healthy: pytest.MonkeyPatch) -> None:
@@ -156,12 +197,18 @@ def test_hmac_fallback_logs_critical_in_development(
     healthy.setattr(posture_mod, "_signer", lambda: _Signer(kms=False))
     with caplog.at_level(logging.CRITICAL, logger=posture_mod.logger.name):
         assert_production_posture(_DEV, components=_components(_DEV))
-    records = [json.loads(r.getMessage()) for r in caplog.records if r.levelno == logging.CRITICAL]
+    records = [
+        json.loads(r.getMessage())
+        for r in caplog.records
+        if r.levelno == logging.CRITICAL
+    ]
     assert [r["check"] for r in records] == ["kms_signing_mode"]
     assert records[0]["event"] == "CAGE_POSTURE_CHECK_FAILED"
 
 
-def test_components_assembled_for_another_posture_are_refused(healthy: pytest.MonkeyPatch) -> None:
+def test_components_assembled_for_another_posture_are_refused(
+    healthy: pytest.MonkeyPatch,
+) -> None:
     with pytest.raises(PostureViolation, match="assembled for"):
         assert_production_posture(_PROD, components=_components(_DEV))
 
@@ -200,13 +247,20 @@ def test_import_is_pure_in_production_without_kms_or_redis() -> None:
         "print('IMPORT_OK')\n"
     )
     proc = subprocess.run(
-        [sys.executable, "-c", code], cwd=_REPO, env=env, capture_output=True, text=True, timeout=180
+        [sys.executable, "-c", code],
+        cwd=_REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
     assert proc.returncode == 0, proc.stderr[-3000:]
     assert "IMPORT_OK" in proc.stdout
 
 
-_POSTURE_READ = re.compile(r"""(environ(\.get)?|getenv)\s*[\(\[]\s*["'](CAGE_ENV|ENVIRONMENT)["']""")
+_POSTURE_READ = re.compile(
+    r"""(environ(\.get)?|getenv)\s*[\(\[]\s*["'](CAGE_ENV|ENVIRONMENT)["']"""
+)
 
 
 def test_posture_is_read_only_through_env_posture() -> None:
@@ -220,4 +274,6 @@ def test_posture_is_read_only_through_env_posture() -> None:
         for n, line in enumerate(p.read_text().splitlines(), 1)
         if _POSTURE_READ.search(line)
     ]
-    assert offenders == [], f"read posture via env_posture.resolve_posture(): {offenders}"
+    assert offenders == [], (
+        f"read posture via env_posture.resolve_posture(): {offenders}"
+    )

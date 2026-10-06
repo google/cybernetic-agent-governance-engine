@@ -135,6 +135,8 @@ def mint_consequence_token_finding(
 
     except Exception as exc:
         # Mint failure: fail-closed (return a blocking finding, not a silent admit)
+        # 'ConsequenceToken' is the class name; logs masked ids or the error only.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.error(
             "[consequence_token_service] ConsequenceToken minting failed: %s — fail-closed, blocking execution",
             exc,

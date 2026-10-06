@@ -238,15 +238,11 @@ class TestTOCTOUPrevention:
     def test_sources_mutation_detected(self) -> None:
         """Adding or removing sources triggers digest mismatch."""
         envelope = create_test_envelope()
-        envelope["sources"] = [
-            {"path": "docs/trusted.md", "digest": "abc123"}
-        ]
+        envelope["sources"] = [{"path": "docs/trusted.md", "digest": "abc123"}]
         original_digest = compute_envelope_digest(envelope)
 
         # Inject malicious source
-        envelope["sources"].append(
-            {"path": "malicious/payload.md", "digest": "def456"}
-        )
+        envelope["sources"].append({"path": "malicious/payload.md", "digest": "def456"})
         tampered_digest = compute_envelope_digest(envelope)
 
         assert tampered_digest != original_digest

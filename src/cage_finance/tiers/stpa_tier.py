@@ -23,7 +23,7 @@ from src.cage_finance.stpa.uca_rules import (
 )
 
 __all__ = [
+    "UCA_RULES",
     "FinanceSTPAValidator",
     "GeneratedSTPAValidator",
-    "UCA_RULES",
 ]

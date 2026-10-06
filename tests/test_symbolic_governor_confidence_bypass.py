@@ -124,6 +124,7 @@ def _make_governor(
         bypassed_ftra_node=False,
     )
     from src.gateway.governance.governor.stages.ftra import FtraStage
+
     for stage in governor.stages:
         if isinstance(stage, FtraStage):
             stage._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)

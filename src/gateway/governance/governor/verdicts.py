@@ -25,14 +25,18 @@ from opentelemetry.trace import Status, StatusCode
 if TYPE_CHECKING:
     from src.gateway.governance.defer_queue import DeferReason
 
-from src.gateway.governance.agent_confidence import reported_confidence
-from src.gateway.governance.constants import ControlRegistry, GovernanceControl
-from src.gateway.governance.contracts import GovernanceTierFailure, Violation, ViolationKind
-from src.gateway.governance.contracts import RefusalReceipt
 from src.gateway.governance import routing_seal
-from src.gateway.governance.governor.errors import GovernanceError
-from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.agent_confidence import reported_confidence
 from src.gateway.governance.classification_engine import ClassificationResult
+from src.gateway.governance.constants import ControlRegistry, GovernanceControl
+from src.gateway.governance.contracts import (
+    GovernanceTierFailure,
+    RefusalReceipt,
+    Violation,
+    ViolationKind,
+)
+from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.governor.errors import GovernanceError
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -54,13 +58,17 @@ def build_refusal_receipt(
     violations: list[Violation],
     tier_failures: list[GovernanceTierFailure],
     *,
-    violated_tier_default: str = "SYMBOLIC_GOVERNOR"
+    violated_tier_default: str = "SYMBOLIC_GOVERNOR",
 ) -> RefusalReceipt:
     thread_id = resolve_thread_id(params)
     _first_tf = tier_failures[0] if tier_failures else None
-    
-    violated_rule = "Multiple violations" if len(violations) > 1 else (str(violations[0]) if violations else "Unknown violation")
-    
+
+    violated_rule = (
+        "Multiple violations"
+        if len(violations) > 1
+        else (str(violations[0]) if violations else "Unknown violation")
+    )
+
     # Generate standing at refusal
     standing_at_refusal = {
         "is_compliant": False,
@@ -73,9 +81,9 @@ def build_refusal_receipt(
                 "protected_consequence": tf.protected_consequence,
             }
             for tf in tier_failures
-        ]
+        ],
     }
-    
+
     return RefusalReceipt(
         thread_id=thread_id,
         action=action,
@@ -89,16 +97,23 @@ def build_refusal_receipt(
         standing_snapshot=_first_tf.governing_state if _first_tf else {},
         control_id=_first_tf.control_id if _first_tf else "",
         protected_consequence=_first_tf.protected_consequence if _first_tf else "",
-        non_formation_proof=[tf.tier for tf in tier_failures],
-        tier_failures=tier_failures
+        # Contract: a string naming the tiers that held the action back.
+        non_formation_proof=",".join(tf.tier for tf in tier_failures),
+        tier_failures=tuple(tier_failures),
     )
 
 
 async def publish_refusal(receipt: RefusalReceipt) -> None:
     from src.gateway.governance.evidence.stream import get_evidence_sink
+
     try:
         sink = get_evidence_sink()
-        event = {"type": "GOVERNANCE_REFUSAL", "receipt": receipt.to_dict() if hasattr(receipt, "to_dict") else vars(receipt)}
+        event = {
+            "type": "GOVERNANCE_REFUSAL",
+            "receipt": receipt.to_dict()
+            if hasattr(receipt, "to_dict")
+            else vars(receipt),
+        }
         await sink.ingest(event)
     except Exception as exc:
         logger.error(f"Failed to publish refusal receipt: {exc}")
@@ -155,7 +170,9 @@ async def _park_defer_context(
         "classification_reason": classification_meta.get("classification_reason", ""),
         # What the reviewer was told the approved request would hit (Phase-2 preview).
         "barrier_preview": classification_meta.get("barrier_preview"),
-        "barrier_preview_violations": classification_meta.get("barrier_preview_violations", []),
+        "barrier_preview_violations": classification_meta.get(
+            "barrier_preview_violations", []
+        ),
         # Re-verified clamped params that would leave only the approval to give.
         "narrow_hint": classification_meta.get("narrow_hint"),
     }
@@ -175,7 +192,9 @@ async def _park_defer_context(
         logger.error(
             "DeferQueue park failed (%s) — token NOT persisted; nothing can "
             "approve or resume it. action=%s thread_id=%s",
-            exc, action, effective_thread_id,
+            exc,
+            action,
+            effective_thread_id,
         )
         return token.defer_id, False
 
@@ -239,7 +258,9 @@ async def handle_require_approval(
         "latency_ms": latency_ms,
         "classification_reason": classification_meta.get("classification_reason", ""),
         "classification_meta": classification_meta,
-        "narrowed_params": (classification_meta.get("narrow_hint") or {}).get("narrowed_params"),
+        "narrowed_params": (classification_meta.get("narrow_hint") or {}).get(
+            "narrowed_params"
+        ),
     }
 
 
@@ -313,17 +334,24 @@ def handle_narrow(
     is a separate committing run that governs them again.
     """
     span = trace.get_current_span()
-    narrowing_reason = classification_meta.get("narrowing_reason", "Constraints applied")
+    narrowing_reason = classification_meta.get(
+        "narrowing_reason", "Constraints applied"
+    )
     constraints_applied = classification_meta.get("constraints_applied", {})
 
     span.set_attribute("cage.verdict", GovernanceDecision.NARROW)
     span.set_attribute("cage.governance.narrowed", True)
-    span.set_attribute("cage.governance.constraints_applied", json.dumps(constraints_applied)[:500])
+    span.set_attribute(
+        "cage.governance.constraints_applied", json.dumps(constraints_applied)[:500]
+    )
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.NARROW)
     span.set_status(Status(StatusCode.OK))
     logger.info(
         "📐 handle_narrow NARROW: action=%s reason=%s constraints=%s (%.1fms)",
-        action, narrowing_reason, constraints_applied, latency_ms,
+        action,
+        narrowing_reason,
+        constraints_applied,
+        latency_ms,
     )
     agent_id = original_params.get("_caller_principal", "")
 
@@ -332,7 +360,10 @@ def handle_narrow(
         "violations": violations,
         "latency_ms": latency_ms,
         "agent_id": agent_id,
-        "classification_meta": {**classification_meta, "narrowed_params": narrowed_params},
+        "classification_meta": {
+            **classification_meta,
+            "narrowed_params": narrowed_params,
+        },
         "original_params": original_params,
         "narrowed_params": narrowed_params,
         "narrowing_reason": narrowing_reason,
@@ -353,11 +384,11 @@ async def handle_deny(
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.DENY)
     span.set_status(Status(StatusCode.ERROR))
-    logger.warning("🚫 handle_deny DENY: action=%s violations=%d", action, len(violations))
-    
-    receipt = build_refusal_receipt(
-        action, params, violations, tier_failures
+    logger.warning(
+        "🚫 handle_deny DENY: action=%s violations=%d", action, len(violations)
     )
+
+    receipt = build_refusal_receipt(action, params, violations, tier_failures)
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
     await publish_refusal(receipt)
     # Lead with the violation that decided the refusal (a HARD one when
@@ -425,8 +456,6 @@ async def handle_deny(
         receipt=receipt,
         violations=[_error_message(v) for v in ordered],
     )
-
-
 
 
 _CONTROL_ID_RE = re.compile(r"^\[(CTRL_[A-Z0-9_]+)\]")

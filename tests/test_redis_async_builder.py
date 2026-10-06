@@ -32,8 +32,9 @@ import logging
 import socket
 import ssl
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -111,9 +112,7 @@ def redis_entry_point(
 def local_tls_redis_server(tmp_path: Path):
     """Start a hermetic local TLS socket server with a throwaway self-signed cert."""
     key = ec.generate_private_key(ec.SECP256R1())
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")]
-    )
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()
@@ -246,8 +245,7 @@ def test_resolve_redis_tls_logs_one_line_for_required_and_none(
     assert cert_reqs == ssl.CERT_REQUIRED
     assert ca_certs == "/etc/cage/tls/redis/ca.pem"
     assert (
-        "🔒 Redis TLS: cert_reqs=REQUIRED ca=/etc/cage/tls/redis/ca.pem"
-        in caplog.text
+        "🔒 Redis TLS: cert_reqs=REQUIRED ca=/etc/cage/tls/redis/ca.pem" in caplog.text
     )
 
     caplog.clear()
@@ -303,4 +301,3 @@ async def test_staging_tls_handshake_rejects_unpinned_cert_and_succeeds_with_pin
         assert await pinned_client.ping() is True
     finally:
         await pinned_client.aclose()
-

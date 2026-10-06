@@ -60,9 +60,9 @@ class UcaRule:
     uca_id: str
     action: str = "*"
     description: str = ""
-    predicate: Callable[
-        ..., Violation | Sequence[Violation] | str | bool | None
-    ] = field(default=lambda *_args, **_kwargs: None)
+    predicate: Callable[..., Violation | Sequence[Violation] | str | bool | None] = (
+        field(default=lambda *_args, **_kwargs: None)
+    )
     action_name: str | None = None
 
     def __post_init__(self) -> None:
@@ -121,7 +121,8 @@ class UcaRule:
                 Violation(
                     tier="stpa",
                     code=code,
-                    message=self.description or f"{self.uca_id} ({action_name}): UCA triggered.",
+                    message=self.description
+                    or f"{self.uca_id} ({action_name}): UCA triggered.",
                     kind=ViolationKind.HARD,
                 )
             ]
@@ -139,9 +140,7 @@ class UcaRule:
         return list(result)
 
 
-def _check_core_uca_1(
-    action_name: str, params: Mapping[str, Any]
-) -> Violation | None:
+def _check_core_uca_1(action_name: str, params: Mapping[str, Any]) -> Violation | None:
     """UCA-1 [unsafe_action] on 'write_db': requires a signed approval_token."""
     if action_name != "write_db":
         return None

@@ -18,15 +18,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.cage_finance.safety.bounding.contract import (
+    BoundingContractConfig,
+    BoundingContractEnforcer,
+)
 from src.cage_finance.safety.bounding.models import (
     BoundedTradeRequest,
     ContractSeverity,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
-from src.cage_finance.safety.bounding.contract import (
-    BoundingContractConfig,
-    BoundingContractEnforcer,
-)
 
 # Hermetic: validates bounding contract registry orchestration in-memory.
 pytestmark = [pytest.mark.unit, pytest.mark.local]

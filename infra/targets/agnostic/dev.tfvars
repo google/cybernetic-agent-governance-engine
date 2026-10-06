@@ -6,6 +6,9 @@ kubeconfig_path    = "~/.kube/config"
 kubeconfig_context = "" # Use current context
 
 # ─── Environment ──────────────────────────────────────────────────────────────
+# Deployment jurisdiction (cage-deployment ConfigMap): US_FED | EU_ECB | APAC_MAS
+cage_deployment_region = "US_FED"
+
 environment = "dev"
 namespace   = "governance-stack-dev"
 

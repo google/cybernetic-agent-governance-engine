@@ -15,6 +15,9 @@
 import logging
 from typing import Any
 
+from src.cage_finance.invariants import finance_cost_resolver
+from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.cage_finance.tiers.cbf_tier import CostResolver
 from src.gateway.governance.contracts import (
     CommitReceipt,
     MutatingTier,
@@ -22,9 +25,6 @@ from src.gateway.governance.contracts import (
     ViolationKind,
     coerce_bound,
 )
-from src.cage_finance.invariants import finance_cost_resolver
-from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
-from src.cage_finance.tiers.cbf_tier import CostResolver
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,9 @@ class FiscalTierPlugin(MutatingTier):
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
         if token.rejected:
             return [await self._limit_violation(agent_id)], None
-        return [], CommitReceipt(tier=self.tier_name, magnitude=token.amount_usd, token=token)
+        return [], CommitReceipt(
+            tier=self.tier_name, magnitude=token.amount_usd, token=token
+        )
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt

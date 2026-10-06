@@ -52,8 +52,12 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 actions = pytest.importorskip("config.rails.actions")
-nemo_input = pytest.importorskip("nemoguardrails.library.self_check.input_check.actions")
-nemo_output = pytest.importorskip("nemoguardrails.library.self_check.output_check.actions")
+nemo_input = pytest.importorskip(
+    "nemoguardrails.library.self_check.input_check.actions"
+)
+nemo_output = pytest.importorskip(
+    "nemoguardrails.library.self_check.output_check.actions"
+)
 from nemoguardrails.actions.actions import ActionResult  # noqa: E402
 
 # Benign inputs/outputs with no Stage 2 allowlist keyword: they reach the judge.

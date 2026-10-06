@@ -17,22 +17,28 @@ tests/infrastructure/test_data_residency_apac_mas.py
 =====================================================
 APAC_MAS data-residency gate tests.
 
-These tests assert that all GCS storage paths and bucket references are
-confined to the ``asia-southeast1`` region when ``CAGE_DEPLOYMENT_REGION``
-is set to ``APAC_MAS``.  They are skipped automatically for all other
-deployment regions.
+Two classes:
+
+- ``TestAPACMASResidencyArtifacts`` (``local``): repository artifacts for the
+  APAC_MAS posture (tfvars, baseline, MAS TRM references) reference
+  ``asia-southeast1``. Runs in every hermetic session, pinned to APAC_MAS by
+  its region marker.
+- ``TestAPACMASDeployedResidency`` (``integration``): GCS paths and buckets of
+  a live deployment are confined to ``asia-southeast1``. Runs only when the
+  deployment's ``cage-deployment`` ConfigMap sets APAC_MAS.
 
 Regulatory basis: MAS TRM §4.2 (data residency), MAS Notice 655 (outsourcing),
 MAS FEAT (fairness, ethics, accountability, transparency).
 
-Run manually against an APAC_MAS posture:
+Run against a live APAC_MAS deployment:
 
-    CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/infrastructure/ -v -m apac_mas
+    uv run pytest tests/infrastructure/ -v -m apac_mas --run-integration
 
 Marks
 -----
-- ``apac_mas`` : APAC_MAS jurisdiction-specific test
-- ``local``    : safe to run with no live services (CI default)
+- ``apac_mas``    : APAC_MAS jurisdiction-specific test
+- ``local``       : safe to run with no live services (CI default)
+- ``integration`` : needs a live APAC_MAS deployment
 """
 
 from __future__ import annotations
@@ -40,20 +46,6 @@ from __future__ import annotations
 import os
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Module-level skip guard — entire module is skipped unless APAC_MAS is active
-# ---------------------------------------------------------------------------
-
-_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
-
-_SKIP_NON_APAC = pytest.mark.skipif(
-    _REGION != "APAC_MAS",
-    reason=(
-        f"APAC_MAS data-residency tests skipped for region {_REGION!r}. "
-        "Set CAGE_DEPLOYMENT_REGION=APAC_MAS to run."
-    ),
-)
 
 # ---------------------------------------------------------------------------
 # Known non-APAC region substrings — any bucket/path containing these is a
@@ -103,24 +95,17 @@ def _assert_apac_region(value: str, label: str) -> None:
 
 
 @pytest.mark.apac_mas
-@pytest.mark.local
-@_SKIP_NON_APAC
-class TestAPACMASDataResidency:
-    """Gate tests for APAC_MAS data-residency compliance (MAS TRM §4.2)."""
+@pytest.mark.integration
+class TestAPACMASDeployedResidency:
+    """Gate tests for APAC_MAS data-residency compliance (MAS TRM §4.2).
+
+    Checks the environment of a live APAC_MAS deployment run. The harness
+    skips this class unless the deployment's ``cage-deployment`` ConfigMap
+    sets ``CAGE_DEPLOYMENT_REGION=APAC_MAS``.
+    """
 
     # ------------------------------------------------------------------
-    # 1. Deployment region identity
-    # ------------------------------------------------------------------
-
-    def test_cage_deployment_region_is_apac_mas(self) -> None:
-        """CAGE_DEPLOYMENT_REGION must be exactly 'APAC_MAS' in this posture."""
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
-        assert region == "APAC_MAS", (
-            f"Expected CAGE_DEPLOYMENT_REGION='APAC_MAS', got {region!r}"
-        )
-
-    # ------------------------------------------------------------------
-    # 2. GCS storage path residency
+    # 1. GCS storage path residency
     # ------------------------------------------------------------------
 
     def test_gcs_storage_paths_are_apac_region(self) -> None:
@@ -171,7 +156,7 @@ class TestAPACMASDataResidency:
         )
 
     # ------------------------------------------------------------------
-    # 3. COLD_TIER_BUCKET residency
+    # 2. COLD_TIER_BUCKET residency
     # ------------------------------------------------------------------
 
     def test_cold_tier_bucket_does_not_reference_non_apac_region(self) -> None:
@@ -200,7 +185,7 @@ class TestAPACMASDataResidency:
             _assert_apac_region(bucket, "COLD_TIER_BUCKET")
 
     # ------------------------------------------------------------------
-    # 4. OSCAL_S3_BUCKET residency
+    # 3. OSCAL_S3_BUCKET residency
     # ------------------------------------------------------------------
 
     def test_oscal_s3_bucket_does_not_reference_non_apac_region(self) -> None:
@@ -225,8 +210,14 @@ class TestAPACMASDataResidency:
         ):
             _assert_apac_region(bucket, "OSCAL_S3_BUCKET")
 
+
+@pytest.mark.apac_mas
+@pytest.mark.local
+class TestAPACMASResidencyArtifacts:
+    """Repository artifacts (tfvars, baselines) for the APAC_MAS posture."""
+
     # ------------------------------------------------------------------
-    # 5. Terraform tfvars residency (apac-dev / apac-prod)
+    # 4. Terraform tfvars residency (apac-dev / apac-prod)
     # ------------------------------------------------------------------
 
     def test_apac_dev_tfvars_references_asia_southeast1(self) -> None:
@@ -254,7 +245,7 @@ class TestAPACMASDataResidency:
         )
 
     # ------------------------------------------------------------------
-    # 6. APAC_MAS baseline config residency
+    # 5. APAC_MAS baseline config residency
     # ------------------------------------------------------------------
 
     def test_apac_mas_baseline_config_is_loadable(self) -> None:
@@ -289,7 +280,7 @@ class TestAPACMASDataResidency:
         )
 
     # ------------------------------------------------------------------
-    # 7. MAS TRM §4.2 data residency reference in shared modules
+    # 6. MAS TRM §4.2 data residency reference in shared modules
     # ------------------------------------------------------------------
 
     def test_mas_trm_data_residency_referenced_in_compliance_bridge(self) -> None:

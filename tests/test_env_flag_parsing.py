@@ -45,4 +45,3 @@ def test_env_flag(monkeypatch, env_val, default, expected):
         monkeypatch.setenv("TEST_FLAG", env_val)
 
     assert _env_flag("TEST_FLAG", default) is expected
-

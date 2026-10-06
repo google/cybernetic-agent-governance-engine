@@ -155,9 +155,7 @@ async def test_gfa_unwraps_v3_envelope_correctly(mock_v3_envelope_approved):
         )
 
         # Verify unwrapping occurred correctly
-        assert result["verdict"] == "ALLOW", (
-            "Verdict should be unwrapped from payload"
-        )
+        assert result["verdict"] == "ALLOW", "Verdict should be unwrapped from payload"
         assert "seal" not in result, "validate-action never carries a seal"
         assert result["violations"] == [], "Violations should be unwrapped from payload"
         assert result["latency_ms"] == 42.5, "Latency should be unwrapped from payload"

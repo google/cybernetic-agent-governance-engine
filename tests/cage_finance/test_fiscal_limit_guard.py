@@ -205,7 +205,9 @@ async def test_redis_failure_fails_closed(
         daily_cap_usd=500_000.0,
     )
     # Simulate a connection error at the script layer
-    broken_guard._eval = AsyncMock(side_effect=ConnectionError("Redis connection refused"))
+    broken_guard._eval = AsyncMock(
+        side_effect=ConnectionError("Redis connection refused")
+    )
     token = await broken_guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
     assert token.rejected, "Redis failure must fail CLOSED (reservation rejected)"
 
@@ -442,7 +444,9 @@ async def test_preview_fails_closed_when_pending_set_unreadable(
 
 
 @pytest.mark.asyncio
-async def test_confirmed_reservation_is_never_reclaimed(guard: FiscalLimitGuard) -> None:
+async def test_confirmed_reservation_is_never_reclaimed(
+    guard: FiscalLimitGuard,
+) -> None:
     token = await guard.reserve(agent_id="agent", amount_usd=100_000.0)
     await guard.confirm(token)
     assert await guard.reclaim_expired(now=time.time() + 10_000) == 0
@@ -469,7 +473,9 @@ async def test_double_release_refunds_once(guard: FiscalLimitGuard) -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_after_reclaim_recounts_the_spend(guard: FiscalLimitGuard) -> None:
+async def test_confirm_after_reclaim_recounts_the_spend(
+    guard: FiscalLimitGuard,
+) -> None:
     """The trade executed after its reservation expired: it still counts, once."""
     token = await guard.reserve(agent_id="agent", amount_usd=100_000.0)
     await guard.reclaim_expired(now=time.time() + 301)
@@ -480,7 +486,9 @@ async def test_confirm_after_reclaim_recounts_the_spend(guard: FiscalLimitGuard)
 
 
 @pytest.mark.asyncio
-async def test_release_after_reclaim_does_not_double_refund(guard: FiscalLimitGuard) -> None:
+async def test_release_after_reclaim_does_not_double_refund(
+    guard: FiscalLimitGuard,
+) -> None:
     keep = await guard.reserve(agent_id="a", amount_usd=50_000.0)
     token = await guard.reserve(agent_id="b", amount_usd=100_000.0)
     # Expire only ``token``.

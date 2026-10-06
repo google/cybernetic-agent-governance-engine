@@ -591,6 +591,7 @@ class TestSubmitEvidence:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -638,7 +639,11 @@ class TestSubmitEvidence:
             "expiresAt": (now + timedelta(days=365)).isoformat(),
             "policyDigest": hashlib.sha256(b"test-policy").hexdigest(),
             "envelopeDigest": "test-evidence-hash",
-            "verification": {"protocolVersion": "1-alpha", "status": "PASS", "findings": []},
+            "verification": {
+                "protocolVersion": "1-alpha",
+                "status": "PASS",
+                "findings": [],
+            },
         }
 
         payload_bytes = jcs_canonicalize_plan(payload)
@@ -675,6 +680,7 @@ class TestSubmitEvidence:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response
@@ -723,7 +729,11 @@ class TestSubmitEvidence:
             "expiresAt": (now + timedelta(days=365)).isoformat(),
             "policyDigest": hashlib.sha256(b"test-policy").hexdigest(),
             "envelopeDigest": "original-digest",
-            "verification": {"protocolVersion": "1-alpha", "status": "PASS", "findings": []},
+            "verification": {
+                "protocolVersion": "1-alpha",
+                "status": "PASS",
+                "findings": [],
+            },
         }
 
         payload_bytes = jcs_canonicalize_plan(payload)
@@ -768,6 +778,7 @@ class TestSubmitEvidence:
             with patch("httpx.AsyncClient") as MockHTTPClient:
                 client_instance = AsyncMock()
                 from unittest.mock import MagicMock
+
                 mock_response = MagicMock()
                 mock_response.json.return_value = receipt
                 client_instance.post.return_value = mock_response

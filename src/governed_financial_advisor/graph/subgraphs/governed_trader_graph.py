@@ -621,7 +621,9 @@ def build_governed_trader_graph() -> Any:
     builder.add_node(
         "post_hitl_revalidate", post_hitl_revalidate_node
     )  # TOCTOU: pre-actuation re-eval
-    builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
+    builder.add_node(
+        "drift_blocked", drift_blocked_node
+    )  # TOCTOU: fail-closed terminal
     builder.add_node("executor", executor_node)
     builder.add_node("tools", guarded_tool_executor_node)  # CAGE governance enforced
 
@@ -643,7 +645,9 @@ def build_governed_trader_graph() -> Any:
 
     # Executor tool-call loop; REQUIRE_APPROVAL pauses for a human and a
     # gateway refusal terminates the subgraph.
-    builder.add_conditional_edges("executor", should_continue, {"tools": "tools", END: END})
+    builder.add_conditional_edges(
+        "executor", should_continue, {"tools": "tools", END: END}
+    )
     builder.add_conditional_edges(
         "tools",
         route_after_tools,

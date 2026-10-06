@@ -1197,8 +1197,16 @@ class TestInferThetaPartnerContractVectors:
         priv2 = Ed25519PrivateKey.generate()
         pub2 = priv2.public_key()
 
-        x1 = base64.urlsafe_b64encode(pub1.public_bytes_raw()).rstrip(b"=").decode("ascii")
-        x2 = base64.urlsafe_b64encode(pub2.public_bytes_raw()).rstrip(b"=").decode("ascii")
+        x1 = (
+            base64.urlsafe_b64encode(pub1.public_bytes_raw())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        x2 = (
+            base64.urlsafe_b64encode(pub2.public_bytes_raw())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
 
         jwks_v1 = {"keys": [{"kty": "OKP", "crv": "Ed25519", "kid": "key-v1", "x": x1}]}
         jwks_v2 = {
@@ -1234,4 +1242,3 @@ class TestInferThetaPartnerContractVectors:
             assert k2 is not None
             assert k2.public_bytes_raw() == pub2.public_bytes_raw()
             assert client_instance.get.call_count == 2
-

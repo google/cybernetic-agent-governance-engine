@@ -354,3 +354,14 @@ variable "redis_url" {
   type        = string
   default     = ""
 }
+
+# No default (DEP-09): the deployment jurisdiction must be declared explicitly.
+variable "cage_deployment_region" {
+  description = "CAGE deployment jurisdiction: US_FED, EU_ECB, or APAC_MAS. Written to the cage-deployment ConfigMap."
+  type        = string
+
+  validation {
+    condition     = contains(["US_FED", "EU_ECB", "APAC_MAS"], var.cage_deployment_region)
+    error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS."
+  }
+}

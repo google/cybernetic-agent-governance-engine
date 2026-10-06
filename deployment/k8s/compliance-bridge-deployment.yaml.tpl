@@ -25,6 +25,13 @@ spec:
             - containerPort: 3001
               name: http
           env:
+            - name: CAGE_DEPLOYMENT_REGION
+              # Single source: the cage-deployment ConfigMap (cage-deployment-configmap.yaml.tpl).
+              valueFrom:
+                configMapKeyRef:
+                  name: cage-deployment
+                  key: CAGE_DEPLOYMENT_REGION
+                  optional: false
             - name: PORT
               value: "3001"
             - name: LANGFUSE_PUBLIC_KEY

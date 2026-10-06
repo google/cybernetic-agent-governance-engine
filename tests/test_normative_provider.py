@@ -414,7 +414,6 @@ class TestDataContracts:
         assert b1.profile_hash == b2.profile_hash
 
 
-
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 

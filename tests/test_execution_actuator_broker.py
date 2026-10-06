@@ -204,8 +204,10 @@ async def test_actuator_masks_credentials_in_logs(caplog):
     log_text = caplog.text
     assert "sensitive-secret-token-xyz" not in log_text
 
-    # Masked prefix should appear
-    assert "Bearer s****" in log_text or "Credentials fetched" in log_text
+    # No value prefix is logged either — only the header names.
+    assert "Bearer s" not in log_text
+    assert "Outbound auth headers fetched" in log_text
+    assert "Authorization" in log_text
 
 
 @pytest.mark.asyncio
@@ -362,9 +364,7 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
     sink = EvidenceStreamSink()
     sink._redis = fake_redis
     sink._running = True
-    monkeypatch.setattr(
-        "src.gateway.governance.evidence.stream._evidence_sink", sink
-    )
+    monkeypatch.setattr("src.gateway.governance.evidence.stream._evidence_sink", sink)
 
     mock_client = MagicMock(spec=ActuatorHttpClient)
     mock_client.base_url = "https://test.actuator.example.com"

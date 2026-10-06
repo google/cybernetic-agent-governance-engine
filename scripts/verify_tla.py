@@ -49,7 +49,11 @@ from proof.tla_pins import TLC_PINS  # noqa: E402
 
 _DISTINCT = re.compile(r"(\d+) distinct states found")
 _VIOLATED = re.compile(r"Invariant (\w+) is violated")
-_FAILURES = ("Temporal properties were violated", "unexpected exception", "Error: Deadlock")
+_FAILURES = (
+    "Temporal properties were violated",
+    "unexpected exception",
+    "Error: Deadlock",
+)
 
 
 def _tools() -> tuple[str, str] | None:
@@ -65,23 +69,41 @@ def run_tlc(java: str, jar: str, cfg: Path, spec: Path) -> tuple[int, set[str], 
     with tempfile.TemporaryDirectory() as meta:
         proc = subprocess.run(  # nosec B603 — argv built from repo paths
             [
-                java, "-XX:+UseParallelGC", "-cp", jar, "tlc2.TLC",
-                "-nowarning", "-continue", "-workers", "auto", "-metadir", meta,
-                "-config", str(cfg), str(spec),
+                java,
+                "-XX:+UseParallelGC",
+                "-cp",
+                jar,
+                "tlc2.TLC",
+                "-nowarning",
+                "-continue",
+                "-workers",
+                "auto",
+                "-metadir",
+                meta,
+                "-config",
+                str(cfg),
+                str(spec),
             ],
-            capture_output=True, text=True, check=False, cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
         )
     out = proc.stdout + proc.stderr
     counts = _DISTINCT.findall(out)
     if not counts:
-        raise RuntimeError(f"TLC produced no state count for {cfg.name}:\n{out[-2000:]}")
+        raise RuntimeError(
+            f"TLC produced no state count for {cfg.name}:\n{out[-2000:]}"
+        )
     return int(counts[-1]), set(_VIOLATED.findall(out)), out
 
 
 def main() -> int:
     tools = _tools()
     if tools is None:
-        print("TLC unavailable: set TLA_TOOLS_JAR to tla2tools.jar (and JAVA if java is not on PATH).")
+        print(
+            "TLC unavailable: set TLA_TOOLS_JAR to tla2tools.jar (and JAVA if java is not on PATH)."
+        )
         print("Download: https://github.com/tlaplus/tlaplus/releases")
         return 2
     java, jar = tools
@@ -106,9 +128,13 @@ def main() -> int:
         )
     for name, pin in TLC_PINS.items():
         cfg = ROOT / "proof" / f"{name}.cfg"
-        states, violated, out = run_tlc(java, jar, cfg, ROOT / "proof" / f"{pin.spec}.tla")
+        states, violated, out = run_tlc(
+            java, jar, cfg, ROOT / "proof" / f"{pin.spec}.tla"
+        )
         failures = [f for f in _FAILURES if f in out]
-        match = states == pin.distinct_states and violated == pin.violated and not failures
+        match = (
+            states == pin.distinct_states and violated == pin.violated and not failures
+        )
         ok &= match
         print(
             f"{'OK ' if match else 'BAD'} {cfg.name}: TLC states={states}, "

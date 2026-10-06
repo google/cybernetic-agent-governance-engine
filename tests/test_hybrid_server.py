@@ -417,7 +417,9 @@ async def test_healthz_returns_200_on_kms_exception_in_dev(monkeypatch):
     ids=["stub_ledger", "kms_not_active"],
 )
 @pytest.mark.asyncio
-async def test_lifespan_aborts_when_governor_posture_is_refused(monkeypatch, env, refusal):
+async def test_lifespan_aborts_when_governor_posture_is_refused(
+    monkeypatch, env, refusal
+):
     """A PostureViolation from governor assembly aborts startup before serving.
 
     The stub-ledger (POAM-023) and KMS-signing-mode (K3) guards run in
@@ -434,7 +436,9 @@ async def test_lifespan_aborts_when_governor_posture_is_refused(monkeypatch, env
     # tests/test_evidence_stream.py; stub it so this test reaches the governor.
     import src.gateway.governance.evidence.stream as _stream_mod
 
-    monkeypatch.setattr(_stream_mod, "start_evidence_sink", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        _stream_mod, "start_evidence_sink", AsyncMock(return_value=None)
+    )
 
     stubs = _make_hybrid_stubs()
     activate = AsyncMock(

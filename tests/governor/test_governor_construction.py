@@ -45,10 +45,16 @@ def test_none_classifier_is_rejected() -> None:
 
 def test_legacy_kwargs_constructor_is_gone() -> None:
     with pytest.raises(TypeError):
-        SymbolicGovernor(opa_client=MagicMock(), safety_filter=MagicMock(), consensus_engine=MagicMock())  # type: ignore[call-arg]
+        SymbolicGovernor(
+            opa_client=MagicMock(),
+            safety_filter=MagicMock(),
+            consensus_engine=MagicMock(),
+        )  # type: ignore[call-arg]
 
 
 def test_supplied_classifier_is_used() -> None:
     engine = ClassificationEngine(narrower_registry=NarrowerRegistry(narrowers=[]))
-    governor = SymbolicGovernor(GovernorComponents(opa=allow_opa(), core_stages=(), classifier=engine))
+    governor = SymbolicGovernor(
+        GovernorComponents(opa=allow_opa(), core_stages=(), classifier=engine)
+    )
     assert governor.components.classifier is engine

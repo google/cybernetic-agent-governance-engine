@@ -91,7 +91,9 @@ from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-ADVISOR = "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+ADVISOR = (
+    "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+)
 DAILY_CAP_USD = 500_000.0
 OPENING_CASH = 1_000_000.0
 _CASH_KEY = "safety:current_cash"
@@ -139,7 +141,11 @@ class DoseLimitEngine:
     """Barrier engine for dose_barrier: at most 500 mg per administration."""
 
     async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
-        return "SAFE" if float(payload.get("dose_mg", 0)) <= 500 else "UNSAFE: dose > 500 mg"
+        return (
+            "SAFE"
+            if float(payload.get("dose_mg", 0)) <= 500
+            else "UNSAFE: dose > 500 mg"
+        )
 
     async def atomic_verify_and_commit(
         self,
@@ -150,7 +156,11 @@ class DoseLimitEngine:
         debit_id: str | None = None,
     ) -> tuple[bool, str, float]:
         dose = float(payload.get("dose_mg", 0))
-        return (True, "COMMITTED", dose) if dose <= 500 else (False, "UNSAFE: dose > 500 mg", 0.0)
+        return (
+            (True, "COMMITTED", dose)
+            if dose <= 500
+            else (False, "UNSAFE: dose > 500 mg", 0.0)
+        )
 
     async def rollback_state(
         self,
@@ -181,7 +191,13 @@ class Gateway:
     refusals: AsyncMock
     http: httpx.AsyncClient
 
-    async def validate(self, params: dict[str, Any], *, action: str = "execute_trade", headers: dict[str, str] | None = None) -> httpx.Response:
+    async def validate(
+        self,
+        params: dict[str, Any],
+        *,
+        action: str = "execute_trade",
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
         return await self.http.post(
             "/governance/validate-action",
             json={"action": action, "params": params},
@@ -192,7 +208,11 @@ class Gateway:
         return float(await self.cbf_redis.get(_CASH_KEY))
 
     async def parked_tokens(self) -> list[str]:
-        return [k for k in await self.defer_redis.keys("DEFER:*") if k != "DEFER:expiry_index"]
+        return [
+            k
+            for k in await self.defer_redis.keys("DEFER:*")
+            if k != "DEFER:expiry_index"
+        ]
 
     async def approve(self, deferred_id: str, *approvers: str) -> None:
         queue = DeferQueue(self.defer_redis)
@@ -207,7 +227,9 @@ class Gateway:
                 ),
             )
 
-    async def execute(self, params: dict[str, Any], deferred_id: str | None = None) -> str:
+    async def execute(
+        self, params: dict[str, Any], deferred_id: str | None = None
+    ) -> str:
         return await execute_trade_action(
             params["symbol"],
             params["amount"],
@@ -238,7 +260,9 @@ def trade(amount: float, role: str = "senior", **extra: Any) -> dict[str, Any]:
     }
 
 
-def _classifier(*, narrow: bool = False, narrowers: list[Any] | None = None) -> ClassificationEngine:
+def _classifier(
+    *, narrow: bool = False, narrowers: list[Any] | None = None
+) -> ClassificationEngine:
     return ClassificationEngine(
         narrower_registry=NarrowerRegistry(narrowers=narrowers or [AmountNarrower()]),
         confidence_threshold=0.95,
@@ -280,13 +304,17 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
 
     raw_cbf_client = MagicMock()
     raw_cbf_client.get_raw_client.return_value = cbf_redis
-    monkeypatch.setattr("src.gateway.governance.safety.cbf_engine.redis_client", raw_cbf_client)
+    monkeypatch.setattr(
+        "src.gateway.governance.safety.cbf_engine.redis_client", raw_cbf_client
+    )
     # No reconciler runs here: the verified-state store is empty, not unreachable.
     monkeypatch.setattr(
         "src.gateway.governance.safety.cbf_engine.sync_redis_client",
         fakeredis.FakeRedis(decode_responses=True),
     )
-    monkeypatch.setattr("src.gateway.infrastructure.redis_client.redis_client", seal_redis)
+    monkeypatch.setattr(
+        "src.gateway.infrastructure.redis_client.redis_client", seal_redis
+    )
 
     @asynccontextmanager
     async def _queue() -> AsyncIterator[DeferQueue]:
@@ -298,13 +326,18 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
     evidence_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     sink = evidence_stream.EvidenceStreamSink()
     with monkeypatch.context() as m:
-        m.setattr("src.gateway.infrastructure.redis_client.build_async_redis", lambda *a, **k: evidence_redis)
+        m.setattr(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            lambda *a, **k: evidence_redis,
+        )
         m.setattr("redis.asyncio.from_url", lambda *a, **k: evidence_redis)
         await sink.start()
     monkeypatch.setattr(evidence_stream, "_evidence_sink", sink)
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(), cost_resolver=finance_cost_resolver, skip_epoch_seed=True
+        invariant=CashBarrier(),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
     )
     cbf.threshold_value = 0.0
     cbf.gamma = 1.0
@@ -379,7 +412,9 @@ async def _assert_nothing_committed(gw: Gateway) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_s0_no_workload_identity_is_refused_before_any_evaluation(gw: Gateway) -> None:
+async def test_s0_no_workload_identity_is_refused_before_any_evaluation(
+    gw: Gateway,
+) -> None:
     resp = await gw.validate(trade(500.0), headers={})
     assert resp.status_code == 403
     assert gw.policy.calls == []
@@ -392,7 +427,9 @@ async def test_s0_no_workload_identity_is_refused_before_any_evaluation(gw: Gate
 # ---------------------------------------------------------------------------
 
 
-async def test_s1_require_approval_parks_a_token_and_commits_nothing(gw: Gateway) -> None:
+async def test_s1_require_approval_parks_a_token_and_commits_nothing(
+    gw: Gateway,
+) -> None:
     deferred_id = await _require_approval(gw, trade(20_000.0))
     assert await gw.parked_tokens() == [f"DEFER:{deferred_id}"]
     await _assert_nothing_committed(gw)
@@ -416,7 +453,11 @@ async def _replay_concurrently(gw: Gateway) -> list[str]:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
-    return list(await asyncio.gather(gw.execute(params, deferred_id), gw.execute(params, deferred_id)))
+    return list(
+        await asyncio.gather(
+            gw.execute(params, deferred_id), gw.execute(params, deferred_id)
+        )
+    )
 
 
 def _assert_single_execution(results: list[str], spend: float) -> None:
@@ -434,7 +475,9 @@ async def test_s3_concurrent_replay_executes_exactly_once(gw: Gateway) -> None:
     ("approvers", "why"),
     [((), "no approvals"), (("urn:op:alice",), "below quorum")],
 )
-async def test_s2_unapproved_token_is_blocked(gw: Gateway, approvers: tuple[str, ...], why: str) -> None:
+async def test_s2_unapproved_token_is_blocked(
+    gw: Gateway, approvers: tuple[str, ...], why: str
+) -> None:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, *approvers)
@@ -448,10 +491,17 @@ async def test_s2_unapproved_token_is_blocked(gw: Gateway, approvers: tuple[str,
 
 @pytest.mark.parametrize(
     "change",
-    [{"amount": 20_000.01}, {"symbol": "MSFT"}, {"trader_role": "junior"}, {"trader_id": "someone-else"}],
+    [
+        {"amount": 20_000.01},
+        {"symbol": "MSFT"},
+        {"trader_role": "junior"},
+        {"trader_id": "someone-else"},
+    ],
     ids=["amount-grows", "other-symbol", "other-role", "other-trader"],
 )
-async def test_s2_approval_does_not_cover_other_params_and_is_not_burned(gw: Gateway, change: dict[str, Any]) -> None:
+async def test_s2_approval_does_not_cover_other_params_and_is_not_burned(
+    gw: Gateway, change: dict[str, Any]
+) -> None:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
@@ -467,7 +517,9 @@ async def test_s2_approval_may_shrink_the_trade(gw: Gateway) -> None:
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
 
-    assert (await gw.execute({**params, "amount": 15_000.0}, deferred_id)).startswith("EXECUTED")
+    assert (await gw.execute({**params, "amount": 15_000.0}, deferred_id)).startswith(
+        "EXECUTED"
+    )
     assert await gw.fiscal.current_spend_usd() == 15_000.0
 
 
@@ -476,7 +528,9 @@ async def test_s2_unknown_deferred_id_is_blocked(gw: Gateway) -> None:
     await _assert_nothing_committed(gw)
 
 
-async def test_s2_unreachable_defer_queue_blocks(gw: Gateway, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_s2_unreachable_defer_queue_blocks(
+    gw: Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
     @asynccontextmanager
     async def _down() -> AsyncIterator[DeferQueue]:
         raise ConnectionError("redis db=1 unreachable")
@@ -503,10 +557,14 @@ async def _assert_denied(gw: Gateway, resp: httpx.Response, code: str) -> None:
 
 
 async def test_s4_rbac_denial_parks_nothing_and_emits_a_refusal(gw: Gateway) -> None:
-    await _assert_denied(gw, await gw.validate(trade(50_000.0, role="junior")), "CTRL_OPA_005")
+    await _assert_denied(
+        gw, await gw.validate(trade(50_000.0, role="junior")), "CTRL_OPA_005"
+    )
 
 
-async def test_s6_fiscal_drift_after_approval_blocks_in_the_committing_run(gw: Gateway) -> None:
+async def test_s6_fiscal_drift_after_approval_blocks_in_the_committing_run(
+    gw: Gateway,
+) -> None:
     params = trade(15_000.0)
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
@@ -525,7 +583,9 @@ async def test_s6_fiscal_drift_after_approval_blocks_in_the_committing_run(gw: G
 # ---------------------------------------------------------------------------
 
 
-async def test_s6_barrier_drift_after_approval_is_refused_as_context_drift(gw: Gateway) -> None:
+async def test_s6_barrier_drift_after_approval_is_refused_as_context_drift(
+    gw: Gateway,
+) -> None:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)  # barrier preview: PASS
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
@@ -542,7 +602,9 @@ async def test_s6_barrier_drift_after_approval_is_refused_as_context_drift(gw: G
     gw.refusals.assert_awaited()
 
 
-async def test_approval_given_against_a_failing_preview_may_run_once_it_passes(gw: Gateway) -> None:
+async def test_approval_given_against_a_failing_preview_may_run_once_it_passes(
+    gw: Gateway,
+) -> None:
     # FAIL → PASS is not drift: the human approved knowing the barrier would
     # breach (e.g. accepting a narrow hint) and the committing run re-checks.
     params = trade(600_000.0)
@@ -557,7 +619,9 @@ async def test_approval_given_against_a_failing_preview_may_run_once_it_passes(g
     assert await gw.fiscal.current_spend_usd() == 15_000.0
 
 
-async def test_approve_stamps_the_token_snapshot_over_a_client_supplied_binding(gw: Gateway) -> None:
+async def test_approve_stamps_the_token_snapshot_over_a_client_supplied_binding(
+    gw: Gateway,
+) -> None:
     deferred_id = await _require_approval(gw, trade(20_000.0))
     queue = DeferQueue(gw.defer_redis)
     await queue.approve(
@@ -577,7 +641,9 @@ async def test_approve_stamps_the_token_snapshot_over_a_client_supplied_binding(
     assert [a.approved_barrier_preview for a in token.approvals] == ["PASS"]
 
 
-async def test_consume_refuses_an_approval_bound_to_another_snapshot(gw: Gateway) -> None:
+async def test_consume_refuses_an_approval_bound_to_another_snapshot(
+    gw: Gateway,
+) -> None:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
@@ -594,7 +660,9 @@ async def test_consume_refuses_an_approval_bound_to_another_snapshot(gw: Gateway
 
 
 @pytest.mark.parametrize("snapshot", ["MAYBE", "", 7])
-async def test_unparseable_approved_snapshot_is_refused_before_any_commit(gw: Gateway, snapshot: Any) -> None:
+async def test_unparseable_approved_snapshot_is_refused_before_any_commit(
+    gw: Gateway, snapshot: Any
+) -> None:
     with pytest.raises(GovernanceError) as refused:
         await gw.governor.revalidate_post_hitl(
             "execute_trade", trade(500.0), approved_barrier_preview=snapshot
@@ -606,11 +674,15 @@ async def test_unparseable_approved_snapshot_is_refused_before_any_commit(gw: Ga
 async def test_s7_unsafe_control_action_is_denied(gw: Gateway) -> None:
     # The finance STPA rules act on structured params (UCA-9: compliance check
     # bypassed); free-text prompt screening belongs to the NeMo rails.
-    await _assert_denied(gw, await gw.validate(trade(500.0, compliance_checked=False)), "STPA_UCA_UCA_9")
+    await _assert_denied(
+        gw, await gw.validate(trade(500.0, compliance_checked=False)), "STPA_UCA_UCA_9"
+    )
 
 
 async def test_s9_causal_refusal_is_denied(gw: Gateway) -> None:
-    await _assert_denied(gw, await gw.validate(trade(500.0, risk_score=0.95)), "CAUSAL_CHECK_FAILED")
+    await _assert_denied(
+        gw, await gw.validate(trade(500.0, risk_score=0.95)), "CAUSAL_CHECK_FAILED"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +691,9 @@ async def test_s9_causal_refusal_is_denied(gw: Gateway) -> None:
 
 
 async def _unregistered(gw: Gateway) -> httpx.Response:
-    return await gw.validate(trade(10.0, confidence=0.99), action="rebalance_portfolio_unregistered")
+    return await gw.validate(
+        trade(10.0, confidence=0.99), action="rebalance_portfolio_unregistered"
+    )
 
 
 def _assert_not_auto_cleared(resp: httpx.Response) -> None:
@@ -675,7 +749,9 @@ async def test_s13_bounded_trade_is_claimed_by_the_cash_barrier(gw: Gateway) -> 
 async def test_s11_post_hitl_reruns_the_dose_barrier(gw: Gateway) -> None:
     params = {"dose_mg": 600, "trader_role": "senior", "amount": 0.0}
     with pytest.raises(GovernanceError) as refused:
-        await gw.governor.revalidate_post_hitl("administer_medication", params, approved_barrier_preview=None)
+        await gw.governor.revalidate_post_hitl(
+            "administer_medication", params, approved_barrier_preview=None
+        )
     assert any("DOSE_BARRIER_VIOLATED" in v for v in refused.value.violations)
 
 
@@ -684,7 +760,9 @@ async def test_s11_post_hitl_reruns_the_dose_barrier(gw: Gateway) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_s1_clean_barrier_preview_is_recorded_for_the_reviewer(gw: Gateway) -> None:
+async def test_s1_clean_barrier_preview_is_recorded_for_the_reviewer(
+    gw: Gateway,
+) -> None:
     body = _body(await gw.validate(trade(20_000.0)))
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
     assert body["classification_meta"]["barrier_preview"] == "PASS"
@@ -697,7 +775,12 @@ async def test_s1_clean_barrier_preview_is_recorded_for_the_reviewer(gw: Gateway
 async def test_s11_preview_surfaces_the_dose_barrier(gw: Gateway) -> None:
     # FTRA: unregistered here → HITL; OPA allows the senior role. The HARD
     # dose-barrier preview then denies before any token is parked.
-    params = {"dose_mg": 600, "confidence": 0.99, "trader_role": "senior", "amount": 0.0}
+    params = {
+        "dose_mg": 600,
+        "confidence": 0.99,
+        "trader_role": "senior",
+        "amount": 0.0,
+    }
     resp = await gw.validate(params, action="administer_medication")
     assert resp.status_code == 403, resp.text
     assert any("DOSE_BARRIER_VIOLATED" in str(v) for v in resp.json()["violations"])
@@ -717,12 +800,18 @@ async def test_s5_fiscal_breach_surfaces_before_human_review(gw: Gateway) -> Non
     assert any("FISCAL_LIMIT_EXCEEDED" in str(v) for v in body["violations"])
     meta = body["classification_meta"]
     assert meta["barrier_preview"] == "FAIL"
-    assert [v["code"] for v in meta["barrier_preview_violations"]] == ["FISCAL_LIMIT_EXCEEDED"]
+    assert [v["code"] for v in meta["barrier_preview_violations"]] == [
+        "FISCAL_LIMIT_EXCEEDED"
+    ]
     await _assert_nothing_committed(gw)
 
 
-async def test_s10_autonomous_trade_is_narrowed_to_the_remaining_cap(gw: Gateway) -> None:
-    gw.governor = _build_governor(gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True))
+async def test_s10_autonomous_trade_is_narrowed_to_the_remaining_cap(
+    gw: Gateway,
+) -> None:
+    gw.governor = _build_governor(
+        gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True)
+    )
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
     result = await gw.execute(trade(4_000.0))
     assert result.startswith("EXECUTED: AAPL x 3000.0"), result
@@ -744,9 +833,14 @@ class HeadroomNarrower:
         self.clamp_to = clamp_to
 
     def can_narrow(self, violation: Any, action: str, params: dict[str, Any]) -> bool:
-        return violation.code == "FISCAL_LIMIT_EXCEEDED" and float(params["amount"]) > self.clamp_to
+        return (
+            violation.code == "FISCAL_LIMIT_EXCEEDED"
+            and float(params["amount"]) > self.clamp_to
+        )
 
-    def narrow(self, violation: Any, action: str, params: dict[str, Any]) -> NarrowingResult:
+    def narrow(
+        self, violation: Any, action: str, params: dict[str, Any]
+    ) -> NarrowingResult:
         return NarrowingResult(
             can_narrow=True,
             narrowed_params={**params, "amount": self.clamp_to},
@@ -757,7 +851,10 @@ class HeadroomNarrower:
 
 def _narrowing(gw: Gateway, clamp_to: float) -> None:
     gw.governor = _build_governor(
-        gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True, narrowers=[HeadroomNarrower(clamp_to)])
+        gw.policy,
+        gw.cbf,
+        gw.fiscal_tier,
+        _classifier(narrow=True, narrowers=[HeadroomNarrower(clamp_to)]),
     )
 
 
@@ -765,7 +862,9 @@ async def _receipts(gw: Gateway) -> list[Any]:
     return await gw.seal_redis.keys("narrow:receipt:*")
 
 
-async def test_committing_run_seals_and_executes_the_narrowed_trade(gw: Gateway) -> None:
+async def test_committing_run_seals_and_executes_the_narrowed_trade(
+    gw: Gateway,
+) -> None:
     _narrowing(gw, 3_000.0)
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
 
@@ -778,7 +877,9 @@ async def test_committing_run_seals_and_executes_the_narrowed_trade(gw: Gateway)
     assert await _receipts(gw) == []  # fetched and burned
 
 
-async def test_narrowed_params_that_still_breach_are_denied_and_commit_nothing(gw: Gateway) -> None:
+async def test_narrowed_params_that_still_breach_are_denied_and_commit_nothing(
+    gw: Gateway,
+) -> None:
     _narrowing(gw, 3_500.0)  # still over the $3,000 headroom: the re-run refuses
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
 
@@ -817,8 +918,12 @@ async def test_committing_run_without_narrowing_enabled_denies(gw: Gateway) -> N
 # ---------------------------------------------------------------------------
 
 
-async def test_s10_validate_offers_the_remaining_cap_as_a_narrow_candidate(gw: Gateway) -> None:
-    gw.governor = _build_governor(gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True))
+async def test_s10_validate_offers_the_remaining_cap_as_a_narrow_candidate(
+    gw: Gateway,
+) -> None:
+    gw.governor = _build_governor(
+        gw.policy, gw.cbf, gw.fiscal_tier, _classifier(narrow=True)
+    )
     governance_app.state.governor = gw.governor
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
 
@@ -853,7 +958,9 @@ async def test_require_approval_carries_a_reverified_narrow_hint(gw: Gateway) ->
     assert [v["bound"] for v in meta["barrier_preview_violations"]] == [10_000.0]
     token = await DeferQueue(gw.defer_redis).get(body["deferred_id"])
     assert token is not None
-    assert token.opa_input_snapshot["narrow_hint"]["narrowed_params"]["amount"] == 10_000.0
+    assert (
+        token.opa_input_snapshot["narrow_hint"]["narrowed_params"]["amount"] == 10_000.0
+    )
     assert await gw.fiscal.current_spend_usd() == 490_000.0
 
     # Approving the hinted (shrunk) trade executes it in the committing run.
@@ -876,7 +983,9 @@ async def test_require_approval_drops_a_hint_that_still_breaches(gw: Gateway) ->
     assert token is not None and token.opa_input_snapshot["narrow_hint"] is None
 
 
-async def test_require_approval_offers_no_hint_when_narrowing_is_disabled(gw: Gateway) -> None:
+async def test_require_approval_offers_no_hint_when_narrowing_is_disabled(
+    gw: Gateway,
+) -> None:
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=490_000.0)
     body = _body(await gw.validate(trade(20_000.0)))
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
@@ -926,7 +1035,11 @@ async def test_mutation_ftra_without_violations_lets_unregistered_actions_clear(
 
         return replace(real(*args, **kwargs), violations=(), requires_hitl=False)
 
-    monkeypatch.setattr(ftra_models.FtraBoundaryResult, "from_classification", staticmethod(_no_violations))
+    monkeypatch.setattr(
+        ftra_models.FtraBoundaryResult,
+        "from_classification",
+        staticmethod(_no_violations),
+    )
     with pytest.raises(AssertionError):
         _assert_not_auto_cleared(await _unregistered(gw))
 

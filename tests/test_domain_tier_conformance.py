@@ -71,10 +71,14 @@ class MinimalMutatingTier(_MinimalBehaviour, MutatingTier):
     ) -> tuple[list[Violation], CommitReceipt | None]:
         return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
 

@@ -225,7 +225,10 @@ class TestGenerateSspPatch:
         assert "artifact-opa" in props
         assert "artifact-nemo" in props
         assert "artifact-python" in props
-        assert props.get("artifact-sandbox") == "config/sandbox/generated_sandbox_policy.yaml"
+        assert (
+            props.get("artifact-sandbox")
+            == "config/sandbox/generated_sandbox_policy.yaml"
+        )
 
     def test_by_components_non_empty(self, minimal_cs: ControlStructureModel) -> None:
         block = generate_ssp_patch(minimal_cs)
@@ -313,7 +316,9 @@ class TestGenerateFtraComponentEntry:
 
         root = Path(__file__).resolve().parents[1]
         text = yaml.safe_dump(generate_ftra_component_entry())
-        paths = set(re.findall(r"(?:src|config|docs)/[\w./-]+\.(?:py|rego|co|txt|md)", text))
+        paths = set(
+            re.findall(r"(?:src|config|docs)/[\w./-]+\.(?:py|rego|co|txt|md)", text)
+        )
         assert paths, "expected the FTRA component to cite source paths"
         missing = sorted(p for p in paths if not (root / p).exists())
         assert missing == []
@@ -400,9 +405,7 @@ class TestApplySspPatch:
         assert versions[0].endswith("+stpa")
         assert versions[0].count("+stpa") == 1
 
-    def test_two_consecutive_exports_yield_same_version(
-        self, tmp_path: Path
-    ) -> None:
+    def test_two_consecutive_exports_yield_same_version(self, tmp_path: Path) -> None:
         """Two full `export` runs leave metadata.version unchanged the second time."""
         cs_file = tmp_path / "cs.yaml"
         cs_file.write_text(_MINIMAL_YAML)

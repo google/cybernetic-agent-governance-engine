@@ -61,11 +61,16 @@ class FinanceCagePlugin(CagePlugin):
     name = "finance"
     api_version = "2.0"
     domain_config = DomainConfig(
-        ftra_registry_path=Path(__file__).resolve().parents[2] / "config" / "ftra" / "terminal_registry.json",
+        ftra_registry_path=Path(__file__).resolve().parents[2]
+        / "config"
+        / "ftra"
+        / "terminal_registry.json",
         # src/cage_finance/opa/trade_governance.rego
         opa_package="trade.governance",
         opa_required_rules=("allow",),
-        causal_graph_path=Path(__file__).resolve().parent / "config" / "causal_graph.yaml",
+        causal_graph_path=Path(__file__).resolve().parent
+        / "config"
+        / "causal_graph.yaml",
     )
 
     def contribute(self) -> PluginContribution:
@@ -75,7 +80,9 @@ class FinanceCagePlugin(CagePlugin):
         from src.cage_finance.thresholds import FinanceThresholds
 
         cash_barrier = CashBarrier()
-        cash_provider = SimulatedCashLedgerProvider(invariant_id=cash_barrier.invariant_id)
+        cash_provider = SimulatedCashLedgerProvider(
+            invariant_id=cash_barrier.invariant_id
+        )
         cbf = ControlBarrierFunction(
             invariant=cash_barrier,
             cost_resolver=finance_cost_resolver,
@@ -96,7 +103,11 @@ class FinanceCagePlugin(CagePlugin):
                 BoundingContractConfig(
                     allowed_instruments={"AAPL", "MSFT", "GOOGL", "AMZN"},
                     allowed_venues={"NYSE", "NASDAQ", "CBOE"},
-                    allowed_counterparties={"BROKER_A", "BROKER_B", "TEST_COUNTERPARTY"},
+                    allowed_counterparties={
+                        "BROKER_A",
+                        "BROKER_B",
+                        "TEST_COUNTERPARTY",
+                    },
                 )
             ),
         )

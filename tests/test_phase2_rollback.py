@@ -40,13 +40,19 @@ class MockTier(MutatingTier):
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         return []
 
-    async def commit(self, action: str, params: dict[str, Any]) -> tuple[list[Violation], CommitReceipt | None]:
+    async def commit(
+        self, action: str, params: dict[str, Any]
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         """Replaced per instance by an AsyncMock in ``__init__``."""
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         pass
 
 
@@ -113,6 +119,7 @@ async def test_rollback_exception_does_not_stop_others(governor, classification_
     assert violations[0].tier == "TierB"
     assert violations[0].code == "ROLLBACK_FAILED"
     from src.gateway.governance.contracts import ViolationKind
+
     assert violations[0].kind == ViolationKind.HARD
 
 
@@ -139,6 +146,7 @@ async def test_rollback_multiple_failures(governor, classification_engine):
     assert violations[2].tier == "TierA"
 
     from src.gateway.governance.contracts import ViolationKind
+
     for v in violations:
         assert v.code == "ROLLBACK_FAILED"
         assert v.kind == ViolationKind.HARD
@@ -179,6 +187,7 @@ async def test_rollback_failed_violation_structure(governor, classification_engi
     assert "TierA" in violation.message
     assert "ValueError" in violation.message
     from src.gateway.governance.contracts import ViolationKind
+
     assert violation.kind == ViolationKind.HARD
 
 
@@ -186,6 +195,7 @@ async def _rollback(committed):
     from src.gateway.governance.governor.pipeline import Profile, StageContext
     from src.gateway.governance.governor.stages.domain_tiers import DomainTierStage
     from tests.governor.scope_helpers import rollback_pairs
+
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
     return await rollback_pairs(
         [(DomainTierStage(t), _receipt(t)) for t in committed], ctx
@@ -195,4 +205,5 @@ async def _rollback(committed):
 def _receipt(tier):
     """Deterministic per-tier receipt so assertions can name exactly what was undone."""
     from src.gateway.governance.contracts import CommitReceipt
+
     return CommitReceipt(tier=tier.tier_name, magnitude=1.0)

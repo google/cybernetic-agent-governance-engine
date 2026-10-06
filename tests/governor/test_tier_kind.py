@@ -61,10 +61,14 @@ class _Hooks:
     ) -> tuple[list[Violation], CommitReceipt | None]:
         return [], None
 
-    async def rollback(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def rollback(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         return None
 
-    async def confirm(self, action: str, params: dict[str, Any], receipt: CommitReceipt) -> None:
+    async def confirm(
+        self, action: str, params: dict[str, Any], receipt: CommitReceipt
+    ) -> None:
         return None
 
 
@@ -129,7 +133,9 @@ def test_read_only_tier_defining_a_mutating_hook_is_refused(hook: str) -> None:
     [(_ReadOnly, 2), (_Mutating, 1)],
     ids=["read-only-claims-2", "mutating-claims-1"],
 )
-def test_phase_override_contradicting_kind_is_refused(base: type, wrong_phase: int) -> None:
+def test_phase_override_contradicting_kind_is_refused(
+    base: type, wrong_phase: int
+) -> None:
     liar = type("_Liar", (base,), {"phase": property(lambda self: wrong_phase)})
     _refused(liar(), ValueError, f"reports phase {wrong_phase}")
 

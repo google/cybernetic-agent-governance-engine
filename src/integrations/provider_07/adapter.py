@@ -165,10 +165,9 @@ class Provider07NormativeProvider:
         api_key = os.environ.get("PROVIDER_07_API_KEY", "").strip()
         jwks_url = os.environ.get("PROVIDER_07_JWKS_URL", "").strip()
         timeout_seconds = float(os.environ.get("PROVIDER_07_TIMEOUT_SECONDS", "5.0"))
-        allow_step1_unsigned = (
-            os.environ.get("PROVIDER_07_ALLOW_STEP1_UNSIGNED", "false").strip().lower()
-            in ("true", "1", "yes")
-        )
+        allow_step1_unsigned = os.environ.get(
+            "PROVIDER_07_ALLOW_STEP1_UNSIGNED", "false"
+        ).strip().lower() in ("true", "1", "yes")
 
         return cls(
             endpoint=endpoint,

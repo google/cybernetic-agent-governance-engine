@@ -240,7 +240,6 @@ def _vllm_judge_reachable() -> bool:
     return False
 
 
-
 # ── Langfuse client ───────────────────────────────────────────────────────────
 langfuse_client = None
 if LANGFUSE_AVAILABLE and LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
@@ -431,7 +430,6 @@ def call_backend(query: str, session_id: str) -> str:
         return data.get("response") or str(data)
     except requests.exceptions.RequestException as e:
         return f"[ERROR] Backend call failed: {e}"
-
 
 
 def judge_response(query: str, response: str, judge_llm) -> "dict[str, float] | None":
@@ -674,7 +672,6 @@ def test_langfuse_llm_judge_evaluation():
         requests.get(f"{backend_url}/health", timeout=5).raise_for_status()
     except requests.exceptions.RequestException as exc:
         pytest.skip(f"Backend {backend_url}/health unreachable: {exc}")
-
 
     all_scores: list[dict[str, float]] = []
     results = []

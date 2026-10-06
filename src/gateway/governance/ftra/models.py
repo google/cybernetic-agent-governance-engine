@@ -25,9 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any
-from src.gateway.governance.contracts import Violation, ViolationKind
 
 from pydantic import BaseModel, Field
+
+from src.gateway.governance.contracts import Violation, ViolationKind
 
 
 class TerminalClassification(str, Enum):
@@ -430,15 +431,19 @@ class FtraBoundaryResult:
         }
         score = score_map.get(classification, 1.0)  # Fail-closed: unknown = 1.0
         auto_cleared = clear_reason is not None
-        violation = None if auto_cleared else _provenance_violation(
-            classification, action_name, registry_state
+        violation = (
+            None
+            if auto_cleared
+            else _provenance_violation(classification, action_name, registry_state)
         )
 
         return cls(
             requires_hitl=violation is not None,
             irreversibility_score=score,
             classification=classification.value,
-            terminal_match=action_name if registry_state is RegistryState.REGISTERED else None,
+            terminal_match=action_name
+            if registry_state is RegistryState.REGISTERED
+            else None,
             violations=[violation] if violation is not None else [],
             bypassed_ftra_node=bypassed_ftra_node and not auto_cleared,
             registry_state=registry_state,

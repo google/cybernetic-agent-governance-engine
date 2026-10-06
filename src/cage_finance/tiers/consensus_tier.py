@@ -40,13 +40,24 @@ def load_finance_critics() -> tuple[CriticSpec, ...]:
 
 
 def _resolve_default_consensus_threshold() -> float:
-    try:
-        val = THRESHOLDS.resolve("domains.finance.consensus.threshold_usd")
-        if isinstance(val, (int, float)):
-            return float(val)
-    except Exception:
-        pass
-    return float(THRESHOLDS.consensus.threshold_usd)
+    """The configured finance consensus threshold (USD).
+
+    Fail closed: a missing or non-positive threshold refuses to build the
+    contribution rather than falling back to a value nobody configured. (The
+    previous fallback read ``THRESHOLDS.consensus``, which does not exist, so
+    it raised ``AttributeError`` anyway.)
+    """
+    val = THRESHOLDS.resolve("domains.finance.consensus.threshold_usd")
+    if (
+        isinstance(val, bool)
+        or not isinstance(val, (int, float))
+        or not math.isfinite(val)
+        or val <= 0
+    ):
+        raise ValueError(
+            f"domains.finance.consensus.threshold_usd must be a positive number, got {val!r}"
+        )
+    return float(val)
 
 
 def build_finance_consensus_contribution(

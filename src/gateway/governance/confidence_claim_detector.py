@@ -280,8 +280,8 @@ def detect_confidence_claim(
 
 
 __all__ = [
-    "ConfidenceClaimResult",
     "DEFAULT_EXECUTION_VERBS",
+    "ConfidenceClaimResult",
     "detect_confidence_claim",
     "get_confclaim_pattern_names",
 ]

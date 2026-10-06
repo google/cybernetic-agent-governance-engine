@@ -494,10 +494,12 @@ class TestFtraBoundaryCheckInputValidation:
         assert result.auto_cleared is False
         assert [v.code for v in result.violations] == ["FTRA_REGISTERED_IRREVERSIBLE"]
 
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 def _ftra_stage(gov):
     """Return the governor's FtraStage (the boundary check lives on the stage)."""
     from src.gateway.governance.governor.stages.ftra import FtraStage
+
     return next(s for s in gov.stages if isinstance(s, FtraStage))

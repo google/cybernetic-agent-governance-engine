@@ -85,8 +85,13 @@ class TestBasicTierRestart:
         # Restart occurs: Redis live epoch key is wiped or starts from 0
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "0")
 
-        with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
-            with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async
+        ):
+            with patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ):
                 is_valid, reason = await cbf_finance._check_fence_epoch(0)
 
         assert is_valid is False
@@ -97,8 +102,13 @@ class TestBasicTierRestart:
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "51")
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH_HWM, "51")
 
-        with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
-            with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async
+        ):
+            with patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ):
                 is_valid_after, reason_after = await cbf_finance._check_fence_epoch(51)
 
         assert is_valid_after is True
@@ -114,14 +124,20 @@ class TestStagingTierWaitAndRollback:
     """Verifies staging tier 1-replica failover and WAIT contract."""
 
     @pytest.mark.asyncio
-    async def test_wait_confirms_and_commit_survives(self, fake_redis_async, cbf_finance):
+    async def test_wait_confirms_and_commit_survives(
+        self, fake_redis_async, cbf_finance
+    ):
         """When WAIT confirms replication (acked >= 1), commit survives and debits persist."""
         conn_mock = AsyncMock()
         conn_mock.execute_command = AsyncMock(return_value=1)  # WAIT 1 returns 1 ack
 
-        with patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True
+        ):
             with patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1):
-                with patch("src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_MS", 100):
+                with patch(
+                    "src.gateway.governance.safety.cbf_engine._WAIT_TIMEOUT_MS", 100
+                ):
                     # _sync_to_replicas should succeed with 1 ack
                     ok = await cbf_finance._sync_to_replicas(
                         num_replicas=1,
@@ -141,22 +157,40 @@ class TestStagingTierWaitAndRollback:
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "1")
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client",
+                fake_redis_async,
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ),
             patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
             patch("src.gateway.governance.safety.cbf_engine._STRICT_REPLICATION", True),
             # Pinned: tests/test_fence_epoch.py reloads cbf_engine with the flag
             # off, and the strict rollback only runs when fence epochs are on.
-            patch("src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                100000.0,
-                {"source": "reconciliation", "sequence": 3, "fence_epoch": 1},
-            ))),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._FENCE_EPOCH_ENABLED", True
+            ),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        100000.0,
+                        {"source": "reconciliation", "sequence": 3, "fence_epoch": 1},
+                    )
+                ),
+            ),
             # Simulate WAIT failure (replica timeout / 0 acknowledgments)
-            patch.object(cbf_finance, "_sync_to_replicas", AsyncMock(return_value=False)),
+            patch.object(
+                cbf_finance, "_sync_to_replicas", AsyncMock(return_value=False)
+            ),
         ):
             committed, msg, _ = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}, governance_signature="sig-fail"
+                "execute_trade",
+                {"symbol": "AAPL", "shares": 10, "price": 100.0},
+                governance_signature="sig-fail",
             )
 
         assert committed is False
@@ -166,8 +200,12 @@ class TestStagingTierWaitAndRollback:
         # ledger entry, its time index and the running total are all restored.
         assert await fake_redis_async.hgetall(DEBITS_KEY) == {}
         assert await fake_redis_async.zcard(DEBITS_BY_TIME_KEY) == 0
-        assert float(await fake_redis_async.get(DEBITS_TOTAL_KEY) or 0.0) == pytest.approx(0.0)
-        assert float(await fake_redis_async.get(cbf_finance.redis_key)) == pytest.approx(100000.0)
+        assert float(
+            await fake_redis_async.get(DEBITS_TOTAL_KEY) or 0.0
+        ) == pytest.approx(0.0)
+        assert float(
+            await fake_redis_async.get(cbf_finance.redis_key)
+        ) == pytest.approx(100000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +221,16 @@ class TestHaTierZoneFailover:
         self, fake_redis_async
     ):
         """Two gateway pods: Pod A advanced to 100. Zone failover to lagging replica (80) blocks Pod B."""
-        cbf_pod_a = ControlBarrierFunction(invariant=CashBarrier(), cost_resolver=finance_cost_resolver, skip_epoch_seed=True)
-        cbf_pod_b = ControlBarrierFunction(invariant=CashBarrier(), cost_resolver=finance_cost_resolver, skip_epoch_seed=True)
+        cbf_pod_a = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
+        cbf_pod_b = ControlBarrierFunction(
+            invariant=CashBarrier(),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
 
         # Pod A observes epoch 100, which updates safety:fence_epoch_hwm in Redis to 100
         await fake_redis_async.set(_REDIS_KEY_FENCE_EPOCH, "100")
@@ -199,8 +245,13 @@ class TestHaTierZoneFailover:
         # Pod B starts a safety check against this failed-over Redis instance
         cbf_pod_b._last_seen_epoch = 0
 
-        with patch("src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async):
-            with patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=fake_redis_async)):
+        with patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client", fake_redis_async
+        ):
+            with patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=fake_redis_async),
+            ):
                 is_valid, reason = await cbf_pod_b._check_fence_epoch(80)
 
         # Pod B must reject the transaction because live epoch (80) is below persisted HWM (100)
@@ -234,15 +285,28 @@ class TestNoevictionCeilingError:
         mock_raw_client.client = MagicMock(return_value=mock_pinned_client)
 
         with (
-            patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_raw_client),
-            patch("src.gateway.governance.safety.cbf_engine._get_raw_redis", AsyncMock(return_value=mock_raw_client)),
-            patch.object(cbf_finance, "_resolve_ground_truth_balance", AsyncMock(return_value=(
-                100000.0,
-                {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
-            ))),
+            patch(
+                "src.gateway.governance.safety.cbf_engine.redis_client", mock_raw_client
+            ),
+            patch(
+                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                AsyncMock(return_value=mock_raw_client),
+            ),
+            patch.object(
+                cbf_finance,
+                "_resolve_ground_truth_balance",
+                AsyncMock(
+                    return_value=(
+                        100000.0,
+                        {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
+                    )
+                ),
+            ),
         ):
             # Must fail closed: Redis raises ResponseError, preventing commit
-            with pytest.raises(redis.exceptions.ResponseError, match="OOM command not allowed"):
+            with pytest.raises(
+                redis.exceptions.ResponseError, match="OOM command not allowed"
+            ):
                 await cbf_finance.atomic_verify_and_commit(
                     "execute_trade", {"symbol": "AAPL", "shares": 10, "price": 100.0}
                 )

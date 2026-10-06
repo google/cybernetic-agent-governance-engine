@@ -84,14 +84,10 @@ _LINKERD_IDENTITY = re.compile(
     r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"  # trust domain
 )
 
-ASGIApp = Callable[
-    [
-        dict[str, Any],
-        Callable[[], Awaitable[dict[str, Any]]],
-        Callable[[dict[str, Any]], Awaitable[None]],
-    ],
-    Awaitable[None],
-]
+Scope = dict[str, Any]
+Receive = Callable[[], Awaitable[dict[str, Any]]]
+Send = Callable[[dict[str, Any]], Awaitable[None]]
+ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -180,7 +176,7 @@ class WorkloadIdentityMiddleware:
         self.app = app
         self.policy = policy
 
-    async def __call__(self, scope, receive, send) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
@@ -202,7 +198,7 @@ class WorkloadIdentityMiddleware:
         await _refuse(scope, send)
 
 
-async def _refuse(scope: dict[str, Any], send) -> None:
+async def _refuse(scope: Scope, send: Send) -> None:
     if scope["type"] == "websocket":
         await send({"type": "websocket.close", "code": 1008})
         return

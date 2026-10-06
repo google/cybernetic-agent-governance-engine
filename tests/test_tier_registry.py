@@ -91,7 +91,9 @@ def test_tier_registry_phase_1_ordering(classification_engine):
     t_consensus = MockTier("Consensus", 1, 5)
     t_causal = MockTier("Causal", 1, 6)
 
-    governor = make_governor(t_causal, t_consensus, classification_engine=classification_engine)
+    governor = make_governor(
+        t_causal, t_consensus, classification_engine=classification_engine
+    )
 
     assert governor.registered_tier_names() == ["Consensus", "Causal"]
 
@@ -103,7 +105,9 @@ def test_tier_registry_phase_2_ordering(classification_engine):
     t_cbf = MockTier("CBF", 2, 3)
     t_fiscal = MockTier("Fiscal", 2, 4)
 
-    governor = make_governor(t_fiscal, t_cbf, classification_engine=classification_engine)
+    governor = make_governor(
+        t_fiscal, t_cbf, classification_engine=classification_engine
+    )
 
     assert governor.registered_tier_names() == ["CBF", "Fiscal"]
 

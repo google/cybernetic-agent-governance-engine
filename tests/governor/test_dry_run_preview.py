@@ -25,13 +25,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import Profile, StageContext, run_pipeline
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
-from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -45,7 +45,9 @@ def _cbf(verdict: str) -> MagicMock:
     return cbf
 
 
-async def _dry_run(tiers: list[Any], action: str = "execute_trade", params: dict | None = None):
+async def _dry_run(
+    tiers: list[Any], action: str = "execute_trade", params: dict | None = None
+):
     ctx = StageContext(action=action, params=params or TRADE, profile=Profile.DRY_RUN)
     return await run_pipeline(order_stages(tiers), ctx, profile=Profile.DRY_RUN)
 
@@ -84,7 +86,9 @@ async def test_barrier_preview_exception_is_hard_violation() -> None:
     cbf = _cbf("SAFE")
     cbf.verify_action = AsyncMock(side_effect=ConnectionError("redis down"))
     result = await _dry_run([CBFTierPlugin(cbf)])
-    assert [(v.code, v.kind) for v in result.violations] == [("TIER_EXCEPTION", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in result.violations] == [
+        ("TIER_EXCEPTION", ViolationKind.HARD)
+    ]
     assert "ConnectionError" in result.violations[0].message
 
 
@@ -92,7 +96,9 @@ async def test_barrier_preview_exception_is_hard_violation() -> None:
 async def test_dry_run_reports_healthcare_dose_barrier_refusal() -> None:
     """The preview is kernel-level, so non-finance barrier tiers are covered too."""
     cbf = _cbf("UNSAFE: cumulative dose exceeds ceiling")
-    result = await _dry_run([DoseBarrierTier(cbf)], action="administer_dose", params={"dose_mg": 10})
+    result = await _dry_run(
+        [DoseBarrierTier(cbf)], action="administer_dose", params={"dose_mg": 10}
+    )
     assert [v.code for v in result.violations] == ["DOSE_BARRIER_VIOLATED"]
     cbf.atomic_verify_and_commit.assert_not_called()
 
@@ -119,6 +125,7 @@ class _Redis:
     def __getattr__(self, name: str):  # any write-path call is recorded
         async def _write(*args, **kwargs):
             self.writes.append(name)
+
         return _write
 
 
@@ -139,9 +146,16 @@ async def test_dry_run_reports_fiscal_limit_without_reserving() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("spent_cents", "amount", "accepted"),
-    [(90_000, 100.0, True), (90_001, 100.0, False), (None, 1_000.0, True), (0, 1_000.01, False)],
+    [
+        (90_000, 100.0, True),
+        (90_001, 100.0, False),
+        (None, 1_000.0, True),
+        (0, 1_000.01, False),
+    ],
 )
-async def test_would_accept_matches_reserve_cap_rule(spent_cents, amount, accepted) -> None:
+async def test_would_accept_matches_reserve_cap_rule(
+    spent_cents, amount, accepted
+) -> None:
     """Same boundary as reserve(): current + amount > cap rejects."""
     redis = _Redis(spent_cents=spent_cents)
     assert await _guard(redis).would_accept(amount) is accepted
@@ -172,7 +186,9 @@ class _NoPreviewStage:
     async def run(self, ctx: StageContext) -> list[Violation]:
         raise AssertionError("DRY_RUN must never call run() on a mutating stage")
 
-    async def commit(self, ctx: StageContext) -> tuple[list[Violation], CommitReceipt | None]:
+    async def commit(
+        self, ctx: StageContext
+    ) -> tuple[list[Violation], CommitReceipt | None]:
         raise AssertionError("DRY_RUN must never call commit()")
 
     async def rollback(self, ctx: StageContext, receipt: CommitReceipt) -> None:
@@ -184,7 +200,9 @@ async def test_mutating_stage_without_preview_blocks_dry_run() -> None:
     """A commit that can't be previewed must not be reported as ALLOW."""
     ctx = StageContext(action="execute_trade", params=TRADE, profile=Profile.DRY_RUN)
     result = await run_pipeline([_NoPreviewStage()], ctx, profile=Profile.DRY_RUN)
-    assert [(v.code, v.kind) for v in result.violations] == [("PREVIEW_UNAVAILABLE", ViolationKind.HARD)]
+    assert [(v.code, v.kind) for v in result.violations] == [
+        ("PREVIEW_UNAVAILABLE", ViolationKind.HARD)
+    ]
 
 
 # ── PREVIEW_IS_PURE: real barriers on Redis, approval pending ──────────────
@@ -199,7 +217,10 @@ import fakeredis  # noqa: E402
 import fakeredis.aioredis  # noqa: E402
 
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver  # noqa: E402
-from src.cage_healthcare.invariants import SerumConcentrationBarrier, healthcare_cost_resolver  # noqa: E402
+from src.cage_healthcare.invariants import (  # noqa: E402
+    SerumConcentrationBarrier,
+    healthcare_cost_resolver,
+)
 from src.cage_physical_ai.invariants import (  # noqa: E402
     KinematicVelocityBarrier,
     SpatialSeparationBarrier,
@@ -208,10 +229,14 @@ from src.cage_physical_ai.invariants import (  # noqa: E402
     torque_cost_resolver,
     velocity_cost_resolver,
 )
-from src.cage_physical_ai.tiers.kinematic_barrier_tier import KinematicBarrierTier  # noqa: E402
+from src.cage_physical_ai.tiers.kinematic_barrier_tier import (
+    KinematicBarrierTier,  # noqa: E402
+)
 from src.gateway.governance.governor.pipeline import BarrierPreview  # noqa: E402
 from src.gateway.governance.governor.reservation import ReservationScope  # noqa: E402
-from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction  # noqa: E402
+from src.gateway.governance.safety.cbf_engine import (
+    ControlBarrierFunction,  # noqa: E402
+)
 
 _FISCAL_CAP = 10_000.0
 _HEADROOM = 100_000.0  # every barrier state starts far from its threshold
@@ -224,8 +249,14 @@ class _Backends:
 
     async def snapshot(self) -> dict[str, dict[bytes, bytes | None]]:
         return {
-            "barrier": {k: await self.barrier.dump(k) for k in sorted(await self.barrier.keys("*"))},
-            "fiscal": {k: await self.fiscal.dump(k) for k in sorted(await self.fiscal.keys("*"))},
+            "barrier": {
+                k: await self.barrier.dump(k)
+                for k in sorted(await self.barrier.keys("*"))
+            },
+            "fiscal": {
+                k: await self.fiscal.dump(k)
+                for k in sorted(await self.fiscal.keys("*"))
+            },
         }
 
 
@@ -243,7 +274,9 @@ async def backends(monkeypatch: pytest.MonkeyPatch) -> _Backends:
 
 
 def _engine(invariant: Any, cost_resolver: Any) -> ControlBarrierFunction:
-    return ControlBarrierFunction(invariant=invariant, cost_resolver=cost_resolver, skip_epoch_seed=True)
+    return ControlBarrierFunction(
+        invariant=invariant, cost_resolver=cost_resolver, skip_epoch_seed=True
+    )
 
 
 async def _seeded(backends: _Backends, *engines: ControlBarrierFunction) -> None:
@@ -272,7 +305,11 @@ async def _phase2_cases(backends: _Backends) -> list[tuple[Any, str, dict[str, A
         (
             KinematicBarrierTier(kinematic),
             "move_arm",
-            {"approach_distance_mm": 1.0, "target_velocity_mm_s": 1.0, "target_torque_nm": 1.0},
+            {
+                "approach_distance_mm": 1.0,
+                "target_velocity_mm_s": 1.0,
+                "target_torque_nm": 1.0,
+            },
         ),
     ]
 
@@ -283,7 +320,14 @@ class _PendingApproval:
     name, mutating = "opa", False
 
     async def run(self, ctx: StageContext) -> list[Violation]:
-        return [Violation(tier="opa", code="OPA_MANUAL_REVIEW", message="review", kind=ViolationKind.HITL)]
+        return [
+            Violation(
+                tier="opa",
+                code="OPA_MANUAL_REVIEW",
+                message="review",
+                kind=ViolationKind.HITL,
+            )
+        ]
 
 
 def test_registered_phase2_tiers_are_all_covered() -> None:
@@ -302,7 +346,9 @@ def test_registered_phase2_tiers_are_all_covered() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("profile", [Profile.FULL, Profile.POST_HITL])
-@pytest.mark.parametrize("case", range(4), ids=["cbf", "fiscal", "dose_barrier", "kinematic_barrier"])
+@pytest.mark.parametrize(
+    "case", range(4), ids=["cbf", "fiscal", "dose_barrier", "kinematic_barrier"]
+)
 async def test_pending_approval_previews_barriers_and_writes_nothing(
     backends: _Backends, profile: Profile, case: int
 ) -> None:
@@ -311,7 +357,12 @@ async def test_pending_approval_previews_barriers_and_writes_nothing(
 
     ctx = StageContext(action=action, params=params, profile=profile)
     async with ReservationScope() as scope:
-        result = await run_pipeline([_PendingApproval(), *order_stages([tier])], ctx, profile=profile, scope=scope)
+        result = await run_pipeline(
+            [_PendingApproval(), *order_stages([tier])],
+            ctx,
+            profile=profile,
+            scope=scope,
+        )
 
     assert result.barrier_preview == BarrierPreview.PASS
     assert result.commits == () and result.committed_stages == ()
@@ -320,7 +371,9 @@ async def test_pending_approval_previews_barriers_and_writes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_pending_approval_preview_reports_a_breach_and_writes_nothing(backends: _Backends) -> None:
+async def test_pending_approval_preview_reports_a_breach_and_writes_nothing(
+    backends: _Backends,
+) -> None:
     fiscal = FiscalLimitGuard(backends.fiscal, daily_cap_usd=_FISCAL_CAP)
     await fiscal.reserve(agent_id="other-desk", amount_usd=_FISCAL_CAP - 50.0)
     before = await backends.snapshot()
@@ -328,7 +381,10 @@ async def test_pending_approval_preview_reports_a_breach_and_writes_nothing(back
     ctx = StageContext(action="execute_trade", params=TRADE, profile=Profile.FULL)
     async with ReservationScope() as scope:
         result = await run_pipeline(
-            [_PendingApproval(), *order_stages([FiscalTierPlugin(fiscal)])], ctx, profile=Profile.FULL, scope=scope
+            [_PendingApproval(), *order_stages([FiscalTierPlugin(fiscal)])],
+            ctx,
+            profile=Profile.FULL,
+            scope=scope,
         )
 
     assert result.barrier_preview == BarrierPreview.FAIL
@@ -345,11 +401,20 @@ async def test_hard_phase1_finding_skips_the_barriers_entirely() -> None:
         name, mutating = "opa", False
 
         async def run(self, ctx: StageContext) -> list[Violation]:
-            return [Violation(tier="opa", code="OPA_DENY", message="deny", kind=ViolationKind.HARD)]
+            return [
+                Violation(
+                    tier="opa", code="OPA_DENY", message="deny", kind=ViolationKind.HARD
+                )
+            ]
 
     ctx = StageContext(action="execute_trade", params=TRADE, profile=Profile.FULL)
     async with ReservationScope() as scope:
-        result = await run_pipeline([_Refused(), *order_stages([CBFTierPlugin(cbf)])], ctx, profile=Profile.FULL, scope=scope)
+        result = await run_pipeline(
+            [_Refused(), *order_stages([CBFTierPlugin(cbf)])],
+            ctx,
+            profile=Profile.FULL,
+            scope=scope,
+        )
     assert result.barrier_preview is None
     cbf.verify_action.assert_not_called()
     cbf.atomic_verify_and_commit.assert_not_called()
@@ -366,22 +431,38 @@ async def test_preview_continues_past_a_narrowable_breach_to_a_hard_one() -> Non
             return True
 
         async def preview(self, ctx: StageContext) -> list[Violation]:
-            return [Violation(tier=self.name, code="CAP", message="cap", kind=ViolationKind.NARROWABLE)]
+            return [
+                Violation(
+                    tier=self.name,
+                    code="CAP",
+                    message="cap",
+                    kind=ViolationKind.NARROWABLE,
+                )
+            ]
 
     hard = _cbf("UNSAFE: barrier")
     ctx = StageContext(action="execute_trade", params=TRADE, profile=Profile.DRY_RUN)
     result = await run_pipeline(
-        [_PendingApproval(), _Narrowable(), *order_stages([CBFTierPlugin(hard)])], ctx, profile=Profile.DRY_RUN
+        [_PendingApproval(), _Narrowable(), *order_stages([CBFTierPlugin(hard)])],
+        ctx,
+        profile=Profile.DRY_RUN,
     )
-    assert [v.code for v in result.preview_violations] == ["CAP", "CBF_BARRIER_VIOLATED"]
+    assert [v.code for v in result.preview_violations] == [
+        "CAP",
+        "CBF_BARRIER_VIOLATED",
+    ]
 
 
 # ── Tier contract: evaluate() never mutates (contracts.GovernanceTier) ───────
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", range(4), ids=["cbf", "fiscal", "dose_barrier", "kinematic_barrier"])
-async def test_evaluate_after_commit_leaves_barrier_state_unchanged(backends: _Backends, case: int) -> None:
+@pytest.mark.parametrize(
+    "case", range(4), ids=["cbf", "fiscal", "dose_barrier", "kinematic_barrier"]
+)
+async def test_evaluate_after_commit_leaves_barrier_state_unchanged(
+    backends: _Backends, case: int
+) -> None:
     tier, action, params = (await _phase2_cases(backends))[case]
     violations, receipt = await tier.commit(action, params)
     assert violations == [] and receipt is not None, violations

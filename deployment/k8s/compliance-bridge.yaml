@@ -217,7 +217,12 @@ spec:
             # are active (US_FED → NIST SP 800-53 / FedRAMP; EU_ECB → EU AI Act;
             # APAC_MAS → MAS FEAT). Without this, only universal ISO 42001 controls load.
             - name: CAGE_DEPLOYMENT_REGION
-              value: "US_FED"
+              # Single source: the cage-deployment ConfigMap (cage-deployment-configmap.yaml.tpl).
+              valueFrom:
+                configMapKeyRef:
+                  name: cage-deployment
+                  key: CAGE_DEPLOYMENT_REGION
+                  optional: false
 
             # POAM-2026-079 / §5.2: Dedicated compliance-evidence KMS signing key.
             # KMSBatchSigner reads EVIDENCE_KMS_KEY (never KMS_GOVERNANCE_KEY).

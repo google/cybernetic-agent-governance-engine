@@ -811,7 +811,7 @@ module "compliance_bridge" {
   clickhouse_password_secret_name = module.clickhouse_operator.evidence_sink_password_secret_name
   clickhouse_password_secret_key  = module.clickhouse_operator.evidence_sink_password_secret_key
   cage_env                        = var.environment
-  cage_deployment_region          = var.cage_deployment_region
+  deployment_config_map_name      = module.deployment_config.config_map_name
 
   # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
   # IAM auth mode as the gateway producer (see local.evidence_stream_*).
@@ -856,6 +856,7 @@ module "gateway" {
   source = "../../modules/gateway"
 
   namespace                      = module.namespace.name
+  deployment_config_map_name     = module.deployment_config.config_map_name
   image                          = var.image_digests["gateway"]
   replicas                       = var.enable_high_availability ? 2 : 1
   project_id                     = var.project_id
@@ -915,22 +916,23 @@ module "gateway" {
 module "governed_advisor" {
   source = "../../modules/governed_advisor"
 
-  namespace               = module.namespace.name
-  image                   = var.image_digests["governed-financial-advisor"]
-  replicas                = var.enable_high_availability ? 2 : 1
-  project_id              = var.project_id
-  region                  = var.region
-  enable_logging          = "true"
-  redis_host              = module.memorystore_app.primary_endpoint_ip
-  redis_port              = tostring(module.memorystore_app.primary_endpoint_port)
-  redis_password          = ""
-  model_fast              = var.served_model_fast
-  model_reasoning         = var.served_model_reasoning
-  model_consensus         = var.served_model_reasoning
-  vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
-  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
+  namespace                  = module.namespace.name
+  deployment_config_map_name = module.deployment_config.config_map_name
+  image                      = var.image_digests["governed-financial-advisor"]
+  replicas                   = var.enable_high_availability ? 2 : 1
+  project_id                 = var.project_id
+  region                     = var.region
+  enable_logging             = "true"
+  redis_host                 = module.memorystore_app.primary_endpoint_ip
+  redis_port                 = tostring(module.memorystore_app.primary_endpoint_port)
+  redis_password             = ""
+  model_fast                 = var.served_model_fast
+  model_reasoning            = var.served_model_reasoning
+  model_consensus            = var.served_model_reasoning
+  vllm_base_url              = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_fast_api_base         = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_reasoning_api_base    = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  opa_url                    = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   gateway_url   = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
@@ -959,6 +961,17 @@ module "agentsight_ui" {
   replicas  = 1
 
   depends_on = [module.gke]
+}
+
+# ─── Deployment Jurisdiction ──────────────────────────────────────────────────
+# The cage-deployment ConfigMap is the single source of CAGE_DEPLOYMENT_REGION
+# for every workload (and for integration-test region discovery).
+
+module "deployment_config" {
+  source = "../../modules/deployment_config"
+
+  namespace              = module.namespace.name
+  cage_deployment_region = var.cage_deployment_region
 }
 
 # ─── Application Secrets ──────────────────────────────────────────────────────

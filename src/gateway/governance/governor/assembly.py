@@ -42,7 +42,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.contracts import (
@@ -79,6 +79,9 @@ from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
+
+if TYPE_CHECKING:
+    from src.gateway.governance.stpa_validator import STPAValidator
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +125,9 @@ class GovernorComponents:
             "contributions",
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
-        object.__setattr__(self, "ground_truth_providers", dict(self.ground_truth_providers))
+        object.__setattr__(
+            self, "ground_truth_providers", dict(self.ground_truth_providers)
+        )
         object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
 
     @property
@@ -137,8 +142,13 @@ class GovernorComponents:
     @property
     def unfilled_slots(self) -> tuple[str, ...]:
         """Engine slots still holding a deny-by-default null object."""
-        nulls = (("safety_filter", NullSafetyFilter), ("consensus", NullConsensusProvider))
-        return tuple(name for name, null in nulls if isinstance(getattr(self, name), null))
+        nulls = (
+            ("safety_filter", NullSafetyFilter),
+            ("consensus", NullConsensusProvider),
+        )
+        return tuple(
+            name for name, null in nulls if isinstance(getattr(self, name), null)
+        )
 
 
 @dataclass(frozen=True)
@@ -155,7 +165,7 @@ class DecisionFlags:
 
 def kernel_stages(
     opa: PolicyClient,
-    stpa_validator: object | None,
+    stpa_validator: STPAValidator | None,
     *,
     metrics: GovernorMetrics | None = None,
     magnitude_extractor: MagnitudeExtractor | None = None,
@@ -179,7 +189,7 @@ def assemble_governor(
     *,
     posture: DeploymentPosture,
     opa: PolicyClient | None = None,
-    stpa_validator: object | None = None,
+    stpa_validator: STPAValidator | None = None,
     flags: DecisionFlags | None = None,
     metrics: GovernorMetrics | None = None,
     jurisdiction: JurisdictionContribution | None = None,
@@ -198,11 +208,15 @@ def assemble_governor(
     """
     contributions = tuple(_contribution_of(plugin) for plugin in plugins)
     _reject_duplicates("domain", (c.domain for c in contributions))
-    _reject_duplicates("threshold section", (s for c in contributions for s in c.threshold_sections))
+    _reject_duplicates(
+        "threshold section", (s for c in contributions for s in c.threshold_sections)
+    )
     _validate_threshold_sections(contributions)
     tiers = tuple(t for c in contributions for t in c.tiers)
     jurisdiction = jurisdiction if jurisdiction is not None else resolve_jurisdiction()
-    _reject_slot_collisions((*tiers, *jurisdiction.tiers), _known_actions(plugins, contributions))
+    _reject_slot_collisions(
+        (*tiers, *jurisdiction.tiers), _known_actions(plugins, contributions)
+    )
     _reject_ungoverned_irreversible(plugins, tiers)  # domain tiers only
 
     invariants: list[InvariantModel] = []
@@ -237,15 +251,22 @@ def assemble_governor(
 
     execution_verbs = frozenset(v for c in contributions for v in c.execution_verbs)
     raw_consensus = _single_slot("consensus", contributions)
-    magnitude_extractor = _single_slot("magnitude_extractor", contributions)
+    magnitude_extractor = cast(
+        "MagnitudeExtractor | None", _single_slot("magnitude_extractor", contributions)
+    )
     if isinstance(raw_consensus, ConsensusContribution):
         from src.gateway.governance.consensus.engine import ConsensusGate
 
-        if raw_consensus.magnitude_extractor is None and magnitude_extractor is not None:
+        if (
+            raw_consensus.magnitude_extractor is None
+            and magnitude_extractor is not None
+        ):
             raw_consensus = dataclasses.replace(
                 raw_consensus, magnitude_extractor=magnitude_extractor
             )
-        resolved_consensus: ConsensusProvider = ConsensusGate.from_contribution(raw_consensus)
+        resolved_consensus: ConsensusProvider = ConsensusGate.from_contribution(
+            raw_consensus
+        )
     elif raw_consensus is not None:
         resolved_consensus = raw_consensus  # type: ignore[assignment]
     else:
@@ -257,7 +278,7 @@ def assemble_governor(
             opa,
             stpa_validator,
             metrics=metrics,
-            magnitude_extractor=magnitude_extractor,  # type: ignore[arg-type]
+            magnitude_extractor=magnitude_extractor,
         ),
         classifier=ClassificationEngine(
             narrower_registry=NarrowerRegistry(narrowers=list(narrowers)),
@@ -271,7 +292,10 @@ def assemble_governor(
         uca_rules=uca_rules,
         saga_compensators=saga_compensators,
         ground_truth_providers=ground_truth_providers,
-        safety_filter=_single_slot("safety_filter", contributions) or NullSafetyFilter(),
+        safety_filter=cast(
+            "SafetyFilter | None", _single_slot("safety_filter", contributions)
+        )
+        or NullSafetyFilter(),
         consensus=resolved_consensus,
         execution_verbs=execution_verbs,
         contributions=contributions,
@@ -281,8 +305,11 @@ def assemble_governor(
     governor = SymbolicGovernor(components)
     logger.info(
         "governor assembled: domains=%s region=%s tiers=%s posture=%s unfilled=%s",
-        [c.domain for c in contributions], jurisdiction.region,
-        governor.registered_tier_names(), posture.value, components.unfilled_slots,
+        [c.domain for c in contributions],
+        jurisdiction.region,
+        governor.registered_tier_names(),
+        posture.value,
+        components.unfilled_slots,
     )
     return governor
 
@@ -290,7 +317,9 @@ def assemble_governor(
 def _contribution_of(plugin: CagePlugin) -> PluginContribution:
     contribution = plugin.contribute()
     if not isinstance(contribution, PluginContribution):
-        raise GovernorAssemblyError(f"plugin {plugin.name!r}: contribute() must return a PluginContribution")
+        raise GovernorAssemblyError(
+            f"plugin {plugin.name!r}: contribute() must return a PluginContribution"
+        )
     if contribution.domain != plugin.name:
         raise GovernorAssemblyError(
             f"plugin {plugin.name!r} contributed domain {contribution.domain!r}; they must match"
@@ -302,7 +331,9 @@ def _reject_duplicates(what: str, names: Iterable[str]) -> None:
     seen: set[str] = set()
     for name in names:
         if name in seen:
-            raise GovernorAssemblyError(f"duplicate {what}: {name!r} is contributed twice")
+            raise GovernorAssemblyError(
+                f"duplicate {what}: {name!r} is contributed twice"
+            )
         seen.add(name)
 
 
@@ -328,10 +359,18 @@ def _validate_threshold_sections(contributions: Sequence[PluginContribution]) ->
                 ) from exc
 
 
-def _single_slot(slot: str, contributions: Sequence[PluginContribution]) -> object | None:
-    filled = [(c.domain, getattr(c, slot)) for c in contributions if getattr(c, slot) is not None]
+def _single_slot(
+    slot: str, contributions: Sequence[PluginContribution]
+) -> object | None:
+    filled = [
+        (c.domain, getattr(c, slot))
+        for c in contributions
+        if getattr(c, slot) is not None
+    ]
     if len(filled) > 1:
-        raise GovernorAssemblyError(f"slot collision: {slot} contributed by {[d for d, _ in filled]}")
+        raise GovernorAssemblyError(
+            f"slot collision: {slot} contributed by {[d for d, _ in filled]}"
+        )
     return filled[0][1] if filled else None
 
 
@@ -349,14 +388,18 @@ def _registry_of(plugin: CagePlugin) -> dict[str, str]:
     return dict(_get_registry(config.ftra_registry_path))
 
 
-def _known_actions(plugins: Sequence[CagePlugin], contributions: Sequence[PluginContribution]) -> set[str]:
+def _known_actions(
+    plugins: Sequence[CagePlugin], contributions: Sequence[PluginContribution]
+) -> set[str]:
     actions = {a for c in contributions for a in c.registered_actions}
     for plugin in plugins:
         actions.update(_registry_of(plugin))
     return actions
 
 
-def _reject_slot_collisions(tiers: Sequence[GovernanceTier], actions: Iterable[str]) -> None:
+def _reject_slot_collisions(
+    tiers: Sequence[GovernanceTier], actions: Iterable[str]
+) -> None:
     for action in sorted(actions):
         slots: dict[tuple[int, int], list[str]] = defaultdict(list)
         for tier in tiers:
@@ -369,13 +412,17 @@ def _reject_slot_collisions(tiers: Sequence[GovernanceTier], actions: Iterable[s
                 )
 
 
-def _reject_ungoverned_irreversible(plugins: Sequence[CagePlugin], tiers: Sequence[GovernanceTier]) -> None:
+def _reject_ungoverned_irreversible(
+    plugins: Sequence[CagePlugin], tiers: Sequence[GovernanceTier]
+) -> None:
     from src.gateway.governance.ftra.models import TerminalClassification
 
     irreversible = TerminalClassification.IRREVERSIBLE_TERMINAL.value
     for plugin in plugins:
         for action, classification in sorted(_registry_of(plugin).items()):
-            if classification == irreversible and not any(t.claims_action(action, {}) for t in tiers):
+            if classification == irreversible and not any(
+                t.claims_action(action, {}) for t in tiers
+            ):
                 raise GovernorAssemblyError(
                     f"domain {plugin.name!r}: irreversible action {action!r} in its FTRA registry "
                     "is claimed by no tier (ungoverned irreversible action)"

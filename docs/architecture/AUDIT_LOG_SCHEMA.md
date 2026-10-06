@@ -144,29 +144,25 @@ mechanism covers *outbound* credentials obtained from the credential broker seam
 ([`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py))
 at the actuation edge.
 
-**Masking rule.** Before the actuator logs anything about a fetched credential,
-every header value is reduced to its first 8 characters followed by `****`
-(empty values become `****`). Header *names* are preserved so operators can see
-*which* credential was issued without seeing its value. Implemented in
-[`adapter.py`](../../src/integrations/actuator_01/adapter.py):
-
-```python
-masked_keys = {k: f"{v[:8]}****" if v else "****" for k, v in extra_headers.items()}
-```
+**Masking rule.** The actuator never logs any part of a fetched credential
+value — not even a prefix. Only the header *names* are logged, so operators can
+see *which* credential was issued without seeing its value. Implemented in
+[`adapter.py`](../../src/integrations/actuator_01/adapter.py), which logs
+`sorted(extra_headers)` (the header names) and nothing else from the broker
+response.
 
 The single INFO record emitted on a successful fetch carries only the action,
 the agent SVID (itself truncated to 20 characters plus `...` when longer), and
-the masked header map:
+the sorted header names:
 
 ```text
-[actuator_01/adapter] Credentials fetched for action=execute_trade svid=urn:cage:agent:advis... headers={'Authorization': 'Bearer s****'}
+[actuator_01/adapter] Outbound auth headers fetched for action=execute_trade svid=urn:cage:agent:advis... header_names=['Authorization']
 ```
 
-> [!IMPORTANT]
-> The mask is prefix-preserving: the first 8 characters of each header value
-> survive into the log. For `Authorization: Bearer <token>` headers this exposes
-> only the scheme prefix. Brokers that return bare-token headers (no scheme
-> prefix) will leak the first 8 characters of the token into logs.
+> [!NOTE]
+> An earlier revision logged each value's first 8 characters followed by
+> `****`. That leaked the first 8 characters of bare-token headers (headers
+> with no scheme prefix), so value prefixes are no longer logged.
 
 **Credentials never enter audit records.** The broker's return value is held in a
 local variable for the duration of a single dispatch and is passed only to

@@ -320,9 +320,12 @@ def test_is_foreign_signing_kid_detects_gateway_and_reconciler_keys(
     monkeypatch.setenv("RECONCILER_KMS_KEY", rec_key)
 
     assert is_foreign_signing_kid(gw_key) is True
-    assert is_foreign_signing_kid(
-        "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/gateway-seal/cryptoKeyVersions/2"
-    ) is True
+    assert (
+        is_foreign_signing_kid(
+            "projects/p/locations/us-central1/keyRings/cage-signing-dev/cryptoKeys/gateway-seal/cryptoKeyVersions/2"
+        )
+        is True
+    )
     assert is_foreign_signing_kid(rec_key) is True
     assert is_foreign_signing_kid(ev_key) is False
 

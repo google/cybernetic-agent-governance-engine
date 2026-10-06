@@ -48,7 +48,9 @@ def mock_dependencies():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_version_matching(registry, mock_dependencies, classification_engine):
+async def test_symbolic_governor_version_matching(
+    registry, mock_dependencies, classification_engine
+):
     """SymbolicGovernor validate_action should succeed when policy_version_id matches active_hash."""
     from src.gateway.governance.ftra.models import FtraBoundaryResult
 
@@ -94,7 +96,6 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies, c
             new=AsyncMock(return_value="mock-seal-token"),
         ),
     ):
-
         # 1. Matching version
         res = await gov.validate_action(
             action="execute_trade",
@@ -314,13 +315,21 @@ def _stub_pipeline(mock_result):
 
     from src.gateway.governance.contracts import Violation, ViolationKind
     from src.gateway.governance.governor.pipeline import PipelineResult
+
     violations = tuple(
-        v if isinstance(v, Violation)
-        else Violation(tier="test", code="TEST", message=str(v), kind=ViolationKind.HARD)
+        v
+        if isinstance(v, Violation)
+        else Violation(
+            tier="test", code="TEST", message=str(v), kind=ViolationKind.HARD
+        )
         for v in mock_result.get("violations", [])
     )
     result = PipelineResult(
-        violations=violations, tier_failures=(), opa_verdict=None, ftra=None, committed_stages=(),
+        violations=violations,
+        tier_failures=(),
+        opa_verdict=None,
+        ftra=None,
+        committed_stages=(),
     )
     return patch(
         "src.gateway.governance.governor.governor.run_pipeline",

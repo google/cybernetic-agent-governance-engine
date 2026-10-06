@@ -243,7 +243,7 @@ SKIP_PORT_FORWARD_CHECKS=1 uv run pytest tests/integration/test_linkerd_mesh_con
 ### Live Google CAS Mesh Certificate Issuance (`make test-live` — POAM-2026-080):
 Validates live certificate signing against Google Cloud Certificate Authority Service (`privateca.googleapis.com`) via [`tests/live/test_cas_mesh_issuer_live.py`](../../tests/live/test_cas_mesh_issuer_live.py):
 ```bash
-CAGE_CAS_PROJECT_ID=laah-cybernetics CAGE_CAS_POOL_ID=cage-mesh-staging CAGE_REQUIRE_LIVE_CAS=1 make test-live
+CAGE_CAS_PROJECT_ID=<your-gcp-project> CAGE_CAS_POOL_ID=cage-mesh-staging CAGE_REQUIRE_LIVE_CAS=1 make test-live
 ```
 
 ### Memorystore `WAIT 1 100` Synchronous Replication Smoke Test (Track 6b):

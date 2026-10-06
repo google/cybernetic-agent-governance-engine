@@ -175,9 +175,7 @@ class MockTelemetryProvider(BaseTelemetryProvider):
         confounder_col, treatment_col, outcome_col = _resolve_telemetry_columns()
         np.random.seed(self._seed)
         confounder = np.random.uniform(0.1, 0.9, n_samples)
-        treatment = np.random.normal(5000, 1000, n_samples) - (
-            confounder * 2000
-        )
+        treatment = np.random.normal(5000, 1000, n_samples) - (confounder * 2000)
         treatment = np.clip(treatment, 100, 10_000)
         outcome = (
             (confounder * 0.5)
