@@ -970,8 +970,8 @@ class TestProvider02AttestationProvider:
         assert receipt.error is not None, "Error field must be set on HTTP failure"
 
     @pytest.mark.asyncio
-    async def test_register_project_bundle_returns_error_on_failure(self) -> None:
-        """register_project_bundle() must return error dict on HTTP failure."""
+    async def test_attest_bundle_returns_unverified_on_failure(self) -> None:
+        """attest_bundle() must return a non-verified verdict on HTTP failure."""
         from src.integrations.provider_02.provider import Provider02AttestationProvider
 
         provider = Provider02AttestationProvider(
@@ -987,11 +987,12 @@ class TestProvider02AttestationProvider:
             mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
             mock_client_cls.return_value = mock_client
 
-            result = await provider.register_project_bundle({"bundleId": "b1"})
+            verdict = await provider.attest_bundle(
+                {"bundleId": "b1", "completedAt": "2026-10-06T00:00:00Z"}
+            )
 
-        assert "error" in result, (
-            "register_project_bundle must return an error dict on HTTP failure"
-        )
+        assert verdict.verified is False
+        assert verdict.code == "TRANSPORT_ERROR"
 
     def test_get_provider_02_returns_singleton(self) -> None:
         """get_provider_02() must return the same instance on repeated calls."""

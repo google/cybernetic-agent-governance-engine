@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -96,8 +97,20 @@ class InProcessCommitter:
 
 
 def seal(callback: Any) -> None:
-    """Run ``callback.seal()`` from synchronous test code."""
-    asyncio.run(callback.seal())
+    """Run ``callback.seal()`` to completion from synchronous helper code.
+
+    Helpers such as ``build_hitl_approval_bundle()`` are also called from
+    async tests, where ``asyncio.run`` would fail on the already-running loop.
+    In that case the seal runs on a worker thread with its own loop; the
+    in-process committer holds no loop-bound resources.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(callback.seal())
+        return
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, callback.seal()).result()
 
 
 def sealed_bundle(callback: Any) -> Any:

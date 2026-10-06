@@ -22,9 +22,12 @@ protocol from ``src.gateway.governance.seams.attestation``.
 Provider 02 adds a capability: **public JWK-verifiable receipts**
 (Ed25519 signed CERs).  This module provides:
 
-  1. CER creation via ``certifyDecision`` — wraps the raw HTTP API
-  2. CER verification via locally-cached Ed25519 JWKs — no hot-path network call
-  3. Project Bundle registration via ``registerProjectBundle``
+  1. Bundle attestation via ``attest_bundle`` — seals the ``AttestationBundle``
+     into a ``cer.governed.execution.v1`` CER, submits it to ``POST /api/attest``
+     and verifies both Ed25519 signatures on the node's response against the
+     ``kid``-resolved manifest key (see ``governed_cer.py``)
+  2. CER creation via ``certifyDecision`` — wraps the raw HTTP API
+  3. CER verification via locally-cached Ed25519 JWKs — no hot-path network call
   4. Attestation fetch via ``fetch_attestations`` — returns UNVERIFIED status
      until Wave 3 (Ed25519 signature verification) lands
 
@@ -42,6 +45,7 @@ Environment variables
 ---------------------
   PROVIDER_02_API_ENDPOINT       — API base URL (required)
   PROVIDER_02_API_KEY_SECRET     — API key (direct or Secret Manager path)
+  PROVIDER_02_ATTEST_PATH        — Attestation path (default: /api/attest)
   PROVIDER_02_JWK_ENDPOINT       — Public JWK endpoint for receipt verification
   PROVIDER_02_JWK_CACHE_TTL_HOURS — JWK cache TTL (default: 24)
   PROVIDER_02_TIMEOUT_SECONDS    — Per-request timeout (default: 5.0)
@@ -58,6 +62,7 @@ import hashlib
 import logging
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,6 +74,12 @@ from src.gateway.governance.seams.attestation import (
     AttestationProvider,
     AttestationStatus,
     ExternalAttestation,
+)
+from src.integrations.provider_02.governed_cer import (
+    AttestationVerdict,
+    GovernedCerError,
+    seal_governed_execution,
+    verify_attestation,
 )
 from src.integrations.provider_02.resolver import Provider02CERResolver
 
@@ -88,6 +99,24 @@ _JWK_CACHE_TTL_HOURS: float = float(
     os.environ.get("PROVIDER_02_JWK_CACHE_TTL_HOURS", "24")
 )
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_TIMEOUT_SECONDS", "5.0"))
+_ATTEST_PATH: str = os.environ.get("PROVIDER_02_ATTEST_PATH", "/api/attest")
+
+
+def _node_rejection(status: int, body: Any) -> tuple[str, str]:
+    """Map a non-200 ``/api/attest`` response to a ``(code, error)`` pair.
+
+    The node returns ``{"error": ..., "reasonCode": ..., "details": [...]}``;
+    ``reasonCode`` is the most specific and wins over ``error``.
+    """
+    if not isinstance(body, dict):
+        return f"HTTP_{status}", f"node returned HTTP {status} without a JSON body"
+    code = str(body.get("reasonCode") or body.get("error") or f"HTTP_{status}")
+    details = body.get("details")
+    if isinstance(details, list) and details:
+        error = "; ".join(str(d) for d in details)
+    else:
+        error = str(body.get("message") or body.get("error") or f"HTTP {status}")
+    return code, error
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +221,8 @@ class Provider02AttestationProvider(AttestationProvider):
         # Verify a CER (local — uses cached JWKs)
         result = await provider.verify_cer(cer.certificate_hash)
 
-        # Register a bundle (provider-specific)
-        await provider.register_project_bundle(bundle_dict)
+        # Attest a completed bundle (provider-specific)
+        verdict = await provider.attest_bundle(bundle_dict)
     """
 
     def __init__(
@@ -216,10 +245,7 @@ class Provider02AttestationProvider(AttestationProvider):
         self._client_key = os.getenv("PROVIDER_02_CLIENT_KEY", "")
         self._ca_bundle = os.getenv("PROVIDER_02_CA_BUNDLE", "")
 
-        # Configurable ingestion endpoint with fallback
-        self._ingest_path = os.getenv(
-            "PROVIDER_02_INGEST_PATH", "/v1/governance/bundles"
-        )
+        self._attest_path = _ATTEST_PATH
 
         # CER resolver for fetching receipts during verification
         # Extract base URL without the /v1 suffix if present
@@ -313,9 +339,21 @@ class Provider02AttestationProvider(AttestationProvider):
         if not self._jwk_cache.has_keys:
             return None
 
-        for jwk in self._jwk_cache.jwk_set.get("keys", []):
-            if jwk.get("kid") != kid:
+        for entry in self._jwk_cache.jwk_set.get("keys", []):
+            if not isinstance(entry, dict) or entry.get("kid") != kid:
                 continue
+            # The node manifest wraps each key as
+            # ``{kid, alg, status, revoked, publicKeyJwk: {kty, crv, x}}``;
+            # a bare JWK (``{kid, kty, crv, x}``) is also accepted.
+            if (
+                entry.get("revoked") is True
+                or entry.get("status", "active") != "active"
+            ):
+                logger.warning("[Provider02] Key %s is revoked or inactive", kid)
+                return None
+            jwk = entry.get("publicKeyJwk", entry)
+            if not isinstance(jwk, dict):
+                return None
             if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
                 logger.warning(
                     "[Provider02] Key %s is not OKP/Ed25519 (kty=%s, crv=%s)",
@@ -723,66 +761,79 @@ class Provider02AttestationProvider(AttestationProvider):
             )
 
     # ------------------------------------------------------------------
-    # Project Bundle registration
+    # Bundle attestation (POST /api/attest)
     # ------------------------------------------------------------------
 
-    async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
-        """Register a completed Project Bundle with Provider 02.
+    def _base_url(self) -> str:
+        """API base URL without a trailing ``/v1`` segment."""
+        if self._endpoint.endswith("/v1"):
+            return self._endpoint.rsplit("/v1", 1)[0]
+        return self._endpoint
+
+    async def attest_bundle(
+        self,
+        bundle: Mapping[str, Any],
+        topology: Mapping[str, Any] | None = None,
+    ) -> AttestationVerdict:
+        """Seal ``bundle`` into a governed CER, attest it and verify the receipt.
 
         Args:
-            bundle: Serialized AttestationBundle dict (from provider_02_adapter.py).
+            bundle: Serialized ``AttestationBundle`` (``bundle.to_dict()``).
+            topology: Optional wire topology (``topology_to_wire()``). When
+                supplied, the node must report ``topologyValidation: valid``.
 
         Returns:
-            Registration response with bundleHash and receiptUrl.
+            An ``AttestationVerdict``. ``verified`` is True only when the node
+            accepted the CER *and* CAGE verified both Ed25519 signatures against
+            the ``kid``-resolved manifest key. Transport errors and node
+            rejections return a non-verified verdict; this method never raises.
         """
         import httpx
 
-        # Try primary ingestion endpoint
-        url = f"{self._endpoint}{self._ingest_path}"
+        try:
+            cer = seal_governed_execution(bundle, topology)
+        except GovernedCerError as exc:
+            return AttestationVerdict.reject("CER_SEAL_FAILED", str(exc))
+        certificate_hash = str(cer["certificateHash"])
+
+        url = f"{self._base_url()}{self._attest_path}"
         try:
             async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
-                resp = await client.post(url, json=bundle, headers=self._headers())
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPStatusError as exc:
-            # Fallback to legacy endpoint on 404/405
-            if exc.response.status_code in (404, 405):
-                logger.warning(
-                    "[Provider02] Primary endpoint %s failed with %d, "
-                    "falling back to /registerProjectBundle",
-                    url,
-                    exc.response.status_code,
-                )
-                return await self._register_bundle_fallback(bundle)
-
-            logger.error(
-                "[Provider02] registerProjectBundle failed: %s status=%d",
-                url,
-                exc.response.status_code,
+                resp = await client.post(url, json=cer, headers=self._headers())
+        except httpx.HTTPError as exc:
+            logger.error("[Provider02] attest failed: %s %s", url, exc)
+            return AttestationVerdict.reject(
+                "TRANSPORT_ERROR", str(exc), certificate_hash
             )
-            return {"error": f"HTTP {exc.response.status_code}"}
-        except Exception as exc:
-            logger.error("[Provider02] registerProjectBundle failed: %s %s", url, exc)
-            return {"error": str(exc)}
 
-    async def _register_bundle_fallback(self, bundle: dict[str, Any]) -> dict[str, Any]:
-        """Fallback bundle registration using legacy /registerProjectBundle endpoint."""
-        import httpx
-
-        url = f"{self._endpoint}/registerProjectBundle"
         try:
-            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
-                resp = await client.post(url, json=bundle, headers=self._headers())
-                resp.raise_for_status()
-                logger.info(
-                    "[Provider02] Fallback endpoint succeeded: /registerProjectBundle"
-                )
-                return resp.json()
-        except Exception as exc:
-            logger.error(
-                "[Provider02] Fallback registration also failed: %s %s", url, exc
+            body: Any = resp.json()
+        except ValueError:
+            body = None
+        if resp.status_code != 200 or not isinstance(body, dict):
+            code, error = _node_rejection(resp.status_code, body)
+            logger.warning(
+                "[Provider02] attest rejected: status=%d code=%s",
+                resp.status_code,
+                code,
             )
-            return {"error": f"Both endpoints failed: {exc}"}
+            return AttestationVerdict.reject(code, error, certificate_hash)
+
+        if not self._jwk_cache.has_keys or self._jwk_cache.is_stale:
+            await self._sync_jwks()
+        supplied = topology is not None
+        verdict = verify_attestation(
+            cer, body, self._resolve_public_key, topology_supplied=supplied
+        )
+        if verdict.code == "UNKNOWN_KEY":
+            # The node may have rotated keys since the last sync. Refresh the
+            # independently fetched manifest once; never trust a key from the
+            # response itself.
+            await self._sync_jwks()
+            verdict = verify_attestation(
+                cer, body, self._resolve_public_key, topology_supplied=supplied
+            )
+        return verdict
 
     # ------------------------------------------------------------------
     # JWK sync daemon
@@ -825,6 +876,10 @@ class Provider02AttestationProvider(AttestationProvider):
 
                 resp.raise_for_status()
                 jwk_set = resp.json()
+                if not isinstance(jwk_set, dict) or not isinstance(
+                    jwk_set.get("keys"), list
+                ):
+                    raise ValueError("key manifest has no 'keys' list")
 
                 self._jwk_cache = JWKCache(
                     jwk_set=jwk_set,

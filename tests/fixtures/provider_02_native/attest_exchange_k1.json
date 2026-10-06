@@ -1,0 +1,322 @@
+{
+  "cer": {
+    "bundleType": "cer.governed.execution.v1",
+    "certificateHash": "sha256:f330b5e47c6c3a04f31336db09d5ba71943ea1ac408c7f1f25635dff3d4c4bf5",
+    "createdAt": "2026-10-06T20:53:27.578Z",
+    "evidence": {
+      "bundle": {
+        "bundleId": "7e05f9a5-6b9d-4e81-be20-f90d9c5dc713",
+        "completedAt": "2026-10-04T21:38:02.335676+00:00",
+        "startedAt": "2026-10-04T21:38:02.332083+00:00",
+        "steps": [
+          {
+            "durationMs": 0.017417012713849545,
+            "metadata": {
+              "loopIteration": 0,
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "nemo_guardrail",
+            "parentStepIds": [],
+            "signals": {
+              "governanceSignature": "sig_pre_hitl",
+              "loopCount": 0,
+              "riskStatus": "APPROVED",
+              "safetyStatus": "APPROVED"
+            },
+            "stateHash": "ce0d0bdeba8ef5154a27c4b2f6dc8e9a843562033e77c26a332e7d33678a005b",
+            "stepId": "5288c3a3-36f4-4212-b191-a01d7fed953e",
+            "timestampUtc": "2026-10-04T21:38:02.332117+00:00"
+          },
+          {
+            "durationMs": 0.001667009200900793,
+            "metadata": {
+              "loopIteration": 0,
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "evaluator",
+            "parentStepIds": [
+              "5288c3a3-36f4-4212-b191-a01d7fed953e"
+            ],
+            "signals": {
+              "governanceSignature": "sig_pre_hitl",
+              "loopCount": 0,
+              "riskStatus": "APPROVED",
+              "safetyStatus": "APPROVED"
+            },
+            "stateHash": "ce0d0bdeba8ef5154a27c4b2f6dc8e9a843562033e77c26a332e7d33678a005b",
+            "stepId": "6aeae7e7-9834-4151-9b0e-c385c9f86f30",
+            "timestampUtc": "2026-10-04T21:38:02.332147+00:00"
+          },
+          {
+            "durationMs": 0.001500011421740055,
+            "metadata": {
+              "loopIteration": 0,
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "safety_check",
+            "parentStepIds": [
+              "6aeae7e7-9834-4151-9b0e-c385c9f86f30"
+            ],
+            "signals": {
+              "governanceSignature": "sig_pre_hitl",
+              "loopCount": 0,
+              "riskStatus": "APPROVED",
+              "safetyStatus": "APPROVED"
+            },
+            "stateHash": "ce0d0bdeba8ef5154a27c4b2f6dc8e9a843562033e77c26a332e7d33678a005b",
+            "stepId": "695c54fb-d098-4108-9741-e85bf07ce76e",
+            "timestampUtc": "2026-10-04T21:38:02.332164+00:00"
+          },
+          {
+            "durationMs": 0.0,
+            "metadata": {
+              "interruptNode": "governed_trader",
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "hitl_interrupt",
+            "parentStepIds": [
+              "695c54fb-d098-4108-9741-e85bf07ce76e"
+            ],
+            "signals": {
+              "approvalRequired": true,
+              "hitlApproval": {
+                "approved": true,
+                "rationale": "Trade within acceptable parameters",
+                "reviewer": "reviewer@example.com",
+                "timestamp": "2026-10-04T12:00:00Z"
+              },
+              "interruptType": "HITL_MANUAL_REVIEW"
+            },
+            "stateHash": "9792487b749c562cc39c2b71d94f9e5f99bb99179438c4d9844cfc9cff23c3fe",
+            "stepId": "e1cbadc9-78af-45e2-9b38-7ccb5ad1764c",
+            "timestampUtc": "2026-10-04T21:38:02.332184+00:00"
+          },
+          {
+            "durationMs": 0.002207991201430559,
+            "metadata": {
+              "loopIteration": 0,
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "governed_trader",
+            "parentStepIds": [
+              "e1cbadc9-78af-45e2-9b38-7ccb5ad1764c"
+            ],
+            "signals": {
+              "governanceSignature": "sig_hitl_approved",
+              "hitlApproval": {
+                "approved": true,
+                "rationale": "Trade within acceptable parameters",
+                "reviewer": "reviewer@example.com",
+                "timestamp": "2026-10-04T12:00:00Z"
+              },
+              "loopCount": 0,
+              "riskStatus": "APPROVED",
+              "safetyStatus": "APPROVED"
+            },
+            "stateHash": "9792487b749c562cc39c2b71d94f9e5f99bb99179438c4d9844cfc9cff23c3fe",
+            "stepId": "6616a520-f9b3-447d-8698-34967e7989cb",
+            "timestampUtc": "2026-10-04T21:38:02.332381+00:00"
+          },
+          {
+            "durationMs": 0.00204198295250535,
+            "metadata": {
+              "loopIteration": 0,
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "explainer",
+            "parentStepIds": [
+              "6616a520-f9b3-447d-8698-34967e7989cb"
+            ],
+            "signals": {
+              "governanceSignature": "sig_hitl_approved",
+              "hitlApproval": {
+                "approved": true,
+                "rationale": "Trade within acceptable parameters",
+                "reviewer": "reviewer@example.com",
+                "timestamp": "2026-10-04T12:00:00Z"
+              },
+              "loopCount": 0,
+              "riskStatus": "APPROVED",
+              "safetyStatus": "APPROVED"
+            },
+            "stateHash": "9792487b749c562cc39c2b71d94f9e5f99bb99179438c4d9844cfc9cff23c3fe",
+            "stepId": "388895c3-a01a-4c44-ae84-eb4dedb3600f",
+            "timestampUtc": "2026-10-04T21:38:02.332405+00:00"
+          },
+          {
+            "durationMs": 0.001292035449296236,
+            "metadata": {
+              "loopIteration": 0,
+              "stateHashAlg": "sha256",
+              "stateHashCanon": "RFC8785-JCS",
+              "stateHashScope": "agentstate-pii-sanitized/v1",
+              "threadId": "hitl-approval-path"
+            },
+            "nodeName": "nemo_output_rail",
+            "parentStepIds": [
+              "388895c3-a01a-4c44-ae84-eb4dedb3600f"
+            ],
+            "signals": {
+              "governanceSignature": "sig_hitl_approved",
+              "hitlApproval": {
+                "approved": true,
+                "rationale": "Trade within acceptable parameters",
+                "reviewer": "reviewer@example.com",
+                "timestamp": "2026-10-04T12:00:00Z"
+              },
+              "loopCount": 0,
+              "riskStatus": "APPROVED",
+              "safetyStatus": "APPROVED"
+            },
+            "stateHash": "9792487b749c562cc39c2b71d94f9e5f99bb99179438c4d9844cfc9cff23c3fe",
+            "stepId": "9b421071-1857-49c5-9b9b-8145025af895",
+            "timestampUtc": "2026-10-04T21:38:02.332422+00:00"
+          }
+        ],
+        "terminalPath": "happy_path",
+        "threadId": "hitl-approval-path"
+      }
+    },
+    "profile": {
+      "contract": "urn:cage:governance:v1:attestation-bundle",
+      "id": "cage-governance-v1",
+      "source": {
+        "profile": "provider_02",
+        "system": "CAGE"
+      },
+      "version": "1"
+    },
+    "protectedSet": {
+      "protectedFields": [
+        "bundleType",
+        "createdAt",
+        "version",
+        "profile",
+        "evidence"
+      ],
+      "protectedSetId": "nexart.governed.execution.v1.protected-set.v1",
+      "stabilitySchemeId": "jcs-v1"
+    },
+    "version": "0.1"
+  },
+  "description": "Real POST /api/attest exchange with NexArt Attestation Node v0.30.0 (nexart-node-prod-1), captured 2026-10-06. Public data only: the CER CAGE submitted (the 06_hitl_approval.json HITL bundle with a fresh bundleId, no topology) and the node's signed response. Verify with manifest key k1 (manifestKey, as published at /.well-known/nexart-node.json).",
+  "manifestKey": {
+    "alg": "Ed25519",
+    "kid": "k1",
+    "publicKeyJwk": {
+      "crv": "Ed25519",
+      "kty": "OKP",
+      "x": "30ROjmcwj5oowj_fflAqdyacB0ik7eEnndzNKJmy9uU"
+    },
+    "revoked": false,
+    "status": "active"
+  },
+  "response": {
+    "attestation": {
+      "attestationId": "a5d2423e-e74b-453c-8f6f-dd442b9707c2",
+      "attestedAt": "2026-10-06T20:53:27.759Z",
+      "bundleType": "cer.governed.execution.v1",
+      "certificateHash": "sha256:f330b5e47c6c3a04f31336db09d5ba71943ea1ac408c7f1f25635dff3d4c4bf5",
+      "checks": [
+        "governed_execution"
+      ],
+      "nodeRuntimeHash": "sha256:669f5345a9e2318ec0aced1cf2218ff264d96b4f5bdc7dde0397458ff864781a",
+      "protocolVersion": "0.1",
+      "requestId": "a5d2423e-e74b-453c-8f6f-dd442b9707c2",
+      "verified": true
+    },
+    "attestationId": "a5d2423e-e74b-453c-8f6f-dd442b9707c2",
+    "attestorKeyId": "k1",
+    "bundleType": "cer.governed.execution.v1",
+    "certificateHash": "sha256:f330b5e47c6c3a04f31336db09d5ba71943ea1ac408c7f1f25635dff3d4c4bf5",
+    "governedVerification": {
+      "cageSchemaValidity": "valid",
+      "causalGraphValidity": "valid",
+      "certificateIntegrity": "valid",
+      "completeness": "not-claimed",
+      "producerAuthentication": "not-performed",
+      "resourceSafety": "valid",
+      "stateHashVerification": "not-performed",
+      "topologyValidation": "not-supplied",
+      "warnings": []
+    },
+    "issuedAt": "2026-10-06T20:53:27.759Z",
+    "kid": "k1",
+    "nodeRuntimeHash": "sha256:669f5345a9e2318ec0aced1cf2218ff264d96b4f5bdc7dde0397458ff864781a",
+    "ok": true,
+    "protocolVersion": "0.1",
+    "receipt": {
+      "attestationId": "a5d2423e-e74b-453c-8f6f-dd442b9707c2",
+      "attestedAt": "2026-10-06T20:53:27.759Z",
+      "attestorKeyId": "k1",
+      "certificateHash": "sha256:f330b5e47c6c3a04f31336db09d5ba71943ea1ac408c7f1f25635dff3d4c4bf5",
+      "nodeId": "nexart-node-prod-1",
+      "nodeRuntimeHash": "sha256:669f5345a9e2318ec0aced1cf2218ff264d96b4f5bdc7dde0397458ff864781a",
+      "protocolVersion": "0.1",
+      "receiptVersion": "attestation.receipt.v1",
+      "timestampProvider": "digicert",
+      "timestampStatus": "ok",
+      "timestampType": "rfc3161"
+    },
+    "signature": "86wdA15aCZIbIM3sMjR_bbTJJrv62WiR0pqzkyJusivmAhV4Hui7kV1MCmhUVWl41E5tQxI9xChfpARdl_BRDg",
+    "timestamp": {
+      "provider": "digicert",
+      "status": "ok",
+      "token": "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",
+      "type": "rfc3161"
+    },
+    "verificationEnvelope": {
+      "algorithm": "Ed25519",
+      "attestation": {
+        "attestationId": "a5d2423e-e74b-453c-8f6f-dd442b9707c2",
+        "attestedAt": "2026-10-06T20:53:27.759Z",
+        "kid": "k1",
+        "nodeRuntimeHash": "sha256:669f5345a9e2318ec0aced1cf2218ff264d96b4f5bdc7dde0397458ff864781a",
+        "protocolVersion": "0.1"
+      },
+      "canonicalization": "jcs",
+      "envelopeType": "nexart.verification.envelope.v2",
+      "kid": "k1",
+      "scope": "whitelist",
+      "signedFields": {
+        "attestation": [
+          "attestationId",
+          "attestedAt",
+          "kid",
+          "nodeRuntimeHash",
+          "protocolVersion"
+        ],
+        "bundle": [
+          "bundleType",
+          "version",
+          "createdAt",
+          "profile",
+          "evidence",
+          "protectedSet"
+        ]
+      },
+      "specVersion": "v0.16.1"
+    },
+    "verificationEnvelopeSignature": "_M3ePCow75sp7WtFjVtMXEWFU1wCAAlFeJ47b6Vu6pjm8fvOTLBf1mvX8utjZ6lPXK6iO185Cx6OD0tEcxRvCg",
+    "verificationUrl": "https://verify.nexart.io/c/sha256%3Af330b5e47c6c3a04f31336db09d5ba71943ea1ac408c7f1f25635dff3d4c4bf5",
+    "visibility": "hidden"
+  }
+}

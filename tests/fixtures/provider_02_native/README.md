@@ -51,6 +51,15 @@ This directory contains realistic test fixtures for validating Provider 02's nat
 - **Regenerate:** `uv run python -m tests.integrations.provider_02.hitl_bundle`
 - **Use Case:** Partner HITL interop (see [`HITL_INTEROP_STATUS.md`](../../../docs/partners/provider_02/nexart/HITL_INTEROP_STATUS.md)).
 
+### Attestation test vector: [`attest_exchange_k1.json`](attest_exchange_k1.json)
+**Not a bundle fixture.** A real `POST /api/attest` exchange captured from the
+partner node on 2026-10-06: the `cer.governed.execution.v1` CER CAGE submitted
+(fixture 06 with a fresh `bundleId`), the node's signed response, and the
+published manifest key `k1`. Used by
+[`test_governed_cer.py`](../../integrations/provider_02/test_governed_cer.py) to
+check receipt-signature verification against bytes the node actually signed.
+Contains no credentials.
+
 ## Schema Validation
 
 All fixtures are validated against:

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:cage:governance:v1:attestation-bundle",
   "title": "AttestationBundle",
-  "description": "A complete governance bundle for a single graph execution. Assembled from all ProjectBundleStepEntry objects collected during a graph run. Submitted to Provider 02's registerProjectBundle endpoint for CER issuance.",
+  "description": "A complete governance bundle for a single graph execution. Assembled from all ProjectBundleStepEntry objects collected during a graph run. Sealed into a cer.governed.execution.v1 CER (evidence.bundle) and submitted to Provider 02's POST /api/attest endpoint.",
   "type": "object",
   "properties": {
     "bundleId": {
