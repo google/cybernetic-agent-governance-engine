@@ -30,12 +30,6 @@ import os
 from dataclasses import dataclass
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-from src.integrations.provider_05.warrant import (
-    Warrant,
-)
-from src.integrations.provider_05.warrant import (
-    WarrantStandingVerifier as WarrantStandingVerifier,
-)
 
 logger = logging.getLogger("cage.integrations.provider_05.client")
 
@@ -135,7 +129,6 @@ class Provider05Client:
         self._risk_acceptances: dict[str, RiskAcceptanceRecord] = {}
         self._admissibility_grants: dict[tuple[str, str], AdmissibilityGrant] = {}
         self._substrate_attestations: dict[str, SubstrateAttestation] = {}
-        self._warrants: dict[str, Warrant] = {}
 
     def seed_risk_acceptance(self, record: RiskAcceptanceRecord) -> None:
         """Seed a risk acceptance record for local/synthetic evaluation."""
@@ -148,20 +141,6 @@ class Provider05Client:
     def seed_substrate_attestation(self, attestation: SubstrateAttestation) -> None:
         """Seed a substrate attestation for local/synthetic evaluation."""
         self._substrate_attestations[attestation.node_id] = attestation
-
-    def seed_warrant(self, warrant: Warrant) -> None:
-        """Seed a Provider 05 institutional warrant for local/synthetic evaluation."""
-        self._warrants[warrant.norm_id] = warrant
-        self._warrants[warrant.warrant_id] = warrant
-
-    async def get_warrant(self, norm_or_warrant_id: str) -> Warrant | None:
-        """Retrieve a warrant by norm_id or warrant_id."""
-        if norm_or_warrant_id in self._warrants:
-            return self._warrants[norm_or_warrant_id]
-        if not self._endpoint:
-            return None
-        # HTTP client implementation for live deployment
-        return None
 
     async def get_risk_acceptance(
         self, threshold_id: str

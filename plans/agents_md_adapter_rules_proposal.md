@@ -85,7 +85,8 @@ Both compiled. Both passed their own tests. Neither worked.
 ### L3 — Required-field additions break silently outside their own package
 
 Adding a required `provider_name` to `ExternalAttestation` broke
-[`warrant.py:364`](../src/integrations/provider_05/warrant.py:364) — **production
+the former provider_05 `warrant.py`, line 364 (the binding now lives at
+[`evidence.py:54`](../src/gateway/governance/warrant/evidence.py:54)) — **production
 code**, a runtime `TypeError` on every `bind_warrant_to_attestation` call. The
 originating subtask ran only its own package's tests.
 

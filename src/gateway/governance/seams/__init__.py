@@ -26,6 +26,7 @@ Modules:
     attestation: Attestation provider seam (external trust service integration)
     actuation: Execution actuator seam (downstream clearance transmission)
     graph_topology: Domain-agnostic graph structure for attestation adapters
+    warrant: Warrant source seam (issuer-supplied warrants for norm reliance)
 
 Architecture Principle:
     Seam modules must NEVER import from the rest of the kernel. They define
@@ -52,4 +53,5 @@ __all__ = [
     "credential_broker",
     "graph_topology",
     "normative",
+    "warrant",
 ]
