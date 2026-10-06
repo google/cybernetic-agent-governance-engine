@@ -166,7 +166,7 @@ Third-party compliance, attestation, and actuator provider adapters live in `src
 | **Provider 01** | `src/integrations/provider_01/` | Production normative provider; implements 3-endpoint normative validation API via `Provider01NormativeProvider` | Implemented (POAM-022 awaiting credentials) |
 | **Provider 02** | `src/integrations/provider_02/` | CER (Compliance Evidence Record) attestation provider; `Provider02Client` + `Provider02AttestationCallback` | Implemented |
 | **Provider 03** | `src/integrations/provider_03/` | JCS (RFC 8785) evidence normalization and decision governance adapter                                     | Implemented |
-| **Provider 05** | `src/integrations/provider_05/` | Verifiable Execution Evidence Pack; RFC-3161 cryptographic evidence packages with 3 axioms               | Implemented |
+| **Provider 05** | `src/integrations/provider_05/` | Veraxis Execution Integrity Protocol (VEIP); three `AttestationProvider` axioms (Blueprint / Key / Physics) plus execution-warrant verification | Seeded (HTTP path unimplemented) |
 | **Provider 06** | `src/integrations/provider_06/` | Tri-state deterministic verifier adapter (`PASS`/`REVIEW`/`BLOCKED`) with DeferQueue parking integration | Implemented |
 | **Provider 07** | `src/integrations/provider_07/` | Bayesian causal suitability adapter; `Provider07NormativeProvider` + `Provider07JwksClient` with `kid`-resolved signature verification | Implemented |
 | **Actuator 01** | `src/integrations/actuator_01/` | Actuator-side vendor adapter; envelope builder and signature verification for sealed execution            | Implemented |

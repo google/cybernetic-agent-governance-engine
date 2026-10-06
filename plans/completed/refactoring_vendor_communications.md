@@ -79,7 +79,7 @@ Your integration implements the [`ExecutionActuator`](src/gateway/governance/exe
 
 ---
 
-## Provider 05 — Verifiable Execution Evidence Pack (Blueprint / Key / Physics Axioms)
+## Provider 05 — Veraxis Execution Integrity Protocol (VEIP) (Blueprint / Key / Physics Axioms)
 
 **Context**: CAGE is undergoing a significant refactoring to extract finance-specific logic into a plugin architecture, enabling domain-agnostic governance. This refactoring represents our last opportunity to introduce coordinated breaking changes before the v4.0.0 protocol stabilization and reference architecture freeze. We're reaching out now to give sufficient lead time for any adaptations on your side, as the window for API changes is closing rapidly after this release.
 
@@ -89,8 +89,10 @@ Your three [`AttestationProvider`](src/gateway/governance/attestation_provider.p
 
 **Questions for Your Team**:
 1. While no immediate action is required for this refactoring, do you have any concerns about the domain-agnostic architecture affecting your three axiom implementations or warrant module? We want to ensure the attestation framework remains robust across different domain plugins.
-2. Is vendor anonymity in the CAGE codebase important to you? The current "Provider 05" numbering is incomplete — "VEIP" (Verifiable Execution Integrity Pack) is used verbatim in class names like `VEIPBlueprintAttestation`, `VEIPKeyAttestation`, and `VEIPPhysicsAttestation`, as well as in plan filenames like [`plans/veip_three_axioms_architecture.md`](plans/veip_three_axioms_architecture.md). Would you prefer we complete the anonymization, or continue using "VEIP" consistently in committed code?
+2. Is vendor anonymity in the CAGE codebase important to you? The current "Provider 05" numbering is incomplete — "VEIP" is used verbatim in class names like `VEIPBlueprintAttestation`, `VEIPKeyAttestation`, and `VEIPPhysicsAttestation`, as well as in plan filenames like [`veip_three_axioms_architecture.md`](docs/partners/provider_05/veip_three_axioms_architecture.md). Would you prefer we complete the anonymization, or continue using "VEIP" consistently in committed code?
 3. When would you like to review the final v4.0.0 attestation contracts and warrant semantics before we freeze them? We're targeting freeze within the next 2-3 weeks.
+
+**Resolution**: The partner asked to keep "VEIP" named explicitly as open protocol infrastructure and corrected the expansion to **Veraxis Execution Integrity Protocol**. The `provider_05` package path is retained for import stability.
 
 ---
 
@@ -117,5 +119,5 @@ Your integration implements the [`NormativeProvider`](src/gateway/governance/nor
 | 02 | CER attestation | Vendor-specific attestation | **Yes (breaking)** | Hardcoded finance graph topology + `stateHash` drift |
 | 03 | Decision governance / bind receipts | `NormativeProvider` | Yes | Payload key drift → receipt digest re-baseline |
 | 04 | Attestation + envelope mapper | `AttestationProvider` | No | Envelope treated opaquely; fetch is a stub |
-| 05 | Execution evidence pack (3 axioms) | `AttestationProvider` ×3 | No | Already domain-agnostic |
+| 05 | VEIP attestation (3 axioms) + warrant | `AttestationProvider` ×3 | No | Already domain-agnostic |
 | 06 | Agent integrity verifier | `NormativeProvider` | Yes | Vendored schema regeneration; plugin-seam prohibition |
