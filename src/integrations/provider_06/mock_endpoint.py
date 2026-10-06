@@ -60,13 +60,20 @@ import jsonschema
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
+# Defined before the key-pair import below: its ImportError fallback logs.
+logger = logging.getLogger("cage.integrations.provider_06.mock")
+
 # Import test key pair for cryptographic signing
 try:
     import sys
 
     # Add tests directory to path for fixture imports
     test_fixtures_path = (
-        Path(__file__).resolve().parents[3] / "tests" / "integrations" / "provider_06" / "fixtures"
+        Path(__file__).resolve().parents[3]
+        / "tests"
+        / "integrations"
+        / "provider_06"
+        / "fixtures"
     )
     if str(test_fixtures_path) not in sys.path:
         sys.path.insert(0, str(test_fixtures_path))
@@ -80,8 +87,6 @@ except ImportError as exc:
     )
     TEST_KEY_ID = "mock-key-001"
     get_test_private_key = None  # type: ignore[assignment]
-
-logger = logging.getLogger("cage.integrations.provider_06.mock")
 
 # Schema vendored from Agent Integrity by Simran Pabla.
 # Path: third_party/agent-integrity/schemas/integrity-envelope.schema.json
@@ -225,10 +230,14 @@ def _create_mock_receipt(
         try:
             private_key = get_test_private_key()
             signature_bytes = private_key.sign(payload_bytes)
-            signature_value = base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+            signature_value = (
+                base64.urlsafe_b64encode(signature_bytes).decode("ascii").rstrip("=")
+            )
             key_id = TEST_KEY_ID
         except Exception as exc:
-            logger.warning("[MockEndpoint] Ed25519 signing failed: %s. Using mock signature.", exc)
+            logger.warning(
+                "[MockEndpoint] Ed25519 signing failed: %s. Using mock signature.", exc
+            )
             signature_value = _sha256(f"mock-sign:{payload_bytes.decode('utf-8')}")
             key_id = "mock-key-001"
     else:

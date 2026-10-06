@@ -46,9 +46,11 @@ fail closed: a timeout, transport error or any non-200 response reads as
 > legacy `GET /health`, so `SidecarHealthCheck` reports it not ready. The mock
 > is SHA-256-pinned by the recorded conformance experiment (`PROTECTED_PATHS`
 > in
-> [`provider_06_agent_integrity_cli.py`](../../../tests/integrations/provider_06/support/provider_06_agent_integrity_cli.py)),
-> so the probe routes are added in the Phase 2 adapter PR, which regenerates
-> that conformance record.
+> [`provider_06_agent_integrity_cli.py`](../../../tests/integrations/provider_06/support/provider_06_agent_integrity_cli.py),
+> digests in
+> [`protected_baseline.json`](../../../tests/integrations/provider_06/protected_baseline.json)),
+> so the probe routes are added in the Phase 2 adapter PR. That PR re-pins the
+> manifest and regenerates the conformance record.
 
 `fetch_baseline()` does not call the vendor. Agent Integrity verifies responses
 rather than supplying normative data, so the adapter returns a minimal
@@ -202,6 +204,18 @@ CAGE_AGENT_INTEGRITY_ENDPOINT=http://localhost:8090
 CAGE_AGENT_INTEGRITY_KEY_MANIFEST=file:///home/user/cage/tests/integrations/provider_06/fixtures/key_manifest.json
 CAGE_AGENT_INTEGRITY_TIMEOUT=10
 ```
+
+## Protected files and re-pinning
+
+`adapter.py`, `mock_endpoint.py`, and the two vendored Agent Integrity schemas
+are pinned by SHA-256 in the reviewed manifest
+[`protected_baseline.json`](../../../tests/integrations/provider_06/protected_baseline.json).
+Changing any of their bytes requires, in the same PR, an updated manifest with a
+new `repins` entry (paths, previous digests, date, reason), a regenerated
+[conformance artifact](../../../tests/integrations/provider_06/artifacts/provider_06_agent_integrity_conformance_result.json),
+and a note to the Provider 06 partner in the PR description. The procedure is
+in
+[`CONFORMANCE_RESULT.md`](../../../docs/partners/provider_06/CONFORMANCE_RESULT.md).
 
 ## Upstream reference
 

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import multiprocessing
 import os
@@ -28,13 +29,13 @@ import pytest
 
 from tests.integrations.provider_06.support.provider_06_agent_integrity_cli import (
     ARTIFACT_PATH,
-    BASE_COMMIT,
     FIXTURE_ROOT,
     PROSE_PATH,
     PROTECTED_PATHS,
     REPO_ROOT,
     copy_fixture_project,
     generate_conformance_artifact,
+    load_protected_baseline,
     run_agent_integrity_verify,
     run_bounded_process,
 )
@@ -159,33 +160,55 @@ def test_fixture_envelopes_exclude_cage_action_keys() -> None:
         visit(json.loads(path.read_text(encoding="utf-8"))["envelope"])
 
 
-def _ensure_base_commit() -> None:
+UPSTREAM_BASE_COMMIT = load_protected_baseline().upstream_base_commit
+
+
+def _ensure_upstream_base_commit() -> None:
     try:
         subprocess.run(
-            ["git", "cat-file", "-e", BASE_COMMIT],
+            ["git", "cat-file", "-e", UPSTREAM_BASE_COMMIT],
             cwd=REPO_ROOT,
             check=True,
             capture_output=True,
         )
     except subprocess.CalledProcessError:
-        pytest.skip(f"Base commit {BASE_COMMIT} not available (shallow clone)")
+        pytest.skip(f"Base commit {UPSTREAM_BASE_COMMIT} not available (shallow clone)")
 
 
-def test_protected_runtime_and_schema_files_match_base() -> None:
-    _ensure_base_commit()
-    repo_root = REPO_ROOT
+def test_protected_runtime_and_schema_files_match_pinned_baseline() -> None:
+    """Protected bytes must equal the reviewed pin; needs no git history."""
+    baseline = load_protected_baseline()
+    assert set(baseline.protected_files) == set(PROTECTED_PATHS)
     for relative in PROTECTED_PATHS:
-        expected = subprocess.run(
-            ["git", "show", f"{BASE_COMMIT}:{relative}"],
-            cwd=repo_root,
+        assert re.fullmatch(r"[0-9a-f]{64}", baseline.protected_files[relative])
+        actual = hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest()
+        assert actual == baseline.protected_files[relative], (
+            f"{relative} differs from protected_baseline.json; a change to a "
+            "protected file requires an explicit, reviewed re-pin"
+        )
+
+
+def test_pinned_baseline_divergence_from_upstream_is_declared() -> None:
+    """Every pinned file differing from the upstream base must be in a re-pin."""
+    baseline = load_protected_baseline()
+    assert re.fullmatch(r"[0-9a-f]{40}", baseline.upstream_base_commit)
+    assert baseline.repinned_paths <= set(PROTECTED_PATHS)
+    _ensure_upstream_base_commit()
+    for relative in PROTECTED_PATHS:
+        upstream = subprocess.run(
+            ["git", "show", f"{UPSTREAM_BASE_COMMIT}:{relative}"],
+            cwd=REPO_ROOT,
             check=True,
             capture_output=True,
         ).stdout
-        assert (repo_root / relative).read_bytes() == expected
+        if relative not in baseline.repinned_paths:
+            assert (REPO_ROOT / relative).read_bytes() == upstream, (
+                f"{relative} diverges from the upstream base without a declared re-pin"
+            )
 
 
 def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
-    _ensure_base_commit()
+    _ensure_upstream_base_commit()
     repo_root = REPO_ROOT
     diff = subprocess.run(
         [
@@ -193,7 +216,7 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
             "diff",
             "--no-ext-diff",
             "--unified=0",
-            f"{BASE_COMMIT}...HEAD",
+            f"{UPSTREAM_BASE_COMMIT}...HEAD",
             "--",
             "src/integrations/provider_06/",
         ],
@@ -321,6 +344,7 @@ def test_prose_result_matches_machine_readable_artifact() -> None:
         "agentIntegrityCliBuildSha256",
         "cageEvidenceBinding",
         "generatorVersion",
+        "protectedBaselineSha256",
     ):
         assert provenance_key in artifact["provenance"]
 
@@ -387,12 +411,18 @@ def test_generated_artifact_matches_committed_artifact(tmp_path: Path) -> None:
 def test_artifact_provenance_is_complete_and_self_consistent(tmp_path: Path) -> None:
     artifact = generate_conformance_artifact(tmp_path / "generated.json")
     provenance = artifact["provenance"]
-    assert provenance["generatorVersion"] == 1
+    assert provenance["generatorVersion"] == 2
     assert re.fullmatch(r"[0-9a-f]{40}", provenance["cageBase"])
     assert re.fullmatch(r"[0-9a-f]{40}", provenance["agentIntegrityTree"])
     for key in ("agentIntegrityPackageLockSha256", "agentIntegrityCliBuildSha256"):
         assert re.fullmatch(r"[0-9a-f]{64}", provenance[key])
-    assert provenance["cageEvidenceBinding"] == "fixed-base-plus-protected-file-sha256"
+    assert re.fullmatch(r"[0-9a-f]{64}", provenance["protectedBaselineSha256"])
+    assert (
+        provenance["cageEvidenceBinding"]
+        == "pinned-manifest-plus-protected-file-sha256"
+    )
+    assert provenance["cageBase"] == load_protected_baseline().upstream_base_commit
+    assert artifact["protectedFiles"] == load_protected_baseline().protected_files
 
 
 def test_fixture_tree_is_allowlisted_and_contains_no_private_material() -> None:

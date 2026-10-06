@@ -552,7 +552,9 @@ class Provider06AgentIntegrityAdapter:
         expires_at_str = receipt.get("expiresAt")
         if expires_at_str:
             try:
-                expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                expires_at = datetime.fromisoformat(
+                    expires_at_str.replace("Z", "+00:00")
+                )
                 now = datetime.now(timezone.utc)
                 if now > expires_at:
                     logger.error(

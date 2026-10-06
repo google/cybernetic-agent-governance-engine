@@ -197,8 +197,16 @@ updates only the copied bytes and their explicitly intended envelope fields.
 - Missing-source removes a referenced trusted file.
 - Invalid-config changes the temporary trusted configuration to an invalid or
   disallowed project boundary.
-- Protected-file tests compare bytes directly with the fixed base commit rather than
-  trusting editable constants in the new tests.
+- Protected-file tests originally compared bytes directly with the fixed base
+  commit rather than trusting editable constants in the new tests.
+  *Superseded:* squash-merge-only `main` makes a commit pin impossible to advance
+  in the PR that changes a protected file. The tests now compare SHA-256 digests
+  with the reviewed manifest
+  [`protected_baseline.json`](../../../tests/integrations/provider_06/protected_baseline.json).
+  Editing it is an explicit re-attestation that must be reviewed, so it is not an
+  incidental constant. Every divergence from the original base commit must be
+  declared as a re-pin (see `CONFORMANCE_RESULT.md`, "Re-pinning the protected
+  baseline").
 - Boundary tests inspect the full branch diff and repository plugin registrations,
   not only the Provider 06 directory, and prove that no domain-plugin protocol or
   `cage.plugins` entry point was introduced.

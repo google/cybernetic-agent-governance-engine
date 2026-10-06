@@ -33,7 +33,8 @@ npm run build
 
 The machine-readable artifact additionally binds this result to the exact vendored
 Agent Integrity Git tree, `package-lock.json` SHA-256, built CLI SHA-256, generator
-version, fixed CAGE base, and protected-file SHA-256 values. The artifact does not
+version, upstream CAGE base, the SHA-256 of the reviewed protected-baseline
+manifest, and protected-file SHA-256 values. The artifact does not
 claim to embed its own final branch commit: that would be self-referential. Instead,
 CI executes the committed generator and compares its complete output with the
 committed artifact.
@@ -70,14 +71,46 @@ only scenario metadata, statuses, exit codes, finding codes, versions, and hashe
 
 ## Protected boundary
 
-The following files remain byte-identical to the fixed CAGE base. Their SHA-256
-digests are recorded in the machine-readable artifact and verified against
-`git show 94e9d717...:<path>` by the test suite:
+The following files are pinned by SHA-256 in the reviewed manifest
+[`protected_baseline.json`](../../../tests/integrations/provider_06/protected_baseline.json).
+The test suite fails if any protected byte differs from that pin, and the
+machine-readable artifact records both the file digests and the manifest digest:
 
 - `src/integrations/provider_06/adapter.py`
 - `src/integrations/provider_06/mock_endpoint.py`
 - `third_party/agent-integrity/schemas/integrity-envelope.schema.json`
 - `third_party/agent-integrity/schemas/integrity-receipt.schema.json`
+
+### Re-pinning the protected baseline
+
+The pin was originally the git commit `364e91b8164584062b434d72ee31719fa75d1a7b`
+(protected files compared with `git show <commit>:<path>`). Because `main` is
+squash-merge only, a commit pin cannot be advanced by the PR that changes a
+protected file: that PR's own squash SHA does not exist yet, and its branch
+commits become unreachable after merge. The pin is therefore an explicit,
+committed manifest, and a re-pin is a reviewed diff in the same PR:
+
+1. Change the protected file.
+2. Update `protectedFiles` in `protected_baseline.json` and append a `repins`
+   entry listing the changed `paths`, their `previousSha256`, the date, and the
+   reason.
+3. Regenerate the artifact:
+   `PYTHONPATH=. uv run python -c "from tests.integrations.provider_06.support.provider_06_agent_integrity_cli import generate_conformance_artifact, ARTIFACT_PATH; generate_conformance_artifact(ARTIFACT_PATH)"`
+   (needs Node.js 22+).
+4. Tell the Provider 06 partner about the re-pin in the PR description.
+
+`upstreamBaseCommit` stays at the original attested commit for provenance. A
+second test requires every protected file that differs from that commit to be
+listed in a `repins` entry, so a divergence cannot go undeclared. The digest
+check needs no git history, so it also runs in shallow CI clones.
+
+Re-pin 1 (2026-10-06) changed `adapter.py` and `mock_endpoint.py`: `ruff format`
+only, plus a fix in `mock_endpoint.py`. Its module logger is now defined before
+the test-key-pair `ImportError` fallback that logs, which used to raise
+`NameError`. The schemas are unchanged, and all seven scenario outcomes were
+regenerated with the same results.
+
+### Domain-plugin boundary
 
 The full branch diff and repository entry-point configuration were also checked:
 this experiment introduces no Provider 06 domain-plugin implementation or
@@ -87,7 +120,7 @@ this experiment introduces no Provider 06 domain-plugin implementation or
 
 The experiment satisfies the approved **PASS** threshold: the existing envelope
 honestly represents the frozen governed-response artifact, all seven required CLI
-outcomes match, protected schemas and runtime files remain unchanged, and CAGE owns
+outcomes match, protected schemas and runtime files match the reviewed pin, and CAGE owns
 the fixture evidence-completeness assertion.
 
 The predetermined next action is a separate design/PR for CLI sidecar lifecycle,

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "description": "Reviewed SHA-256 pin of the Provider 06 protected runtime and schema files. A change to any protected byte must update this manifest in the same PR (an explicit re-attestation) and regenerate the conformance artifact. Each re-pin lists the paths that diverge from upstreamBaseCommit and why; the Provider 06 partner is informed of every re-pin.",
+  "upstreamBaseCommit": "364e91b8164584062b434d72ee31719fa75d1a7b",
+  "repins": [
+    {
+      "sequence": 1,
+      "date": "2026-10-06",
+      "paths": [
+        "src/integrations/provider_06/adapter.py",
+        "src/integrations/provider_06/mock_endpoint.py"
+      ],
+      "previousSha256": {
+        "src/integrations/provider_06/adapter.py": "868027e8ef3212c5313b59603d90cb2cf5c21c229c89105e3360c66089367f9c",
+        "src/integrations/provider_06/mock_endpoint.py": "8eda880da72c5bea03b16bcd938abfc00aa29bbf2041ec181ddb6ca4601d9b64"
+      },
+      "reason": "ruff format (no behavior change) for both files; mock_endpoint.py also defines its module logger before the test-key-pair ImportError fallback that logs, fixing a NameError on that path."
+    }
+  ],
+  "protectedFiles": {
+    "src/integrations/provider_06/adapter.py": "e89bbe7cfb39b18c989f14189a0373d299e2caafd5736583e0fdceb75940bc9e",
+    "src/integrations/provider_06/mock_endpoint.py": "236e8646b603a79b4a6016a5d963b39cb23b696942a200de33c985384f55283d",
+    "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
+    "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"
+  }
+}
