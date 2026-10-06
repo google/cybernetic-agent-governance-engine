@@ -21,7 +21,7 @@ Implements the Three Uncomputable Axioms integration:
   - Axiom 3 (Substrate Integrity / Physics) — Provider05PhysicsProvider
 
 and the institutional warrant source for the kernel ``WarrantSource`` seam:
-  - VeipWarrantSource (the warrant model and verifier live in
+  - Provider05WarrantSource (the warrant model and verifier live in
     ``src.gateway.governance.warrant``)
 """
 
@@ -34,7 +34,7 @@ from src.integrations.provider_05.client import (
 )
 from src.integrations.provider_05.key_provider import Provider05KeyProvider
 from src.integrations.provider_05.physics_provider import Provider05PhysicsProvider
-from src.integrations.provider_05.warrant_source import VeipWarrantSource
+from src.integrations.provider_05.warrant_source import Provider05WarrantSource
 
 __all__ = [
     "AdmissibilityGrant",
@@ -42,7 +42,7 @@ __all__ = [
     "Provider05Client",
     "Provider05KeyProvider",
     "Provider05PhysicsProvider",
+    "Provider05WarrantSource",
     "RiskAcceptanceRecord",
     "SubstrateAttestation",
-    "VeipWarrantSource",
 ]

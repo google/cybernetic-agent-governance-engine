@@ -40,7 +40,7 @@ logger = logging.getLogger("cage.integrations.provider_05.warrant_source")
 PROVIDER_NAME = "provider_05_warrant"
 
 
-class VeipWarrantSource:
+class Provider05WarrantSource:
     """Seeded VEIP warrant source implementing the kernel ``WarrantSource`` seam."""
 
     def __init__(self, endpoint: str = "") -> None:

@@ -16,7 +16,7 @@
 Unit tests for CAGE x Provider 05 Warrant Contract v0.1.
 
 Runs the first falsifiable test for min_trade_confidence = 0.97 through the
-seeded ``VeipWarrantSource`` and the kernel verifier. The schema and
+seeded ``Provider05WarrantSource`` and the kernel verifier. The schema and
 failure-matrix tests are vendor-neutral and live in
 ``tests/governance/test_warrant_kernel.py``.
   - Test A: ACTIVE warrant -> norm eligible -> ALLOW -> seal with warrant digest.
@@ -43,7 +43,7 @@ from src.gateway.governance.warrant import (
     WarrantStatus,
     bind_warrant_to_attestation,
 )
-from src.integrations.provider_05 import VeipWarrantSource
+from src.integrations.provider_05 import Provider05WarrantSource
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
@@ -79,7 +79,7 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
     sample_warrant: Warrant,
 ) -> None:
     """Test A - ACTIVE: Valid warrant attached -> CAGE evaluates 0.97 and seals evidence with warrant digest."""
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     source.seed(sample_warrant)
 
     # 1. Query warrant from Provider 05
@@ -156,7 +156,7 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
         residual_risk_ref=sample_warrant.residual_risk_ref,
     )
 
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     source.seed(revoked_warrant)
 
     # Query warrant

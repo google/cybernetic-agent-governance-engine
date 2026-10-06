@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-``WarrantSource`` seam conformance for ``VeipWarrantSource``.
+``WarrantSource`` seam conformance for ``Provider05WarrantSource``.
 
 Checks the seam contract (protocol shape, fail-closed ``None`` for MISSING,
 warrants returned exactly as issued) and replays the VEIP v0.1 vectors through
@@ -35,7 +35,7 @@ from src.gateway.governance.warrant import (
     Warrant,
     WarrantStandingVerifier,
 )
-from src.integrations.provider_05 import VeipWarrantSource
+from src.integrations.provider_05 import Provider05WarrantSource
 from tests.integrations.provider_05.test_provider_05_veip_vectors import (
     SHARED_CONTEXT,
     SHARED_WARRANT,
@@ -56,14 +56,14 @@ def _verify(warrant: Warrant | None, context: dict[str, Any]):
 
 
 def test_satisfies_warrant_source_protocol() -> None:
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     assert isinstance(source, WarrantSource)
     assert source.provider_name == "provider_05_warrant"
 
 
 @pytest.mark.asyncio
 async def test_unseeded_norm_is_missing() -> None:
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     warrant = await source.fetch(NORM_ID)
     assert warrant is None
     result = _verify(warrant, SHARED_CONTEXT)
@@ -75,7 +75,7 @@ async def test_configured_endpoint_still_fails_closed(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The HTTP path is unimplemented: an endpoint never yields a warrant."""
-    source = VeipWarrantSource(endpoint="https://veip.invalid/")
+    source = Provider05WarrantSource(endpoint="https://veip.invalid/")
     with caplog.at_level(logging.WARNING):
         assert await source.fetch(NORM_ID) is None
     assert "unimplemented" in caplog.text
@@ -86,13 +86,13 @@ async def test_endpoint_env_var_does_not_enable_fetch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PROVIDER_05_ATTESTATION_ENDPOINT", "https://veip.invalid")
-    assert await VeipWarrantSource().fetch(NORM_ID) is None
+    assert await Provider05WarrantSource().fetch(NORM_ID) is None
 
 
 @pytest.mark.asyncio
 async def test_fetch_returns_warrant_exactly_as_issued() -> None:
     issued = Warrant(**SHARED_WARRANT)
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     source.seed(issued)
     fetched = await source.fetch(NORM_ID)
     assert fetched is issued
@@ -103,7 +103,7 @@ async def test_fetch_returns_warrant_exactly_as_issued() -> None:
 @pytest.mark.asyncio
 async def test_reseed_replaces_current_warrant() -> None:
     """Issuer lifecycle: a revocation supersedes the active warrant."""
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     source.seed(Warrant(**SHARED_WARRANT))
     source.seed(
         Warrant(
@@ -125,7 +125,7 @@ async def test_reseed_replaces_current_warrant() -> None:
 async def test_veip_vectors_through_source(
     warrant: dict[str, Any], context: dict[str, Any], expected: RelianceStatus
 ) -> None:
-    source = VeipWarrantSource()
+    source = Provider05WarrantSource()
     source.seed(Warrant(**warrant))
     result = _verify(await source.fetch(warrant["norm_id"]), context)
     assert result.reliance_status == expected, result.reason

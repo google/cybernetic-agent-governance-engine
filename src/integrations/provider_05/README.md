@@ -14,7 +14,7 @@
 |---|---|
 | Protocol | [`AttestationProvider`](../../gateway/governance/attestation_provider.py:36) — **three** concrete subclasses, one per axiom |
 | Integration style | Out-of-band attestation, served from a **seeded in-memory store** |
-| Classes | `Provider05BlueprintProvider`, `Provider05KeyProvider`, `Provider05PhysicsProvider`, plus `Provider05Client` and `VeipWarrantSource` |
+| Classes | `Provider05BlueprintProvider`, `Provider05KeyProvider`, `Provider05PhysicsProvider`, plus `Provider05Client` and `Provider05WarrantSource` |
 | Status | Seeded / synthetic — the HTTP path is unimplemented (see below) |
 | Conformance suite | Not in `NORMATIVE_PROVIDERS` or `ATTESTATION_PROVIDERS`; covered separately by `test_attestation_providers_exist`, which instantiates `Provider05BlueprintProvider` ([`tests/test_normative_provider_conformance.py`](../../../tests/test_normative_provider_conformance.py:103)) |
 
@@ -30,7 +30,7 @@
 
 The warrant model, standing verifier and evidence binding are vendor-neutral
 kernel code in [`src/gateway/governance/warrant/`](../../gateway/governance/warrant/__init__.py).
-This package only supplies warrants: [`VeipWarrantSource`](warrant_source.py:43)
+This package only supplies warrants: [`Provider05WarrantSource`](warrant_source.py:43)
 implements the kernel [`WarrantSource`](../../gateway/governance/seams/warrant.py:43)
 seam. `fetch(norm_id)` returns the seeded warrant exactly as issued (declared
 digest included) or `None`, which the kernel verifier treats as
@@ -38,7 +38,7 @@ digest included) or `None`, which the kernel verifier treats as
 
 A fourth `attestation_type`, `WARRANT`, is emitted by the kernel's
 [`bind_warrant_to_attestation()`](../../gateway/governance/warrant/evidence.py:33),
-with `provider_name` taken from `VeipWarrantSource.provider_name`
+with `provider_name` taken from `Provider05WarrantSource.provider_name`
 (`provider_05_warrant`). Its status is always `UNVERIFIED`: the declared digest
 proves the warrant is internally consistent, not who issued it (issuer
 signatures are v0.2). Reliance eligibility travels in
@@ -73,7 +73,7 @@ carries two further enums, distinct from `AttestationStatus`:
 
 [`Provider05Client`](client.py:115) holds three in-memory dicts populated
 through `seed_risk_acceptance()`, `seed_admissibility_grant()`, and
-`seed_substrate_attestation()`. [`VeipWarrantSource`](warrant_source.py:43)
+`seed_substrate_attestation()`. [`Provider05WarrantSource`](warrant_source.py:43)
 holds warrants keyed by `norm_id`, populated through
 [`seed()`](warrant_source.py:56).
 
