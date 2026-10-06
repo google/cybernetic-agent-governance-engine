@@ -202,8 +202,9 @@ All imports and test mocks must use these canonical locations:
 - FTRA Action Reachability: `src.gateway.governance.ftra`
 - Evidence Stream & Cold Store: `src.gateway.governance.evidence.stream`, `src.gateway.governance.evidence.cold_store`
 
-### Observability: Langfuse Sovereign Telemetry vs. LangSmith
-- **Langfuse**: Standard runtime model observability and compliance telemetry tool. Self-hosted per region (`europe-west1`, `asia-southeast1`, `us-central1`) for sovereign data residency.
+### Observability: Langfuse Sovereign Telemetry, Prometheus, and LangSmith
+- **Langfuse**: Standard runtime model observability and compliance trace telemetry tool. Self-hosted per region (`europe-west1`, `asia-southeast1`, `us-central1`) for sovereign data residency.
+- **Prometheus (GKE Managed Prometheus)**: Operational, safety-gate, and evidence-pipeline health telemetry (NIST SP 800-53 AU-12 via `monitoring_config.managed_prometheus` in [`infra/modules/gcp_gke_cluster/main.tf`](infra/modules/gcp_gke_cluster/main.tf), scraped via [`deployment/k8s/gateway-servicemonitor.yaml`](deployment/k8s/gateway-servicemonitor.yaml) and validated by [`compliance/lula/lula-validation-metrics.yaml`](compliance/lula/lula-validation-metrics.yaml)). Python collectors in `src/gateway/` and `src/compliance_bridge/` use `prometheus_client` optionally and degrade to no-ops when absent; ClickHouse exposes aggregated evidence-pipeline metrics via `cage_evidence.v_prometheus_metrics` ([`deployment/clickhouse/evidence_stream_schema.sql`](deployment/clickhouse/evidence_stream_schema.sql)).
 - **LangSmith**: Transitively present via `langchain-core` / `langgraph`. **LangSmith is strictly forbidden in CAGE application code.** Tracing is explicitly disabled across manifests and tests via `LANGSMITH_TRACING=false` and `LANGCHAIN_TRACING_V2=false`.
 
 ### External Vendor Adapter Standards (Plugin Architecture)

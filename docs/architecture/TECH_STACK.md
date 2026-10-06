@@ -90,6 +90,7 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 | `opentelemetry-exporter-otlp-proto-grpc`  | Apache-2.0 | Direct OTLP export to Langfuse (collector deprecated 2026-05-31)      |
 | `opentelemetry-instrumentation-fastapi`   | Apache-2.0 | Automatic HTTP span generation for inbound gateway requests           |
 | `opentelemetry-instrumentation-langchain` | Apache-2.0 | Automatic trace propagation across LangChain and LangGraph executions |
+| `prometheus-client`                       | Apache-2.0 | Operational, CBF safety-gate, FTRA, rate-limiter, and evidence-pipeline Prometheus collectors (gracefully degrades to no-op when absent) |
 
 ### 4.5 Data Validation & Serialization
 
@@ -255,6 +256,7 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 | ----------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | **Distributed Tracing** | OpenTelemetry SDK            | Direct OTLP/HTTP export to Langfuse (`http://langfuse-web:3000/api/public/otel/v1/traces`); auto-instrumentation          |
 | **Compliance Metrics**  | Langfuse                     | Dual-project setup; sovereign regional telemetry instances (`us-central1`, `europe-west1`, `asia-southeast1`)               |
+| **Operational & Safety Metrics** | Prometheus / GKE Managed Prometheus (GMP) | NIST SP 800-53 AU-12 (`monitoring_config.managed_prometheus` in [`infra/modules/gcp_gke_cluster/main.tf`](../../infra/modules/gcp_gke_cluster/main.tf)); `/metrics` scrape via [`deployment/k8s/gateway-servicemonitor.yaml`](../../deployment/k8s/gateway-servicemonitor.yaml) validated by [`compliance/lula/lula-validation-metrics.yaml`](../../compliance/lula/lula-validation-metrics.yaml); covers CBF safety/replication, FTRA boundary checks, MCP rate limiting, evidence stream/custody/verification, and ClickHouse `cage_evidence.v_prometheus_metrics` (2-year operational TTL) |
 | **Real-time Events**    | Server-Sent Events (SSE)     | `GovernanceEventBus`; `asyncio.Queue(maxsize=128)` back-pressure                                                          |
 | **Kernel Monitoring**   | eBPF DaemonSet (AgentSight)  | OpenSSL uprobes; syscall interception; `python3` process targeting                                                         |
 | **Sampling**            | 1% general / 100% governance | All governance decisions sampled at 100%; general traces sampled at 1%                                                     |
