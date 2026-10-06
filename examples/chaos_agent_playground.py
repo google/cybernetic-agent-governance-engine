@@ -120,12 +120,15 @@ _THRESH_PATH = _REPO_ROOT / "config" / "governance_thresholds.json"
 with open(_THRESH_PATH) as _fh:
     _RAW = json.load(_fh)
 
-_MAX_LATENCY_MS: float = _RAW["stpa"]["max_latency_ms"]  # 200.0
-_DRAWDOWN_LIMIT: float = _RAW["stpa"]["uca5_drawdown_threshold_pct"]  # 4.5
-_MIN_CONFIDENCE: float = _RAW["confidence"]["min_trade_confidence"]  # 0.95
-_CONSENSUS_USD: float = _RAW["consensus"]["threshold_usd"]  # 10000.0
+# Finance limits live under domains.finance (the finance plugin's sections);
+# the confidence floor is the universal band's ALLOW floor.
+_FINANCE = _RAW["domains"]["finance"]
+_MAX_LATENCY_MS: float = _FINANCE["stpa"]["max_latency_ms"]  # 200.0
+_DRAWDOWN_LIMIT: float = _FINANCE["stpa"]["uca5_drawdown_threshold_pct"]  # 4.5
+_MIN_CONFIDENCE: float = _RAW["confidence"]["agent_threshold"]  # 0.95
+_CONSENSUS_USD: float = _FINANCE["consensus"]["threshold_usd"]  # 10000.0
 _TIER1_KEYWORDS: list[str] = _RAW.get("tier1_keywords", [])
-_MIN_CASH: float = _RAW["cbf"]["min_cash_balance"]  # 1000.0
+_MIN_CASH: float = _FINANCE["cbf"]["min_cash_balance"]  # 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -1002,6 +1005,9 @@ def main() -> int:
         print(f"  {'ID':<4} {'Expected':<15} {'Actual':<15} {'Result':<12} {'Latency'}")
         _bar()
         for r in saga_results:
+            if "error" in r:  # saga nodes failed to load; nothing ran
+                print(f"  {r['scenario']:<4} {RED('UNAVAILABLE ✗')}  {r['error']}")
+                continue
             status_str = GREEN("CORRECT ✓") if r["passed"] else RED("UNEXPECTED ✗")
             print(
                 f"  {r['scenario']:<4} {r['expected_status']:<15} "
