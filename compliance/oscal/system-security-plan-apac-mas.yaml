@@ -17,7 +17,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-06-15T00:00:00Z'
+    last-modified: '2026-10-06T00:00:00Z'
     version: 1.0.0-draft
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls
@@ -194,9 +194,14 @@ system-security-plan:
       type: software
       title: CAGE MAS TRM §6.3 AI Controls
       description: 'MAS TRM Guidelines §6.3 AI and Machine Learning Controls
-        implemented via the AI governance framework. Confidence threshold 0.96
-        (APAC_MAS_BASELINE.json), human-in-the-loop for decisions above SGD
-        11,500 / USD 8,500, model performance monitoring with drift detection.'
+        implemented via the AI governance framework. Since commit ecca70b9 the
+        0.96 trade-confidence floor (APAC_MAS_BASELINE.json
+        domains.finance.confidence.min_trade_confidence) is enforced for trade
+        execution by src/cage_finance/tiers/trade_confidence_tier.py, and trades
+        above domains.finance.consensus.threshold_usd = 8500.0 (SGD 11,500 /
+        USD 8,500 equivalent) require multi-model critic consensus
+        (src/cage_finance/tiers/consensus_tier.py). Model performance monitoring
+        with drift detection.'
       purpose: 'Satisfies MAS TRM §6.3 AI governance framework, model risk
         management, and §4.2 data residency requirements.'
       status:
@@ -216,6 +221,51 @@ system-security-plan:
       - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
         rel: lula
         text: 'Lula validation: MAS TRM §6.3 AI Controls'
+    - uuid: apac-mas-comp-0004-4000-8000-000000000004
+      type: software
+      title: CAGE Regional Finance Threshold Overlay and Trade-Confidence Tier
+      description: 'Since commit ecca70b9, load_and_validate_thresholds()
+        (src/gateway/governance/schemas/thresholds.py) deep-merges the domains
+        object of config/thresholds/APAC_MAS_BASELINE.json onto the global
+        domains sections of config/governance_thresholds.json
+        (src/gateway/governance/schemas/regional_overlay.py) when
+        CAGE_DEPLOYMENT_REGION=APAC_MAS. The finance plugin
+        (src/cage_finance/plugin.py) builds its CashBarrier, bounding contracts
+        and trade_confidence tier from the effective domains.finance section,
+        and the CBF, STPA and consensus readers resolve the same effective
+        values through THRESHOLDS.resolve(). Before ecca70b9 these APAC_MAS
+        values were declared in the baseline file but not read; APAC_MAS ran on
+        the global (US_FED) values.'
+      purpose: 'Applies the APAC_MAS configuration settings (NIST SP 800-53
+        CM-6) and the regional agentic confidence floor (CTRL_AGT_001) to the
+        governor pipeline, failing closed when they cannot be applied.'
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: compliance-engineer
+      props:
+      - name: applicable-regions
+        value: APAC_MAS
+      - name: min-trade-confidence
+        value: '0.96'
+      - name: cbf-gamma
+        value: '0.55'
+      - name: drawdown-limit
+        value: '0.045'
+      - name: consensus-threshold-usd
+        value: '8500.0'
+      - name: remediation-commit
+        value: ecca70b9
+      links:
+      - href: ../../config/thresholds/APAC_MAS_BASELINE.json
+        rel: reference
+        text: APAC_MAS regional threshold baseline (domains.finance overlay)
+      - href: ../../src/gateway/governance/schemas/regional_overlay.py
+        rel: reference
+        text: Fail-closed regional overlay
+      - href: ../../src/cage_finance/tiers/trade_confidence_tier.py
+        rel: reference
+        text: TradeConfidenceTier (CTRL_AGT_001)
   control-implementation:
     description: 'CAGE APAC_MAS compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -271,9 +321,12 @@ system-security-plan:
           text: Lula automated validation for MAS Notice 655
     - uuid: apac-mas-req-0003-4000-8000-000000000003
       control-id: mas-trm-s6
-      description: 'MAS TRM §6.3 AI governance framework implemented. Confidence
-        threshold 0.96, HITL for high-impact decisions, model monitoring active.
-        Data residency confirmed within asia-southeast1.'
+      description: 'MAS TRM §6.3 AI governance framework. The 0.96 confidence
+        floor is enforced for trade execution since commit ecca70b9 (see the
+        ctrl-agt-001 requirement below). The compliance-bridge evidence endpoint
+        asserted by the Lula manifest (/v1/compliance/mas/trm-s6) is not yet
+        implemented (APAC-MAS-TRM-001). Data residency within asia-southeast1 is
+        a deployment requirement.'
       props:
       - name: implementation-status
         value: under-development
@@ -292,6 +345,86 @@ system-security-plan:
         - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
           rel: reference
           text: Lula automated validation for MAS TRM §6.3
+    - uuid: apac-mas-req-0004-4000-8000-000000000004
+      control-id: cm-6
+      description: 'Configuration settings (NIST SP 800-53 CM-6). The effective
+        APAC_MAS domains.finance values, enforced since commit ecca70b9, are:
+        CBF gamma 0.55 (CashBarrier(gamma=...) in src/cage_finance/plugin.py);
+        drawdown.limit 0.045 (bounding contract B2,
+        src/cage_finance/safety/bounding/contracts.py); consensus.threshold_usd
+        8500.0 (multi-model consensus above this amount,
+        src/cage_finance/tiers/consensus_tier.py); STPA UCA-5 drawdown
+        4.0%, UCA-6 order-volume fraction 0.008 and FIN-2 /
+        UCA-2 latency 175 ms (src/cage_finance/stpa/uca_rules.py).
+        The overlay fails closed: a missing or malformed APAC_MAS_BASELINE.json,
+        a regional section with no global counterpart, or a shape change aborts
+        threshold loading; an unknown or invalid key fails governor assembly
+        (src/cage_finance/thresholds.py); and assemble_governor()
+        (src/gateway/governance/governor/assembly.py) refuses to assemble when
+        the thresholds region differs from the jurisdiction region. FIN-1
+        stpa.max_sell_portfolio_fraction (0.09) is overlaid and
+        schema-validated but no runtime rule reads it in any region; tracked as
+        POAM-2026-103. The consensus threshold is configured in the key threshold_usd and documented in
+        APAC_MAS_BASELINE.json as a SGD 11,500 / USD 8,500 equivalent.'
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: regulatory-citation
+        value: NIST SP 800-53 Rev 5 CM-6 (Configuration Settings)
+      - name: applicable-regions
+        value: APAC_MAS
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: apac-mas-comp-0004-4000-8000-000000000004
+        uuid: apac-mas-bycomp-0004-4000-8000-000000000004
+        description: 'Each fail-closed path and the effective APAC_MAS values
+          are observed in tests/governor/test_regional_overlay.py
+          (test_effective_finance_values_per_region,
+          test_region_mismatch_fails_assembly,
+          test_unknown_regional_key_fails_assembly,
+          test_missing_regional_file_fails_closed). Remediation recorded as
+          POAM-2026-102 in docs/POAM.md.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../tests/governor/test_regional_overlay.py
+          rel: reference
+          text: Regional overlay fail-closed tests
+    - uuid: apac-mas-req-0005-4000-8000-000000000005
+      control-id: ctrl-agt-001
+      description: 'CTRL_AGT_001 regional agentic confidence floor. Since commit
+        ecca70b9 the finance trade_confidence tier
+        (src/cage_finance/tiers/trade_confidence_tier.py, phase 1, order 1)
+        refuses execute_trade and execute_trade_bounded when the confidence
+        score is below the effective
+        domains.finance.confidence.min_trade_confidence of 0.96: a
+        score at or above the universal defer floor requires human approval
+        (HITL), a lower score defers, and a missing or malformed score is a
+        HARD violation. The kernel ConfidenceStage still enforces the universal
+        confidence band (0.95) for every action.'
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: cage-control-id
+        value: CTRL_AGT_001
+      - name: applicable-regions
+        value: APAC_MAS
+      responsible-roles:
+      - role-id: ai-model-operator
+      by-components:
+      - component-uuid: apac-mas-comp-0004-4000-8000-000000000004
+        uuid: apac-mas-bycomp-0005-4000-8000-000000000005
+        description: 'Verified by tests/cage_finance/test_trade_confidence_tier.py
+          (test_plugin_wires_the_effective_floor_and_gamma) and
+          tests/governor/test_jurisdiction_wiring.py (trade_confidence tier
+          present in the assembled pipeline).'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../tests/cage_finance/test_trade_confidence_tier.py
+          rel: reference
+          text: TradeConfidenceTier tests
   back-matter:
     resources:
     - uuid: apac-mas-res-0001-4000-8000-000000000001

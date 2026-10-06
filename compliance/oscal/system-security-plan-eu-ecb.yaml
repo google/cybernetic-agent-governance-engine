@@ -17,7 +17,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-06-15T00:00:00Z'
+    last-modified: '2026-10-06T00:00:00Z'
     version: 1.0.0-draft
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls
@@ -166,8 +166,11 @@ system-security-plan:
       title: CAGE GDPR Art. 22 Human Oversight Controls
       description: 'GDPR Art. 22 human oversight implemented via the DEFER
         State Machine (defer_queue.py) and HITL escalator (hitl_escalator.py).
-        EU_ECB consensus threshold of EUR 7,500 ensures more decisions receive
-        human review than the US_FED baseline.'
+        Since commit ecca70b9 trades above the EU_ECB consensus threshold
+        (domains.finance.consensus.threshold_usd = 7500.0, documented as a
+        EUR 7,500 equivalent; global value 10,000) require multi-model critic
+        consensus (src/cage_finance/tiers/consensus_tier.py); before ecca70b9
+        the global value applied in EU_ECB.'
       purpose: 'Satisfies GDPR Art. 22(2)(b) safeguards for automated individual
         decision-making with legal or similarly significant effects.'
       status:
@@ -233,6 +236,51 @@ system-security-plan:
       - href: ../../compliance/lula/lula-validation-eu-fria.yaml
         rel: lula
         text: 'Lula validation: EU AI Act Art. 27 FRIA'
+    - uuid: eu-ecb-comp-0005-4000-8000-000000000005
+      type: software
+      title: CAGE Regional Finance Threshold Overlay and Trade-Confidence Tier
+      description: 'Since commit ecca70b9, load_and_validate_thresholds()
+        (src/gateway/governance/schemas/thresholds.py) deep-merges the domains
+        object of config/thresholds/EU_ECB_BASELINE.json onto the global
+        domains sections of config/governance_thresholds.json
+        (src/gateway/governance/schemas/regional_overlay.py) when
+        CAGE_DEPLOYMENT_REGION=EU_ECB. The finance plugin
+        (src/cage_finance/plugin.py) builds its CashBarrier, bounding contracts
+        and trade_confidence tier from the effective domains.finance section,
+        and the CBF, STPA and consensus readers resolve the same effective
+        values through THRESHOLDS.resolve(). Before ecca70b9 these EU_ECB
+        values were declared in the baseline file but not read; EU_ECB ran on
+        the global (US_FED) values.'
+      purpose: 'Applies the EU_ECB configuration settings (NIST SP 800-53
+        CM-6) and the regional agentic confidence floor (CTRL_AGT_001) to the
+        governor pipeline, failing closed when they cannot be applied.'
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: compliance-engineer
+      props:
+      - name: applicable-regions
+        value: EU_ECB
+      - name: min-trade-confidence
+        value: '0.97'
+      - name: cbf-gamma
+        value: '0.6'
+      - name: drawdown-limit
+        value: '0.04'
+      - name: consensus-threshold-usd
+        value: '7500.0'
+      - name: remediation-commit
+        value: ecca70b9
+      links:
+      - href: ../../config/thresholds/EU_ECB_BASELINE.json
+        rel: reference
+        text: EU_ECB regional threshold baseline (domains.finance overlay)
+      - href: ../../src/gateway/governance/schemas/regional_overlay.py
+        rel: reference
+        text: Fail-closed regional overlay
+      - href: ../../src/cage_finance/tiers/trade_confidence_tier.py
+        rel: reference
+        text: TradeConfidenceTier (CTRL_AGT_001)
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -339,6 +387,86 @@ system-security-plan:
         - href: ../../compliance/lula/lula-validation-eu-fria.yaml
           rel: reference
           text: Lula automated validation for EU AI Act Art. 27
+    - uuid: eu-ecb-req-0005-4000-8000-000000000005
+      control-id: cm-6
+      description: 'Configuration settings (NIST SP 800-53 CM-6). The effective
+        EU_ECB domains.finance values, enforced since commit ecca70b9, are:
+        CBF gamma 0.6 (CashBarrier(gamma=...) in src/cage_finance/plugin.py);
+        drawdown.limit 0.04 (bounding contract B2,
+        src/cage_finance/safety/bounding/contracts.py); consensus.threshold_usd
+        7500.0 (multi-model consensus above this amount,
+        src/cage_finance/tiers/consensus_tier.py); STPA UCA-5 drawdown
+        3.5%, UCA-6 order-volume fraction 0.005 and FIN-2 /
+        UCA-2 latency 150 ms (src/cage_finance/stpa/uca_rules.py).
+        The overlay fails closed: a missing or malformed EU_ECB_BASELINE.json,
+        a regional section with no global counterpart, or a shape change aborts
+        threshold loading; an unknown or invalid key fails governor assembly
+        (src/cage_finance/thresholds.py); and assemble_governor()
+        (src/gateway/governance/governor/assembly.py) refuses to assemble when
+        the thresholds region differs from the jurisdiction region. FIN-1
+        stpa.max_sell_portfolio_fraction (0.08) is overlaid and
+        schema-validated but no runtime rule reads it in any region; tracked as
+        POAM-2026-103. The consensus threshold is configured in the key threshold_usd and documented in
+        EU_ECB_BASELINE.json as a EUR 7,500 equivalent.'
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: regulatory-citation
+        value: NIST SP 800-53 Rev 5 CM-6 (Configuration Settings)
+      - name: applicable-regions
+        value: EU_ECB
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: eu-ecb-comp-0005-4000-8000-000000000005
+        uuid: eu-ecb-bycomp-0005-4000-8000-000000000005
+        description: 'Each fail-closed path and the effective EU_ECB values
+          are observed in tests/governor/test_regional_overlay.py
+          (test_effective_finance_values_per_region,
+          test_region_mismatch_fails_assembly,
+          test_unknown_regional_key_fails_assembly,
+          test_missing_regional_file_fails_closed). Remediation recorded as
+          POAM-2026-102 in docs/POAM.md.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../tests/governor/test_regional_overlay.py
+          rel: reference
+          text: Regional overlay fail-closed tests
+    - uuid: eu-ecb-req-0006-4000-8000-000000000006
+      control-id: ctrl-agt-001
+      description: 'CTRL_AGT_001 regional agentic confidence floor. Since commit
+        ecca70b9 the finance trade_confidence tier
+        (src/cage_finance/tiers/trade_confidence_tier.py, phase 1, order 1)
+        refuses execute_trade and execute_trade_bounded when the confidence
+        score is below the effective
+        domains.finance.confidence.min_trade_confidence of 0.97: a
+        score at or above the universal defer floor requires human approval
+        (HITL), a lower score defers, and a missing or malformed score is a
+        HARD violation. The kernel ConfidenceStage still enforces the universal
+        confidence band (0.95) for every action.'
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: cage-control-id
+        value: CTRL_AGT_001
+      - name: applicable-regions
+        value: EU_ECB
+      responsible-roles:
+      - role-id: ai-model-operator
+      by-components:
+      - component-uuid: eu-ecb-comp-0005-4000-8000-000000000005
+        uuid: eu-ecb-bycomp-0006-4000-8000-000000000006
+        description: 'Verified by tests/cage_finance/test_trade_confidence_tier.py
+          (test_plugin_wires_the_effective_floor_and_gamma) and
+          tests/governor/test_jurisdiction_wiring.py (trade_confidence tier
+          present in the assembled pipeline).'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../tests/cage_finance/test_trade_confidence_tier.py
+          rel: reference
+          text: TradeConfidenceTier tests
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001
