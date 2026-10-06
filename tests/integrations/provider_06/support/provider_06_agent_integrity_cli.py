@@ -29,7 +29,6 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-BASE_COMMIT = "364e91b8164584062b434d72ee31719fa75d1a7b"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/project"
 ARTIFACT_PATH = (
@@ -37,6 +36,11 @@ ARTIFACT_PATH = (
     / "artifacts/provider_06_agent_integrity_conformance_result.json"
 )
 PROSE_PATH = REPO_ROOT / "docs/partners/provider_06/CONFORMANCE_RESULT.md"
+# Reviewed pin of the protected files. Changing any protected byte requires a
+# deliberate, reviewed edit of this manifest (a re-attestation) in the same PR.
+PROTECTED_BASELINE_PATH = (
+    Path(__file__).resolve().parents[1] / "protected_baseline.json"
+)
 AGENT_INTEGRITY_ROOT = REPO_ROOT / "third_party/agent-integrity"
 CLI_PATH = AGENT_INTEGRITY_ROOT / "packages/cli/dist/cli.js"
 PROTECTED_PATHS = (
@@ -49,10 +53,42 @@ PROTECTED_PATHS = (
 _MAX_OUTPUT_BYTES = 128 * 1024
 _BUILD_TIMEOUT_SECONDS = 180
 _VERIFY_TIMEOUT_SECONDS = 30
-_GENERATOR_VERSION = 1
+_GENERATOR_VERSION = 2
 _BUILD_LOCK_PATH = (
     Path(tempfile.gettempdir()) / "cage-provider-06-agent-integrity-build.lock"
 )
+
+
+@dataclass(frozen=True)
+class ProtectedBaseline:
+    """Reviewed SHA-256 pin of ``PROTECTED_PATHS`` plus its upstream provenance."""
+
+    upstream_base_commit: str
+    protected_files: dict[str, str]
+    repinned_paths: frozenset[str]
+    manifest_sha256: str
+
+
+def load_protected_baseline(path: Path = PROTECTED_BASELINE_PATH) -> ProtectedBaseline:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if raw.get("schemaVersion") != 1:
+        raise RuntimeError("unsupported protected baseline schemaVersion")
+    upstream = raw["upstreamBaseCommit"]
+    files = raw["protectedFiles"]
+    if not isinstance(upstream, str) or not isinstance(files, dict):
+        raise RuntimeError("malformed protected baseline manifest")
+    repinned: set[str] = set()
+    for repin in raw.get("repins", []):
+        paths = repin.get("paths")
+        if not isinstance(paths, list) or not repin.get("reason"):
+            raise RuntimeError("every re-pin must list paths and a reason")
+        repinned.update(paths)
+    return ProtectedBaseline(
+        upstream_base_commit=upstream,
+        protected_files=dict(files),
+        repinned_paths=frozenset(repinned),
+        manifest_sha256=_sha256(path),
+    )
 
 
 @dataclass(frozen=True)
@@ -357,8 +393,9 @@ def generate_conformance_artifact(output_path: Path | None = None) -> dict[str, 
             )
     agent_tree = _git("rev-parse", "HEAD:third_party/agent-integrity")
     protected = {path: _sha256(REPO_ROOT / path) for path in PROTECTED_PATHS}
+    baseline = load_protected_baseline()
     artifact: dict[str, object] = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "experiment": "provider-06-agent-integrity-verification-conformance",
         "verdict": "PASS" if all(item["passed"] for item in scenarios) else "FAIL",
         "requiredScenariosPassed": sum(bool(item["passed"]) for item in scenarios),
@@ -367,8 +404,9 @@ def generate_conformance_artifact(output_path: Path | None = None) -> dict[str, 
         "protectedFiles": protected,
         "provenance": {
             "generatorVersion": _GENERATOR_VERSION,
-            "cageBase": BASE_COMMIT,
-            "cageEvidenceBinding": "fixed-base-plus-protected-file-sha256",
+            "cageBase": baseline.upstream_base_commit,
+            "cageEvidenceBinding": "pinned-manifest-plus-protected-file-sha256",
+            "protectedBaselineSha256": baseline.manifest_sha256,
             "agentIntegrityTree": agent_tree,
             "agentIntegrityPackageLockSha256": _sha256(
                 AGENT_INTEGRITY_ROOT / "package-lock.json"
