@@ -260,16 +260,18 @@ def _assemble_with_overlay(
         update={"domains": overlay_domains(base.domains, {"finance": regional_finance})}
     )
     assert isinstance(effective, GovernanceThresholds)
-    monkeypatch.setattr(
-        thresholds_module, "load_and_validate_thresholds", lambda *a, **k: effective
-    )
+    monkeypatch.setattr(thresholds_module, "THRESHOLDS", effective)
+    return _assemble(resolve_jurisdiction("US_FED"))
+
+
+def _assemble(jurisdiction: Any = None) -> Any:
     return assemble_governor(
         [_SectionPlugin()],
         posture=DeploymentPosture.TEST,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
         flags=DecisionFlags(defer=False, narrow=False),
-        jurisdiction=resolve_jurisdiction("US_FED"),
+        jurisdiction=jurisdiction,
     )
 
 
@@ -311,3 +313,45 @@ def test_valid_regional_override_assembles(monkeypatch: pytest.MonkeyPatch) -> N
         monkeypatch, {"confidence": {"min_trade_confidence": 0.99}}
     )
     assert governor is not None
+
+
+# ── Fail closed at assembly on a thresholds/jurisdiction region mismatch ─────
+
+_REGIONS = ("APAC_MAS", "EU_ECB", "US_FED")
+
+
+@pytest.mark.parametrize(
+    ("thresholds_region", "jurisdiction_region"),
+    [(t, j) for t in _REGIONS for j in _REGIONS if t != j],
+)
+def test_region_mismatch_fails_assembly(
+    monkeypatch: pytest.MonkeyPatch, thresholds_region: str, jurisdiction_region: str
+) -> None:
+    """An EU jurisdiction must never assemble on another region's limits."""
+    monkeypatch.setattr(
+        thresholds_module,
+        "THRESHOLDS",
+        load_and_validate_thresholds(region=thresholds_region),
+    )
+    with pytest.raises(GovernorAssemblyError, match="region mismatch") as exc:
+        _assemble(resolve_jurisdiction(jurisdiction_region))
+    assert thresholds_region in str(exc.value)
+    assert jurisdiction_region in str(exc.value)
+
+
+@pytest.mark.parametrize("region", _REGIONS)
+def test_matching_explicit_region_assembles(
+    monkeypatch: pytest.MonkeyPatch, region: str
+) -> None:
+    monkeypatch.setattr(
+        thresholds_module, "THRESHOLDS", load_and_validate_thresholds(region=region)
+    )
+    governor = _assemble(resolve_jurisdiction(region))
+    assert governor.components.jurisdiction.region == region
+
+
+def test_default_jurisdiction_matches_pinned_region(each_region: str) -> None:
+    """``jurisdiction=None`` resolves the active region, which the thresholds share."""
+    assert thresholds_module.THRESHOLDS.region == each_region
+    governor = _assemble()
+    assert governor.components.jurisdiction.region == each_region

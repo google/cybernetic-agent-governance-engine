@@ -145,6 +145,17 @@ def _assemble(
     )
 
 
+def _use_region_thresholds(monkeypatch: pytest.MonkeyPatch, region: str) -> None:
+    """Load ``region``'s effective thresholds; assembly refuses a region mismatch."""
+    from src.gateway.governance.schemas import thresholds as thresholds_module
+
+    monkeypatch.setattr(
+        thresholds_module,
+        "THRESHOLDS",
+        thresholds_module.load_and_validate_thresholds(region=region),
+    )
+
+
 def _domain_stage_names(governor: SymbolicGovernor) -> list[str]:
     return [s.name for s in governor.stages if isinstance(s, DomainTierStage)]
 
@@ -165,7 +176,10 @@ def test_non_eu_regions_contribute_no_tiers_or_requirements(region: str) -> None
 
 
 @pytest.mark.parametrize("region", ["US_FED", "APAC_MAS"])
-def test_non_eu_governor_has_no_fria_tier(region: str) -> None:
+def test_non_eu_governor_has_no_fria_tier(
+    monkeypatch: pytest.MonkeyPatch, region: str
+) -> None:
+    _use_region_thresholds(monkeypatch, region)
     governor = _assemble(jurisdiction=resolve_jurisdiction(region))
     assert "fria" not in governor.registered_tier_names()
     assert "fria" not in _domain_stage_names(governor)
@@ -180,7 +194,10 @@ def test_default_test_region_resolves_without_fria() -> None:
     assert "fria" not in governor.registered_tier_names()
 
 
-def test_eu_governor_runs_fria_once_in_phase_one_after_causal() -> None:
+def test_eu_governor_runs_fria_once_in_phase_one_after_causal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_region_thresholds(monkeypatch, "EU_ECB")
     governor = _assemble(jurisdiction=eu_ai_act.contribution(provider=_FakeProvider()))  # type: ignore[arg-type]
     names = _domain_stage_names(governor)
     assert names.count("fria") == 1
@@ -213,8 +230,11 @@ def test_reconfigure_reports_the_region_it_loaded() -> None:
     )
 
 
-def test_eu_region_resolves_to_fria_through_control_registry() -> None:
+def test_eu_region_resolves_to_fria_through_control_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ControlRegistry.reconfigure("EU_ECB")  # restored by the conftest fixture
+    _use_region_thresholds(monkeypatch, "EU_ECB")
     governor = _assemble()
     assert governor.components.jurisdiction is not None
     assert governor.components.jurisdiction.region == "EU_ECB"
