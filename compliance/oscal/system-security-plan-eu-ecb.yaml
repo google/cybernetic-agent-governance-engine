@@ -404,9 +404,10 @@ system-security-plan:
         (src/cage_finance/thresholds.py); and assemble_governor()
         (src/gateway/governance/governor/assembly.py) refuses to assemble when
         the thresholds region differs from the jurisdiction region. FIN-1
-        stpa.max_sell_portfolio_fraction (0.08) is overlaid and
-        schema-validated but no runtime rule reads it in any region; tracked as
-        POAM-2026-103. The consensus threshold is configured in the key threshold_usd and documented in
+        stpa.max_sell_portfolio_fraction (0.08) is enforced by UCA-13
+        (src/cage_finance/stpa/uca_rules.py): a sell whose amount exceeds this
+        fraction of portfolio_total, or that lacks a numeric amount or
+        portfolio_total, is a HARD STPA violation (POAM-2026-103 closed). The consensus threshold is configured in the key threshold_usd and documented in
         EU_ECB_BASELINE.json as a EUR 7,500 equivalent.'
       props:
       - name: implementation-status

@@ -237,7 +237,7 @@ The STPA (Systems-Theoretic Process Analysis) ontology defines Unsafe Control Ac
 
 | UCA ID | Inequality Condition | Hazard Description |
 |--------|---------------------|--------------------|
-| **FIN-1** | `trade_value > position_limit` | Trade value exceeds the authorised position limit — unsafe control action |
+| **FIN-1** | `side == sell` and `amount > stpa.max_sell_portfolio_fraction × portfolio_total` (10%; EU_ECB 8%, APAC_MAS 9%) | Sell exceeds the permitted portfolio fraction, or lacks `amount`/`portfolio_total` — STPA Violation (UCA-13) |
 | **FIN-2** | `portfolio_concentration > 0.25` | Single-asset concentration exceeds 25% of portfolio — unsafe control action |
 
 ### General UCAs (UCA-*)

@@ -166,7 +166,7 @@ class TradingKnowledgeGraph:
 
         self.add_constraint(
             Constraint(
-                id="FIN-1",
+                id="FIN-3",
                 description="Sell volume cannot exceed current portfolio holdings (No Naked Shorts).",
                 logic="sell_amount <= current_holdings",
                 scope=["execute_sell"],

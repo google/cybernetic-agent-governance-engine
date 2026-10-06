@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-06T23:42:42Z'
+    last-modified: '2026-10-06T23:56:17Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1041,9 +1041,12 @@ system-security-plan:
         refuses to assemble when the thresholds region differs from the jurisdiction
         region. For US_FED the regional overlay sets only domains.finance.confidence.min_trade_confidence
         = 0.95, equal to the universal confidence band, so US_FED effective values
-        are the global values. Kubernetes ConfigMaps and Cloud Secret Manager provide
-        the configuration injection mechanism. IaC (Terraform) manages infrastructure
-        configuration in version-controlled HCL.
+        are the global values. The generated finance STPA rules (src/cage_finance/stpa/uca_rules.py)
+        read the effective values: UCA-2/FIN-2 latency, UCA-5 drawdown, UCA-6 order-volume
+        fraction and UCA-13/FIN-1 sell fraction (US_FED 0.10; a sell lacking a numeric
+        amount or portfolio_total fails closed). Kubernetes ConfigMaps and Cloud Secret
+        Manager provide the configuration injection mechanism. IaC (Terraform) manages
+        infrastructure configuration in version-controlled HCL.
 
         '
       props:
@@ -1279,14 +1282,14 @@ system-security-plan:
         \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
         \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
         \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
-        \    (OPA Rego — 6 UCAs)\n            - config/rails/generated_stpa_rails.co\
+        \    (OPA Rego — 7 UCAs)\n            - config/rails/generated_stpa_rails.co\
         \     (NeMo Colang — 4 UCAs)\n            - src/gateway/governance/stpa_validator.py\
-        \ (Python — 7 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (Python — 8 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
         \ (Sandbox — 1 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
-        \ 11\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-06T23:42:42Z\n\n          UCA-to-Control mapping\
+        \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
+        \       Last compiled: 2026-10-06T23:56:17Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1299,35 +1302,38 @@ system-security-plan:
         \ the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and\
         \ the request parks for human approval, as an irreversible action would.\n\
         \  → NIST: ac-3 (Access Enforcement), sa-11 (Developer Testing and Evaluation)\n\
-        UCA-2 (wrong_timing): Agent executes trade with stale market data (latency\
-        \ > threshold).\n  → NIST: cm-6 (Configuration Settings), sa-11 (Developer\
-        \ Testing and Evaluation)\nUCA-3 (unsafe_action): Agent outputs PII to user\
-        \ interface.\n  → NIST: ac-3 (Access Enforcement), sc-28 (Protection of Information\
-        \ at Rest)\nUCA-4 (stopped_too_soon): Agent debits account but fails to credit\
-        \ asset (atomic failure).\n  → NIST: si-7 (Software, Firmware, and Information\
-        \ Integrity), au-10 (Non-Repudiation)\nUCA-5 (unsafe_action): Agent executes\
-        \ buy order when daily drawdown exceeds limit.\n  → NIST: ac-3 (Access Enforcement),\
-        \ sc-4 (Information in Shared System Resources / Fiscal Limits)\nUCA-6 (wrong_timing):\
-        \ Agent submits market order exceeding allowable fraction of daily volume.\n\
-        \  → NIST: sc-4 (Information in Shared System Resources / Fiscal Limits),\
-        \ si-3 (Malicious Code Protection)\nUCA-7 (unsafe_action): Adversarial prompt\
-        \ injection score exceeds detection threshold.\n  → NIST: sc-4 (Information\
+        UCA-13 (unsafe_action): Agent executes sell order exceeding the allowable\
+        \ fraction of portfolio value.\n  → NIST: sc-4 (Information in Shared System\
+        \ Resources / Fiscal Limits), cm-6 (Configuration Settings)\nUCA-2 (wrong_timing):\
+        \ Agent executes trade with stale market data (latency > threshold).\n  →\
+        \ NIST: cm-6 (Configuration Settings), sa-11 (Developer Testing and Evaluation)\n\
+        UCA-3 (unsafe_action): Agent outputs PII to user interface.\n  → NIST: ac-3\
+        \ (Access Enforcement), sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon):\
+        \ Agent debits account but fails to credit asset (atomic failure).\n  → NIST:\
+        \ si-7 (Software, Firmware, and Information Integrity), au-10 (Non-Repudiation)\n\
+        UCA-5 (unsafe_action): Agent executes buy order when daily drawdown exceeds\
+        \ limit.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information in Shared\
+        \ System Resources / Fiscal Limits)\nUCA-6 (wrong_timing): Agent submits market\
+        \ order exceeding allowable fraction of daily volume.\n  → NIST: sc-4 (Information\
         \ in Shared System Resources / Fiscal Limits), si-3 (Malicious Code Protection)\n\
-        UCA-8 (wrong_timing): Agent executes trade before risk assessment is complete.\n\
-        \  → NIST: ac-3 (Access Enforcement), sa-11 (Developer Testing and Evaluation)\n\
-        UCA-9 (wrong_timing): Agent executes trade with compliance check bypassed.\n\
-        \  → NIST: ac-3 (Access Enforcement), cm-6 (Configuration Settings)"
+        UCA-7 (unsafe_action): Adversarial prompt injection score exceeds detection\
+        \ threshold.\n  → NIST: sc-4 (Information in Shared System Resources / Fiscal\
+        \ Limits), si-3 (Malicious Code Protection)\nUCA-8 (wrong_timing): Agent executes\
+        \ trade before risk assessment is complete.\n  → NIST: ac-3 (Access Enforcement),\
+        \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing): Agent executes\
+        \ trade with compliance check bypassed.\n  → NIST: ac-3 (Access Enforcement),\
+        \ cm-6 (Configuration Settings)"
       props:
       - name: implementation-status
         value: implemented
       - name: stpa-compiler-version
         value: 1.1.0
       - name: uca-count
-        value: '11'
+        value: '12'
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-06T23:42:42Z'
+        value: '2026-10-06T23:56:17Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
@@ -1363,7 +1369,7 @@ system-security-plan:
         description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
           / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
           (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-          (Python validator). UCAs covered: UCA-1, UCA-5, UCA-6, UCA-7.'
+          (Python validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
         implementation-status:
           state: implemented
         links:
@@ -1378,7 +1384,7 @@ system-security-plan:
         description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
           artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
           (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-          validator). UCAs covered: UCA-10, UCA-2, UCA-9.'
+          validator). UCAs covered: UCA-10, UCA-13, UCA-2, UCA-9.'
         implementation-status:
           state: implemented
         links:
