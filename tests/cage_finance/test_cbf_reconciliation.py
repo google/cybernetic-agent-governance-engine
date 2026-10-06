@@ -177,7 +177,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -232,7 +232,7 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -291,7 +291,7 @@ def test_atomic_commit_uses_reconciled_balance() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -353,7 +353,7 @@ def test_strict_mode_fails_closed_without_reconciliation() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -417,7 +417,7 @@ def test_fence_epoch_regression_rejected() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -481,7 +481,7 @@ def test_debits_accumulate_in_ledger_within_cycle() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -576,7 +576,7 @@ def test_kms_signature_verified_before_commit() -> None:
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

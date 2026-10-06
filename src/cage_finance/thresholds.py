@@ -12,27 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Finance domain threshold schema (`domains.finance` in `governance_thresholds.json`)."""
+"""Finance domain threshold schema (`domains.finance` in `governance_thresholds.json`).
+
+The kernel overlays the deployment region's `domains.finance` from
+`config/thresholds/{REGION}_BASELINE.json` onto the global section and
+validates the result with :class:`FinanceThresholds` at governor assembly.
+Every model forbids unknown keys, so a misspelt regional override fails
+assembly instead of silently leaving the global value in force.
+"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class CbfThresholds(BaseModel):
+class _FinanceSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class CbfThresholds(_FinanceSection):
     min_cash_balance: float = Field(
         ..., gt=0, description="Minimum cash balance floor (USD)."
     )
     gamma: float = Field(..., gt=0, lt=1, description="CBF decay factor g in (0,1).")
 
 
-class DrawdownThresholds(BaseModel):
+class DrawdownThresholds(_FinanceSection):
     limit: float = Field(
         ..., gt=0.0, lt=1.0, description="Max portfolio drawdown fraction [0,1)."
     )
 
 
-class StpaThresholds(BaseModel):
+class StpaThresholds(_FinanceSection):
     uca5_drawdown_threshold_pct: float = Field(
         ..., gt=0, description="UCA-5 drawdown % trigger (e.g. 4.5)."
     )
@@ -47,13 +58,29 @@ class StpaThresholds(BaseModel):
     )
 
 
-class ConsensusThresholds(BaseModel):
+class ConsensusThresholds(_FinanceSection):
     threshold_usd: float = Field(
         ..., gt=0, description="USD amount above which consensus check is triggered."
     )
 
 
-class BoundingThresholds(BaseModel):
+class TradeConfidenceThresholds(_FinanceSection):
+    """[CTRL_AGT_001] Regional floor on agent confidence for trade execution.
+
+    Not the universal confidence band (`confidence.agent_threshold`): that
+    band is region-neutral and enforced by the kernel for every action. This
+    floor is a jurisdiction's requirement for trades only.
+    """
+
+    min_trade_confidence: float = Field(
+        ...,
+        gt=0.0,
+        le=1.0,
+        description="Minimum agent confidence to execute a trade (0, 1].",
+    )
+
+
+class BoundingThresholds(_FinanceSection):
     enabled_contracts: list[str] = Field(
         default_factory=lambda: [
             "B1",
@@ -106,14 +133,28 @@ class BoundingThresholds(BaseModel):
     )
 
 
-class FinanceThresholds(BaseModel):
-    """Root schema for `domains.finance` in `config/governance_thresholds.json`."""
+class FinanceThresholds(_FinanceSection):
+    """Root schema for the effective `domains.finance` section."""
 
     cbf: CbfThresholds
     drawdown: DrawdownThresholds
     stpa: StpaThresholds
     consensus: ConsensusThresholds
+    confidence: TradeConfidenceThresholds
     bounding: BoundingThresholds = Field(default_factory=BoundingThresholds)
+
+
+def load_finance_thresholds() -> FinanceThresholds:
+    """The active region's effective `domains.finance`, schema-validated.
+
+    Raises:
+        KeyError: The thresholds carry no `domains.finance` section.
+        pydantic.ValidationError: The section has an unknown, missing or
+            out-of-range key.
+    """
+    from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
+    return FinanceThresholds.model_validate(THRESHOLDS.domains["finance"])
 
 
 __all__ = [
@@ -123,4 +164,6 @@ __all__ = [
     "DrawdownThresholds",
     "FinanceThresholds",
     "StpaThresholds",
+    "TradeConfidenceThresholds",
+    "load_finance_thresholds",
 ]

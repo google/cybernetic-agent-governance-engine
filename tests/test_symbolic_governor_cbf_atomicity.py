@@ -80,7 +80,7 @@ def _make_cbf_with_fakeredis(
     from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

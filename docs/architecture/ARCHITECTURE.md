@@ -230,11 +230,13 @@ System initialization and regional behavior are driven by environmental flags an
 
 Profiles dynamically alter operational confidence boundaries, latency budgets, and compliance frameworks without modifying application logic:
 
-| Region Code | Primary Frameworks | Default Min Confidence | Drawdown Limit | Target Consensus SLA |
+| Region Code | Primary Frameworks | Trade Confidence Floor | Drawdown Limit | Max Trade Latency (FIN-2) |
 |---|---|---|---|---|
 | `US_FED` | NIST SP 800-53, SR 26-2, ISO 42001 | 0.95 | 5.0% | 200ms |
 | `EU_ECB` | EU AI Act (Art. 27 FRIA), DORA, GDPR | 0.97 | 4.0% | 150ms |
-| `APAC_MAS` | MAS FEAT Principles, ISO 42001 | 0.95 | 5.0% | 100ms |
+| `APAC_MAS` | MAS FEAT Principles, ISO 42001 | 0.96 | 4.5% | 175ms |
+
+Values are the effective `domains.finance` thresholds: the global section of `config/governance_thresholds.json` with the region's `config/thresholds/{REGION}_BASELINE.json` overlay applied at load (`src/gateway/governance/schemas/regional_overlay.py`). The universal confidence band (`confidence.agent_threshold` 0.95) is the same in every region.
 
 ### Architecture & Design Index
 

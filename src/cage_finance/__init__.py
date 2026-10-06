@@ -30,6 +30,7 @@ from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+from src.cage_finance.tiers.trade_confidence_tier import TradeConfidenceTier
 from src.gateway.governance.contracts import GovernanceTier
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
@@ -73,6 +74,7 @@ def create_finance_tiers(
     consensus_gate: Any,
     bounding_registry: BoundingContractRegistry | None = None,
     telemetry_provider: BaseTelemetryProvider | None = None,
+    min_trade_confidence: float | None = None,
 ) -> tuple[GovernanceTier, ...]:
     """Create finance domain governance tiers for construction-time registration.
 
@@ -91,10 +93,14 @@ def create_finance_tiers(
                           ``CAGE_TELEMETRY_PROVIDER`` (``remote`` without
                           credentials raises ``ConfigurationError`` here, at
                           assembly, rather than on the first trade).
+        min_trade_confidence: [CTRL_AGT_001] regional trade-confidence floor.
+                          If None, the active region's effective
+                          ``domains.finance.confidence.min_trade_confidence``.
 
     Returns:
         Tuple of finance domain tiers in (phase, order, tier_name) order.
         The tiers are:
+        - TradeConfidenceTier (phase=1, order=1) — Regional trade-confidence floor
         - BoundingContractTierPlugin (phase=1, order=2) — Phase 5 pre-trade constraints
         - CBFTierPlugin (phase=2, order=3) — Cash barrier validation
         - FiscalTierPlugin (phase=2, order=4) — Daily limit reservation
@@ -121,7 +127,13 @@ def create_finance_tiers(
             enforcer=bounding_enforcer,
         )
 
+    if min_trade_confidence is None:
+        from src.cage_finance.thresholds import load_finance_thresholds
+
+        min_trade_confidence = load_finance_thresholds().confidence.min_trade_confidence
+
     return (
+        TradeConfidenceTier(min_trade_confidence),
         BoundingContractTierPlugin(bounding_registry),
         CBFTierPlugin(cbf),
         FiscalTierPlugin(fiscal_guard),

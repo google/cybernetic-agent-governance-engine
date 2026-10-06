@@ -152,7 +152,10 @@ def test_duplicate_tier_name_is_rejected_at_construction() -> None:
 @pytest.mark.parametrize(
     ("plugin_cls", "expected"),
     [
-        (FinanceCagePlugin, {"bounding", "consensus", "causal", "cbf", "fiscal"}),
+        (
+            FinanceCagePlugin,
+            {"trade_confidence", "bounding", "consensus", "causal", "cbf", "fiscal"},
+        ),
         (HealthcareCagePlugin, {"clinical_consensus", "dose_barrier"}),
         (PhysicalAICagePlugin, {"kinematic_barrier", "physical_safety_consensus"}),
     ],

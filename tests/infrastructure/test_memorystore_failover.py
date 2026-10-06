@@ -57,7 +57,7 @@ def fake_redis_async():
 def cbf_finance():
     """CBF instance configured with CashBarrier."""
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )
@@ -222,12 +222,12 @@ class TestHaTierZoneFailover:
     ):
         """Two gateway pods: Pod A advanced to 100. Zone failover to lagging replica (80) blocks Pod B."""
         cbf_pod_a = ControlBarrierFunction(
-            invariant=CashBarrier(),
+            invariant=CashBarrier(gamma=0.5),
             cost_resolver=finance_cost_resolver,
             skip_epoch_seed=True,
         )
         cbf_pod_b = ControlBarrierFunction(
-            invariant=CashBarrier(),
+            invariant=CashBarrier(gamma=0.5),
             cost_resolver=finance_cost_resolver,
             skip_epoch_seed=True,
         )

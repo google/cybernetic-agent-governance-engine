@@ -167,7 +167,7 @@ async def test_delta_above_floor_and_ratio_fails_closed(
     assert read_verified_state(redis, INVARIANT_ID, signer=signer) is None
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

@@ -288,7 +288,7 @@ async def _seeded(backends: _Backends, *engines: ControlBarrierFunction) -> None
 #: whose commit succeeds from a seeded state. (test_registered_phase2_tiers_are_all_covered
 #: fails when a plugin adds a phase-2 tier missing here.)
 async def _phase2_cases(backends: _Backends) -> list[tuple[Any, str, dict[str, Any]]]:
-    cash = _engine(CashBarrier(), finance_cost_resolver)
+    cash = _engine(CashBarrier(gamma=0.5), finance_cost_resolver)
     serum = _engine(SerumConcentrationBarrier(), healthcare_cost_resolver)
     kinematic = (
         _engine(SpatialSeparationBarrier(), spatial_cost_resolver),

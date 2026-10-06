@@ -81,6 +81,7 @@ from src.gateway.governance.null_components import (
 )
 
 if TYPE_CHECKING:
+    from src.gateway.governance.schemas.thresholds import GovernanceThresholds
     from src.gateway.governance.stpa_validator import STPAValidator
 
 logger = logging.getLogger(__name__)
@@ -201,11 +202,16 @@ def assemble_governor(
     (:func:`~src.gateway.governance.jurisdiction.resolve_jurisdiction`).
 
     Raises:
-        GovernorAssemblyError: The contributions collide or leave an
-            irreversible action ungoverned.
+        GovernorAssemblyError: The contributions collide, leave an
+            irreversible action ungoverned, or the jurisdiction's region is
+            not the region the effective thresholds were resolved for.
         ValueError: A contributed invariant fails V1-V4, or two tiers share a
             ``tier_name``.
     """
+    # ``jurisdiction=None`` means "the active region", never "no jurisdiction":
+    # every governor built here has one, so the region check always runs.
+    jurisdiction = jurisdiction if jurisdiction is not None else resolve_jurisdiction()
+    _reject_region_mismatch(jurisdiction)
     contributions = tuple(_contribution_of(plugin) for plugin in plugins)
     _reject_duplicates("domain", (c.domain for c in contributions))
     _reject_duplicates(
@@ -213,7 +219,6 @@ def assemble_governor(
     )
     _validate_threshold_sections(contributions)
     tiers = tuple(t for c in contributions for t in c.tiers)
-    jurisdiction = jurisdiction if jurisdiction is not None else resolve_jurisdiction()
     _reject_slot_collisions(
         (*tiers, *jurisdiction.tiers), _known_actions(plugins, contributions)
     )
@@ -337,10 +342,35 @@ def _reject_duplicates(what: str, names: Iterable[str]) -> None:
         seen.add(name)
 
 
-def _validate_threshold_sections(contributions: Sequence[PluginContribution]) -> None:
-    from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
+def _effective_thresholds() -> GovernanceThresholds:
+    """The process's effective thresholds — the object every reader resolves.
 
-    domains = load_and_validate_thresholds().domains
+    Read through the module attribute at call time (not bound at import) so the
+    governor is validated against exactly what its tiers and plugins read.
+    """
+    from src.gateway.governance.schemas import thresholds as thresholds_module
+
+    return thresholds_module.THRESHOLDS
+
+
+def _reject_region_mismatch(jurisdiction: JurisdictionContribution) -> None:
+    """Fail closed when thresholds and jurisdiction disagree on the region.
+
+    The regional ``domains`` overlay is applied when the thresholds load; a
+    jurisdiction for another region would otherwise assemble silently on the
+    wrong region's limits (one region's obligations enforcing another
+    region's values).
+    """
+    thresholds_region = _effective_thresholds().region
+    if thresholds_region != jurisdiction.region:
+        raise GovernorAssemblyError(
+            f"region mismatch: thresholds were resolved for {thresholds_region!r} "
+            f"but the jurisdiction contribution is {jurisdiction.region!r}"
+        )
+
+
+def _validate_threshold_sections(contributions: Sequence[PluginContribution]) -> None:
+    domains = _effective_thresholds().domains
     for c in contributions:
         for section_name, schema_cls in c.threshold_sections.items():
             if section_name not in domains:

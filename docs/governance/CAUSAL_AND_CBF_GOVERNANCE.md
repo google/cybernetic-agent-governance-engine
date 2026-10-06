@@ -300,7 +300,7 @@ A confidence of `0.95` yields a confabulation risk score of `0.05` (low risk). A
 
 ### Block Threshold
 
-The block threshold is **0.95** (sourced from `CONFIDENCE_MIN_SCORE` env var, falling back to `THRESHOLDS.confidence.min_trade_confidence`). A request is blocked when:
+The block threshold is **0.95** (`confidence.min_score` in `config/governance_thresholds.json`, read through `get_confidence_min_score()`; env override `CONFIDENCE_MIN_SCORE`). A request is blocked when:
 
 ```python
 confidence < CONFIDENCE_THRESHOLD  # i.e. risk_score > 0.05

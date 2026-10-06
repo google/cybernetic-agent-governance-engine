@@ -21,6 +21,11 @@ Usage (startup validation):
 
 All governance modules import the module-level ``THRESHOLDS`` singleton
 rather than reading inline literals.
+
+``THRESHOLDS.domains`` holds the *effective* domain sections of the active
+deployment region: the global ``domains.<section>`` blocks with the region's
+``config/thresholds/{REGION}_BASELINE.json`` ``domains`` overlay applied
+(see :mod:`src.gateway.governance.schemas.regional_overlay`).
 """
 
 from __future__ import annotations
@@ -34,6 +39,12 @@ from functools import lru_cache
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from src.gateway.governance.schemas.regional_overlay import (
+    RegionalOverlayError,
+    load_regional_domains,
+    overlay_domains,
+)
 
 logger = logging.getLogger("Gateway.Governance.Schemas")
 
@@ -335,8 +346,9 @@ class GovernanceThresholds(BaseModel):
 
     Schema Version 3.0.0: Domain-specific threshold blocks live under
     ``domains.<domain>`` and are validated by each domain's
-    ``GovernanceDomainPlugin.contribute().threshold_sections`` during
-    governor assembly.
+    ``CagePlugin.contribute().threshold_sections`` during governor assembly.
+    A deployment region tightens them through the ``domains`` object of
+    ``config/thresholds/{REGION}_BASELINE.json`` (regional overlay).
     """
 
     # EV-1, EV-2, EV-5: the universal confidence band (+ confabulation floor)
@@ -357,8 +369,14 @@ class GovernanceThresholds(BaseModel):
     )
 
     # Open domain threshold namespaces (e.g. domains.finance, domains.healthcare,
-    # domains.physical_ai), validated at assembly time by domain plugins.
+    # domains.physical_ai), validated at assembly time by domain plugins. The
+    # loader stores the region's effective sections here (regional overlay
+    # applied, ``_``-prefixed annotation keys removed).
     domains: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # The deployment region whose overlay produced ``domains`` (empty when the
+    # model is built directly rather than by load_and_validate_thresholds).
+    region: str = ""
 
     tier1_keywords: list[str] = Field(default_factory=list)
 
@@ -530,18 +548,36 @@ def _apply_env_overrides(raw: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThresholds:
-    """Load and validate governance_thresholds.json with env var overrides.
+def _active_region() -> str:
+    """The deployment region, from the same reader as every regional control.
 
-    Loads the base configuration from the JSON file, then applies any
+    ``ControlRegistry`` resolves ``CAGE_DEPLOYMENT_REGION`` (unknown values
+    fall back to ``US_FED``); governor assembly resolves the jurisdiction
+    contribution from the same source.
+    """
+    from src.gateway.governance.constants import ControlRegistry
+
+    return ControlRegistry().active_region
+
+
+@lru_cache(maxsize=8)
+def load_and_validate_thresholds(
+    path: str = _ENV_CONFIG_PATH, region: str | None = None
+) -> GovernanceThresholds:
+    """Load and validate governance_thresholds.json for a deployment region.
+
+    Loads the base configuration from the JSON file, overlays the region's
+    ``domains`` sections from ``config/thresholds/{REGION}_BASELINE.json``
+    (``region`` defaults to the active deployment region), then applies any
     environment variable overrides from _ENV_OVERRIDES. This allows runtime
-    tuning while keeping the config file as the single source of truth for
+    tuning while keeping the config files as the single source of truth for
     default values.
 
     Aborts the Python process immediately (``sys.exit(1)``) if the JSON is
-    missing, malformed, or fails Pydantic validation.  This guarantees
-    fail-fast semantics: no threshold drift can reach production.
+    missing, malformed, cannot take the regional overlay, or fails Pydantic
+    validation. This guarantees fail-fast semantics: no threshold drift can
+    reach production. Domain sections are validated by their plugin's schema
+    at governor assembly.
 
     Returns:
         A fully-validated ``GovernanceThresholds`` singleton.
@@ -563,6 +599,20 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         logger.critical("❌ governance_thresholds.json is not valid JSON: %s", exc)
         sys.exit(1)
 
+    resolved_region = (region if region is not None else _active_region()).upper()
+    try:
+        raw["domains"] = overlay_domains(
+            raw.get("domains", {}), load_regional_domains(resolved_region)
+        )
+    except RegionalOverlayError as exc:
+        logger.critical(
+            "❌ regional threshold overlay for %s failed: %s — aborting startup.",
+            resolved_region,
+            exc,
+        )
+        sys.exit(1)
+    raw["region"] = resolved_region
+
     # Apply environment variable overrides (EV-1 through EV-6)
     raw = _apply_env_overrides(raw)
 
@@ -576,8 +626,9 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         sys.exit(1)
 
     logger.info(
-        "✅ Governance thresholds validated: confidence=%.2f, "
+        "✅ Governance thresholds validated: region=%s, confidence=%.2f, "
         "defer_floor=%.2f, causal_min_samples=%d, domains=%s",
+        thresholds.region,
         thresholds.confidence.agent_threshold,
         thresholds.confidence.defer_floor,
         thresholds.causal.min_samples,

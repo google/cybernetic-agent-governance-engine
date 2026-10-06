@@ -68,6 +68,10 @@
         "threshold_usd": 10000.0,
         "_comment": "Trades above this USD amount trigger the multi-agent consensus check."
       },
+      "confidence": {
+        "min_trade_confidence": 0.95,
+        "_comment": "[CTRL_AGT_001] Floor on agent confidence for trade execution, enforced by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py) with the universal band semantics: below it, HITL at or above confidence.defer_floor, DEFERRABLE below. Regions raise it in config/thresholds/{REGION}_BASELINE.json (domains.finance.confidence). Distinct from the region-neutral confidence.agent_threshold."
+      },
       "bounding": {
         "_comment": "Phase 5: Bounding contracts B1–B10 for execute_trade_bounded verb. All contracts enabled by default for reference architecture demonstration. Production deployments should tune thresholds per risk appetite.",
         "enabled_contracts": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10"],

@@ -440,6 +440,7 @@ def control_registry_region(request: pytest.FixtureRequest, monkeypatch):
         monkeypatch.setenv(REGION_ENV_VAR, pinned)
         if was_loaded:
             ControlRegistry.reconfigure(pinned)
+        _pin_thresholds_region(monkeypatch, pinned)
     yield
     if ControlRegistry._instance is not None:
         if not was_loaded:
@@ -463,7 +464,25 @@ def each_region(request: pytest.FixtureRequest, monkeypatch) -> str:
     region: str = request.param
     monkeypatch.setenv(REGION_ENV_VAR, region)
     ControlRegistry.reconfigure(region)
+    _pin_thresholds_region(monkeypatch, region)
     return region
+
+
+def _pin_thresholds_region(monkeypatch: pytest.MonkeyPatch, region: str) -> None:
+    """Swap in the region's effective thresholds for the duration of a test.
+
+    ``THRESHOLDS`` is resolved once per process (the session region); governor
+    assembly refuses a jurisdiction whose region differs from it, so a test
+    pinned to another region needs that region's thresholds. Modules that bound
+    ``THRESHOLDS`` at import keep the session values.
+    """
+    from src.gateway.governance.schemas import thresholds as thresholds_module
+
+    monkeypatch.setattr(
+        thresholds_module,
+        "THRESHOLDS",
+        thresholds_module.load_and_validate_thresholds(region=region),
+    )
 
 
 # ── Redis WAIT command mock (fakeredis compatibility) ──────────────────────────

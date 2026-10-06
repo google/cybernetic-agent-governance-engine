@@ -253,10 +253,11 @@ def _cbf_trusts(identity: SigningIdentity) -> Iterator[None]:
 
 def _build_cbf() -> Any:
     from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
+    from src.cage_finance.thresholds import load_finance_thresholds
     from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=load_finance_thresholds().cbf.gamma),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

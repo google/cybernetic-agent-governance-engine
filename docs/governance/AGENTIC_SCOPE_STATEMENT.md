@@ -60,13 +60,17 @@ Per `config/governance_thresholds.json` → `consensus.threshold_usd`:
 
 ### 2.2 Confidence Threshold
 
-Per `config/governance_thresholds.json` → `confidence.min_trade_confidence`:
+Two thresholds apply (`CTRL_AGT_001`):
 
-- **Threshold**: 0.95 (95%) — note: `min_trade_confidence` is deprecated in the schema;
-  OPA `system_authz.rego` is the authoritative enforcer via `CTRL_AGT_001`.
-- **Enforcement**: `src/gateway/governance/governor/stages/confidence.py` (Tier 2) applies the confidence
-  band (`confidence.agent_threshold` 0.95 / `confidence.defer_floor` 0.70: pass ≥ 0.95, REQUIRE_APPROVAL
-  0.70–0.95, DEFER < 0.70) + OPA `system_authz.rego` (`confidence_sufficient`, ≥ 0.95 for `execute_trade`).
+- **Universal band** (`config/governance_thresholds.json` → `confidence.agent_threshold` 0.95 /
+  `confidence.defer_floor` 0.70), identical in every region:
+  `src/gateway/governance/governor/stages/confidence.py` (Tier 2) passes ≥ 0.95, asks for approval
+  (REQUIRE_APPROVAL) in 0.70–0.95 and defers below 0.70, for every action. OPA `system_authz.rego`
+  (`confidence_sufficient`, ≥ 0.95 for `execute_trade`) repeats the 0.95 floor.
+- **Regional trade floor** (`domains.finance.confidence.min_trade_confidence`): 0.95 globally, raised by
+  the region's `config/thresholds/{REGION}_BASELINE.json` overlay to 0.96 (`APAC_MAS`) and 0.97
+  (`EU_ECB`). `src/cage_finance/tiers/trade_confidence_tier.py` enforces it for trade execution with the
+  same band semantics: below the floor, REQUIRE_APPROVAL at or above 0.70, DEFER below.
 - **Behavior**: Any LLM response with `confidence < 0.95` is blocked and the
   confabulation risk score (`1.0 - confidence`) is recorded via `confabulation_scorer.py`.
 

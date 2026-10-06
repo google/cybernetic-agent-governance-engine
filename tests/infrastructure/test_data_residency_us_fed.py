@@ -104,48 +104,31 @@ class TestUSFEDDataResidency:
             f"Expected jurisdiction='US_FED', got {data['jurisdiction']!r}"
         )
 
-    def test_us_fed_thresholds_cbf_section(self) -> None:
-        """US_FED_BASELINE.json must have a cbf section with min_cash_balance."""
+    def test_us_fed_thresholds_has_no_flat_finance_sections(self) -> None:
+        """Finance values live under domains.finance, the only overlaid namespace."""
         data = _load_json(_US_FED_THRESHOLDS)
-        assert "cbf" in data, "US_FED_BASELINE.json must contain a 'cbf' section"
-        cbf = data["cbf"]
-        assert "min_cash_balance" in cbf, "cbf section must contain 'min_cash_balance'"
-        assert isinstance(cbf["min_cash_balance"], (int, float)), (
-            "cbf.min_cash_balance must be numeric"
-        )
-        assert cbf["min_cash_balance"] > 0, (
-            f"cbf.min_cash_balance must be positive, got {cbf['min_cash_balance']}"
+        flat = {"cbf", "drawdown", "stpa", "consensus", "confidence"} & data.keys()
+        assert not flat, (
+            f"US_FED_BASELINE.json declares top-level finance sections {sorted(flat)}; "
+            "they are never read — move them under domains.finance"
         )
 
-    def test_us_fed_thresholds_stpa_section(self) -> None:
-        """US_FED_BASELINE.json must have a stpa section with UCA-2 and UCA-5 thresholds."""
-        data = _load_json(_US_FED_THRESHOLDS)
-        assert "stpa" in data, "US_FED_BASELINE.json must contain an 'stpa' section"
-        stpa = data["stpa"]
-        assert "uca5_drawdown_threshold_pct" in stpa, (
-            "stpa section must contain 'uca5_drawdown_threshold_pct'"
+    def test_us_fed_effective_finance_thresholds(self) -> None:
+        """US_FED's effective domains.finance validates and states the CBF, STPA,
+        consensus and CTRL_AGT_001 trade-confidence values."""
+        from src.cage_finance.thresholds import FinanceThresholds
+        from src.gateway.governance.schemas.thresholds import (
+            load_and_validate_thresholds,
         )
-        assert "max_latency_ms" in stpa, "stpa section must contain 'max_latency_ms'"
-        # UCA-5 drawdown threshold must be a positive percentage
-        assert stpa["uca5_drawdown_threshold_pct"] > 0, (
-            "stpa.uca5_drawdown_threshold_pct must be positive"
-        )
-        # Latency threshold must be positive
-        assert stpa["max_latency_ms"] > 0, "stpa.max_latency_ms must be positive"
 
-    def test_us_fed_thresholds_consensus_section(self) -> None:
-        """US_FED_BASELINE.json must have a consensus section with threshold_usd."""
-        data = _load_json(_US_FED_THRESHOLDS)
-        assert "consensus" in data, (
-            "US_FED_BASELINE.json must contain a 'consensus' section"
+        finance = FinanceThresholds.model_validate(
+            load_and_validate_thresholds(region="US_FED").domains["finance"]
         )
-        consensus = data["consensus"]
-        assert "threshold_usd" in consensus, (
-            "consensus section must contain 'threshold_usd'"
-        )
-        assert isinstance(consensus["threshold_usd"], (int, float)), (
-            "consensus.threshold_usd must be numeric"
-        )
+        assert finance.cbf.min_cash_balance > 0
+        assert finance.stpa.uca5_drawdown_threshold_pct > 0
+        assert finance.stpa.max_latency_ms > 0
+        assert finance.consensus.threshold_usd > 0
+        assert finance.confidence.min_trade_confidence == 0.95
 
     def test_us_fed_thresholds_tier1_keywords_present(self) -> None:
         """US_FED_BASELINE.json must include tier1_keywords for prompt injection detection."""

@@ -36,7 +36,7 @@ def make_cbf():
     """Factory fixture for ControlBarrierFunction instances with mock Redis.
 
     Returns a factory function that creates hermetic CBF instances with:
-    - Mandatory invariant (defaults to CashBarrier())
+    - Mandatory invariant (defaults to CashBarrier(gamma=0.5))
     - Skipped Redis epoch seeding (offline-first)
     - Optional cost resolver override
     - Mocked Redis client (AsyncMock)
@@ -60,7 +60,7 @@ def make_cbf():
         """Create a CBF instance with optional parameter overrides.
 
         Args:
-            invariant: InvariantModel instance. If None, uses CashBarrier()
+            invariant: InvariantModel instance. If None, uses CashBarrier(gamma=0.5)
                 with any overrides from **invariant_overrides.
             cost_resolver: Cost resolution function. Defaults to finance_cost_resolver.
             skip_epoch_seed: Skip Redis epoch fetch at construction. Default True
@@ -78,7 +78,7 @@ def make_cbf():
 
         # Default to CashBarrier with optional overrides
         if invariant is None:
-            base_invariant = CashBarrier()
+            base_invariant = CashBarrier(gamma=0.5)
             if invariant_overrides:
                 invariant = replace(base_invariant, **invariant_overrides)
             else:

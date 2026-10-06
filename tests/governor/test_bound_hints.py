@@ -181,7 +181,7 @@ def _cbf(
     source: str = "redis",
 ) -> ControlBarrierFunction:
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

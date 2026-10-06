@@ -77,9 +77,14 @@ class FinanceCagePlugin(CagePlugin):
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
         from src.cage_finance.stpa import SAGA_COMPENSATORS, UCA_RULES
-        from src.cage_finance.thresholds import FinanceThresholds
+        from src.cage_finance.thresholds import (
+            FinanceThresholds,
+            load_finance_thresholds,
+        )
 
-        cash_barrier = CashBarrier()
+        # The region's effective domains.finance (regional overlay applied).
+        finance = load_finance_thresholds()
+        cash_barrier = CashBarrier(gamma=finance.cbf.gamma)
         cash_provider = SimulatedCashLedgerProvider(
             invariant_id=cash_barrier.invariant_id
         )
@@ -116,6 +121,7 @@ class FinanceCagePlugin(CagePlugin):
             fiscal_guard=FiscalLimitGuard.from_env(),
             consensus_gate=consensus_gate,
             bounding_registry=bounding_registry,
+            min_trade_confidence=finance.confidence.min_trade_confidence,
         )
         return PluginContribution(
             domain=self.name,

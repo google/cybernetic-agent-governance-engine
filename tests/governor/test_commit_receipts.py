@@ -255,7 +255,7 @@ async def test_engine_reports_the_magnitude_it_deducted() -> None:
     fake = fakeredis.FakeRedis(decode_responses=False)
     await fake.set("safety:current_cash", "1000.0")
     cbf = ControlBarrierFunction(
-        invariant=CashBarrier(),
+        invariant=CashBarrier(gamma=0.5),
         cost_resolver=finance_cost_resolver,
         skip_epoch_seed=True,
     )

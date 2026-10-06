@@ -872,7 +872,7 @@ class TestFenceEpochColdStartSeeding:
             mock_sync_redis,
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
             )
 
@@ -896,7 +896,7 @@ class TestFenceEpochColdStartSeeding:
             mock_sync_redis,
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
             )
 
@@ -913,7 +913,7 @@ class TestFenceEpochColdStartSeeding:
             from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
                 skip_epoch_seed=True,
             )
@@ -934,7 +934,7 @@ class TestFenceEpochColdStartSeeding:
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction(
-                    invariant=CashBarrier(),
+                    invariant=CashBarrier(gamma=0.5),
                     cost_resolver=finance_cost_resolver,
                 )
 
@@ -952,7 +952,7 @@ class TestFenceEpochColdStartSeeding:
             patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             cbf = ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
             )
 
@@ -984,7 +984,7 @@ class TestFenceEpochColdStartSeeding:
         ):
             with pytest.raises(CBFInitializationError) as exc_info:
                 ControlBarrierFunction(
-                    invariant=CashBarrier(),
+                    invariant=CashBarrier(gamma=0.5),
                     cost_resolver=finance_cost_resolver,
                 )
 
@@ -1010,7 +1010,7 @@ class TestFenceEpochColdStartSeeding:
         ):
             mock_gauge.set = MagicMock()
             ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
             )
 
@@ -1032,7 +1032,7 @@ class TestFenceEpochColdStartSeeding:
             patch("src.gateway.governance.safety.cbf_engine.logger") as mock_logger,
         ):
             ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
             )
 

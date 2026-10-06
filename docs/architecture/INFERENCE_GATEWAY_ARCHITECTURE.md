@@ -118,7 +118,7 @@ The **Priority Handling** feature alone justifies the complexity, as it directly
 
 The Inference Gateway works in conjunction with the DEFER queue (AARM-V7) to handle confidence-starved contexts:
 
-- **DEFER Queue:** Redis `db=1` (noeviction policy) holds contexts that fail the `min_trade_confidence: 0.95` threshold but are not outright denied. These are queued for human review or re-evaluation.
+- **DEFER Queue:** Redis `db=1` (noeviction policy) holds requests deferred because their confidence fell below the universal band's `confidence.defer_floor` (0.70) but that are not outright denied. These are queued for human review or re-evaluation.
 - **Gateway Role:** The Inference Gateway's priority routing ensures that DEFER queue re-evaluation requests are processed with appropriate priority — preventing starvation of deferred contexts during peak load.
 - **AARM Coverage:** The 11-vector CSA AARM v1.0 threat model is enforced across the gateway layer:
   - AARM-V1: SHA-256 hash-chained context accumulator prevents context poisoning across inference calls.

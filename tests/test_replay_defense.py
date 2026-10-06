@@ -163,7 +163,7 @@ class TestCBFSequenceValidation:
         from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
         return ControlBarrierFunction(
-            invariant=CashBarrier(),
+            invariant=CashBarrier(gamma=0.5),
             cost_resolver=finance_cost_resolver,
             skip_epoch_seed=True,
         )
@@ -265,7 +265,7 @@ class TestCBFSequenceValidation:
         # When replay defense is disabled, the CBF should accept the payload
         # without calling _validate_sequence
         ControlBarrierFunction(
-            invariant=CashBarrier(),
+            invariant=CashBarrier(gamma=0.5),
             cost_resolver=finance_cost_resolver,
             skip_epoch_seed=True,
         )
@@ -366,7 +366,7 @@ class TestReplayDefenseTelemetry:
             cbf_module._REPLAY_REJECTED_COUNTER = mock_counter
 
             cbf = cbf_module.ControlBarrierFunction(
-                invariant=CashBarrier(),
+                invariant=CashBarrier(gamma=0.5),
                 cost_resolver=finance_cost_resolver,
                 skip_epoch_seed=True,
             )
