@@ -31,7 +31,7 @@ Phase 3 v0.2 Schema Reconciliation
 Provider now sends the full 37-field `CageAuthorityDetermineRequest` payload
 to the `/cage/validate` endpoint (superseding the legacy 7-field `/validate/fria`).
 
-See: docs/partners/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2 for complete schema.
+See: docs/partners/provider_01/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2 for complete schema.
 
 Authentication
 --------------
@@ -189,7 +189,7 @@ def _build_cage_authority_request(envelope: dict[str, Any]) -> dict[str, Any]:
     """Build the complete 37-field CageAuthorityDetermineRequest payload.
 
     Maps CAGE GovernanceEnvelope fields to the FlowSignal Phase 3 v0.2 schema.
-    See: docs/partners/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2
+    See: docs/partners/provider_01/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2
 
     Args:
         envelope: The GovernanceEnvelope dict (or dict-like payload with CAGE fields).
@@ -276,7 +276,7 @@ class FlowSignalNormativeProvider:
     Implements the 3-endpoint HTTP contract defined in §2.5.2 of
     EXTENSIBILITY_ARCHITECTURE.md:
       - GET  /legal-baseline/{region}      → Normative Data Supply
-      - POST /validate/fria                → External Validation
+      - POST /cage/validate                → External Validation (Phase 3 v0.2)
       - GET  /evidence-chain/{thread_id}   → Attestation Logging
     """
 

@@ -13,7 +13,7 @@
 |---|---|
 | Protocol | [`NormativeProvider`](../../gateway/governance/normative_provider.py:273) |
 | Integration style | Synchronous gate, remote HTTP, on the request hot path |
-| Class | `Provider01NormativeProvider` ([`provider.py`](provider.py:247)) |
+| Class | `FlowSignalNormativeProvider` ([`provider.py`](provider.py:273)) |
 | Status | `INTERFACE READY` — HTTP client fully implemented; no endpoint configured |
 | Factory names | `provider_01`, alias `p01` |
 | Conformance suite | Registered in `NORMATIVE_PROVIDERS` ([`tests/test_normative_provider_conformance.py`](../../../tests/test_normative_provider_conformance.py:48)) |
@@ -22,26 +22,31 @@
 
 Base URL from `CAGE_NORMATIVE_ENDPOINT` (placeholder:
 `https://api.example.com/normative`). Auth is
-`Authorization: Bearer <key>` from `CAGE_NORMATIVE_API_KEY_SECRET`. Timeout
-defaults to 5s (`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`).
+`Authorization: Bearer <key>` from `CAGE_NORMATIVE_API_KEY_SECRET` (plus optional
+`X-Serverless-Authorization: Bearer <token>` from `CAGE_NORMATIVE_GCP_ID_TOKEN`
+for Cloud Run DRS ingress). Validation path defaults to `/cage/validate`
+(`CAGE_NORMATIVE_VALIDATE_PATH`, cut over from legacy `/validate/fria` in Phase 3
+v0.2) and sends the 37-field `CageAuthorityDetermineRequest` payload constructed by
+[`_build_cage_authority_request()`](provider.py:188). Timeout defaults to 5s
+(`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`).
 
 | Method | Path | Protocol method | Returns |
 |---|---|---|---|
 | `GET` | `/legal-baseline/{region}` | `fetch_baseline()` | `NormativeBaseline` |
-| `POST` | `/validate/fria` | `validate_fria()` | `ValidationResult` |
+| `POST` | `/cage/validate` | `validate_fria()` | `ValidationResult` |
 | `GET` | `/evidence-chain/{thread_id}` | `submit_evidence()` | `EvidenceSeal` |
 
 ## Verdict vocabulary
 
 `ALLOW` / `REFUSE` / `ESCALATE` — declared at
-[`provider.py:74`](provider.py:74), matched case-insensitively via
-`.upper().strip()` in [`_map_flowsignal_decision()`](provider.py:177).
+[`provider.py:101`](provider.py:101), matched case-insensitively via
+`.upper().strip()` in [`_map_flowsignal_decision()`](provider.py:111).
 
 | `decision` | `admitted` | Finding code | Severity | Effect |
 |---|---|---|---|---|
 | `ALLOW` | `True` | `CONSEQUENCE_TOKEN` | `info` | ConsequenceToken JWS minted and attached |
 | `REFUSE` | `False` | `FLOWSIGNAL_REFUSE` | `blocked` | Hard deny |
-| `ESCALATE` | `False` | `FLOWSIGNAL_HOLD` | `review` | `needs_human_review: True` → parks in `DeferQueue` |
+| `ESCALATE` | `False` | `EXTERNAL_HOLD` | `review` | `needs_human_review: True` → parks in `DeferQueue` |
 
 > **`REVIEW` is not part of this vocabulary.** `PASS` / `REVIEW` / `BLOCKED`
 > belongs to [`provider_06`](../provider_06/README.md). A `REVIEW` string on
@@ -61,17 +66,18 @@ All of these yield `ValidationResult(admitted=False)`:
 
 ### `authority_record_id` is required on `ALLOW`
 
-On `ALLOW`, [`_mint_consequence_token()`](provider.py:86) needs five inputs.
+On `ALLOW`, [`mint_consequence_token_finding()`](../../gateway/governance/consequence_token_service.py)
+(invoked from [`_map_flowsignal_decision()`](provider.py:150)) needs five inputs.
 Two come from the CAGE-side FRIA payload (`actor_id`, `thread_id`); one is
 computed (SHA-256 over the JCS-canonicalized payload); and two come from the
 vendor response:
 
-- **`authority_record_id` — required.** [`provider.py:128`](provider.py:128)
-  raises without it.
+- **`authority_record_id` — required.** Minting fails closed with
+  `CONSEQUENCE_TOKEN_MINT_FAILED` without it.
 - `authority_state_version` — nullable, does not block.
 
 A mint failure is not downgraded to a warning:
-[`validate_fria()`](provider.py:357) detects the
+[`validate_fria()`](provider.py:352) detects the
 `CONSEQUENCE_TOKEN_MINT_FAILED` finding and forces `admitted` back to `False`.
 So an `ALLOW` lacking `authority_record_id` fails closed even though the
 response parsed cleanly — a **distinct** failure mode from a missing
