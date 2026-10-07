@@ -340,6 +340,16 @@ component-definition:
                 commits to how fresh the relied-on state was; a warrant older than
                 the 60 s window whose re-fetch failed is recorded as
                 INELIGIBLE_STALE (src/gateway/governance/warrant/cache.py).
+                Since POAM-2026-111 (2026-10-07) the hash-chained record carries
+                every Warrant Contract v0.1 evidence field (warrant_id, norm_id,
+                digest as warrant_digest, reliance_status, governing_version as
+                warrant_governing_version, residual_risk_ref recorded opaquely,
+                attested_at) plus issuing_authority, authority_basis,
+                revocation_ref and required_governing_version (the version the
+                binding requires, kept apart from the version the warrant
+                declares), and the envelope WARRANT attestation is derived from
+                the same record (its metadata equals the record), so the signed
+                envelope and the evidence chain cannot disagree (AU-3, AU-10).
 
                 This remediation (Phase 5b C3, POAM-2026-072, closed 2026-09-09) addresses
                 defect patterns where provider identity was inferred from ambient context

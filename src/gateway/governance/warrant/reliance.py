@@ -28,6 +28,47 @@ whatever the verdict, into the artefact that decision produces:
 Refusals are primary evidence: an ineligible record is as complete as an
 eligible one.
 
+One source of truth: :meth:`RelianceRecord.to_dict` is the evidence form, and
+the envelope's ``WARRANT`` attestation (:meth:`RelianceRecord.attestation`)
+carries exactly that dict as its metadata. The hash-chained record and the
+signed envelope therefore cannot disagree about what was relied on.
+
+Warrant Contract v0.1 evidence fields (``WARRANT_CONTRACT_EVIDENCE_FIELDS``
+maps each contract name to its key here):
+
+=====================  ==============================  =========================
+Contract field         Evidence key                    Meaning
+=====================  ==============================  =========================
+``warrant_id``         ``warrant_id``                  issuer's warrant id
+``norm_id``            ``norm_id``                     the governed norm
+``digest``             ``warrant_digest``              issuer-declared digest
+``reliance_status``    ``reliance_status``             CAGE's eligibility outcome
+``governing_version``  ``warrant_governing_version``   version the warrant declares
+``residual_risk_ref``  ``residual_risk_ref``           opaque issuer reference
+``attested_at``        ``attested_at``                 when CAGE evaluated standing
+=====================  ==============================  =========================
+
+``governing_version`` is split in two so it is never ambiguous:
+``required_governing_version`` is the version the deployment's ``NormBinding``
+requires (what the warrant was checked against), and
+``warrant_governing_version`` the version the warrant declares. They differ
+exactly when the outcome is ``INELIGIBLE_VERSION_MISMATCH`` (or when no warrant
+was received, in which case the warrant side is empty).
+
+Absent values: every warrant-declared field (``warrant_id``,
+``warrant_digest``, ``warrant_status``, ``warrant_governing_version``,
+``issuing_authority``, ``authority_basis``, ``revocation_ref``,
+``residual_risk_ref``) is the empty string ``""`` when no warrant was received
+(``INELIGIBLE_MISSING``, or the source failed before answering), and the two
+optional warrant fields (``revocation_ref``, ``residual_risk_ref``) are also
+``""`` when the warrant declares none. ``warrant_id == ""`` is the marker for
+"no warrant". The evidence form is strings-only, so it is always
+JCS-canonicalisable. ``attested_at`` is never empty: standing is always
+evaluated, even when the outcome is that there was nothing to evaluate.
+
+``residual_risk_ref`` is opaque to CAGE: it is recorded verbatim and never
+resolved or interpreted (Warrant Contract v0.1, partner Q5).
+
 Freshness: ``observed_at`` is when CAGE received the warrant state (its own
 receipt time, not an issuer-declared time) and ``age_seconds`` how old that
 state was when the decision relied on it; ``max_age_seconds`` is the
@@ -36,7 +77,10 @@ freshness window it was held to (``warrant.cache.WarrantCache``).
 ``verification_status`` is always ``UNVERIFIED``. The declared digest proves
 the warrant is internally consistent, not who issued it; issuer signatures
 against a ``kid``-resolved trust anchor are a Warrant Contract v0.2 item.
-Until then no record can claim more, so the field cannot be set.
+Until then no record can claim more, so the field cannot be set. The envelope
+attestation status is ``UNVERIFIED`` for the same reason; an ineligible
+warrant is never expressed as ``DENIED``, which would read as an institutional
+verdict rather than a reliance outcome.
 
 The emitting source is the ``WarrantSource.provider_name`` the stage was
 assembled with; the kernel never names a vendor.
@@ -45,32 +89,50 @@ assembled with; the kernel never names a vendor.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from src.gateway.governance.seams.attestation import (
     AttestationStatus,
     ExternalAttestation,
 )
-from src.gateway.governance.warrant.evidence import bind_warrant_to_attestation
 from src.gateway.governance.warrant.model import (
     RelianceStatus,
     StandingVerificationResult,
+    Warrant,
     WarrantStatus,
 )
 
 #: The only verification status a v0.1 reliance record can carry.
 RELIANCE_VERIFICATION_STATUS: str = AttestationStatus.UNVERIFIED.value
 
+#: ``ExternalAttestation.attestation_type`` of the envelope warrant entry.
+WARRANT_ATTESTATION_TYPE: str = "WARRANT"
+
+#: Warrant Contract v0.1 evidence field name -> ``RelianceRecord.to_dict`` key.
+WARRANT_CONTRACT_EVIDENCE_FIELDS: Mapping[str, str] = MappingProxyType(
+    {
+        "warrant_id": "warrant_id",
+        "norm_id": "norm_id",
+        "digest": "warrant_digest",
+        "reliance_status": "reliance_status",
+        "governing_version": "warrant_governing_version",
+        "residual_risk_ref": "residual_risk_ref",
+        "attested_at": "attested_at",
+    }
+)
+
 
 @dataclass(frozen=True)
 class RelianceRecord:
     """One warranted norm's reliance outcome for one governance decision.
 
-    ``governing_version`` is the version the deployment's binding requires
-    (what the warrant was checked against), not the version the warrant
-    declares; a mismatch shows up as ``INELIGIBLE_VERSION_MISMATCH``.
+    The stored fields are what only the decision knows (the norm, the
+    version the binding requires, the source, the standing and its
+    freshness); everything the warrant declares is read from
+    ``standing.warrant`` so it cannot be restated inconsistently.
 
     ``observed_at`` (ISO 8601 UTC) and ``age_seconds`` describe CAGE's receipt
     of the warrant state the standing was computed from; both are empty when
@@ -78,7 +140,7 @@ class RelianceRecord:
     """
 
     norm_id: str
-    governing_version: str
+    required_governing_version: str
     provider_name: str
     standing: StandingVerificationResult
     observed_at: str = ""
@@ -86,7 +148,7 @@ class RelianceRecord:
     max_age_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        for name in ("norm_id", "governing_version", "provider_name"):
+        for name in ("norm_id", "required_governing_version", "provider_name"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
                 raise ValueError(f"RelianceRecord.{name} must be a non-empty string")
@@ -94,6 +156,17 @@ class RelianceRecord:
             raise TypeError(
                 "RelianceRecord.standing must be a StandingVerificationResult"
             )
+        warrant = self.standing.warrant
+        expected = ("", "") if warrant is None else (warrant.warrant_id, warrant.digest)
+        if (self.standing.warrant_id, self.standing.warrant_digest) != expected:
+            raise ValueError(
+                "RelianceRecord.standing does not belong to its warrant; "
+                "refusing to bind evidence"
+            )
+        if not isinstance(self.standing.attested_at, str) or not (
+            self.standing.attested_at
+        ):
+            raise ValueError("RelianceRecord.standing.attested_at must be set")
         if not isinstance(self.observed_at, str):
             raise TypeError("RelianceRecord.observed_at must be an ISO 8601 string")
         for name in ("age_seconds", "max_age_seconds"):
@@ -108,6 +181,8 @@ class RelianceRecord:
                     f"RelianceRecord.{name} must be None or a finite number >= 0"
                 )
 
+    # ── decision outcome ────────────────────────────────────────────────────
+
     @property
     def eligible(self) -> bool:
         return self.standing.eligible
@@ -117,36 +192,87 @@ class RelianceRecord:
         return self.standing.reliance_status
 
     @property
+    def reason(self) -> str:
+        return self.standing.reason
+
+    @property
+    def attested_at(self) -> str:
+        """When CAGE evaluated standing (ISO 8601 UTC); never empty."""
+        return self.standing.attested_at
+
+    @property
     def verification_status(self) -> str:
         """Always ``UNVERIFIED`` until issuer signatures exist (v0.2)."""
         return RELIANCE_VERIFICATION_STATUS
 
+    # ── warrant-declared (``""`` when no warrant was received) ──────────────
+
+    @property
+    def warrant(self) -> Warrant | None:
+        return self.standing.warrant
+
+    @property
+    def warrant_id(self) -> str:
+        return self.standing.warrant_id
+
+    @property
+    def warrant_digest(self) -> str:
+        """The issuer-declared digest, never one CAGE computed."""
+        return self.standing.warrant_digest
+
+    @property
+    def warrant_status(self) -> str:
+        warrant = self.warrant
+        if warrant is None:
+            return ""
+        if isinstance(warrant.status, WarrantStatus):
+            return warrant.status.value
+        return str(warrant.status)
+
+    @property
+    def warrant_governing_version(self) -> str:
+        return _declared(self.warrant, "governing_version")
+
+    @property
+    def issuing_authority(self) -> str:
+        return _declared(self.warrant, "issuing_authority")
+
+    @property
+    def authority_basis(self) -> str:
+        return _declared(self.warrant, "authority_basis")
+
+    @property
+    def revocation_ref(self) -> str:
+        return _declared(self.warrant, "revocation_ref")
+
+    @property
+    def residual_risk_ref(self) -> str:
+        """Opaque issuer reference, recorded verbatim, never resolved."""
+        return _declared(self.warrant, "residual_risk_ref")
+
+    # ── evidence forms ──────────────────────────────────────────────────────
+
     def to_dict(self) -> dict[str, Any]:
         """The JSON evidence form (strings only, so JCS-canonicalisable).
 
-        ``warrant_id``, ``warrant_digest`` and ``warrant_status`` are ``""``
-        when no warrant was supplied (``INELIGIBLE_MISSING``) or the source
-        failed before returning one. ``warrant_digest`` is the issuer-declared
-        digest, never one CAGE computed. ``age_seconds`` and
-        ``max_age_seconds`` are decimal strings with millisecond precision
-        (``""`` when unknown), so the record stays strings-only.
+        ``age_seconds`` and ``max_age_seconds`` are decimal strings with
+        millisecond precision (``""`` when unknown). See the module docstring
+        for the Warrant Contract field mapping and the empty-value rules.
         """
-        warrant = self.standing.warrant
-        if warrant is None:
-            warrant_status = ""
-        elif isinstance(warrant.status, WarrantStatus):
-            warrant_status = warrant.status.value
-        else:
-            warrant_status = str(warrant.status)
         return {
             "norm_id": self.norm_id,
-            "warrant_id": self.standing.warrant_id,
-            "warrant_digest": self.standing.warrant_digest,
-            "warrant_status": warrant_status,
-            "reliance_status": self.standing.reliance_status.value,
-            "reason": self.standing.reason,
-            "governing_version": self.governing_version,
-            "evaluated_at": self.standing.evaluated_at,
+            "warrant_id": self.warrant_id,
+            "warrant_digest": self.warrant_digest,
+            "warrant_status": self.warrant_status,
+            "reliance_status": self.reliance_status.value,
+            "reason": self.reason,
+            "required_governing_version": self.required_governing_version,
+            "warrant_governing_version": self.warrant_governing_version,
+            "issuing_authority": self.issuing_authority,
+            "authority_basis": self.authority_basis,
+            "revocation_ref": self.revocation_ref,
+            "residual_risk_ref": self.residual_risk_ref,
+            "attested_at": self.attested_at,
             "observed_at": self.observed_at,
             "age_seconds": _seconds(self.age_seconds),
             "max_age_seconds": _seconds(self.max_age_seconds),
@@ -157,14 +283,28 @@ class RelianceRecord:
     def attestation(self) -> ExternalAttestation | None:
         """The envelope ``WARRANT`` attestation, or ``None`` with no warrant.
 
-        Always ``UNVERIFIED`` (see :func:`bind_warrant_to_attestation`).
+        Its metadata is exactly :meth:`to_dict`, so the signed envelope and
+        the hash-chained evidence carry the same fields and values. Always
+        ``UNVERIFIED`` (see the module docstring).
         """
-        warrant = self.standing.warrant
-        if warrant is None:
+        if self.warrant is None:
             return None
-        return bind_warrant_to_attestation(
-            warrant, self.standing, provider_name=self.provider_name
+        return ExternalAttestation(
+            attestation_type=WARRANT_ATTESTATION_TYPE,
+            status=RELIANCE_VERIFICATION_STATUS,
+            receipt_id=self.warrant_id,
+            attested_at=self.attested_at,
+            provider_name=self.provider_name,
+            metadata=self.to_dict(),
         )
+
+
+def _declared(warrant: Warrant | None, name: str) -> str:
+    """A warrant-declared string field, ``""`` when absent or undeclared."""
+    if warrant is None:
+        return ""
+    value = getattr(warrant, name)
+    return "" if value is None else str(value)
 
 
 def _seconds(value: float | None) -> str:
@@ -185,6 +325,8 @@ def reliance_attestations(
 
 __all__ = [
     "RELIANCE_VERIFICATION_STATUS",
+    "WARRANT_ATTESTATION_TYPE",
+    "WARRANT_CONTRACT_EVIDENCE_FIELDS",
     "RelianceRecord",
     "reliance_attestations",
     "reliance_evidence",

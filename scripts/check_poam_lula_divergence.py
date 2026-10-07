@@ -85,6 +85,11 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
     ),
     # Atomic, fail-closed ground-truth sequence check in the CBF Lua script.
     "POAM-2026-097": ("tests/test_replay_defense.py",),
+    # Hash-chained reliance evidence carries every Warrant Contract v0.1 field.
+    "POAM-2026-111": (
+        "tests/integrations/provider_05/test_provider_05_reliance_record.py",
+        "tests/governor/test_warrant_reliance_e2e.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
