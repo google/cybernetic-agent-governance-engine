@@ -125,7 +125,7 @@ _(FIPS 199 / NIST SP 800-60 — formally determining Confidentiality, Integrity,
 
 - **`docs/project/CAGE_ONE_PAGER.md`** (lines 8–9) explicitly references three regulatory frameworks: SR 11-7 (Federal Reserve model risk management for high-risk AI), ISO/IEC 42001 (AI management system), and SOC 2 Type II. SR 11-7 applies to model risk in bank holding companies — a Moderate-to-High designation context. The document also references adversarial attack classes RBAC-002 (excessive permissions) and PII-004 (data leakage), confirming sensitivity of data in scope.
 
-- **`config/governance_thresholds.json`** (lines 32–34) sets a `consensus.threshold_usd: 10000.0`, triggering human-in-the-loop for trades above $10k. The `confidence.min_trade_confidence: 0.95` (line 27) reflects an SR 11-7 model performance requirement. These operational thresholds implicitly reflect a Moderate/High Integrity and Availability posture (trading errors must be contained; system availability required for time-sensitive market operations), but no formal categorization document references these thresholds.
+- **`config/governance_thresholds.json`** (lines 32–34) sets a `consensus.threshold_usd: 10000.0`, triggering human-in-the-loop for trades above $10k. The `domains.finance.confidence.min_trade_confidence.value: 0.95` (line 72 onward) reflects an SR 11-7 model performance requirement. These operational thresholds implicitly reflect a Moderate/High Integrity and Availability posture (trading errors must be contained; system availability required for time-sensitive market operations), but no formal categorization document references these thresholds.
 
 ### Gaps Identified
 
@@ -155,7 +155,7 @@ _(NIST SP 800-60 Vol. II — cataloguing all information types processed, stored
 
 - **`src/gateway/governance/nemo/manager.py`** (lines 58–68) implements a `SafeAnalyzer` patching Presidio's `AnalyzerEngine` to enforce the same 15-entity set at detection time, with a `score_threshold=0.3` sensitivity floor. This confirms runtime enforcement of PII detection but does not constitute a formal information type catalog with SP 800-60 identifiers or data owner assignments.
 
-- **`config/governance_thresholds.json`** defines financial thresholds (`cbf.min_cash_balance`, `drawdown.limit`, `consensus.threshold_usd`, `confidence.min_trade_confidence`) that implicitly characterize financial transaction data as high-sensitivity (irreversible, regulated), but no formal data classification or sensitivity label is attached to the financial information types the system processes.
+- **`config/governance_thresholds.json`** defines financial thresholds (`cbf.min_cash_balance`, `drawdown.limit`, `consensus.threshold_usd`, `confidence.min_trade_confidence.value`) that implicitly characterize financial transaction data as high-sensitivity (irreversible, regulated), but no formal data classification or sensitivity label is attached to the financial information types the system processes.
 
 ### Gaps Identified
 

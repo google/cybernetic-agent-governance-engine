@@ -136,7 +136,7 @@
 
 1. **CM-2 (Baseline Configuration):** No formal configuration baseline document. `governance_thresholds.json` captures application-layer thresholds but there is no documented infrastructure baseline (OS image versions, Kubernetes version, Helm chart versions) or a process to establish and maintain it.
 2. **CM-3 (Configuration Change Control):** No change control board (CCB) process documented. Changes to `governance_thresholds.json` or Rego policies can be merged without formal review — CONTRIBUTING.md exists but doesn't mandate CCB for security-relevant configuration.
-3. **CM-4 (Impact Analysis):** No impact analysis requirement before configuration changes. Modifying `confidence.min_trade_confidence` from 0.95 has security implications (AC, SI) that are not formally analyzed.
+3. **CM-4 (Impact Analysis):** No impact analysis requirement before configuration changes. Modifying `domains.finance.confidence.min_trade_confidence.value` from 0.95 has security implications (AC, SI) that are not formally analyzed.
 4. **CM-5 (Access Restrictions for Change):** No documented access restriction on who may modify Rego policies, `governance_thresholds.json`, or Terraform IaC. Branch protection rules (if any) are not referenced in security documentation.
 5. **CM-7 (Least Functionality):** No port/service inventory. Multiple services (NeMo, vLLM, Redis, OPA) are exposed within the cluster. No formal review that only necessary functions are enabled.
 6. **CM-8 (System Component Inventory):** No software component inventory (SBOM) generated or maintained. Container images referenced in Dockerfiles are not pinned to content-digest hashes.

@@ -196,7 +196,7 @@ system-security-plan:
       description: 'MAS TRM Guidelines §6.3 AI and Machine Learning Controls
         implemented via the AI governance framework. Since commit ecca70b9 the
         0.96 trade-confidence floor (APAC_MAS_BASELINE.json
-        domains.finance.confidence.min_trade_confidence) is enforced for trade
+        domains.finance.confidence.min_trade_confidence.value) is enforced for trade
         execution by src/cage_finance/tiers/trade_confidence_tier.py, and trades
         above domains.finance.consensus.threshold_usd = 8500.0 (SGD 11,500 /
         USD 8,500 equivalent) require multi-model critic consensus
@@ -407,11 +407,14 @@ system-security-plan:
         (src/cage_finance/tiers/trade_confidence_tier.py, phase 1, order 1)
         refuses execute_trade and execute_trade_bounded when the confidence
         score is below the effective
-        domains.finance.confidence.min_trade_confidence of 0.96: a
+        domains.finance.confidence.min_trade_confidence.value of 0.96: a
         score at or above the universal defer floor requires human approval
         (HITL), a lower score defers, and a missing or malformed score is a
         HARD violation. The kernel ConfidenceStage still enforces the universal
-        confidence band (0.95) for every action.'
+        confidence band (0.95) for every action. APAC_MAS sets
+        requires_warrant false for this norm, so the kernel warrant reliance
+        gate (WarrantStage, commit a0deb7ad) is not assembled in this region
+        and no warrant source is needed.'
       props:
       - name: implementation-status
         value: implemented

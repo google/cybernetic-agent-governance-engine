@@ -93,6 +93,7 @@ The following findings are tracked as open items with target remediation dates. 
 | EU-AI-ACT-001 | EU AI Act Art. 9 | Compliance bridge endpoint for EU AI Act risk management system evidence not yet implemented | High | 2026-12-31 |
 | EU-GDPR-001 | GDPR Art. 22 | Compliance bridge endpoint for GDPR human oversight of automated decisions not yet implemented | High | 2026-12-31 |
 | EU-001 | EU AI Act Art. 27 | FRIA gating normative provider is in stub mode; external compliance validation provider not yet configured for EU_ECB | High | 2026-12-31 |
+| POAM-2026-104 | AC-3 / SC-13 / AU-10 | Warrant reliance gate residuals (since `a0deb7ad`, #423). The EU_ECB trade-confidence floor is a warranted norm gated by [`WarrantStage`](../src/gateway/governance/governor/stages/warrant.py), which fails closed (DEFER `WARRANT_INELIGIBLE`). Open gaps: (1) warrant authenticity is UNVERIFIED: digest-only, no issuer signature or `kid`-resolved trust anchor until VEIP v0.2; (2) the `Provider05WarrantSource` HTTP path is unimplemented, so every EU_ECB trade defers (`INELIGIBLE_MISSING`); (3) a post-HITL warrant refusal burns the approval token; (4) warrant identity and digest are not yet bound into the evidence record. See detail section. | Moderate | 2026-12-31 |
 | POAM-2026-099 | EU AI Act Art. 27 / SI-10 | FRIA (`CTRL_FRIA_006`) was never enforced: from v2.0.0-dev.1 (2026-06-01) `enforce_fria_boundary()` had no pipeline caller, so no EU_ECB decision consulted an impact assessment. Remediated in `refactor/fria-jurisdiction` by the EU_ECB-only `fria` jurisdiction tier; closes at merge | High | 2026-10-15 |
 
 ### APAC MAS Region (APAC_MAS)
@@ -534,7 +535,7 @@ Effective values at `ecca70b9`:
 
 | Key (`domains.finance.`) | US_FED | EU_ECB | APAC_MAS |
 |---|---|---|---|
-| `confidence.min_trade_confidence` | 0.95 | 0.97 | 0.96 |
+| `confidence.min_trade_confidence` (`.value` since `a0deb7ad`) | 0.95 | 0.97 | 0.96 |
 | `cbf.gamma` | 0.5 | 0.6 | 0.55 |
 | `drawdown.limit` | 0.05 | 0.04 | 0.045 |
 | `consensus.threshold_usd` | 10000.0 | 7500.0 | 8500.0 |
@@ -573,6 +574,34 @@ Effective values at `ecca70b9`:
 3. **Lula: not run**, for the same reasons as POAM-2026-102: the `lula` CLI is not installed and no EU_ECB or APAC_MAS cluster exists. No Kubernetes resource was added, removed or renamed, so no Lula manifest change was required. Closure rests on the tests and the OSCAL export above.
 
 **Follow-up (`fix/trade-tool-sell-inputs`):** `execute_trade_action` in [`tool_provider.py`](../src/cage_finance/tools/tool_provider.py) now takes the order `side` and, for a sell, sets `portfolio_total` from the custodian ledger snapshot of the governor's `finance.cash_balance` ground-truth provider ([`portfolio_valuation.py`](../src/cage_finance/tools/portfolio_valuation.py)). The caller cannot supply `portfolio_total`. When the ledger is missing, faulted, stale, unverified or non-positive, the value is omitted and UCA-13 refuses the sell inside the governor, so the refusal enters the evidence chain.
+
+### POAM-2026-104: Warrant Reliance Gate Residuals (EU_ECB)
+
+**Control:** NIST AC-3, SC-13, AU-10
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-10-06
+**Target Date:** 2026-12-31
+**Related Commit:** `a0deb7ad` (#423, squash-merged to `main`)
+
+**Description:**
+Since `a0deb7ad`, `config/thresholds/EU_ECB_BASELINE.json` marks `domains.finance.confidence.min_trade_confidence` as warranted (`value` 0.97, `requires_warrant: true`, `governing_version: cage-policy-2.1.0`). For every `execute_trade` and `execute_trade_bounded` request, [`WarrantStage`](../src/gateway/governance/governor/stages/warrant.py) fetches the norm's warrant through the `WarrantSource` seam and evaluates its standing with [`WarrantStandingVerifier`](../src/gateway/governance/warrant/verifier.py). Any ineligible standing is a `RELIANCE_INELIGIBLE` finding, and the governor defers with `DeferReason.WARRANT_INELIGIBLE` and mints no seal. The stage re-runs under `POST_HITL`, and [`assemble_governor()`](../src/gateway/governance/governor/assembly.py) refuses a warranted norm with no source, with DEFER disabled, without a `governing_version`, or with no claiming tier. The enforcement path is complete and fails closed. These gaps remain open:
+
+1. **Warrant authenticity is UNVERIFIED.** [`Warrant`](../src/gateway/governance/warrant/model.py) carries a self-declared SHA-256 digest over its JCS-canonical fields. The verifier checks that the digest matches the fields. This detects accidental or partial mutation, but anyone who can supply a warrant can recompute the digest. There is no issuer signature and no `kid`-resolved trust anchor; both are VEIP v0.2. [`bind_warrant_to_attestation()`](../src/gateway/governance/warrant/evidence.py) records the status as `UNVERIFIED`. Under AGENTS.md (Trust Anchors; Resolution Status Is Not Verification Status), a warrant must not be cited as verified evidence until the signature is verified against an out-of-band key manifest.
+2. **No live warrant source.** The gateway manifests set `CAGE_WARRANT_SOURCE=provider_05`. [`Provider05WarrantSource`](../src/integrations/provider_05/warrant_source.py) serves only warrants seeded in process, and its HTTP path is unimplemented. As a result, every EU_ECB trade action in a deployed gateway defers (`INELIGIBLE_MISSING`). This is fail-closed (CAGE does not rely on the floor without a warrant), but no EU_ECB trade can execute until a live source exists.
+3. **Approval token burned on a post-HITL warrant refusal.** [`governance_middleware.py`](../src/gateway/server/governance_middleware.py) consumes the `HITL_REQUIRED` token before `revalidate_post_hitl()` runs. A warrant revoked between approval and execution is refused (no seal, no phase-2 commit), but the operator must approve a fresh request. This is by design: a spent approval cannot be replayed. It is recorded here because the refusal costs the reviewer's work.
+4. **Warrant not bound into the evidence record.** The `RELIANCE_INELIGIBLE` finding (code `RELIANCE_<status>`, naming the norm and its standing) is returned with the DEFER verdict and parked with the DeferQueue token. The `warrant_id` and digest of an eligible warrant are not yet attached to the decision's evidence (VEIP Phase 2, PR 4).
+
+**Verification of the enforcement path (2026-10-06):**
+1. [`tests/governor/test_warrant_reliance_gate.py`](../tests/governor/test_warrant_reliance_gate.py) passes. It covers the failure matrix, a revoked warrant at confidence 0.99 deferring rather than denying, a HARD finding still denying, no seal on warrant failure, a warrant revoked after approval being refused with no seal and no commit, the assembly refusals, and the pinned EU_ECB (norm_id, value) → `governing_version` pair. [`proof/model.py`](../proof/model.py) claims 12 and 13 hold, with parity in [`tests/test_formal_profile_parity.py`](../tests/test_formal_profile_parity.py).
+2. OSCAL: [`system-security-plan-eu-ecb.yaml`](../compliance/oscal/system-security-plan-eu-ecb.yaml) adds component `eu-ecb-comp-0006` (warrant reliance gate, attestation status `UNVERIFIED`) and the partially implemented `ac-3` requirement `eu-ecb-req-0007`, and updates `ctrl-agt-001`. The US_FED and APAC_MAS SSPs record that no norm is warranted in those regions. `uv run python -m src.gateway.governance.oscal_ssp_exporter export` (default discovery) compiled, and [`tests/test_oscal_ssp_exporter.py`](../tests/test_oscal_ssp_exporter.py) passed.
+3. **Lula: not run.** The `lula` CLI is not installed and no EU_ECB cluster exists. No Kubernetes resource was added, removed or renamed (only a container environment variable), so no Lula manifest change was required.
+
+**Closure Criteria:**
+1. Issuer signature verification against a `kid`-resolved, independently fetched trust anchor, failing closed on unknown `kid` (VEIP v0.2). Warrants are reported `VERIFIED` only after that check.
+2. A live warrant source (implemented provider_05 HTTP path or another `WarrantSource`) tested over the wire against the partner's staging endpoint (Tier 1 conformance).
+3. Warrant identity, digest and standing bound into the decision's evidence record (PR 4).
+4. A decision recorded on the approval-token behaviour (keep burning, or re-park on a post-HITL warrant refusal).
 
 ### POAM-2026-085: Causal Gatekeeper Cache Bypassed the Risk Boundary
 
