@@ -35,6 +35,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
+from src.cage_finance.simulated_feeds import (
+    SimulatedMarketQuoteFeed,
+    SimulatedPortfolioNavSource,
+)
 from src.cage_finance.stpa import uca_rules
 from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
 from src.cage_finance.tools import portfolio_valuation, tool_provider
@@ -46,6 +50,7 @@ from src.cage_finance.tools.tool_provider import (
     _approval_covers_trade,
     execute_trade_action,
 )
+from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import (
@@ -55,6 +60,12 @@ from src.gateway.governance.seams.ground_truth import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+#: In-limit UCA-2 / UCA-5 inputs, so only UCA-13 decides the sell.
+_TRADE_INPUTS = ServerTradeInputs(
+    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
+    nav_source=SimulatedPortfolioNavSource(),
+)
 
 _UCA_13 = "STPA_UCA_UCA_13"
 _PORTFOLIO = 100_000.0
@@ -129,8 +140,7 @@ async def _trade(governor: Any, amount: float, **kwargs: Any) -> str:
         amount=amount,
         currency="USD",
         confidence=0.99,
-        latency_ms=10.0,
-        drawdown=0.0,
+        inputs=_TRADE_INPUTS,
         governor=governor,
         **kwargs,
     )
@@ -251,7 +261,9 @@ def test_registered_mcp_tool_takes_no_caller_portfolio_total() -> None:
 
             return _register
 
-    tool_provider.FinancialToolProvider().register_tools(_Server(), MagicMock())  # type: ignore[arg-type]
+    tool_provider.FinancialToolProvider(_TRADE_INPUTS).register_tools(
+        _Server(), MagicMock()
+    )  # type: ignore[arg-type]
     params = inspect.signature(registered["execute_trade_action"]).parameters
     assert "side" in params
     assert "portfolio_total" not in params

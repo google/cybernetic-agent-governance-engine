@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-07T00:08:33Z'
+    last-modified: '2026-10-07T00:25:10Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1046,9 +1046,14 @@ system-security-plan:
         fraction and UCA-13/FIN-1 sell fraction (US_FED 0.10; a sell lacking a numeric
         amount or portfolio_total fails closed; the gateway reads portfolio_total
         from the custodian ledger snapshot, src/cage_finance/tools/portfolio_valuation.py,
-        never from the caller). Kubernetes ConfigMaps and Cloud Secret Manager provide
-        the configuration injection mechanism. IaC (Terraform) manages infrastructure
-        configuration in version-controlled HCL.
+        never from the caller). For UCA-2 and UCA-5, the gateway trade tool supplies
+        both inputs itself on every committing run, never from the caller (src/cage_finance/tools/trade_inputs.py):
+        latency_ms is the measured age of the traded symbol''s latest quote at the
+        tool boundary and drawdown is the daily NAV drawdown in percent; an unavailable
+        or untrustworthy source leaves the input unset and UCA-2 / UCA-5 refuse the
+        trade. Kubernetes ConfigMaps and Cloud Secret Manager provide the configuration
+        injection mechanism. IaC (Terraform) manages infrastructure configuration
+        in version-controlled HCL.
 
         '
       props:
@@ -1291,7 +1296,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-07T00:08:33Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-07T00:25:10Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1335,7 +1340,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-07T00:08:33Z'
+        value: '2026-10-07T00:25:10Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

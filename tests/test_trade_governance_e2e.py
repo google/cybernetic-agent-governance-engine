@@ -58,11 +58,16 @@ from starlette.routing import Mount
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.cage_finance.narrowers import AmountNarrower
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
+from src.cage_finance.simulated_feeds import (
+    SimulatedMarketQuoteFeed,
+    SimulatedPortfolioNavSource,
+)
 from src.cage_finance.stpa import UCA_RULES
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.causal.gatekeeper import CausalDecision
@@ -90,6 +95,13 @@ from src.gateway.server.workload_identity import (
 from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+#: The gateway's STPA input sources, in limit: a 10 ms quote age and no drawdown.
+_TRADE_INPUTS = ServerTradeInputs(
+    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
+    nav_source=SimulatedPortfolioNavSource(),
+)
+
 
 ADVISOR = (
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
@@ -240,10 +252,9 @@ class Gateway:
             params["trader_role"],
             False,
             deferred_id,
-            params.get("latency_ms"),
-            params.get("drawdown"),
             params.get("side", "buy"),
             governor=self.governor,
+            inputs=_TRADE_INPUTS,
         )
 
 

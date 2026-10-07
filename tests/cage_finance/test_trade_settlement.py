@@ -27,11 +27,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.cage_finance.simulated_feeds import (
+    SimulatedMarketQuoteFeed,
+    SimulatedPortfolioNavSource,
+)
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationReceipt
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+#: The gateway's STPA input sources, in limit: a 10 ms quote age and no drawdown.
+_TRADE_INPUTS = ServerTradeInputs(
+    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
+    nav_source=SimulatedPortfolioNavSource(),
+)
+
 
 _SEAL = "seal-under-test"
 
@@ -85,6 +97,7 @@ async def _run(
             amount=10.0,
             currency="USD",
             confidence=0.99,
+            inputs=_TRADE_INPUTS,
             governor=governor,
             **kwargs,
         )
@@ -162,7 +175,11 @@ async def test_refused_governance_settles_nothing() -> None:
         side_effect=PermissionError("denied"),
     ):
         result = await execute_trade_action(
-            symbol="AAPL", amount=10.0, currency="USD", governor=governor
+            symbol="AAPL",
+            amount=10.0,
+            currency="USD",
+            inputs=_TRADE_INPUTS,
+            governor=governor,
         )
     assert result.startswith("BLOCKED")
     governor.settle.assert_not_awaited()

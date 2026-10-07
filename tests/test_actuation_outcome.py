@@ -27,7 +27,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.cage_finance.simulated_feeds import (
+    SimulatedMarketQuoteFeed,
+    SimulatedPortfolioNavSource,
+)
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.execution_actuator import dispatch_actuation
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
@@ -37,6 +42,13 @@ from src.gateway.governance.seams.actuation import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+#: The gateway's STPA input sources, in limit: a 10 ms quote age and no drawdown.
+_TRADE_INPUTS = ServerTradeInputs(
+    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
+    nav_source=SimulatedPortfolioNavSource(),
+)
+
 
 _SEAL = "valid-seal-outcome"
 
@@ -150,6 +162,7 @@ async def _run_trade(actuate_mock: AsyncMock) -> tuple[MagicMock, object]:
     ):
         try:
             outcome: object = await execute_trade_action(
+                inputs=_TRADE_INPUTS,
                 governor=governor,
                 symbol="AAPL",
                 amount=100.0,

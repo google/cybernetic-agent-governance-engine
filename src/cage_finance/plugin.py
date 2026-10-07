@@ -79,11 +79,16 @@ class FinanceCagePlugin(CagePlugin):
     def contribute(self) -> PluginContribution:
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
+        from src.cage_finance.simulated_feeds import (
+            SimulatedMarketQuoteFeed,
+            SimulatedPortfolioNavSource,
+        )
         from src.cage_finance.stpa import SAGA_COMPENSATORS, UCA_RULES
         from src.cage_finance.thresholds import (
             FinanceThresholds,
             load_finance_thresholds,
         )
+        from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 
         # The region's effective domains.finance (regional overlay applied).
         finance = load_finance_thresholds()
@@ -144,7 +149,12 @@ class FinanceCagePlugin(CagePlugin):
             safety_filter=cbf,
             consensus=consensus_gate,
             narrowers=(AmountNarrower(),),
-            tool_provider=FinancialToolProvider(),
+            tool_provider=FinancialToolProvider(
+                ServerTradeInputs(
+                    market_feed=SimulatedMarketQuoteFeed(),
+                    nav_source=SimulatedPortfolioNavSource.from_env(),
+                )
+            ),
             threshold_sections={"finance": FinanceThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},
