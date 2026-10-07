@@ -56,6 +56,19 @@ seal's evidence record (covered by `record_hash`), the DEFER token and its
 fields whether the warrant was eligible or not, and always
 `verification_status: UNVERIFIED`.
 
+### Freshness (60 s window)
+
+The kernel never relies on a warrant state from this source for more than
+`warrant.max_age_seconds` (60 s, the Warrant Contract v0.1 Q2 window) after
+CAGE received it. [`WarrantCache`](../../gateway/governance/warrant/cache.py)
+wraps `Provider05WarrantSource`, records `observed_at` (CAGE's receipt time;
+the 11-field v0.1 schema has no issuer `state_as_of`) and re-fetches once the
+window has elapsed. A re-fetch that fails or exceeds
+`warrant.fetch_timeout_seconds` (2 s) makes the norm `INELIGIBLE_STALE`
+(DEFER); the source cannot extend the window. The kernel timeout bounds every
+fetch, whatever `PROVIDER_05_TIMEOUT_SECONDS` says. `observed_at`,
+`age_seconds` and `max_age_seconds` are in every reliance record.
+
 ## Verdict vocabulary
 
 **No gate verdict.** These providers never return a `ValidationResult`. They
@@ -78,7 +91,7 @@ carries two further enums, distinct from `AttestationStatus`:
 - `WarrantStatus` — `ACTIVE`, `SUSPENDED`, `REVOKED`
 - `RelianceStatus` — `ELIGIBLE`, `INELIGIBLE_MISSING`, `INELIGIBLE_EXPIRED`,
   `INELIGIBLE_REVOKED`, `INELIGIBLE_OUT_OF_SCOPE`,
-  `INELIGIBLE_VERSION_MISMATCH`, `INELIGIBLE_UNRESOLVED`
+  `INELIGIBLE_VERSION_MISMATCH`, `INELIGIBLE_UNRESOLVED`, `INELIGIBLE_STALE`
 
 ## Seeded / synthetic data
 
