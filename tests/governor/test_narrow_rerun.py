@@ -511,6 +511,9 @@ async def test_s10_committing_run_seals_the_narrowed_params(
     assert receipt is not None, "a sealed NARROW must leave its single-use receipt"
     assert '"amount": 1000.0' in receipt
     seal.assert_awaited_once_with(
-        ACTION, {"amount": 1000.0, "agent_id": "agent-1"}, path="govern_narrow"
+        ACTION,
+        {"amount": 1000.0, "agent_id": "agent-1"},
+        path="govern_narrow",
+        reliance=(),
     )
     assert log[-1] == "commit:fiscal:1000"

@@ -28,6 +28,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.governor.reservation import ReservationScope
+from src.gateway.governance.warrant.reliance import RelianceRecord
 
 tracer = trace.get_tracer(__name__)
 
@@ -62,15 +63,18 @@ class StageOutput:
     """What a read-only stage reports for one request.
 
     Stages are shared across concurrent requests, so anything a stage learns
-    about *this* request (the decoded OPA verdict, the FTRA boundary result)
-    travels back to :func:`run_pipeline` here, never as an attribute on the
-    stage. ``run_pipeline`` threads ``opa_verdict`` into the ``StageContext``
-    of later stages and both fields into the ``PipelineResult``.
+    about *this* request (the decoded OPA verdict, the FTRA boundary result,
+    the warrant reliance records) travels back to :func:`run_pipeline` here,
+    never as an attribute on the stage. ``run_pipeline`` threads
+    ``opa_verdict`` into the ``StageContext`` of later stages and every field
+    into the ``PipelineResult``.
     """
 
     violations: tuple[Violation, ...] = ()
     opa_verdict: OpaVerdict | None = None
     ftra: FtraBoundaryResult | None = None
+    # One record per warranted norm the stage evaluated, eligible or not.
+    reliance: tuple[RelianceRecord, ...] = ()
 
 
 def as_stage_output(result: "list[Violation] | StageOutput") -> StageOutput:
@@ -172,6 +176,10 @@ class PipelineResult:
     # False when no domain tier claimed the action, so only
     # UNGOVERNED_STAGES ran.
     governed: bool = True
+    # Every warrant reliance record the read-only stages reported, in
+    # execution order (empty when no warranted norm governs the action). The
+    # verdict's artefact carries them: seal evidence, DeferToken or receipt.
+    reliance: tuple[RelianceRecord, ...] = ()
 
 
 class StageOutcome(StrEnum):
@@ -338,6 +346,7 @@ async def run_pipeline(
 
     ftra_result: FtraBoundaryResult | None = None
     opa_verdict: OpaVerdict | None = None
+    reliance: list[RelianceRecord] = []
 
     async def run_stage(stage: Stage, stage_ctx: StageContext) -> StageOutput:
         if id(stage) in claim_failures:
@@ -363,6 +372,7 @@ async def run_pipeline(
             current_ctx = dataclasses.replace(current_ctx, opa_verdict=opa_verdict)
         if output.ftra is not None:
             ftra_result = output.ftra
+        reliance.extend(output.reliance)
         outcomes.append((stage.name, _outcome(stage_violations)))
 
         if stage_violations:
@@ -431,6 +441,7 @@ async def run_pipeline(
         plan=plan,
         stage_outcomes=tuple(outcomes),
         governed=is_governed,
+        reliance=tuple(reliance),
     )
 
 

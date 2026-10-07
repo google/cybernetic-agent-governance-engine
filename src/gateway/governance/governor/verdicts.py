@@ -17,13 +17,15 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 if TYPE_CHECKING:
-    from src.gateway.governance.defer_queue import DeferReason
+    from src.gateway.governance.defer_queue import DeferReason, DeferToken
 
 from src.gateway.governance import routing_seal
 from src.gateway.governance.agent_confidence import reported_confidence
@@ -37,6 +39,7 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.warrant.reliance import RelianceRecord, reliance_evidence
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -59,6 +62,7 @@ def build_refusal_receipt(
     tier_failures: list[GovernanceTierFailure],
     *,
     violated_tier_default: str = "SYMBOLIC_GOVERNOR",
+    reliance: Sequence[RelianceRecord] = (),
 ) -> RefusalReceipt:
     thread_id = resolve_thread_id(params)
     _first_tf = tier_failures[0] if tier_failures else None
@@ -100,6 +104,7 @@ def build_refusal_receipt(
         # Contract: a string naming the tiers that held the action back.
         non_formation_proof=",".join(tf.tier for tf in tier_failures),
         tier_failures=tuple(tier_failures),
+        reliance=tuple(reliance_evidence(reliance)),
     )
 
 
@@ -119,9 +124,23 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
         logger.error(f"Failed to publish refusal receipt: {exc}")
 
 
-async def issue_seal(action: str, params: dict[str, Any], *, path: str) -> str:
+async def issue_seal(
+    action: str,
+    params: dict[str, Any],
+    *,
+    path: str,
+    reliance: Sequence[RelianceRecord] = (),
+) -> str:
+    """Mint the routing seal, committing ``reliance`` into its evidence record.
+
+    The reliance records are those of the clean run being sealed, so the
+    evidence record cannot drift from what the stages saw. With none (no
+    warranted norm governs the action) the evidence record is unchanged.
+    """
     with tracer.start_as_current_span("cage.routing_seal") as seal_span:
-        seal = await routing_seal.generate_seal_with_evidence(action, params)
+        seal = await routing_seal.generate_seal_with_evidence(
+            action, params, reliance=reliance_evidence(reliance)
+        )
         seal_span.set_attribute("cage.seal_issued", True)
         seal_span.set_attribute("cage.seal_path", path)
         return seal
@@ -161,11 +180,17 @@ async def _park_defer_context(
     violations: list[Violation],
     *,
     defer_reason: "DeferReason | None" = None,
+    reliance: Sequence[RelianceRecord] = (),
 ) -> tuple[str, bool]:
     """Park a DeferToken and return ``(defer_id, persisted)``.
 
     ``persisted`` is False when the queue was unreachable: the id then names
     no stored token, so nothing can approve or resume it.
+
+    The token's snapshot carries the decision's warrant ``reliance`` records,
+    and the token (parked or not) is published to the evidence chain as a
+    ``GOVERNANCE_DEFERRAL`` event, so a deferral leaves the same trail as a
+    sealed ALLOW (Refusals Are Primary Evidence).
     """
     from src.gateway.governance.defer_queue import DeferToken, open_defer_queue
 
@@ -185,6 +210,8 @@ async def _park_defer_context(
         # Re-verified clamped params that would leave only the approval to give.
         "narrow_hint": classification_meta.get("narrow_hint"),
     }
+    if reliance:
+        opa_input_snapshot["reliance"] = reliance_evidence(reliance)
 
     token = DeferToken(
         thread_id=effective_thread_id,
@@ -196,7 +223,7 @@ async def _park_defer_context(
 
     try:
         async with open_defer_queue() as queue:
-            return await queue.park(token), True
+            defer_id, persisted = await queue.park(token), True
     except Exception as exc:
         logger.error(
             "DeferQueue park failed (%s) — token NOT persisted; nothing can "
@@ -205,7 +232,57 @@ async def _park_defer_context(
             action,
             effective_thread_id,
         )
-        return token.defer_id, False
+        defer_id, persisted = token.defer_id, False
+    await publish_deferral(token, persisted=persisted)
+    return defer_id, persisted
+
+
+def deferral_event(token: "DeferToken", *, persisted: bool) -> dict[str, Any]:
+    """The ``GOVERNANCE_DEFERRAL`` evidence event for a parked (or unparked) token.
+
+    Carries what the reviewer is shown (the token's snapshot, including any
+    warrant ``reliance`` records) so the hash-chained record is as complete as
+    the evidence record a seal commits to. ``params_hash`` uses the seal's
+    canonical recipe; it is ``None`` for params that recipe cannot represent.
+    """
+    snapshot = token.opa_input_snapshot
+    action = str(snapshot.get("action", ""))
+    params = snapshot.get("params")
+    try:
+        params_hash: str | None = routing_seal.compute_action_hash(
+            action, params if isinstance(params, dict) else {}
+        )[:16]
+    except routing_seal.SealCanonicalizationError:
+        params_hash = None
+    event: dict[str, Any] = {
+        "type": "GOVERNANCE_DEFERRAL",
+        "defer_id": token.defer_id,
+        "persisted": persisted,
+        "defer_reason": token.defer_reason.value,
+        "thread_id": token.thread_id,
+        "action": action,
+        "params_hash": params_hash,
+        "classification_reason": str(snapshot.get("classification_reason", "")),
+        "violations": list(snapshot.get("violations", [])),
+        "barrier_preview": snapshot.get("barrier_preview"),
+        "required_quorum": token.required_quorum,
+        "deferred_at_utc": token.deferred_at_utc,
+        "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    reliance = snapshot.get("reliance")
+    if reliance:
+        event["reliance"] = reliance
+    return event
+
+
+async def publish_deferral(token: "DeferToken", *, persisted: bool) -> None:
+    """Hash-chain the deferral into the evidence stream (best effort, like refusals)."""
+    from src.gateway.governance.evidence.stream import get_evidence_sink
+
+    try:
+        await get_evidence_sink().ingest(deferral_event(token, persisted=persisted))
+    except Exception as exc:
+        logger.error("Failed to publish deferral evidence: %s", exc)
 
 
 async def handle_require_approval(
@@ -215,6 +292,8 @@ async def handle_require_approval(
     tier_failures: list[GovernanceTierFailure],
     classification_meta: dict[str, Any],
     latency_ms: float = 0.0,
+    *,
+    reliance: Sequence[RelianceRecord] = (),
 ) -> dict[str, Any]:
     """Park the pending approval in the gateway's DeferQueue; mint no seal.
 
@@ -247,6 +326,7 @@ async def handle_require_approval(
         classification_meta=classification_meta,
         violations=violations,
         defer_reason=DeferReason.HITL_REQUIRED,
+        reliance=reliance,
     )
     deferred_id = defer_id if persisted else None
     span.set_attribute("cage.verdict", GovernanceDecision.REQUIRE_APPROVAL)
@@ -270,6 +350,7 @@ async def handle_require_approval(
         "narrowed_params": (classification_meta.get("narrow_hint") or {}).get(
             "narrowed_params"
         ),
+        **_reliance_field(reliance),
     }
 
 
@@ -280,6 +361,8 @@ async def handle_defer(
     tier_failures: list[GovernanceTierFailure],
     classification_meta: dict[str, Any],
     latency_ms: float = 0.0,
+    *,
+    reliance: Sequence[RelianceRecord] = (),
 ) -> dict[str, Any]:
     span = trace.get_current_span()
     defer_reason = _reason_from_classification(classification_meta)
@@ -299,6 +382,7 @@ async def handle_defer(
         classification_meta=classification_meta,
         violations=violations,
         defer_reason=defer_reason,
+        reliance=reliance,
     )
 
     span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
@@ -323,7 +407,13 @@ async def handle_defer(
         "deferrable": classification_meta.get("deferrable", True),
         "retry_after_seconds": 300,
         "agent_id": agent_id,
+        **_reliance_field(reliance),
     }
+
+
+def _reliance_field(reliance: Sequence[RelianceRecord]) -> dict[str, Any]:
+    """``{"reliance": [...]}`` for a verdict response, or ``{}`` without records."""
+    return {"reliance": reliance_evidence(reliance)} if reliance else {}
 
 
 def handle_narrow(
@@ -390,6 +480,8 @@ async def handle_deny(
     tier_failures: list[GovernanceTierFailure],
     classification_meta: dict[str, Any] | None = None,
     latency_ms: float = 0.0,
+    *,
+    reliance: Sequence[RelianceRecord] = (),
 ) -> None:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
@@ -399,7 +491,9 @@ async def handle_deny(
         "🚫 handle_deny DENY: action=%s violations=%d", action, len(violations)
     )
 
-    receipt = build_refusal_receipt(action, params, violations, tier_failures)
+    receipt = build_refusal_receipt(
+        action, params, violations, tier_failures, reliance=reliance
+    )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
     await publish_refusal(receipt)
     # Lead with the violation that decided the refusal (a HARD one when

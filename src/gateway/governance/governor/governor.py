@@ -62,6 +62,10 @@ from src.gateway.governance.governor.verdicts import (
     reported_confidence,
 )
 from src.gateway.governance.narrow_receipt import issue_narrow_receipt
+from src.gateway.governance.warrant.reliance import (
+    reliance_attestations,
+    reliance_evidence,
+)
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
@@ -176,6 +180,7 @@ class SymbolicGovernor:
                     "violations": [],
                     "latency_ms": latency_ms,
                     "agent_id": params.get("_caller_principal", ""),
+                    **_reliance_meta(result),
                 }
 
             violations = list(result.violations)
@@ -222,7 +227,13 @@ class SymbolicGovernor:
                 else GovernanceDecision.DENY,
             )
             verdict = handler(
-                action, params, violations, list(result.tier_failures), meta, latency_ms
+                action,
+                params,
+                violations,
+                list(result.tier_failures),
+                meta,
+                latency_ms,
+                reliance=result.reliance,
             )
             return await verdict if inspect.isawaitable(verdict) else verdict
 
@@ -314,18 +325,23 @@ class SymbolicGovernor:
                 list(rerun.tier_failures),
                 deny_meta,
                 latency_ms,
+                reliance=rerun.reliance,
             )
             raise GovernanceError(
                 f"handle_deny returned without raising; refusing {action}"
             )  # fail closed
-        return handle_narrow(
-            action,
-            params,
-            verified,
-            violations=list(result.violations),
-            classification_meta=meta,
-            latency_ms=latency_ms,
-        )
+        # The envelope attests the warrants the *re-verified* params relied on.
+        return {
+            **handle_narrow(
+                action,
+                params,
+                verified,
+                violations=list(result.violations),
+                classification_meta=meta,
+                latency_ms=latency_ms,
+            ),
+            **_reliance_meta(rerun),
+        }
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
         """The committing run: commit phase 2 and seal, or refuse.
@@ -449,6 +465,7 @@ class SymbolicGovernor:
                     **_ftra_meta(rerun),
                     "classification_reason": "narrow_reverification_failed",
                 },
+                reliance=rerun.reliance,
             )
             raise GovernanceError(
                 f"handle_deny returned without raising; refusing {action}"
@@ -706,6 +723,7 @@ async def _deny_drift(
             "approved_barrier_preview": approved.value,
             "barrier_outcome": BarrierPreview.FAIL.value,
         },
+        reliance=result.reliance,
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
@@ -761,6 +779,7 @@ async def _deny(
         list(result.violations),
         list(result.tier_failures),
         _ftra_meta(result),
+        reliance=result.reliance,
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
@@ -791,6 +810,22 @@ def _ftra_meta(result: Any) -> dict[str, Any]:
             result.ftra.registry_state.value if result.ftra.registry_state else None
         ),
         "ftra_auto_cleared": result.ftra.auto_cleared,
+    }
+
+
+def _reliance_meta(result: PipelineResult) -> dict[str, Any]:
+    """Warrant evidence for an admissible (ALLOW / NARROW) response.
+
+    ``reliance`` is the evidence form of every warranted norm the run relied
+    on; ``external_attestations`` the matching ``WARRANT`` attestations
+    (always ``UNVERIFIED``) that the gateway signs into the governance
+    envelope. Both are absent when no warranted norm governs the action.
+    """
+    if not result.reliance:
+        return {}
+    return {
+        "reliance": reliance_evidence(result.reliance),
+        "external_attestations": reliance_attestations(result.reliance),
     }
 
 
