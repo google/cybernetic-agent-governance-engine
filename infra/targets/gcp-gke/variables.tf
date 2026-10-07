@@ -864,12 +864,22 @@ variable "model_reasoning" {
   description = "Reasoning model GCS path in the model bucket (from MODEL_REASONING)"
   type        = string
   default     = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+
+  validation {
+    condition     = can(regex("^gs://[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]/", var.model_reasoning))
+    error_message = "model_reasoning must be a valid GCS URI starting with 'gs://<bucket>/' to prevent pulling unvetted models from Hugging Face or public repositories."
+  }
 }
 
 variable "model_fast" {
   description = "Fast model GCS path in the model bucket (from MODEL_FAST)"
   type        = string
   default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
+
+  validation {
+    condition     = can(regex("^gs://[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]/", var.model_fast))
+    error_message = "model_fast must be a valid GCS URI starting with 'gs://<bucket>/' to prevent pulling unvetted models from Hugging Face or public repositories."
+  }
 }
 
 variable "served_model_reasoning" {
