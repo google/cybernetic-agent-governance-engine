@@ -29,10 +29,14 @@ from typing import Any
 
 import pytest
 
+from src.gateway.governance.seams.ground_truth import FaultMode
 from src.gateway.governance.seams.warrant import WarrantSource
 from src.gateway.governance.warrant import (
     RelianceStatus,
     Warrant,
+    WarrantCache,
+    WarrantClock,
+    WarrantFreshness,
     WarrantStandingVerifier,
 )
 from src.integrations.provider_05 import Provider05WarrantSource
@@ -130,3 +134,110 @@ async def test_veip_vectors_through_source(
     result = _verify(await source.fetch(warrant["norm_id"]), context)
     assert result.reliance_status == expected, result.reason
     assert result.warrant_digest == warrant["digest"]
+
+
+# --- Fault injection (every fail-closed path) ----------------------------------
+
+
+def _seeded() -> Provider05WarrantSource:
+    source = Provider05WarrantSource()
+    source.seed(Warrant(**SHARED_WARRANT))
+    return source
+
+
+@pytest.mark.parametrize(
+    ("fault", "exc"),
+    [(FaultMode.TIMEOUT, TimeoutError), (FaultMode.CONNECTION_ERROR, ConnectionError)],
+    ids=str,
+)
+async def test_transport_faults_raise(fault: FaultMode, exc: type[Exception]) -> None:
+    source = _seeded()
+    source.inject_fault(fault)
+    assert source.fault_mode is fault
+    with pytest.raises(exc):
+        await source.fetch(NORM_ID)
+
+
+async def test_malformed_payload_is_not_a_warrant() -> None:
+    source = _seeded()
+    source.inject_fault("malformed_payload")
+    payload = await source.fetch(NORM_ID)
+    assert isinstance(payload, dict) and not isinstance(payload, Warrant)
+    assert payload["digest"] == VEIP_ACTIVE_DIGEST
+
+
+async def test_unverified_source_rewrites_fields_but_keeps_the_declared_digest() -> (
+    None
+):
+    source = _seeded()
+    source.inject_fault(FaultMode.UNVERIFIED_SOURCE)
+    warrant = await source.fetch(NORM_ID)
+    assert isinstance(warrant, Warrant)
+    assert warrant.digest == VEIP_ACTIVE_DIGEST
+    assert warrant.compute_digest() != VEIP_ACTIVE_DIGEST
+    result = _verify(warrant, SHARED_CONTEXT)
+    assert result.reliance_status == RelianceStatus.INELIGIBLE_UNRESOLVED
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        FaultMode.TIMEOUT,
+        FaultMode.CONNECTION_ERROR,
+        FaultMode.MALFORMED_PAYLOAD,
+    ],
+    ids=str,
+)
+async def test_cache_treats_every_transport_fault_as_unresolved_then_stale(
+    fault: FaultMode,
+) -> None:
+    """Through the kernel cache: no state is trusted, none is extended."""
+    now = [0.0]
+    source = _seeded()
+    cache = WarrantCache(
+        source,
+        monotonic=WarrantClock(monotonic=lambda: now[0]).monotonic,
+    )
+    source.inject_fault(fault)
+    cold = await cache.observe(NORM_ID)
+    assert cold.freshness is WarrantFreshness.UNRESOLVED and cold.warrant is None
+
+    source.clear_fault()
+    assert (await cache.observe(NORM_ID)).fresh
+    source.inject_fault(fault)
+    now[0] += 60.001
+    stale = await cache.observe(NORM_ID)
+    assert stale.freshness is WarrantFreshness.STALE
+    assert stale.warrant is not None and stale.warrant.digest == VEIP_ACTIVE_DIGEST
+
+
+@pytest.mark.parametrize(
+    "fault",
+    sorted(
+        {
+            FaultMode.NAN_VALUE,
+            FaultMode.NEGATIVE_VALUE,
+            FaultMode.STALE_TIMESTAMP,
+            FaultMode.SETTLEMENT_STALL,
+        }
+    ),
+    ids=str,
+)
+def test_faults_without_a_warrant_meaning_are_refused(fault: FaultMode) -> None:
+    source = _seeded()
+    with pytest.raises(ValueError, match="no warrant-source meaning"):
+        source.inject_fault(fault)
+    assert source.fault_mode is FaultMode.NONE
+
+
+def test_unknown_fault_name_is_refused() -> None:
+    with pytest.raises(ValueError):
+        Provider05WarrantSource().inject_fault("bit_flip")
+
+
+async def test_clear_fault_restores_the_seeded_warrant() -> None:
+    source = _seeded()
+    source.inject_fault(FaultMode.CONNECTION_ERROR)
+    source.clear_fault()
+    warrant = await source.fetch(NORM_ID)
+    assert isinstance(warrant, Warrant) and warrant.digest == VEIP_ACTIVE_DIGEST

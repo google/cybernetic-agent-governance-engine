@@ -30,11 +30,16 @@
 
 The warrant model, standing verifier and evidence binding are vendor-neutral
 kernel code in [`src/gateway/governance/warrant/`](../../gateway/governance/warrant/__init__.py).
-This package only supplies warrants: [`Provider05WarrantSource`](warrant_source.py:43)
+This package only supplies warrants: [`Provider05WarrantSource`](warrant_source.py:74)
 implements the kernel [`WarrantSource`](../../gateway/governance/seams/warrant.py:43)
 seam. `fetch(norm_id)` returns the seeded warrant exactly as issued (declared
 digest included) or `None`, which the kernel verifier treats as
 `INELIGIBLE_MISSING`. The source never decides reliance eligibility itself.
+`inject_fault()` takes the kernel `FaultMode` (`timeout`, `connection_error`,
+`malformed_payload`, `unverified_source`) so every source-side fail-closed path
+(`INELIGIBLE_UNRESOLVED`, `INELIGIBLE_STALE`) is exercised deterministically,
+including end to end in
+[`test_warrant_reliance_e2e.py`](../../../tests/governor/test_warrant_reliance_e2e.py).
 
 A fourth `attestation_type`, `WARRANT`, is emitted by the kernel's
 [`bind_warrant_to_attestation()`](../../gateway/governance/warrant/evidence.py:33),
@@ -97,7 +102,7 @@ carries two further enums, distinct from `AttestationStatus`:
 
 [`Provider05Client`](client.py:115) holds three in-memory dicts populated
 through `seed_risk_acceptance()`, `seed_admissibility_grant()`, and
-`seed_substrate_attestation()`. [`Provider05WarrantSource`](warrant_source.py:43)
+`seed_substrate_attestation()`. [`Provider05WarrantSource`](warrant_source.py:74)
 holds warrants keyed by `norm_id`, populated through
 [`seed()`](warrant_source.py:56).
 

@@ -492,8 +492,14 @@ exercised by
    ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)), never
    DENY: ineligibility is not an institutional verdict. The DEFER token and
    the `GOVERNANCE_DEFERRAL` record carry the reliance record, and nothing is
-   sealed. An independent HARD finding still denies, with the reliance record
-   inside the refusal receipt's `proof_hash`.
+   sealed. An independent HARD finding still denies. DENY receipts carry
+   reliance when the warrant stage ran: a HARD finding from a domain tier
+   (which runs after `WarrantStage`) is refused with the reliance record
+   inside the receipt's `proof_hash`. Kernel-stage HARD findings that precede
+   it (FTRA, STPA, OPA, confidence) short-circuit before any reliance is
+   formed: the pipeline stops at the first HARD finding, no warrant is
+   fetched, and the receipt carries no reliance record. A warrant that was
+   not evaluated was not relied upon.
 5. **After a human.** `WarrantStage` re-runs under POST_HITL. A warrant
    revoked while the request waited for approval is refused at
    `revalidate_post_hitl()` with no seal, once the cached state expires (at
@@ -503,7 +509,11 @@ exercised by
 
 The end-to-end test runs every step above through CAGE code. The warrant
 source is the seeded adapter holding the VEIP v0.1 vectors, because VEIP has
-no live endpoint yet. It is therefore not Tier 1 over-the-wire conformance
+no live endpoint yet. Its deterministic fault injection (`inject_fault()`
+with the kernel `FaultMode`: timeout, connection error, malformed payload,
+fields rewritten in transit) drives every source-side fail-closed path:
+`INELIGIBLE_UNRESOLVED` with no trusted state, `INELIGIBLE_STALE` past the
+window, both DEFER. It is therefore not Tier 1 over-the-wire conformance
 evidence (see [`AGENTS.md`](../../AGENTS.md) and POAM-2026-104 / POAM-2026-107
 in [`POAM.md`](../POAM.md)). Warrant authenticity stays `UNVERIFIED` until a
 `kid`-resolved issuer signature is checked.

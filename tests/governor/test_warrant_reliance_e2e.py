@@ -85,6 +85,7 @@ from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jurisdiction import eu_ai_act
 from src.gateway.governance.seams.actuation import ActuationReceipt
+from src.gateway.governance.seams.ground_truth import FaultMode
 from src.gateway.governance.seams.normative import ValidationResult
 from src.gateway.governance.warrant import Warrant, WarrantClock
 from src.gateway.governance.warrant.source_factory import (
@@ -638,16 +639,18 @@ async def test_bc_ineligible_warrant_defers_with_reliance_and_actuates_nothing(
 
 
 @pytest.mark.eu_ecb
-async def test_c_stale_state_past_60s_with_a_failing_source_defers(
-    build: StackFactory, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "fault",
+    [FaultMode.TIMEOUT, FaultMode.CONNECTION_ERROR, FaultMode.MALFORMED_PAYLOAD],
+    ids=str,
+)
+async def test_c_stale_state_past_60s_with_a_faulted_source_defers(
+    build: StackFactory, fault: FaultMode
 ) -> None:
     stack = await build(seed=_vec(SHARED_WARRANT))
     assert _body(await stack.validate(trade()))["verdict"] == GovernanceDecision.ALLOW
 
-    async def _down(norm_id: str) -> Warrant | None:
-        raise ConnectionError("VEIP warrant endpoint unreachable")
-
-    monkeypatch.setattr(stack.source, "fetch", _down)
+    stack.source.inject_fault(fault)
     stack.clock.advance(59.0)  # inside the window: the cached state still holds
     assert _body(await stack.validate(trade()))["verdict"] == GovernanceDecision.ALLOW
     stack.clock.advance(2.0)  # 61 s since receipt; the re-fetch fails
@@ -660,6 +663,39 @@ async def test_c_stale_state_past_60s_with_a_failing_source_defers(
     assert reliance["age_seconds"] == "61.000"
     assert reliance["max_age_seconds"] == "60.000"
     assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
+    assert (await stack.execute(trade())).startswith("BLOCKED")
+    await stack.assert_nothing_actuated()
+
+    # The source recovers: the next request re-fetches and is admitted again.
+    stack.source.clear_fault()
+    assert _body(await stack.validate(trade()))["verdict"] == GovernanceDecision.ALLOW
+
+
+@pytest.mark.eu_ecb
+@pytest.mark.parametrize(
+    "fault",
+    [
+        FaultMode.TIMEOUT,
+        FaultMode.CONNECTION_ERROR,
+        FaultMode.MALFORMED_PAYLOAD,
+        FaultMode.UNVERIFIED_SOURCE,
+    ],
+    ids=str,
+)
+async def test_c_faulted_source_with_no_trusted_state_defers_unresolved(
+    build: StackFactory, fault: FaultMode
+) -> None:
+    """Every injected fault on a cold cache is INELIGIBLE_UNRESOLVED → DEFER."""
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    stack.source.inject_fault(fault)
+
+    body = _body(await stack.validate(trade()))
+    assert body["verdict"] == GovernanceDecision.DEFER
+    assert body["defer_reason"] == DeferReason.WARRANT_INELIGIBLE.value
+    (reliance,) = body["reliance"]
+    assert reliance["reliance_status"] == "INELIGIBLE_UNRESOLVED"
+    (deferral,) = await stack.records("GOVERNANCE_DEFERRAL")
+    assert _payload(deferral)["reliance"] == [reliance]
     assert (await stack.execute(trade())).startswith("BLOCKED")
     await stack.assert_nothing_actuated()
 

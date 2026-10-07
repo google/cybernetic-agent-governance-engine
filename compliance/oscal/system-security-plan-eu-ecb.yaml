@@ -731,9 +731,14 @@ system-security-plan:
           record holding the ELIGIBLE reliance record; VEC-002 to VEC-006,
           a missing warrant and a stale state (61 s, source failing) defer
           with WARRANT_INELIGIBLE, the reliance record in the DEFER token and
-          the GOVERNANCE_DEFERRAL record, and nothing sealed or actuated; a
+          the GOVERNANCE_DEFERRAL record, and nothing sealed or actuated, as
+          do source faults injected through Provider05WarrantSource
+          inject_fault() (kernel FaultMode: timeout, connection error,
+          malformed payload, fields rewritten in transit); a
           HARD bounding-tier finding under a revoked warrant denies with the
-          reliance record inside the refusal receipt; a warrant revoked after
+          reliance record inside the refusal receipt (kernel-stage HARD
+          findings before the warrant stage short-circuit before any reliance
+          is formed); a warrant revoked after
           human approval is refused with no seal; the 0.97 floor applies
           with an eligible warrant; APAC_MAS (0.96) and US_FED (0.95) never
           consult a warrant; and bootstrap refuses an EU_ECB governor with no
