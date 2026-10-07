@@ -52,7 +52,7 @@
 #   (or use the staged wrapper once implemented in step 15)
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-project_id = "YOUR_GCP_PROJECT_ID"
+project_id = "laah-cybernetics"
 region     = "us-central1"
 zone       = "us-central1-a"
 
@@ -186,8 +186,8 @@ enable_compliance_bridge = true
 enable_nemo_guardrails   = true
 
 # vLLM configuration — weights streamed from GCS model bucket via runai_streamer
-model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
-model_reasoning        = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+model_fast             = "gs://laah-cybernetics-models/Qwen/Qwen2.5-1.5B-Instruct"
+model_reasoning        = "gs://laah-cybernetics-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
 served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 vllm_gpu_count         = 1
@@ -202,21 +202,21 @@ presidio_analyzer_image   = ""
 presidio_anonymizer_image = ""
 
 image_digests = {
-  "gateway"                    = "gcr.io/cage-reference/gateway@sha256:cbc2a57928ea9ca3938d9e0dcf8563aa29eeae08f2c5b51081d5e50ba2f2076c"
-  "governed-financial-advisor" = "gcr.io/cage-reference/governed-financial-advisor@sha256:67485436e8f6a29b8a241499968defdca7a1086d6d4e0bcbbe496ca67fdf2386"
-  "vllm-streamer"              = "gcr.io/cage-reference/vllm-streamer@sha256:12e2a7f6320d54d5f098d28bc20f8104676c4e2058cc69436587912151b738e3"
-  "nemo-guardrails"            = "gcr.io/cage-reference/nemo-guardrails@sha256:0c79dc5901ab443d65434ac8ca34d94338c5debf1fedbdea7960dbe6bcb3476b"
-  "compliance-bridge"          = "gcr.io/cage-reference/compliance-bridge@sha256:4df4d9cec44843550b5358dc1c8b3472fe021aebfda93bd12d43d42534774d6c"
-  "agentsight-ui"              = "gcr.io/cage-reference/agentsight-ui@sha256:ef769f96e7474ea20b0288015e6c88d5fe71e501b3faa3fef3e5a6e372d8b4dc"
-  "presidio-analyzer"          = "gcr.io/cage-reference/presidio-analyzer@sha256:7b7add0ea5d226f7f6c35f9e5a8927214e84cc7f5e84f67dee154b594b79e195"
-  "presidio-anonymizer"        = "gcr.io/cage-reference/presidio-anonymizer@sha256:00ac4c3f6f85473de6c3120615c878310c14a07eeba9a4233705e6f8fab7c81d"
-  "opa"                        = "gcr.io/cage-reference/opa@sha256:bd9909283897aaf8e4409efb6fcb049f08fe6466f32467545157b66a39f4879f"
-  "langfuse"                   = "gcr.io/cage-reference/langfuse@sha256:bd6f8de1482c56e31b360fe7a14109f07e9083a370feeb37d6e4afb2f693b8a7"
-  "langfuse-worker"            = "gcr.io/cage-reference/langfuse-worker@sha256:43858560677507ed37946eb0ad7a1d835aa9e685ae774ee8a9c99401c0fef1a3"
-  "cloud-sql-proxy"            = "gcr.io/cage-reference/cloud-sql-proxy@sha256:c80e265fdf62108468cdb688af9737775f2a875a470bd99f83f88c7f93e82dfc"
-  "clickhouse-server"          = "gcr.io/cage-reference/clickhouse-server@sha256:3a52e89091e2f5e9471ca4860fd91ba9da855efcbad605073a5d2f8817023018"
-  "clickhouse-keeper"          = "gcr.io/cage-reference/clickhouse-keeper@sha256:602384a626262c4fab92e442612406f40b620b8a78c7dd11785b0d61a1840e27"
-  "redis"                      = "gcr.io/cage-reference/redis@sha256:41a05f1df0e41913c765714bcc4e2b7b61bad98686c3f8577fb5370306bd1efe"
+  "gateway"                    = "gcr.io/laah-cybernetics/gateway@sha256:bd2e9444753c8b2d5c0bd014e537c15980bdcc43601a7fddd3d1634835aa5c5e"
+  "governed-financial-advisor" = "gcr.io/laah-cybernetics/governed-financial-advisor@sha256:03934c2b619a604c7c35927ba2287ace63ca33606f7c4536f710668f1b6d4af1"
+  "vllm-streamer"              = "gcr.io/laah-cybernetics/vllm-streamer@sha256:12e2a7f6320d54d5f098d28bc20f8104676c4e2058cc69436587912151b738e3"
+  "nemo-guardrails"            = "gcr.io/laah-cybernetics/nemo-guardrails@sha256:740c05d1dc5b39ea427d5b60a61111892957a19c7da014a67c5db2a187c5b213"
+  "compliance-bridge"          = "gcr.io/laah-cybernetics/compliance-bridge@sha256:8f87cb1ad5bad7ba9f238e06df82f9ebba29232ee4596f689524d6870710981a"
+  "agentsight-ui"              = "gcr.io/laah-cybernetics/agentsight-ui@sha256:9f4385af5fcf5fb30906f66aac1cd06de2e23cdad702dd4eb9ea5792f8e8a9d2"
+  "presidio-analyzer"          = "gcr.io/laah-cybernetics/presidio-analyzer@sha256:7b7add0ea5d226f7f6c35f9e5a8927214e84cc7f5e84f67dee154b594b79e195"
+  "presidio-anonymizer"        = "gcr.io/laah-cybernetics/presidio-anonymizer@sha256:00ac4c3f6f85473de6c3120615c878310c14a07eeba9a4233705e6f8fab7c81d"
+  "opa"                        = "gcr.io/laah-cybernetics/opa@sha256:bd9909283897aaf8e4409efb6fcb049f08fe6466f32467545157b66a39f4879f"
+  "langfuse"                   = "gcr.io/laah-cybernetics/langfuse@sha256:bd6f8de1482c56e31b360fe7a14109f07e9083a370feeb37d6e4afb2f693b8a7"
+  "langfuse-worker"            = "gcr.io/laah-cybernetics/langfuse-worker@sha256:43858560677507ed37946eb0ad7a1d835aa9e685ae774ee8a9c99401c0fef1a3"
+  "cloud-sql-proxy"            = "gcr.io/laah-cybernetics/cloud-sql-proxy@sha256:c80e265fdf62108468cdb688af9737775f2a875a470bd99f83f88c7f93e82dfc"
+  "clickhouse-server"          = "gcr.io/laah-cybernetics/clickhouse-server@sha256:3a52e89091e2f5e9471ca4860fd91ba9da855efcbad605073a5d2f8817023018"
+  "clickhouse-keeper"          = "gcr.io/laah-cybernetics/clickhouse-keeper@sha256:602384a626262c4fab92e442612406f40b620b8a78c7dd11785b0d61a1840e27"
+  "redis"                      = "gcr.io/laah-cybernetics/redis@sha256:41a05f1df0e41913c765714bcc4e2b7b61bad98686c3f8577fb5370306bd1efe"
 }
 
 memorystore_governance_instance_id = "cage-valkey-gov-staging-v2"

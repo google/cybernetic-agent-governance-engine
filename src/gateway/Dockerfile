@@ -50,10 +50,11 @@ ENV UV_PYTHON=/usr/bin/python3.12 \
 # Copy dependency definitions — both files required for uv sync --frozen
 COPY pyproject.toml uv.lock ./
 
-# Create virtual env for the gateway
-RUN uv venv
-ENV VIRTUAL_ENV=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+# Create virtual env for the gateway using the system interpreter
+RUN uv venv --python /usr/bin/python3.12 /app/.venv
+ENV VIRTUAL_ENV=/app/.venv \
+    UV_PYTHON=/app/.venv/bin/python \
+    PATH="/app/.venv/bin:$PATH"
 
 # Install locked dependencies exactly as resolved by uv lock.
 # --frozen enforces the lockfile; --no-dev skips test/lint extras.
@@ -65,9 +66,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN uv sync --frozen --no-dev --extra gateway --extra advisor --extra compliance --extra langfuse --no-install-project
 
 # Download spaCy large model via direct wheel URL (avoids CDN redirect failures).
-# Use uv pip install so the package lands in the uv-managed venv — never bypass
-# uv with a bare 'pip' call inside a uv-managed container.
-RUN uv pip install --no-cache \
+# Target the venv explicitly so the package lands in /app/.venv.
+RUN uv pip install --python /app/.venv --no-cache \
     "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 # Copy Source Code
@@ -76,14 +76,15 @@ COPY src/cybernetic_governance_engine /app/src/cybernetic_governance_engine
 COPY src/gateway /app/src/gateway
 COPY src/cage_finance /app/src/cage_finance
 COPY src/cage_healthcare /app/src/cage_healthcare
+COPY src/cage_physical_ai /app/src/cage_physical_ai
 COPY src/governed_financial_advisor /app/src/governed_financial_advisor
 COPY src/compliance_bridge /app/src/compliance_bridge
 COPY src/integrations /app/src/integrations
 COPY config /app/config
 COPY README.md /app/README.md
 
-# Install the project itself so entry-point metadata exists in the image.
-RUN uv pip install --no-deps .
+# Install the project itself into the venv so entry-point metadata exists in the image.
+RUN uv pip install --python /app/.venv --no-deps .
 
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
