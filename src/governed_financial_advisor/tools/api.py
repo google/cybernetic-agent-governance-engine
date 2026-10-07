@@ -171,6 +171,8 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                         "transaction_id": order.transaction_id,
                         "trader_id": order.trader_id or "agent_001",
                         "trader_role": order.trader_role or "junior",
+                        # The gateway values the portfolio itself for a sell.
+                        "side": order.side or "buy",
                     },
                 )
                 root_span.set_attribute(

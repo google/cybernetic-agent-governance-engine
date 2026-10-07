@@ -63,4 +63,5 @@ def trade_params(source: Mapping[str, Any]) -> dict[str, Any]:
         "currency": str(source.get("currency") or "USD"),
         "trader_role": DEFAULT_TRADER_ROLE,
         "confidence": source.get("confidence", 1.0),
+        "side": str(source.get("side") or "buy").lower(),
     }

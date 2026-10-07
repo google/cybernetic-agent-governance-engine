@@ -365,7 +365,9 @@ system-security-plan:
         stpa.max_sell_portfolio_fraction (0.09) is enforced by UCA-13
         (src/cage_finance/stpa/uca_rules.py): a sell whose amount exceeds this
         fraction of portfolio_total, or that lacks a numeric amount or
-        portfolio_total, is a HARD STPA violation (POAM-2026-103 closed). The consensus threshold is configured in the key threshold_usd and documented in
+        portfolio_total, is a HARD STPA violation (POAM-2026-103 closed).
+        The gateway reads portfolio_total from the custodian ledger snapshot
+        (src/cage_finance/tools/portfolio_valuation.py), never from the caller. The consensus threshold is configured in the key threshold_usd and documented in
         APAC_MAS_BASELINE.json as a SGD 11,500 / USD 8,500 equivalent.'
       props:
       - name: implementation-status

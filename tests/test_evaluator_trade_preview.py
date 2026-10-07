@@ -110,6 +110,7 @@ def test_trade_params_never_take_the_role_from_the_source() -> None:
         "currency": "USD",
         "trader_role": DEFAULT_TRADER_ROLE,
         "confidence": 1.0,
+        "side": "buy",
     }
 
 
