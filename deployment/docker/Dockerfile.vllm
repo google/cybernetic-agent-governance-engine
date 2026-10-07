@@ -28,8 +28,7 @@ RUN pip install --no-cache-dir --upgrade \
 
 # Inject runtime hook so gs:// model paths are handled transparently.
 COPY deployment/docker/vllm_sitecustomize.py /etc/python3.12/sitecustomize.py
-RUN cp /etc/python3.12/sitecustomize.py /usr/lib/python3.12/sitecustomize.py && \
-    cp /etc/python3.12/sitecustomize.py /usr/local/lib/python3.12/dist-packages/sitecustomize.py
+RUN cp -f /etc/python3.12/sitecustomize.py /usr/local/lib/python3.12/dist-packages/sitecustomize.py
 
 # The entrypoint is inherited from the vllm/vllm-openai base image:
 #   python3 -m vllm.entrypoints.openai.api_server
