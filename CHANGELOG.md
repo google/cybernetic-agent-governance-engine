@@ -9,6 +9,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **POST_HITL governedness no longer depends on the profile.** `run_pipeline()` decided whether an action was governed *after* dropping read-only domain tiers for `POST_HITL`, so an action claimed only by read-only tiers looked ungoverned after approval: the warrant gate was skipped and a seal could be minted over a warrant revoked while the request waited. Claims are now resolved over the full stage set by [`resolve_claims()`](src/gateway/governance/governor/pipeline.py), which `SymbolicGovernor._is_governed_action` also uses, so the pipeline and the post-HITL gate agree by construction.
+- **Best-effort refusal and deferral evidence is never silent.** A failed `GOVERNANCE_REFUSAL` / `GOVERNANCE_DEFERRAL` write still lets the refusal or deferral proceed (neither executes anything), but now logs at ERROR and increments `cage_governance_evidence_publish_failures_total{kind}` ([`governor/metrics.py`](src/gateway/governance/governor/metrics.py); no-op without `prometheus_client`).
+
 ### Documentation
 - **paper:** recorded the 2026-10-03 benign-FPR reruns under `docs/paper/measurements/` (`2026-10-03-5aa1a65f`, `-3902db4b`, `-55096730`). Reference run `55096730`: deflection 26/26 (100 %), benign FPR 4/20 (20 %, down from 11/20), Table 2b `govern` P50/P95/P99 = 94.1 / 114.7 / 168.5 ms. The 4 remaining false positives are trade prompts denied by the causal tier for lack of a live world-model feed (POAM-2026-094). REVISION_TRACKER S2 updated.
 

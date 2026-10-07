@@ -48,6 +48,7 @@ from src.gateway.governance.governor.pipeline import (
     Profile,
     Stage,
     StageContext,
+    resolve_claims,
     run_pipeline,
 )
 from src.gateway.governance.governor.sealing import run_sealed
@@ -653,18 +654,15 @@ class SymbolicGovernor:
             }
 
     def _is_governed_action(self, action: str, params: dict[str, Any]) -> bool:
-        """True if any domain or jurisdiction tier claims ``action``.
+        """True if any domain or jurisdiction stage claims ``action``.
 
-        A tier whose ``claims_action`` raises counts as claiming it (fail
-        closed): the pipeline then records the raise as a HARD TIER_EXCEPTION.
+        Delegates to :func:`resolve_claims` — the function ``run_pipeline``
+        uses — so the two agree by construction.  A stage whose claim raises
+        counts as claiming it (fail closed): the pipeline then records the
+        raise as a HARD TIER_EXCEPTION.
         """
-        for tier in self.tiers:
-            try:
-                if tier.claims_action(action, params):
-                    return True
-            except Exception:
-                return True
-        return False
+        ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
+        return resolve_claims(self.stages, ctx).governed
 
 
 _UNGOVERNED_POST_HITL = Violation(

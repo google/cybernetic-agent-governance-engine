@@ -39,6 +39,7 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.metrics import governor_metrics
 from src.gateway.governance.warrant.reliance import RelianceRecord, reliance_evidence
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,10 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
         }
         await sink.ingest(event)
     except Exception as exc:
-        logger.error(f"Failed to publish refusal receipt: {exc}")
+        # Non-blocking (the refusal already holds the action back) but never
+        # silent: ERROR log plus a Prometheus counter an operator can alert on.
+        logger.error("Failed to publish refusal receipt: %s", exc)
+        governor_metrics().evidence_publish_failure("refusal")
 
 
 async def issue_seal(
@@ -276,13 +280,20 @@ def deferral_event(token: "DeferToken", *, persisted: bool) -> dict[str, Any]:
 
 
 async def publish_deferral(token: "DeferToken", *, persisted: bool) -> None:
-    """Hash-chain the deferral into the evidence stream (best effort, like refusals)."""
+    """Hash-chain the deferral into the evidence stream.
+
+    Non-blocking, like :func:`publish_refusal`: a DEFER never executes, so
+    failing it on an evidence-write error adds no safety.  Never silent: a
+    failure is logged at ERROR and counted in
+    ``cage_governance_evidence_publish_failures_total{kind="deferral"}``.
+    """
     from src.gateway.governance.evidence.stream import get_evidence_sink
 
     try:
         await get_evidence_sink().ingest(deferral_event(token, persisted=persisted))
     except Exception as exc:
         logger.error("Failed to publish deferral evidence: %s", exc)
+        governor_metrics().evidence_publish_failure("deferral")
 
 
 async def handle_require_approval(

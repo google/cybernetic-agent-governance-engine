@@ -66,7 +66,11 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.assembly import DecisionFlags, assemble_governor
 from src.gateway.governance.governor.errors import GovernanceError
-from src.gateway.governance.governor.pipeline import Profile, StageContext
+from src.gateway.governance.governor.pipeline import (
+    Profile,
+    StageContext,
+    resolve_claims,
+)
 from src.gateway.governance.governor.stages.opa import OpaStage
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
@@ -676,8 +680,7 @@ async def test_post_hitl_revocation_deny_records_the_revoked_reliance(
     chain: SimpleNamespace,
 ) -> None:
     source = _source_with(status="REVOKED", revocation_ref="REV-AFTER-APPROVAL")
-    # POST_HITL re-runs read-only stages only for an action a phase-2 tier
-    # claims (the finance cbf/fiscal barriers do); _AmountCap stands in.
+    # With a phase-2 barrier claiming the action too (finance's cbf/fiscal).
     governor = _governor(source, _AmountCap(limit=1_000.0))
     with pytest.raises(GovernanceError) as exc_info:
         await governor.revalidate_post_hitl(
@@ -686,6 +689,115 @@ async def test_post_hitl_revocation_deny_records_the_revoked_reliance(
     (reliance,) = exc_info.value.receipt.reliance
     assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
     assert await chain.records("GOVERNANCE_DECISION") == []
+
+
+async def test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim(
+    chain: SimpleNamespace,
+) -> None:
+    """Regression: governedness must not depend on the profile.
+
+    Only the read-only TradeConfidenceTier claims the action.  POST_HITL drops
+    read-only domain tiers from the run, and run_pipeline used to decide
+    "governed" *after* that filter — so it saw an ungoverned action, skipped
+    the warrant stage and minted a seal over a warrant revoked while the
+    request waited for a human.
+    """
+    source = StaticWarrantSource.eligible()
+    governor = _governor(source)  # no phase-2 tier claims execute_trade
+
+    approved = await governor.validate_action(_ACTION, _trade())
+    assert approved["verdict"] == GovernanceDecision.ALLOW
+    assert approved["reliance"][0]["reliance_status"] == "ELIGIBLE"
+
+    source.put(issue_test_warrant(status="REVOKED", revocation_ref="REV-WHILE-WAITING"))
+    with pytest.raises(GovernanceError) as exc_info:
+        await governor.revalidate_post_hitl(
+            _ACTION, _trade(), approved_barrier_preview=None
+        )
+
+    receipt = exc_info.value.receipt
+    assert receipt is not None
+    assert "RELIANCE_INELIGIBLE_REVOKED" in receipt.violated_rule
+    (reliance,) = receipt.reliance
+    assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
+    assert await chain.records("GOVERNANCE_DECISION") == []  # no seal
+
+
+async def test_pipeline_and_post_hitl_gate_agree_on_governedness() -> None:
+    """run_pipeline and revalidate_post_hitl ask one function: resolve_claims."""
+    governor = _governor(StaticWarrantSource.eligible())
+    ctx = StageContext(action=_ACTION, params=_trade(), profile=Profile.POST_HITL)
+
+    claims = resolve_claims(governor.stages, ctx)
+    assert claims.governed
+    assert [s.name for s in claims.claimed] == ["trade_confidence"]
+    assert governor._is_governed_action(_ACTION, _trade())
+
+    other = StageContext(action="read_quote", params={}, profile=Profile.POST_HITL)
+    assert not resolve_claims(governor.stages, other).governed
+    assert not governor._is_governed_action("read_quote", {})
+
+
+# ── Best-effort evidence is never silent ─────────────────────────────────────
+
+
+def _publish_failures(kind: str) -> float:
+    from prometheus_client import REGISTRY
+
+    value = REGISTRY.get_sample_value(
+        "cage_governance_evidence_publish_failures_total", {"kind": kind}
+    )
+    return value or 0.0
+
+
+async def test_deferral_proceeds_and_is_counted_when_the_sink_fails(
+    chain: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def _down(event: Any) -> None:
+        raise ConnectionError("evidence stream down")
+
+    monkeypatch.setattr(chain.sink, "ingest", _down)
+    before = _publish_failures("deferral")
+    governor = _governor(StaticWarrantSource())
+
+    with caplog.at_level("ERROR"):
+        result = await governor.validate_action(_ACTION, _trade())
+
+    # The deferral still proceeds: token parked with its reliance record ...
+    assert result["verdict"] == GovernanceDecision.DEFER
+    token = await chain.queue.get(result["defer_token"])
+    assert token is not None
+    assert token.opa_input_snapshot["reliance"] == result["reliance"]
+    # ... and the lost evidence write is loud: ERROR log plus counter.
+    assert _publish_failures("deferral") == before + 1
+    assert any(
+        r.levelname == "ERROR" and "deferral evidence" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_refusal_is_counted_when_the_sink_fails(
+    chain: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def _down(event: Any) -> None:
+        raise ConnectionError("evidence stream down")
+
+    monkeypatch.setattr(chain.sink, "ingest", _down)
+    before = _publish_failures("refusal")
+    governor = _governor(StaticWarrantSource())
+
+    with caplog.at_level("ERROR"), pytest.raises(GovernanceError):
+        await governor.validate_action(_ACTION, _trade(confidence="0.99"))
+
+    assert _publish_failures("refusal") == before + 1
+    assert any(
+        r.levelname == "ERROR" and "refusal receipt" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 # ── Unwarranted regions: nothing changes ─────────────────────────────────────
