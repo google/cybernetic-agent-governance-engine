@@ -239,6 +239,16 @@ component-definition:
                 The blocking mode satisfies AU-12(1) system-wide/time-correlated audit
                 trail requirements through hash-linked evidence chain correlation.
 
+                Refusal and deferral parity (0cdb5aaa, #427): a DENY writes a
+                GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL writes a
+                hash-chained GOVERNANCE_DEFERRAL record (verdicts.publish_refusal /
+                publish_deferral in src/gateway/governance/governor/verdicts.py).
+                These writes are non-blocking, because neither outcome executes
+                anything, but a failed write is never silent: it logs at ERROR and
+                increments cage_governance_evidence_publish_failures_total{kind}
+                (src/gateway/governance/governor/metrics.py; a no-op when
+                prometheus_client is absent).
+
                 The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) removed
                 all dual-schema machinery (v1.0/v1.1 support) from the evidence pipeline
                 and compliance-bridge. Hash-chain canonicalization in evidence_stream.py
@@ -312,6 +322,14 @@ component-definition:
                 in the hash-linked evidence chain described in AU-12, providing time-correlated
                 audit trail binding between governance decisions and their supporting external
                 attestations.
+
+                Warrant reliance (0cdb5aaa, #427): for a warranted norm, the
+                RelianceRecord (src/gateway/governance/warrant/reliance.py) naming the
+                warrant_id, declared digest, standing and provider_name is bound into
+                the routing seal's evidence record and covered by record_hash, so
+                the seal commits to the reliance the decision made; the envelope's
+                WARRANT attestation is recorded with status UNVERIFIED until issuer
+                signatures are verified (VEIP v0.2, POAM-2026-104).
 
                 This remediation (Phase 5b C3, POAM-2026-072, closed 2026-09-09) addresses
                 defect patterns where provider identity was inferred from ambient context
