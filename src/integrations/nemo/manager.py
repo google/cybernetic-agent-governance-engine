@@ -77,34 +77,10 @@ logger.setLevel(logging.INFO)
 
 
 def _get_analyzer_patch():  # type: ignore[no-untyped-def]
-    """
-    Replacement for nemoguardrails.library.sensitive_data_detection.actions._get_analyzer.
+    """Delegate analyzer creation to Layer 3 Microsoft Presidio adapter."""
+    from src.integrations.presidio.redactor import get_analyzer_patch
 
-    Uses en_core_web_sm (always available) instead of requiring en_core_web_lg, and
-    configures Presidio's AnalyzerEngine with an expanded entity set.
-    """
-    try:
-        import spacy
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
-
-        if spacy.util.is_package("en_core_web_lg"):
-            model_name = "en_core_web_lg"
-        elif spacy.util.is_package("en_core_web_sm"):
-            model_name = "en_core_web_sm"
-        else:
-            model_name = "en_core_web_sm"
-
-        configuration = {
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": model_name}],
-        }
-        provider = NlpEngineProvider(nlp_configuration=configuration)
-        nlp_engine = provider.create_engine()
-        return AnalyzerEngine(nlp_engine=nlp_engine, default_score_threshold=0.3)
-    except Exception as exc:
-        logger.warning("⚠️ _get_analyzer_patch failed: %s", exc)
-        return None
+    return get_analyzer_patch()
 
 
 def _apply_sdd_monkeypatch() -> None:
@@ -120,114 +96,11 @@ def _apply_sdd_monkeypatch() -> None:
         logger.warning("⚠️ Could not monkeypatch SDD _get_analyzer: %s", exc)
 
 
-# ---------------------------------------------------------------------------
-# Presidio-backed SDD action factory (complementary to the monkeypatch above)
-# ---------------------------------------------------------------------------
-
-
 def _build_presidio_action():  # type: ignore[no-untyped-def]
-    """
-    Build and return a coroutine that implements NeMo's ``detect_sensitive_data``
-    action contract using Microsoft Presidio + the best available spaCy model.
+    """Delegate SDD action construction to Layer 3 Microsoft Presidio adapter."""
+    from src.integrations.presidio.redactor import build_presidio_sdd_action
 
-    Returns None if Presidio or spaCy are not installed (graceful degradation).
-    """
-    try:
-        import spacy
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
-
-        class _SafeAnalyzer(AnalyzerEngine):
-            """AnalyzerEngine that guards None input and expands the default entity set."""
-
-            _ENTITIES = [
-                "PHONE_NUMBER",
-                "CREDIT_CARD",
-                "EMAIL_ADDRESS",
-                "LOCATION",
-                "PERSON",
-                "DATE_TIME",
-                "NRP",
-                "CRYPTO",
-                "US_SSN",
-                "US_ITIN",
-                "US_PASSPORT",
-                "US_BANK_NUMBER",
-                "US_DRIVER_LICENSE",
-                "IBAN_CODE",
-                "IP_ADDRESS",
-            ]
-
-            def analyze(self, text, entities=None, **kwargs):  # type: ignore[override, no-untyped-def]  # Presidio stubs use strict signature; **kwargs is intentional for multi-version compat
-                if text is None:
-                    return []
-                if not entities:
-                    entities = self._ENTITIES
-                return super().analyze(text=text, entities=entities, **kwargs)
-
-        if spacy.util.is_package("en_core_web_lg"):
-            model_name = "en_core_web_lg"
-        elif spacy.util.is_package("en_core_web_sm"):
-            logger.warning(
-                "en_core_web_lg not found; falling back to en_core_web_sm for PII detection."
-            )
-            model_name = "en_core_web_sm"
-        else:
-            logger.warning("No spaCy NLP model found; PII detection may fail.")
-            model_name = "en_core_web_sm"
-
-        configuration = {
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": model_name}],
-        }
-        provider = NlpEngineProvider(nlp_configuration=configuration)
-        nlp_engine = provider.create_engine()
-        analyzer = _SafeAnalyzer(nlp_engine=nlp_engine, default_score_threshold=0.3)
-
-        async def detect_sensitive_data(  # type: ignore[no-untyped-def]
-            text: str = "",
-            entities: list = None,  # type: ignore[assignment]
-            score_threshold: float = 0.3,
-            **kwargs,
-        ) -> list:
-            """
-            NeMo ``detect_sensitive_data`` action — Presidio-backed implementation.
-
-            Registered via ``rails.register_action()`` so it overrides the built-in
-            SDD action without touching any private NeMo symbols.
-
-            Args:
-                text: Input text to analyze for sensitive data
-                entities: List of entity types to detect (defaults to all supported)
-                score_threshold: Minimum confidence score (0.0-1.0) for detections.
-                                 Results below this threshold are filtered out.
-                **kwargs: Additional keyword arguments for compatibility
-
-            Returns:
-                List of detected sensitive entities meeting the score threshold
-            """
-            if not text:
-                return []
-
-            # Analyze text and filter by score threshold
-            results = analyzer.analyze(text=text, entities=entities or [])
-
-            # Filter results by score_threshold (fail-closed: only return high-confidence detections)
-            return [r for r in results if r.score >= score_threshold]
-
-        logger.info(
-            "✅ Presidio SDD action built (model=%s, score_threshold=0.3)", model_name
-        )
-        return detect_sensitive_data
-
-    except ImportError as exc:
-        logger.warning(
-            "⚠️ Presidio/spaCy not available; SDD action not registered: %s", exc
-        )
-        return None
-    except Exception as exc:
-        logger.warning("⚠️ Failed to build Presidio SDD action: %s", exc)
-        return None
+    return build_presidio_sdd_action()
 
 
 _PRESIDIO_SDD_ACTION = _build_presidio_action()

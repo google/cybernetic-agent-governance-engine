@@ -85,125 +85,22 @@ async def validate_output_semantics(rails: Any, output_text: str) -> tuple[bool,
 _NEMO_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
-# Presidio input-side PII scan — module-level engine instances (Fix 3 / P1)
-#
-# Uses the same AnalyzerEngine + AnonymizerEngine pattern as manager.py's
-# _build_presidio_action().  Engines are built once at import time and reused
-# across all node invocations.  If Presidio is unavailable the engines are
-# None and the scan is skipped (graceful degradation).
+# Identity-PII redaction — delegated to Layer 3 via pii_redactor_factory
 # ---------------------------------------------------------------------------
-
-# Identity-bearing entities only. DATE_TIME, LOCATION and NRP are not
-# redacted: on their own they do not identify a person, and redacting them
-# mangles ordinary financial text ("reports on 22 October", "US equities")
-# now that the redacted text replaces the message the agents see.
-_PII_ENTITIES: list[str] = [
-    "PHONE_NUMBER",
-    "CREDIT_CARD",
-    "EMAIL_ADDRESS",
-    "PERSON",
-    "CRYPTO",
-    "US_SSN",
-    "US_ITIN",
-    "US_PASSPORT",
-    "US_BANK_NUMBER",
-    "US_DRIVER_LICENSE",
-    "IBAN_CODE",
-    "IP_ADDRESS",
-]
-
-_presidio_analyzer = None
-_presidio_anonymizer = None
-_presidio_init_done = False
 
 
 def _ensure_presidio_engines() -> None:
-    """Lazy-initialise Presidio engines on first use.
+    """Lazy-initialise Layer 3 PII redaction engines on first use."""
+    from src.gateway.governance.pii_redactor_factory import ensure_pii_engines
 
-    Presidio (spaCy + transformer NLP engine) takes ~2-3 s to import and
-    build at module load time.  Because this module is imported by
-    governance/__init__.py (and thus by every test file that touches the
-    governance package), that cost was paid unconditionally at collection
-    time — even for tests that never exercise the PII-scan path.
-
-    Moving initialization here means the cost is only paid when the first
-    actual NeMo guardrail invocation runs, not at pytest --collect-only.
-
-    Tests that need to patch ``_presidio_analyzer`` / ``_presidio_anonymizer``
-    can do so normally — the module-level names remain visible as ``None``
-    until this function is called, and unittest.mock.patch replaces them
-    before any call site reaches ``_ensure_presidio_engines()``.
-    """
-    global _presidio_analyzer, _presidio_anonymizer, _presidio_init_done
-    if _presidio_init_done:
-        return
-    _presidio_init_done = True
-    try:
-        import spacy as _spacy
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
-        from presidio_anonymizer import AnonymizerEngine
-
-        _spacy_model = (
-            "en_core_web_lg"
-            if _spacy.util.is_package("en_core_web_lg")
-            else "en_core_web_sm"
-        )
-        _nlp_provider = NlpEngineProvider(
-            nlp_configuration={
-                "nlp_engine_name": "spacy",
-                "models": [{"lang_code": "en", "model_name": _spacy_model}],
-            }
-        )
-        _presidio_analyzer = AnalyzerEngine(
-            nlp_engine=_nlp_provider.create_engine(),
-            default_score_threshold=0.3,
-        )
-        _presidio_anonymizer = AnonymizerEngine()
-        logger.info(
-            "✅ Presidio input-PII engines initialised (model=%s, entities=%d)",
-            _spacy_model,
-            len(_PII_ENTITIES),
-        )
-    except ImportError:
-        logger.warning(
-            "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
-            "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
-        )
-    except Exception as _presidio_init_exc:
-        logger.warning(
-            "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
-            _presidio_init_exc,
-        )
+    ensure_pii_engines()
 
 
 def _redact_pii(text: str) -> tuple[str, list[str]]:
-    """Replace identity PII in ``text`` with ``<ENTITY_TYPE>`` tokens.
+    """Replace identity PII in ``text`` with ``<ENTITY_TYPE>`` tokens via Layer 3."""
+    from src.gateway.governance.pii_redactor_factory import redact_identity_pii
 
-    Returns the redacted text and the sorted entity types found. When the
-    Presidio engines are unavailable the text is returned unchanged. Engine
-    errors propagate; each caller decides how to fail.
-    """
-    _ensure_presidio_engines()
-    if _presidio_analyzer is None or _presidio_anonymizer is None:
-        return text, []
-    results = _presidio_analyzer.analyze(
-        text=text, entities=_PII_ENTITIES, language="en"
-    )
-    if not results:
-        return text, []
-    entity_types = sorted({r.entity_type for r in results})
-    from presidio_anonymizer.entities import OperatorConfig
-
-    anonymized = _presidio_anonymizer.anonymize(
-        text=text,
-        analyzer_results=results,  # type: ignore[arg-type]
-        operators={
-            et: OperatorConfig("replace", {"new_value": f"<{et}>"})
-            for et in entity_types
-        },
-    )
-    return anonymized.text, entity_types
+    return redact_identity_pii(text)
 
 
 def _replace_last_message(state: StateDict, original: str, text: str) -> list[Any]:
