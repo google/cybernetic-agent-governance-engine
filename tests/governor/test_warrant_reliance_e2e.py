@@ -538,10 +538,10 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
     assert reliance["warrant_id"] == "warrant-veip-2026-001"
     assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST
     assert reliance["warrant_status"] == "ACTIVE"
-    assert reliance["governing_version"] == "cage-policy-2.1.0"
+    assert reliance["required_governing_version"] == "cage-policy-2.1.0"
     assert reliance["provider_name"] == "provider_05_warrant"
     assert reliance["verification_status"] == "UNVERIFIED"
-    assert reliance["evaluated_at"] == VEIP_NOW.isoformat()
+    assert reliance["attested_at"] == VEIP_NOW.isoformat()
     assert rs.verify_seal_against_evidence(
         clearance.routing_seal,
         "execute_trade",
@@ -1025,3 +1025,105 @@ async def test_us_fed_unchanged_095_clears_and_executes_without_a_warrant(
     (decision,) = await stack.records("GOVERNANCE_DECISION")
     assert "reliance" not in _payload(decision)
     assert fetches == []
+
+
+# ── Warrant Contract v0.1 evidence fields in the hash chain ─────────────────
+
+
+def _contract_fields(reliance: dict[str, Any]) -> dict[str, str]:
+    """The seven Warrant Contract v0.1 evidence fields, by contract name."""
+    from src.gateway.governance.warrant import WARRANT_CONTRACT_EVIDENCE_FIELDS
+
+    return {
+        name: reliance[key] for name, key in WARRANT_CONTRACT_EVIDENCE_FIELDS.items()
+    }
+
+
+@pytest.mark.eu_ecb
+async def test_contract_fields_in_the_chained_allow_decision_and_envelope(
+    build: StackFactory,
+) -> None:
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    envelope = (await stack.validate(trade(0.98))).json()
+    assert (await stack.execute(trade(0.98))).startswith("EXECUTED")
+
+    (decision,) = await stack.records("GOVERNANCE_DECISION")  # chain verified
+    (reliance,) = _payload(decision)["reliance"]
+    assert _contract_fields(reliance) == {
+        "warrant_id": "warrant-veip-2026-001",
+        "norm_id": TRADE_CONFIDENCE_NORM_ID,
+        "digest": VEIP_ACTIVE_DIGEST,
+        "reliance_status": "ELIGIBLE",
+        "governing_version": "cage-policy-2.1.0",
+        "residual_risk_ref": "RRR-2026-08-01-A1",
+        "attested_at": VEIP_NOW.isoformat(),
+    }
+    assert reliance["required_governing_version"] == "cage-policy-2.1.0"
+    assert reliance["issuing_authority"] == SHARED_WARRANT["issuing_authority"]
+
+    # The signed envelope attestation is derived from the same record: the
+    # preview and the sealed commit agree on every reliance field.
+    (attestation,) = envelope["external_attestations"]
+    assert {k: attestation[k] for k in reliance} == reliance
+
+
+@pytest.mark.eu_ecb
+@pytest.mark.parametrize(("seed", "clock_kw", "status"), _INELIGIBLE)
+async def test_contract_fields_in_the_chained_deferral(
+    build: StackFactory,
+    seed: Warrant | None,
+    clock_kw: dict[str, Any],
+    status: str,
+) -> None:
+    clock = _Clock(**clock_kw)
+    stack = await build(seed=seed, clock=clock)
+    expected = {
+        "warrant_id": seed.warrant_id if seed is not None else "",
+        "norm_id": TRADE_CONFIDENCE_NORM_ID,
+        "digest": seed.digest if seed is not None else "",
+        "reliance_status": status,
+        "governing_version": seed.governing_version if seed is not None else "",
+        "residual_risk_ref": "RRR-2026-08-01-A1" if seed is not None else "",
+        "attested_at": clock.wall.isoformat(),
+    }
+
+    # Preview deferral (gateway dry run).
+    body = _body(await stack.validate(trade(0.98)))
+    assert body["verdict"] == GovernanceDecision.DEFER
+    (deferral,) = await stack.records("GOVERNANCE_DEFERRAL")  # chain verified
+    (reliance,) = _payload(deferral)["reliance"]
+    assert _contract_fields(reliance) == expected
+    # What the binding required is recorded apart from what the warrant says.
+    assert reliance["required_governing_version"] == "cage-policy-2.1.0"
+
+    # Commit-path deferral (execute_trade_action()): same contract fields.
+    committed = await assert_commit_defers(stack, trade(0.98), status)
+    assert _contract_fields(committed) == expected
+    assert committed["required_governing_version"] == "cage-policy-2.1.0"
+
+
+@pytest.mark.eu_ecb
+async def test_contract_fields_in_the_chained_post_hitl_deferral(
+    build: StackFactory,
+) -> None:
+    """The POST_HITL ``approval_retained`` deferral carries every field too."""
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    deferred_id = await _approved_floor_breach(stack)
+    stack.source.seed(_vec(VEC_002_REVOKED))
+    stack.clock.advance(60.001)
+
+    result = await stack.execute(trade(0.96), deferred_id)
+    reliance = await _assert_post_hitl_deferral(
+        stack, deferred_id, result, "INELIGIBLE_REVOKED"
+    )
+    assert _contract_fields(reliance) == {
+        "warrant_id": "warrant-veip-2026-001",
+        "norm_id": TRADE_CONFIDENCE_NORM_ID,
+        "digest": VEIP_REVOKED_DIGEST,
+        "reliance_status": "INELIGIBLE_REVOKED",
+        "governing_version": "cage-policy-2.1.0",
+        "residual_risk_ref": "RRR-2026-08-01-A1",
+        "attested_at": stack.clock.wall.isoformat(),
+    }
+    assert reliance["revocation_ref"] == "Emergency Risk Notice #912"
+    assert reliance["required_governing_version"] == "cage-policy-2.1.0"

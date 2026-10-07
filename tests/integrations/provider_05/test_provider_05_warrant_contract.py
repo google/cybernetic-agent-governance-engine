@@ -47,8 +47,8 @@ from src.gateway.governance.warrant import (
     WarrantScope,
     WarrantStandingVerifier,
     WarrantStatus,
-    bind_warrant_to_attestation,
 )
+from src.gateway.governance.warrant.reliance import RelianceRecord
 from src.integrations.provider_05 import Provider05WarrantSource
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
@@ -105,9 +105,13 @@ async def test_falsifiable_test_a_active_warrant_is_eligible_and_attested(
 
     # 2. Bind warrant to evidence record in GovernanceEnvelope.
     # UNVERIFIED: the digest proves consistency, not issuer identity (v0.2).
-    att = bind_warrant_to_attestation(
-        warrant, standing, provider_name=source.provider_name
-    )
+    att = RelianceRecord(
+        norm_id=warrant.norm_id,
+        required_governing_version=context["governing_version"],
+        provider_name=source.provider_name,
+        standing=standing,
+    ).attestation()
+    assert att is not None
     assert att.attestation_type == "WARRANT"
     assert att.status == AttestationStatus.UNVERIFIED.value
     assert att.attested_at == EVAL_TIME.isoformat()
@@ -176,9 +180,13 @@ async def test_falsifiable_test_b_revoked_warrant_is_ineligible_not_denied(
 
     # Bind ineligible standing into the audit trail / evidence envelope.
     # Never DENIED: ineligibility is not an institutional verdict.
-    att = bind_warrant_to_attestation(
-        warrant, standing, provider_name=source.provider_name
-    )
+    att = RelianceRecord(
+        norm_id=warrant.norm_id,
+        required_governing_version=context["governing_version"],
+        provider_name=source.provider_name,
+        standing=standing,
+    ).attestation()
+    assert att is not None
     assert att.status == AttestationStatus.UNVERIFIED.value
     assert att.status != AttestationStatus.DENIED.value
     assert att.metadata["reliance_status"] == "INELIGIBLE_REVOKED"

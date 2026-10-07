@@ -472,10 +472,18 @@ exercised by
    the deployment jurisdiction, the action and the binding's
    `governing_version`. It emits a `RelianceRecord`
    ([`reliance.py`](../../src/gateway/governance/warrant/reliance.py)) for
-   the norm.
+   the norm. The record carries the seven Warrant Contract v0.1 evidence
+   fields (`warrant_id`, `norm_id`, the declared digest as `warrant_digest`,
+   `reliance_status`, the warrant's `governing_version` as
+   `warrant_governing_version`, the opaque `residual_risk_ref`, and
+   `attested_at`, when CAGE evaluated standing), plus `issuing_authority`,
+   `authority_basis`, `revocation_ref` and `required_governing_version`
+   (the binding's version, kept apart from the warrant's). With no warrant
+   every warrant-declared field is `""`.
 2. **Admit.** If the warrant is eligible and nothing else objects, the
    response is a signed envelope carrying a `WARRANT` attestation with status
-   `UNVERIFIED`. The digest proves the fields are consistent, not who issued
+   `UNVERIFIED`, derived from the same `RelianceRecord` (its metadata is the
+   record's evidence form), so the envelope and the evidence chain agree. The digest proves the fields are consistent, not who issued
    them; issuer signatures arrive with VEIP v0.2.
 3. **Commit.** The trade tool
    ([`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py))

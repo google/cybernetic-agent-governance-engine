@@ -23,13 +23,17 @@ partner-published v0.1 vectors and their pinned digests stay in
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from src.gateway.governance.governance_envelope import AttestationStatus
+from src.gateway.governance.governance_envelope import (
+    AttestationStatus,
+    ExternalAttestation,
+)
 from src.gateway.governance.seams import warrant as warrant_seam
 from src.gateway.governance.warrant import (
     RelianceStatus,
@@ -37,8 +41,9 @@ from src.gateway.governance.warrant import (
     WarrantScope,
     WarrantStandingVerifier,
     WarrantStatus,
-    bind_warrant_to_attestation,
 )
+from src.gateway.governance.warrant.model import StandingVerificationResult
+from src.gateway.governance.warrant.reliance import RelianceRecord
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -150,13 +155,23 @@ def test_failure_matrix(sample_warrant: Warrant) -> None:
         assert result.reliance_status == expected, result.reason
 
 
+def _attest(
+    standing: StandingVerificationResult, provider_name: str = "example"
+) -> ExternalAttestation | None:
+    return RelianceRecord(
+        norm_id="example.norm",
+        required_governing_version=CONTEXT["governing_version"],
+        provider_name=provider_name,
+        standing=standing,
+    ).attestation()
+
+
 def test_binding_is_unverified_and_names_the_source(sample_warrant: Warrant) -> None:
     standing = WarrantStandingVerifier.verify_standing(
         sample_warrant, context=CONTEXT, now=EVAL_TIME
     )
-    att = bind_warrant_to_attestation(
-        sample_warrant, standing, provider_name="example_source"
-    )
+    att = _attest(standing, provider_name="example_source")
+    assert att is not None
     assert att.attestation_type == "WARRANT"
     assert att.status == AttestationStatus.UNVERIFIED.value
     assert att.provider_name == "example_source"
@@ -171,7 +186,8 @@ def test_ineligible_binding_is_never_denied(sample_warrant: Warrant) -> None:
     standing = WarrantStandingVerifier.verify_standing(
         revoked, context=CONTEXT, now=EVAL_TIME
     )
-    att = bind_warrant_to_attestation(revoked, standing, provider_name="example")
+    att = _attest(standing, provider_name="example")
+    assert att is not None
     assert att.status == AttestationStatus.UNVERIFIED.value
     assert att.metadata["reliance_status"] == "INELIGIBLE_REVOKED"
 
@@ -182,7 +198,7 @@ def test_binding_refuses_foreign_standing_result(sample_warrant: Warrant) -> Non
         other, context=CONTEXT, now=EVAL_TIME
     )
     with pytest.raises(ValueError, match="does not belong"):
-        bind_warrant_to_attestation(sample_warrant, standing, provider_name="example")
+        _attest(dataclasses.replace(standing, warrant=sample_warrant))
 
 
 def test_warrant_seam_has_no_runtime_kernel_import() -> None:

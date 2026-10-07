@@ -175,7 +175,7 @@ class WarrantStage(Stage):
     ) -> RelianceRecord:
         return RelianceRecord(
             norm_id=binding.norm_id,
-            governing_version=str(binding.governing_version),
+            required_governing_version=str(binding.governing_version),
             provider_name=self.source_name,
             standing=self._standing(binding, observation, action, now),
             observed_at=(
@@ -194,14 +194,14 @@ class WarrantStage(Stage):
         action: str,
         now: datetime,
     ) -> StandingVerificationResult:
-        evaluated_at = now.isoformat()
+        attested_at = now.isoformat()
         warrant = observation.warrant
         if observation.freshness is WarrantFreshness.UNRESOLVED:
             return StandingVerificationResult(
                 eligible=False,
                 reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
                 reason=observation.error,
-                evaluated_at=evaluated_at,
+                attested_at=attested_at,
             )
         if observation.freshness is WarrantFreshness.STALE:
             # The last state is evidence of what went stale, never relied on.
@@ -213,7 +213,7 @@ class WarrantStage(Stage):
                     f"ago > {observation.max_age_seconds:g}s and re-fetch failed "
                     f"({observation.error})"
                 ),
-                evaluated_at=evaluated_at,
+                attested_at=attested_at,
                 warrant=warrant,
                 warrant_id=warrant.warrant_id if warrant is not None else "",
                 warrant_digest=warrant.digest if warrant is not None else "",
@@ -226,7 +226,7 @@ class WarrantStage(Stage):
                     f"warrant source returned a warrant for norm {warrant.norm_id!r} "
                     f"when {binding.norm_id!r} was requested"
                 ),
-                evaluated_at=evaluated_at,
+                attested_at=attested_at,
                 warrant=warrant,
                 warrant_id=warrant.warrant_id,
                 warrant_digest=warrant.digest,
