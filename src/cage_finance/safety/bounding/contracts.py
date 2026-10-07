@@ -161,7 +161,8 @@ def contract_b2_drawdown_breaker(
     Args:
         request: Bounded trade request to validate
         thresholds: Governance thresholds dict
-        current_drawdown: Current portfolio drawdown percentage (0-100), None if unavailable
+        current_drawdown: Current portfolio daily drawdown as a fraction (0.0-1.0),
+            the same unit as ``drawdown.limit``; None if unavailable
 
     Returns:
         ContractResult with admitted=True if drawdown is within threshold, else False
