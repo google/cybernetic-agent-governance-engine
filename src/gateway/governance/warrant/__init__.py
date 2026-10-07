@@ -25,6 +25,8 @@ Modules:
               ``RelianceStatus``, ``StandingVerificationResult``
     verifier: ``WarrantStandingVerifier``
     evidence: ``bind_warrant_to_attestation``
+    reliance: ``RelianceRecord`` (the per-decision evidence form carried in
+              seals, deferrals and refusal receipts)
 """
 
 from __future__ import annotations
@@ -39,11 +41,19 @@ from src.gateway.governance.warrant.model import (
     WarrantScope,
     WarrantStatus,
 )
+from src.gateway.governance.warrant.reliance import (
+    RELIANCE_VERIFICATION_STATUS,
+    RelianceRecord,
+    reliance_attestations,
+    reliance_evidence,
+)
 from src.gateway.governance.warrant.verifier import WarrantStandingVerifier
 
 __all__ = [
+    "RELIANCE_VERIFICATION_STATUS",
     "REQUIRED_CONTEXT_KEYS",
     "SCOPE_DIMENSIONS",
+    "RelianceRecord",
     "RelianceStatus",
     "StandingVerificationResult",
     "Warrant",
@@ -51,4 +61,6 @@ __all__ = [
     "WarrantStandingVerifier",
     "WarrantStatus",
     "bind_warrant_to_attestation",
+    "reliance_attestations",
+    "reliance_evidence",
 ]

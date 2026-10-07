@@ -210,7 +210,12 @@ class _Recorder:
         self.events.append(event)
 
     async def issue_seal(
-        self, action: str, params: dict[str, Any], *, path: str
+        self,
+        action: str,
+        params: dict[str, Any],
+        *,
+        path: str,
+        reliance: Any = (),
     ) -> str:
         seal = f"seal-{len(self.seals)}"
         self.seals.append(seal)

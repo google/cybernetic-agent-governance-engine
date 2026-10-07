@@ -71,6 +71,14 @@ class RefusalReceipt:
     - v2: Added 5-part proof chain (Terry Snyder seam: attempted_params,
           standing_snapshot, control_id, protected_consequence, non_formation_proof)
     - v3: Added tier_failures tuple (multi-tier dispatch architecture)
+
+    ``reliance`` holds the warrant reliance records (JSON objects, see
+    ``src.gateway.governance.warrant.reliance``) the refused decision
+    evaluated, e.g. a RELIANCE_INELIGIBLE finding co-occurring with the HARD
+    one that decided the refusal. Refusals are primary evidence, so they are
+    inside ``proof_hash`` with the same fields a seal's evidence record
+    carries. Omitted from the hash when empty, so receipts for decisions that
+    relied on no warranted norm hash as before.
     """
 
     thread_id: str
@@ -89,6 +97,7 @@ class RefusalReceipt:
     protected_consequence: str = field(default="")
     non_formation_proof: str = field(default="")
     tier_failures: tuple[GovernanceTierFailure, ...] = field(default_factory=tuple)
+    reliance: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.proof_hash:
@@ -134,6 +143,8 @@ class RefusalReceipt:
                     }
                     for tf in self.tier_failures
                 ]
+            if self.reliance:
+                payload["reliance"] = [dict(record) for record in self.reliance]
             from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
             canon = jcs_canonicalize_plan(payload)

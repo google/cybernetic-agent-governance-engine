@@ -57,13 +57,18 @@ async def run_sealed(
     error propagates, so a seal whose companion artefact (e.g. a NARROW
     receipt) could not be delivered never holds reserved headroom.  Once the
     seal is issued its commits are held in ``settlements`` under the seal.
+
+    The seal's evidence record commits to the run's warrant reliance records
+    (``PipelineResult.reliance``), so the seal proves which warrants grounded
+    the decision it authorises.
     """
     async with ReservationScope() as scope:
         result = await run_pipeline(stages, ctx, profile=ctx.profile, scope=scope)
         if result.violations:
             assert_nothing_committed(result)
             return result, None
-        seal = await issue_seal(ctx.action, params, path=path)
+        # The clean run's reliance records go into the seal's evidence record.
+        seal = await issue_seal(ctx.action, params, path=path, reliance=result.reliance)
         if on_seal is not None:
             await on_seal(seal)
         settlements.hold(seal, scope.seal_issued(seal))

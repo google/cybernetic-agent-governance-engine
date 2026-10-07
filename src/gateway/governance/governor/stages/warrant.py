@@ -42,6 +42,14 @@ The stage is assembled only when some binding requires a warrant
 (``assembly.assemble_governor``); it adds no proof states of its own. Its
 findings are covered by the verdict lattice in ``proof/model.py``
 (``RELIANCE_INELIGIBLE``).
+
+Besides its findings, the stage reports one
+:class:`~src.gateway.governance.warrant.reliance.RelianceRecord` per
+governing warranted norm, eligible or not, in ``StageOutput.reliance``. The
+pipeline carries them in ``PipelineResult.reliance`` into the seal's evidence
+record (ALLOW / NARROW), the parked ``DeferToken`` and its deferral evidence
+(DEFER / REQUIRE_APPROVAL) and the ``RefusalReceipt`` (DENY), and the
+envelope's ``WARRANT`` attestations.
 """
 
 from __future__ import annotations
@@ -54,12 +62,13 @@ from datetime import datetime, timezone
 from opentelemetry import trace
 
 from src.gateway.governance.contracts import NormBinding, Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import Stage, StageContext
+from src.gateway.governance.governor.pipeline import Stage, StageContext, StageOutput
 from src.gateway.governance.seams.warrant import WarrantSource
 from src.gateway.governance.warrant.model import (
     RelianceStatus,
     StandingVerificationResult,
 )
+from src.gateway.governance.warrant.reliance import RelianceRecord
 from src.gateway.governance.warrant.verifier import WarrantStandingVerifier
 
 tracer = trace.get_tracer(__name__)
@@ -124,10 +133,10 @@ class WarrantStage(Stage):
     def source_name(self) -> str:
         return str(self._source.provider_name)
 
-    async def run(self, ctx: StageContext) -> list[Violation]:
+    async def run(self, ctx: StageContext) -> StageOutput:
         governing = [b for b in self._bindings if b.governs(ctx.action)]
         if not governing:
-            return []
+            return StageOutput()
         with tracer.start_as_current_span("cage.warrant_check") as span:
             span.set_attribute("governance.stage", self.name)
             span.set_attribute("cage.warrant.source", self.source_name)
@@ -136,13 +145,20 @@ class WarrantStage(Stage):
             standings = await asyncio.gather(
                 *(self._standing(b, ctx.action, now) for b in governing)
             )
-            violations = [
-                self._violation(binding, standing)
+            records = tuple(
+                RelianceRecord(
+                    norm_id=binding.norm_id,
+                    governing_version=str(binding.governing_version),
+                    provider_name=self.source_name,
+                    standing=standing,
+                )
                 for binding, standing in zip(governing, standings, strict=True)
-                if not standing.eligible
-            ]
+            )
+            violations = tuple(
+                self._violation(record) for record in records if not record.eligible
+            )
             span.set_attribute("cage.warrant.ineligible_count", len(violations))
-            return violations
+            return StageOutput(violations=violations, reliance=records)
 
     async def _standing(
         self, binding: NormBinding, action: str, now: datetime
@@ -185,15 +201,14 @@ class WarrantStage(Stage):
             now=now,
         )
 
-    def _violation(
-        self, binding: NormBinding, standing: StandingVerificationResult
-    ) -> Violation:
+    def _violation(self, record: RelianceRecord) -> Violation:
+        status = record.reliance_status.value
         return Violation(
             tier=self.name,
-            code=f"{RELIANCE_CODE_PREFIX}{standing.reliance_status.value}",
+            code=f"{RELIANCE_CODE_PREFIX}{status}",
             message=(
-                f"norm {binding.norm_id!r} is ineligible for reliance "
-                f"({standing.reliance_status.value}): {standing.reason}"
+                f"norm {record.norm_id!r} is ineligible for reliance "
+                f"({status}): {record.standing.reason}"
             ),
             kind=ViolationKind.RELIANCE_INELIGIBLE,
         )

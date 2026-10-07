@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover - exercised only without prometheus_clie
 class GovernorMetrics:
     """Governor collectors bound to one registry. Build via :func:`governor_metrics`."""
 
-    __slots__ = ("_ftra_boundary_checks",)
+    __slots__ = ("_evidence_publish_failures", "_ftra_boundary_checks")
 
     def __init__(self, registry: CollectorRegistry | None) -> None:
         self._ftra_boundary_checks = (
@@ -50,6 +50,21 @@ class GovernorMetrics:
                 registry=registry,
             )
         )
+        self._evidence_publish_failures = (
+            None
+            if Counter is None or registry is None
+            else Counter(
+                "cage_governance_evidence_publish_failures_total",
+                "Refusal/deferral evidence records that failed to reach the evidence stream",
+                ["kind"],
+                registry=registry,
+            )
+        )
+
+    def evidence_publish_failure(self, kind: str) -> None:
+        """Count one best-effort evidence write that failed (``refusal``, ``deferral``)."""
+        if self._evidence_publish_failures is not None:
+            self._evidence_publish_failures.labels(kind=kind).inc()
 
     def ftra_boundary_check(self, result: str) -> None:
         """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""

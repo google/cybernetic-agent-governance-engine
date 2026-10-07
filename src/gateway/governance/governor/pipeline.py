@@ -28,6 +28,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.governor.reservation import ReservationScope
+from src.gateway.governance.warrant.reliance import RelianceRecord
 
 tracer = trace.get_tracer(__name__)
 
@@ -62,15 +63,18 @@ class StageOutput:
     """What a read-only stage reports for one request.
 
     Stages are shared across concurrent requests, so anything a stage learns
-    about *this* request (the decoded OPA verdict, the FTRA boundary result)
-    travels back to :func:`run_pipeline` here, never as an attribute on the
-    stage. ``run_pipeline`` threads ``opa_verdict`` into the ``StageContext``
-    of later stages and both fields into the ``PipelineResult``.
+    about *this* request (the decoded OPA verdict, the FTRA boundary result,
+    the warrant reliance records) travels back to :func:`run_pipeline` here,
+    never as an attribute on the stage. ``run_pipeline`` threads
+    ``opa_verdict`` into the ``StageContext`` of later stages and every field
+    into the ``PipelineResult``.
     """
 
     violations: tuple[Violation, ...] = ()
     opa_verdict: OpaVerdict | None = None
     ftra: FtraBoundaryResult | None = None
+    # One record per warranted norm the stage evaluated, eligible or not.
+    reliance: tuple[RelianceRecord, ...] = ()
 
 
 def as_stage_output(result: "list[Violation] | StageOutput") -> StageOutput:
@@ -172,6 +176,10 @@ class PipelineResult:
     # False when no domain tier claimed the action, so only
     # UNGOVERNED_STAGES ran.
     governed: bool = True
+    # Every warrant reliance record the read-only stages reported, in
+    # execution order (empty when no warranted norm governs the action). The
+    # verdict's artefact carries them: seal evidence, DeferToken or receipt.
+    reliance: tuple[RelianceRecord, ...] = ()
 
 
 class StageOutcome(StrEnum):
@@ -253,6 +261,46 @@ def _check_scope(profile: Profile, scope: ReservationScope | None) -> None:
         )
 
 
+@dataclass(frozen=True)
+class Claims:
+    """Which domain stages claim an action, over the full (unfiltered) stage set.
+
+    A stage whose ``claims()`` raised counts as claiming the action (fail
+    closed) and carries a HARD ``TIER_EXCEPTION`` in :attr:`failures`, keyed by
+    stage identity: stages are shared across requests, so the failure lives
+    with the request, never on the stage.
+    """
+
+    claimed: tuple[Stage, ...]
+    failures: Mapping[int, Violation]
+
+    @property
+    def governed(self) -> bool:
+        """True if any domain stage claims the action — independent of profile."""
+        return bool(self.claimed)
+
+
+def resolve_claims(stages: Sequence[Stage], ctx: StageContext) -> Claims:
+    """Ask every claiming stage, whatever the profile, whether it claims ``ctx``.
+
+    The single source of governedness for :func:`run_pipeline` and for
+    ``SymbolicGovernor.revalidate_post_hitl``: both agree by construction.
+    """
+    claimed: list[Stage] = []
+    failures: dict[int, Violation] = {}
+    for s in stages:
+        claims: Callable[[StageContext], bool] | None = getattr(s, "claims", None)
+        if claims is None:
+            continue
+        try:
+            if claims(ctx):
+                claimed.append(s)
+        except Exception as exc:
+            failures[id(s)] = _claims_failure(s, exc)
+            claimed.append(s)
+    return Claims(claimed=tuple(claimed), failures=failures)
+
+
 async def run_pipeline(
     stages: Sequence[Stage],
     ctx: StageContext,
@@ -272,35 +320,31 @@ async def run_pipeline(
     _check_scope(profile, scope)
     span = trace.get_current_span()
 
-    # a. Select the stages that run under this profile (stage_runs_under).
+    # a. Who claims the action is decided over the FULL stage set, before any
+    #    profile filtering (resolve_claims), so governedness never depends on
+    #    the profile: an action claimed only by read-only tiers is still
+    #    governed under POST_HITL and still re-runs the POST_HITL read-only
+    #    stages (OPA, warrant).  revalidate_post_hitl asks the same function.
+    claims = resolve_claims(stages, ctx)
+    claim_failures = dict(claims.failures)
+    claimed_ids = {id(s) for s in claims.claimed}
+
+    # b. Select the stages that run under this profile (stage_runs_under).
+    #    Structural, never by name: domain tiers carry plugin-chosen names
+    #    (e.g. "dose_barrier"), and a name filter would silently skip them.
     profile_stages = []
     claimed_domains = []
-    # A domain tier whose claims() raised is treated as claiming the action and
-    # fails closed where it would have run.  Kept per request (keyed by stage
-    # identity), never on the stage: stages are shared across requests.
-    claim_failures: dict[int, Violation] = {}
-
     for s in stages:
-        claims: Callable[[StageContext], bool] | None = getattr(s, "claims", None)
-        # Structural, never by name: domain tiers carry plugin-chosen names
-        # (e.g. "dose_barrier"), and a name filter would silently skip them.
         if not stage_runs_under(
             profile, name=s.name, mutating=bool(getattr(s, "mutating", False))
         ):
             continue
-
-        if claims is not None:
-            try:
-                claimed = claims(ctx)
-            except Exception as exc:
-                claim_failures[id(s)] = _claims_failure(s, exc)
-                claimed = True
-            if claimed:
-                claimed_domains.append(s)
-        else:
+        if getattr(s, "claims", None) is None:
             profile_stages.append(s)
+        elif id(s) in claimed_ids:
+            claimed_domains.append(s)
 
-    is_governed = len(claimed_domains) > 0
+    is_governed = claims.governed
 
     if not is_governed:
         span.set_attribute("governance.governed", False)
@@ -338,6 +382,7 @@ async def run_pipeline(
 
     ftra_result: FtraBoundaryResult | None = None
     opa_verdict: OpaVerdict | None = None
+    reliance: list[RelianceRecord] = []
 
     async def run_stage(stage: Stage, stage_ctx: StageContext) -> StageOutput:
         if id(stage) in claim_failures:
@@ -363,6 +408,7 @@ async def run_pipeline(
             current_ctx = dataclasses.replace(current_ctx, opa_verdict=opa_verdict)
         if output.ftra is not None:
             ftra_result = output.ftra
+        reliance.extend(output.reliance)
         outcomes.append((stage.name, _outcome(stage_violations)))
 
         if stage_violations:
@@ -431,6 +477,7 @@ async def run_pipeline(
         plan=plan,
         stage_outcomes=tuple(outcomes),
         governed=is_governed,
+        reliance=tuple(reliance),
     )
 
 

@@ -43,7 +43,18 @@ with `provider_name` taken from `Provider05WarrantSource.provider_name`
 proves the warrant is internally consistent, not who issued it (issuer
 signatures are v0.2). Reliance eligibility travels in
 `metadata["reliance_status"]`; an ineligible warrant is never emitted as
-`DENIED`, because ineligibility is not an institutional verdict.
+`DENIED`, because ineligibility is not an institutional verdict. The kernel
+returns these attestations with every `validate_action` ALLOW / NARROW for an
+action a warranted norm governs, and the gateway signs them into the
+`GovernanceEnvelope`.
+
+Independently of the envelope, each evaluation becomes a kernel
+[`RelianceRecord`](../../gateway/governance/warrant/reliance.py) naming this
+source (`provider_name: provider_05_warrant`). It is written into the routing
+seal's evidence record (covered by `record_hash`), the DEFER token and its
+`GOVERNANCE_DEFERRAL` evidence event, or the refusal receipt, with the same
+fields whether the warrant was eligible or not, and always
+`verification_status: UNVERIFIED`.
 
 ## Verdict vocabulary
 

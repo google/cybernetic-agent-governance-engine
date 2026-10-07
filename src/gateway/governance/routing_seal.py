@@ -72,7 +72,7 @@ import math
 import os
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, TypeVar
@@ -473,6 +473,7 @@ async def generate_seal_with_evidence(
     evidence_timeout_s: float = 5.0,
     aud: str | None = None,
     redis_client: Any = None,
+    reliance: Sequence[Mapping[str, Any]] = (),
 ) -> str:
     """Generate a routing seal with evidence chain blocking gate (R-06 mitigation).
 
@@ -512,6 +513,12 @@ async def generate_seal_with_evidence(
         params:  Execution plan parameters dict.
         ttl_s:   Seal lifetime in seconds (default: ``GOVERNANCE_SEAL_TTL_S``).
         evidence_timeout_s: Timeout for evidence commit in blocking mode (default: 5s).
+        reliance: The decision's warrant reliance records (JSON objects, one
+            per warranted norm the decision relied on). Written into the
+            evidence record as ``reliance``, so ``record_hash`` -- and with
+            it the seal -- commits to exactly which warrants grounded the
+            decision. Omitted from the record when empty, so a decision that
+            relied on no warranted norm commits the same record as before.
 
     Returns:
         A dot-separated v2 seal string:
@@ -533,8 +540,13 @@ async def generate_seal_with_evidence(
         # the hash cannot represent exactly are refused here, before any
         # evidence is committed for an action that could never be sealed.
         action_bytes = canonical_action_bytes(action, params)
+        # The reliance records must be committed exactly as given; anything the
+        # JCS hash cannot represent is refused before evidence is written.
+        reliance_evidence = _strict_json(
+            [dict(record) for record in reliance], "reliance"
+        )
 
-        evidence_event = {
+        evidence_event: dict[str, Any] = {
             "type": "GOVERNANCE_DECISION",
             "controlId": _SCOPE_CONTROL.value,
             "action": action,
@@ -542,6 +554,9 @@ async def generate_seal_with_evidence(
             "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
             "seal_ttl_s": ttl_s,
         }
+        if reliance_evidence:
+            evidence_event["reliance"] = reliance_evidence
+            span.set_attribute("cage.seal.reliance_count", len(reliance_evidence))
 
         sink = es.get_evidence_sink()
         record_hash: str | None = None  # Will be set if evidence commit succeeds
@@ -611,6 +626,42 @@ async def generate_seal_with_evidence(
             await _index_evidence_binding(seal, record_hash, ttl_s, redis_client)
         span.set_attribute("cage.seal.issued", True)
         return seal
+
+
+def verify_seal_against_evidence(
+    seal: str,
+    action: str,
+    params: dict,
+    record: Mapping[str, Any],
+    *,
+    prev_hash: str,
+    expected_aud: str | None = None,
+) -> bool:
+    """Audit check: ``seal`` commits to exactly this evidence record.
+
+    Recomputes the record's hash from its contents (``verify_record``) and
+    verifies the seal against that hash, so any change to the record --
+    including its ``reliance`` entries -- breaks the correspondence. Unlike
+    :func:`verify_and_consume_seal` this is stateless and consumes nothing;
+    it is for auditors replaying the evidence chain.
+
+    Raises:
+        SymbolicGovernorViolation: The record does not verify against its own
+            ``record_hash`` and ``prev_hash``, or the seal does not verify
+            against the recomputed hash.
+    """
+    result = es.verify_record(dict(record), prev_hash)
+    if not result.valid:
+        raise SymbolicGovernorViolation(
+            f"evidence record does not verify: {result.error}", action
+        )
+    return verify_seal(
+        seal,
+        action,
+        params,
+        expected_record_hash=result.computed_hash,
+        expected_aud=expected_aud,
+    )
 
 
 def _evidence_index_key(nonce: str) -> str:

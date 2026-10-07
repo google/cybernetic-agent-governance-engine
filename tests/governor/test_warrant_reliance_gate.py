@@ -119,9 +119,10 @@ def _tampered_source() -> StaticWarrantSource:
 
 
 async def _run(stage: WarrantStage, action: str = "execute_trade") -> list[Violation]:
-    return await stage.run(
+    output = await stage.run(
         StageContext(action=action, params={"confidence": 0.99}, profile=Profile.FULL)
     )
+    return list(output.violations)
 
 
 # ── NormBinding contract ─────────────────────────────────────────────────────
