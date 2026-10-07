@@ -427,6 +427,9 @@ system-security-plan:
       - href: ../../tests/governor/test_warrant_freshness.py
         rel: reference
         text: Warrant freshness window tests
+      - href: ../../tests/governor/test_warrant_reliance_e2e.py
+        rel: reference
+        text: Warrant reliance end-to-end matrix (composition root, gateway, trade tool)
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -715,7 +718,28 @@ system-security-plan:
           windows (above 60 s, at or below 0, NaN, infinite, timeout not
           below max_age) are refused by the schema, the loader and the cache,
           and every reliance record carries observed_at, age_seconds and
-          max_age_seconds.'
+          max_age_seconds. Observed end to end in
+          tests/governor/test_warrant_reliance_e2e.py (2026-10-06): the
+          governor is built by bootstrap_governor() with the real finance
+          plugin, the EU_ECB thresholds and jurisdiction and the
+          CAGE_WARRANT_SOURCE=provider_05 adapter seeded with the VEIP v0.1
+          vectors; requests enter through POST /governance/validate-action
+          behind workload identity and through execute_trade_action(). VEC-001
+          at confidence 0.98 is admitted, the signed envelope carries an
+          UNVERIFIED WARRANT attestation with the VEIP-published digest, and
+          the seal consumed by the actuation verifies against an evidence
+          record holding the ELIGIBLE reliance record; VEC-002 to VEC-006,
+          a missing warrant and a stale state (61 s, source failing) defer
+          with WARRANT_INELIGIBLE, the reliance record in the DEFER token and
+          the GOVERNANCE_DEFERRAL record, and nothing sealed or actuated; a
+          HARD bounding-tier finding under a revoked warrant denies with the
+          reliance record inside the refusal receipt; a warrant revoked after
+          human approval is refused with no seal; the 0.97 floor applies
+          with an eligible warrant; APAC_MAS (0.96) and US_FED (0.95) never
+          consult a warrant; and bootstrap refuses an EU_ECB governor with no
+          warrant source or with DEFER disabled. The warrant source is the
+          seeded adapter, not the VEIP wire: this is not over-the-wire
+          conformance evidence (VEIP has no live endpoint).'
         implementation-status:
           state: partially-implemented
         links:
@@ -731,6 +755,9 @@ system-security-plan:
         - href: ../../tests/governor/test_warrant_freshness.py
           rel: reference
           text: Warrant freshness window tests
+        - href: ../../tests/governor/test_warrant_reliance_e2e.py
+          rel: reference
+          text: Warrant reliance end-to-end matrix
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001

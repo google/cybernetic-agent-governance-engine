@@ -80,6 +80,21 @@ def _positive_seconds(name: str, value: object) -> float:
     return float(value)
 
 
+@dataclass(frozen=True)
+class WarrantClock:
+    """The two clocks warrant reliance reads, injected once at assembly.
+
+    ``monotonic`` measures how old a cached warrant state is (the freshness
+    window). ``wall_clock`` (UTC, timezone-aware) stamps receipt and
+    evaluation times in the reliance evidence and is the ``now`` the standing
+    verifier checks a warrant's validity window against. The defaults are the
+    process clocks; tests pass hand-advanced ones, so nothing sleeps.
+    """
+
+    monotonic: Callable[[], float] = time.monotonic
+    wall_clock: Callable[[], datetime] = _utc_now
+
+
 class WarrantFreshness(str, Enum):
     """Whether CAGE may rely on the observed warrant state at all."""
 
@@ -269,6 +284,7 @@ __all__ = [
     "DEFAULT_FETCH_TIMEOUT_SECONDS",
     "DEFAULT_MAX_AGE_SECONDS",
     "WarrantCache",
+    "WarrantClock",
     "WarrantFreshness",
     "WarrantObservation",
 ]

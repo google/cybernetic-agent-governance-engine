@@ -91,7 +91,7 @@ from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
-from src.gateway.governance.warrant.cache import WarrantCache
+from src.gateway.governance.warrant.cache import WarrantCache, WarrantClock
 
 if TYPE_CHECKING:
     from src.gateway.governance.schemas.thresholds import GovernanceThresholds
@@ -248,6 +248,7 @@ def assemble_governor(
     metrics: GovernorMetrics | None = None,
     jurisdiction: JurisdictionContribution | None = None,
     warrant_source: WarrantSource | None = None,
+    warrant_clock: WarrantClock | None = None,
 ) -> SymbolicGovernor:
     """Collect every plugin's contribution, validate them together, build the governor.
 
@@ -257,7 +258,9 @@ def assemble_governor(
     ``warrant_source`` supplies warrants for norms the region marks
     ``requires_warrant``; it is never defaulted here (the composition root,
     :func:`~src.gateway.governance.governor.bootstrap.bootstrap_governor`,
-    resolves it from ``CAGE_WARRANT_SOURCE``).
+    resolves it from ``CAGE_WARRANT_SOURCE``). ``warrant_clock`` is the
+    monotonic and wall clock the warrant cache and stage read (default: the
+    process clocks).
 
     Raises:
         GovernorAssemblyError: The contributions collide, leave an
@@ -356,12 +359,14 @@ def assemble_governor(
         magnitude_extractor=magnitude_extractor,
     )
     if warranted and warrant_source is not None:  # else refused above
+        clock = warrant_clock or WarrantClock()
         core_stages = (
             *core_stages,
             WarrantStage(
                 warranted,
-                _warrant_cache(warrant_source),
+                _warrant_cache(warrant_source, clock),
                 jurisdiction=jurisdiction.region,
+                clock=clock.wall_clock,
             ),
         )
 
@@ -406,7 +411,7 @@ def assemble_governor(
     return governor
 
 
-def _warrant_cache(source: WarrantSource) -> WarrantCache:
+def _warrant_cache(source: WarrantSource, clock: WarrantClock) -> WarrantCache:
     """Wrap ``source`` in the freshness cache the validated thresholds define.
 
     One cache per governor: the governor (and so the cache) is built only
@@ -417,6 +422,8 @@ def _warrant_cache(source: WarrantSource) -> WarrantCache:
         source,
         max_age_seconds=window.max_age_seconds,
         fetch_timeout_seconds=window.fetch_timeout_seconds,
+        monotonic=clock.monotonic,
+        wall_clock=clock.wall_clock,
     )
 
 
