@@ -220,13 +220,15 @@ async def test_warrant_ineligible_defers_without_spending_or_committing() -> Non
         if c.args[0].get("type") == "GOVERNANCE_DEFERRAL"
     ]
     assert event["type"] == "GOVERNANCE_DEFERRAL"
+    assert event["controlId"] == "CTRL_AGT_001"
     assert event["defer_id"] == "appr-1"
     assert event["thread_id"] == "t-1"
     assert event["profile"] == "POST_HITL"
     assert event["approval_retained"] is True
     assert event["defer_reason"] == DeferReason.WARRANT_INELIGIBLE.value
     assert event["reliance"] == [reliance]
-    assert event["params_hash"]
+    assert len(event["params_hash"]) == 64
+    assert all(isinstance(v, dict) for v in event["violations"])
 
 
 async def test_deferral_evidence_failure_is_counted_and_still_defers() -> None:

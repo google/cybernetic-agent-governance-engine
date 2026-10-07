@@ -90,6 +90,11 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/integrations/provider_05/test_provider_05_reliance_record.py",
         "tests/governor/test_warrant_reliance_e2e.py",
     ),
+    # Deferral envelope wrapping and evidence format normalization.
+    "POAM-2026-112": (
+        "tests/test_envelope_transport.py",
+        "tests/governor/test_warrant_reliance_e2e.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

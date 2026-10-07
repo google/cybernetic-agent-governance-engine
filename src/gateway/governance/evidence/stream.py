@@ -1420,7 +1420,7 @@ class EvidenceStreamSink:
         payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
         event_type = event.get("type", "UNKNOWN")
-        control_id = event.get("controlId", "")
+        control_id = str(event.get("controlId") or event.get("control_id") or "")
 
         async with self._chain_lock:
             for _attempt in range(_MAX_APPEND_ATTEMPTS):

@@ -785,57 +785,62 @@ async def validate_action_endpoint(
                 content=receipt_payload,
             )
 
-        # ADR-008 Phase 3: Build canonical signed envelope for admissible verdicts
-        if verdict in (GovernanceDecision.ALLOW, GovernanceDecision.NARROW):
-            from src.gateway.governance.seams.attestation import ExternalAttestation
+        # ADR-008 Phase 3: Build canonical signed envelope for all HTTP 200 verdicts
+        from src.gateway.governance.contracts import Violation
+        from src.gateway.governance.seams.attestation import ExternalAttestation
 
-            # Convert dict attestations to ExternalAttestation objects
-            attestations_raw = result.get("external_attestations")
-            attestations = None
-            if attestations_raw:
-                attestations = []
-                for att in attestations_raw:
-                    if isinstance(att, dict):
-                        # Extract standard fields; everything else goes into metadata
-                        standard_keys = {
-                            "type",
-                            "status",
-                            "receipt_id",
-                            "attested_at",
-                            "provider_name",
-                        }
-                        metadata = {
-                            k: v for k, v in att.items() if k not in standard_keys
-                        }
-                        attestations.append(
-                            ExternalAttestation(
-                                attestation_type=att.get("type", ""),
-                                status=att.get("status", ""),
-                                receipt_id=att.get("receipt_id", ""),
-                                attested_at=att.get("attested_at", ""),
-                                provider_name=att.get("provider_name", "unknown"),
-                                metadata=metadata,
-                            )
+        # Convert dict attestations to ExternalAttestation objects
+        attestations_raw = result.get("external_attestations")
+        attestations = None
+        if attestations_raw:
+            attestations = []
+            for att in attestations_raw:
+                if isinstance(att, dict):
+                    # Extract standard fields; everything else goes into metadata
+                    standard_keys = {
+                        "type",
+                        "status",
+                        "receipt_id",
+                        "attested_at",
+                        "provider_name",
+                    }
+                    metadata = {k: v for k, v in att.items() if k not in standard_keys}
+                    attestations.append(
+                        ExternalAttestation(
+                            attestation_type=att.get("type", ""),
+                            status=att.get("status", ""),
+                            receipt_id=att.get("receipt_id", ""),
+                            attested_at=att.get("attested_at", ""),
+                            provider_name=att.get("provider_name", "unknown"),
+                            metadata=metadata,
                         )
-                    else:
-                        attestations.append(att)
+                    )
+                else:
+                    attestations.append(att)
 
-            builder = GovernanceEnvelopeBuilder()
-            envelope = await builder.build(
-                action=body.action,
-                params=body.params,
-                governance_result=jsonable_encoder(result),
-                record_hash=result.get("record_hash"),
-                agent_id=result.get("agent_id"),
-                tiers_passed=result.get("tiers_passed", []),
-                controls_satisfied=result.get("controls_satisfied", []),
-                external_attestations=attestations,
-            )
-            return JSONResponse(content=envelope.to_dict(include_signature=True))
+        payload_result = {
+            k: v for k, v in result.items() if k != "external_attestations"
+        }
+        if "violations" in payload_result and isinstance(
+            payload_result["violations"], list
+        ):
+            payload_result["violations"] = [
+                v.to_dict() if isinstance(v, Violation) else v
+                for v in payload_result["violations"]
+            ]
 
-        # REQUIRE_APPROVAL (carries ``deferred_id``) and DEFER: flat format
-        payload = {"schema_version": "1.0.0", **result}
-        return JSONResponse(content=jsonable_encoder(payload))
+        builder = GovernanceEnvelopeBuilder()
+        envelope = await builder.build(
+            action=body.action,
+            params=body.params,
+            governance_result=jsonable_encoder(payload_result),
+            record_hash=result.get("record_hash"),
+            agent_id=result.get("agent_id"),
+            tiers_passed=result.get("tiers_passed", []),
+            controls_satisfied=result.get("controls_satisfied", []),
+            external_attestations=attestations,
+        )
+        return JSONResponse(content=envelope.to_dict(include_signature=True))
 
     except GovernanceError as exc:
         # P6: emit a signed OSCAL compliance receipt for every hard refusal.
