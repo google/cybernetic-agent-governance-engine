@@ -1,0 +1,476 @@
+{
+  "generator": "generate_samples.py driving CAGE main@82df1b14 (real code path)",
+  "region": "EU_ECB",
+  "posture": "hermetic development (CAGE_ENV=test, HMAC seals, no KMS)",
+  "warrant_source": "Provider05WarrantSource, seeded with VEIP v0.1 vectors (not live wire)",
+  "evaluation_time": "2026-08-22T12:00:00+00:00",
+  "scenario": "VEC-006 tampered: declared digest does not match content",
+  "seeded_warrant": {
+    "warrant_id": "warrant-veip-2026-001",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade"
+      ],
+      "actors": [
+        "*"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "valid_from": "2026-08-01T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "ACTIVE",
+    "revocation_ref": null,
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0"
+  },
+  "request": {
+    "action": "execute_trade",
+    "params": {
+      "symbol": "AAPL",
+      "amount": 500.0,
+      "currency": "USD",
+      "confidence": 0.98,
+      "trader_id": "trader-7",
+      "trader_role": "junior",
+      "side": "buy"
+    }
+  },
+  "governance_decision": {
+    "verdict": "DEFER",
+    "defer_reason": "WARRANT_INELIGIBLE",
+    "body": {
+      "verdict": "DEFER",
+      "violations": [
+        {
+          "tier": "warrant",
+          "code": "RELIANCE_INELIGIBLE_UNRESOLVED",
+          "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+          "kind": "reliance_ineligible"
+        }
+      ],
+      "latency_ms": 173.15,
+      "classification_meta": {
+        "terminal_classification": "IRREVERSIBLE_TERMINAL",
+        "requires_hitl": false,
+        "bypassed_ftra_node": false,
+        "in_registry": true,
+        "ftra_registry_state": "registered",
+        "ftra_auto_cleared": true,
+        "barrier_preview": "PASS",
+        "barrier_preview_violations": [],
+        "classification_reason": "reliance_ineligible",
+        "deferrable": true,
+        "reliance_ineligible": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_UNRESOLVED",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+            "kind": "reliance_ineligible"
+          }
+        ]
+      },
+      "defer_reason": "WARRANT_INELIGIBLE",
+      "defer_token": "7569e1f1-3659-42b9-89d3-bb90ab97c323",
+      "deferrable": true,
+      "retry_after_seconds": 300,
+      "agent_id": "",
+      "reliance": [
+        {
+          "norm_id": "confidence.min_trade_confidence",
+          "warrant_id": "warrant-veip-2026-001",
+          "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+          "warrant_status": "ACTIVE",
+          "reliance_status": "INELIGIBLE_UNRESOLVED",
+          "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+          "required_governing_version": "cage-policy-2.1.0",
+          "warrant_governing_version": "cage-policy-2.1.0",
+          "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+          "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+          "revocation_ref": "",
+          "residual_risk_ref": "RRR-2026-08-01-A1",
+          "attested_at": "2026-08-22T12:00:00+00:00",
+          "observed_at": "2026-08-22T12:00:00+00:00",
+          "age_seconds": "0.000",
+          "max_age_seconds": "60.000",
+          "provider_name": "provider_05_warrant",
+          "verification_status": "UNVERIFIED"
+        }
+      ],
+      "tiers_passed": [
+        "ftra",
+        "stpa",
+        "opa",
+        "confidence",
+        "trade_confidence",
+        "consensus",
+        "causal",
+        "fria",
+        "cbf",
+        "fiscal"
+      ],
+      "envelope_id": "cage-1c85286ff7904c8b808dbd63d619c205",
+      "envelope_version": "3.0",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "cage-gateway-sample-01",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "signature": null,
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "external_attestations": []
+    }
+  },
+  "gateway_response": {
+    "envelope_version": "3.0",
+    "envelope_type": "cage_governance_decision",
+    "envelope_id": "cage-1c85286ff7904c8b808dbd63d619c205",
+    "issued_at": "2026-08-22T12:00:00.000Z",
+    "expires_at": "2026-08-22T12:05:00.000Z",
+    "issuer": {
+      "service": "cage-gateway",
+      "instance_id": "cage-gateway-sample-01",
+      "region": "EU_ECB"
+    },
+    "subject": {
+      "action": "execute_trade",
+      "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+      "consequence_ceiling": "LOW_INFORMATIONAL",
+      "target_route": "local://default",
+      "executor_id": "kernel"
+    },
+    "governance_context": {
+      "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+      "tiers_passed": [
+        "ftra",
+        "stpa",
+        "opa",
+        "confidence",
+        "trade_confidence",
+        "consensus",
+        "causal",
+        "fria",
+        "cbf",
+        "fiscal"
+      ],
+      "deployment_region": "EU_ECB",
+      "controls_satisfied": []
+    },
+    "payload": {
+      "verdict": "DEFER",
+      "violations": [
+        {
+          "tier": "warrant",
+          "code": "RELIANCE_INELIGIBLE_UNRESOLVED",
+          "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+          "kind": "reliance_ineligible"
+        }
+      ],
+      "latency_ms": 173.15,
+      "classification_meta": {
+        "terminal_classification": "IRREVERSIBLE_TERMINAL",
+        "requires_hitl": false,
+        "bypassed_ftra_node": false,
+        "in_registry": true,
+        "ftra_registry_state": "registered",
+        "ftra_auto_cleared": true,
+        "barrier_preview": "PASS",
+        "barrier_preview_violations": [],
+        "classification_reason": "reliance_ineligible",
+        "deferrable": true,
+        "reliance_ineligible": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_UNRESOLVED",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+            "kind": "reliance_ineligible"
+          }
+        ]
+      },
+      "defer_reason": "WARRANT_INELIGIBLE",
+      "defer_token": "7569e1f1-3659-42b9-89d3-bb90ab97c323",
+      "deferrable": true,
+      "retry_after_seconds": 300,
+      "agent_id": "",
+      "reliance": [
+        {
+          "norm_id": "confidence.min_trade_confidence",
+          "warrant_id": "warrant-veip-2026-001",
+          "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+          "warrant_status": "ACTIVE",
+          "reliance_status": "INELIGIBLE_UNRESOLVED",
+          "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+          "required_governing_version": "cage-policy-2.1.0",
+          "warrant_governing_version": "cage-policy-2.1.0",
+          "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+          "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+          "revocation_ref": "",
+          "residual_risk_ref": "RRR-2026-08-01-A1",
+          "attested_at": "2026-08-22T12:00:00+00:00",
+          "observed_at": "2026-08-22T12:00:00+00:00",
+          "age_seconds": "0.000",
+          "max_age_seconds": "60.000",
+          "provider_name": "provider_05_warrant",
+          "verification_status": "UNVERIFIED"
+        }
+      ],
+      "tiers_passed": [
+        "ftra",
+        "stpa",
+        "opa",
+        "confidence",
+        "trade_confidence",
+        "consensus",
+        "causal",
+        "fria",
+        "cbf",
+        "fiscal"
+      ]
+    }
+  },
+  "gateway_response_note": "Preview envelope from /governance/validate-action. All HTTP 200 verdicts (ALLOW, NARROW, DEFER, REQUIRE_APPROVAL) are wrapped in a v3.0 GovernanceEnvelope. The ineligible reliance record is carried in envelope.payload.reliance, the parked DeferQueue token, and the hash-chained GOVERNANCE_DEFERRAL evidence records.",
+  "reliance_record": [
+    {
+      "norm_id": "confidence.min_trade_confidence",
+      "warrant_id": "warrant-veip-2026-001",
+      "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+      "warrant_status": "ACTIVE",
+      "reliance_status": "INELIGIBLE_UNRESOLVED",
+      "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+      "required_governing_version": "cage-policy-2.1.0",
+      "warrant_governing_version": "cage-policy-2.1.0",
+      "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+      "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+      "revocation_ref": "",
+      "residual_risk_ref": "RRR-2026-08-01-A1",
+      "attested_at": "2026-08-22T12:00:00+00:00",
+      "observed_at": "2026-08-22T12:00:00+00:00",
+      "age_seconds": "0.000",
+      "max_age_seconds": "60.000",
+      "provider_name": "provider_05_warrant",
+      "verification_status": "UNVERIFIED"
+    }
+  ],
+  "veip_contract_fields_in_chained_deferral": {
+    "warrant_id": "warrant-veip-2026-001",
+    "norm_id": "confidence.min_trade_confidence",
+    "digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+    "reliance_status": "INELIGIBLE_UNRESOLVED",
+    "governing_version": "cage-policy-2.1.0",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "attested_at": "2026-08-22T12:00:00+00:00"
+  },
+  "defer_token_snapshot_reliance": [
+    {
+      "norm_id": "confidence.min_trade_confidence",
+      "warrant_id": "warrant-veip-2026-001",
+      "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+      "warrant_status": "ACTIVE",
+      "reliance_status": "INELIGIBLE_UNRESOLVED",
+      "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+      "required_governing_version": "cage-policy-2.1.0",
+      "warrant_governing_version": "cage-policy-2.1.0",
+      "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+      "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+      "revocation_ref": "",
+      "residual_risk_ref": "RRR-2026-08-01-A1",
+      "attested_at": "2026-08-22T12:00:00+00:00",
+      "observed_at": "2026-08-22T12:00:00+00:00",
+      "age_seconds": "0.000",
+      "max_age_seconds": "60.000",
+      "provider_name": "provider_05_warrant",
+      "verification_status": "UNVERIFIED"
+    }
+  ],
+  "deferral_evidence_records": [
+    {
+      "schema": "cage-audit/3.0",
+      "chain_id": "208bb9bb-b438-4fe1-9f7d-7ee1ff3fd237",
+      "sequence": "1",
+      "timestamp_utc": "2026-08-22T12:00:00+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "0000000000000000000000000000000b",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "cf0c66707e6250f0beb671eaac19de4d64d264f46125c003c8e6fc3e6fa5ee85",
+      "record_hash": "60c0e0bd8813e4d5b2562a9c0f06ea6ff08788cbedd09376b9172d1a8bcf993e",
+      "payload_json": "{\"action\":\"execute_trade\",\"barrier_preview\":\"PASS\",\"classification_reason\":\"reliance_ineligible\",\"controlId\":\"CTRL_AGT_001\",\"defer_id\":\"7569e1f1-3659-42b9-89d3-bb90ab97c323\",\"defer_reason\":\"WARRANT_INELIGIBLE\",\"deferred_at_utc\":\"2026-08-22T12:00:00+00:00\",\"params_hash\":\"7794c8562aa4e1be48c6e93ab957da013dd8236ddb9bf2bb56679b4c3d05f3c0\",\"persisted\":true,\"reliance\":[{\"age_seconds\":\"0.000\",\"attested_at\":\"2026-08-22T12:00:00+00:00\",\"authority_basis\":\"EU AI Act Art. 9 Risk Management Instrument #442\",\"issuing_authority\":\"Risk Oversight Committee (EU_ECB)\",\"max_age_seconds\":\"60.000\",\"norm_id\":\"confidence.min_trade_confidence\",\"observed_at\":\"2026-08-22T12:00:00+00:00\",\"provider_name\":\"provider_05_warrant\",\"reason\":\"Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce\",\"reliance_status\":\"INELIGIBLE_UNRESOLVED\",\"required_governing_version\":\"cage-policy-2.1.0\",\"residual_risk_ref\":\"RRR-2026-08-01-A1\",\"revocation_ref\":\"\",\"verification_status\":\"UNVERIFIED\",\"warrant_digest\":\"b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0\",\"warrant_governing_version\":\"cage-policy-2.1.0\",\"warrant_id\":\"warrant-veip-2026-001\",\"warrant_status\":\"ACTIVE\"}],\"required_quorum\":3,\"thread_id\":\"0008e98e-7d40-451a-88c5-53419b6c993f\",\"timestamp_utc\":\"2026-08-22T12:00:00+00:00\",\"type\":\"GOVERNANCE_DEFERRAL\",\"violations\":[{\"code\":\"RELIANCE_INELIGIBLE_UNRESOLVED\",\"kind\":\"reliance_ineligible\",\"message\":\"norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce\",\"tier\":\"warrant\"}]}",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": "PASS",
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "7569e1f1-3659-42b9-89d3-bb90ab97c323",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-08-22T12:00:00+00:00",
+        "params_hash": "7794c8562aa4e1be48c6e93ab957da013dd8236ddb9bf2bb56679b4c3d05f3c0",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-08-22T12:00:00+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-08-22T12:00:00+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+            "reliance_status": "INELIGIBLE_UNRESOLVED",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "UNVERIFIED",
+            "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-001",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "0008e98e-7d40-451a-88c5-53419b6c993f",
+        "timestamp_utc": "2026-08-22T12:00:00+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_UNRESOLVED",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+            "tier": "warrant"
+          }
+        ]
+      }
+    },
+    {
+      "schema": "cage-audit/3.0",
+      "chain_id": "208bb9bb-b438-4fe1-9f7d-7ee1ff3fd237",
+      "sequence": "3",
+      "timestamp_utc": "2026-08-22T12:00:00+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "0000000000000000000000000000000d",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "b0dc9ee2322e19d11e487594fef40a6af26db67cca8031038ec210567a09aff1",
+      "record_hash": "105da81a3801a076842c89c8fe78cf439f75f2f9dc1f80a38a6b702da60e6a94",
+      "payload_json": "{\"action\":\"execute_trade\",\"barrier_preview\":null,\"classification_reason\":\"reliance_ineligible\",\"controlId\":\"CTRL_AGT_001\",\"defer_id\":\"051c1f79-ef38-41d1-a44b-f21077a131a4\",\"defer_reason\":\"WARRANT_INELIGIBLE\",\"deferred_at_utc\":\"2026-08-22T12:00:00+00:00\",\"params_hash\":\"5e7a2a08e6edafb429a46ce6ad74625966a7a475a32bdced24d24a411de96688\",\"persisted\":true,\"reliance\":[{\"age_seconds\":\"0.000\",\"attested_at\":\"2026-08-22T12:00:00+00:00\",\"authority_basis\":\"EU AI Act Art. 9 Risk Management Instrument #442\",\"issuing_authority\":\"Risk Oversight Committee (EU_ECB)\",\"max_age_seconds\":\"60.000\",\"norm_id\":\"confidence.min_trade_confidence\",\"observed_at\":\"2026-08-22T12:00:00+00:00\",\"provider_name\":\"provider_05_warrant\",\"reason\":\"Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce\",\"reliance_status\":\"INELIGIBLE_UNRESOLVED\",\"required_governing_version\":\"cage-policy-2.1.0\",\"residual_risk_ref\":\"RRR-2026-08-01-A1\",\"revocation_ref\":\"\",\"verification_status\":\"UNVERIFIED\",\"warrant_digest\":\"b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0\",\"warrant_governing_version\":\"cage-policy-2.1.0\",\"warrant_id\":\"warrant-veip-2026-001\",\"warrant_status\":\"ACTIVE\"}],\"required_quorum\":3,\"thread_id\":\"23513a48-7f1d-483b-8280-75a1c98aa8b9\",\"timestamp_utc\":\"2026-08-22T12:00:00+00:00\",\"type\":\"GOVERNANCE_DEFERRAL\",\"violations\":[{\"code\":\"RELIANCE_INELIGIBLE_UNRESOLVED\",\"kind\":\"reliance_ineligible\",\"message\":\"norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce\",\"tier\":\"warrant\"}]}",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "051c1f79-ef38-41d1-a44b-f21077a131a4",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-08-22T12:00:00+00:00",
+        "params_hash": "5e7a2a08e6edafb429a46ce6ad74625966a7a475a32bdced24d24a411de96688",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-08-22T12:00:00+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-08-22T12:00:00+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+            "reliance_status": "INELIGIBLE_UNRESOLVED",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "UNVERIFIED",
+            "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-001",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "23513a48-7f1d-483b-8280-75a1c98aa8b9",
+        "timestamp_utc": "2026-08-22T12:00:00+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_UNRESOLVED",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  ],
+  "commit_attempt": {
+    "note": "The trade tool's committing run re-evaluates the warrant and DEFERS (WARRANT_INELIGIBLE): it parks a second token and writes a second GOVERNANCE_DEFERRAL record (the last entry of deferral_evidence_records). No GOVERNANCE_REFUSAL, no refusal receipt, no routing seal, no actuation.",
+    "trade_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as '051c1f79-ef38-41d1-a44b-f21077a131a4': [RELIANCE_INELIGIBLE_UNRESOLVED] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_UNRESOLVED): Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+    "commit_deferral_reliance": {
+      "age_seconds": "0.000",
+      "attested_at": "2026-08-22T12:00:00+00:00",
+      "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+      "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+      "max_age_seconds": "60.000",
+      "norm_id": "confidence.min_trade_confidence",
+      "observed_at": "2026-08-22T12:00:00+00:00",
+      "provider_name": "provider_05_warrant",
+      "reason": "Cryptographic digest mismatch: declared b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0 vs computed b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+      "reliance_status": "INELIGIBLE_UNRESOLVED",
+      "required_governing_version": "cage-policy-2.1.0",
+      "residual_risk_ref": "RRR-2026-08-01-A1",
+      "revocation_ref": "",
+      "verification_status": "UNVERIFIED",
+      "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0",
+      "warrant_governing_version": "cage-policy-2.1.0",
+      "warrant_id": "warrant-veip-2026-001",
+      "warrant_status": "ACTIVE"
+    },
+    "commit_token_reliance_matches": true,
+    "routing_seal_issued": false,
+    "seal_nonces_in_store": 0,
+    "actuations": 0,
+    "governance_decision_records": 0,
+    "governance_refusal_records": 0
+  },
+  "full_evidence_chain_event_types": [
+    "GOVERNANCE_TRACE",
+    "GOVERNANCE_DEFERRAL",
+    "GOVERNANCE_TRACE",
+    "GOVERNANCE_DEFERRAL"
+  ]
+}
