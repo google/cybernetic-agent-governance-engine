@@ -166,10 +166,11 @@ single approved refinement propagates to every consumer simultaneously.
 | [`actions.py`](actions.py)                                                             | Gateway-internal NeMo action: `InvokeVllmFallbackAction`. Finance policy is enforced at tool dispatch by the governor, not by NeMo.                                                                    |
 | [`prompt_fetcher.py`](prompt_fetcher.py)                                               | **v2.0.0:** Fetches Langfuse prompts for NeMo rail configuration. Used by the human-gated refinement workflow (`POST /v1/nemo/propose-refinement`) to stage config proposals before human approval.    |
 | [`vllm_client.py`](vllm_client.py)                                                     | `VLLMLLM` — a LangChain `BaseChatModel` wrapper around the vLLM inference service via LiteLLM. Registered as the `vllm_llama` LLM provider and used by NeMo for any LLM calls within Colang flows.   |
+| [`otel_exporter.py`](otel_exporter.py)                                                 | `NeMoOTelCallback` — streams Colang execution spans into CAGE's OpenTelemetry pipeline (relocated from Layer 1 `src/gateway/` to preserve kernel purity).                                             |
 | [`__init__.py`](__init__.py)                                                           | Package init (currently empty; kept for Python package resolution).                                                                                                                                    |
-| [`src.integrations.nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)                                         | **\[US\_FED only\]** CBRN safety rail (NIST AI 600-1 §2.6/§2.12). Blocks synthesis/weaponisation queries across Chemical, Biological, Radiological, and Nuclear categories. Loaded only when `CAGE_DEPLOYMENT_REGION=US_FED`. |
-| [`../../../../src/gateway/protos/nemo.proto`](../../protos/nemo.proto)                 | Protobuf definition for the gRPC sidecar: `NeMoGuardrails.Verify(VerifyRequest) → VerifyResponse`.                                                                                                     |
-| [`../../../../config/rails/`](../../../../config/rails/)                               | Colang flow definitions and `config.yml` consumed by both the in-process manager and the gRPC sidecar.                                                                                                 |
+| [`src/integrations/nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)                   | **\[US\_FED only\]** CBRN safety rail (NIST AI 600-1 §2.6/§2.12). Blocks synthesis/weaponisation queries across Chemical, Biological, Radiological, and Nuclear categories. Loaded only when `CAGE_DEPLOYMENT_REGION=US_FED`. |
+| [`../../gateway/protos/nemo.proto`](../../gateway/protos/nemo.proto)                   | Protobuf definition for the gRPC sidecar: `NeMoGuardrails.Verify(VerifyRequest) → VerifyResponse`.                                                                                                     |
+| [`../../../config/rails/`](../../../config/rails/)                                     | Colang flow definitions and `config.yml` consumed by both the in-process manager and the gRPC sidecar.                                                                                                 |
 
 ---
 
@@ -188,7 +189,7 @@ startup via the `config.yml` rail configuration.
 
 ### `cbrn_rails.co` — CBRN Safety Rail **\[US\_FED only\]**
 
-**File:** [`src.integrations.nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)
+**File:** [`src/integrations/nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)
 **Compliance authority:** NIST AI 600-1 §2.6 (Dual-Use Foundation Model Risks) and §2.12 (CBRN Uplift Prevention) — **US\_FED jurisdiction only**
 **POAM reference:** AI600-007
 **Change category:** Cat-M — requires AO pre-approval before production deployment (Phase 3)
@@ -293,7 +294,7 @@ masked = await verify_and_mask_output(rails, text)
 > `manager.py` contract. Inside the **GFA pod**, callers should not call
 > `create_nemo_manager()` directly — they must go through the harness
 > singleton accessors in
-> [`nemo_node_factory.py`](../../langgraph_harness/nemo_node_factory.py)
+> [`nemo_node_factory.py`](../../gateway/governance/langgraph_harness/nemo_node_factory.py)
 > instead, so that the same `LLMRails` instance is shared across every
 > consumer in the pod:
 >
@@ -352,10 +353,9 @@ sidecar would introduce four problems:
 
 ## Related Documents
 
-- `plans/nemo_guardrails_architectural_analysis.md` — full architectural analysis and decision record
-- [`docs/GATEWAY_ARCHITECTURE.md`](../../../../docs/architecture/GATEWAY_ARCHITECTURE.md) — gateway architecture overview
-- [`docs/architecture/LATENCY_STRATEGY.md`](../../../../docs/architecture/LATENCY_STRATEGY.md) — latency strategy and budget
-- [`src.integrations.nemo/server.py`](server.py) — module docstring with full sidecar rationale
-- [`src.integrations.nemo/manager.py`](manager.py) — module docstring and comment block above `create_nemo_manager()`
-- [`src/gateway/governance/langgraph_harness/nemo_node_factory.py`](../../langgraph_harness/nemo_node_factory.py) — GFA pod singleton (`_nemo_rails`), `get_nemo_rails()`, and the canonical `reload_nemo_rails()` hot-reload entry point (see [§3](#gfa-pod--singleton-consolidation-2026-08-06))
-- [`infra/modules/nemo_guardrails/main.tf`](../../../../infra/modules/nemo_guardrails/main.tf) — **HISTORICAL-ONLY, DO NOT APPLY**; quarantined inline Colang config predating `config/rails/`
+- [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../../../docs/architecture/GATEWAY_ARCHITECTURE.md) — gateway architecture overview
+- [`docs/architecture/LATENCY_STRATEGY.md`](../../../docs/architecture/LATENCY_STRATEGY.md) — latency strategy and budget
+- [`src/integrations/nemo/server.py`](server.py) — module docstring with full sidecar rationale
+- [`src/integrations/nemo/manager.py`](manager.py) — module docstring and comment block above `create_nemo_manager()`
+- [`src/gateway/governance/langgraph_harness/nemo_node_factory.py`](../../gateway/governance/langgraph_harness/nemo_node_factory.py) — GFA pod singleton (`_nemo_rails`), `get_nemo_rails()`, and the canonical `reload_nemo_rails()` hot-reload entry point (see [§3](#gfa-pod--singleton-consolidation-2026-08-06))
+- [`infra/modules/nemo_guardrails/main.tf`](../../../infra/modules/nemo_guardrails/main.tf) — **HISTORICAL-ONLY, DO NOT APPLY**; quarantined inline Colang config predating `config/rails/`

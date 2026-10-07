@@ -192,8 +192,11 @@ async def chat_completions(
     background_tasks: BackgroundTasks,
 ) -> JSONResponse:
     """OpenAI-compatible governed inference endpoint."""
-    from src.integrations.nemo.manager import initialize_rails as _init_rails
-    from src.integrations.nemo.manager import verify_and_mask_output, verify_input
+    from src.gateway.governance.semantic_rail_factory import (
+        initialize_semantic_rails as _init_rails,
+        verify_and_mask_semantic_output as verify_and_mask_output,
+        verify_semantic_input as verify_input,
+    )
 
     # Rails are initialised externally at startup and stored on app.state.
     # Fall back to on-demand init if not set (e.g. during testing).

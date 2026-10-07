@@ -534,7 +534,7 @@ async def validate_with_nemo(
     from src.gateway.infrastructure.privacy import scrub_pii
 
     try:
-        from src.gateway.infrastructure.telemetry.nemo_exporter import (
+        from src.integrations.nemo.otel_exporter import (
             NeMoOTelCallback,
         )
 

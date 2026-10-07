@@ -56,7 +56,14 @@ LAYER_3_INTEGRATIONS_PATTERN = re.compile(r"^(src\.)?integrations\b")
 LAYER_4_GFA_PATTERN = re.compile(r"^(src\.)?governed_financial_advisor")
 
 # Forbidden vendor SDKs for Layer 1 Kernel (src/gateway/)
-FORBIDDEN_VENDOR_SDKS = ("google.cloud", "boto3", "botocore", "azure", "langfuse")
+FORBIDDEN_VENDOR_SDKS = (
+    "google.cloud",
+    "boto3",
+    "botocore",
+    "azure",
+    "langfuse",
+    "nemoguardrails",
+)
 
 # Rule 1: Forbidden path literals inside Layer 1 (src/gateway/)
 PATH_LITERAL_PATTERN = re.compile(
@@ -122,10 +129,7 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/governance/outbound_credential_factory.py",  # lazy-loads gcp/aws/azure credential providers
         "src/gateway/governance/signer_factory.py",  # lazy-loads gcp/aws/azure KMS providers
         "src/gateway/governance/telemetry_provider.py",  # lazy-loads telemetry_langfuse
-        "src/gateway/server/inference_proxy.py",
-        "src/gateway/server/hybrid_server.py",
-        "src/gateway/server/mcp_tool_server.py",
-        "src/gateway/governance/langgraph_harness/nemo_node_factory.py",
+        "src/gateway/governance/semantic_rail_factory.py",  # lazy-loads integrations.nemo semantic rail provider
         "src/gateway/infrastructure/redis_credential_factory.py",  # lazy-loads gcp Memorystore IAM credential provider
     ]
 )
