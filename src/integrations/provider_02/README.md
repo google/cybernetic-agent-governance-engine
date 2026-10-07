@@ -34,9 +34,9 @@ an optional `error` string ([`provider.py`](provider.py:100)).
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `certify_decision()` | `POST {base}/certifyDecision` | Submit a governance decision, receive a `CERReceipt` |
-| `verify_cer()` | *(local)* → falls back to `GET {base}/verify/{hash}` | Verify against the cached JWK set; remote only when the cache is empty |
-| `register_project_bundle()` | `POST {base}/registerProjectBundle` | Register a completed bundle |
+| `attest_bundle()` | `POST {base}/api/attest` | Seal a completed bundle into a `cer.governed.execution.v1` CER, attest it, and verify both Ed25519 receipt signatures against the `kid`-resolved manifest key ([`governed_cer.py`](governed_cer.py)). Returns an `AttestationVerdict` |
+| `certify_decision()` | `POST {base}/certifyDecision` | Submit a governance decision, receive a `CERReceipt`. **Route returns 404 on the live node (2026-10-06)** |
+| `verify_cer()` | *(local)* → falls back to `GET {base}/verify/{hash}` | Verify against the cached JWK set; remote only when the cache is empty. **Remote route returns 404 on the live node** |
 
 JWKs are synced out-of-band by a background asyncio task
 ([`_jwk_sync_loop()`](provider.py:408)) on a 24h default TTL with `ETag`/`304`
@@ -72,8 +72,11 @@ Every step also carries `stateHashAlg: sha256`,
 `stateHashScope: agentstate-pii-sanitized/v1` metadata.
 [`get_bundle()`](adapter.py:720) raises until the callback is sealed, so a
 failed gateway commit means no step and no bundle (fail-closed).
-[`submit_attested_bundle()`](adapter.py:752) (seal → register) is the single
-submit path. The advisor holds no cold store and no Google Cloud identity.
+[`submit_attested_bundle()`](adapter.py) (seal → attest → verify) is the single
+submit path; it raises `Provider02Error(code="ATTESTATION_REJECTED")` unless
+CAGE verified the node's receipt. Topology is omitted by default because the
+node currently rejects cyclic topologies (see
+[`HITL_INTEROP_STATUS.md`](../../../docs/partners/provider_02/nexart/HITL_INTEROP_STATUS.md)). The advisor holds no cold store and no Google Cloud identity.
 
 `parentStepIds` records **executed** parents only: the callback tracks the
 executed predecessor of each node event, including unrecorded nodes, and

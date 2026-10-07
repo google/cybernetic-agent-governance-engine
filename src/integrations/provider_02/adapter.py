@@ -17,7 +17,7 @@ adapter.py — LangGraph-to-Provider 02 Attestation Adapter (Feature 1)
 =====================================================================
 
 Emits Provider 02 ``certifyDecision`` CERs at governance-significant node boundaries
-and assembles a ``registerProjectBundle`` at graph completion — without modifying
+and assembles an ``AttestationBundle`` at graph completion — without modifying
 any existing node logic.
 
 Architecture
@@ -76,9 +76,9 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from src.gateway.governance.evidence.state_commitment import json_native
 from src.gateway.governance.seams.graph_topology import GraphTopology
@@ -87,6 +87,10 @@ from src.gateway.governance.seams.state_commitment import (
     StateCommitmentError,
     StateCommitmentLinkage,
     StateCommitter,
+)
+from src.integrations.provider_02.governed_cer import (
+    AttestationVerdict,
+    topology_to_wire,
 )
 
 logger = logging.getLogger("cage.provider_02_adapter")
@@ -163,7 +167,8 @@ class AttestationBundle:
     """A complete Project Bundle for a single graph execution.
 
     Assembled from all ``ProjectBundleStepEntry`` objects collected during
-    a graph run, then submitted to Provider 02's ``registerProjectBundle`` endpoint.
+    a graph run, then sealed into a ``cer.governed.execution.v1`` CER and attested via
+    Provider 02's ``POST /api/attest`` (see ``governed_cer.py``).
     """
 
     bundle_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -459,7 +464,7 @@ class Provider02AttestationCallback:
         graph.invoke(input, config={"callbacks": [callback]})
 
         # After graph completion: commit every staged snapshot, then submit.
-        await submit_attested_bundle(callback, Provider02Client())
+        await submit_attested_bundle(callback, Provider02AttestationProvider())
     """
 
     def __init__(
@@ -744,28 +749,62 @@ class Provider02AttestationCallback:
         )
 
     @property
+    def topology(self) -> GraphTopology:
+        """The graph topology this callback enforces lineage against."""
+        return self._topology
+
+    @property
     def step_count(self) -> int:
         """Number of steps recorded so far."""
         return len(self._steps)
 
 
+class BundleAttestor(Protocol):
+    """Attests a serialized ``AttestationBundle`` and verifies the receipt.
+
+    Implemented by ``Provider02AttestationProvider.attest_bundle``.
+    """
+
+    async def attest_bundle(
+        self,
+        bundle: Mapping[str, Any],
+        topology: Mapping[str, Any] | None = None,
+    ) -> AttestationVerdict: ...
+
+
 async def submit_attested_bundle(
     callback: Provider02AttestationCallback,
-    client: Provider02Client,
-) -> dict[str, Any]:
-    """Seal ``callback``'s steps through the gateway, then register the bundle.
+    attestor: BundleAttestor,
+    *,
+    include_topology: bool = False,
+) -> AttestationVerdict:
+    """Seal ``callback``'s steps through the gateway, then attest the bundle.
 
-    This is the single submit path: commitments always precede registration,
+    This is the single submit path: commitments always precede attestation,
     so Provider 02 never receives a ``stateHash`` whose preimage is not
     retained in the evidence chain.
 
+    ``include_topology`` defaults to False: the attestation node currently
+    rejects topologies containing a cycle (``TOPOLOGY_ERROR``), and the
+    financial-advisor graph has an ``execution_analyst`` <-> ``evaluator``
+    loop. CAGE's own lineage checks (``LineageError``) still enforce the
+    topology locally before anything is submitted.
+
     Raises:
         StateCommitmentError: A state commitment failed; nothing was submitted.
-        Provider02Error: Registration with Provider 02 failed.
+        Provider02Error: The bundle was not attested, or CAGE could not verify
+            the node's signed receipt (``code="ATTESTATION_REJECTED"``).
     """
     await callback.seal()
     bundle = callback.get_bundle()
-    return await client.register_project_bundle(bundle.to_dict())
+    topology = topology_to_wire(callback.topology) if include_topology else None
+    verdict = await attestor.attest_bundle(bundle.to_dict(), topology)
+    if not verdict.verified:
+        raise Provider02Error(
+            f"bundle {bundle.bundle_id} not attested: {verdict.code}: {verdict.error}",
+            code="ATTESTATION_REJECTED",
+        )
+    return verdict
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +826,6 @@ class Provider02Client:
         PROVIDER_02_CLIENT_CERT         — Path to client certificate for mTLS (optional)
         PROVIDER_02_CLIENT_KEY          — Path to client private key for mTLS (optional)
         PROVIDER_02_CA_BUNDLE           — Path to CA bundle for server verification (optional)
-        PROVIDER_02_INGEST_PATH         — Bundle ingestion endpoint path (default: /v1/governance/bundles)
     """
 
     def __init__(
@@ -804,11 +842,6 @@ class Provider02Client:
         self._client_cert = os.getenv("PROVIDER_02_CLIENT_CERT", "")
         self._client_key = os.getenv("PROVIDER_02_CLIENT_KEY", "")
         self._ca_bundle = os.getenv("PROVIDER_02_CA_BUNDLE", "")
-
-        # Configurable ingestion endpoint with fallback
-        self._ingest_path = os.getenv(
-            "PROVIDER_02_INGEST_PATH", "/v1/governance/bundles"
-        )
 
         if not self._endpoint:
             logger.warning(
@@ -885,82 +918,6 @@ class Provider02Client:
             logger.error("[Provider02] certify_decision unexpected error: %s", exc)
             raise Provider02Error(
                 f"Unexpected error: {exc}", code="ENDPOINT_ERROR"
-            ) from exc
-
-    async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
-        """Register a completed Project Bundle with Provider 02.
-
-        Args:
-            bundle: The serialized AttestationBundle dict.
-
-        Returns:
-            Registration response with ``bundleHash`` and ``receiptUrl``.
-
-        Raises:
-            Provider02Error: On any HTTP or network failure (fail-closed).
-        """
-        import httpx
-
-        # Try primary ingestion endpoint
-        url = f"{self._endpoint}{self._ingest_path}"
-        try:
-            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
-                resp = await client.post(url, json=bundle, headers=self._headers())
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPStatusError as exc:
-            # Fallback to legacy endpoint on 404/405
-            if exc.response.status_code in (404, 405):
-                logger.warning(
-                    "[Provider02] Primary endpoint %s failed with %d, "
-                    "falling back to /registerProjectBundle",
-                    url,
-                    exc.response.status_code,
-                )
-                return await self._register_bundle_fallback(bundle)
-
-            logger.error(
-                "[Provider02] register_project_bundle HTTP error: %s status=%d",
-                url,
-                exc.response.status_code,
-            )
-            raise Provider02Error(
-                f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
-                code="ENDPOINT_ERROR",
-            ) from exc
-        except httpx.RequestError as exc:
-            logger.error(
-                "[Provider02] register_project_bundle request error: %s %s", url, exc
-            )
-            raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
-        except Exception as exc:
-            logger.error(
-                "[Provider02] register_project_bundle unexpected error: %s", exc
-            )
-            raise Provider02Error(
-                f"Unexpected error: {exc}", code="ENDPOINT_ERROR"
-            ) from exc
-
-    async def _register_bundle_fallback(self, bundle: dict[str, Any]) -> dict[str, Any]:
-        """Fallback bundle registration using legacy /registerProjectBundle endpoint."""
-        import httpx
-
-        url = f"{self._endpoint}/registerProjectBundle"
-        try:
-            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
-                resp = await client.post(url, json=bundle, headers=self._headers())
-                resp.raise_for_status()
-                logger.info(
-                    "[Provider02] Fallback endpoint succeeded: /registerProjectBundle"
-                )
-                return resp.json()
-        except Exception as exc:
-            logger.error(
-                "[Provider02] Fallback registration also failed: %s %s", url, exc
-            )
-            raise Provider02Error(
-                f"Both primary and fallback endpoints failed: {exc}",
-                code="ENDPOINT_ERROR",
             ) from exc
 
     async def verify_cer(self, certificate_hash: str) -> dict[str, Any]:

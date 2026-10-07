@@ -90,8 +90,8 @@ export type TerminalPath =
  * A complete governance bundle for a single graph execution.
  * 
  * Assembled from all `ProjectBundleStepEntry` objects collected during
- * a graph run. Submitted to Provider 02's `registerProjectBundle` endpoint
- * for CER issuance.
+ * a graph run. Sealed into a `cer.governed.execution.v1` CER and submitted to Provider 02's `POST /api/attest` endpoint.
+ * The node returns a signed attestation receipt.
  */
 export interface AttestationBundle {
   /**

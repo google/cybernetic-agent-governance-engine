@@ -18,8 +18,9 @@ Provider 02 Integration Package
 
 Provides two components:
 
-1. **Provider02AttestationProvider** — CER creation, JWK-cached verification,
-   and Project Bundle registration against the attestation API.
+1. **Provider02AttestationProvider** — governed-execution CER attestation
+   (``POST /api/attest``) with receipt signatures verified against the
+   ``kid``-resolved node key manifest.
 
 2. **Provider02AttestationCallback** — LangGraph callback handler that captures
    immutable state snapshots at governance-significant node boundaries and
@@ -32,11 +33,19 @@ Usage::
 
 from .adapter import (
     AttestationBundle,
+    BundleAttestor,
     LineageError,
     ProjectBundleStepEntry,
     Provider02AttestationCallback,
     Provider02Client,
     submit_attested_bundle,
+)
+from .governed_cer import (
+    AttestationVerdict,
+    GovernedCerError,
+    seal_governed_execution,
+    topology_to_wire,
+    verify_attestation,
 )
 from .provider import (
     CERReceipt,
@@ -48,8 +57,11 @@ from .provider import (
 
 __all__ = [
     "AttestationBundle",
+    "AttestationVerdict",
+    "BundleAttestor",
     "CERReceipt",
     "CERVerification",
+    "GovernedCerError",
     "JWKCache",
     "LineageError",
     "ProjectBundleStepEntry",
@@ -57,5 +69,8 @@ __all__ = [
     "Provider02AttestationProvider",
     "Provider02Client",
     "get_provider_02",
+    "seal_governed_execution",
     "submit_attested_bundle",
+    "topology_to_wire",
+    "verify_attestation",
 ]

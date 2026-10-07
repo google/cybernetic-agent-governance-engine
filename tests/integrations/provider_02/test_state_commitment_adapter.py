@@ -40,7 +40,12 @@ from src.gateway.governance.seams.state_commitment import (
 from src.integrations.provider_02.adapter import (
     STATE_COMMITMENT_NAMESPACE,
     Provider02AttestationCallback,
+    Provider02Error,
     submit_attested_bundle,
+)
+from src.integrations.provider_02.governed_cer import (
+    AttestationVerdict,
+    topology_to_wire,
 )
 from tests.integrations.provider_02.state_commitment_support import (
     InProcessCommitter,
@@ -176,25 +181,48 @@ class TestFailClosed:
 
 
 class TestSubmitPath:
-    def test_seals_before_registering(self) -> None:
+    def test_seals_before_attesting(self) -> None:
         cb = _callback(InProcessCommitter())
         _drive(cb)
-        client = AsyncMock()
-        client.register_project_bundle.return_value = {"bundleHash": "x"}
+        attestor = AsyncMock()
+        attestor.attest_bundle.return_value = AttestationVerdict(verified=True)
 
-        result = asyncio.run(submit_attested_bundle(cb, client))
+        result = asyncio.run(submit_attested_bundle(cb, attestor))
 
-        assert result == {"bundleHash": "x"}
-        (submitted,), _ = client.register_project_bundle.call_args
+        assert result.verified
+        (submitted, topology), _ = attestor.attest_bundle.call_args
+        assert topology is None
         assert all(len(s["stateHash"]) == 64 for s in submitted["steps"])
+
+    def test_include_topology_sends_wire_topology(self) -> None:
+        cb = _callback(InProcessCommitter())
+        _drive(cb)
+        attestor = AsyncMock()
+        attestor.attest_bundle.return_value = AttestationVerdict(verified=True)
+
+        asyncio.run(submit_attested_bundle(cb, attestor, include_topology=True))
+
+        (_, topology), _ = attestor.attest_bundle.call_args
+        assert topology == topology_to_wire(cb.topology)
+
+    def test_unverified_attestation_raises(self) -> None:
+        cb = _callback(InProcessCommitter())
+        _drive(cb)
+        attestor = AsyncMock()
+        attestor.attest_bundle.return_value = AttestationVerdict.reject(
+            "TOPOLOGY_ERROR", "cycle"
+        )
+        with pytest.raises(Provider02Error) as exc_info:
+            asyncio.run(submit_attested_bundle(cb, attestor))
+        assert exc_info.value.code == "ATTESTATION_REJECTED"
 
     def test_commit_failure_submits_nothing(self) -> None:
         cb = _callback(InProcessCommitter(RecordingEvidenceSink(fail=True)))
         _drive(cb)
-        client = AsyncMock()
+        attestor = AsyncMock()
         with pytest.raises(StateCommitmentError):
-            asyncio.run(submit_attested_bundle(cb, client))
-        client.register_project_bundle.assert_not_called()
+            asyncio.run(submit_attested_bundle(cb, attestor))
+        attestor.attest_bundle.assert_not_called()
 
 
 class TestAdvisorHoldsNoStorage:
