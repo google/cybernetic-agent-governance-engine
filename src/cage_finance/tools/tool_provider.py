@@ -32,6 +32,7 @@ from src.cage_finance.tools.portfolio_valuation import (
     PortfolioValuationUnavailable,
     resolve_portfolio_total,
 )
+from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
     dispatch_actuation,
@@ -86,11 +87,10 @@ async def execute_trade_action(
     trader_role: str = "junior",
     dry_run: bool = False,
     deferred_id: str | None = None,
-    latency_ms: float | None = None,
-    drawdown: float | None = None,
     side: TradeSide = "buy",
     *,
     governor: "SymbolicGovernor",
+    inputs: ServerTradeInputs,
 ) -> str:
     """Execute a financial trade under strict governance.
 
@@ -118,10 +118,6 @@ async def execute_trade_action(
             once operators have approved it. With it, the gateway consumes
             that approval exactly once and re-validates the fresh params under
             the POST_HITL profile; without it, the trade is governed in full.
-        latency_ms: Market-data latency, an STPA input (UCA-2). Omitted, the
-            full run fails closed on the missing parameter.
-        drawdown: Daily drawdown, an STPA input (UCA-5). Omitted, the full
-            run fails closed on the missing parameter.
         side: Order side, ``"buy"`` (default) or ``"sell"``. A sell is held
             to the regional FIN-1 sell-fraction limit (UCA-13) against the
             portfolio value the gateway reads from the custodian ledger; the
@@ -129,6 +125,11 @@ async def execute_trade_action(
             the sell is refused.
         governor: The assembled governor that seals the trade and settles its
             reservations once the broker has answered.
+        inputs: The gateway's sources for the STPA inputs ``latency_ms``
+            (UCA-2 / FIN-2: measured age of the symbol's latest quote) and
+            ``drawdown`` (UCA-5: daily NAV drawdown, percent). A caller can
+            never supply these values. A source that is unavailable leaves
+            its input unset, and the governor refuses the trade.
     """
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -159,10 +160,9 @@ async def execute_trade_action(
         "dry_run": dry_run,
         "side": side,
     }
-    if latency_ms is not None:
-        params["latency_ms"] = latency_ms
-    if drawdown is not None:
-        params["drawdown"] = drawdown
+    # STPA inputs measured server-side for every committing run; a missing
+    # one is refused by UCA-2 / UCA-5 inside the governor.
+    params.update(await inputs.resolve(symbol))
     if side == "sell":
         # FIN-1 / UCA-13 input. Only the server-side ledger value is used; an
         # unavailable ledger leaves it unset so the governor's STPA stage
@@ -357,9 +357,15 @@ async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) ->
 
 
 class FinancialToolProvider(DomainToolProvider):
+    def __init__(self, inputs: ServerTradeInputs) -> None:
+        self._inputs = inputs
+
     def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         # The MCP schema must expose only the agent-facing parameters, so the
-        # governor is bound here rather than in the signature.
+        # governor and the STPA input sources are bound here rather than in
+        # the signature.
+        inputs = self._inputs
+
         @server.tool(
             name="execute_trade_action", description=execute_trade_action.__doc__
         )
@@ -373,8 +379,6 @@ class FinancialToolProvider(DomainToolProvider):
             trader_role: str = "junior",
             dry_run: bool = False,
             deferred_id: str | None = None,
-            latency_ms: float | None = None,
-            drawdown: float | None = None,
             side: TradeSide = "buy",
         ) -> str:
             return await execute_trade_action(
@@ -387,10 +391,9 @@ class FinancialToolProvider(DomainToolProvider):
                 trader_role,
                 dry_run,
                 deferred_id,
-                latency_ms,
-                drawdown,
                 side,
                 governor=governor,
+                inputs=inputs,
             )
 
         @server.tool()
