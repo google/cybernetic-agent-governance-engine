@@ -1,0 +1,201 @@
+{
+  "generator": "generate_samples.py driving CAGE main@82df1b14 (real code path)",
+  "region": "EU_ECB",
+  "posture": "hermetic development (CAGE_ENV=test, HMAC seals, no KMS)",
+  "warrant_source": "Provider05WarrantSource, seeded with VEIP v0.1 vectors (not live wire)",
+  "evaluation_time": "2026-08-22T12:00:00+00:00",
+  "scenario": "POST_HITL: approve -> VEC-002 revoke -> DEFER (approval_retained) -> VEC-001 restore -> same approval redeems -> ALLOW + seal",
+  "steps": [
+    {
+      "step": "1. preview at confidence 0.96 under ACTIVE warrant -> REQUIRE_APPROVAL; two approvers approve",
+      "verdict": "REQUIRE_APPROVAL",
+      "deferred_id": "6a366f48-c278-4c17-9cdd-650f82bf5e82",
+      "reliance": [
+        {
+          "norm_id": "confidence.min_trade_confidence",
+          "warrant_id": "warrant-veip-2026-001",
+          "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+          "warrant_status": "ACTIVE",
+          "reliance_status": "ELIGIBLE",
+          "reason": "Warrant standing verified and active; norm eligible for reliance",
+          "required_governing_version": "cage-policy-2.1.0",
+          "warrant_governing_version": "cage-policy-2.1.0",
+          "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+          "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+          "revocation_ref": "",
+          "residual_risk_ref": "RRR-2026-08-01-A1",
+          "attested_at": "2026-08-22T12:00:00+00:00",
+          "observed_at": "2026-08-22T12:00:00+00:00",
+          "age_seconds": "0.000",
+          "max_age_seconds": "60.000",
+          "provider_name": "provider_05_warrant",
+          "verification_status": "UNVERIFIED"
+        }
+      ],
+      "approval_status": "RESOLVED"
+    },
+    {
+      "step": "2. issuer revokes (VEC-002), cache window passes (+60.001 s); commit with the approval -> DEFERRED, approval retained",
+      "trade_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] post-approval run deferred; approval '6a366f48-c278-4c17-9cdd-650f82bf5e82' is retained and redeems once the deferral clears: [RELIANCE_INELIGIBLE_REVOKED] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912",
+      "approval_status": "RESOLVED",
+      "approval_retained": true,
+      "veip_contract_fields": {
+        "warrant_id": "warrant-veip-2026-001",
+        "norm_id": "confidence.min_trade_confidence",
+        "digest": "fa18a43aaa7b5e452e98e19bc293ddd978a7d11a00713d95e0d358f133b3059a",
+        "reliance_status": "INELIGIBLE_REVOKED",
+        "governing_version": "cage-policy-2.1.0",
+        "residual_risk_ref": "RRR-2026-08-01-A1",
+        "attested_at": "2026-08-22T12:01:00.001000+00:00"
+      },
+      "post_hitl_deferral_evidence_record": {
+        "schema": "cage-audit/3.0",
+        "chain_id": "b4a7a0d6-2c74-4a6c-8747-79e449ccd415",
+        "sequence": "3",
+        "timestamp_utc": "2026-08-22T12:00:00+00:00",
+        "event_type": "GOVERNANCE_DEFERRAL",
+        "control_id": "CTRL_AGT_001",
+        "trace_id": "00000000000000000000000000000015",
+        "hash_algorithm": "SHA-256",
+        "canonicalization": "RFC8785",
+        "evidence_class": "GOVERNANCE",
+        "prev_hash": "37e28745050e9e90d7455beff45dccc9a70fdbeb3974f273e920f7069064444d",
+        "record_hash": "a01c30d7f23e5c005eea579af5cb027b0aa67dc7a260268864f822321e6161b5",
+        "payload_json": "{\"action\":\"execute_trade\",\"approval_retained\":true,\"barrier_preview\":\"PASS\",\"classification_reason\":\"reliance_ineligible\",\"controlId\":\"CTRL_AGT_001\",\"defer_id\":\"6a366f48-c278-4c17-9cdd-650f82bf5e82\",\"defer_reason\":\"WARRANT_INELIGIBLE\",\"deferred_at_utc\":\"2026-08-22T12:00:00+00:00\",\"params_hash\":\"c2f7115a1979860e5544fcc4a36e08c754d472bcde7260591de8c151db33d3ef\",\"persisted\":true,\"profile\":\"POST_HITL\",\"reliance\":[{\"age_seconds\":\"0.000\",\"attested_at\":\"2026-08-22T12:01:00.001000+00:00\",\"authority_basis\":\"EU AI Act Art. 9 Risk Management Instrument #442\",\"issuing_authority\":\"Risk Oversight Committee (EU_ECB)\",\"max_age_seconds\":\"60.000\",\"norm_id\":\"confidence.min_trade_confidence\",\"observed_at\":\"2026-08-22T12:01:00.001000+00:00\",\"provider_name\":\"provider_05_warrant\",\"reason\":\"Warrant revoked: Emergency Risk Notice #912\",\"reliance_status\":\"INELIGIBLE_REVOKED\",\"required_governing_version\":\"cage-policy-2.1.0\",\"residual_risk_ref\":\"RRR-2026-08-01-A1\",\"revocation_ref\":\"Emergency Risk Notice #912\",\"verification_status\":\"UNVERIFIED\",\"warrant_digest\":\"fa18a43aaa7b5e452e98e19bc293ddd978a7d11a00713d95e0d358f133b3059a\",\"warrant_governing_version\":\"cage-policy-2.1.0\",\"warrant_id\":\"warrant-veip-2026-001\",\"warrant_status\":\"REVOKED\"}],\"thread_id\":\"81dbefc4-40e6-494c-8ff7-8f563be24674\",\"timestamp_utc\":\"2026-08-22T12:00:00+00:00\",\"type\":\"GOVERNANCE_DEFERRAL\",\"violations\":[{\"code\":\"RELIANCE_INELIGIBLE_REVOKED\",\"kind\":\"reliance_ineligible\",\"message\":\"norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912\",\"tier\":\"warrant\"}]}",
+        "classification_reason": "reliance_ineligible",
+        "payload": {
+          "action": "execute_trade",
+          "approval_retained": true,
+          "barrier_preview": "PASS",
+          "classification_reason": "reliance_ineligible",
+          "controlId": "CTRL_AGT_001",
+          "defer_id": "6a366f48-c278-4c17-9cdd-650f82bf5e82",
+          "defer_reason": "WARRANT_INELIGIBLE",
+          "deferred_at_utc": "2026-08-22T12:00:00+00:00",
+          "params_hash": "c2f7115a1979860e5544fcc4a36e08c754d472bcde7260591de8c151db33d3ef",
+          "persisted": true,
+          "profile": "POST_HITL",
+          "reliance": [
+            {
+              "age_seconds": "0.000",
+              "attested_at": "2026-08-22T12:01:00.001000+00:00",
+              "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+              "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+              "max_age_seconds": "60.000",
+              "norm_id": "confidence.min_trade_confidence",
+              "observed_at": "2026-08-22T12:01:00.001000+00:00",
+              "provider_name": "provider_05_warrant",
+              "reason": "Warrant revoked: Emergency Risk Notice #912",
+              "reliance_status": "INELIGIBLE_REVOKED",
+              "required_governing_version": "cage-policy-2.1.0",
+              "residual_risk_ref": "RRR-2026-08-01-A1",
+              "revocation_ref": "Emergency Risk Notice #912",
+              "verification_status": "UNVERIFIED",
+              "warrant_digest": "fa18a43aaa7b5e452e98e19bc293ddd978a7d11a00713d95e0d358f133b3059a",
+              "warrant_governing_version": "cage-policy-2.1.0",
+              "warrant_id": "warrant-veip-2026-001",
+              "warrant_status": "REVOKED"
+            }
+          ],
+          "thread_id": "81dbefc4-40e6-494c-8ff7-8f563be24674",
+          "timestamp_utc": "2026-08-22T12:00:00+00:00",
+          "type": "GOVERNANCE_DEFERRAL",
+          "violations": [
+            {
+              "code": "RELIANCE_INELIGIBLE_REVOKED",
+              "kind": "reliance_ineligible",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912",
+              "tier": "warrant"
+            }
+          ]
+        }
+      },
+      "routing_seal_issued": false
+    },
+    {
+      "step": "3. issuer restores (VEC-001), window passes; the same approval redeems -> ALLOW, sealed, executed once",
+      "trade_tool_result": "EXECUTED: AAPL x 500.0 (Receipt ID: r-00000001)",
+      "approval_status": "CONSUMED",
+      "routing_seal": {
+        "format": "v2 HMAC (development posture; production uses v3 asymmetric JWT)",
+        "expire_ts_hex": "6a898f5e",
+        "action_slug": "execute-trade",
+        "record_hash": "3562465c9c611f7b42736345278d871c9e102f071d635b06bbd4b873936ecd1e",
+        "hmac_sha256": "<REDACTED: HMAC over dev test salt, illustrative only>"
+      },
+      "seal_verifies_against_evidence_record": true,
+      "routing_seal_evidence_record": {
+        "schema": "cage-audit/3.0",
+        "chain_id": "b4a7a0d6-2c74-4a6c-8747-79e449ccd415",
+        "sequence": "4",
+        "timestamp_utc": "2026-08-22T12:00:00+00:00",
+        "event_type": "GOVERNANCE_DECISION",
+        "control_id": "agentic_scope_statement",
+        "trace_id": "00000000000000000000000000000016",
+        "hash_algorithm": "SHA-256",
+        "canonicalization": "RFC8785",
+        "evidence_class": "GOVERNANCE",
+        "prev_hash": "a01c30d7f23e5c005eea579af5cb027b0aa67dc7a260268864f822321e6161b5",
+        "record_hash": "3562465c9c611f7b42736345278d871c9e102f071d635b06bbd4b873936ecd1e",
+        "payload_json": "{\"action\":\"execute_trade\",\"controlId\":\"agentic_scope_statement\",\"params_hash\":\"0cb2dc2a4719323a1bd1b9c9ee89527ab6b24b2f9d394c2e6d2a05ebe15a58c4\",\"reliance\":[{\"age_seconds\":\"0.000\",\"attested_at\":\"2026-08-22T12:02:00.002000+00:00\",\"authority_basis\":\"EU AI Act Art. 9 Risk Management Instrument #442\",\"issuing_authority\":\"Risk Oversight Committee (EU_ECB)\",\"max_age_seconds\":\"60.000\",\"norm_id\":\"confidence.min_trade_confidence\",\"observed_at\":\"2026-08-22T12:02:00.002000+00:00\",\"provider_name\":\"provider_05_warrant\",\"reason\":\"Warrant standing verified and active; norm eligible for reliance\",\"reliance_status\":\"ELIGIBLE\",\"required_governing_version\":\"cage-policy-2.1.0\",\"residual_risk_ref\":\"RRR-2026-08-01-A1\",\"revocation_ref\":\"\",\"verification_status\":\"UNVERIFIED\",\"warrant_digest\":\"b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce\",\"warrant_governing_version\":\"cage-policy-2.1.0\",\"warrant_id\":\"warrant-veip-2026-001\",\"warrant_status\":\"ACTIVE\"}],\"seal_ttl_s\":30,\"timestamp_utc\":\"2026-08-22T12:00:00+00:00\",\"type\":\"GOVERNANCE_DECISION\"}",
+        "payload": {
+          "action": "execute_trade",
+          "controlId": "agentic_scope_statement",
+          "params_hash": "0cb2dc2a4719323a1bd1b9c9ee89527ab6b24b2f9d394c2e6d2a05ebe15a58c4",
+          "reliance": [
+            {
+              "age_seconds": "0.000",
+              "attested_at": "2026-08-22T12:02:00.002000+00:00",
+              "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+              "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+              "max_age_seconds": "60.000",
+              "norm_id": "confidence.min_trade_confidence",
+              "observed_at": "2026-08-22T12:02:00.002000+00:00",
+              "provider_name": "provider_05_warrant",
+              "reason": "Warrant standing verified and active; norm eligible for reliance",
+              "reliance_status": "ELIGIBLE",
+              "required_governing_version": "cage-policy-2.1.0",
+              "residual_risk_ref": "RRR-2026-08-01-A1",
+              "revocation_ref": "",
+              "verification_status": "UNVERIFIED",
+              "warrant_digest": "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce",
+              "warrant_governing_version": "cage-policy-2.1.0",
+              "warrant_id": "warrant-veip-2026-001",
+              "warrant_status": "ACTIVE"
+            }
+          ],
+          "seal_ttl_s": 30,
+          "timestamp_utc": "2026-08-22T12:00:00+00:00",
+          "type": "GOVERNANCE_DECISION"
+        }
+      },
+      "record_hash_computation": {
+        "formula": "record_hash = SHA-256( prev_hash_utf8 || JCS(header) || payload_json_utf8 )",
+        "schema": "cage-audit/3.0",
+        "prev_hash": "a01c30d7f23e5c005eea579af5cb027b0aa67dc7a260268864f822321e6161b5",
+        "header_jcs": "{\"canonicalization\":\"RFC8785\",\"chain_id\":\"b4a7a0d6-2c74-4a6c-8747-79e449ccd415\",\"control_id\":\"agentic_scope_statement\",\"event_type\":\"GOVERNANCE_DECISION\",\"hash_algorithm\":\"SHA-256\",\"schema\":\"cage-audit/3.0\",\"sequence\":4,\"trace_id\":\"00000000000000000000000000000016\"}",
+        "payload_json": "{\"action\":\"execute_trade\",\"controlId\":\"agentic_scope_statement\",\"params_hash\":\"0cb2dc2a4719323a1bd1b9c9ee89527ab6b24b2f9d394c2e6d2a05ebe15a58c4\",\"reliance\":[{\"age_seconds\":\"0.000\",\"attested_at\":\"2026-08-22T12:02:00.002000+00:00\",\"authority_basis\":\"EU AI Act Art. 9 Risk Management Instrument #442\",\"issuing_authority\":\"Risk Oversight Committee (EU_ECB)\",\"max_age_seconds\":\"60.000\",\"norm_id\":\"confidence.min_trade_confidence\",\"observed_at\":\"2026-08-22T12:02:00.002000+00:00\",\"provider_name\":\"provider_05_warrant\",\"reason\":\"Warrant standing verified and active; norm eligible for reliance\",\"reliance_status\":\"ELIGIBLE\",\"required_governing_version\":\"cage-policy-2.1.0\",\"residual_risk_ref\":\"RRR-2026-08-01-A1\",\"revocation_ref\":\"\",\"verification_status\":\"UNVERIFIED\",\"warrant_digest\":\"b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce\",\"warrant_governing_version\":\"cage-policy-2.1.0\",\"warrant_id\":\"warrant-veip-2026-001\",\"warrant_status\":\"ACTIVE\"}],\"seal_ttl_s\":30,\"timestamp_utc\":\"2026-08-22T12:00:00+00:00\",\"type\":\"GOVERNANCE_DECISION\"}",
+        "recomputed_record_hash": "3562465c9c611f7b42736345278d871c9e102f071d635b06bbd4b873936ecd1e",
+        "stored_record_hash": "3562465c9c611f7b42736345278d871c9e102f071d635b06bbd4b873936ecd1e",
+        "matches_stored_record_hash": true,
+        "warrant_digest_in_payload_json": true,
+        "note": "payload_json is RFC 8785 (JCS) canonical and carries the reliance array, so the warrant digest is inside the hashed bytes; the seal in turn signs record_hash (seal field 3), binding seal -> evidence -> warrant digest."
+      }
+    },
+    {
+      "step": "4. replay of the consumed approval -> BLOCKED, no second actuation",
+      "trade_tool_result": "BLOCKED: Governance Blocked: no unconsumed approval '6a366f48-c278-4c17-9cdd-650f82bf5e82' covers this execute_trade",
+      "actuations_total": 1
+    }
+  ],
+  "full_evidence_chain_event_types": [
+    "GOVERNANCE_TRACE",
+    "GOVERNANCE_DEFERRAL",
+    "GOVERNANCE_TRACE",
+    "GOVERNANCE_DEFERRAL",
+    "GOVERNANCE_DECISION",
+    "GOVERNANCE_TRACE",
+    "GOVERNANCE_TRACE",
+    "ACTUATION_RECEIPT"
+  ]
+}
