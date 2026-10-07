@@ -449,6 +449,8 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             # Presidio identity masking first (PERSON and the other entities
             # the regex scrubber cannot see), then the NeMo output pass. Any
             # error replaces the output with the blocked sentinel.
+            rails: Any = None
+            mask_failed = False
             try:
                 rails = get_nemo_rails()
                 presidio_text, output_entities = _redact_pii(output_text)
@@ -465,35 +467,37 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 span.record_exception(exc)
                 span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
                 masked_text = cfg.output_blocked_sentinel
+                mask_failed = True
 
             # --- Call 2 of 2: Semantic safety validation ---
             # Run validate_output_semantics() on the PII-masked text and fail closed.
+            # Skip when Call 1 already failed closed into the blocked sentinel.
             final_text = masked_text
-            try:
-                rails = get_nemo_rails()
-                sem_safe, sem_reason = await validate_output_semantics(
-                    rails, masked_text
-                )
-                span.set_attribute("output.semantic_validated", True)
-                span.set_attribute("output.semantic_safe", sem_safe)
-                if not sem_safe:
-                    logger.warning(
-                        "nemo_output_rail_node: output BLOCKED by semantic validation — reason: %s",
-                        sem_reason,
+            if not mask_failed:
+                try:
+                    sem_safe, sem_reason = await validate_output_semantics(
+                        rails, masked_text
                     )
+                    span.set_attribute("output.semantic_validated", True)
+                    span.set_attribute("output.semantic_safe", sem_safe)
+                    if not sem_safe:
+                        logger.warning(
+                            "nemo_output_rail_node: output BLOCKED by semantic validation — reason: %s",
+                            sem_reason,
+                        )
+                        span.set_attribute("output.semantic_blocked", True)
+                        final_text = cfg.output_blocked_sentinel
+                    else:
+                        logger.debug("nemo_output_rail_node: semantic validation PASSED")
+                except Exception as sem_exc:
+                    logger.error(
+                        "nemo_output_rail_node: validate_output_semantics raised — "
+                        "applying fail-closed logic: %s",
+                        sem_exc,
+                    )
+                    span.set_attribute("output.semantic_validated", False)
                     span.set_attribute("output.semantic_blocked", True)
                     final_text = cfg.output_blocked_sentinel
-                else:
-                    logger.debug("nemo_output_rail_node: semantic validation PASSED")
-            except Exception as sem_exc:
-                logger.error(
-                    "nemo_output_rail_node: validate_output_semantics raised — "
-                    "applying fail-closed logic: %s",
-                    sem_exc,
-                )
-                span.set_attribute("output.semantic_validated", False)
-                span.set_attribute("output.semantic_blocked", True)
-                final_text = cfg.output_blocked_sentinel
 
             # Write the final text back.  add_messages reducer replaces an
             # existing message when the returned message carries the same id.

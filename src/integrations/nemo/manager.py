@@ -737,11 +737,10 @@ async def verify_input(
 async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
     """Verify and mask output strings (Interceptor pattern)."""
     with tracer.start_as_current_span("guardrails.verify_and_mask_output") as span:
+        scrubbed_text = scrub_pii(text)
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_output_masking")
-        span.set_attribute("input", scrub_pii(text))
-
-        scrubbed_text = scrub_pii(text)
+        span.set_attribute("input", scrubbed_text)
 
         try:
             res = await rails.generate_async(
