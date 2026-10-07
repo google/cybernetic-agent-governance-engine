@@ -492,7 +492,13 @@ exercised by
    ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)), never
    DENY: ineligibility is not an institutional verdict. The DEFER token and
    the `GOVERNANCE_DEFERRAL` record carry the reliance record, and nothing is
-   sealed. An independent HARD finding still denies. DENY receipts carry
+   sealed. This holds on every path: the dry-run preview, the committing
+   run of `govern()` (including its narrowed re-run) and POST_HITL all defer
+   on a warrant failure, and `execute_trade_action()` reports `DEFERRED:`,
+   never `BLOCKED:`, with no `GOVERNANCE_REFUSAL` record (POAM-2026-110). An
+   independent HARD finding still denies: the classifier ranks HARD above
+   `RELIANCE_INELIGIBLE`, so a co-occurring safety violation wins. DENY
+   receipts carry
    reliance when the warrant stage ran: a HARD finding from a domain tier
    (which runs after `WarrantStage`) is refused with the reliance record
    inside the receipt's `proof_hash`. Kernel-stage HARD findings that precede
@@ -501,9 +507,25 @@ exercised by
    fetched, and the receipt carries no reliance record. A warrant that was
    not evaluated was not relied upon.
 5. **After a human.** `WarrantStage` re-runs under POST_HITL. A warrant
-   revoked while the request waited for approval is refused at
-   `revalidate_post_hitl()` with no seal, once the cached state expires (at
-   most 60 s).
+   revoked while the request waited for approval, once the cached state
+   expires (at most 60 s), defers at `revalidate_post_hitl()` with no seal
+   and no phase-2 commit. The human approval is not spent. The governor
+   receives it unspent as a
+   [`PostHitlApproval`](../../src/gateway/governance/governor/approval.py)
+   and spends it (`DeferQueue.consume_approval()`, an atomic
+   `RESOLVED → CONSUMED` swap) through the `admit` hook of
+   [`run_sealed()`](../../src/gateway/governance/governor/sealing.py): after
+   every stage has passed, inside the `ReservationScope`, before the seal is
+   minted. A deferral therefore never reaches the spend, and the approval
+   token itself stays the resolvable record. It is still single-use, still
+   bound to the same action and parameters, and still expires with its own
+   TTL. The `GOVERNANCE_DEFERRAL` record for the failed attempt
+   (`profile: POST_HITL`, `approval_retained: true`) carries the reliance
+   record. Once the warrant is eligible again, the same approval redeems
+   once. Of two concurrent redemptions only one spend succeeds; the other
+   seals nothing, rolls back its phase-2 commits and is refused
+   `APPROVAL_NOT_REDEEMABLE`. A DENY at revalidation (barrier drift, a HARD
+   finding) still spends the approval.
 
 ### 10.3 What the evidence does and does not show
 

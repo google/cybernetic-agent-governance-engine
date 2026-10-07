@@ -42,6 +42,7 @@ from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
+from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import allow_opa, clean_stpa
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -302,7 +303,7 @@ async def test_empty_governor_denies_verify() -> None:
 async def test_empty_governor_denies_revalidate_post_hitl() -> None:
     with pytest.raises(GovernanceError):
         await _assemble().revalidate_post_hitl(
-            *_IRREVERSIBLE, approved_barrier_preview=None
+            *_IRREVERSIBLE, approval=granted_approval()
         )
 
 

@@ -35,6 +35,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from tests.fixtures.approval import granted_approval
 from tests.governor.golden.fixtures import (
     SCENARIOS,
     Scenario,
@@ -93,7 +94,7 @@ async def _execute_scenario_entry_point(
             # The corpus records unbound post-approval runs (no barrier snapshot);
             # approval binding (D-H) is covered by tests/test_trade_governance_e2e.py.
             kwargs = (
-                {"approved_barrier_preview": None}
+                {"approval": granted_approval()}
                 if entry_point == "revalidate_post_hitl"
                 else {}
             )

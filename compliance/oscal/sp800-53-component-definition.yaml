@@ -119,9 +119,14 @@ component-definition:
                 approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken
                 (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
                 execute_trade_action(..., deferred_id=...) (src/governed_financial_advisor/tools/trades.py)
-                is the sole committing path, consuming the approved token atomically via
-                DeferQueue.consume_approval() and running SymbolicGovernor.revalidate_post_hitl()
-                inside src/gateway/server/governance_middleware.py (enforce_approved_governance).
+                is the sole committing path: enforce_approved_governance()
+                (src/gateway/server/governance_middleware.py) checks the approved token without
+                spending it (DeferQueue.redeemable_approval()) and hands
+                SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval. The governor
+                spends it atomically (DeferQueue.consume_approval(), a RESOLVED to CONSUMED CAS)
+                only after every stage passes and before the seal is minted, so a DENY spends it,
+                a warrant-ineligible DEFER leaves it redeemable (POAM-2026-104), and concurrent
+                redemptions seal at most once.
                 When narrowing is enabled, any narrow_hint / narrowed_params attached to a
                 REQUIRE_APPROVAL verdict is purely advisory: it is dry-run re-verified before
                 surfacing (_reverified_narrow_hint) and re-verified in full by the single
@@ -788,8 +793,9 @@ component-definition:
                 runs under Profile.DRY_RUN, mints no seal, and parks REQUIRE_APPROVAL verdicts as
                 DeferReason.HITL_REQUIRED tokens in DeferQueue returning deferred_id. A single
                 committing run executes per trade: execute_trade_action(..., deferred_id=...)
-                consumes the approval atomically via DeferQueue.consume_approval() and invokes
-                SymbolicGovernor.revalidate_post_hitl() under Profile.POST_HITL (stage_runs_under
+                invokes SymbolicGovernor.revalidate_post_hitl() under Profile.POST_HITL, which
+                spends the approval atomically via DeferQueue.consume_approval() only when the
+                run seals (a warrant-ineligible DEFER leaves it redeemable) (stage_runs_under
                 in src/gateway/governance/governor/pipeline.py; proved in proof/model.py). Any
                 narrow_hint / narrowed_params attached to REQUIRE_APPROVAL is advisory, dry-run
                 re-verified before surfacing (_reverified_narrow_hint) and re-verified in full by

@@ -984,38 +984,39 @@ class DeferQueue:
             return False
 
     # ------------------------------------------------------------------
-    # consume_approval — spend a quorum-approved HITL token exactly once
+    # redeemable_approval / consume_approval — check, then spend exactly once
     # ------------------------------------------------------------------
 
-    async def consume_approval(
+    async def redeemable_approval(
         self,
         defer_id: str,
         *,
         action: str,
         covers: Callable[[dict[str, Any]], bool],
     ) -> DeferToken | None:
-        """Consume an approved ``HITL_REQUIRED`` token for ``action``, exactly once.
+        """The approved ``HITL_REQUIRED`` token for ``action``, if it is unspent.
 
-        The token must be a governor-parked approval (``HITL_REQUIRED``) that
-        ``approve()`` resolved by reaching quorum (``resolution == "ESCALATED"``),
-        that was parked for ``action``, whose approvals were all given against
-        the token's current ``barrier_preview`` (D-H), and whose approved
-        params satisfy
-        ``covers`` (checked before consumption, so a mismatched request does
-        not burn the approval). Consumption is the ``RESOLVED -> CONSUMED``
-        compare-and-swap in :meth:`atomic_resolve`, so of any number of
-        concurrent callers at most one receives the token.
+        Read-only: nothing is consumed. The token must be a governor-parked
+        approval (``HITL_REQUIRED``) that ``approve()`` resolved by reaching
+        quorum (``resolution == "ESCALATED"``, status ``RESOLVED``), that was
+        parked for ``action``, whose approvals were all given against the
+        token's current ``barrier_preview`` (D-H), and whose approved params
+        satisfy ``covers``. A token whose key has expired is unknown.
+
+        The committing run checks this before it runs and spends the token
+        with :meth:`consume_approval` only once it commits, so a run that
+        defers (POAM-2026-104) leaves the approval redeemable.
 
         Returns:
-            The consumed token, or ``None`` when the token is unknown, is not
-            an approval, is not (yet) approved, was parked for another action,
+            The token, or ``None`` when it is unknown or expired, is not an
+            approval, is not (yet) approved, was parked for another action,
             does not cover the request, or was already consumed. Every
             ``None`` must block execution.
         """
         token, status, _rev = await self._read_token_with_rev(defer_id)
         if token is None:
             logger.warning(
-                "[defer_queue] consume_approval: unknown defer_id=%s", defer_id
+                "[defer_queue] approval check: unknown defer_id=%s", defer_id
             )
             return None
         distinct_approvers = len({a.approver_urn for a in token.approvals})
@@ -1046,10 +1047,37 @@ class DeferQueue:
             refusal = "approved params do not cover the request"
         if refusal is not None:
             logger.warning(
-                "[defer_queue] consume_approval refused defer_id=%s: %s",
+                "[defer_queue] approval refused defer_id=%s: %s",
                 defer_id,
                 refusal,
             )
+            return None
+        return token
+
+    async def consume_approval(
+        self,
+        defer_id: str,
+        *,
+        action: str,
+        covers: Callable[[dict[str, Any]], bool],
+    ) -> DeferToken | None:
+        """Consume an approved ``HITL_REQUIRED`` token for ``action``, exactly once.
+
+        Re-checks :meth:`redeemable_approval` (so a mismatched request, or a
+        token that expired since it was checked, does not burn the approval),
+        then spends it with the ``RESOLVED -> CONSUMED`` compare-and-swap in
+        :meth:`atomic_resolve`: of any number of concurrent callers at most
+        one receives the token. A ``RESOLVED`` approval is immutable (neither
+        ``approve()`` nor ``_resolve()`` leaves ``RESOLVED``), so the token
+        checked is the token consumed.
+
+        Returns:
+            The consumed token, or ``None`` (see :meth:`redeemable_approval`,
+            plus: another caller consumed it first). Every ``None`` must
+            block execution.
+        """
+        token = await self.redeemable_approval(defer_id, action=action, covers=covers)
+        if token is None:
             return None
         if not await self.atomic_resolve(
             defer_id, expected_status="RESOLVED", new_status="CONSUMED"

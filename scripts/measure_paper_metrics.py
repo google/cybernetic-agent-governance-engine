@@ -546,6 +546,9 @@ async def measure_governor_latency(
       sum(tiers) <= total holds by construction.
     """
     from src.gateway.governance.decisions import GovernanceDecision  # noqa: PLC0415
+    from src.gateway.governance.governor.approval import (  # noqa: PLC0415
+        PostHitlApproval,
+    )
     from src.gateway.governance.governor.errors import GovernanceError  # noqa: PLC0415
 
     if not (os.environ.get("EVIDENCE_STREAM_REDIS_URL") or os.environ.get("REDIS_URL")):
@@ -625,13 +628,24 @@ async def measure_governor_latency(
                 f"latency benchmark: validate_action returned {verdict.get('verdict')!r}, "
                 f"expected REQUIRE_APPROVAL (violations={verdict.get('violations')!r})"
             )
-        seal = await gov.revalidate_post_hitl(
-            "execute_trade",
-            call,
-            approved_barrier_preview=(verdict.get("classification_meta") or {}).get(
+        # The benchmark holds no DeferQueue: the approval is spent in memory,
+        # once, which is what the gateway's consume_approval() CAS guarantees.
+        spent = {"done": False}
+
+        async def _spend() -> bool:
+            if spent["done"]:
+                return False
+            spent["done"] = True
+            return True
+
+        approval = PostHitlApproval(
+            approval_id=str(verdict.get("deferred_id") or uuid.uuid4()),
+            barrier_preview=(verdict.get("classification_meta") or {}).get(
                 "barrier_preview"
             ),
+            spend=_spend,
         )
+        seal = await gov.revalidate_post_hitl("execute_trade", call, approval=approval)
         t2 = time.perf_counter()
         if not seal:
             raise RuntimeError(

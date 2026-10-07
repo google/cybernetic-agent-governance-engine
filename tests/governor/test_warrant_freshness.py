@@ -59,7 +59,10 @@ from src.gateway.governance.governor.assembly import (
     assemble_governor,
     kernel_stages,
 )
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.errors import (
+    GovernanceDeferred,
+    GovernanceError,
+)
 from src.gateway.governance.governor.pipeline import Profile, StageContext
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jurisdiction import eu_ai_act
@@ -75,6 +78,7 @@ from src.gateway.governance.warrant import (
     WarrantCache,
     WarrantFreshness,
 )
+from tests.fixtures.approval import SpendCounter, granted_approval
 from tests.fixtures.governor import (
     WARRANT_TEST_GOVERNING_VERSION,
     WARRANT_TEST_NOW,
@@ -451,14 +455,14 @@ async def test_post_hitl_inside_the_window_relies_on_the_cached_warrant() -> Non
         return_value="seal-ok",
     ):
         seal = await governor.revalidate_post_hitl(
-            "execute_trade", dict(_TRADE), approved_barrier_preview="PASS"
+            "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
     assert seal == "seal-ok"
     assert source.calls == 1
 
 
 @pytest.mark.parametrize("mode", ["error", "hang"])
-async def test_post_hitl_with_an_expired_cache_refetches_and_refuses_stale(
+async def test_post_hitl_with_an_expired_cache_refetches_and_defers_stale(
     mode: str,
 ) -> None:
     source, clock = _ScriptedSource(), _Clock()
@@ -466,14 +470,18 @@ async def test_post_hitl_with_an_expired_cache_refetches_and_refuses_stale(
     await governor.validate_action("execute_trade", dict(_TRADE))
     clock.advance(60.001)
     source.mode = mode
+    counter = SpendCounter()
     with patch(
         "src.gateway.governance.routing_seal.generate_seal_with_evidence"
     ) as mint:
-        with pytest.raises(GovernanceError, match="RELIANCE_INELIGIBLE_STALE"):
+        with pytest.raises(GovernanceDeferred, match="RELIANCE_INELIGIBLE_STALE"):
             await governor.revalidate_post_hitl(
-                "execute_trade", dict(_TRADE), approved_barrier_preview="PASS"
+                "execute_trade",
+                dict(_TRADE),
+                approval=granted_approval("PASS", counter=counter),
             )
     assert source.calls == 2  # the expired state was re-fetched
+    assert counter.calls == 0  # the approval is retained, not burned
     mint.assert_not_called()
 
 
@@ -487,7 +495,7 @@ async def test_post_hitl_with_an_expired_cache_seals_on_a_good_refetch() -> None
         return_value="seal-ok",
     ):
         seal = await governor.revalidate_post_hitl(
-            "execute_trade", dict(_TRADE), approved_barrier_preview="PASS"
+            "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
     assert seal == "seal-ok"
     assert source.calls == 2

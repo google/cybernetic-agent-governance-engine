@@ -19,7 +19,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -38,7 +38,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.metrics import governor_metrics
 from src.gateway.governance.warrant.reliance import RelianceRecord, reliance_evidence
 
@@ -294,6 +294,117 @@ async def publish_deferral(token: "DeferToken", *, persisted: bool) -> None:
     except Exception as exc:
         logger.error("Failed to publish deferral evidence: %s", exc)
         governor_metrics().evidence_publish_failure("deferral")
+
+
+def post_hitl_deferral_event(
+    action: str,
+    params: dict[str, Any],
+    violations: Sequence[Violation],
+    *,
+    approval_id: str,
+    thread_id: str | None,
+    defer_reason: "DeferReason",
+    classification_reason: str,
+    barrier_preview: str | None,
+    reliance: Sequence[RelianceRecord],
+) -> dict[str, Any]:
+    """The ``GOVERNANCE_DEFERRAL`` event for a deferred post-approval run.
+
+    Names the approval token (``defer_id``) as the record that stays
+    resolvable: no new token is parked, because the deferral asks no human
+    anything new. ``approval_retained`` records that the approval was not
+    spent; ``reliance`` carries the warrant state the failed attempt saw.
+    """
+    try:
+        params_hash: str | None = routing_seal.compute_action_hash(action, params)[:16]
+    except routing_seal.SealCanonicalizationError:
+        params_hash = None
+    now = datetime.now(tz=timezone.utc).isoformat()
+    event: dict[str, Any] = {
+        "type": "GOVERNANCE_DEFERRAL",
+        "defer_id": approval_id,
+        "persisted": True,
+        "approval_retained": True,
+        "profile": "POST_HITL",
+        "defer_reason": defer_reason.value,
+        "thread_id": thread_id,
+        "action": action,
+        "params_hash": params_hash,
+        "classification_reason": classification_reason,
+        "violations": [str(v) for v in violations],
+        "barrier_preview": barrier_preview,
+        "deferred_at_utc": now,
+        "timestamp_utc": now,
+    }
+    if reliance:
+        event["reliance"] = reliance_evidence(reliance)
+    return event
+
+
+async def handle_post_hitl_defer(
+    action: str,
+    params: dict[str, Any],
+    violations: list[Violation],
+    classification_meta: dict[str, Any],
+    *,
+    approval_id: str,
+    thread_id: str | None,
+    barrier_preview: str | None,
+    reliance: Sequence[RelianceRecord] = (),
+) -> NoReturn:
+    """DEFER a post-approval committing run, leaving its approval unspent.
+
+    Nothing was sealed and every phase-2 commit was rolled back. The
+    deferral is hash-chained as primary evidence (non-blocking, counted on
+    failure like every deferral write), then :class:`GovernanceDeferred` is
+    raised naming the approval that stays redeemable.
+
+    Raises:
+        GovernanceDeferred: Always.
+    """
+    from src.gateway.governance.evidence.stream import get_evidence_sink
+
+    span = trace.get_current_span()
+    defer_reason = _reason_from_classification(classification_meta)
+    classification_reason = str(classification_meta.get("classification_reason", ""))
+    try:
+        await get_evidence_sink().ingest(
+            post_hitl_deferral_event(
+                action,
+                params,
+                violations,
+                approval_id=approval_id,
+                thread_id=thread_id,
+                defer_reason=defer_reason,
+                classification_reason=classification_reason,
+                barrier_preview=barrier_preview,
+                reliance=reliance,
+            )
+        )
+    except Exception as exc:
+        logger.error("Failed to publish post-approval deferral evidence: %s", exc)
+        governor_metrics().evidence_publish_failure("deferral")
+    span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
+    span.set_attribute("cage.defer_token", approval_id)
+    span.set_attribute("cage.approval_retained", True)
+    span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.DEFER)
+    span.set_status(Status(StatusCode.OK))
+    logger.info(
+        "🕒 post-approval DEFER: action=%s reason=%s approval=%s retained",
+        action,
+        defer_reason.value,
+        approval_id,
+    )
+    findings = [f"[{v.code}] {v.message}" for v in violations]
+    raise GovernanceDeferred(
+        f"[{defer_reason.value}] post-approval run deferred; approval "
+        f"{approval_id!r} is retained and redeems once the deferral clears: "
+        + "; ".join(findings),
+        defer_reason=defer_reason.value,
+        deferred_id=approval_id,
+        reliance=reliance_evidence(reliance) if reliance else [],
+        violations=findings,
+    )
 
 
 async def handle_require_approval(

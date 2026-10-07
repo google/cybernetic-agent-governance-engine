@@ -31,6 +31,7 @@ receipt, never a suspended request.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -85,6 +86,22 @@ class ClassificationEngine:
         self._confidence_threshold = confidence_threshold
         self._defer_enabled = defer_enabled
         self._narrow_enabled = narrow_enabled
+
+    def defers_on_reliance(self, violations: Sequence[Violation]) -> bool:
+        """True iff :meth:`classify` answers DEFER for an ineligible warrant.
+
+        Steps 1 and 2 of :meth:`classify`, side-effect free (no narrower
+        runs): no HARD finding, at least one ``RELIANCE_INELIGIBLE`` finding,
+        and DEFER enabled. Every committing path of the governor asks this, so
+        a warrant failure is a DEFER on all of them and a HARD finding still
+        outranks it (``proof/model.py`` ``verdict_of``).
+        """
+        kinds = {v.kind for v in violations}
+        return (
+            self._defer_enabled
+            and ViolationKind.RELIANCE_INELIGIBLE in kinds
+            and ViolationKind.HARD not in kinds
+        )
 
     def classify(
         self,

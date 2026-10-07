@@ -67,6 +67,7 @@ from src.gateway.governance.governor.pipeline import (
 )
 from src.gateway.governance.governor.reservation import ReservationScope
 from src.gateway.governance.narrower import NarrowerRegistry
+from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import allow_opa, make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -247,9 +248,7 @@ async def _decide(gov: SymbolicGovernor, entry: str) -> None:
         elif entry == "validate_action":
             await gov.validate_action(ACTION, params)
         else:
-            await gov.revalidate_post_hitl(
-                ACTION, params, approved_barrier_preview=None
-            )
+            await gov.revalidate_post_hitl(ACTION, params, approval=granted_approval())
     except GovernanceError:
         pass
 

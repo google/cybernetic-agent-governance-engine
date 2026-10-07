@@ -47,6 +47,7 @@ async def run_sealed(
     path: str,
     settlements: SettlementLedger,
     on_seal: Callable[[str], Awaitable[None]] | None = None,
+    admit: Callable[[], Awaitable[bool]] | None = None,
 ) -> tuple[PipelineResult, str | None]:
     """Run ``ctx.profile`` and seal ``params`` if the run is clean.
 
@@ -58,6 +59,13 @@ async def run_sealed(
     receipt) could not be delivered never holds reserved headroom.  Once the
     seal is issued its commits are held in ``settlements`` under the seal.
 
+    ``admit()`` is the last gate before a clean run is sealed: it runs inside
+    the scope, after every stage and before the seal is minted.  It returns
+    ``(result, None)`` when ``admit()`` answers ``False``: nothing is sealed
+    and the scope rolls every commit back.  The post-approval run passes the
+    approval's atomic ``spend`` here, so an approval is consumed only by the
+    run it authorises, and a run that loses a redemption race mints nothing.
+
     The seal's evidence record commits to the run's warrant reliance records
     (``PipelineResult.reliance``), so the seal proves which warrants grounded
     the decision it authorises.
@@ -67,6 +75,8 @@ async def run_sealed(
         if result.violations:
             assert_nothing_committed(result)
             return result, None
+        if admit is not None and not await admit():
+            return result, None  # the scope rolls the clean run's commits back
         # The clean run's reliance records go into the seal's evidence record.
         seal = await issue_seal(ctx.action, params, path=path, reliance=result.reliance)
         if on_seal is not None:

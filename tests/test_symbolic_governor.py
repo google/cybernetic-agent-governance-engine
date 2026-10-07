@@ -22,6 +22,7 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.gateway.governance import GovernanceError
+from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
 
 pytestmark = pytest.mark.unit
@@ -267,7 +268,7 @@ async def test_revalidate_post_hitl_opa_governance_violation(
 
     with pytest.raises(GovernanceError) as excinfo:
         await governor.revalidate_post_hitl(
-            "execute_trade", params, approved_barrier_preview=None
+            "execute_trade", params, approval=granted_approval()
         )
 
     assert "CTRL_OPA_005" in str(excinfo.value)
@@ -1165,7 +1166,7 @@ async def test_revalidate_post_hitl_fiscal_denial(
 
     with pytest.raises(GovernanceError) as excinfo:
         await governor.revalidate_post_hitl(
-            "execute_trade", params, approved_barrier_preview=None
+            "execute_trade", params, approval=granted_approval()
         )
 
     assert "Daily fiscal limit exceeded" in str(excinfo.value)
