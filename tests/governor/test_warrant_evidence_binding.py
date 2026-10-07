@@ -34,7 +34,7 @@ Invariants under test:
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -81,6 +81,7 @@ from src.gateway.governance.warrant import (
     RelianceRecord,
     RelianceStatus,
     StandingVerificationResult,
+    WarrantCache,
 )
 from tests.fixtures.governor import (
     WARRANT_TEST_GOVERNING_VERSION,
@@ -105,6 +106,9 @@ _RELIANCE_KEYS = {
     "reason",
     "governing_version",
     "evaluated_at",
+    "observed_at",
+    "age_seconds",
+    "max_age_seconds",
     "provider_name",
     "verification_status",
 }
@@ -137,18 +141,30 @@ def _trade(**overrides: Any) -> dict[str, Any]:
     return {"confidence": 0.99, "amount": 100.0, "symbol": "AAPL", **overrides}
 
 
-def _stage(source: StaticWarrantSource, jurisdiction: str = "EU_ECB") -> WarrantStage:
+def _stage(
+    source: StaticWarrantSource,
+    jurisdiction: str = "EU_ECB",
+    monotonic: Callable[[], float] = lambda: 0.0,
+) -> WarrantStage:
+    cache = WarrantCache(
+        source, monotonic=monotonic, wall_clock=lambda: WARRANT_TEST_NOW
+    )
     return WarrantStage(
-        [_BINDING], source, jurisdiction=jurisdiction, clock=lambda: WARRANT_TEST_NOW
+        [_BINDING], cache, jurisdiction=jurisdiction, clock=lambda: WARRANT_TEST_NOW
     )
 
 
-def _governor(source: StaticWarrantSource, *extra_tiers: Any, **kwargs: Any) -> Any:
+def _governor(
+    source: StaticWarrantSource,
+    *extra_tiers: Any,
+    monotonic: Callable[[], float] = lambda: 0.0,
+    **kwargs: Any,
+) -> Any:
     """OPA + warrant gate + the warranted trade-confidence tier (no FTRA HITL)."""
     opa = allow_opa()
     return make_governor(
         opa=opa,
-        core_stages=(OpaStage(opa), _stage(source)),
+        core_stages=(OpaStage(opa), _stage(source, monotonic=monotonic)),
         domain_tiers=(TradeConfidenceTier(_BINDING), *extra_tiers),
         **kwargs,
     )
@@ -328,6 +344,9 @@ async def test_allow_seal_evidence_carries_the_eligible_reliance_record(
         "reason": reliance["reason"],
         "governing_version": WARRANT_TEST_GOVERNING_VERSION,
         "evaluated_at": WARRANT_TEST_NOW.isoformat(),
+        "observed_at": WARRANT_TEST_NOW.isoformat(),
+        "age_seconds": "0.000",
+        "max_age_seconds": "60.000",
         "provider_name": "static_test_source",
         "verification_status": "UNVERIFIED",
     }
@@ -495,7 +514,9 @@ async def test_narrow_seal_carries_the_narrowed_runs_reliance(
     assert seal["params"]["amount"] == 50.0
     (record,) = seal["reliance"]
     assert record.reliance_status is RelianceStatus.ELIGIBLE
-    assert source.calls == [TRADE_CONFIDENCE_NORM_ID] * 2  # re-checked on the clamp
+    # The narrowed re-run re-checks reliance through the cache; the warrant
+    # is still inside the freshness window, so it is not fetched again.
+    assert source.calls == [TRADE_CONFIDENCE_NORM_ID]
 
 
 # ── Envelope attestation ─────────────────────────────────────────────────────
@@ -703,13 +724,16 @@ async def test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim(
     request waited for a human.
     """
     source = StaticWarrantSource.eligible()
-    governor = _governor(source)  # no phase-2 tier claims execute_trade
+    now = [0.0]
+    # No phase-2 tier claims execute_trade.
+    governor = _governor(source, monotonic=lambda: now[0])
 
     approved = await governor.validate_action(_ACTION, _trade())
     assert approved["verdict"] == GovernanceDecision.ALLOW
     assert approved["reliance"][0]["reliance_status"] == "ELIGIBLE"
 
     source.put(issue_test_warrant(status="REVOKED", revocation_ref="REV-WHILE-WAITING"))
+    now[0] += 60.001  # the human took longer than the freshness window
     with pytest.raises(GovernanceError) as exc_info:
         await governor.revalidate_post_hitl(
             _ACTION, _trade(), approved_barrier_preview=None

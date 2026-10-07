@@ -70,7 +70,7 @@ from src.gateway.governance.governor.pipeline import Profile, StageContext
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jurisdiction import eu_ai_act, resolve_jurisdiction
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
-from src.gateway.governance.warrant import RelianceStatus
+from src.gateway.governance.warrant import RelianceStatus, WarrantCache
 from tests.fixtures.governor import (
     WARRANT_TEST_GOVERNING_VERSION,
     WARRANT_TEST_NOW,
@@ -95,13 +95,13 @@ _BINDING = NormBinding(
 )
 
 
-def _stage(source: Any, *, jurisdiction: str = "EU_ECB", **kwargs: Any) -> WarrantStage:
+def _stage(source: Any, *, jurisdiction: str = "EU_ECB", **cache: Any) -> WarrantStage:
+    """The stage over a fresh cache; ``cache`` kwargs configure the cache."""
     return WarrantStage(
         [_BINDING],
-        source,
+        WarrantCache(source, **cache),
         jurisdiction=jurisdiction,
         clock=lambda: WARRANT_TEST_NOW,
-        **kwargs,
     )
 
 
@@ -247,7 +247,7 @@ async def test_source_timeout_is_ineligible() -> None:
     (violation,) = await _run(stage)
     assert violation.kind is ViolationKind.RELIANCE_INELIGIBLE
     assert violation.code == f"RELIANCE_{RelianceStatus.INELIGIBLE_UNRESOLVED.value}"
-    assert "TimeoutError" in violation.message
+    assert "did not answer within 0.01s" in violation.message
 
 
 async def test_out_of_jurisdiction_deployment_is_out_of_scope() -> None:
@@ -261,19 +261,20 @@ def test_stage_refuses_unwarranted_bindings_and_bad_sources() -> None:
     plain = NormBinding(
         norm_id="n", value=0.5, requires_warrant=False, actions=frozenset({"a"})
     )
+    cache = WarrantCache(StaticWarrantSource())
     with pytest.raises(ValueError):
-        WarrantStage([plain], StaticWarrantSource(), jurisdiction="EU_ECB")
+        WarrantStage([plain], cache, jurisdiction="EU_ECB")
     with pytest.raises(TypeError):
         WarrantStage([_BINDING], object(), jurisdiction="EU_ECB")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="WarrantCache"):
+        # A bare source bypasses the freshness window: refused.
+        WarrantStage([_BINDING], StaticWarrantSource(), jurisdiction="EU_ECB")  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        WarrantStage([_BINDING], StaticWarrantSource(), jurisdiction="")
+        WarrantStage([_BINDING], cache, jurisdiction="")
+    with pytest.raises(TypeError):
+        WarrantCache(object())  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        WarrantStage(
-            [_BINDING],
-            StaticWarrantSource(),
-            jurisdiction="EU_ECB",
-            fetch_timeout_seconds=0,
-        )
+        WarrantCache(StaticWarrantSource(), fetch_timeout_seconds=0)
 
 
 # ── Classifier ───────────────────────────────────────────────────────────────
@@ -431,13 +432,26 @@ class _RecordingBarrier(MutatingTier):
         return None
 
 
-def _approval_governor(source: StaticWarrantSource) -> tuple[Any, _RecordingBarrier]:
+class _Monotonic:
+    """A hand-advanced monotonic clock (no sleeps)."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _approval_governor(
+    source: StaticWarrantSource, clock: _Monotonic | None = None
+) -> tuple[Any, _RecordingBarrier]:
     opa, stpa = allow_opa(), clean_stpa()
     barrier = _RecordingBarrier()
+    cache_kwargs: dict[str, Any] = {} if clock is None else {"monotonic": clock}
     governor = make_governor(
         opa=opa,
         stpa_validator=stpa,
-        core_stages=(*kernel_stages(opa, stpa), _stage(source)),
+        core_stages=(*kernel_stages(opa, stpa), _stage(source, **cache_kwargs)),
         domain_tiers=(TradeConfidenceTier(_BINDING), barrier),
     )
     return governor, barrier
@@ -447,10 +461,12 @@ _TRADE = {"confidence": 0.99, "amount": 100.0, "symbol": "AAPL"}
 
 
 async def test_warrant_revoked_after_approval_is_refused_without_seal() -> None:
-    """Eligible at approval, revoked before post-HITL revalidation: refused,
-    no seal, and phase 2 commits nothing (no barrier headroom is spent)."""
+    """Eligible at approval, revoked before post-HITL revalidation: once the
+    cached state is outside the 60 s window it is re-fetched, the revocation
+    is refused, no seal is minted, and phase 2 commits nothing."""
     source = StaticWarrantSource.eligible()
-    governor, barrier = _approval_governor(source)
+    clock = _Monotonic()
+    governor, barrier = _approval_governor(source, clock)
 
     pending = await governor.validate_action("execute_trade", dict(_TRADE))
     assert pending["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
@@ -461,6 +477,7 @@ async def test_warrant_revoked_after_approval_is_refused_without_seal() -> None:
     source.put(
         issue_test_warrant(status="REVOKED", revocation_ref="REV-AFTER-APPROVAL")
     )
+    clock.now += 60.001  # the approval took longer than the freshness window
     calls_before = len(source.calls)
     with patch(
         "src.gateway.governance.routing_seal.generate_seal_with_evidence"

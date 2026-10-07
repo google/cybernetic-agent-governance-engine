@@ -509,7 +509,11 @@ def post_hitl_rechecks_warrant() -> bool:
 
     The warrant tier re-runs under POST_HITL, and any RELIANCE_INELIGIBLE it
     then reports blocks phase 2 from committing and never reaches a sealing
-    verdict, so the approved request is refused without a seal.
+    verdict, so the approved request is refused without a seal. "Revoked"
+    means observed at revalidation: the kernel WarrantCache re-fetches any
+    warrant last received more than ``warrant.max_age_seconds`` (<= 60 s)
+    earlier, and a failed re-fetch (INELIGIBLE_STALE) is RELIANCE_INELIGIBLE
+    too. The model abstracts over which RelianceStatus caused the finding.
     """
     if not runs_under_profile(
         "POST_HITL", WARRANT_TIER, WARRANT_TIER_PHASE[WARRANT_TIER]
@@ -1478,7 +1482,8 @@ def main() -> None:
     print("     failure defers and never fabricates a DENY, while an independent")
     print("     HARD finding still denies (warranted_norm_never_fabricates_deny).")
     print(" 13. The warrant tier re-runs under POST_HITL: a warrant revoked between")
-    print("     approval and execution commits nothing and is never sealed")
+    print("     approval and execution (as observed through the <= 60 s freshness")
+    print("     window) commits nothing and is never sealed")
     print("     (post_hitl_rechecks_warrant).")
     print()
     print("PLAUSIBLE (not proved here):")

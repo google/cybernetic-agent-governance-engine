@@ -67,6 +67,9 @@ class RelianceStatus(str, Enum):
     INELIGIBLE_OUT_OF_SCOPE = "INELIGIBLE_OUT_OF_SCOPE"
     INELIGIBLE_VERSION_MISMATCH = "INELIGIBLE_VERSION_MISMATCH"
     INELIGIBLE_UNRESOLVED = "INELIGIBLE_UNRESOLVED"
+    #: The cached warrant state outlived the freshness window and the
+    #: re-fetch failed (``warrant.cache.WarrantCache``).
+    INELIGIBLE_STALE = "INELIGIBLE_STALE"
 
 
 @dataclass(frozen=True)

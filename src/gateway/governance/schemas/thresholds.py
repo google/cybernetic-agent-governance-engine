@@ -337,6 +337,58 @@ class ReconciliationThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# EV-8: Warrant freshness (Warrant Contract v0.1, Q2)
+# ---------------------------------------------------------------------------
+
+#: The frozen Warrant Contract v0.1 freshness window (Q2). Mirrors
+#: ``warrant.cache.CONTRACT_MAX_AGE_SECONDS``; a parity test pins the two.
+WARRANT_CONTRACT_MAX_AGE_SECONDS: float = 60.0
+
+
+class WarrantThresholds(BaseModel):
+    """Kernel warrant freshness window (``warrant.cache.WarrantCache``).
+
+    CAGE may rely on a warrant state for at most ``max_age_seconds`` after it
+    received it; the contract caps the window at 60 s, so larger values are
+    rejected at load. A re-fetch that fails or exceeds
+    ``fetch_timeout_seconds`` makes the state STALE (DEFER).
+
+    Env overrides: WARRANT_MAX_AGE_SECONDS, WARRANT_FETCH_TIMEOUT_SECONDS
+    """
+
+    max_age_seconds: float = Field(
+        default=WARRANT_CONTRACT_MAX_AGE_SECONDS,
+        gt=0.0,
+        le=WARRANT_CONTRACT_MAX_AGE_SECONDS,
+        allow_inf_nan=False,
+        description=(
+            "[EV-8] Longest time (seconds, from CAGE's receipt) a warrant state "
+            "may be relied on before it must be re-fetched. 0 < value <= 60 "
+            "(Warrant Contract v0.1 Q2). Env override: WARRANT_MAX_AGE_SECONDS"
+        ),
+    )
+    fetch_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description=(
+            "[EV-8] Upper bound on one warrant fetch; an unanswered fetch is "
+            "ineligible. Must be shorter than max_age_seconds. Env override: "
+            "WARRANT_FETCH_TIMEOUT_SECONDS"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _timeout_fits_window(self) -> WarrantThresholds:
+        if self.fetch_timeout_seconds >= self.max_age_seconds:
+            raise ValueError(
+                f"warrant.fetch_timeout_seconds ({self.fetch_timeout_seconds}) must "
+                f"be shorter than warrant.max_age_seconds ({self.max_age_seconds})"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Root model
 # ---------------------------------------------------------------------------
 
@@ -367,6 +419,9 @@ class GovernanceThresholds(BaseModel):
     reconciliation: ReconciliationThresholds = Field(
         default_factory=ReconciliationThresholds
     )
+
+    # EV-8: Warrant freshness window (Warrant Contract v0.1 Q2)
+    warrant: WarrantThresholds = Field(default_factory=WarrantThresholds)
 
     # Open domain threshold namespaces (e.g. domains.finance, domains.healthcare,
     # domains.physical_ai), validated at assembly time by domain plugins. The
@@ -446,7 +501,7 @@ class GovernanceThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Environment Variable Override Map (EV-1 through EV-6)
+# Environment Variable Override Map (EV-1 through EV-8)
 #
 # These mappings allow runtime tuning of thresholds via environment variables
 # while keeping config/governance_thresholds.json as the single source of truth
@@ -497,6 +552,9 @@ _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
         "reconciliation.pending_debit_max_age_seconds",
         float,
     ),
+    # EV-8: Warrant freshness window
+    "WARRANT_MAX_AGE_SECONDS": ("warrant.max_age_seconds", float),
+    "WARRANT_FETCH_TIMEOUT_SECONDS": ("warrant.fetch_timeout_seconds", float),
 }
 
 

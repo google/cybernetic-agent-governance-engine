@@ -44,6 +44,12 @@
     "pending_debit_max_age_seconds": 600.0,
     "_comment_pending": "[EV-7] Unconfirmed debits older than this are promoted to confirmed (stamped at promotion) because they may have executed. Must be >= the governor settlement hold (DEFAULT_HOLD_SECONDS). Env override: RECONCILIATION_PENDING_DEBIT_MAX_AGE_SECONDS."
   },
+  "warrant": {
+    "max_age_seconds": 60,
+    "_comment_max_age": "[EV-8] Warrant Contract v0.1 Q2 freshness window: CAGE relies on a warrant state for at most this many seconds after it received it, then re-fetches; a failed or timed-out re-fetch makes the state STALE (INELIGIBLE_STALE -> DEFER). Validated 0 < value <= 60. Env override: WARRANT_MAX_AGE_SECONDS.",
+    "fetch_timeout_seconds": 2.0,
+    "_comment_fetch_timeout": "[EV-8] Upper bound on one warrant fetch; an unanswered fetch is ineligible. Must be shorter than max_age_seconds. Env override: WARRANT_FETCH_TIMEOUT_SECONDS."
+  },
   "domains": {
     "finance": {
       "cbf": {

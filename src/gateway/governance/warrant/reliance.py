@@ -28,6 +28,11 @@ whatever the verdict, into the artefact that decision produces:
 Refusals are primary evidence: an ineligible record is as complete as an
 eligible one.
 
+Freshness: ``observed_at`` is when CAGE received the warrant state (its own
+receipt time, not an issuer-declared time) and ``age_seconds`` how old that
+state was when the decision relied on it; ``max_age_seconds`` is the
+freshness window it was held to (``warrant.cache.WarrantCache``).
+
 ``verification_status`` is always ``UNVERIFIED``. The declared digest proves
 the warrant is internally consistent, not who issued it; issuer signatures
 against a ``kid``-resolved trust anchor are a Warrant Contract v0.2 item.
@@ -39,6 +44,7 @@ assembled with; the kernel never names a vendor.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -65,12 +71,19 @@ class RelianceRecord:
     ``governing_version`` is the version the deployment's binding requires
     (what the warrant was checked against), not the version the warrant
     declares; a mismatch shows up as ``INELIGIBLE_VERSION_MISMATCH``.
+
+    ``observed_at`` (ISO 8601 UTC) and ``age_seconds`` describe CAGE's receipt
+    of the warrant state the standing was computed from; both are empty when
+    nothing was received (the source failed before answering).
     """
 
     norm_id: str
     governing_version: str
     provider_name: str
     standing: StandingVerificationResult
+    observed_at: str = ""
+    age_seconds: float | None = None
+    max_age_seconds: float | None = None
 
     def __post_init__(self) -> None:
         for name in ("norm_id", "governing_version", "provider_name"):
@@ -81,6 +94,19 @@ class RelianceRecord:
             raise TypeError(
                 "RelianceRecord.standing must be a StandingVerificationResult"
             )
+        if not isinstance(self.observed_at, str):
+            raise TypeError("RelianceRecord.observed_at must be an ISO 8601 string")
+        for name in ("age_seconds", "max_age_seconds"):
+            seconds = getattr(self, name)
+            if seconds is not None and (
+                isinstance(seconds, bool)
+                or not isinstance(seconds, int | float)
+                or not math.isfinite(seconds)
+                or seconds < 0
+            ):
+                raise ValueError(
+                    f"RelianceRecord.{name} must be None or a finite number >= 0"
+                )
 
     @property
     def eligible(self) -> bool:
@@ -101,7 +127,9 @@ class RelianceRecord:
         ``warrant_id``, ``warrant_digest`` and ``warrant_status`` are ``""``
         when no warrant was supplied (``INELIGIBLE_MISSING``) or the source
         failed before returning one. ``warrant_digest`` is the issuer-declared
-        digest, never one CAGE computed.
+        digest, never one CAGE computed. ``age_seconds`` and
+        ``max_age_seconds`` are decimal strings with millisecond precision
+        (``""`` when unknown), so the record stays strings-only.
         """
         warrant = self.standing.warrant
         if warrant is None:
@@ -119,6 +147,9 @@ class RelianceRecord:
             "reason": self.standing.reason,
             "governing_version": self.governing_version,
             "evaluated_at": self.standing.evaluated_at,
+            "observed_at": self.observed_at,
+            "age_seconds": _seconds(self.age_seconds),
+            "max_age_seconds": _seconds(self.max_age_seconds),
             "provider_name": self.provider_name,
             "verification_status": self.verification_status,
         }
@@ -134,6 +165,10 @@ class RelianceRecord:
         return bind_warrant_to_attestation(
             warrant, self.standing, provider_name=self.provider_name
         )
+
+
+def _seconds(value: float | None) -> str:
+    return "" if value is None else f"{value:.3f}"
 
 
 def reliance_evidence(records: Iterable[RelianceRecord]) -> list[dict[str, Any]]:

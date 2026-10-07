@@ -91,6 +91,7 @@ from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
+from src.gateway.governance.warrant.cache import WarrantCache
 
 if TYPE_CHECKING:
     from src.gateway.governance.schemas.thresholds import GovernanceThresholds
@@ -357,7 +358,11 @@ def assemble_governor(
     if warranted and warrant_source is not None:  # else refused above
         core_stages = (
             *core_stages,
-            WarrantStage(warranted, warrant_source, jurisdiction=jurisdiction.region),
+            WarrantStage(
+                warranted,
+                _warrant_cache(warrant_source),
+                jurisdiction=jurisdiction.region,
+            ),
         )
 
     components = GovernorComponents(
@@ -399,6 +404,20 @@ def assemble_governor(
         [b.norm_id for b in warranted],
     )
     return governor
+
+
+def _warrant_cache(source: WarrantSource) -> WarrantCache:
+    """Wrap ``source`` in the freshness cache the validated thresholds define.
+
+    One cache per governor: the governor (and so the cache) is built only
+    here, never at import time.
+    """
+    window = _effective_thresholds().warrant
+    return WarrantCache(
+        source,
+        max_age_seconds=window.max_age_seconds,
+        fetch_timeout_seconds=window.fetch_timeout_seconds,
+    )
 
 
 def warranted_assembly_admissible(
