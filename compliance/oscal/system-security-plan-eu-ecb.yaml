@@ -296,7 +296,8 @@ system-security-plan:
         (src/gateway/governance/contracts.py) for execute_trade and
         execute_trade_bounded. For every request to one of those actions the
         kernel WarrantStage (src/gateway/governance/governor/stages/warrant.py)
-        fetches the norm''s warrant through the WarrantSource seam
+        reads the norm''s warrant through the kernel WarrantCache
+        (src/gateway/governance/warrant/cache.py) over the WarrantSource seam
         (src/gateway/governance/seams/warrant.py; adapter selected by
         CAGE_WARRANT_SOURCE, src/gateway/governance/warrant/source_factory.py)
         and evaluates its standing with WarrantStandingVerifier
@@ -304,7 +305,8 @@ system-security-plan:
         jurisdiction and the binding''s governing_version. A missing, revoked,
         suspended, expired, out-of-scope, version-mismatched or
         digest-mismatched warrant, a warrant for another norm, a source error
-        or a fetch timeout yields one RELIANCE_INELIGIBLE finding. The
+        or a fetch timeout, or a stale warrant (below) yields one
+        RELIANCE_INELIGIBLE finding. The
         classifier ranks HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE >
         DEFERRABLE and answers DEFER with DeferReason.WARRANT_INELIGIBLE
         (quorum 3, not resolvable by data injection) regardless of model
@@ -312,9 +314,9 @@ system-security-plan:
         STPA and OPA still run and a HARD finding still denies. WarrantStage
         is in POST_HITL_READ_ONLY_STAGES
         (src/gateway/governance/governor/pipeline.py), so a warrant revoked
-        between human approval and execution is refused at
-        revalidate_post_hitl() with no seal and no phase-2 commit.
-        assemble_governor() (src/gateway/governance/governor/assembly.py)
+        between human approval and execution, as observed through the
+        freshness window below, is refused at revalidate_post_hitl() with no
+        seal and no phase-2 commit. assemble_governor() (src/gateway/governance/governor/assembly.py)
         refuses to assemble when a warranted norm has no WarrantSource, when
         DEFER is disabled, when it lacks a governing_version, or when no domain
         tier claims its actions. Limits stated plainly: (1) warrant
@@ -330,7 +332,8 @@ system-security-plan:
         decision relied on yields a RelianceRecord
         (src/gateway/governance/warrant/reliance.py: norm_id, warrant_id,
         declared digest, warrant status, reliance status, governing_version,
-        evaluated_at, provider_name, verification_status always UNVERIFIED).
+        evaluated_at, provider_name, verification_status always UNVERIFIED;
+        since 9ddefb8c also observed_at, age_seconds and max_age_seconds).
         ALLOW and NARROW seals carry it in their evidence record, covered by
         record_hash, so altering or dropping it breaks seal verification
         (verify_seal_against_evidence, src/gateway/governance/routing_seal.py);
@@ -346,7 +349,33 @@ system-security-plan:
         governed is resolved over the full stage set before POST_HITL
         filtering (resolve_claims, src/gateway/governance/governor/pipeline.py,
         shared with revalidate_post_hitl), so the warrant stage re-runs after
-        approval even when only read-only tiers claim the action.'
+        approval even when only read-only tiers claim the action. Since commit
+        9ddefb8c (#430) the Warrant Contract v0.1 Q2 60 s freshness window is
+        enforced: assemble_governor() wraps the configured WarrantSource in
+        one WarrantCache per governor (built at the composition root, no
+        module singleton). The cache stamps each warrant with CAGE''s own
+        receipt time (a monotonic clock for age, a UTC wall clock for the
+        observed_at evidence field), not an issuer-declared time, because the
+        v0.1 schema has no issuer state_as_of. It serves a cached warrant only
+        while its age is at most warrant.max_age_seconds and re-fetches past
+        that, so a revocation returned by the re-fetch is refused on that
+        request. A re-fetch that raises or does not answer within
+        warrant.fetch_timeout_seconds never extends the old state: the norm is
+        INELIGIBLE_STALE, a RELIANCE_INELIGIBLE finding, so DEFER. A failure
+        with no earlier observation is INELIGIBLE_UNRESOLVED, a MISSING
+        answer is never cached, and concurrent requests for one norm share a
+        single in-flight fetch (read-through, single-flight; no background
+        poll). The same window applies under POST_HITL. Thresholds
+        (config/governance_thresholds.json, WarrantThresholds in
+        src/gateway/governance/schemas/thresholds.py): max_age_seconds
+        default 60, validated 0 < value <= 60; fetch_timeout_seconds default
+        2, validated below max_age_seconds; an out-of-range value, including
+        an env override (WARRANT_MAX_AGE_SECONDS,
+        WARRANT_FETCH_TIMEOUT_SECONDS), aborts startup, and the cache
+        constructor enforces the same bounds. Limit stated plainly: a
+        revocation issued less than max_age_seconds after CAGE last received
+        the warrant is observed only when that window elapses (at most 60 s,
+        the contracted bound), not on every request.'
       purpose: 'Ensures CAGE relies on the EU_ECB trade-confidence norm only
         while a current, in-scope warrant for the governing version is
         presented, failing closed (DEFER) otherwise.'
@@ -369,6 +398,10 @@ system-security-plan:
         value: a0deb7ad
       - name: evidence-binding-commit
         value: 0cdb5aaa
+      - name: freshness-commit
+        value: 9ddefb8c
+      - name: warrant-max-age-seconds
+        value: '60'
       links:
       - href: ../../src/gateway/governance/governor/stages/warrant.py
         rel: reference
@@ -388,6 +421,12 @@ system-security-plan:
       - href: ../../tests/governor/test_warrant_evidence_binding.py
         rel: reference
         text: Warrant evidence binding tests
+      - href: ../../src/gateway/governance/warrant/cache.py
+        rel: reference
+        text: WarrantCache (60 s freshness window)
+      - href: ../../tests/governor/test_warrant_freshness.py
+        rel: reference
+        text: Warrant freshness window tests
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -616,7 +655,13 @@ system-security-plan:
         evidenced: since 0cdb5aaa the reliance record is bound into the seal''s
         evidence record (record_hash), the DEFER/REQUIRE_APPROVAL token, the
         GOVERNANCE_DEFERRAL record and any co-occurring DENY receipt''s
-        proof_hash, always with verification_status UNVERIFIED.'
+        proof_hash, always with verification_status UNVERIFIED. Since 9ddefb8c
+        reliance is also bounded in time: a warrant is relied on for at most
+        warrant.max_age_seconds (<= 60 s, Warrant Contract v0.1 Q2) after CAGE
+        received it; past that it is re-fetched, and a failed or timed-out
+        re-fetch is INELIGIBLE_STALE and defers. The reliance record carries
+        observed_at, age_seconds and max_age_seconds, so the evidence shows
+        how fresh the relied-on warrant state was.'
       props:
       - name: implementation-status
         value: partially-implemented
@@ -652,7 +697,19 @@ system-security-plan:
           the action
           (test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim),
           and a failed deferral evidence write is counted while the deferral
-          proceeds (test_deferral_proceeds_and_is_counted_when_the_sink_fails).'
+          proceeds (test_deferral_proceeds_and_is_counted_when_the_sink_fails).
+          Observed in tests/governor/test_warrant_freshness.py (injected
+          clocks, no sleeps): a warrant is served without a fetch up to and
+          including 60.000 s and re-fetched at 60.001 s, a re-fetched
+          revocation is refused immediately, a re-fetch error or timeout is
+          INELIGIBLE_STALE and the governor defers with WARRANT_INELIGIBLE,
+          concurrent requests share one fetch, POST_HITL inside the window
+          relies on the cached warrant while an expired one is re-fetched
+          (and refused without a seal when the re-fetch fails), out-of-range
+          windows (above 60 s, at or below 0, NaN, infinite, timeout not
+          below max_age) are refused by the schema, the loader and the cache,
+          and every reliance record carries observed_at, age_seconds and
+          max_age_seconds.'
         implementation-status:
           state: partially-implemented
         links:
@@ -665,6 +722,9 @@ system-security-plan:
         - href: ../../tests/governor/test_warrant_evidence_binding.py
           rel: reference
           text: Warrant evidence binding tests
+        - href: ../../tests/governor/test_warrant_freshness.py
+          rel: reference
+          text: Warrant freshness window tests
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001
