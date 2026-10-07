@@ -52,6 +52,7 @@ from src.gateway.governance.governor.pipeline import (
     run_pipeline,
 )
 from src.gateway.governance.governor.sealing import run_sealed
+from src.gateway.governance.governor.server_inputs import bind_server_inputs
 from src.gateway.governance.governor.settlement import SettlementLedger, settle
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.trace import decision_trace_event, publish_trace
@@ -149,7 +150,14 @@ class SymbolicGovernor:
         REQUIRE_APPROVAL with a ``deferred_id``, DEFER, or DENY via
         ``GovernanceError``) only routes the caller. The single committing run
         is :meth:`govern` or, after approval, :meth:`revalidate_post_hitl`.
+
+        The params are bound first (:func:`bind_server_inputs`): caller values
+        for keys a domain resolves server-side are replaced, so the preview
+        evaluates the same inputs as the committing run.
         """
+        params = await bind_server_inputs(
+            self._components.server_inputs, action, params
+        )
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
@@ -599,7 +607,11 @@ class SymbolicGovernor:
         ``decision`` is ``ALLOW`` iff there are no violations, otherwise the
         classifier's decision over them. Unlike :meth:`validate_action` no
         NARROW proposal is re-verified and no approval token is parked.
+        Params are bound as in :meth:`validate_action`.
         """
+        params = await bind_server_inputs(
+            self._components.server_inputs, tool_name, params
+        )
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")

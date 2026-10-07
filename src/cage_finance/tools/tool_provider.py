@@ -28,12 +28,12 @@ if TYPE_CHECKING:
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.market_service import get_market_data
-from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
     dispatch_actuation,
     get_actuator_registry,
 )
+from src.gateway.governance.governor.server_inputs import bind_server_inputs
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
     enforce_approved_governance,
@@ -86,7 +86,6 @@ async def execute_trade_action(
     side: TradeSide = "buy",
     *,
     governor: "SymbolicGovernor",
-    inputs: ServerTradeInputs,
 ) -> str:
     """Execute a financial trade under strict governance.
 
@@ -120,13 +119,13 @@ async def execute_trade_action(
             source; the caller cannot supply that value. When the NAV is
             unavailable the sell is refused.
         governor: The assembled governor that seals the trade and settles its
-            reservations once the broker has answered.
-        inputs: The gateway's sources for the STPA inputs ``latency_ms``
-            (UCA-2 / FIN-2: measured age of the symbol's latest quote),
-            ``drawdown`` (UCA-5: daily NAV drawdown, percent) and, for a sell,
-            ``portfolio_total`` (UCA-13 / FIN-1: current NAV). A caller can
-            never supply these values. A source that is unavailable leaves
-            its input unset, and the governor refuses the trade.
+            reservations once the broker has answered. Its ``execute_trade``
+            server-input resolver (the finance plugin's
+            :class:`~src.cage_finance.tools.trade_inputs.TradeInputResolver`)
+            supplies ``latency_ms`` (UCA-2 / FIN-2), ``drawdown`` (UCA-5) and,
+            for a sell, ``portfolio_total`` (UCA-13 / FIN-1); a caller can
+            never supply them. An unavailable source leaves its input unset,
+            and the governor refuses the trade.
     """
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -157,10 +156,12 @@ async def execute_trade_action(
         "dry_run": dry_run,
         "side": side,
     }
-    # STPA inputs measured server-side for every committing run; a missing
-    # one is refused by UCA-2 / UCA-5 / UCA-13 inside the governor, which
-    # records the refusal, rather than by this tool.
-    params.update(await inputs.resolve(symbol, side=side))
+    # Server-side inputs are bound by the kernel, exactly as for previews; the
+    # seal names these bound params. A missing one is refused by UCA-2 /
+    # UCA-5 / UCA-13 inside the governor, which records the refusal.
+    params = await bind_server_inputs(
+        governor.components.server_inputs, "execute_trade", params
+    )
 
     # Step 1: Enforce governance (commit + seal) and obtain the seal
     try:
@@ -343,14 +344,9 @@ async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) ->
 
 
 class FinancialToolProvider(DomainToolProvider):
-    def __init__(self, inputs: ServerTradeInputs) -> None:
-        self._inputs = inputs
-
     def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         # The MCP schema must expose only the agent-facing parameters, so the
-        # governor and the STPA input sources are bound here rather than in
-        # the signature.
-        inputs = self._inputs
+        # governor is bound here rather than in the signature.
 
         @server.tool(
             name="execute_trade_action", description=execute_trade_action.__doc__
@@ -379,7 +375,6 @@ class FinancialToolProvider(DomainToolProvider):
                 deferred_id,
                 side,
                 governor=governor,
-                inputs=inputs,
             )
 
         @server.tool()

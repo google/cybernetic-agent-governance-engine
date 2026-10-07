@@ -15,9 +15,10 @@
 """The trade tool measures UCA-2 ``latency_ms`` and reads UCA-5 ``drawdown`` itself.
 
 ``execute_trade_action`` takes neither value from its caller. For every
-committing run it measures the age of the symbol's latest quote and reads the
-daily NAV drawdown from the gateway's sources
-(:class:`~src.cage_finance.tools.trade_inputs.ServerTradeInputs`). The params
+committing run the kernel binds them through the governor's ``execute_trade``
+server-input resolver
+(:class:`~src.cage_finance.tools.trade_inputs.TradeInputResolver` over
+:class:`~src.cage_finance.tools.trade_inputs.ServerTradeInputs`). The params
 it hands to governance run through the generated finance STPA rules for each
 region (UCA-5 drawdown 3.5 / 4.0 / 4.5 %, FIN-2 latency 150 / 175 / 200 ms):
 
@@ -47,6 +48,7 @@ from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.cage_finance.tools.trade_inputs import (
     MarketQuote,
     ServerTradeInputs,
+    TradeInputResolver,
     TradeInputUnavailable,
     measure_market_data_latency_ms,
     resolve_daily_drawdown_pct,
@@ -54,6 +56,7 @@ from src.cage_finance.tools.trade_inputs import (
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
+from tests.fixtures.trade_inputs import trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -130,8 +133,7 @@ async def _buy(inputs: ServerTradeInputs) -> str:
         amount=500.0,
         currency="USD",
         confidence=0.99,
-        governor=MagicMock(settle=AsyncMock(return_value=[])),
-        inputs=inputs,
+        governor=trade_governor({"execute_trade": TradeInputResolver(inputs)}),
     )
 
 
@@ -348,19 +350,15 @@ def test_tool_takes_no_caller_latency_or_drawdown() -> None:
     params = inspect.signature(execute_trade_action).parameters
     assert "latency_ms" not in params
     assert "drawdown" not in params
-    assert params["inputs"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert "inputs" not in params
 
 
 def test_registered_mcp_tool_takes_no_caller_latency_or_drawdown() -> None:
-    registered = _register(_inputs())
+    registered = _register_with(tool_provider.FinancialToolProvider())
     params = inspect.signature(registered["execute_trade_action"]).parameters
     assert "latency_ms" not in params
     assert "drawdown" not in params
     assert "inputs" not in params
-
-
-def _register(inputs: ServerTradeInputs) -> dict[str, Any]:
-    return _register_with(tool_provider.FinancialToolProvider(inputs))
 
 
 # ── Advisor path ───────────────────────────────────────────────────────────
@@ -372,15 +370,18 @@ async def test_advisor_buy_now_clears_the_stpa_stage(
 ) -> None:
     """``/tools/execute`` -> gateway ``execute_trade_action`` -> STPA stage.
 
-    The gateway tool is the one the finance plugin contributes, with the
-    plugin's own simulated sources. The advisor forwards no latency or
-    drawdown; the gateway supplies both and the buy clears UCA-2 and UCA-5.
+    The gateway tool and its server-input resolver are the ones the finance
+    plugin contributes, with the plugin's own simulated sources. The advisor
+    forwards no latency or drawdown; the gateway supplies both and the buy
+    clears UCA-2 and UCA-5.
     """
     from src.cage_finance.plugin import FinanceCagePlugin
     from src.governed_financial_advisor.tools import api
 
-    provider = FinanceCagePlugin().contribute().tool_provider
-    tool = _register_with(provider)["execute_trade_action"]
+    contribution = FinanceCagePlugin().contribute()
+    tool = _register_with(
+        contribution.tool_provider, trade_governor(dict(contribution.server_inputs))
+    )["execute_trade_action"]
 
     async def _gateway_execute(name: str, params: dict[str, Any]) -> dict[str, Any]:
         assert name == "execute_trade_action"
@@ -413,7 +414,7 @@ async def test_advisor_buy_now_clears_the_stpa_stage(
     assert GeneratedSTPAValidator().validate("execute_trade", params) == []
 
 
-def _register_with(provider: Any) -> dict[str, Any]:
+def _register_with(provider: Any, governor: Any = None) -> dict[str, Any]:
     registered: dict[str, Any] = {}
 
     class _Server:
@@ -424,5 +425,5 @@ def _register_with(provider: Any) -> dict[str, Any]:
 
             return _register_fn
 
-    provider.register_tools(_Server(), MagicMock(settle=AsyncMock(return_value=[])))
+    provider.register_tools(_Server(), governor or trade_governor())
     return registered

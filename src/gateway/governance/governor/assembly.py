@@ -50,6 +50,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from src.gateway.governance.classification_engine import ClassificationEngine
@@ -64,6 +65,7 @@ from src.gateway.governance.contracts import (
     PluginContribution,
     PolicyClient,
     SafetyFilter,
+    ServerInputResolver,
 )
 from src.gateway.governance.env_posture import (
     DeploymentPosture,
@@ -125,6 +127,8 @@ class GovernorComponents:
     jurisdiction: JurisdictionContribution | None = None
     # Every contributed norm binding, warranted or not.
     norm_bindings: tuple[NormBinding, ...] = ()
+    # Per-action resolvers for params only the gateway may supply.
+    server_inputs: Mapping[str, ServerInputResolver] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.classifier is None:
@@ -142,6 +146,9 @@ class GovernorComponents:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(
             self, "ground_truth_providers", dict(self.ground_truth_providers)
+        )
+        object.__setattr__(
+            self, "server_inputs", MappingProxyType(dict(self.server_inputs))
         )
         object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
 
@@ -176,6 +183,37 @@ class DecisionFlags:
     @classmethod
     def from_env(cls) -> DecisionFlags:
         return cls(defer=is_cage_defer_enabled(), narrow=is_cage_narrow_enabled())
+
+
+def _collect_server_inputs(
+    contributions: Sequence[PluginContribution], known_actions: set[str]
+) -> dict[str, ServerInputResolver]:
+    """Merge every contribution's resolvers; one per known action, owning keys."""
+    resolvers: dict[str, ServerInputResolver] = {}
+    for c in contributions:
+        for action, resolver in c.server_inputs.items():
+            if action in resolvers:
+                raise GovernorAssemblyError(
+                    f"duplicate server_inputs resolver: {action!r} is contributed twice"
+                )
+            if action not in known_actions:
+                raise GovernorAssemblyError(
+                    f"server_inputs resolver for unknown action {action!r} "
+                    f"(domain {c.domain!r})"
+                )
+            owned = getattr(resolver, "owned_keys", None)
+            if (
+                not isinstance(owned, frozenset)
+                or not owned
+                or not all(isinstance(k, str) and k for k in owned)
+                or not callable(getattr(resolver, "resolve", None))
+            ):
+                raise GovernorAssemblyError(
+                    f"server_inputs resolver for {action!r} must expose a "
+                    "non-empty frozenset of key names and an async resolve()"
+                )
+            resolvers[action] = resolver
+    return resolvers
 
 
 def kernel_stages(
@@ -264,6 +302,9 @@ def assemble_governor(
                 )
             ground_truth_providers[inv_id] = prov
 
+    server_inputs = _collect_server_inputs(
+        contributions, _known_actions(plugins, contributions)
+    )
     narrowers = tuple(n for c in contributions for n in c.narrowers)
     flags = flags or DecisionFlags.from_env()
     warranted = tuple(b for b in norm_bindings if b.requires_warrant)
@@ -344,6 +385,7 @@ def assemble_governor(
         posture=posture,
         jurisdiction=jurisdiction,
         norm_bindings=norm_bindings,
+        server_inputs=server_inputs,
     )
     governor = SymbolicGovernor(components)
     logger.info(

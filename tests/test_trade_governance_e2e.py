@@ -67,7 +67,7 @@ from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import execute_trade_action
-from src.cage_finance.tools.trade_inputs import ServerTradeInputs
+from src.cage_finance.tools.trade_inputs import TradeInputResolver
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.causal.gatekeeper import CausalDecision
@@ -93,15 +93,9 @@ from src.gateway.server.workload_identity import (
     WorkloadIdentityMiddleware,
 )
 from tests.fixtures.governor import make_governor
+from tests.fixtures.trade_inputs import trade_server_inputs
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
-
-#: The gateway's STPA input sources, in limit: a 10 ms quote age and no drawdown.
-_TRADE_INPUTS = ServerTradeInputs(
-    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
-    nav_source=SimulatedPortfolioNavSource(),
-)
-
 
 ADVISOR = (
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
@@ -202,6 +196,9 @@ class Gateway:
     actuate: AsyncMock
     refusals: AsyncMock
     http: httpx.AsyncClient
+    # The gateway's STPA input sources (in limit until a test injects a fault).
+    market_feed: SimulatedMarketQuoteFeed
+    nav_source: SimulatedPortfolioNavSource
 
     async def validate(
         self,
@@ -254,7 +251,6 @@ class Gateway:
             deferred_id,
             params.get("side", "buy"),
             governor=self.governor,
-            inputs=_TRADE_INPUTS,
         )
 
 
@@ -266,8 +262,7 @@ def trade(amount: float, role: str = "senior", **extra: Any) -> dict[str, Any]:
         "confidence": 0.98,
         "trader_id": "trader-7",
         "trader_role": role,
-        "latency_ms": 10.0,
-        "drawdown": 0.0,
+        # No latency_ms / drawdown: the gateway binds them server-side.
         # The tool always sends a side, and an approval binds it.
         "side": "buy",
         **extra,
@@ -290,6 +285,7 @@ def _build_governor(
     cbf: ControlBarrierFunction,
     fiscal_tier: FiscalTierPlugin,
     classifier: ClassificationEngine,
+    server_inputs: dict[str, TradeInputResolver] | None = None,
 ) -> SymbolicGovernor:
     return make_governor(
         opa=policy,
@@ -303,6 +299,7 @@ def _build_governor(
         ),
         safety_filter=cbf,
         magnitude_extractor=extract_field_magnitude("amount"),
+        server_inputs=server_inputs or trade_server_inputs(),
     )
 
 
@@ -358,7 +355,15 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
     fiscal = FiscalLimitGuard(fiscal_redis, daily_cap_usd=DAILY_CAP_USD)
     fiscal_tier = FiscalTierPlugin(fiscal)
     policy = RegoMirrorPolicy()
-    governor = _build_governor(policy, cbf, fiscal_tier, _classifier())
+    market_feed = SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0))
+    nav_source = SimulatedPortfolioNavSource()
+    governor = _build_governor(
+        policy,
+        cbf,
+        fiscal_tier,
+        _classifier(),
+        trade_server_inputs(market_feed=market_feed, nav_source=nav_source),
+    )
     governance_app.state.governor = governor
 
     actuate = AsyncMock(
@@ -374,6 +379,8 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
     )
     refusals = AsyncMock()
     monkeypatch.setattr(governance_middleware, "_emit_refusal_receipt", refusals)
+    # Each scenario starts with an empty per-IP validate-action window.
+    governance_middleware._validate_action_rate_buckets.clear()
 
     root = WorkloadIdentityMiddleware(
         Starlette(routes=[Mount("/governance", app=governance_app)]),
@@ -394,6 +401,8 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
             actuate=actuate,
             refusals=refusals,
             http=http,
+            market_feed=market_feed,
+            nav_source=nav_source,
         )
     governance_app.state.governor = None
     await sink.stop()
@@ -967,7 +976,11 @@ async def test_require_approval_carries_a_reverified_narrow_hint(gw: Gateway) ->
     body = _body(await gw.validate(params))
 
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
-    assert body["narrowed_params"] == {**params, "amount": 10_000.0}
+    narrowed = body["narrowed_params"]
+    # The re-verified proposal carries the server-bound STPA inputs it was
+    # evaluated against; they are re-bound (caller values dropped) on resubmit.
+    assert set(narrowed) - set(params) <= {"latency_ms", "drawdown"}
+    assert {k: narrowed[k] for k in params} == {**params, "amount": 10_000.0}
     meta = body["classification_meta"]
     assert [v["bound"] for v in meta["barrier_preview_violations"]] == [10_000.0]
     token = await DeferQueue(gw.defer_redis).get(body["deferred_id"])

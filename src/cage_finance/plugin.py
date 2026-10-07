@@ -88,7 +88,10 @@ class FinanceCagePlugin(CagePlugin):
             FinanceThresholds,
             load_finance_thresholds,
         )
-        from src.cage_finance.tools.trade_inputs import ServerTradeInputs
+        from src.cage_finance.tools.trade_inputs import (
+            ServerTradeInputs,
+            TradeInputResolver,
+        )
 
         # The region's effective domains.finance (regional overlay applied).
         finance = load_finance_thresholds()
@@ -149,16 +152,21 @@ class FinanceCagePlugin(CagePlugin):
             safety_filter=cbf,
             consensus=consensus_gate,
             narrowers=(AmountNarrower(),),
-            tool_provider=FinancialToolProvider(
-                ServerTradeInputs(
-                    market_feed=SimulatedMarketQuoteFeed(),
-                    nav_source=SimulatedPortfolioNavSource.from_env(),
-                )
-            ),
+            tool_provider=FinancialToolProvider(),
             threshold_sections={"finance": FinanceThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},
             norm_bindings=(trade_confidence,),
+            # One resolver serves every path that evaluates a trade: the
+            # validate-action and MCP previews and the committing run.
+            server_inputs={
+                "execute_trade": TradeInputResolver(
+                    ServerTradeInputs(
+                        market_feed=SimulatedMarketQuoteFeed(),
+                        nav_source=SimulatedPortfolioNavSource.from_env(),
+                    )
+                )
+            },
         )
 
 

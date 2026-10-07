@@ -49,19 +49,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.cage_finance.simulated_feeds import (
-    SimulatedMarketQuoteFeed,
-    SimulatedPortfolioNavSource,
-)
-from src.cage_finance.tools.trade_inputs import ServerTradeInputs
-
-#: The gateway's STPA input sources, in limit: a 10 ms quote age and no drawdown.
-_TRADE_INPUTS = ServerTradeInputs(
-    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
-    nav_source=SimulatedPortfolioNavSource(),
-)
-
 from src.gateway.governance.decisions import GovernanceDecision
+from tests.fixtures.trade_inputs import trade_governor
 
 
 @pytest.mark.unit
@@ -102,8 +91,7 @@ async def test_mcp_server_fetches_and_burns_receipt():
                 mock_verify,
             ):
                 result = await execute_trade_action(
-                    inputs=_TRADE_INPUTS,
-                    governor=MagicMock(settle=AsyncMock(return_value=[])),
+                    governor=trade_governor(),
                     symbol="AAPL",  # Original params (will be replaced by narrowed)
                     amount=100.0,
                     currency="USD",
@@ -156,8 +144,7 @@ async def test_expired_receipt_rejected():
             # Since that's a race condition, let's verify the behavior is safe.
 
             result = await execute_trade_action(
-                inputs=_TRADE_INPUTS,
-                governor=MagicMock(settle=AsyncMock(return_value=[])),
+                governor=trade_governor(),
                 symbol="AAPL",
                 amount=50.0,
                 currency="USD",
@@ -204,8 +191,7 @@ async def test_forged_receipt_rejected():
             "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
             result = await execute_trade_action(
-                inputs=_TRADE_INPUTS,
-                governor=MagicMock(settle=AsyncMock(return_value=[])),
+                governor=trade_governor(),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
@@ -256,8 +242,7 @@ async def test_narrowed_params_applied_to_trade():
                 mock_verify,
             ):
                 result = await execute_trade_action(
-                    inputs=_TRADE_INPUTS,
-                    governor=MagicMock(settle=AsyncMock(return_value=[])),
+                    governor=trade_governor(),
                     symbol="AAPL",  # Original
                     amount=500.0,  # Original (should be replaced)
                     currency="USD",
@@ -318,8 +303,7 @@ async def test_seal_computed_over_narrowed_params():
                 mock_verify,
             ):
                 await execute_trade_action(
-                    inputs=_TRADE_INPUTS,
-                    governor=MagicMock(settle=AsyncMock(return_value=[])),
+                    governor=trade_governor(),
                     symbol="AAPL",
                     amount=1000.0,
                     currency="USD",
@@ -348,8 +332,7 @@ async def test_narrow_disabled_uses_original_params():
 
     with patch("src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce):
         result = await execute_trade_action(
-            inputs=_TRADE_INPUTS,
-            governor=MagicMock(settle=AsyncMock(return_value=[])),
+            governor=trade_governor(),
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -403,8 +386,7 @@ async def test_receipt_replay_blocked():
             ):
                 # First execution should succeed
                 result1 = await execute_trade_action(
-                    inputs=_TRADE_INPUTS,
-                    governor=MagicMock(settle=AsyncMock(return_value=[])),
+                    governor=trade_governor(),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
@@ -415,8 +397,7 @@ async def test_receipt_replay_blocked():
                 # Second execution with same seal should use original params
                 # (no receipt found = ALLOW path, not NARROW)
                 result2 = await execute_trade_action(
-                    inputs=_TRADE_INPUTS,
-                    governor=MagicMock(settle=AsyncMock(return_value=[])),
+                    governor=trade_governor(),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",

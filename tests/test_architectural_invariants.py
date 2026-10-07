@@ -36,21 +36,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.cage_finance.models.trade_order import TradeOrder
-from src.cage_finance.simulated_feeds import (
-    SimulatedMarketQuoteFeed,
-    SimulatedPortfolioNavSource,
-)
-from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.defer_queue import DeferQueue, DeferToken
 from src.gateway.governance.seams.actuation import ActuationReceipt, ExecutionClearance
+from tests.fixtures.trade_inputs import trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
-
-#: The gateway's STPA input sources, in limit: a 10 ms quote age and no drawdown.
-_TRADE_INPUTS = ServerTradeInputs(
-    market_feed=SimulatedMarketQuoteFeed(seed=0, publication_delay_ms=(10.0, 10.0)),
-    nav_source=SimulatedPortfolioNavSource(),
-)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -241,8 +231,7 @@ async def test_execute_trade_action_traverses_actuator():
                         amount=10.0,
                         currency="USD",
                         confidence=0.95,
-                        inputs=_TRADE_INPUTS,
-                        governor=MagicMock(settle=AsyncMock(return_value=[])),
+                        governor=trade_governor(),
                     )
 
     # Assert the actuate spy was called

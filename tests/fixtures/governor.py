@@ -150,6 +150,7 @@ def make_governor(
     invariants: Sequence[Any] = (),
     posture: DeploymentPosture = DeploymentPosture.DEV,
     magnitude_extractor: Any = None,
+    server_inputs: Any = None,
 ) -> SymbolicGovernor:
     """Build a governor from explicit parts; unspecified parts are permissive mocks.
 
@@ -157,6 +158,8 @@ def make_governor(
     stage); otherwise they are built from ``opa``, ``stpa_validator`` and
     ``magnitude_extractor`` (conditional FTRA; ``None`` clears nothing).
     Unset ``safety_filter`` / ``consensus`` keep the deny-by-default nulls.
+    ``server_inputs`` maps an action to its server-input resolver (none by
+    default: caller params pass through unchanged).
     """
     opa = opa if opa is not None else allow_opa()
     stpa_validator = stpa_validator if stpa_validator is not None else clean_stpa()
@@ -178,6 +181,7 @@ def make_governor(
         domain_tiers=tuple(domain_tiers),
         invariants=tuple(invariants),
         posture=posture,
+        server_inputs=dict(server_inputs or {}),
         **extra,
     )
     return SymbolicGovernor(components)
