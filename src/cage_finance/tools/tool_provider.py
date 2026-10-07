@@ -36,6 +36,7 @@ from src.gateway.governance.execution_actuator import (
 from src.gateway.governance.governor.server_inputs import bind_server_inputs
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
+    ActionDeferred,
     enforce_approved_governance,
     enforce_governance,
 )
@@ -177,6 +178,11 @@ async def execute_trade_action(
             governance_result = await enforce_governance(
                 governor, "execute_trade", params
             )
+    except ActionDeferred as exc:
+        # Nothing sealed, committed or refused. After an approval, the same
+        # approval redeems once the deferral clears (the warrant is eligible
+        # again); otherwise the request is parked as exc.deferred_id.
+        return f"DEFERRED: {exc}"
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
 

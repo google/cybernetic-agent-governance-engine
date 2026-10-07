@@ -65,7 +65,7 @@ from src.gateway.governance.evidence.stream import EvidenceStreamSink, verify_re
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.assembly import DecisionFlags, assemble_governor
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
@@ -83,6 +83,7 @@ from src.gateway.governance.warrant import (
     StandingVerificationResult,
     WarrantCache,
 )
+from tests.fixtures.approval import SpendCounter, granted_approval
 from tests.fixtures.governor import (
     WARRANT_TEST_GOVERNING_VERSION,
     WARRANT_TEST_NOW,
@@ -697,19 +698,31 @@ async def test_receipt_without_reliance_hashes_as_before() -> None:
     )
 
 
-async def test_post_hitl_revocation_deny_records_the_revoked_reliance(
+async def test_post_hitl_revocation_defers_with_the_revoked_reliance(
     chain: SimpleNamespace,
 ) -> None:
+    """A warrant revoked after approval defers (POAM-2026-104): the deferral
+    evidence carries the revoked reliance and names the retained approval."""
     source = _source_with(status="REVOKED", revocation_ref="REV-AFTER-APPROVAL")
     # With a phase-2 barrier claiming the action too (finance's cbf/fiscal).
     governor = _governor(source, _AmountCap(limit=1_000.0))
-    with pytest.raises(GovernanceError) as exc_info:
+    counter = SpendCounter()
+    with pytest.raises(GovernanceDeferred) as exc_info:
         await governor.revalidate_post_hitl(
-            _ACTION, _trade(), approved_barrier_preview=None
+            _ACTION,
+            _trade(),
+            approval=granted_approval(approval_id="appr-7", counter=counter),
         )
-    (reliance,) = exc_info.value.receipt.reliance
+    assert counter.calls == 0  # the approval stays redeemable
+    (reliance,) = exc_info.value.reliance
     assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
     assert await chain.records("GOVERNANCE_DECISION") == []
+    assert await chain.records("GOVERNANCE_REFUSAL") == []
+    (deferral,) = await chain.records("GOVERNANCE_DEFERRAL")
+    event = _payload(deferral)
+    assert event["defer_id"] == "appr-7"
+    assert event["approval_retained"] is True
+    assert event["reliance"] == [reliance]
 
 
 async def test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim(
@@ -734,17 +747,17 @@ async def test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim(
 
     source.put(issue_test_warrant(status="REVOKED", revocation_ref="REV-WHILE-WAITING"))
     now[0] += 60.001  # the human took longer than the freshness window
-    with pytest.raises(GovernanceError) as exc_info:
+    with pytest.raises(GovernanceDeferred) as exc_info:
         await governor.revalidate_post_hitl(
-            _ACTION, _trade(), approved_barrier_preview=None
+            _ACTION, _trade(), approval=granted_approval()
         )
 
-    receipt = exc_info.value.receipt
-    assert receipt is not None
-    assert "RELIANCE_INELIGIBLE_REVOKED" in receipt.violated_rule
-    (reliance,) = receipt.reliance
+    assert "RELIANCE_INELIGIBLE_REVOKED" in str(exc_info.value)
+    (reliance,) = exc_info.value.reliance
     assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
     assert await chain.records("GOVERNANCE_DECISION") == []  # no seal
+    (deferral,) = await chain.records("GOVERNANCE_DEFERRAL")
+    assert _payload(deferral)["reliance"] == [reliance]
 
 
 async def test_pipeline_and_post_hitl_gate_agree_on_governedness() -> None:

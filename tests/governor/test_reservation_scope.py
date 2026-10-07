@@ -45,6 +45,7 @@ from src.gateway.governance.governor.stages.domain_tiers import (
     DomainTierStage,
     order_stages,
 )
+from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -123,7 +124,7 @@ def _ctx(profile: Profile = Profile.FULL) -> StageContext:
 
 async def _call(gov: SymbolicGovernor, entry_point: str) -> Any:
     kwargs = (
-        {"approved_barrier_preview": None}
+        {"approval": granted_approval()}
         if entry_point == "revalidate_post_hitl"
         else {}
     )

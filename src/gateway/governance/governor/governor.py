@@ -33,7 +33,10 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from src.gateway.governance.classification_engine import ClassificationContext
+from src.gateway.governance.classification_engine import (
+    REASON_RELIANCE_INELIGIBLE,
+    ClassificationContext,
+)
 from src.gateway.governance.constants import ControlRegistry
 from src.gateway.governance.contracts import (
     GovernanceTier,
@@ -41,7 +44,8 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.approval import PostHitlApproval
+from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.pipeline import (
     BarrierPreview,
     PipelineResult,
@@ -60,6 +64,7 @@ from src.gateway.governance.governor.verdicts import (
     handle_defer,
     handle_deny,
     handle_narrow,
+    handle_post_hitl_defer,
     handle_require_approval,
     reported_confidence,
 )
@@ -335,6 +340,16 @@ class SymbolicGovernor:
             "cage.governance.narrow_reverified", reverified
         )
         if not reverified:
+            if self._defers_on_reliance(rerun):
+                return await handle_defer(
+                    action,
+                    verified,
+                    list(rerun.violations),
+                    list(rerun.tier_failures),
+                    {**meta, **_ftra_meta(rerun), **_RELIANCE_DEFER_META},
+                    latency_ms,
+                    reliance=rerun.reliance,
+                )
             deny_meta = {
                 **meta,
                 **_ftra_meta(rerun),
@@ -421,6 +436,14 @@ class SymbolicGovernor:
         receipt is stored inside that run's ``ReservationScope``: if it
         cannot be stored, the commits are rolled back and the request denied.
         """
+        if self._defers_on_reliance(result):
+            # A warrant failure removes reliance on the norm; it never becomes
+            # a DENY of its own (proof/model.py verdict_of). An independent
+            # HARD finding still denies: the classifier ranks HARD first.
+            await _trace(
+                result, action, Profile.FULL, "govern", GovernanceDecision.DEFER
+            )
+            await _defer_commit(action, params, result)
         classification = self._components.classifier.classify(
             ClassificationContext(
                 violations=list(result.violations),
@@ -479,6 +502,8 @@ class SymbolicGovernor:
             clamped_params_valid=seal is not None,
         )
         if seal is None:
+            if self._defers_on_reliance(rerun):
+                await _defer_commit(action, narrowed, rerun)
             await handle_deny(
                 action,
                 narrowed,
@@ -501,21 +526,37 @@ class SymbolicGovernor:
         action: str,
         params: dict[str, Any],
         *,
-        approved_barrier_preview: BarrierPreview | str | None,
-        trace_id: str | None = None,
+        approval: PostHitlApproval,
     ) -> str:
-        """The post-approval committing run: POST_HITL commit + seal, or refuse.
+        """The post-approval committing run: POST_HITL commit + seal, or not.
 
-        ``approved_barrier_preview`` is the phase-2 preview the approval was
-        given against (``DeferToken.opa_input_snapshot["barrier_preview"]``,
-        bound into every ``ApprovalRecord`` by ``DeferQueue.approve``). The
-        approval covers only that context: if the reviewer was told the
-        barriers would PASS and the committing run's barriers now refuse, the
-        refusal is ``[APPROVAL_CONTEXT_DRIFT]`` — the operator approved a
-        request that no longer exists. An unrecognised snapshot is refused
-        before anything runs. Either way no seal is minted. An approval given
-        against ``FAIL`` (e.g. of a ``narrow_hint``'s clamped params) is
-        honoured only if the barriers now admit the executed params.
+        ``approval`` is the verified, unspent human approval
+        (:class:`~.approval.PostHitlApproval`). The run decides first and
+        spends second:
+
+        * **ALLOW** — the run is clean; ``approval.spend()`` consumes the
+          approval atomically inside the run's ``ReservationScope``, before
+          the seal is minted. If it was already spent (a replay or a
+          concurrent redemption won), the run is refused
+          ``[APPROVAL_NOT_REDEEMABLE]``, nothing is sealed and every commit
+          rolls back: at most one redemption seals.
+        * **DEFER** — the only findings are ``RELIANCE_INELIGIBLE`` (a
+          warranted norm lost its warrant while the human decided). Nothing
+          is sealed or committed, and the approval is **not** spent: the
+          deferral is hash-chained naming it, and
+          :class:`~.errors.GovernanceDeferred` is raised. The same approval
+          redeems once the warrant is eligible again (POAM-2026-104).
+        * **DENY** — any other finding. The approval is spent, then the run
+          is refused, so the operator must approve a fresh request.
+
+        The approval covers only the context it was given against
+        (``approval.barrier_preview``, bound into every ``ApprovalRecord`` by
+        ``DeferQueue.approve``): if the reviewer was told the barriers would
+        PASS and the committing run's barriers now refuse, the refusal is
+        ``[APPROVAL_CONTEXT_DRIFT]``. An unrecognised snapshot is refused
+        before anything runs. An approval given against ``FAIL`` (e.g. of a
+        ``narrow_hint``'s clamped params) is honoured only if the barriers
+        now admit the executed params.
         """
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
@@ -526,21 +567,23 @@ class SymbolicGovernor:
                 OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
             )
             span.set_attribute("toctou.revalidation.scope", "opa+warrant+phase2")
-            if trace_id is not None:
-                span.set_attribute("toctou.revalidation.trace_id", trace_id)
+            span.set_attribute("toctou.approval_id", approval.approval_id)
+            if approval.thread_id is not None:
+                span.set_attribute("toctou.revalidation.trace_id", approval.thread_id)
             try:
-                approved = _parse_barrier_snapshot(approved_barrier_preview)
+                approved = _parse_barrier_snapshot(approval.barrier_preview)
             except ValueError:
+                await _spend_refused(approval)
                 await handle_deny(
                     action,
                     params,
                     [
                         _approval_drift(
-                            f"unrecognised approval snapshot {approved_barrier_preview!r}"
+                            f"unrecognised approval snapshot {approval.barrier_preview!r}"
                         )
                     ],
                     [],
-                    {"approved_barrier_preview": str(approved_barrier_preview)},
+                    {"approved_barrier_preview": str(approval.barrier_preview)},
                 )
                 raise GovernanceError(
                     f"handle_deny returned without raising; refusing {action}"
@@ -551,40 +594,104 @@ class SymbolicGovernor:
             if not self._is_governed_action(action, params):
                 # POST_HITL re-runs only claimed barriers; with none there is
                 # nothing to re-verify, so the approval cannot be honoured.
+                await _spend_refused(approval)
                 await handle_deny(action, params, [_UNGOVERNED_POST_HITL], [], {})
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
             ctx = StageContext(action=action, params=params, profile=Profile.POST_HITL)
+            # The approval is spent only by the run it authorises: admit()
+            # runs after every stage passed and before the seal is minted.
             result, seal = await run_sealed(
                 self.stages,
                 ctx,
                 params,
                 path="revalidate_post_hitl",
                 settlements=self._settlements,
+                admit=approval.spend,
             )
             if result.barrier_outcome is not None:
                 span.set_attribute(
                     "toctou.barrier_outcome", result.barrier_outcome.value
                 )
+            if seal is not None:
+                span.set_attribute("toctou.approval_spent", True)
+                await _trace(
+                    result,
+                    action,
+                    Profile.POST_HITL,
+                    "revalidate_post_hitl",
+                    GovernanceDecision.ALLOW,
+                    seal=seal,
+                )
+                return seal
+            if not result.violations:
+                # Clean, but the approval could not be spent: replayed, lost a
+                # concurrent redemption, expired or no longer covering.
+                span.set_attribute("toctou.approval_spent", False)
+                await _trace(
+                    result,
+                    action,
+                    Profile.POST_HITL,
+                    "revalidate_post_hitl",
+                    GovernanceDecision.DENY,
+                )
+                await handle_deny(
+                    action,
+                    params,
+                    [_approval_not_redeemable(approval.approval_id)],
+                    [],
+                    {"approval_id": approval.approval_id},
+                    reliance=result.reliance,
+                )
+                raise GovernanceError(
+                    f"handle_deny returned without raising; refusing {action}"
+                )  # fail closed
+            if self._defers_on_reliance(result):
+                span.set_attribute("toctou.approval_spent", False)
+                await _trace(
+                    result,
+                    action,
+                    Profile.POST_HITL,
+                    "revalidate_post_hitl",
+                    GovernanceDecision.DEFER,
+                )
+                await handle_post_hitl_defer(
+                    action,
+                    params,
+                    list(result.violations),
+                    dict(_RELIANCE_DEFER_META),
+                    approval_id=approval.approval_id,
+                    thread_id=approval.thread_id,
+                    barrier_preview=approval.barrier_preview,
+                    reliance=result.reliance,
+                )
+            await _spend_refused(approval)
+            span.set_attribute("toctou.approval_spent", True)
             await _trace(
                 result,
                 action,
                 Profile.POST_HITL,
                 "revalidate_post_hitl",
-                GovernanceDecision.ALLOW
-                if seal is not None
-                else GovernanceDecision.DENY,
-                seal=seal,
+                GovernanceDecision.DENY,
             )
-            if seal is None:
-                if (
-                    approved == BarrierPreview.PASS
-                    and result.barrier_outcome == BarrierPreview.FAIL
-                ):
-                    await _deny_drift(action, params, result, approved)
-                await _deny(action, params, result)
-            return seal
+            if (
+                approved == BarrierPreview.PASS
+                and result.barrier_outcome == BarrierPreview.FAIL
+            ):
+                await _deny_drift(action, params, result, approved)
+            await _deny(action, params, result)
+
+    def _defers_on_reliance(self, result: PipelineResult) -> bool:
+        """True iff the run's findings defer on an ineligible warrant.
+
+        Asks the classifier's side-effect-free
+        :meth:`~src.gateway.governance.classification_engine.ClassificationEngine.defers_on_reliance`
+        (no narrower runs), so every committing path agrees with
+        :meth:`validate_action`'s classification: ``RELIANCE_INELIGIBLE``
+        without a HARD finding is a DEFER; a HARD finding still denies.
+        """
+        return self._components.classifier.defers_on_reliance(result.violations)
 
     async def settle(self, seal: str, *, executed: bool) -> list[Violation]:
         """Settle the phase-2 commits behind ``seal`` after the sealed action.
@@ -699,6 +806,80 @@ _UNGOVERNED_POST_HITL = Violation(
 )
 
 APPROVAL_CONTEXT_DRIFT = "APPROVAL_CONTEXT_DRIFT"
+APPROVAL_NOT_REDEEMABLE = "APPROVAL_NOT_REDEEMABLE"
+
+
+def _approval_not_redeemable(approval_id: str) -> Violation:
+    return Violation(
+        tier="kernel",
+        code=APPROVAL_NOT_REDEEMABLE,
+        kind=ViolationKind.HARD,
+        message=(
+            f"[{APPROVAL_NOT_REDEEMABLE}] approval {approval_id!r} was already "
+            "spent, expired or no longer covers the request; nothing was sealed"
+        ),
+    )
+
+
+#: Classification metadata of a warrant-ineligible DEFER (``handle_defer``
+#: maps it to ``DeferReason.WARRANT_INELIGIBLE``).
+_RELIANCE_DEFER_META: dict[str, Any] = {
+    "classification_reason": REASON_RELIANCE_INELIGIBLE,
+    "deferrable": True,
+}
+
+
+async def _defer_commit(
+    action: str, params: dict[str, Any], result: PipelineResult
+) -> NoReturn:
+    """DEFER a committing run on an ineligible warrant: park, evidence, raise.
+
+    Nothing was sealed and the run's commits were rolled back. The request
+    parks as a ``WARRANT_INELIGIBLE`` token with its reliance records, and
+    the ``GOVERNANCE_DEFERRAL`` event is hash-chained (``handle_defer``,
+    exactly as for a DEFER preview). No refusal receipt is issued.
+
+    Raises:
+        GovernanceDeferred: Always, naming the parked token.
+    """
+    verdict = await handle_defer(
+        action,
+        params,
+        list(result.violations),
+        list(result.tier_failures),
+        {**_ftra_meta(result), **_RELIANCE_DEFER_META},
+        reliance=result.reliance,
+    )
+    findings = [f"[{v.code}] {v.message}" for v in result.violations]
+    raise GovernanceDeferred(
+        f"[{verdict['defer_reason']}] committing run deferred as "
+        f"{verdict['defer_token']!r}: " + "; ".join(findings),
+        defer_reason=str(verdict["defer_reason"]),
+        deferred_id=str(verdict["defer_token"]),
+        reliance=list(verdict.get("reliance", [])),
+        violations=findings,
+    )
+
+
+async def _spend_refused(approval: PostHitlApproval) -> None:
+    """Spend the approval of a run about to be refused (DENY burns it).
+
+    Best effort: the run is refused either way, so a failed spend only
+    leaves an approval that the committing run's own spend would still
+    re-check before any seal.
+    """
+    try:
+        if not await approval.spend():
+            logger.info(
+                "approval %s was already spent when its run was refused",
+                approval.approval_id,
+            )
+    except Exception as exc:  # the refusal stands regardless
+        logger.error(
+            "could not spend approval %s of a refused run: %s",
+            approval.approval_id,
+            exc,
+        )
 
 
 def _parse_barrier_snapshot(

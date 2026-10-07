@@ -232,10 +232,13 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    On human approval, the advisor invokes `execute_trade_action(..., deferred_id=deferred_id)`
    ([`src/governed_financial_advisor/tools/trades.py`](../../src/governed_financial_advisor/tools/trades.py)).
    Inside [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
-   `enforce_approved_governance()` atomically consumes the quorum-approved `HITL_REQUIRED` token
-   exactly once (`DeferQueue.consume_approval`, verifying action and canonical parameter SHA-256
-   binding) and calls `SymbolicGovernor.revalidate_post_hitl(..., approved_barrier_preview=...)` in
+   `enforce_approved_governance()` checks the quorum-approved `HITL_REQUIRED` token without
+   spending it (`DeferQueue.redeemable_approval`, verifying action and canonical parameter SHA-256
+   binding) and calls `SymbolicGovernor.revalidate_post_hitl(..., approval=PostHitlApproval(...))` in
    [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py).
+   The governor spends the approval exactly once (`DeferQueue.consume_approval`, an atomic CAS)
+   only when the run is about to mint a seal. A DENY spends it; a `WARRANT_INELIGIBLE` DEFER
+   leaves it redeemable (POAM-2026-104), and the tool reports `DEFERRED:`.
    Under `Profile.POST_HITL` (`stage_runs_under` in `pipeline.py`), the governor skips `ftra` and
    `confidence` (which the human reviewer resolved), re-evaluates Phase 1 (`stpa`, `bounding`,
    `opa`, `consensus`, `causal`, and under `EU_ECB` `fria`), and commits every claiming Phase 2

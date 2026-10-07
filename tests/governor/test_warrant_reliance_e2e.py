@@ -41,16 +41,22 @@ Matrix (``veip_phase2_recommendation.md`` §6):
   UNVERIFIED ``WARRANT`` attestation; the trade executes once.
 * B/C — EU_ECB, VEC-002…006, MISSING, STALE: DEFER ``WARRANT_INELIGIBLE``,
   reliance in the token and the deferral evidence, never DENY, nothing
-  sealed or actuated.
+  sealed or actuated — on the gateway preview *and* the trade tool's
+  committing run (a parked token and a ``GOVERNANCE_DEFERRAL``, never a
+  ``GOVERNANCE_REFUSAL``).
 * No masking — HARD finding plus warrant failure: DENY, reliance in the
   refusal receipt.
-* POST_HITL — warrant revoked after approval: refused, no seal.
+* POST_HITL — warrant revoked (or its source faulted) after approval: DEFER,
+  no seal, the approval is not spent; once the warrant is eligible again the
+  same approval redeems exactly once (POAM-2026-104 gap 3). A DENY after
+  approval still spends it; concurrent redemptions seal at most once.
 * EU / APAC floors live; US unchanged; assembly refuses an ungateable EU
   governor.
 """
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -279,6 +285,36 @@ def _body(resp: httpx.Response) -> dict[str, Any]:
 
 def _payload(fields: dict[str, Any]) -> dict[str, Any]:
     return json.loads(fields["payload_json"])
+
+
+async def assert_commit_defers(
+    stack: Stack, params: dict[str, Any], status: str
+) -> dict[str, Any]:
+    """The trade tool's committing run defers on the warrant: never a DENY.
+
+    No seal, no actuation, no ``GOVERNANCE_REFUSAL`` and no refusal receipt;
+    one more ``GOVERNANCE_DEFERRAL`` naming a parked ``WARRANT_INELIGIBLE``
+    token that carries the reliance record.
+    """
+    before = len(await stack.records("GOVERNANCE_DEFERRAL"))
+    result = await stack.execute(params)
+    assert result.startswith("DEFERRED"), result
+    assert DeferReason.WARRANT_INELIGIBLE.value in result
+    assert f"RELIANCE_{status}" in result
+    await stack.assert_nothing_actuated()
+    assert await stack.records("GOVERNANCE_REFUSAL") == []
+    stack.refusals.assert_not_awaited()
+    deferrals = await stack.records("GOVERNANCE_DEFERRAL")
+    assert len(deferrals) == before + 1
+    payload = _payload(deferrals[-1])
+    assert payload["defer_reason"] == DeferReason.WARRANT_INELIGIBLE.value
+    (reliance,) = payload["reliance"]
+    assert reliance["reliance_status"] == status
+    token = await DeferQueue(stack.defer_redis).get(payload["defer_id"])
+    assert token is not None
+    assert token.defer_reason is DeferReason.WARRANT_INELIGIBLE
+    assert token.opa_input_snapshot["reliance"] == [reliance]
+    return reliance
 
 
 StackFactory = Callable[..., Awaitable[Stack]]
@@ -634,8 +670,8 @@ async def test_bc_ineligible_warrant_defers_with_reliance_and_actuates_nothing(
     assert _payload(deferral)["reliance"] == [reliance]
     assert await stack.records("GOVERNANCE_REFUSAL") == []
 
-    assert (await stack.execute(trade(0.98))).startswith("BLOCKED")  # commit too
-    await stack.assert_nothing_actuated()
+    # The committing run defers too, with the same reliance: never a DENY.
+    assert await assert_commit_defers(stack, trade(0.98), status) == reliance
 
 
 @pytest.mark.eu_ecb
@@ -663,8 +699,7 @@ async def test_c_stale_state_past_60s_with_a_faulted_source_defers(
     assert reliance["age_seconds"] == "61.000"
     assert reliance["max_age_seconds"] == "60.000"
     assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
-    assert (await stack.execute(trade())).startswith("BLOCKED")
-    await stack.assert_nothing_actuated()
+    await assert_commit_defers(stack, trade(), "INELIGIBLE_STALE")
 
     # The source recovers: the next request re-fetches and is admitted again.
     stack.source.clear_fault()
@@ -696,8 +731,7 @@ async def test_c_faulted_source_with_no_trusted_state_defers_unresolved(
     assert reliance["reliance_status"] == "INELIGIBLE_UNRESOLVED"
     (deferral,) = await stack.records("GOVERNANCE_DEFERRAL")
     assert _payload(deferral)["reliance"] == [reliance]
-    assert (await stack.execute(trade())).startswith("BLOCKED")
-    await stack.assert_nothing_actuated()
+    await assert_commit_defers(stack, trade(), "INELIGIBLE_UNRESOLVED")
 
 
 # ── No masking: an independent HARD finding still DENIES ────────────────────
@@ -777,10 +811,55 @@ async def test_post_hitl_approval_executes_while_the_warrant_holds(
     stack.actuate.assert_awaited_once()
 
 
+async def _approval_status(stack: Stack, deferred_id: str) -> str | None:
+    return await stack.defer_redis.hget(f"DEFER:{deferred_id}", "status")
+
+
+async def _assert_post_hitl_deferral(
+    stack: Stack, deferred_id: str, result: str, reliance_status: str
+) -> dict[str, Any]:
+    """A post-approval warrant failure: DEFER, nothing sealed, approval kept."""
+    assert result.startswith("DEFERRED"), result
+    assert DeferReason.WARRANT_INELIGIBLE.value in result
+    assert f"RELIANCE_{reliance_status}" in result
+    await stack.assert_nothing_actuated()
+    # The approval was not spent: still RESOLVED (approved), not CONSUMED.
+    assert await _approval_status(stack, deferred_id) == "RESOLVED"
+    # Deferrals are primary evidence: the failed attempt's reliance is
+    # hash-chained, naming the approval that stays resolvable. No refusal.
+    deferral = (await stack.records("GOVERNANCE_DEFERRAL"))[-1]
+    payload = _payload(deferral)
+    assert payload["defer_id"] == deferred_id
+    assert payload["profile"] == "POST_HITL"
+    assert payload["approval_retained"] is True
+    assert payload["defer_reason"] == DeferReason.WARRANT_INELIGIBLE.value
+    (reliance,) = payload["reliance"]
+    assert reliance["reliance_status"] == reliance_status
+    assert await stack.records("GOVERNANCE_REFUSAL") == []
+    stack.refusals.assert_not_awaited()
+    return reliance
+
+
+async def _assert_redeems_once(stack: Stack, deferred_id: str) -> None:
+    """The same approval now executes, sealed, and can never be replayed."""
+    result = await stack.execute(trade(0.96), deferred_id)
+    assert result.startswith("EXECUTED"), result
+    stack.actuate.assert_awaited_once()
+    assert await _approval_status(stack, deferred_id) == "CONSUMED"
+    (decision,) = await stack.records("GOVERNANCE_DECISION")  # exactly one seal
+    (reliance,) = _payload(decision)["reliance"]
+    assert reliance["reliance_status"] == "ELIGIBLE"
+    replay = await stack.execute(trade(0.96), deferred_id)
+    assert replay.startswith("BLOCKED"), replay
+    stack.actuate.assert_awaited_once()
+    assert len(await stack.records("GOVERNANCE_DECISION")) == 1
+
+
 @pytest.mark.eu_ecb
-async def test_post_hitl_revocation_after_approval_is_refused_without_a_seal(
+async def test_post_hitl_revocation_defers_and_keeps_the_approval(
     build: StackFactory,
 ) -> None:
+    """POAM-2026-104 gap 3: revoked -> DEFER, approval kept -> restored -> ALLOW."""
     stack = await build(seed=_vec(SHARED_WARRANT))
     deferred_id = await _approved_floor_breach(stack)
 
@@ -788,18 +867,114 @@ async def test_post_hitl_revocation_after_approval_is_refused_without_a_seal(
     stack.clock.advance(60.001)  # ... and the cached ACTIVE state expires
 
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("BLOCKED"), result
-    assert "RELIANCE_INELIGIBLE_REVOKED" in result
-    await stack.assert_nothing_actuated()
-    refusal = (await stack.records("GOVERNANCE_REFUSAL"))[-1]
-    (reliance,) = _payload(refusal)["receipt"]["reliance"]
-    assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
+    reliance = await _assert_post_hitl_deferral(
+        stack, deferred_id, result, "INELIGIBLE_REVOKED"
+    )
     assert reliance["warrant_digest"] == VEIP_REVOKED_DIGEST
-    # The approval was spent: it cannot be replayed once the warrant returns.
+
+    # Still revoked: a retry defers again and still spends nothing.
+    result = await stack.execute(trade(0.96), deferred_id)
+    await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
+    assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3  # park + 2 retries
+
+    # The issuer restores the warrant: the same approval redeems, once.
+    stack.source.seed(_vec(SHARED_WARRANT))
+    stack.clock.advance(60.001)
+    await _assert_redeems_once(stack, deferred_id)
+
+
+@pytest.mark.eu_ecb
+async def test_post_hitl_source_fault_defers_and_the_approval_redeems_on_recovery(
+    build: StackFactory,
+) -> None:
+    """A faulted source past the window (STALE) defers; clear_fault() redeems."""
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    deferred_id = await _approved_floor_breach(stack)
+
+    stack.source.inject_fault(FaultMode.TIMEOUT)
+    stack.clock.advance(61.0)
+    result = await stack.execute(trade(0.96), deferred_id)
+    reliance = await _assert_post_hitl_deferral(
+        stack, deferred_id, result, "INELIGIBLE_STALE"
+    )
+    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
+
+    stack.source.clear_fault()
+    await _assert_redeems_once(stack, deferred_id)
+
+
+@pytest.mark.eu_ecb
+async def test_post_hitl_deferred_approval_still_expires(
+    build: StackFactory,
+) -> None:
+    """Retaining an approval never extends it: once its key expires it is gone."""
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    deferred_id = await _approved_floor_breach(stack)
+    key = f"DEFER:{deferred_id}"
+    ttl = await stack.defer_redis.ttl(key)
+    assert 0 < ttl <= 4 * 3600
+
+    stack.source.seed(_vec(VEC_002_REVOKED))
+    stack.clock.advance(60.001)
+    result = await stack.execute(trade(0.96), deferred_id)
+    await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
+    assert 0 < await stack.defer_redis.ttl(key) <= ttl  # the deferral kept the TTL
+
+    await stack.defer_redis.expire(key, 0)  # the approval's own expiry elapses
+    stack.source.seed(_vec(SHARED_WARRANT))
+    stack.clock.advance(60.001)
+    result = await stack.execute(trade(0.96), deferred_id)
+    assert result.startswith("BLOCKED"), result
+    await stack.assert_nothing_actuated()
+
+
+@pytest.mark.eu_ecb
+async def test_post_hitl_hard_refusal_still_spends_the_approval(
+    build: StackFactory,
+) -> None:
+    """A DENY after approval (OPA now refuses, warrant revoked too) burns it."""
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    deferred_id = await _approved_floor_breach(stack)
+
+    stack.source.seed(_vec(VEC_002_REVOKED))
+    stack.clock.advance(60.001)
+    stack.opa.verdict = "DENY"
+    result = await stack.execute(trade(0.96), deferred_id)
+    assert result.startswith("BLOCKED"), result
+    await stack.assert_nothing_actuated()
+    assert await _approval_status(stack, deferred_id) == "CONSUMED"
+    stack.refusals.assert_awaited_once()
+
+    # Policy and warrant both recover: the burned approval cannot be replayed.
+    stack.opa.verdict = "ALLOW"
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
     assert (await stack.execute(trade(0.96), deferred_id)).startswith("BLOCKED")
     await stack.assert_nothing_actuated()
+
+
+@pytest.mark.eu_ecb
+async def test_post_hitl_concurrent_redemptions_after_a_deferral_commit_once(
+    build: StackFactory,
+) -> None:
+    """Replay/race: N concurrent redemptions of one retained approval, one seal."""
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    deferred_id = await _approved_floor_breach(stack)
+    stack.source.seed(_vec(VEC_002_REVOKED))
+    stack.clock.advance(60.001)
+    result = await stack.execute(trade(0.96), deferred_id)
+    await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
+
+    stack.source.seed(_vec(SHARED_WARRANT))
+    stack.clock.advance(60.001)
+    results = await asyncio.gather(
+        *(stack.execute(trade(0.96), deferred_id) for _ in range(5))
+    )
+    assert sum(r.startswith("EXECUTED") for r in results) == 1, results
+    assert all(r.startswith(("EXECUTED", "BLOCKED")) for r in results), results
+    stack.actuate.assert_awaited_once()
+    assert len(await stack.records("GOVERNANCE_DECISION")) == 1
+    assert await _approval_status(stack, deferred_id) == "CONSUMED"
 
 
 # ── Unwarranted regions: floors live, warrant never consulted ───────────────

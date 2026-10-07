@@ -42,3 +42,37 @@ class GovernanceError(Exception):
         self.payload: dict[str, Any] = payload or {}
         self.receipt: RefusalReceipt | None = receipt
         self.violations: list[str] = list(violations) if violations else [message]
+
+
+class GovernanceDeferred(GovernanceError):
+    """Raised when a committing run defers instead of refusing.
+
+    A deferral seals nothing and commits nothing, so it is a
+    :class:`GovernanceError` to every caller that only needs to stop.  It is
+    distinct from a refusal in what it leaves behind: the post-approval
+    committing run raises it on a warrant-ineligible finding, and the human
+    approval it was given stays unspent and redeemable (POAM-2026-104).
+
+    Args:
+        message: Human-readable description of why the run deferred.
+        defer_reason: The ``DeferReason`` value (e.g. ``WARRANT_INELIGIBLE``).
+        deferred_id: The id of the parked record that stays resolvable (for a
+            post-approval run, the approval token itself).
+        reliance: The evidence form of the reliance records behind the
+            deferral (``reliance_evidence()``).
+        violations: Every finding behind the deferral.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        defer_reason: str,
+        deferred_id: str,
+        reliance: list[dict[str, Any]] | None = None,
+        violations: list[str] | None = None,
+    ) -> None:
+        super().__init__(message, violations=violations)
+        self.defer_reason: str = defer_reason
+        self.deferred_id: str = deferred_id
+        self.reliance: list[dict[str, Any]] = list(reliance or [])

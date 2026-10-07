@@ -34,8 +34,9 @@ import os
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NoReturn
 
 from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Request
@@ -48,6 +49,8 @@ from pydantic import BaseModel, field_validator
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+from src.gateway.governance.governor.approval import PostHitlApproval
+from src.gateway.governance.governor.errors import GovernanceDeferred
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
@@ -102,6 +105,24 @@ def _is_dev_environment() -> bool:
 # ---------------------------------------------------------------------------
 
 
+class ActionDeferred(PermissionError):
+    """The committing run deferred: nothing was sealed, committed or refused.
+
+    A :class:`PermissionError`, so every caller that only needs to stop
+    still fails closed. ``deferred_id`` names the record that stays
+    resolvable: a freshly parked token on the plain committing run, or the
+    retained approval itself after a post-approval deferral
+    (``approval_retained``). ``defer_reason`` and ``reliance`` say why.
+    """
+
+    def __init__(self, cause: GovernanceDeferred, *, approval_retained: bool) -> None:
+        super().__init__(f"Governance Deferred: {cause}")
+        self.deferred_id: str = cause.deferred_id
+        self.defer_reason: str = cause.defer_reason
+        self.reliance: list[dict[str, Any]] = list(cause.reliance)
+        self.approval_retained: bool = approval_retained
+
+
 async def enforce_governance(
     governor: SymbolicGovernor, tool_name: str, params: dict[str, Any]
 ) -> str:
@@ -116,6 +137,7 @@ async def enforce_governance(
         HMAC-SHA256 routing seal string (non-empty on approval).
 
     Raises:
+        ActionDeferred: The committing run deferred (an ineligible warrant).
         PermissionError: If the governor blocks the action.
     """
     if tool_name in {"check_market_status", "verify_content_safety"}:
@@ -124,6 +146,11 @@ async def enforce_governance(
     try:
         seal = await governor.govern(tool_name, params)
         return seal
+    except GovernanceDeferred as exc:
+        # A warrant failure removes reliance; it is never a refusal. The
+        # deferral (parked token + GOVERNANCE_DEFERRAL) is already evidenced.
+        logger.info("🕒 Symbolic Governor DEFERRED %s: %s", tool_name, exc)
+        raise ActionDeferred(exc, approval_retained=False) from exc
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
         await _emit_refusal_receipt(
@@ -146,26 +173,31 @@ async def enforce_approved_governance(
 ) -> str:
     """Commit and seal a human-approved action: the post-approval committing run.
 
-    1. Consume the ``HITL_REQUIRED`` token ``deferred_id`` from the gateway's
-       DeferQueue exactly once. It must be quorum-approved, parked for
-       ``tool_name``, and ``approval_covers(approved_params, params)`` must
-       hold, so an approval for one action cannot authorise a different or
-       larger one. Consumption is a compare-and-swap: a replayed or concurrent
-       ``deferred_id`` is refused.
-    2. Run ``SymbolicGovernor.revalidate_post_hitl()`` (POST_HITL profile:
-       commit + seal) on the fresh ``params``, bound to the token's
-       ``barrier_preview``: an approval given against PASS whose barriers now
-       refuse is ``APPROVAL_CONTEXT_DRIFT``.
-
-    The approval is spent before re-validation, so a re-validation refusal
-    also burns it: the operator must approve a fresh request.
+    1. Check that the ``HITL_REQUIRED`` token ``deferred_id`` in the gateway's
+       DeferQueue is redeemable (``DeferQueue.redeemable_approval``): quorum-
+       approved, unspent, parked for ``tool_name``, and
+       ``approval_covers(approved_params, params)`` holds, so an approval for
+       one action cannot authorise a different or larger one. Nothing is
+       spent yet.
+    2. Run ``SymbolicGovernor.revalidate_post_hitl()`` (POST_HITL profile) on
+       the fresh ``params``, handing it the approval bound to its
+       ``barrier_preview`` and to a ``spend`` that re-checks the token and
+       consumes it with the ``RESOLVED -> CONSUMED`` compare-and-swap
+       (``DeferQueue.consume_approval``). The governor spends it only when
+       it seals (a replayed or concurrent ``deferred_id`` loses the swap and
+       seals nothing) or refuses; a warrant-ineligible DEFER leaves it
+       unspent, so the same approval redeems once the warrant returns
+       (POAM-2026-104).
 
     Returns:
         The routing seal for ``params``.
 
     Raises:
-        PermissionError: The approval is missing, unapproved, mismatched or
-            already consumed, or post-approval re-validation refused.
+        ActionDeferred: Post-approval re-validation deferred; the approval
+            is retained (``approval_retained``).
+        PermissionError: The approval is missing, unapproved, mismatched,
+            expired or already consumed, or post-approval re-validation
+            refused.
     """
     from src.gateway.governance.defer_queue import open_defer_queue
 
@@ -176,15 +208,7 @@ async def enforce_approved_governance(
             logger.warning("approval_covers raised for %s: %s", tool_name, exc)
             return False
 
-    try:
-        async with open_defer_queue() as queue:
-            token = await queue.consume_approval(
-                deferred_id, action=tool_name, covers=_covers
-            )
-    except Exception as exc:  # queue unreachable: no approval can be proven
-        logger.error("DeferQueue unavailable consuming %s: %s", deferred_id, exc)
-        token = None
-    if token is None:
+    async def _refuse_unredeemable() -> NoReturn:
         reason = f"no unconsumed approval {deferred_id!r} covers this {tool_name}"
         await _emit_refusal_receipt(
             action_id=tool_name,
@@ -195,12 +219,44 @@ async def enforce_approved_governance(
         raise PermissionError(f"Governance Blocked: {reason}")
 
     try:
-        return await governor.revalidate_post_hitl(
-            tool_name,
-            params,
-            approved_barrier_preview=token.barrier_preview,
-            trace_id=token.thread_id,
-        )
+        async with AsyncExitStack() as stack:
+            try:
+                queue = await stack.enter_async_context(open_defer_queue())
+                token = await queue.redeemable_approval(
+                    deferred_id, action=tool_name, covers=_covers
+                )
+            except Exception as exc:  # queue unreachable: no approval can be proven
+                logger.error("DeferQueue unavailable checking %s: %s", deferred_id, exc)
+                token = None
+            if token is None:
+                await _refuse_unredeemable()
+
+            async def _spend() -> bool:
+                try:
+                    spent = await queue.consume_approval(
+                        deferred_id, action=tool_name, covers=_covers
+                    )
+                except Exception as exc:  # unprovable spend never authorises
+                    logger.error(
+                        "DeferQueue unavailable spending %s: %s", deferred_id, exc
+                    )
+                    return False
+                return spent is not None
+
+            approval = PostHitlApproval(
+                approval_id=deferred_id,
+                barrier_preview=token.barrier_preview,
+                spend=_spend,
+                thread_id=token.thread_id,
+            )
+            return await governor.revalidate_post_hitl(
+                tool_name, params, approval=approval
+            )
+    except GovernanceDeferred as exc:
+        # Primary evidence is already hash-chained (GOVERNANCE_DEFERRAL naming
+        # the approval); a deferral is not a refusal, so no refusal receipt.
+        logger.info("🕒 Post-approval re-validation DEFERRED %s: %s", tool_name, exc)
+        raise ActionDeferred(exc, approval_retained=True) from exc
     except GovernanceError as exc:
         logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
         await _emit_refusal_receipt(
@@ -210,7 +266,7 @@ async def enforce_approved_governance(
             params=params,
             receipt=exc.receipt,
         )
-        raise PermissionError(f"Governance Blocked: {exc}")
+        raise PermissionError(f"Governance Blocked: {exc}") from exc
 
 
 async def tier1_keyword_check(text: str, span: Any = None) -> str | None:

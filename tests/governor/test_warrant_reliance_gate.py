@@ -65,12 +65,13 @@ from src.gateway.governance.governor.assembly import (
     kernel_stages,
     warranted_assembly_admissible,
 )
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.pipeline import Profile, StageContext
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jurisdiction import eu_ai_act, resolve_jurisdiction
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.warrant import RelianceStatus, WarrantCache
+from tests.fixtures.approval import SpendCounter, granted_approval
 from tests.fixtures.governor import (
     WARRANT_TEST_GOVERNING_VERSION,
     WARRANT_TEST_NOW,
@@ -460,10 +461,11 @@ def _approval_governor(
 _TRADE = {"confidence": 0.99, "amount": 100.0, "symbol": "AAPL"}
 
 
-async def test_warrant_revoked_after_approval_is_refused_without_seal() -> None:
+async def test_warrant_revoked_after_approval_defers_without_seal() -> None:
     """Eligible at approval, revoked before post-HITL revalidation: once the
     cached state is outside the 60 s window it is re-fetched, the revocation
-    is refused, no seal is minted, and phase 2 commits nothing."""
+    defers (never a DENY), no seal is minted, phase 2 commits nothing, and
+    the approval is not spent (POAM-2026-104)."""
     source = StaticWarrantSource.eligible()
     clock = _Monotonic()
     governor, barrier = _approval_governor(source, clock)
@@ -479,16 +481,20 @@ async def test_warrant_revoked_after_approval_is_refused_without_seal() -> None:
     )
     clock.now += 60.001  # the approval took longer than the freshness window
     calls_before = len(source.calls)
+    counter = SpendCounter()
     with patch(
         "src.gateway.governance.routing_seal.generate_seal_with_evidence"
     ) as mint:
-        with pytest.raises(GovernanceError, match="RELIANCE_INELIGIBLE_REVOKED"):
+        with pytest.raises(GovernanceDeferred, match="RELIANCE_INELIGIBLE_REVOKED"):
             await governor.revalidate_post_hitl(
-                "execute_trade", dict(_TRADE), approved_barrier_preview="PASS"
+                "execute_trade",
+                dict(_TRADE),
+                approval=granted_approval("PASS", counter=counter),
             )
     assert len(source.calls) == calls_before + 1  # the warrant was re-fetched
     mint.assert_not_called()
     assert barrier.commits == []
+    assert counter.calls == 0
 
 
 async def test_warrant_still_eligible_after_approval_seals() -> None:
@@ -500,7 +506,7 @@ async def test_warrant_still_eligible_after_approval_seals() -> None:
         return_value="seal-ok",
     ):
         seal = await governor.revalidate_post_hitl(
-            "execute_trade", dict(_TRADE), approved_barrier_preview="PASS"
+            "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
     assert seal == "seal-ok"
     assert source.calls == [TRADE_CONFIDENCE_NORM_ID]

@@ -95,6 +95,7 @@ from src.gateway.server.workload_identity import (
     IdentityPolicy,
     WorkloadIdentityMiddleware,
 )
+from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
 from tests.fixtures.trade_inputs import trade_server_inputs
 
@@ -691,7 +692,7 @@ async def test_unparseable_approved_snapshot_is_refused_before_any_commit(
 ) -> None:
     with pytest.raises(GovernanceError) as refused:
         await gw.governor.revalidate_post_hitl(
-            "execute_trade", trade(500.0), approved_barrier_preview=snapshot
+            "execute_trade", trade(500.0), approval=granted_approval(snapshot)
         )
     assert "APPROVAL_CONTEXT_DRIFT" in str(refused.value)
     await _assert_nothing_committed(gw)
@@ -776,7 +777,7 @@ async def test_s11_post_hitl_reruns_the_dose_barrier(gw: Gateway) -> None:
     params = {"dose_mg": 600, "trader_role": "senior", "amount": 0.0}
     with pytest.raises(GovernanceError) as refused:
         await gw.governor.revalidate_post_hitl(
-            "administer_medication", params, approved_barrier_preview=None
+            "administer_medication", params, approval=granted_approval()
         )
     assert any("DOSE_BARRIER_VIOLATED" in v for v in refused.value.violations)
 

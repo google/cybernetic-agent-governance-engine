@@ -369,11 +369,12 @@ class TestRevalidatePostHitlRemoved:
 
 
 class TestEnforceApprovedGovernance:
-    """``enforce_approved_governance``: consume the approval once, then commit + seal."""
+    """``enforce_approved_governance``: check the approval, then let the run spend it."""
 
     @staticmethod
     def _queue(token: Any):
         queue = MagicMock()
+        queue.redeemable_approval = AsyncMock(return_value=token)
         queue.consume_approval = AsyncMock(return_value=token)
 
         @asynccontextmanager
@@ -399,7 +400,7 @@ class TestEnforceApprovedGovernance:
                 approval_covers=covers,
             )
 
-    async def test_consumed_approval_runs_post_hitl_and_returns_seal(self):
+    async def test_redeemable_approval_runs_post_hitl_and_returns_seal(self):
         governor = _mock_governor()
         governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
         queue, open_queue = self._queue(
@@ -410,15 +411,49 @@ class TestEnforceApprovedGovernance:
         seal = await self._call(governor, open_queue, emit)
 
         assert seal == "SEAL"
+        args = governor.revalidate_post_hitl.await_args
+        assert args.args == ("execute_trade", {"symbol": "AAPL", "amount": 10.0})
+        approval = args.kwargs["approval"]
         # D-H: the committing run is bound to the barrier snapshot approved.
-        governor.revalidate_post_hitl.assert_awaited_once_with(
-            "execute_trade",
-            {"symbol": "AAPL", "amount": 10.0},
-            approved_barrier_preview="PASS",
-            trace_id="thread-9",
-        )
-        assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
+        assert approval.approval_id == "defer-1"
+        assert approval.barrier_preview == "PASS"
+        assert approval.thread_id == "thread-9"
+        assert queue.redeemable_approval.await_args.kwargs["action"] == "execute_trade"
+        # Checking spends nothing: only the governor's committing run spends.
+        queue.consume_approval.assert_not_awaited()
         emit.assert_not_awaited()
+
+    async def test_spend_is_the_queues_atomic_consume(self):
+        governor = _mock_governor()
+        spent: list[bool] = []
+
+        async def _revalidate(action, params, *, approval):
+            spent.append(await approval.spend())
+            return "SEAL"
+
+        governor.revalidate_post_hitl = _revalidate
+        queue, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
+
+        assert await self._call(governor, open_queue, AsyncMock()) == "SEAL"
+        assert spent == [True]
+        queue.consume_approval.assert_awaited_once()
+        assert queue.consume_approval.await_args.args == ("defer-1",)
+        assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
+
+    async def test_spend_fails_closed_when_the_queue_raises(self):
+        governor = _mock_governor()
+        spent: list[bool] = []
+
+        async def _revalidate(action, params, *, approval):
+            spent.append(await approval.spend())
+            return "SEAL"
+
+        governor.revalidate_post_hitl = _revalidate
+        queue, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
+        queue.consume_approval = AsyncMock(side_effect=ConnectionError("redis down"))
+
+        await self._call(governor, open_queue, AsyncMock())
+        assert spent == [False]
 
     async def test_no_approval_refuses_with_receipt_and_never_commits(self):
         governor = _mock_governor()
@@ -456,11 +491,11 @@ class TestEnforceApprovedGovernance:
 
         queue = MagicMock()
 
-        async def _consume(defer_id, *, action, covers):
+        async def _check(defer_id, *, action, covers):
             seen.append(covers({"symbol": "AAPL"}))
             return None
 
-        queue.consume_approval = _consume
+        queue.redeemable_approval = _check
 
         @asynccontextmanager
         async def _open():
@@ -481,13 +516,39 @@ class TestEnforceApprovedGovernance:
         governor.revalidate_post_hitl = AsyncMock(
             side_effect=GovernanceError("CBF Violation: h(next) < 0")
         )
-        _, open_queue = self._queue(MagicMock(thread_id="t"))
+        _, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
         emit = AsyncMock()
 
         with pytest.raises(PermissionError, match="CBF Violation"):
             await self._call(governor, open_queue, emit)
         emit.assert_awaited_once()
         assert emit.await_args.kwargs["oscal_control_ref"] == "SC-4"
+
+    async def test_post_hitl_deferral_retains_the_approval_without_a_refusal(self):
+        from src.gateway.governance.governor.errors import GovernanceDeferred
+        from src.gateway.server.governance_middleware import ActionDeferred
+
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(
+            side_effect=GovernanceDeferred(
+                "[WARRANT_INELIGIBLE] deferred",
+                defer_reason="WARRANT_INELIGIBLE",
+                deferred_id="defer-1",
+                reliance=[{"reliance_status": "INELIGIBLE_REVOKED"}],
+            )
+        )
+        queue, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
+        emit = AsyncMock()
+
+        with pytest.raises(ActionDeferred, match="Governance Deferred") as deferred:
+            await self._call(governor, open_queue, emit)
+        assert isinstance(deferred.value, PermissionError)  # still fails closed
+        assert deferred.value.deferred_id == "defer-1"
+        assert deferred.value.approval_retained is True
+        assert deferred.value.defer_reason == "WARRANT_INELIGIBLE"
+        assert deferred.value.reliance == [{"reliance_status": "INELIGIBLE_REVOKED"}]
+        queue.consume_approval.assert_not_awaited()
+        emit.assert_not_awaited()  # a deferral is evidenced as a deferral
 
 
 # ===========================================================================
@@ -670,6 +731,32 @@ class TestEnforceGovernanceHelper:
         ):
             with pytest.raises(PermissionError, match="Governance Blocked"):
                 await enforce_governance(mock_gov, "execute_trade", {"amount": 100})
+
+    async def test_warrant_deferral_is_a_deferral_not_a_refusal(self):
+        """GovernanceDeferred from govern() is ActionDeferred, with no receipt."""
+        from src.gateway.governance.governor.errors import GovernanceDeferred
+        from src.gateway.server.governance_middleware import (
+            ActionDeferred,
+            enforce_governance,
+        )
+
+        mock_gov = _mock_governor()
+        mock_gov.govern = AsyncMock(
+            side_effect=GovernanceDeferred(
+                "[WARRANT_INELIGIBLE] deferred",
+                defer_reason="WARRANT_INELIGIBLE",
+                deferred_id="defer-9",
+            )
+        )
+        emit = AsyncMock()
+        with patch(
+            "src.gateway.server.governance_middleware._emit_refusal_receipt", new=emit
+        ):
+            with pytest.raises(ActionDeferred, match="Governance Deferred") as exc:
+                await enforce_governance(mock_gov, "execute_trade", {"amount": 100})
+        assert exc.value.deferred_id == "defer-9"
+        assert exc.value.approval_retained is False
+        emit.assert_not_awaited()
 
 
 # ===========================================================================

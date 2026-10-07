@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-07T02:07:28Z'
+    last-modified: '2026-10-07T11:55:27Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -853,19 +853,21 @@ system-security-plan:
         parks REQUIRE_APPROVAL verdicts in DeferQueue (DeferReason.HITL_REQUIRED)
         with a side-effect-free phase-2 barrier preview (Phase2Mode.PREVIEW), returning
         deferred_id. A single committing run executes per trade: execute_trade_action(...,
-        deferred_id=...) atomically consumes the human-approved token via DeferQueue.consume_approval()
-        and invokes SymbolicGovernor.revalidate_post_hitl() inside src/gateway/server/governance_middleware.py
-        (enforce_approved_governance). Any narrow_hint / narrowed_params attached
-        to REQUIRE_APPROVAL is purely advisory, dry-run re-verified before surfacing
-        (_reverified_narrow_hint) and re-verified in full by the committing run (_sealed_narrow
-        with tamper-evident issue_narrow_receipt inside ReservationScope). OPA decisions
-        are logged to stdout and captured by Cloud Logging for audit. All OPA enforce
-        decisions are emitted as OTel spans tagged with control-id AC-3 for automated
-        compliance verification via Lula. Since commit a0deb7ad the classifier ranks
-        findings HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE > DEFERRABLE; RELIANCE_INELIGIBLE
-        (no eligible warrant for a norm a region marks requires_warrant) defers with
-        DeferReason.WARRANT_INELIGIBLE and is re-checked under Profile.POST_HITL.
-        No US_FED norm is warranted, so it cannot arise in this region (see system-security-plan-eu-ecb.yaml).
+        deferred_id=...) invokes SymbolicGovernor.revalidate_post_hitl() inside src/gateway/server/governance_middleware.py
+        (enforce_approved_governance), which spends the human-approved token atomically
+        via DeferQueue.consume_approval() only when the run seals; a DENY spends it
+        and a warrant-ineligible DEFER leaves it redeemable. Any narrow_hint / narrowed_params
+        attached to REQUIRE_APPROVAL is purely advisory, dry-run re-verified before
+        surfacing (_reverified_narrow_hint) and re-verified in full by the committing
+        run (_sealed_narrow with tamper-evident issue_narrow_receipt inside ReservationScope).
+        OPA decisions are logged to stdout and captured by Cloud Logging for audit.
+        All OPA enforce decisions are emitted as OTel spans tagged with control-id
+        AC-3 for automated compliance verification via Lula. Since commit a0deb7ad
+        the classifier ranks findings HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE
+        > DEFERRABLE; RELIANCE_INELIGIBLE (no eligible warrant for a norm a region
+        marks requires_warrant) defers with DeferReason.WARRANT_INELIGIBLE and is
+        re-checked under Profile.POST_HITL. No US_FED norm is warranted, so it cannot
+        arise in this region (see system-security-plan-eu-ecb.yaml).
 
         '
       props:
@@ -1325,7 +1327,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-07T02:07:28Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-07T11:55:27Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1369,7 +1371,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-07T02:07:28Z'
+        value: '2026-10-07T11:55:27Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

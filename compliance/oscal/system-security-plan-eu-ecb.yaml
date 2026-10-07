@@ -315,8 +315,13 @@ system-security-plan:
         is in POST_HITL_READ_ONLY_STAGES
         (src/gateway/governance/governor/pipeline.py), so a warrant revoked
         between human approval and execution, as observed through the
-        freshness window below, is refused at revalidate_post_hitl() with no
-        seal and no phase-2 commit. assemble_governor() (src/gateway/governance/governor/assembly.py)
+        freshness window below, defers at revalidate_post_hitl() with no
+        seal and no phase-2 commit, and the human approval stays unspent and
+        redeemable once the warrant is eligible again (DeferQueue spends it
+        only through the admit hook of run_sealed(), after every stage passes
+        and before the seal is minted). Since 2026-10-07 the committing run of
+        govern() also defers on a warrant failure instead of denying
+        (POAM-2026-110). assemble_governor() (src/gateway/governance/governor/assembly.py)
         refuses to assemble when a warranted norm has no WarrantSource, when
         DEFER is disabled, when it lacks a governing_version, or when no domain
         tier claims its actions. Limits stated plainly: (1) warrant
@@ -661,10 +666,14 @@ system-security-plan:
         partially implemented: the enforcement path is complete and fails
         closed, but warrant authenticity is UNVERIFIED (digest-only, no issuer
         signature or kid trust anchor until VEIP v0.2), the configured
-        provider_05 source has no live HTTP path (all EU_ECB trades defer),
-        and a post-approval warrant refusal burns the approval token
-        (src/gateway/server/governance_middleware.py consumes it before
-        revalidation). See POAM-2026-104. Every admit and every refusal is
+        provider_05 source has no live HTTP path (all EU_ECB trades defer).
+        See POAM-2026-104. Since 2026-10-07 a post-approval warrant deferral
+        no longer spends the approval token: SymbolicGovernor.revalidate_post_hitl()
+        receives an unspent PostHitlApproval and spends it (atomic
+        DeferQueue.consume_approval()) only when the run is about to seal, so
+        the approval stays single-use, bound to the same action and
+        parameters and subject to its own expiry, and two concurrent
+        redemptions yield at most one seal. A DENY still spends it. Every admit and every refusal is
         evidenced: since 0cdb5aaa the reliance record is bound into the seal''s
         evidence record (record_hash), the DEFER/REQUIRE_APPROVAL token, the
         GOVERNANCE_DEFERRAL record and any co-occurring DENY receipt''s
@@ -693,8 +702,9 @@ system-security-plan:
           0.99 defers rather than denies
           (test_revoked_warrant_with_high_confidence_defers_not_denies), a HARD
           finding still denies, govern() mints no seal on a warrant failure, a
-          warrant revoked after approval is refused with no seal and no commit
-          (test_warrant_revoked_after_approval_is_refused_without_seal), the
+          warrant revoked after approval defers with no seal, no commit and no
+          spend of the approval
+          (test_warrant_revoked_after_approval_defers_without_seal), the
           assembly refusals, and the pinned EU_ECB (norm_id, value) to
           governing_version pair. proof/model.py claims 12
           (warranted_norm_never_fabricates_deny) and 13
@@ -706,7 +716,7 @@ system-security-plan:
           test_dropping_the_reliance_record_breaks_seal_verification), DEFER
           tokens and GOVERNANCE_DEFERRAL records carry the ineligible record
           (test_defer_carries_the_ineligible_reliance_record), a post-approval
-          revocation is refused with no seal when only read-only tiers claim
+          revocation defers with no seal when only read-only tiers claim
           the action
           (test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim),
           and a failed deferral evidence write is counted while the deferral
@@ -718,7 +728,8 @@ system-security-plan:
           INELIGIBLE_STALE and the governor defers with WARRANT_INELIGIBLE,
           concurrent requests share one fetch, POST_HITL inside the window
           relies on the cached warrant while an expired one is re-fetched
-          (and refused without a seal when the re-fetch fails), out-of-range
+          (and deferred without a seal or a spent approval when the re-fetch
+          fails), out-of-range
           windows (above 60 s, at or below 0, NaN, infinite, timeout not
           below max_age) are refused by the schema, the loader and the cache,
           and every reliance record carries observed_at, age_seconds and
@@ -742,8 +753,15 @@ system-security-plan:
           HARD bounding-tier finding under a revoked warrant denies with the
           reliance record inside the refusal receipt (kernel-stage HARD
           findings before the warrant stage short-circuit before any reliance
-          is formed); a warrant revoked after
-          human approval is refused with no seal; the 0.97 floor applies
+          is formed); after execute_trade_action() VEC-002 to VEC-006 and a
+          missing warrant leave a GOVERNANCE_DEFERRAL and no
+          GOVERNANCE_REFUSAL in the evidence chain (2026-10-07); a warrant
+          revoked after human approval, or a source fault at revalidation,
+          defers with no seal while the approval stays unspent, the same
+          approval redeems once the warrant is restored (ALLOW and a seal)
+          and a second redemption is refused, a deferred approval still
+          expires, a HARD finding at revalidation still spends it, and five
+          concurrent redemptions execute once; the 0.97 floor applies
           with an eligible warrant; APAC_MAS (0.96) and US_FED (0.95) never
           consult a warrant; and bootstrap refuses an EU_ECB governor with no
           warrant source or with DEFER disabled. The warrant source is the

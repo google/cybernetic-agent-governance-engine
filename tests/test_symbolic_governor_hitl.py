@@ -28,6 +28,7 @@ import pytest
 
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.gateway.governance.governor.governor import GovernanceError
+from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
 
 # Test markers per AGENTS.md
@@ -78,7 +79,7 @@ class TestC1PostHITLRevalidationFailClosed:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert: Violation message contains the refusal reason
@@ -104,7 +105,7 @@ class TestC1PostHITLRevalidationFailClosed:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert
@@ -128,7 +129,7 @@ class TestC1PostHITLRevalidationFailClosed:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert
@@ -157,7 +158,7 @@ class TestC1PostHITLRevalidationFailClosed:
             seal = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
             # Assert: Seal issued means approval
@@ -182,7 +183,7 @@ class TestC1PostHITLRevalidationFailClosed:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert
@@ -215,7 +216,7 @@ class TestC2PostHITLSequentialOrdering:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert: OPA violation recorded
@@ -245,7 +246,7 @@ class TestC2PostHITLSequentialOrdering:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert: OPA violation recorded
@@ -276,7 +277,7 @@ class TestC2PostHITLSequentialOrdering:
             seal = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
             # Assert: Seal issued (happy path)
@@ -302,7 +303,7 @@ class TestC2PostHITLSequentialOrdering:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
         # Assert: Exception recorded as violation
@@ -344,7 +345,7 @@ class TestC2PostHITLSequentialOrdering:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approved_barrier_preview=None,
+                approval=granted_approval(),
             )
 
             # C2 Critical Assertion: OPA called strictly before CBF
