@@ -13,15 +13,21 @@
 # limitations under the License.
 
 """
-Unit tests for CAGE x Provider 05 Warrant Contract v0.1.
+Contract tests for CAGE x Provider 05 Warrant Contract v0.1.
 
-Runs the first falsifiable test for min_trade_confidence = 0.97 through the
-seeded ``Provider05WarrantSource`` and the kernel verifier. The schema and
-failure-matrix tests are vendor-neutral and live in
-``tests/governance/test_warrant_kernel.py``.
-  - Test A: ACTIVE warrant -> norm eligible -> ALLOW -> seal with warrant digest.
-  - Test B: REVOKED warrant -> norm ineligible for reliance.
-  - Test C: EXPECTED failure -> DEFER (no Routing Seal, no fabricated hard DENY).
+What the seeded ``Provider05WarrantSource`` serves, the kernel verifier and
+the attestation binding make of it:
+  - Test A: ACTIVE warrant -> norm eligible -> UNVERIFIED attestation bound
+    into a GovernanceEnvelope with the warrant digest.
+  - Test B: REVOKED warrant -> norm ineligible for reliance, attested
+    UNVERIFIED (never DENIED).
+
+The schema and failure-matrix tests are vendor-neutral and live in
+``tests/governance/test_warrant_kernel.py``. What the governor *decides*
+(ALLOW with a sealed reliance record, DEFER ``WARRANT_INELIGIBLE`` with no
+seal, DENY on an independent HARD finding) is asserted end to end through
+the composition root, the gateway and the trade tool in
+``tests/governor/test_warrant_reliance_e2e.py``.
 """
 
 from __future__ import annotations
@@ -75,10 +81,10 @@ def sample_warrant() -> Warrant:
 
 
 @pytest.mark.asyncio
-async def test_falsifiable_test_a_active_warrant_allows_and_seals(
+async def test_falsifiable_test_a_active_warrant_is_eligible_and_attested(
     sample_warrant: Warrant,
 ) -> None:
-    """Test A - ACTIVE: Valid warrant attached -> CAGE evaluates 0.97 and seals evidence with warrant digest."""
+    """Test A - ACTIVE: the warrant is eligible and binds into the envelope."""
     source = Provider05WarrantSource()
     source.seed(sample_warrant)
 
@@ -97,12 +103,7 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
     assert standing.eligible is True
     assert standing.reliance_status == RelianceStatus.ELIGIBLE
 
-    # 2. Evaluate norm (confidence score 0.98 >= 0.97 threshold)
-    model_confidence = 0.98
-    target_threshold = 0.97
-    assert model_confidence >= target_threshold
-
-    # 3. Bind warrant to evidence record in GovernanceEnvelope.
+    # 2. Bind warrant to evidence record in GovernanceEnvelope.
     # UNVERIFIED: the digest proves consistency, not issuer identity (v0.2).
     att = bind_warrant_to_attestation(
         warrant, standing, provider_name=source.provider_name
@@ -124,7 +125,7 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
         external_attestations=[att],
     )
 
-    # 4. Verify envelope contains bound warrant digest
+    # 3. Verify envelope contains bound warrant digest
     envelope_dict = envelope.to_dict()
     assert len(envelope_dict["external_attestations"]) == 1
     bound_att = envelope_dict["external_attestations"][0]
@@ -133,14 +134,10 @@ async def test_falsifiable_test_a_active_warrant_allows_and_seals(
 
 
 @pytest.mark.asyncio
-async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
+async def test_falsifiable_test_b_revoked_warrant_is_ineligible_not_denied(
     sample_warrant: Warrant,
 ) -> None:
-    """Test B & C - REVOKED & EXPECTED:
-
-    Test B: Revoking the warrant makes 0.97 ineligible for reliance.
-    Test C: No alternative eligible norm -> DEFER (no Routing Seal, no fabricated hard DENY).
-    """
+    """Test B - REVOKED: revoking the warrant makes 0.97 ineligible for reliance."""
     # Create revoked variant of the same warrant
     revoked_warrant = Warrant.issue(
         warrant_id=sample_warrant.warrant_id,
@@ -176,26 +173,6 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
     # Test B Assertion: 0.97 becomes ineligible for reliance
     assert standing.eligible is False
     assert standing.reliance_status == RelianceStatus.INELIGIBLE_REVOKED
-
-    # Test C — contract-level simulation only. The verifier is not yet wired
-    # into the governor pipeline; the end-to-end DEFER/no-seal assertion
-    # belongs to the Phase 3 integration test.
-    # When reliance is ineligible and no alternative warranted norm exists:
-    # The decision must drop to DEFER (Parked in DeferQueue).
-    # It must NOT emit an approved Routing Seal, and must NOT fabricate a hard DENY.
-    governance_decision = None
-    routing_seal_emitted = False
-
-    if not standing.eligible:
-        # Fallback resolution check: (none available)
-        alternative_warranted_norm = None
-        if alternative_warranted_norm is None:
-            governance_decision = GovernanceDecision.DEFER
-            routing_seal_emitted = False
-
-    assert governance_decision == GovernanceDecision.DEFER
-    assert governance_decision != GovernanceDecision.DENY
-    assert routing_seal_emitted is False
 
     # Bind ineligible standing into the audit trail / evidence envelope.
     # Never DENIED: ineligibility is not an institutional verdict.

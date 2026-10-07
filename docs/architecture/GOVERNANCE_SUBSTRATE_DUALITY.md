@@ -425,4 +425,99 @@ partially supersedes the ingestion-gap analysis above.
 
 ---
 
+## 10. Warrant Reliance — An Institutional Warrant Through the Handshake
+
+The warrant reliance path is the handshake of §3–§4 for a single norm. The
+Governance Layer (an issuing authority, via VEIP) issues a warrant that
+authorises CAGE to rely on a threshold. CAGE checks the warrant at the commit
+boundary and records the reliance decision in its evidence chain. This section
+traces the EU_ECB trade-confidence floor from configuration to actuation, as
+exercised by
+[`test_warrant_reliance_e2e.py`](../../tests/governor/test_warrant_reliance_e2e.py).
+
+### 10.1 Declaration and assembly
+
+1. **Norm.** [`EU_ECB_BASELINE.json`](../../config/thresholds/EU_ECB_BASELINE.json)
+   declares `domains.finance.confidence.min_trade_confidence` as value 0.97,
+   `requires_warrant: true`, `governing_version: cage-policy-2.1.0`. The
+   finance plugin turns it into one `NormBinding`
+   ([`trade_confidence_tier.py`](../../src/cage_finance/tiers/trade_confidence_tier.py)).
+   That binding is both enforced by `TradeConfidenceTier` and declared to the
+   kernel, so the gated value is the enforced value. APAC_MAS (0.96) and
+   US_FED (0.95) declare no warrant.
+2. **Source.** `CAGE_WARRANT_SOURCE` names the adapter
+   ([`source_factory.py`](../../src/gateway/governance/warrant/source_factory.py)).
+   `provider_05` is the seeded VEIP source
+   ([`warrant_source.py`](../../src/integrations/provider_05/warrant_source.py)),
+   behind the kernel `WarrantSource` seam
+   ([`WarrantSource`](../../src/gateway/governance/seams/warrant.py)).
+3. **Assembly.** [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py)
+   resolves the source and calls
+   [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py).
+   Assembly refuses a warranted norm with no source or with DEFER disabled.
+   Otherwise it appends one `WarrantStage`
+   ([`WarrantStage`](../../src/gateway/governance/governor/stages/warrant.py))
+   that reads through one `WarrantCache` per governor
+   ([`cache.py`](../../src/gateway/governance/warrant/cache.py), 60 s window).
+   Both read time from the `WarrantClock` the composition root passes in (the
+   process clocks by default).
+
+### 10.2 One request, end to end
+
+1. **Preview.** `POST /governance/validate-action`
+   ([`governance_middleware.py`](../../src/gateway/server/governance_middleware.py))
+   runs the DRY_RUN profile. `WarrantStage` observes the warrant through the
+   cache and evaluates its standing with `WarrantStandingVerifier`
+   ([`verifier.py`](../../src/gateway/governance/warrant/verifier.py)) against
+   the deployment jurisdiction, the action and the binding's
+   `governing_version`. It emits a `RelianceRecord`
+   ([`reliance.py`](../../src/gateway/governance/warrant/reliance.py)) for
+   the norm.
+2. **Admit.** If the warrant is eligible and nothing else objects, the
+   response is a signed envelope carrying a `WARRANT` attestation with status
+   `UNVERIFIED`. The digest proves the fields are consistent, not who issued
+   them; issuer signatures arrive with VEIP v0.2.
+3. **Commit.** The trade tool
+   ([`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py))
+   runs the FULL profile. The seal's evidence record carries the reliance
+   record under `record_hash`
+   ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)), so
+   `verify_seal_against_evidence()` fails if the record is altered or
+   dropped. The tool verifies and consumes the seal, then dispatches through
+   the `ActuatorRegistry`.
+4. **Refuse without fabricating.** An ineligible warrant (revoked, expired,
+   out of scope, version mismatch, tampered digest, missing, or stale past
+   60 s with a failing source) is a `RELIANCE_INELIGIBLE` finding. The
+   governor answers DEFER `WARRANT_INELIGIBLE`
+   ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)), never
+   DENY: ineligibility is not an institutional verdict. The DEFER token and
+   the `GOVERNANCE_DEFERRAL` record carry the reliance record, and nothing is
+   sealed. An independent HARD finding still denies. DENY receipts carry
+   reliance when the warrant stage ran: a HARD finding from a domain tier
+   (which runs after `WarrantStage`) is refused with the reliance record
+   inside the receipt's `proof_hash`. Kernel-stage HARD findings that precede
+   it (FTRA, STPA, OPA, confidence) short-circuit before any reliance is
+   formed: the pipeline stops at the first HARD finding, no warrant is
+   fetched, and the receipt carries no reliance record. A warrant that was
+   not evaluated was not relied upon.
+5. **After a human.** `WarrantStage` re-runs under POST_HITL. A warrant
+   revoked while the request waited for approval is refused at
+   `revalidate_post_hitl()` with no seal, once the cached state expires (at
+   most 60 s).
+
+### 10.3 What the evidence does and does not show
+
+The end-to-end test runs every step above through CAGE code. The warrant
+source is the seeded adapter holding the VEIP v0.1 vectors, because VEIP has
+no live endpoint yet. Its deterministic fault injection (`inject_fault()`
+with the kernel `FaultMode`: timeout, connection error, malformed payload,
+fields rewritten in transit) drives every source-side fail-closed path:
+`INELIGIBLE_UNRESOLVED` with no trusted state, `INELIGIBLE_STALE` past the
+window, both DEFER. It is therefore not Tier 1 over-the-wire conformance
+evidence (see [`AGENTS.md`](../../AGENTS.md) and POAM-2026-104 / POAM-2026-107
+in [`POAM.md`](../POAM.md)). Warrant authenticity stays `UNVERIFIED` until a
+`kid`-resolved issuer signature is checked.
+
+---
+
 *End of CAGE — Governance Layer vs. Enforcement Substrate: Architectural Analysis*

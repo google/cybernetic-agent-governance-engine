@@ -33,6 +33,8 @@ window for the kernel ``WarrantStage``:
   fetch failure with no earlier observation is ``UNRESOLVED``.
 * ``None`` from the source (MISSING) is never cached, so a newly issued warrant
   is seen on the next request; it also drops any earlier cached state.
+* An answer that is neither a ``Warrant`` nor ``None`` (a malformed payload)
+  is a source fault like an exception: it is never cached or relied on.
 * Concurrent requests for one norm share a single in-flight fetch
   (single-flight), so an expired entry cannot fan out into a burst of fetches.
 
@@ -78,6 +80,21 @@ def _positive_seconds(name: str, value: object) -> float:
     ):
         raise ValueError(f"{name} must be a finite positive number, got {value!r}")
     return float(value)
+
+
+@dataclass(frozen=True)
+class WarrantClock:
+    """The two clocks warrant reliance reads, injected once at assembly.
+
+    ``monotonic`` measures how old a cached warrant state is (the freshness
+    window). ``wall_clock`` (UTC, timezone-aware) stamps receipt and
+    evaluation times in the reliance evidence and is the ``now`` the standing
+    verifier checks a warrant's validity window against. The defaults are the
+    process clocks; tests pass hand-advanced ones, so nothing sleeps.
+    """
+
+    monotonic: Callable[[], float] = time.monotonic
+    wall_clock: Callable[[], datetime] = _utc_now
 
 
 class WarrantFreshness(str, Enum):
@@ -227,6 +244,12 @@ class WarrantCache:
             )
         except Exception as exc:  # timeout or source fault: never extends the state
             return self._failed(norm_id, exc)
+        if warrant is not None and not isinstance(warrant, Warrant):
+            # A malformed answer is a source fault, never a cached state.
+            return self._failed(
+                norm_id,
+                TypeError(f"returned {type(warrant).__name__}, not a Warrant"),
+            )
         received_monotonic = self._monotonic()
         received_at = self._wall_clock()
         if warrant is None:
@@ -269,6 +292,7 @@ __all__ = [
     "DEFAULT_FETCH_TIMEOUT_SECONDS",
     "DEFAULT_MAX_AGE_SECONDS",
     "WarrantCache",
+    "WarrantClock",
     "WarrantFreshness",
     "WarrantObservation",
 ]

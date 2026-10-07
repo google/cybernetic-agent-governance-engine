@@ -36,6 +36,7 @@ from __future__ import annotations
 from src.gateway.governance.warrant.cache import (
     CONTRACT_MAX_AGE_SECONDS,
     WarrantCache,
+    WarrantClock,
     WarrantFreshness,
     WarrantObservation,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "StandingVerificationResult",
     "Warrant",
     "WarrantCache",
+    "WarrantClock",
     "WarrantFreshness",
     "WarrantObservation",
     "WarrantScope",
