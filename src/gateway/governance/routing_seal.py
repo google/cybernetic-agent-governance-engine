@@ -550,7 +550,7 @@ async def generate_seal_with_evidence(
             "type": "GOVERNANCE_DECISION",
             "controlId": _SCOPE_CONTROL.value,
             "action": action,
-            "params_hash": hashlib.sha256(action_bytes).hexdigest()[:16],
+            "params_hash": hashlib.sha256(action_bytes).hexdigest(),
             "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
             "seal_ttl_s": ttl_s,
         }

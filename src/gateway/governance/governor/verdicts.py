@@ -71,7 +71,7 @@ def build_refusal_receipt(
     violated_rule = (
         "Multiple violations"
         if len(violations) > 1
-        else (str(violations[0]) if violations else "Unknown violation")
+        else (_error_message(violations[0]) if violations else "Unknown violation")
     )
 
     # Generate standing at refusal
@@ -116,6 +116,8 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
         sink = get_evidence_sink()
         event = {
             "type": "GOVERNANCE_REFUSAL",
+            "controlId": receipt.control_id
+            or GovernanceControl.AGENTIC_SCOPE_STATEMENT.value,
             "receipt": receipt.to_dict()
             if hasattr(receipt, "to_dict")
             else vars(receipt),
@@ -174,6 +176,36 @@ def _reason_from_classification(classification_meta: dict[str, Any]) -> "DeferRe
     return by_reason[reason]
 
 
+def _resolve_deferral_control_id(
+    defer_reason: "DeferReason", violations: Sequence[Any] = ()
+) -> str:
+    """Resolve the canonical ``GovernanceControl`` ID for a deferral event."""
+    from src.gateway.governance.defer_queue import DeferReason
+
+    for v in violations:
+        msg = (
+            v.message
+            if isinstance(v, Violation)
+            else (v.get("message", "") if isinstance(v, dict) else str(v))
+        )
+        m = _CONTROL_ID_RE.match(msg)
+        if m:
+            return m.group(1)
+    by_reason = {
+        DeferReason.CONFIDENCE_BELOW_THRESHOLD: (
+            GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value
+        ),
+        DeferReason.WARRANT_INELIGIBLE: (
+            GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value
+        ),
+        DeferReason.HITL_REQUIRED: GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+        DeferReason.FTRA_IRREVERSIBLE_TERMINAL: (
+            GovernanceControl.FTRA_REACHABILITY_GATE.value
+        ),
+    }
+    return by_reason.get(defer_reason, GovernanceControl.AGENTIC_SCOPE_STATEMENT.value)
+
+
 async def _park_defer_context(
     action: str,
     params: dict[str, Any] | None,
@@ -204,7 +236,9 @@ async def _park_defer_context(
         "action": action,
         "params": params or {},
         "metadata": metadata or {},
-        "violations": [str(v) for v in violations],
+        "violations": [
+            v.to_dict() if isinstance(v, Violation) else v for v in violations
+        ],
         "classification_reason": classification_meta.get("classification_reason", ""),
         # What the reviewer was told the approved request would hit (Phase-2 preview).
         "barrier_preview": classification_meta.get("barrier_preview"),
@@ -252,14 +286,16 @@ def deferral_event(token: "DeferToken", *, persisted: bool) -> dict[str, Any]:
     snapshot = token.opa_input_snapshot
     action = str(snapshot.get("action", ""))
     params = snapshot.get("params")
+    violations = list(snapshot.get("violations", []))
     try:
         params_hash: str | None = routing_seal.compute_action_hash(
             action, params if isinstance(params, dict) else {}
-        )[:16]
+        )
     except routing_seal.SealCanonicalizationError:
         params_hash = None
     event: dict[str, Any] = {
         "type": "GOVERNANCE_DEFERRAL",
+        "controlId": _resolve_deferral_control_id(token.defer_reason, violations),
         "defer_id": token.defer_id,
         "persisted": persisted,
         "defer_reason": token.defer_reason.value,
@@ -267,7 +303,7 @@ def deferral_event(token: "DeferToken", *, persisted: bool) -> dict[str, Any]:
         "action": action,
         "params_hash": params_hash,
         "classification_reason": str(snapshot.get("classification_reason", "")),
-        "violations": list(snapshot.get("violations", [])),
+        "violations": violations,
         "barrier_preview": snapshot.get("barrier_preview"),
         "required_quorum": token.required_quorum,
         "deferred_at_utc": token.deferred_at_utc,
@@ -316,12 +352,13 @@ def post_hitl_deferral_event(
     spent; ``reliance`` carries the warrant state the failed attempt saw.
     """
     try:
-        params_hash: str | None = routing_seal.compute_action_hash(action, params)[:16]
+        params_hash: str | None = routing_seal.compute_action_hash(action, params)
     except routing_seal.SealCanonicalizationError:
         params_hash = None
     now = datetime.now(tz=timezone.utc).isoformat()
     event: dict[str, Any] = {
         "type": "GOVERNANCE_DEFERRAL",
+        "controlId": _resolve_deferral_control_id(defer_reason, violations),
         "defer_id": approval_id,
         "persisted": True,
         "approval_retained": True,
@@ -331,7 +368,9 @@ def post_hitl_deferral_event(
         "action": action,
         "params_hash": params_hash,
         "classification_reason": classification_reason,
-        "violations": [str(v) for v in violations],
+        "violations": [
+            v.to_dict() if isinstance(v, Violation) else v for v in violations
+        ],
         "barrier_preview": barrier_preview,
         "deferred_at_utc": now,
         "timestamp_utc": now,
@@ -489,7 +528,11 @@ async def handle_defer(
     span = trace.get_current_span()
     defer_reason = _reason_from_classification(classification_meta)
     defer_metadata = {
-        "cbf_violation": any("CBF" in str(v) for v in violations),
+        "cbf_violation": any(
+            "CBF" in (v.tier.upper() if isinstance(v, Violation) else str(v).upper())
+            or "CBF" in (v.code.upper() if isinstance(v, Violation) else str(v).upper())
+            for v in violations
+        ),
         "opa_decision": classification_meta.get("opa_decision"),
         "policy_ambiguous": classification_meta.get("policy_ambiguous", False),
         "params": params,

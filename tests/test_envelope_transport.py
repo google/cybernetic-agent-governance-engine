@@ -304,17 +304,17 @@ class TestEnvelopeTransportDenied:
 class TestEnvelopeTransportEdgeCases:
     """Edge case tests for envelope transport."""
 
-    def test_defer_verdict_still_returns_flat_format(
+    def test_defer_verdict_returns_canonical_envelope(
         self, client, mock_symbolic_governor
     ):
-        """DEFER verdicts (non-EXTERNAL_HOLD) still use legacy flat format."""
+        """DEFER verdicts (non-EXTERNAL_HOLD) return a signed v3.0 GovernanceEnvelope."""
         mock_symbolic_governor.validate_action = AsyncMock(
             return_value={
                 "verdict": "DEFER",
                 "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
-                "defer_id": "defer-001",
+                "defer_token": "defer-001",
                 "violations": ["low confidence"],
-                "seal": "",
+                "tiers_passed": ["ftra", "stpa", "opa"],
                 "latency_ms": 2.0,
             }
         )
@@ -327,14 +327,44 @@ class TestEnvelopeTransportEdgeCases:
         assert resp.status_code == 200
         data = resp.json()
 
-        # Should have legacy schema_version
-        assert data.get("schema_version") == "1.0.0"
-        assert data["verdict"] == "DEFER"
+        assert data.get("envelope_version") == "3.0"
+        assert data.get("envelope_type") == "cage_governance_decision"
+        assert "schema_version" not in data
+        assert data["payload"]["verdict"] == "DEFER"
+        assert data["payload"]["defer_token"] == "defer-001"
+        assert data["governance_context"]["tiers_passed"] == ["ftra", "stpa", "opa"]
+
+    def test_require_approval_verdict_returns_canonical_envelope(
+        self, client, mock_symbolic_governor
+    ):
+        """REQUIRE_APPROVAL verdicts return a signed v3.0 GovernanceEnvelope."""
+        mock_symbolic_governor.validate_action = AsyncMock(
+            return_value={
+                "verdict": "REQUIRE_APPROVAL",
+                "deferred_id": "defer-hitl-001",
+                "violations": ["[CTRL_OPA_005] Trade requires human approval"],
+                "tiers_passed": ["ftra", "stpa"],
+                "latency_ms": 2.0,
+            }
+        )
+
+        resp = client.post(
+            "/validate-action",
+            json={"action": "execute_trade", "params": {"amount": 100}},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data.get("envelope_version") == "3.0"
+        assert data["payload"]["verdict"] == "REQUIRE_APPROVAL"
+        assert data["payload"]["deferred_id"] == "defer-hitl-001"
+        assert data["governance_context"]["tiers_passed"] == ["ftra", "stpa"]
 
     def test_external_attestations_preserved_in_envelope(
         self, client, mock_symbolic_governor
     ):
-        """External attestations are embedded in the envelope."""
+        """External attestations are embedded at top-level without payload duplication."""
         mock_symbolic_governor.validate_action = AsyncMock(
             return_value={
                 "verdict": "ALLOW",
@@ -361,8 +391,9 @@ class TestEnvelopeTransportEdgeCases:
 
         data = resp.json()
 
-        # External attestations should be present in envelope
+        # External attestations should be present at top level, not duplicated in payload
         attestations = data.get("external_attestations", [])
         assert len(attestations) > 0
         assert attestations[0]["type"] == "EXTERNAL_PROVIDER_APPROVAL"
         assert attestations[0]["status"] == "VERIFIED"
+        assert "external_attestations" not in data["payload"]

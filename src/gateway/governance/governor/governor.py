@@ -194,6 +194,7 @@ class SymbolicGovernor:
                     "violations": [],
                     "latency_ms": latency_ms,
                     "agent_id": params.get("_caller_principal", ""),
+                    **_context_meta(result),
                     **_reliance_meta(result),
                 }
 
@@ -249,7 +250,8 @@ class SymbolicGovernor:
                 latency_ms,
                 reliance=result.reliance,
             )
-            return await verdict if inspect.isawaitable(verdict) else verdict
+            resolved = await verdict if inspect.isawaitable(verdict) else verdict
+            return {**resolved, **_context_meta(result)}
 
     async def _rebind(self, action: str, proposal: dict[str, Any]) -> dict[str, Any]:
         """A narrower's proposal with its server inputs resolved afresh.
@@ -341,15 +343,20 @@ class SymbolicGovernor:
         )
         if not reverified:
             if self._defers_on_reliance(rerun):
-                return await handle_defer(
-                    action,
-                    verified,
-                    list(rerun.violations),
-                    list(rerun.tier_failures),
-                    {**meta, **_ftra_meta(rerun), **_RELIANCE_DEFER_META},
-                    latency_ms,
-                    reliance=rerun.reliance,
-                )
+                return {
+                    **(
+                        await handle_defer(
+                            action,
+                            verified,
+                            list(rerun.violations),
+                            list(rerun.tier_failures),
+                            {**meta, **_ftra_meta(rerun), **_RELIANCE_DEFER_META},
+                            latency_ms,
+                            reliance=rerun.reliance,
+                        )
+                    ),
+                    **_context_meta(rerun),
+                }
             deny_meta = {
                 **meta,
                 **_ftra_meta(rerun),
@@ -377,6 +384,7 @@ class SymbolicGovernor:
                 classification_meta=meta,
                 latency_ms=latency_ms,
             ),
+            **_context_meta(rerun),
             **_reliance_meta(rerun),
         }
 
@@ -1045,4 +1053,13 @@ def _barrier_meta(result: PipelineResult) -> dict[str, Any]:
     return {
         "barrier_preview": result.barrier_preview.value,
         "barrier_preview_violations": [v.to_dict() for v in result.preview_violations],
+    }
+
+
+def _context_meta(result: PipelineResult) -> dict[str, Any]:
+    """Stage outcomes for the governance envelope context."""
+    return {
+        "tiers_passed": [
+            name for name, outcome in result.stage_outcomes if outcome == "PASS"
+        ],
     }

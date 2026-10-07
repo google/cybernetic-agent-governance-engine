@@ -511,6 +511,9 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
     resp = await stack.validate(trade(0.98))
     assert resp.status_code == 200, resp.text
     envelope = resp.json()
+    assert envelope["envelope_version"] == "3.0"
+    assert "external_attestations" not in envelope["payload"]
+    assert "warrant" in envelope["governance_context"]["tiers_passed"]
     body = unwrap_governance_envelope(envelope)
     assert body["verdict"] == GovernanceDecision.ALLOW
     (attestation,) = envelope["external_attestations"]
@@ -533,7 +536,10 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
         for f, prev in await stack.chain()
         if f["event_type"] == "GOVERNANCE_DECISION"
     ]
-    (reliance,) = _payload(decision)["reliance"]
+    decision_payload = _payload(decision)
+    assert decision["control_id"] == "agentic_scope_statement"
+    assert len(decision_payload["params_hash"]) == 64
+    (reliance,) = decision_payload["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"
     assert reliance["warrant_id"] == "warrant-veip-2026-001"
     assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST
@@ -648,11 +654,16 @@ async def test_bc_ineligible_warrant_defers_with_reliance_and_actuates_nothing(
 
     resp = await stack.validate(trade(0.98))
     assert resp.status_code == 200, resp.text
+    raw_envelope = resp.json()
+    assert raw_envelope["envelope_version"] == "3.0"
+    assert "opa" in raw_envelope["governance_context"]["tiers_passed"]
+    assert "warrant" not in raw_envelope["governance_context"]["tiers_passed"]
     body = _body(resp)
     assert body["verdict"] == GovernanceDecision.DEFER  # never DENY
     assert body["defer_reason"] == DeferReason.WARRANT_INELIGIBLE.value
     assert "seal" not in body
-    assert any(f"RELIANCE_{status}" in str(v) for v in body["violations"])
+    assert all(isinstance(v, dict) and "bound" not in v for v in body["violations"])
+    assert any(v["code"] == f"RELIANCE_{status}" for v in body["violations"])
     (reliance,) = body["reliance"]
     assert reliance["reliance_status"] == status
     assert reliance["verification_status"] == "UNVERIFIED"
@@ -661,13 +672,22 @@ async def test_bc_ineligible_warrant_defers_with_reliance_and_actuates_nothing(
         assert reliance["warrant_digest"] == seed.digest
 
     # Refusals are primary evidence: the parked token and the hash-chained
-    # deferral event both carry the same reliance record.
+    # deferral event both carry the same reliance record and structured violations.
     token = await DeferQueue(stack.defer_redis).get(body["defer_token"])
     assert token is not None
     assert token.defer_reason is DeferReason.WARRANT_INELIGIBLE
     assert token.opa_input_snapshot["reliance"] == [reliance]
+    assert all(
+        isinstance(v, dict) and v["tier"] == "warrant"
+        for v in token.opa_input_snapshot["violations"]
+    )
     (deferral,) = await stack.records("GOVERNANCE_DEFERRAL")
-    assert _payload(deferral)["reliance"] == [reliance]
+    deferral_payload = _payload(deferral)
+    assert deferral["control_id"] == "CTRL_AGT_001"
+    assert deferral_payload["controlId"] == "CTRL_AGT_001"
+    assert len(deferral_payload["params_hash"]) == 64
+    assert deferral_payload["violations"] == token.opa_input_snapshot["violations"]
+    assert deferral_payload["reliance"] == [reliance]
     assert await stack.records("GOVERNANCE_REFUSAL") == []
 
     # The committing run defers too, with the same reliance: never a DENY.

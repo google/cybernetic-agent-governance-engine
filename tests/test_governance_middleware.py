@@ -904,10 +904,11 @@ class TestFlowSignalHttp202Receipt:
                 json={"action": "execute_trade", "params": {"amount": 1000}},
             )
 
-        # Non-FlowSignal DEFER should return 200 (current behavior preserved)
+        # Non-FlowSignal DEFER should return 200 wrapped in canonical v3.0 envelope
         assert resp.status_code == 200
         data = resp.json()
-        assert data["verdict"] == "DEFER"
+        assert data["envelope_version"] == "3.0"
+        assert data["payload"]["verdict"] == "DEFER"
 
     def test_external_hold_without_marker_returns_202(
         self, client_for_flowsignal, mock_kms_signer
