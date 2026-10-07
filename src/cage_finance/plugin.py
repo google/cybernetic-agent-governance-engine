@@ -49,7 +49,6 @@ from src.gateway.governance.contracts import (
     PluginContribution,
 )
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +88,16 @@ class FinanceCagePlugin(CagePlugin):
             load_finance_thresholds,
         )
         from src.cage_finance.tools.trade_inputs import (
+            TRADE_ACTIONS,
             ServerTradeInputs,
             TradeInputResolver,
         )
+        from src.gateway.governance.schemas import thresholds as thresholds_module
 
         # The region's effective domains.finance (regional overlay applied).
+        # The bounding contracts read the same thresholds object, so B1/B2
+        # use the region's limits too.
+        effective = thresholds_module.THRESHOLDS
         finance = load_finance_thresholds()
         cash_barrier = CashBarrier(gamma=finance.cbf.gamma)
         cash_provider = SimulatedCashLedgerProvider(
@@ -110,8 +114,8 @@ class FinanceCagePlugin(CagePlugin):
         # and rollback capability (they fail closed in production).
         bounding_registry = BoundingContractRegistry(
             thresholds={
-                **THRESHOLDS.model_dump(),
-                **THRESHOLDS.domains.get("finance", {}),
+                **effective.model_dump(),
+                **effective.domains.get("finance", {}),
             },
             market_data_provider=StubMarketDataProvider(),
             rollback_provider=StubRollbackCapabilityProvider(),
@@ -139,6 +143,15 @@ class FinanceCagePlugin(CagePlugin):
             bounding_registry=bounding_registry,
             trade_confidence=trade_confidence,
         )
+        # One resolver serves every path that evaluates a trade (the
+        # validate-action and MCP previews and the committing run) for both
+        # trade actions, so a bounded trade's B2 drawdown is measured too.
+        trade_inputs = TradeInputResolver(
+            ServerTradeInputs(
+                market_feed=SimulatedMarketQuoteFeed(),
+                nav_source=SimulatedPortfolioNavSource.from_env(),
+            )
+        )
         return PluginContribution(
             domain=self.name,
             tiers=tiers,
@@ -157,16 +170,7 @@ class FinanceCagePlugin(CagePlugin):
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},
             norm_bindings=(trade_confidence,),
-            # One resolver serves every path that evaluates a trade: the
-            # validate-action and MCP previews and the committing run.
-            server_inputs={
-                "execute_trade": TradeInputResolver(
-                    ServerTradeInputs(
-                        market_feed=SimulatedMarketQuoteFeed(),
-                        nav_source=SimulatedPortfolioNavSource.from_env(),
-                    )
-                )
-            },
+            server_inputs=dict.fromkeys(TRADE_ACTIONS, trade_inputs),
         )
 
 

@@ -81,19 +81,21 @@ than :data:`MAX_CLOCK_SKEW_S` of future skew. One snapshot is fetched per
 trade, so ``drawdown`` and ``portfolio_total`` always describe the same
 moment.
 
-:class:`TradeInputResolver` is the finance plugin's ``execute_trade``
-:class:`~src.gateway.governance.contracts.ServerInputResolver`. The kernel
-applies it on every path that evaluates a trade (``validate-action`` and the
-other previews, and the committing run in the trade tool). It drops any caller
-value for these keys, including the UCA-5 aliases ``portfolio_drawdown_pct``
-and ``current_drawdown``, so a preview and the binding run see the same
-measured values.
+:class:`TradeInputResolver` is the finance plugin's
+:class:`~src.gateway.governance.contracts.ServerInputResolver` for every
+action in :data:`TRADE_ACTIONS` (``execute_trade`` and
+``execute_trade_bounded``, whose bounding contract B2 reads ``drawdown``). The
+kernel applies it on every path that evaluates a trade (``validate-action``
+and the other previews, and the committing run in the trade tool). It drops
+any caller value for these keys, including the UCA-5 aliases
+``portfolio_drawdown_pct`` and ``current_drawdown``, so a preview and the
+binding run see the same measured values.
 
 Fail closed: if a source is missing, times out, or returns a reading that
 fails validation, or ``amount`` is not a usable number, the input is left out
-of the params. The generated UCA-2 / UCA-5 / UCA-6 / UCA-13 rules then refuse
-the trade inside the governor, which records the refusal in the evidence
-chain.
+of the params. The generated UCA-2 / UCA-5 / UCA-6 / UCA-13 rules (and, for a
+bounded trade, B2) then refuse the trade inside the governor, which records
+the refusal in the evidence chain.
 """
 
 from __future__ import annotations
@@ -482,9 +484,13 @@ class ServerTradeInputs:
         return inputs
 
 
-#: Every ``execute_trade`` param a UCA-2 / UCA-5 / UCA-6 / UCA-13 rule reads as
-#: measured state, including UCA-5's aliases (``trade_hazards.yaml``). Only the
-#: gateway sets these; a caller value is always dropped.
+#: The actions that place a trade. Each gets :class:`TradeInputResolver`.
+TRADE_ACTIONS: tuple[str, ...] = ("execute_trade", "execute_trade_bounded")
+
+#: Every trade param a UCA-2 / UCA-5 / UCA-6 / UCA-13 rule or bounding contract
+#: B2 reads as measured state, including UCA-5's aliases
+#: (``trade_hazards.yaml``). Only the gateway sets these; a caller value is
+#: always dropped.
 TRADE_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
     {
         "latency_ms",
@@ -500,7 +506,9 @@ TRADE_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class TradeInputResolver:
-    """``execute_trade`` server-input resolver over :class:`ServerTradeInputs`.
+    """Trade server-input resolver over :class:`ServerTradeInputs`.
+
+    Registered for every action in :data:`TRADE_ACTIONS`.
 
     Reads ``symbol``, ``side`` and ``amount`` from the (already stripped)
     params. A missing symbol resolves nothing, so UCA-2 / UCA-5 / UCA-6
@@ -528,6 +536,7 @@ __all__ = [
     "MAX_CLOCK_SKEW_S",
     "MAX_DAILY_VOLUME_AGE_S",
     "MAX_NAV_AGE_S",
+    "TRADE_ACTIONS",
     "TRADE_SERVER_INPUT_KEYS",
     "DailyVolume",
     "MarketQuote",

@@ -98,7 +98,12 @@ class BoundingContractRegistry:
             self.enabled_contracts,
         )
 
-    def evaluate_all(self, request: BoundedTradeRequest) -> list[ContractResult]:
+    def evaluate_all(
+        self,
+        request: BoundedTradeRequest,
+        *,
+        current_drawdown: float | None = None,
+    ) -> list[ContractResult]:
         """Evaluate every enabled contract in order (B1, B2, ..., B10).
 
         Stops at the first HARD_BLOCK failure (fail-fast).  A closed B10
@@ -106,13 +111,18 @@ class BoundingContractRegistry:
 
         Args:
             request: Bounded trade request to validate
+            current_drawdown: The portfolio's measured daily drawdown as a
+                fraction (0.0-1.0), for B2. ``None`` (not measured) makes B2
+                refuse.
 
         Returns:
             One ContractResult per evaluated contract.
         """
         results: list[ContractResult] = []
         for contract_id in self.enabled_contracts:
-            result = self._evaluate_contract(contract_id, request)
+            result = self._evaluate_contract(
+                contract_id, request, current_drawdown=current_drawdown
+            )
             results.append(result)
             if not result.admitted and result.severity == ContractSeverity.HARD_BLOCK:
                 logger.info(
@@ -123,13 +133,18 @@ class BoundingContractRegistry:
         return results
 
     def _evaluate_contract(
-        self, contract_id: str, request: BoundedTradeRequest
+        self,
+        contract_id: str,
+        request: BoundedTradeRequest,
+        *,
+        current_drawdown: float | None = None,
     ) -> ContractResult:
         """Evaluate a single bounding contract.
 
         Args:
             contract_id: Contract identifier (B1-B10)
             request: Bounded trade request to validate
+            current_drawdown: Measured daily drawdown fraction, for B2
 
         Returns:
             The contract's ContractResult
@@ -141,8 +156,10 @@ class BoundingContractRegistry:
             return contract_b1_max_notional(request, self.thresholds)
 
         elif contract_id == "B2":
-            # B2 uses existing drawdown thresholds, no provider needed
-            return contract_b2_drawdown_breaker(request, self.thresholds)
+            # B2 compares the server-measured drawdown with drawdown.limit.
+            return contract_b2_drawdown_breaker(
+                request, self.thresholds, current_drawdown=current_drawdown
+            )
 
         elif contract_id == "B3":
             if self.market_data_provider is None:

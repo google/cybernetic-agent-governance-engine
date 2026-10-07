@@ -1077,7 +1077,10 @@ system-security-plan:
         the caller''s notional amount divided by the verified quote price, and daily_vol
         is the symbol''s average daily volume from the market-data feed (verified
         source, traded symbol, finite and positive, at most four days old), both bound
-        server-side by TradeInputResolver. Kubernetes ConfigMaps and Cloud Secret
+        server-side by TradeInputResolver. The same resolver is registered for execute_trade_bounded,
+        and bounding contract B2 compares the drawdown the gateway measured (never
+        a caller value) with drawdown.limit (US_FED 5%); an unmeasured drawdown is
+        a HARD refusal (POAM-2026-108 closed). Kubernetes ConfigMaps and Cloud Secret
         Manager provide the configuration injection mechanism. IaC (Terraform) manages
         infrastructure configuration in version-controlled HCL.
 

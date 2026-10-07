@@ -35,6 +35,26 @@ from src.gateway.governance.contracts import (
 
 logger = logging.getLogger(__name__)
 
+#: The params this tier reads as measured state. The finance plugin's
+#: ``execute_trade_bounded`` server-input resolver owns them, so the gateway
+#: drops any caller value and binds its own reading on every path (previews
+#: and the committing run).
+BOUNDING_SERVER_INPUT_KEYS: frozenset[str] = frozenset({"drawdown"})
+
+
+def bound_drawdown_fraction(params: dict[str, Any]) -> float | None:
+    """Return the bound daily drawdown as a fraction, or ``None``.
+
+    ``drawdown`` is the percent the finance resolver measures from one
+    verified NAV snapshot; B2's ``drawdown.limit`` is a fraction. A missing or
+    non-numeric value is ``None`` and a non-finite one stays non-finite, so B2
+    refuses both.
+    """
+    raw = params.get("drawdown")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return float(raw) / 100.0
+
 
 class BoundingContractTierPlugin(ReadOnlyTier):
     """Bounding contract tier (phase 1, order 2).
@@ -49,7 +69,13 @@ class BoundingContractTierPlugin(ReadOnlyTier):
     - Converts ContractResult → Violation
     - HARD_BLOCK severity → ViolationKind.HARD
     - HITL_ESCALATE severity → ViolationKind.HITL (parks in DeferQueue)
+
+    B2 reads ``drawdown`` (:data:`BOUNDING_SERVER_INPUT_KEYS`), which only the
+    gateway sets; the request fields are the caller's order.
     """
+
+    #: Server-bound params this tier reads (see the module constant).
+    server_input_keys: frozenset[str] = BOUNDING_SERVER_INPUT_KEYS
 
     def __init__(self, registry: BoundingContractRegistry):
         """Initialize with bounding contract registry.
@@ -111,7 +137,9 @@ class BoundingContractTierPlugin(ReadOnlyTier):
 
         # Evaluate all contracts via registry; a closed B10 rollback window
         # comes back as a HITL result and parks the request for approval.
-        results = self.registry.evaluate_all(request)
+        results = self.registry.evaluate_all(
+            request, current_drawdown=bound_drawdown_fraction(params)
+        )
         return [
             self._contract_result_to_violation(result)
             for result in results

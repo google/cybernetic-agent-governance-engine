@@ -592,8 +592,10 @@ class ServerInputResolver(Protocol):
     value (fail closed).
     """
 
-    #: Params this resolver alone may set for its action.
-    owned_keys: frozenset[str]
+    @property
+    def owned_keys(self) -> frozenset[str]:
+        """Params this resolver alone may set for its action (read-only)."""
+        ...
 
     async def resolve(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         """Return values for (a subset of) ``owned_keys``.
