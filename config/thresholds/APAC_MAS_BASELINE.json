@@ -34,8 +34,11 @@
         "_comment_fin2": "FIN-2 (MAS): maximum 175ms round-trip latency. MAS TRM Guidelines §7.2 require financial institutions to define and monitor recovery time and recovery point objectives; 175ms is the MAS-expected baseline for AI-driven trade execution systems."
       },
       "confidence": {
-        "min_trade_confidence": 0.96,
-        "_comment": "[CTRL_AGT_001] MAS FEAT Fairness Principle F1 requires AI decisions to be regularly tested for bias and explainability. Confidence threshold of 0.96 reflects MAS expectation that AI systems operating in customer-facing financial contexts must demonstrate high reliability. MAS TRM Guidelines §6.3 require documented confidence thresholds in the AI governance framework. Enforced for trade execution by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py)."
+        "min_trade_confidence": {
+          "value": 0.96,
+          "requires_warrant": false
+        },
+        "_comment": "[CTRL_AGT_001] MAS FEAT Fairness Principle F1 requires AI decisions to be regularly tested for bias and explainability. Confidence threshold of 0.96 reflects MAS expectation that AI systems operating in customer-facing financial contexts must demonstrate high reliability. MAS TRM Guidelines §6.3 require documented confidence thresholds in the AI governance framework. Enforced for trade execution by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py). requires_warrant stays false until a warrant from a MAS-side issuing authority exists."
       },
       "consensus": {
         "threshold_usd": 8500.0,

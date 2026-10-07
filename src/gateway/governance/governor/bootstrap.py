@@ -37,7 +37,11 @@ def bootstrap_governor(**assembly_overrides: Any) -> SymbolicGovernor:
     """Load ``CAGE_DOMAIN``, assemble, check posture; return the governor.
 
     ``assembly_overrides`` are passed to :func:`assemble_governor` (e.g. a
-    shared ``opa`` client).
+    shared ``opa`` client). Unless overridden, ``warrant_source`` is the
+    adapter named by ``CAGE_WARRANT_SOURCE``
+    (:func:`~src.gateway.governance.warrant.source_factory.warrant_source_from_env`),
+    or ``None`` when unset; assembly then refuses any norm the region marks
+    ``requires_warrant``.
 
     Raises:
         RuntimeError: No usable domain plugin, or the domain left an engine
@@ -53,6 +57,12 @@ def bootstrap_governor(**assembly_overrides: Any) -> SymbolicGovernor:
     posture = resolve_posture()
     plugin = load_domain_plugin()
     domain_config_of(plugin)  # before assembly: never half-activate a domain
+    if "warrant_source" not in assembly_overrides:
+        from src.gateway.governance.warrant.source_factory import (
+            warrant_source_from_env,
+        )
+
+        assembly_overrides["warrant_source"] = warrant_source_from_env()
     governor = assemble_governor([plugin], posture=posture, **assembly_overrides)
     if governor.components.unfilled_slots:
         raise RuntimeError(

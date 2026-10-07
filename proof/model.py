@@ -166,8 +166,16 @@ TIER_PHASE: dict[str, int] = dict.fromkeys(TIERS, 1) | {"cbf": 2, "fiscal": 2}
 # skip them after approval.
 PLUGIN_TIER_PHASE: dict[str, int] = {"domain_barrier": 2}
 
-# Read-only tiers re-checked after approval (policy may change while waiting).
-POST_HITL_READ_ONLY_TIERS: frozenset[str] = frozenset({"opa"})
+# The kernel warrant reliance gate (``governor/stages/warrant.py``). Like
+# PLUGIN_TIER_PHASE it is named but not in TIERS: it exists only when a region
+# marks a norm requires_warrant, adds no proof states, and its findings are
+# modelled through verdict_of (RELIANCE_INELIGIBLE). It is read-only.
+WARRANT_TIER = "warrant"
+WARRANT_TIER_PHASE: dict[str, int] = {WARRANT_TIER: 1}
+
+# Read-only tiers re-checked after approval: policy may change, and a warrant
+# may be revoked, while the request waits (TOCTOU).
+POST_HITL_READ_ONLY_TIERS: frozenset[str] = frozenset({"opa", WARRANT_TIER})
 
 
 def runs_under_profile(profile: str, tier: str, phase: int) -> bool:
@@ -285,7 +293,19 @@ def jurisdiction_keeps_post_hitl_set() -> bool:
 # for the outcome, by ``run_pipeline`` + ``ClassificationEngine`` (parity in
 # ``tests/test_formal_profile_parity.py``). Kinds mirror ``contracts.ViolationKind``.
 
-VIOLATION_KINDS: tuple[str, ...] = ("HARD", "HITL", "DEFERRABLE", "NARROWABLE")
+VIOLATION_KINDS: tuple[str, ...] = (
+    "HARD",
+    "HITL",
+    "DEFERRABLE",
+    "NARROWABLE",
+    "RELIANCE_INELIGIBLE",
+)
+
+# A finding that removes CAGE's right to rely on a norm (its warrant failed
+# standing verification). Emitted by the read-only ``warrant`` stage, which
+# runs only for norms a region marks ``requires_warrant`` and adds no proof
+# states of its own: its findings are covered here, by kind.
+RELIANCE_KIND = "RELIANCE_INELIGIBLE"
 
 
 def phase2_mode(profile: str, phase1_kinds: frozenset[str]) -> str:
@@ -298,20 +318,32 @@ def phase2_mode(profile: str, phase1_kinds: frozenset[str]) -> str:
     return "COMMIT"
 
 
+def awaits_approval(phase1_kinds: frozenset[str]) -> bool:
+    """Phase 1 left the request for a human: HITL, and neither HARD nor a
+    norm CAGE may not rely on (a human cannot repair a warrant: DEFER)."""
+    return "HITL" in phase1_kinds and not phase1_kinds & {"HARD", RELIANCE_KIND}
+
+
 def pending_approval_outcome(
     phase1_kinds: frozenset[str], preview_kinds: frozenset[str]
 ) -> tuple[str, str]:
-    """CHECKING → (DENIED | REQUIRE_APPROVAL, barrier_preview ∈ {PASS, FAIL}).
+    """CHECKING → (DENIED | DEFER | REQUIRE_APPROVAL, barrier_preview ∈ {PASS, FAIL}).
 
-    Defined for an approval-pending phase 1 (HITL present, no HARD): the
-    barriers are previewed, a HARD preview denies outright, and otherwise the
-    request waits for a human with the preview's result recorded.
+    Defined for an approval-pending phase 1 (:func:`awaits_approval`): the
+    barriers are previewed, a HARD preview denies outright, a preview that
+    removes reliance on a norm defers, and otherwise the request waits for a
+    human with the preview's result recorded.
     """
-    if "HITL" not in phase1_kinds or "HARD" in phase1_kinds:
-        raise ValueError("pending_approval_outcome needs a HITL, non-HARD phase 1")
+    if not awaits_approval(phase1_kinds):
+        raise ValueError(
+            "pending_approval_outcome needs a HITL phase 1 without HARD or "
+            "RELIANCE_INELIGIBLE"
+        )
     barrier_preview = "FAIL" if preview_kinds else "PASS"
     if "HARD" in preview_kinds:
         return "DENIED", barrier_preview
+    if RELIANCE_KIND in preview_kinds:
+        return "DEFER", barrier_preview
     return "REQUIRE_APPROVAL", barrier_preview
 
 
@@ -333,16 +365,21 @@ def no_commit_under_pending_findings() -> bool:
 
 def hard_preview_denies_before_hitl() -> bool:
     """Claim: with approval pending, the barriers are previewed, a HARD
-    preview yields DENIED (no human is asked), and every REQUIRE_APPROVAL
-    records the preview's outcome (FAIL iff a barrier reported anything)."""
+    preview yields DENIED (no human is asked), a non-HARD preview that
+    removes reliance on a norm yields DEFER (no human is asked either), and
+    every REQUIRE_APPROVAL records the preview's outcome (FAIL iff a barrier
+    reported anything)."""
     for phase1 in _kind_sets():
-        if "HITL" not in phase1 or "HARD" in phase1:
+        if not awaits_approval(phase1):
             continue
         if any(phase2_mode(p, phase1) != "PREVIEW" for p in PROFILES):
             return False
         for preview in _kind_sets():
             outcome, barrier_preview = pending_approval_outcome(phase1, preview)
             if ("HARD" in preview) != (outcome == "DENIED"):
+                return False
+            ineligible = RELIANCE_KIND in preview and "HARD" not in preview
+            if ineligible != (outcome == "DEFER"):
                 return False
             if (barrier_preview == "FAIL") != bool(preview):
                 return False
@@ -370,13 +407,19 @@ def verdict_of(
     manual_review: bool = False,
     defer_enabled: bool = True,
 ) -> str:
-    """HARD > (MANUAL_REVIEW | HITL) > all-NARROWABLE + proposal > DEFERRABLE
-    with low confidence > DENY. ``narrows`` = NARROW enabled and a narrower
-    proposes clamped params. No findings is ALLOW."""
+    """HARD > RELIANCE_INELIGIBLE > (MANUAL_REVIEW | HITL) > all-NARROWABLE +
+    proposal > DEFERRABLE with low confidence > DENY. ``narrows`` = NARROW
+    enabled and a narrower proposes clamped params. No findings is ALLOW.
+
+    RELIANCE_INELIGIBLE defers whatever the confidence; with DEFER disabled
+    it would deny, but no governor with a warranted norm is assembled then
+    (:func:`warranted_assembly_admissible`)."""
     if not kinds:
         return "ALLOW"
     if "HARD" in kinds:
         return "DENY"
+    if RELIANCE_KIND in kinds:
+        return "DEFER" if defer_enabled else "DENY"
     if manual_review or "HITL" in kinds:
         return "REQUIRE_APPROVAL"
     if kinds == frozenset({"NARROWABLE"}) and narrows:
@@ -393,24 +436,96 @@ def _verdict_inputs() -> Iterator[tuple[frozenset[str], bool, bool, bool, bool]]
 
 
 def verdict_lattice_holds() -> bool:
-    """Claims: any HARD finding denies; DEFER needs a DEFERRABLE finding and
-    low confidence; NARROW needs every finding NARROWABLE; a seal-issuing
-    verdict (ALLOW, NARROW) never coexists with a HARD, HITL or DEFERRABLE
-    finding; ALLOW iff no findings."""
+    """Claims: any HARD finding denies; a RELIANCE_INELIGIBLE finding without
+    HARD defers (never DENY, never a seal, never a human) whenever DEFER is
+    enabled; DEFER needs DEFER enabled and either RELIANCE_INELIGIBLE or a
+    DEFERRABLE finding with low confidence; NARROW needs every finding
+    NARROWABLE; a seal-issuing verdict (ALLOW, NARROW) never coexists with a
+    HARD, HITL, DEFERRABLE or RELIANCE_INELIGIBLE finding; ALLOW iff no
+    findings."""
     for kinds, low, nar, mr, de in _verdict_inputs():
         v = verdict_of(
             kinds, low_confidence=low, narrows=nar, manual_review=mr, defer_enabled=de
         )
         if "HARD" in kinds and v != "DENY":
             return False
-        if v == "DEFER" and not ("DEFERRABLE" in kinds and low):
+        if RELIANCE_KIND in kinds and "HARD" not in kinds and de and v != "DEFER":
+            return False
+        if v == "DEFER" and not (
+            de and (RELIANCE_KIND in kinds or ("DEFERRABLE" in kinds and low))
+        ):
             return False
         if v == "NARROW" and kinds != frozenset({"NARROWABLE"}):
             return False
-        if v in SEALING_VERDICTS and kinds & {"HARD", "HITL", "DEFERRABLE"}:
+        if v in SEALING_VERDICTS and kinds & {
+            "HARD",
+            "HITL",
+            "DEFERRABLE",
+            RELIANCE_KIND,
+        }:
             return False
         if (v == "ALLOW") != (not kinds):
             return False
+    return True
+
+
+def warranted_assembly_admissible(
+    *, has_warranted_norm: bool, defer_enabled: bool, has_source: bool
+) -> bool:
+    """Whether a governor is assembled, as far as warranted norms go: a
+    norm a region marks ``requires_warrant`` needs a warrant source and DEFER.
+    Mirrored by ``src/gateway/governance/governor/assembly.py::
+    warranted_assembly_admissible`` (``tests/test_formal_profile_parity.py``)."""
+    return not has_warranted_norm or (defer_enabled and has_source)
+
+
+def warranted_norm_never_fabricates_deny() -> bool:
+    """Claim: in every assembly admitted with a warranted norm, a warrant
+    failure (RELIANCE_INELIGIBLE) without an independent HARD finding is
+    DEFER — never a fabricated DENY — and a HARD finding still denies (a
+    warrant failure never masks a DENY)."""
+    for has_source, de in product((False, True), repeat=2):
+        if not warranted_assembly_admissible(
+            has_warranted_norm=True, defer_enabled=de, has_source=has_source
+        ):
+            continue
+        for kinds, low, nar, mr, _de in _verdict_inputs():
+            if RELIANCE_KIND not in kinds:
+                continue
+            v = verdict_of(
+                kinds,
+                low_confidence=low,
+                narrows=nar,
+                manual_review=mr,
+                defer_enabled=de,
+            )
+            if v != ("DENY" if "HARD" in kinds else "DEFER"):
+                return False
+    return True
+
+
+def post_hitl_rechecks_warrant() -> bool:
+    """Claim: a warrant revoked between approval and execution is caught.
+
+    The warrant tier re-runs under POST_HITL, and any RELIANCE_INELIGIBLE it
+    then reports blocks phase 2 from committing and never reaches a sealing
+    verdict, so the approved request is refused without a seal.
+    """
+    if not runs_under_profile(
+        "POST_HITL", WARRANT_TIER, WARRANT_TIER_PHASE[WARRANT_TIER]
+    ):
+        return False
+    for kinds in _kind_sets():
+        if RELIANCE_KIND not in kinds:
+            continue
+        if phase2_mode("POST_HITL", kinds) == "COMMIT":
+            return False
+        for low, nar, mr in product((False, True), repeat=3):
+            if verdict_of(kinds, low_confidence=low, narrows=nar, manual_review=mr) in (
+                "ALLOW",
+                "NARROW",
+            ):
+                return False
     return True
 
 
@@ -1197,6 +1312,16 @@ def main() -> None:
     print(
         f"  Verdict lattice (only ALLOW/NARROW seal; HARD always denies): {lattice_ok}"
     )
+    warranted_ok = warranted_norm_never_fabricates_deny()
+    print(
+        "  Warranted norms (warrant failure defers, never a fabricated DENY): "
+        f"{warranted_ok}"
+    )
+    warrant_toctou_ok = post_hitl_rechecks_warrant()
+    print(
+        "  POST_HITL re-checks the warrant (revocation after approval refused): "
+        f"{warrant_toctou_ok}"
+    )
 
     # Verify profile ALLOW property
     # under every profile, an ALLOW (SEAL_ISSUED) requires every tier in that profile to PASS.
@@ -1272,6 +1397,12 @@ def main() -> None:
         "PROOF FAILED: I-6 narrow_valid violated by a reachable NARROW state!"
     )
     assert lattice_ok, "PROOF FAILED: verdict lattice violated!"
+    assert warranted_ok, (
+        "PROOF FAILED: a warrant failure fabricates a DENY or masks a HARD finding!"
+    )
+    assert warrant_toctou_ok, (
+        "PROOF FAILED: a warrant revoked after approval can still be sealed!"
+    )
     assert profile_allow_valid, (
         "PROOF FAILED: SEAL_ISSUED requires all profile tiers to pass!"
     )
@@ -1339,8 +1470,16 @@ def main() -> None:
     print("     and the phase-1 jurisdiction tiers leave the POST_HITL set unchanged")
     print(f"     (EU_ECB: {region_results['EU_ECB'][0]} states).")
     print(" 11. Verdict lattice (verdict_of, parity with ClassificationEngine): HARD")
-    print("     always denies, DEFER needs low confidence, and only ALLOW/NARROW")
-    print("     reach SEAL_ISSUED (verdict_lattice_holds).")
+    print("     always denies, RELIANCE_INELIGIBLE defers, DEFER otherwise needs")
+    print("     low confidence, and only ALLOW/NARROW reach SEAL_ISSUED")
+    print("     (verdict_lattice_holds).")
+    print(" 12. Warranted norms: a governor with a norm marked requires_warrant is")
+    print("     assembled only with a warrant source and DEFER enabled, so a warrant")
+    print("     failure defers and never fabricates a DENY, while an independent")
+    print("     HARD finding still denies (warranted_norm_never_fabricates_deny).")
+    print(" 13. The warrant tier re-runs under POST_HITL: a warrant revoked between")
+    print("     approval and execution commits nothing and is never sealed")
+    print("     (post_hitl_rechecks_warrant).")
     print()
     print("PLAUSIBLE (not proved here):")
     print("  That this model generalises to the full production CAGE stack.")

@@ -198,7 +198,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 - CBF: `min_cash_balance: 1000.0`, `gamma: 0.5`
 - Drawdown limit: `0.05` (5%)
 - STPA: UCA-5 threshold 4.5%, UCA-6 max order fraction 1%, max sell fraction 10%, max latency 200 ms
-- Confidence: `domains.finance.confidence.min_trade_confidence: 0.95`; the regional overlay in `config/thresholds/{REGION}_BASELINE.json` raises it to 0.96 (`APAC_MAS`) and 0.97 (`EU_ECB`), enforced for trade execution by `src/cage_finance/tiers/trade_confidence_tier.py`
+- Confidence: `domains.finance.confidence.min_trade_confidence.value: 0.95`; the regional overlay in `config/thresholds/{REGION}_BASELINE.json` raises it to 0.96 (`APAC_MAS`) and 0.97 (`EU_ECB`), enforced for trade execution by `src/cage_finance/tiers/trade_confidence_tier.py`
 - Consensus: `threshold_usd: 10000.0`
 - Tier-1 keywords: 14 bypass/injection phrases
 

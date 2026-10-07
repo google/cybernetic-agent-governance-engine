@@ -67,7 +67,7 @@ Two thresholds apply (`CTRL_AGT_001`):
   `src/gateway/governance/governor/stages/confidence.py` (Tier 2) passes ≥ 0.95, asks for approval
   (REQUIRE_APPROVAL) in 0.70–0.95 and defers below 0.70, for every action. OPA `system_authz.rego`
   (`confidence_sufficient`, ≥ 0.95 for `execute_trade`) repeats the 0.95 floor.
-- **Regional trade floor** (`domains.finance.confidence.min_trade_confidence`): 0.95 globally, raised by
+- **Regional trade floor** (`domains.finance.confidence.min_trade_confidence.value`): 0.95 globally, raised by
   the region's `config/thresholds/{REGION}_BASELINE.json` overlay to 0.96 (`APAC_MAS`) and 0.97
   (`EU_ECB`). `src/cage_finance/tiers/trade_confidence_tier.py` enforces it for trade execution with the
   same band semantics: below the floor, REQUIRE_APPROVAL at or above 0.70, DEFER below.

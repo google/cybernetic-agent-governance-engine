@@ -128,7 +128,8 @@ class TestUSFEDDataResidency:
         assert finance.stpa.uca5_drawdown_threshold_pct > 0
         assert finance.stpa.max_latency_ms > 0
         assert finance.consensus.threshold_usd > 0
-        assert finance.confidence.min_trade_confidence == 0.95
+        assert finance.confidence.min_trade_confidence.value == 0.95
+        assert finance.confidence.min_trade_confidence.requires_warrant is False
 
     def test_us_fed_thresholds_tier1_keywords_present(self) -> None:
         """US_FED_BASELINE.json must include tier1_keywords for prompt injection detection."""

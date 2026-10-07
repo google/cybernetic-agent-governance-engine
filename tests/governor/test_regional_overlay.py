@@ -155,9 +155,10 @@ def test_regional_baselines_carry_no_flat_finance_sections(region: str) -> None:
 
 # ── Effective values per region (all four groups) ────────────────────────────
 
-_EXPECTED: dict[str, dict[str, float]] = {
+_EXPECTED: dict[str, dict[str, float | bool | str]] = {
     "US_FED": {
-        "confidence.min_trade_confidence": 0.95,
+        "confidence.min_trade_confidence.value": 0.95,
+        "confidence.min_trade_confidence.requires_warrant": False,
         "cbf.gamma": 0.5,
         "cbf.min_cash_balance": 1000.0,
         "drawdown.limit": 0.05,
@@ -168,7 +169,9 @@ _EXPECTED: dict[str, dict[str, float]] = {
         "stpa.max_latency_ms": 200.0,
     },
     "EU_ECB": {
-        "confidence.min_trade_confidence": 0.97,
+        "confidence.min_trade_confidence.value": 0.97,
+        "confidence.min_trade_confidence.requires_warrant": True,
+        "confidence.min_trade_confidence.governing_version": "cage-policy-2.1.0",
         "cbf.gamma": 0.6,
         "cbf.min_cash_balance": 1000.0,
         "drawdown.limit": 0.04,
@@ -179,7 +182,8 @@ _EXPECTED: dict[str, dict[str, float]] = {
         "stpa.max_latency_ms": 150.0,
     },
     "APAC_MAS": {
-        "confidence.min_trade_confidence": 0.96,
+        "confidence.min_trade_confidence.value": 0.96,
+        "confidence.min_trade_confidence.requires_warrant": False,
         "cbf.gamma": 0.55,
         "cbf.min_cash_balance": 1000.0,
         "drawdown.limit": 0.045,
@@ -295,11 +299,19 @@ def test_unknown_regional_key_fails_assembly(
 @pytest.mark.parametrize(
     "regional_finance",
     [
-        {"confidence": {"min_trade_confidence": 1.5}},
+        {"confidence": {"min_trade_confidence": {"value": 1.5}}},
+        {"confidence": {"min_trade_confidence": {"requires_warrant": True}}},
+        {"confidence": {"min_trade_confidence": {"requires_warrant": "yes"}}},
         {"cbf": {"gamma": 0.0}},
         {"drawdown": {"limit": "4%"}},
     ],
-    ids=["confidence-above-one", "gamma-zero", "drawdown-not-a-number"],
+    ids=[
+        "confidence-above-one",
+        "warranted-without-governing-version",
+        "requires-warrant-not-a-bool",
+        "gamma-zero",
+        "drawdown-not-a-number",
+    ],
 )
 def test_invalid_regional_value_fails_assembly(
     monkeypatch: pytest.MonkeyPatch, regional_finance: dict[str, Any]
@@ -310,7 +322,7 @@ def test_invalid_regional_value_fails_assembly(
 
 def test_valid_regional_override_assembles(monkeypatch: pytest.MonkeyPatch) -> None:
     governor = _assemble_with_overlay(
-        monkeypatch, {"confidence": {"min_trade_confidence": 0.99}}
+        monkeypatch, {"confidence": {"min_trade_confidence": {"value": 0.99}}}
     )
     assert governor is not None
 

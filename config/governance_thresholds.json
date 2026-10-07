@@ -69,8 +69,11 @@
         "_comment": "Trades above this USD amount trigger the multi-agent consensus check."
       },
       "confidence": {
-        "min_trade_confidence": 0.95,
-        "_comment": "[CTRL_AGT_001] Floor on agent confidence for trade execution, enforced by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py) with the universal band semantics: below it, HITL at or above confidence.defer_floor, DEFERRABLE below. Regions raise it in config/thresholds/{REGION}_BASELINE.json (domains.finance.confidence). Distinct from the region-neutral confidence.agent_threshold."
+        "min_trade_confidence": {
+          "value": 0.95,
+          "requires_warrant": false
+        },
+        "_comment": "[CTRL_AGT_001] Floor on agent confidence for trade execution, enforced by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py) with the universal band semantics: below it, HITL at or above confidence.defer_floor, DEFERRABLE below. Regions raise it in config/thresholds/{REGION}_BASELINE.json (domains.finance.confidence). Distinct from the region-neutral confidence.agent_threshold. requires_warrant (regional decision) makes reliance on the floor conditional on a verified institutional warrant fetched from the configured warrant source (CAGE_WARRANT_SOURCE) and gated by the kernel warrant stage; governing_version is required with it and names the version the warrant must be issued for. Changing a warranted value requires a new governing_version and a re-issued warrant."
       },
       "bounding": {
         "_comment": "Phase 5: Bounding contracts B1–B10 for execute_trade_bounded verb. All contracts enabled by default for reference architecture demonstration. Production deployments should tune thresholds per risk appetite.",

@@ -69,7 +69,12 @@ from src.gateway.governance.jurisdiction.eu_ai_act.fria_tier import (
 )
 from src.gateway.governance.normative_provider import StubNormativeProvider
 from src.gateway.governance.seams.normative import ValidationResult
-from tests.fixtures.governor import allow_opa, clean_stpa, default_classifier
+from tests.fixtures.governor import (
+    StaticWarrantSource,
+    allow_opa,
+    clean_stpa,
+    default_classifier,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -133,15 +138,18 @@ def _tier(
 
 
 def _assemble(
-    *, jurisdiction: JurisdictionContribution | None = None
+    *, jurisdiction: JurisdictionContribution | None = None, warranted: bool = False
 ) -> SymbolicGovernor:
+    """``warranted`` wires what an EU_ECB governor needs for its warranted
+    trade-confidence norm: DEFER enabled and a warrant source."""
     return assemble_governor(
         [FinanceCagePlugin()],
         posture=DeploymentPosture.TEST,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
-        flags=DecisionFlags(defer=False, narrow=False),
+        flags=DecisionFlags(defer=warranted, narrow=False),
         jurisdiction=jurisdiction,
+        warrant_source=StaticWarrantSource.eligible() if warranted else None,
     )
 
 
@@ -198,7 +206,10 @@ def test_eu_governor_runs_fria_once_in_phase_one_after_causal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _use_region_thresholds(monkeypatch, "EU_ECB")
-    governor = _assemble(jurisdiction=eu_ai_act.contribution(provider=_FakeProvider()))  # type: ignore[arg-type]
+    governor = _assemble(
+        jurisdiction=eu_ai_act.contribution(provider=_FakeProvider()),  # type: ignore[arg-type]
+        warranted=True,
+    )
     names = _domain_stage_names(governor)
     assert names.count("fria") == 1
     assert names == [
@@ -235,7 +246,7 @@ def test_eu_region_resolves_to_fria_through_control_registry(
 ) -> None:
     ControlRegistry.reconfigure("EU_ECB")  # restored by the conftest fixture
     _use_region_thresholds(monkeypatch, "EU_ECB")
-    governor = _assemble()
+    governor = _assemble(warranted=True)
     assert governor.components.jurisdiction is not None
     assert governor.components.jurisdiction.region == "EU_ECB"
     assert _domain_stage_names(governor).count("fria") == 1

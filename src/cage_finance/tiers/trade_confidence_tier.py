@@ -25,40 +25,79 @@ the kernel stage: a score below the floor needs human approval (HITL) when it
 is at or above the universal ``confidence.defer_floor``, and defers
 (DEFERRABLE) below it. A missing or malformed score is a HARD violation; the
 kernel stage refuses it too, so this tier never relaxes that outcome.
+
+The floor is declared to the kernel as a :class:`NormBinding`
+(``confidence.min_trade_confidence``). The tier is built from that binding,
+so the value it enforces is by construction the value the binding (and any
+warrant for it) refers to. When the region marks the norm
+``requires_warrant`` (EU_ECB), the kernel ``WarrantStage`` gates reliance on
+it; a warrant failure (``RELIANCE_INELIGIBLE``) outranks every finding this
+tier can raise except HARD, and a HARD here (a malformed score) is invalid
+under any floor.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.gateway.governance.constants import GovernanceControl
-from src.gateway.governance.contracts import ReadOnlyTier, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    NormBinding,
+    ReadOnlyTier,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
+
+if TYPE_CHECKING:
+    from src.cage_finance.thresholds import MinTradeConfidenceNorm
 
 #: Finance actions that execute a trade (``finance_cost_resolver`` charges them).
 TRADE_EXECUTION_ACTIONS: frozenset[str] = frozenset(
     {"execute_trade", "execute_trade_bounded"}
 )
 
+#: Issuer-facing identifier of the trade-confidence floor (warrant ``norm_id``).
+TRADE_CONFIDENCE_NORM_ID = "confidence.min_trade_confidence"
+
 _CONTROL = GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value
+
+
+def trade_confidence_norm_binding(norm: MinTradeConfidenceNorm) -> NormBinding:
+    """The kernel binding for the region's effective trade-confidence floor."""
+    return NormBinding(
+        norm_id=TRADE_CONFIDENCE_NORM_ID,
+        value=norm.value,
+        requires_warrant=norm.requires_warrant,
+        actions=TRADE_EXECUTION_ACTIONS,
+        governing_version=norm.governing_version,
+    )
 
 
 class TradeConfidenceTier(ReadOnlyTier):
     """Refuse trade execution below the region's confidence floor."""
 
-    def __init__(self, min_trade_confidence: float) -> None:
+    def __init__(self, norm: NormBinding) -> None:
         if (
-            isinstance(min_trade_confidence, bool)
-            or not isinstance(min_trade_confidence, (int, float))
-            or not math.isfinite(min_trade_confidence)
-            or not 0.0 < min_trade_confidence <= 1.0
+            not isinstance(norm, NormBinding)
+            or norm.norm_id != TRADE_CONFIDENCE_NORM_ID
         ):
             raise ValueError(
-                "min_trade_confidence must be a finite number in (0, 1], "
-                f"got {min_trade_confidence!r}"
+                f"TradeConfidenceTier needs the {TRADE_CONFIDENCE_NORM_ID!r} NormBinding"
             )
-        self._floor = float(min_trade_confidence)
+        if not 0.0 < norm.value <= 1.0:
+            raise ValueError(
+                "min_trade_confidence must be a finite number in (0, 1], "
+                f"got {norm.value!r}"
+            )
+        self._norm = norm
+        self._floor = float(norm.value)
+
+    @property
+    def norm_binding(self) -> NormBinding:
+        """The binding whose value this tier enforces."""
+        return self._norm
 
     @property
     def min_trade_confidence(self) -> float:
@@ -112,4 +151,9 @@ class TradeConfidenceTier(ReadOnlyTier):
         ]
 
 
-__all__ = ["TRADE_EXECUTION_ACTIONS", "TradeConfidenceTier"]
+__all__ = [
+    "TRADE_CONFIDENCE_NORM_ID",
+    "TRADE_EXECUTION_ACTIONS",
+    "TradeConfidenceTier",
+    "trade_confidence_norm_binding",
+]

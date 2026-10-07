@@ -30,8 +30,11 @@ from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
-from src.cage_finance.tiers.trade_confidence_tier import TradeConfidenceTier
-from src.gateway.governance.contracts import GovernanceTier
+from src.cage_finance.tiers.trade_confidence_tier import (
+    TradeConfidenceTier,
+    trade_confidence_norm_binding,
+)
+from src.gateway.governance.contracts import GovernanceTier, NormBinding
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
     BaseTelemetryProvider,
@@ -74,7 +77,7 @@ def create_finance_tiers(
     consensus_gate: Any,
     bounding_registry: BoundingContractRegistry | None = None,
     telemetry_provider: BaseTelemetryProvider | None = None,
-    min_trade_confidence: float | None = None,
+    trade_confidence: NormBinding | None = None,
 ) -> tuple[GovernanceTier, ...]:
     """Create finance domain governance tiers for construction-time registration.
 
@@ -93,8 +96,9 @@ def create_finance_tiers(
                           ``CAGE_TELEMETRY_PROVIDER`` (``remote`` without
                           credentials raises ``ConfigurationError`` here, at
                           assembly, rather than on the first trade).
-        min_trade_confidence: [CTRL_AGT_001] regional trade-confidence floor.
-                          If None, the active region's effective
+        trade_confidence: [CTRL_AGT_001] binding of the regional
+                          trade-confidence floor. If None, built from the
+                          active region's effective
                           ``domains.finance.confidence.min_trade_confidence``.
 
     Returns:
@@ -127,13 +131,15 @@ def create_finance_tiers(
             enforcer=bounding_enforcer,
         )
 
-    if min_trade_confidence is None:
+    if trade_confidence is None:
         from src.cage_finance.thresholds import load_finance_thresholds
 
-        min_trade_confidence = load_finance_thresholds().confidence.min_trade_confidence
+        trade_confidence = trade_confidence_norm_binding(
+            load_finance_thresholds().confidence.min_trade_confidence
+        )
 
     return (
-        TradeConfidenceTier(min_trade_confidence),
+        TradeConfidenceTier(trade_confidence),
         BoundingContractTierPlugin(bounding_registry),
         CBFTierPlugin(cbf),
         FiscalTierPlugin(fiscal_guard),

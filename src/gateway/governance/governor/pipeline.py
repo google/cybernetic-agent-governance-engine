@@ -186,8 +186,10 @@ def _outcome(stage_violations: Sequence[Violation]) -> str:
 
 
 #: Read-only stages re-run after human approval (TOCTOU): policy may have
-#: changed while the request waited. Must be members of proof/model.py TIERS.
-POST_HITL_READ_ONLY_STAGES: frozenset[str] = frozenset({"opa"})
+#: changed, or a warrant been revoked, while the request waited. Mirrors
+#: ``proof/model.py::POST_HITL_READ_ONLY_TIERS``; ``warrant`` is the kernel
+#: ``WarrantStage`` (present only when a region marks a norm requires_warrant).
+POST_HITL_READ_ONLY_STAGES: frozenset[str] = frozenset({"opa", "warrant"})
 
 #: The only stages an action no domain tier claims runs through.  Mirrors
 #: ``proof/model.py::UNGOVERNED_TIERS`` (``tests/test_governance_trace_conformance.py``).

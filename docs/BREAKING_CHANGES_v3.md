@@ -852,5 +852,17 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-**Last updated:** 2026-10-02 (Review round 2 clean breaks R2-1–R2-7)
+## Unreleased — Warrant Reliance Gate (VEIP Phase 2, PR 3)
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **WR-1** | Threshold schema | `domains.finance.confidence.min_trade_confidence` is `{"value": float, "requires_warrant": bool, "governing_version": str \| null}` ([`thresholds.py`](../src/cage_finance/thresholds.py) `MinTradeConfidenceNorm`); `requires_warrant: true` without `governing_version` fails validation. `EU_ECB` sets `requires_warrant: true`, `governing_version: "cage-policy-2.1.0"`. | The warrant is issued for a value under a policy version; the binding carries both, so a warrant verifies only against the version it was issued for. Changing a warranted value requires a new `governing_version` and a re-issued warrant. | A bare number, or an overlay replacing the object with a scalar, fails assembly (`failed validation` / overlay shape error). |
+| **WR-2** | Kernel contract | New `ViolationKind.RELIANCE_INELIGIBLE`, `NormBinding`, `PluginContribution.norm_bindings`, `DeferReason.WARRANT_INELIGIBLE`. `_reason_from_classification` maps reasons by exact match and raises on any other. `handle_defer` returns the mapped `defer_reason` (it no longer hardcodes `CONFIDENCE_BELOW_THRESHOLD`). | A warrant failure is not a soft confidence problem and a human cannot repair it: its own kind, ranked above `HITL`, with no string matching. | Exhaustive matches over `ViolationKind` / `DeferReason` miss the new member; a classifier reason outside the map raises instead of defaulting. |
+| **WR-3** | Assembly | `assemble_governor(..., warrant_source=)`; `bootstrap_governor()` resolves it from `CAGE_WARRANT_SOURCE` (`provider_05` / `p05`; unknown names raise). A warranted norm with no source, with DEFER disabled, with an unknown action, or with an action no domain tier claims raises `GovernorAssemblyError`. | Fail closed at startup rather than per request; a warranted norm must always have a path that defers. | An `EU_ECB` gateway without `CAGE_WARRANT_SOURCE`, or with `CAGE_DEFER_ENABLED=false`, does not start. |
+| **WR-4** | Finance plugin | `TradeConfidenceTier(norm: NormBinding)` (was a float) and `create_finance_tiers(trade_confidence: NormBinding \| None)` (was `min_trade_confidence: float`). `FinanceCagePlugin` contributes the same binding to the tier and to `norm_bindings`. | One source for the enforced value and the value the warrant refers to. | `TradeConfidenceTier(0.97)` raises `ValueError`; `create_finance_tiers(min_trade_confidence=...)` raises `TypeError`. |
+| **WR-5** | Formal model | `proof/model.py`: `VIOLATION_KINDS` gains `RELIANCE_INELIGIBLE`; `verdict_of` defers it after HARD; `pending_approval_outcome` requires `awaits_approval(phase1)`; new `warranted_assembly_admissible` and claim 12. `POST_HITL_READ_ONLY_STAGES` / `POST_HITL_READ_ONLY_TIERS` are `{"opa", "warrant"}` (named `WARRANT_TIER`, outside `TIERS`), with claim 13 (`post_hitl_rechecks_warrant`). | Parity tests pin the runtime to the model; a warrant revoked after approval must be caught before execution. | Callers of `pending_approval_outcome` with a phase 1 holding `RELIANCE_INELIGIBLE` get `ValueError`. |
+
+---
+
+**Last updated:** 2026-10-06 (Warrant reliance gate WR-1–WR-5)
 

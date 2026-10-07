@@ -264,7 +264,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values (**v3.0.1:** deprecated `stpa_validator.py` shim removed)
 - [`src/gateway/governance/consensus/engine.py`](../src/gateway/governance/consensus/engine.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
 - [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
-- `config/governance_thresholds.json` — universal confidence band (`confidence.agent_threshold: 0.95`) and the finance trade floor (`domains.finance.confidence.min_trade_confidence: 0.95`) reject low-confidence outputs
+- `config/governance_thresholds.json` — universal confidence band (`confidence.agent_threshold: 0.95`) and the finance trade floor (`domains.finance.confidence.min_trade_confidence.value: 0.95`) reject low-confidence outputs
 
 **Gaps:**
 1. **No confabulation rate metric.** There is no measurement of how often the financial advisor LLM produces factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. The `safety_rate` metric in [`src/compliance_bridge/metrics.py`](../../../src/compliance_bridge/metrics.py) measures governance pass/fail, not factual accuracy.

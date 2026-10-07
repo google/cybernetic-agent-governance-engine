@@ -116,6 +116,7 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/governance/evidence/factory.py",  # lazy-loads storage_gcs/storage_s3
         "src/compliance_bridge/main.py",  # lazy-loads provider_02.cer_index (B6 CER wiring)
         "src/gateway/governance/attestation_aggregator.py",  # lazy-loads provider_02/provider_05
+        "src/gateway/governance/warrant/source_factory.py",  # lazy-loads provider_05 warrant source
         "src/gateway/governance/execution_actuator.py",  # lazy-loads actuator_01/02/03
         "src/gateway/governance/quarantine_actuator.py",  # lazy-loads actuator_03
         "src/gateway/governance/outbound_credential_factory.py",  # lazy-loads gcp/aws/azure credential providers

@@ -153,6 +153,11 @@ class DeferReason(str, Enum):
     CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"
     """model confidence_score < confidence.defer_floor (default 0.70)."""
 
+    WARRANT_INELIGIBLE = "WARRANT_INELIGIBLE"
+    """A norm the action relies on has a warrant that failed standing
+    verification (missing, revoked, expired, out of scope, version mismatch,
+    unresolved or unreachable); CAGE may not rely on that norm."""
+
     EXTERNAL_VALIDATION = "EXTERNAL_VALIDATION"
     """Awaiting an external normative provider's synchronous validation."""
 
@@ -420,6 +425,7 @@ _DEFER_REASON_QUORUM: dict[DeferReason, int] = {
     DeferReason.FTRA_IRREVERSIBLE_TERMINAL: 3,
     DeferReason.EXTERNAL_VALIDATION: 3,
     DeferReason.EXTERNAL_HOLD: 3,
+    DeferReason.WARRANT_INELIGIBLE: 3,
     DeferReason.HITL_REQUIRED: 2,
     DeferReason.CONFIDENCE_BELOW_THRESHOLD: 2,
     DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE: 2,
@@ -432,9 +438,10 @@ def get_required_quorum(defer_reason: DeferReason) -> int:
     """Return the required quorum threshold for a given DeferReason.
 
     Per local/integrations/archytan/IMPLEMENTATION_PLAN_v2.md §4.5,
-    this mapping is total over all seven DeferReason enum values.
+    this mapping is total over every DeferReason enum value.
 
-    Irreversible terminal nodes and external validation escalations
+    Irreversible terminal nodes, external validation escalations and
+    warrant-ineligible deferrals (an external authority's warrant failed)
     require 3 distinct approvers; baseline dual control requires 2.
 
     Args:

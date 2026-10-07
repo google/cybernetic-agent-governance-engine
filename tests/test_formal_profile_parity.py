@@ -27,6 +27,9 @@ from proof.model import (
     PROFILES,
     TIER_PHASE,
     TIERS,
+    WARRANT_TIER,
+    WARRANT_TIER_PHASE,
+    post_hitl_rechecks_warrant,
     post_hitl_runs_every_phase2_tier,
     runs_under_profile,
 )
@@ -41,7 +44,7 @@ from src.gateway.governance.governor.pipeline import (
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-_ALL_PHASES = TIER_PHASE | PLUGIN_TIER_PHASE
+_ALL_PHASES = TIER_PHASE | PLUGIN_TIER_PHASE | WARRANT_TIER_PHASE
 
 
 def test_profile_names_match() -> None:
@@ -65,8 +68,21 @@ def test_full_and_dry_run_run_every_tier() -> None:
 
 
 def test_post_hitl_read_only_sets_agree_and_are_proof_tiers() -> None:
+    """Every re-checked read-only stage is a modelled tier: a TIERS member or
+    the named warrant tier (which adds no states; see proof/model.py)."""
     assert POST_HITL_READ_ONLY_STAGES == POST_HITL_READ_ONLY_TIERS
-    assert POST_HITL_READ_ONLY_STAGES <= frozenset(TIERS)
+    assert POST_HITL_READ_ONLY_STAGES <= frozenset(TIERS) | frozenset(
+        WARRANT_TIER_PHASE
+    )
+
+
+def test_warrant_tier_is_the_kernel_warrant_stage() -> None:
+    from src.gateway.governance.governor.stages.warrant import WarrantStage
+
+    assert WarrantStage.name == WARRANT_TIER
+    assert WarrantStage.mutating is (WARRANT_TIER_PHASE[WARRANT_TIER] == 2)
+    assert stage_runs_under(Profile.POST_HITL, name=WarrantStage.name, mutating=False)
+    assert post_hitl_rechecks_warrant()
 
 
 def test_post_hitl_kernel_scope_is_opa_plus_phase2() -> None:
@@ -135,6 +151,7 @@ def test_jurisdiction_claim_holds() -> None:
 from proof.model import (  # noqa: E402
     VIOLATION_KINDS,
     _kind_sets,
+    awaits_approval,
     hard_preview_denies_before_hitl,
     no_commit_under_pending_findings,
     pending_approval_outcome,
@@ -157,7 +174,7 @@ from src.gateway.governance.governor.reservation import ReservationScope  # noqa
 from src.gateway.governance.narrower import NarrowerRegistry  # noqa: E402
 
 _KIND_SETS = list(_kind_sets())
-_PENDING = [k for k in _KIND_SETS if "HITL" in k and "HARD" not in k]
+_PENDING = [k for k in _KIND_SETS if awaits_approval(k)]
 
 
 def _violations(tier: str, kinds: frozenset[str]) -> list[Violation]:

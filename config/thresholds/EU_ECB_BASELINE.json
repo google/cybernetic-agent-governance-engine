@@ -35,8 +35,12 @@
         "_comment_fin2": "FIN-2 (EU): maximum 150ms round-trip latency (vs US 200ms). DORA Art. 10 requires financial entities to maintain ICT operational resilience with lower tolerance thresholds under ECB SSM expectations."
       },
       "confidence": {
-        "min_trade_confidence": 0.97,
-        "_comment": "[CTRL_AGT_001] Minimum agentic model confidence for EU High-Risk AI classification under EU AI Act Art. 6 + Annex III §5(b). Threshold elevated to 0.97 from US baseline of 0.95 to reflect the mandatory Art. 9 risk management requirements for High-Risk AI systems. Enforced for trade execution by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py). Pre-market FRIA (Art. 27) must document this threshold and its calibration basis. Any change requires re-registration with the EU AI Office."
+        "min_trade_confidence": {
+          "value": 0.97,
+          "requires_warrant": true,
+          "governing_version": "cage-policy-2.1.0"
+        },
+        "_comment": "[CTRL_AGT_001] Minimum agentic model confidence for EU High-Risk AI classification under EU AI Act Art. 6 + Annex III §5(b). Threshold elevated to 0.97 from US baseline of 0.95 to reflect the mandatory Art. 9 risk management requirements for High-Risk AI systems. Enforced for trade execution by the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py). Pre-market FRIA (Art. 27) must document this threshold and its calibration basis. Any change requires re-registration with the EU AI Office. requires_warrant: reliance on 0.97 needs an ACTIVE, in-scope institutional warrant (norm_id confidence.min_trade_confidence) issued for governing_version cage-policy-2.1.0 and verified by the kernel warrant stage; any warrant failure defers the trade (RELIANCE_INELIGIBLE), never denies it. Changing the value requires a new governing_version and a re-issued warrant."
       },
       "consensus": {
         "threshold_usd": 7500.0,
