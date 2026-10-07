@@ -485,7 +485,7 @@ class SymbolicGovernor:
             span.set_attribute(
                 OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
             )
-            span.set_attribute("toctou.revalidation.scope", "opa+phase2")
+            span.set_attribute("toctou.revalidation.scope", "opa+warrant+phase2")
             if trace_id is not None:
                 span.set_attribute("toctou.revalidation.trace_id", trace_id)
             try:

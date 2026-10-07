@@ -148,10 +148,16 @@ class RefusalReceipt:
 class ViolationKind(StrEnum):
     """Classification of violation severity and disposition.
 
-    Precedence: HARD > HITL > NARROWABLE > DEFERRABLE
+    Precedence: HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE > DEFERRABLE
+
+    ``RELIANCE_INELIGIBLE`` means CAGE may not rely on a norm because the
+    warrant grounding it failed standing verification. It is not a verdict
+    on the request: it defers (no human can repair a warrant), and it never
+    masks an independent HARD finding.
     """
 
     HARD = "hard"
+    RELIANCE_INELIGIBLE = "reliance_ineligible"
     HITL = "hitl"
     DEFERRABLE = "deferrable"
     NARROWABLE = "narrowable"
@@ -493,6 +499,75 @@ class SagaCompensator(Protocol):
 
 
 @dataclass(frozen=True)
+class NormBinding:
+    """A domain norm the kernel may be asked to rely on, declared as data.
+
+    A plugin declares each norm it enforces whose reliance may need an
+    institutional warrant: ``norm_id`` is the issuer-facing identifier,
+    ``value`` the exact value the plugin enforces, and ``actions`` the
+    actions the norm governs. Whether a warrant is required is regional
+    configuration, not plugin code.
+
+    When ``requires_warrant`` is true, ``governing_version`` names the
+    governance version the warrant must have been issued for; the kernel
+    verifies the warrant against it. The v0.1 warrant carries no value
+    field, so the version is what binds a warrant to ``value``: changing a
+    warranted norm's value requires a new ``governing_version`` and a
+    re-issued warrant.
+    """
+
+    norm_id: str
+    value: float
+    requires_warrant: bool
+    actions: frozenset[str]
+    governing_version: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.norm_id, str) or not self.norm_id:
+            raise ValueError("NormBinding.norm_id must be a non-empty string")
+        if (
+            isinstance(self.value, bool)
+            or not isinstance(self.value, (int, float))
+            or not math.isfinite(self.value)
+        ):
+            raise ValueError(
+                f"NormBinding {self.norm_id!r}: value must be a finite number, "
+                f"got {self.value!r}"
+            )
+        if not isinstance(self.requires_warrant, bool):
+            raise ValueError(
+                f"NormBinding {self.norm_id!r}: requires_warrant must be a bool"
+            )
+        if isinstance(self.actions, str):
+            raise ValueError(
+                f"NormBinding {self.norm_id!r}: actions must be a set of names"
+            )
+        actions = frozenset(self.actions)
+        if not actions or not all(isinstance(a, str) and a for a in actions):
+            raise ValueError(
+                f"NormBinding {self.norm_id!r}: actions must be non-empty strings"
+            )
+        object.__setattr__(self, "actions", actions)
+        if self.governing_version is not None and (
+            not isinstance(self.governing_version, str) or not self.governing_version
+        ):
+            raise ValueError(
+                f"NormBinding {self.norm_id!r}: governing_version must be a "
+                "non-empty string or None"
+            )
+        if self.requires_warrant and self.governing_version is None:
+            # Fail closed: a warrant can only be verified against a version.
+            raise ValueError(
+                f"NormBinding {self.norm_id!r}: requires_warrant needs a "
+                "governing_version"
+            )
+
+    def governs(self, action: str) -> bool:
+        """Whether ``action`` relies on this norm."""
+        return action in self.actions
+
+
+@dataclass(frozen=True)
 class PluginContribution:
     """Everything one domain plugin hands to the kernel, as data.
 
@@ -528,6 +603,9 @@ class PluginContribution:
         compliance_overlay_dirs: Compliance overlay directories.
         background_tasks: Named async background workers.
         rail_providers: NeMo rail providers.
+        norm_bindings: Norms this domain enforces that a region may require
+            a warrant for (:class:`NormBinding`); ``norm_id`` is unique
+            across contributions.
     """
 
     domain: str
@@ -549,6 +627,7 @@ class PluginContribution:
         default_factory=dict
     )
     rail_providers: tuple[Any, ...] = ()
+    norm_bindings: tuple[NormBinding, ...] = ()
 
 
 @runtime_checkable

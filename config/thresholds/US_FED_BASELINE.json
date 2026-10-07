@@ -10,8 +10,11 @@
     "finance": {
       "_comment": "Regional overlay of domains.finance in config/governance_thresholds.json, deep-merged at threshold load for CAGE_DEPLOYMENT_REGION=US_FED (src/gateway/governance/schemas/regional_overlay.py) and validated by the finance schema (src/cage_finance/thresholds.py) at governor assembly. Keys omitted here inherit the global value.",
       "confidence": {
-        "min_trade_confidence": 0.95,
-        "_comment": "[CTRL_AGT_001] Minimum agentic model confidence required to execute a trade. ISO 42001 §A.5.2 primary; SR 26-2 §IV.B legacy citation. Conservative threshold for US Federal Reserve supervised entities; equal to the universal confidence band floor, so the trade_confidence tier adds no constraint in this region."
+        "min_trade_confidence": {
+          "value": 0.95,
+          "requires_warrant": false
+        },
+        "_comment": "[CTRL_AGT_001] Minimum agentic model confidence required to execute a trade. ISO 42001 §A.5.2 primary; SR 26-2 §IV.B legacy citation. Conservative threshold for US Federal Reserve supervised entities; equal to the universal confidence band floor, so the trade_confidence tier adds no constraint in this region. requires_warrant stays false until a warrant from a US-side issuing authority exists."
       }
     }
   },

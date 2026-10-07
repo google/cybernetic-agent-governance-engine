@@ -23,7 +23,7 @@ assembly instead of silently leaving the global value in force.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
 class _FinanceSection(BaseModel):
@@ -64,6 +64,41 @@ class ConsensusThresholds(_FinanceSection):
     )
 
 
+class MinTradeConfidenceNorm(_FinanceSection):
+    """[CTRL_AGT_001] The trade-confidence floor and its warrant requirement.
+
+    ``requires_warrant`` is the region's decision: when true, CAGE relies on
+    the floor only while the issuer's warrant for it verifies, and
+    ``governing_version`` is the version that warrant must have been issued
+    for. Changing ``value`` of a warranted norm requires a new
+    ``governing_version`` and a re-issued warrant.
+    """
+
+    value: float = Field(
+        ...,
+        gt=0.0,
+        le=1.0,
+        description="Minimum agent confidence to execute a trade (0, 1].",
+    )
+    requires_warrant: StrictBool = Field(
+        ...,
+        description="Whether reliance on this floor needs a verified warrant.",
+    )
+    governing_version: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Governance version a warrant for this floor must name.",
+    )
+
+    @model_validator(mode="after")
+    def _warranted_norm_names_a_version(self) -> MinTradeConfidenceNorm:
+        if self.requires_warrant and self.governing_version is None:
+            raise ValueError(
+                "min_trade_confidence.requires_warrant needs a governing_version"
+            )
+        return self
+
+
 class TradeConfidenceThresholds(_FinanceSection):
     """[CTRL_AGT_001] Regional floor on agent confidence for trade execution.
 
@@ -72,12 +107,7 @@ class TradeConfidenceThresholds(_FinanceSection):
     floor is a jurisdiction's requirement for trades only.
     """
 
-    min_trade_confidence: float = Field(
-        ...,
-        gt=0.0,
-        le=1.0,
-        description="Minimum agent confidence to execute a trade (0, 1].",
-    )
+    min_trade_confidence: MinTradeConfidenceNorm
 
 
 class BoundingThresholds(_FinanceSection):
@@ -163,6 +193,7 @@ __all__ = [
     "ConsensusThresholds",
     "DrawdownThresholds",
     "FinanceThresholds",
+    "MinTradeConfidenceNorm",
     "StpaThresholds",
     "TradeConfidenceThresholds",
     "load_finance_thresholds",

@@ -35,6 +35,9 @@ from src.cage_finance.tiers.consensus_tier import (
     build_finance_consensus_gate,
 )
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+from src.cage_finance.tiers.trade_confidence_tier import (
+    trade_confidence_norm_binding,
+)
 from src.cage_finance.tools.tool_provider import FinancialToolProvider
 from src.gateway.governance.consensus.engine import (
     _background_audit_worker,
@@ -116,12 +119,17 @@ class FinanceCagePlugin(CagePlugin):
                 )
             ),
         )
+        # One binding is both enforced (the tier) and declared to the kernel
+        # (norm_bindings), so the gated value is the enforced value.
+        trade_confidence = trade_confidence_norm_binding(
+            finance.confidence.min_trade_confidence
+        )
         tiers = create_finance_tiers(
             cbf=cbf,
             fiscal_guard=FiscalLimitGuard.from_env(),
             consensus_gate=consensus_gate,
             bounding_registry=bounding_registry,
-            min_trade_confidence=finance.confidence.min_trade_confidence,
+            trade_confidence=trade_confidence,
         )
         return PluginContribution(
             domain=self.name,
@@ -140,6 +148,7 @@ class FinanceCagePlugin(CagePlugin):
             threshold_sections={"finance": FinanceThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
             background_tasks={"consensus_audit_worker": _background_audit_worker},
+            norm_bindings=(trade_confidence,),
         )
 
 

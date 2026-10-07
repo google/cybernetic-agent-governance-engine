@@ -67,7 +67,7 @@ The model proves four concrete CAGE gaps:
 
 ### Verdict Lattice and I-6
 
-`verdict_of()` mirrors `ClassificationEngine.classify`: HARD → DENY; OPA `MANUAL_REVIEW` or HITL → REQUIRE_APPROVAL; every finding NARROWABLE with a narrower proposal → NARROW; DEFERRABLE with confidence below the floor → DEFER; otherwise DENY; no findings → ALLOW. `verdict_lattice_holds()` checks that only ALLOW and NARROW reach `SEAL_ISSUED`. I-6 is `narrow_valid`: `phase = NARROW ⇒ seal_present ∧ resolved_allow ∧ clamped_params_valid` (it replaces `EXECUTED_unmodified`, which no model defines). Parity with the real engine is pinned in `tests/test_distributed_cbf_proof.py`.
+`verdict_of()` mirrors `ClassificationEngine.classify`: HARD → DENY; RELIANCE_INELIGIBLE → DEFER (DENY when DEFER is disabled); OPA `MANUAL_REVIEW` or HITL → REQUIRE_APPROVAL; every finding NARROWABLE with a narrower proposal → NARROW; DEFERRABLE with confidence below the floor → DEFER; otherwise DENY; no findings → ALLOW. `verdict_lattice_holds()` checks that only ALLOW and NARROW reach `SEAL_ISSUED`. I-6 is `narrow_valid`: `phase = NARROW ⇒ seal_present ∧ resolved_allow ∧ clamped_params_valid` (it replaces `EXECUTED_unmodified`, which no model defines). Parity with the real engine is pinned in `tests/test_distributed_cbf_proof.py`.
 
 ### NARROW State (C1-sub Audit Remediation)
 

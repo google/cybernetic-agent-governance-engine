@@ -128,18 +128,27 @@ async def issue_seal(action: str, params: dict[str, Any], *, path: str) -> str:
 
 
 def _reason_from_classification(classification_meta: dict[str, Any]) -> "DeferReason":
+    """The ``DeferReason`` for a classifier DEFER, by exact reason match.
+
+    Raises:
+        ValueError: The classification reason is not one the classifier
+            emits with DEFER; parking it under a guessed reason would
+            misstate why the request was held.
+    """
+    from src.gateway.governance.classification_engine import (
+        REASON_CONFIDENCE_BELOW_THRESHOLD,
+        REASON_RELIANCE_INELIGIBLE,
+    )
     from src.gateway.governance.defer_queue import DeferReason
 
-    reason_str = str(classification_meta.get("classification_reason", "")).lower()
-    if "confidence" in reason_str:
-        return DeferReason.CONFIDENCE_BELOW_THRESHOLD
-    if "context" in reason_str or "missing" in reason_str:
-        return DeferReason.INSUFFICIENT_CONTEXT
-    if "ambiguous" in reason_str:
-        return DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE
-    if "data" in reason_str and "starvation" in reason_str:
-        return DeferReason.DATA_STARVATION
-    return DeferReason.CONFIDENCE_BELOW_THRESHOLD
+    by_reason = {
+        REASON_CONFIDENCE_BELOW_THRESHOLD: DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        REASON_RELIANCE_INELIGIBLE: DeferReason.WARRANT_INELIGIBLE,
+    }
+    reason = classification_meta.get("classification_reason")
+    if reason not in by_reason:
+        raise ValueError(f"no DeferReason for classification reason {reason!r}")
+    return by_reason[reason]
 
 
 async def _park_defer_context(
@@ -273,6 +282,7 @@ async def handle_defer(
     latency_ms: float = 0.0,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
+    defer_reason = _reason_from_classification(classification_meta)
     defer_metadata = {
         "cbf_violation": any("CBF" in str(v) for v in violations),
         "opa_decision": classification_meta.get("opa_decision"),
@@ -288,6 +298,7 @@ async def handle_defer(
         confidence=reported_confidence(params),
         classification_meta=classification_meta,
         violations=violations,
+        defer_reason=defer_reason,
     )
 
     span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
@@ -307,7 +318,7 @@ async def handle_defer(
         "violations": violations,
         "latency_ms": latency_ms,
         "classification_meta": classification_meta,
-        "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
+        "defer_reason": defer_reason.value,
         "defer_token": defer_token,
         "deferrable": classification_meta.get("deferrable", True),
         "retry_after_seconds": 300,

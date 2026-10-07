@@ -64,10 +64,12 @@ def test_pipeline_result_frozen():
 
 
 def test_profile_stages_match_proof_tiers():
-    from proof.model import TIER_PHASE
+    from proof.model import TIER_PHASE, WARRANT_TIER_PHASE
 
     proof_tiers = frozenset(TIERS)
-    assert POST_HITL_READ_ONLY_STAGES.issubset(proof_tiers)
+    assert POST_HITL_READ_ONLY_STAGES.issubset(
+        proof_tiers | frozenset(WARRANT_TIER_PHASE)
+    )
 
     def selected(profile: Profile) -> frozenset[str]:
         return frozenset(

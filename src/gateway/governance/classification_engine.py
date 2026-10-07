@@ -16,6 +16,9 @@
 
 Implements the four-way decision tree over violations:
   DENY ← ViolationKind.HARD
+  DEFER ← ViolationKind.RELIANCE_INELIGIBLE (whatever the confidence: a
+          warrant failure removes CAGE's right to rely on a norm; no human can
+          repair it, and it is never a DENY)
   REQUIRE_APPROVAL ← ViolationKind.HITL or OPA MANUAL_REVIEW (with an advisory
                      ``narrow_hint`` when every other finding is NARROWABLE)
   DEFER ← ViolationKind.DEFERRABLE + confidence below threshold
@@ -34,6 +37,15 @@ from typing import Any
 from src.gateway.governance.contracts import NarrowingResult, Violation, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.narrower import NarrowerRegistry
+
+#: ``classification_reason`` values that accompany a DEFER decision.  The
+#: governor maps them to a ``DeferReason`` by exact match
+#: (``verdicts._reason_from_classification``), never by substring.
+REASON_CONFIDENCE_BELOW_THRESHOLD = "confidence_below_threshold"
+REASON_RELIANCE_INELIGIBLE = "reliance_ineligible"
+DEFER_REASONS: frozenset[str] = frozenset(
+    {REASON_CONFIDENCE_BELOW_THRESHOLD, REASON_RELIANCE_INELIGIBLE}
+)
 
 
 @dataclass(frozen=True)
@@ -83,12 +95,15 @@ class ClassificationEngine:
 
         Classification priority (fail-closed):
           1. HARD violations → DENY
-          2. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
-          3. HITL violations → REQUIRE_APPROVAL
-          4. Every violation NARROWABLE + narrower proposal → NARROW candidate
+          2. RELIANCE_INELIGIBLE violations → DEFER, regardless of confidence
+             (DENY only if DEFER is disabled, which assembly refuses whenever
+             a warranted norm is configured)
+          3. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
+          4. HITL violations → REQUIRE_APPROVAL
+          5. Every violation NARROWABLE + narrower proposal → NARROW candidate
              (the governor re-runs FULL on the clamped params; else DENY)
-          5. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
-          6. Default → DENY
+          6. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
+          7. Default → DENY
         """
         if not context.violations:
             # Should not be called with empty violations
@@ -112,15 +127,42 @@ class ClassificationEngine:
                 },
             )
 
-        # Step 2: OPA MANUAL_REVIEW → REQUIRE_APPROVAL
+        # Step 2: a norm CAGE may not rely on → DEFER.  Ranked above approval:
+        # a human approver cannot repair a warrant.  Never a DENY of its own
+        # (proof/model.py verdict_of; assembly refuses a warranted norm when
+        # DEFER is disabled, so the DENY branch below is unreachable there).
+        ineligible = [
+            v
+            for v in normalized_violations
+            if v.kind == ViolationKind.RELIANCE_INELIGIBLE
+        ]
+        if ineligible:
+            if not self._defer_enabled:
+                return ClassificationResult(
+                    decision=GovernanceDecision.DENY,
+                    metadata={
+                        "classification_reason": "reliance_ineligible_defer_disabled",
+                        "deferrable": False,
+                    },
+                )
+            return ClassificationResult(
+                decision=GovernanceDecision.DEFER,
+                metadata={
+                    "classification_reason": REASON_RELIANCE_INELIGIBLE,
+                    "deferrable": True,
+                    "reliance_ineligible": [v.to_dict() for v in ineligible],
+                },
+            )
+
+        # Step 3: OPA MANUAL_REVIEW → REQUIRE_APPROVAL
         if context.opa_decision == "MANUAL_REVIEW":
             return self._require_approval("opa_manual_review", context, action)
 
-        # Step 3: HITL violations → REQUIRE_APPROVAL
+        # Step 4: HITL violations → REQUIRE_APPROVAL
         if any(v.kind == ViolationKind.HITL for v in normalized_violations):
             return self._require_approval("hitl_required", context, action)
 
-        # Step 4: NARROW only if EVERY violation is NARROWABLE and a narrower
+        # Step 5: NARROW only if EVERY violation is NARROWABLE and a narrower
         # proposes clamped params (proof/model.py NARROW conditions (a), (b)).
         # A mixed set falls through (fail closed).  The proposal is NOT an
         # authorisation: the governor re-runs the FULL profile on it (c);
@@ -144,7 +186,7 @@ class ClassificationEngine:
                     },
                 )
 
-        # Step 5: DEFERRABLE violations + low confidence → DEFER
+        # Step 6: DEFERRABLE violations + low confidence → DEFER
         deferrable_violations = [
             v for v in normalized_violations if v.kind == ViolationKind.DEFERRABLE
         ]
@@ -153,14 +195,14 @@ class ClassificationEngine:
                 return ClassificationResult(
                     decision=GovernanceDecision.DEFER,
                     metadata={
-                        "classification_reason": "confidence_below_threshold",
+                        "classification_reason": REASON_CONFIDENCE_BELOW_THRESHOLD,
                         "deferrable": True,
                         "confidence": context.confidence,
                         "threshold": self._confidence_threshold,
                     },
                 )
 
-        # Step 6: Default fallback → DENY
+        # Step 7: Default fallback → DENY
         return ClassificationResult(
             decision=GovernanceDecision.DENY,
             metadata={

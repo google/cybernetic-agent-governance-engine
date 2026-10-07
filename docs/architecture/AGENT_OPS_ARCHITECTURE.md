@@ -172,7 +172,7 @@ The DEFER queue handles confidence-starved contexts that cannot be immediately a
 
 ### Configuration
 - **Redis:** `db=1`, `noeviction` policy (contexts are never evicted — human review is mandatory).
-- **Trigger:** Confidence score in the DEFER zone of the universal band: below `confidence.defer_floor: 0.70`. Three-zone model: ALLOW (≥ `confidence.agent_threshold` 0.95), REQUIRE_APPROVAL (0.70–0.95), DEFER (<0.70). In finance, trade execution also needs the regional `domains.finance.confidence.min_trade_confidence` (0.97 `EU_ECB`, 0.96 `APAC_MAS`) with the same zones.
+- **Trigger:** Confidence score in the DEFER zone of the universal band: below `confidence.defer_floor: 0.70`. Three-zone model: ALLOW (≥ `confidence.agent_threshold` 0.95), REQUIRE_APPROVAL (0.70–0.95), DEFER (<0.70). In finance, trade execution also needs the regional `domains.finance.confidence.min_trade_confidence.value` (0.97 `EU_ECB`, 0.96 `APAC_MAS`) with the same zones.
 - **Implementation:** `src/gateway/governance/defer_queue.py`, owned by the gateway. The advisor holds no DeferQueue: its `defer_node` only checkpoints the gateway-issued `deferral_ticket_id` and fails closed when it is missing.
 
 ### Operational Flow

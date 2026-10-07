@@ -40,7 +40,7 @@ flowchart TD
 
 A `DeferToken` represents the parked execution context and progresses through a strict lifecycle:
 
-- **Parking**: Token is minted with an initial TTL (default: 4 hours) and a `DeferReason` (e.g., `CONFIDENCE_BELOW_THRESHOLD`, `DATA_STARVATION`, `EXTERNAL_HOLD`). If the Redis park fails, `handle_defer()` logs a warning and still returns `DEFER` with a local `defer_id`. The action is not executed, but the token is not persisted, so the resolution API cannot find it.
+- **Parking**: Token is minted with an initial TTL (default: 4 hours) and a `DeferReason` (e.g., `CONFIDENCE_BELOW_THRESHOLD`, `WARRANT_INELIGIBLE`, `DATA_STARVATION`, `EXTERNAL_HOLD`). The reason is mapped from the classifier's `classification_reason` by exact match; an unmapped reason is an error, never a default. `WARRANT_INELIGIBLE` tokens need a quorum of 3 and cannot be resolved by data injection: only a re-issued warrant and a fresh request clear them. If the Redis park fails, `handle_defer()` logs a warning and still returns `DEFER` with a local `defer_id`. The action is not executed, but the token is not persisted, so the resolution API cannot find it.
 - **Dual-Control Approval (Schema v2/v3)**: Human-in-the-loop escalation goes through `DeferQueue.approve()`, which enforces a per-reason quorum (`get_required_quorum()`: 2 for baseline dual control, 3 for irreversible terminals and external escalations). The token tracks `approvals` containing durable operator URNs, timestamps, and WebAuthn cryptographic challenge bindings.
 - **Resolution**:
   - `INJECTED`: An automated system supplies missing context; `replay_evaluate()` admits the token only if the enriched confidence reaches `DEFER_CONFIDENCE_THRESHOLD`, otherwise it stays `PARKED`.

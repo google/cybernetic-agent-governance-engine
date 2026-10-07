@@ -82,7 +82,7 @@ DORA Art. 12 requires financial entities to establish, maintain, and review a **
 
 **Procedure (to be conducted by an accredited TLPT provider):**
 1. Aho-Corasick keyword filter evasion (character substitution, encoding tricks) — pre-pipeline scan
-2. NeMo Guardrails Colang rail evasion (paraphrase attacks) — pre-pipeline scan. OPA enforces a uniform minimum confidence threshold of 0.95; the finance `trade_confidence` tier (`src/cage_finance/tiers/trade_confidence_tier.py`) enforces the `EU_ECB` trade floor of 0.97 (`config/thresholds/EU_ECB_BASELINE.json` → `domains.finance.confidence.min_trade_confidence`).
+2. NeMo Guardrails Colang rail evasion (paraphrase attacks) — pre-pipeline scan. OPA enforces a uniform minimum confidence threshold of 0.95; the finance `trade_confidence` tier (`src/cage_finance/tiers/trade_confidence_tier.py`) enforces the `EU_ECB` trade floor of 0.97 (`config/thresholds/EU_ECB_BASELINE.json` → `domains.finance.confidence.min_trade_confidence.value`).
 3. OPA policy bypass attempts (malformed input, type coercion) — Tier 4 of the SymbolicGovernor pipeline
 4. Indirect injection via MCP tool responses (see `compliance/universal/PII_SCRUBBING_POLICY.md`)
 5. HITL bypass attempts (TOCTOU attack simulation)

@@ -202,6 +202,7 @@ _KIND = {
     "HITL": ViolationKind.HITL,
     "DEFERRABLE": ViolationKind.DEFERRABLE,
     "NARROWABLE": ViolationKind.NARROWABLE,
+    "RELIANCE_INELIGIBLE": ViolationKind.RELIANCE_INELIGIBLE,
 }
 
 

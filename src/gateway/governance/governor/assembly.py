@@ -24,7 +24,15 @@ contribution together and fails at startup, never at the first request, if:
 * an IRREVERSIBLE_TERMINAL action in a domain's FTRA registry has no tier
   claiming it (an ungoverned irreversible action);
 * two contributions fill the same engine slot (safety filter, consensus);
-* a contributed invariant fails V1-V4 (``invariants.validate_invariant``).
+* a contributed invariant fails V1-V4 (``invariants.validate_invariant``);
+* a contributed :class:`NormBinding` requires a warrant but no
+  ``WarrantSource`` is configured, DEFER is disabled (the only remaining
+  outcome of a warrant failure would be a fabricated DENY), or one of its
+  actions is unknown or claimed by no domain tier (it would never be gated).
+
+Warranted norms add the kernel :class:`WarrantStage` after the universal
+kernel stages; a governor with no warranted norm runs exactly
+:func:`kernel_stages`.
 
 The deployment region's :class:`JurisdictionContribution` (e.g. the EU AI
 Act Art. 27 impact-assessment tier) is merged after the domain tiers. Its
@@ -52,6 +60,7 @@ from src.gateway.governance.contracts import (
     GovernanceTier,
     InvariantModel,
     Narrower,
+    NormBinding,
     PluginContribution,
     PolicyClient,
     SafetyFilter,
@@ -70,6 +79,7 @@ from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.ftra import FtraStage
 from src.gateway.governance.governor.stages.opa import OpaStage
 from src.gateway.governance.governor.stages.stpa import StpaStage
+from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jurisdiction import (
     JurisdictionContribution,
     resolve_jurisdiction,
@@ -82,6 +92,7 @@ from src.gateway.governance.null_components import (
 
 if TYPE_CHECKING:
     from src.gateway.governance.schemas.thresholds import GovernanceThresholds
+    from src.gateway.governance.seams.warrant import WarrantSource
     from src.gateway.governance.stpa_validator import STPAValidator
 
 logger = logging.getLogger(__name__)
@@ -112,6 +123,8 @@ class GovernorComponents:
     # The region's obligations; None when components are composed by hand
     # (tests). assemble_governor always sets it.
     jurisdiction: JurisdictionContribution | None = None
+    # Every contributed norm binding, warranted or not.
+    norm_bindings: tuple[NormBinding, ...] = ()
 
     def __post_init__(self) -> None:
         if self.classifier is None:
@@ -124,6 +137,7 @@ class GovernorComponents:
             "uca_rules",
             "saga_compensators",
             "contributions",
+            "norm_bindings",
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(
@@ -194,17 +208,23 @@ def assemble_governor(
     flags: DecisionFlags | None = None,
     metrics: GovernorMetrics | None = None,
     jurisdiction: JurisdictionContribution | None = None,
+    warrant_source: WarrantSource | None = None,
 ) -> SymbolicGovernor:
     """Collect every plugin's contribution, validate them together, build the governor.
 
     ``opa`` and ``stpa_validator`` default to the production clients;
     ``jurisdiction`` defaults to the active region's contribution
     (:func:`~src.gateway.governance.jurisdiction.resolve_jurisdiction`).
+    ``warrant_source`` supplies warrants for norms the region marks
+    ``requires_warrant``; it is never defaulted here (the composition root,
+    :func:`~src.gateway.governance.governor.bootstrap.bootstrap_governor`,
+    resolves it from ``CAGE_WARRANT_SOURCE``).
 
     Raises:
         GovernorAssemblyError: The contributions collide, leave an
-            irreversible action ungoverned, or the jurisdiction's region is
-            not the region the effective thresholds were resolved for.
+            irreversible action ungoverned, declare a warranted norm the
+            governor cannot gate, or the jurisdiction's region is not the
+            region the effective thresholds were resolved for.
         ValueError: A contributed invariant fails V1-V4, or two tiers share a
             ``tier_name``.
     """
@@ -223,6 +243,8 @@ def assemble_governor(
         (*tiers, *jurisdiction.tiers), _known_actions(plugins, contributions)
     )
     _reject_ungoverned_irreversible(plugins, tiers)  # domain tiers only
+    norm_bindings = tuple(b for c in contributions for b in c.norm_bindings)
+    _reject_duplicates("norm binding", (b.norm_id for b in norm_bindings))
 
     invariants: list[InvariantModel] = []
     for invariant in (i for c in contributions for i in c.invariants):
@@ -244,6 +266,14 @@ def assemble_governor(
 
     narrowers = tuple(n for c in contributions for n in c.narrowers)
     flags = flags or DecisionFlags.from_env()
+    warranted = tuple(b for b in norm_bindings if b.requires_warrant)
+    _reject_ungateable_warranted_norms(
+        warranted,
+        warrant_source=warrant_source,
+        flags=flags,
+        tiers=tiers,
+        known_actions=_known_actions(plugins, contributions),
+    )
     if opa is None:
         from src.gateway.core.policy import OPAClient
 
@@ -277,14 +307,21 @@ def assemble_governor(
     else:
         resolved_consensus = NullConsensusProvider()
 
+    core_stages = kernel_stages(
+        opa,
+        stpa_validator,
+        metrics=metrics,
+        magnitude_extractor=magnitude_extractor,
+    )
+    if warranted and warrant_source is not None:  # else refused above
+        core_stages = (
+            *core_stages,
+            WarrantStage(warranted, warrant_source, jurisdiction=jurisdiction.region),
+        )
+
     components = GovernorComponents(
         opa=opa,
-        core_stages=kernel_stages(
-            opa,
-            stpa_validator,
-            metrics=metrics,
-            magnitude_extractor=magnitude_extractor,
-        ),
+        core_stages=core_stages,
         classifier=ClassificationEngine(
             narrower_registry=NarrowerRegistry(narrowers=list(narrowers)),
             confidence_threshold=get_agent_confidence_threshold(),
@@ -306,17 +343,77 @@ def assemble_governor(
         contributions=contributions,
         posture=posture,
         jurisdiction=jurisdiction,
+        norm_bindings=norm_bindings,
     )
     governor = SymbolicGovernor(components)
     logger.info(
-        "governor assembled: domains=%s region=%s tiers=%s posture=%s unfilled=%s",
+        "governor assembled: domains=%s region=%s tiers=%s posture=%s "
+        "unfilled=%s warranted_norms=%s",
         [c.domain for c in contributions],
         jurisdiction.region,
         governor.registered_tier_names(),
         posture.value,
         components.unfilled_slots,
+        [b.norm_id for b in warranted],
     )
     return governor
+
+
+def warranted_assembly_admissible(
+    *, has_warranted_norm: bool, defer_enabled: bool, has_source: bool
+) -> bool:
+    """Whether a governor may be assembled, as far as warranted norms go.
+
+    A warranted norm needs a source to fetch its warrant from and DEFER to
+    route a warrant failure to. Mirrors ``proof/model.py::
+    warranted_assembly_admissible`` (``tests/test_formal_profile_parity.py``).
+    """
+    return not has_warranted_norm or (defer_enabled and has_source)
+
+
+def _reject_ungateable_warranted_norms(
+    warranted: Sequence[NormBinding],
+    *,
+    warrant_source: WarrantSource | None,
+    flags: DecisionFlags,
+    tiers: Sequence[GovernanceTier],
+    known_actions: set[str],
+) -> None:
+    """Fail closed unless every warranted norm can actually be gated."""
+    if not warranted:
+        return
+    norm_ids = [b.norm_id for b in warranted]
+    if warrant_source is None:
+        raise GovernorAssemblyError(
+            f"norms {norm_ids} require a warrant but no WarrantSource is configured "
+            "(set CAGE_WARRANT_SOURCE)"
+        )
+    from src.gateway.governance.seams.warrant import WarrantSource
+
+    if not isinstance(warrant_source, WarrantSource):
+        raise GovernorAssemblyError(
+            f"warrant_source {type(warrant_source).__name__} does not implement "
+            "the WarrantSource seam"
+        )
+    if not warranted_assembly_admissible(
+        has_warranted_norm=True, defer_enabled=flags.defer, has_source=True
+    ):
+        raise GovernorAssemblyError(
+            f"norms {norm_ids} require a warrant but DEFER is disabled "
+            "(CAGE_DEFER_ENABLED=false): a warrant failure could only become a "
+            "fabricated DENY"
+        )
+    for binding in warranted:
+        for action in sorted(binding.actions):
+            if action not in known_actions:
+                raise GovernorAssemblyError(
+                    f"warranted norm {binding.norm_id!r} names unknown action {action!r}"
+                )
+            if not any(t.claims_action(action, {}) for t in tiers):
+                raise GovernorAssemblyError(
+                    f"warranted norm {binding.norm_id!r} governs {action!r}, which no "
+                    "domain tier claims: the warrant gate would never run for it"
+                )
 
 
 def _contribution_of(plugin: CagePlugin) -> PluginContribution:

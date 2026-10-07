@@ -37,6 +37,12 @@ spec:
                   name: cage-deployment
                   key: CAGE_DEPLOYMENT_REGION
                   optional: false
+            # Warrant source for norms a region marks requires_warrant (EU_ECB
+            # trade-confidence floor). Without it an EU_ECB gateway refuses to
+            # assemble; with it, a norm whose warrant the source cannot supply
+            # DEFERs (WARRANT_INELIGIBLE). Unused in US_FED / APAC_MAS.
+            - name: CAGE_WARRANT_SOURCE
+              value: "provider_05"
             - name: PORT
               value: "8080"
             - name: GATEWAY_GRPC_PORT

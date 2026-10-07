@@ -40,16 +40,17 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
     "kind,expected_precedence",
     [
         (ViolationKind.HARD, 1),
-        (ViolationKind.HITL, 2),
-        (ViolationKind.NARROWABLE, 3),
-        (ViolationKind.DEFERRABLE, 4),
+        (ViolationKind.RELIANCE_INELIGIBLE, 2),
+        (ViolationKind.HITL, 3),
+        (ViolationKind.NARROWABLE, 4),
+        (ViolationKind.DEFERRABLE, 5),
     ],
 )
 def test_violation_kind_precedence(kind, expected_precedence):
     """ViolationKind precedence order is enforced.
 
     Verifies that the ViolationKind enum encodes the expected precedence
-    hierarchy: HARD > HITL > NARROWABLE > DEFERRABLE.
+    hierarchy: HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE > DEFERRABLE.
 
     This precedence determines which verdict is returned when multiple
     violation types are present. The highest-precedence kind wins.
@@ -57,9 +58,10 @@ def test_violation_kind_precedence(kind, expected_precedence):
     # Map kinds to their precedence rank
     precedence_map = {
         ViolationKind.HARD: 1,
-        ViolationKind.HITL: 2,
-        ViolationKind.NARROWABLE: 3,
-        ViolationKind.DEFERRABLE: 4,
+        ViolationKind.RELIANCE_INELIGIBLE: 2,
+        ViolationKind.HITL: 3,
+        ViolationKind.NARROWABLE: 4,
+        ViolationKind.DEFERRABLE: 5,
     }
 
     assert precedence_map[kind] == expected_precedence, (
@@ -76,6 +78,7 @@ def test_violation_kind_has_no_transient_member():
         "hitl",
         "deferrable",
         "narrowable",
+        "reliance_ineligible",
     }
     with pytest.raises(ValueError):
         ViolationKind("transient")

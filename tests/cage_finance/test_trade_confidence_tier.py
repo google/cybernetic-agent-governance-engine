@@ -26,14 +26,16 @@ import pytest
 
 from src.cage_finance.thresholds import FinanceThresholds
 from src.cage_finance.tiers.trade_confidence_tier import (
+    TRADE_CONFIDENCE_NORM_ID,
     TRADE_EXECUTION_ACTIONS,
     TradeConfidenceTier,
+    trade_confidence_norm_binding,
 )
 from src.gateway.governance.classification_engine import (
     ClassificationContext,
     ClassificationEngine,
 )
-from src.gateway.governance.contracts import ViolationKind
+from src.gateway.governance.contracts import NormBinding, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.pipeline import Profile, StageContext
 from src.gateway.governance.governor.stages.confidence import ConfidenceStage
@@ -51,7 +53,9 @@ def _regional_tier(region: str) -> TradeConfidenceTier:
     finance = FinanceThresholds.model_validate(
         load_and_validate_thresholds(region=region).domains["finance"]
     )
-    return TradeConfidenceTier(finance.confidence.min_trade_confidence)
+    return TradeConfidenceTier(
+        trade_confidence_norm_binding(finance.confidence.min_trade_confidence)
+    )
 
 
 async def _kinds(tier: TradeConfidenceTier, score: Any, action: str = "execute_trade"):
@@ -131,10 +135,32 @@ async def test_band_edge_follows_the_kernel_defer_floor(
     assert await _kinds(_regional_tier("EU_ECB"), 0.9) == [ViolationKind.HITL]
 
 
-@pytest.mark.parametrize("floor", [0.0, -0.5, 1.01, float("nan"), True, "0.97"])
-def test_invalid_floor_is_refused(floor: Any) -> None:
+def _binding(value: Any, norm_id: str = TRADE_CONFIDENCE_NORM_ID) -> NormBinding:
+    return NormBinding(
+        norm_id=norm_id,
+        value=value,
+        requires_warrant=False,
+        actions=TRADE_EXECUTION_ACTIONS,
+    )
+
+
+@pytest.mark.parametrize("floor", [0.0, -0.5, 1.01])
+def test_out_of_range_floor_is_refused(floor: float) -> None:
     with pytest.raises(ValueError, match="min_trade_confidence"):
-        TradeConfidenceTier(floor)
+        TradeConfidenceTier(_binding(floor))
+
+
+@pytest.mark.parametrize("floor", [float("nan"), True, "0.97"])
+def test_non_numeric_floor_never_reaches_the_tier(floor: Any) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        TradeConfidenceTier(_binding(floor))
+
+
+def test_tier_refuses_a_foreign_norm() -> None:
+    with pytest.raises(ValueError, match=TRADE_CONFIDENCE_NORM_ID):
+        TradeConfidenceTier(_binding(0.97, norm_id="other.norm"))
+    with pytest.raises(ValueError):
+        TradeConfidenceTier(0.97)  # type: ignore[arg-type]
 
 
 # ── Verdicts: the tier and the universal band classify together ──────────────
@@ -205,6 +231,11 @@ def test_plugin_wires_the_effective_floor_and_gamma(
     assert isinstance(tier, TradeConfidenceTier)
     assert tier.min_trade_confidence == floor
     assert (tier.phase, tier.order) == (1, 1)
+    # The tier enforces exactly the binding the plugin contributes to the kernel.
+    (binding,) = contribution.norm_bindings
+    assert binding is tier.norm_binding
+    assert binding.value == floor
+    assert binding.requires_warrant is (region == "EU_ECB")
     (barrier,) = contribution.invariants
     assert barrier.gamma == gamma
 
