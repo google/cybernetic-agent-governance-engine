@@ -39,6 +39,7 @@ from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 from src.gateway.governance.langgraph_harness import (
     nemo_node_factory as f,  # noqa: E402
 )
+from src.integrations.presidio import redactor as pii_redactor  # noqa: E402
 
 _PII_003 = (
     "Hi, my name is John Smith, my email is john.smith@secret-corp.com and "
@@ -50,7 +51,7 @@ _RAW_VALUES = ("John Smith", "john.smith@secret-corp.com", "555-867-5309")
 @pytest.fixture(autouse=True)
 def _presidio_ready() -> None:
     f._ensure_presidio_engines()
-    if f._presidio_analyzer is None:
+    if pii_redactor._presidio_analyzer is None:
         pytest.skip("Presidio engines (spaCy model) unavailable")
 
 

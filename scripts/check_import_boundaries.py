@@ -63,6 +63,8 @@ FORBIDDEN_VENDOR_SDKS = (
     "azure",
     "langfuse",
     "nemoguardrails",
+    "presidio_analyzer",
+    "presidio_anonymizer",
 )
 
 # Rule 1: Forbidden path literals inside Layer 1 (src/gateway/)
@@ -130,6 +132,7 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/governance/signer_factory.py",  # lazy-loads gcp/aws/azure KMS providers
         "src/gateway/governance/telemetry_provider.py",  # lazy-loads telemetry_langfuse
         "src/gateway/governance/semantic_rail_factory.py",  # lazy-loads integrations.nemo semantic rail provider
+        "src/gateway/governance/pii_redactor_factory.py",  # lazy-loads integrations.presidio PII redactor provider
         "src/gateway/infrastructure/redis_credential_factory.py",  # lazy-loads gcp Memorystore IAM credential provider
     ]
 )
