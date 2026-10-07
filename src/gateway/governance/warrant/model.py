@@ -206,12 +206,17 @@ class Warrant:
 
 @dataclass(frozen=True)
 class StandingVerificationResult:
-    """Result of CAGE verifying a warrant's standing."""
+    """Result of CAGE verifying a warrant's standing.
+
+    ``attested_at`` (ISO 8601 UTC) is when CAGE evaluated standing; it is the
+    Warrant Contract v0.1 ``attested_at`` evidence field and is always set,
+    including when no warrant was supplied.
+    """
 
     eligible: bool
     reliance_status: RelianceStatus
     reason: str
-    evaluated_at: str
+    attested_at: str
     warrant: Warrant | None = None
     warrant_id: str = ""
     warrant_digest: str = ""
@@ -221,7 +226,7 @@ class StandingVerificationResult:
             "eligible": self.eligible,
             "reliance_status": self.reliance_status.value,
             "reason": self.reason,
-            "evaluated_at": self.evaluated_at,
+            "attested_at": self.attested_at,
             "warrant_id": self.warrant_id,
             "warrant_digest": self.warrant_digest,
         }

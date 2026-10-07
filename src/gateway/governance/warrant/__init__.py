@@ -24,9 +24,9 @@ Modules:
     model:    ``Warrant``, ``WarrantScope``, ``WarrantStatus``,
               ``RelianceStatus``, ``StandingVerificationResult``
     verifier: ``WarrantStandingVerifier``
-    evidence: ``bind_warrant_to_attestation``
     reliance: ``RelianceRecord`` (the per-decision evidence form carried in
-              seals, deferrals and refusal receipts)
+              seals, deferrals and refusal receipts, and the single source
+              of the envelope ``WARRANT`` attestation)
     cache:    ``WarrantCache`` (the Warrant Contract v0.1 60 s freshness
               window over a ``WarrantSource``)
 """
@@ -40,7 +40,6 @@ from src.gateway.governance.warrant.cache import (
     WarrantFreshness,
     WarrantObservation,
 )
-from src.gateway.governance.warrant.evidence import bind_warrant_to_attestation
 from src.gateway.governance.warrant.model import (
     REQUIRED_CONTEXT_KEYS,
     SCOPE_DIMENSIONS,
@@ -52,6 +51,8 @@ from src.gateway.governance.warrant.model import (
 )
 from src.gateway.governance.warrant.reliance import (
     RELIANCE_VERIFICATION_STATUS,
+    WARRANT_ATTESTATION_TYPE,
+    WARRANT_CONTRACT_EVIDENCE_FIELDS,
     RelianceRecord,
     reliance_attestations,
     reliance_evidence,
@@ -63,6 +64,8 @@ __all__ = [
     "RELIANCE_VERIFICATION_STATUS",
     "REQUIRED_CONTEXT_KEYS",
     "SCOPE_DIMENSIONS",
+    "WARRANT_ATTESTATION_TYPE",
+    "WARRANT_CONTRACT_EVIDENCE_FIELDS",
     "RelianceRecord",
     "RelianceStatus",
     "StandingVerificationResult",
@@ -74,7 +77,6 @@ __all__ = [
     "WarrantScope",
     "WarrantStandingVerifier",
     "WarrantStatus",
-    "bind_warrant_to_attestation",
     "reliance_attestations",
     "reliance_evidence",
 ]

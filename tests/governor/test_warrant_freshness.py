@@ -680,12 +680,12 @@ def test_reliance_record_refuses_malformed_freshness(fields: dict[str, Any]) -> 
         eligible=False,
         reliance_status=RelianceStatus.INELIGIBLE_MISSING,
         reason="missing",
-        evaluated_at=WARRANT_TEST_NOW.isoformat(),
+        attested_at=WARRANT_TEST_NOW.isoformat(),
     )
     with pytest.raises(ValueError):
         RelianceRecord(
             norm_id=_NORM,
-            governing_version=WARRANT_TEST_GOVERNING_VERSION,
+            required_governing_version=WARRANT_TEST_GOVERNING_VERSION,
             provider_name="p",
             standing=standing,
             **fields,

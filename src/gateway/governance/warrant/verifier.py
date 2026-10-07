@@ -68,14 +68,14 @@ class WarrantStandingVerifier:
         """Evaluate standing and return reliance eligibility."""
         context = context or {}
         current_time = now or datetime.now(timezone.utc)
-        evaluated_at = current_time.isoformat()
+        attested_at = current_time.isoformat()
 
         if warrant is None:
             return StandingVerificationResult(
                 eligible=False,
                 reliance_status=RelianceStatus.INELIGIBLE_MISSING,
                 reason="Warrant is missing; cannot ground reliance on norm",
-                evaluated_at=evaluated_at,
+                attested_at=attested_at,
             )
 
         def _ineligible(
@@ -85,7 +85,7 @@ class WarrantStandingVerifier:
                 eligible=False,
                 reliance_status=status,
                 reason=reason,
-                evaluated_at=evaluated_at,
+                attested_at=attested_at,
                 warrant=warrant,
                 warrant_id=warrant.warrant_id,
                 warrant_digest=warrant.digest,
@@ -109,8 +109,8 @@ class WarrantStandingVerifier:
         if warrant.digest != computed_digest:
             return _ineligible(
                 RelianceStatus.INELIGIBLE_UNRESOLVED,
-                f"Cryptographic digest mismatch: declared {warrant.digest[:16]}... "
-                f"vs computed {computed_digest[:16]}...",
+                f"Cryptographic digest mismatch: declared {warrant.digest} "
+                f"vs computed {computed_digest}",
             )
 
         # 3. Status
@@ -145,7 +145,7 @@ class WarrantStandingVerifier:
         if out_of_window:
             return _ineligible(
                 RelianceStatus.INELIGIBLE_EXPIRED,
-                f"Warrant temporal window invalid: current {evaluated_at} outside "
+                f"Warrant temporal window invalid: current {attested_at} outside "
                 f"[{warrant.valid_from}, {warrant.valid_until}]",
             )
 
@@ -179,7 +179,7 @@ class WarrantStandingVerifier:
             eligible=True,
             reliance_status=RelianceStatus.ELIGIBLE,
             reason="Warrant standing verified and active; norm eligible for reliance",
-            evaluated_at=evaluated_at,
+            attested_at=attested_at,
             warrant=warrant,
             warrant_id=warrant.warrant_id,
             warrant_digest=warrant.digest,

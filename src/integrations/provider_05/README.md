@@ -42,9 +42,10 @@ including end to end in
 [`test_warrant_reliance_e2e.py`](../../../tests/governor/test_warrant_reliance_e2e.py).
 
 A fourth `attestation_type`, `WARRANT`, is emitted by the kernel's
-[`bind_warrant_to_attestation()`](../../gateway/governance/warrant/evidence.py:33),
+[`RelianceRecord.attestation()`](../../gateway/governance/warrant/reliance.py),
 with `provider_name` taken from `Provider05WarrantSource.provider_name`
-(`provider_05_warrant`). Its status is always `UNVERIFIED`: the declared digest
+(`provider_05_warrant`). Its metadata is exactly the reliance record's
+evidence form (below), so the envelope and the evidence chain cannot drift. Its status is always `UNVERIFIED`: the declared digest
 proves the warrant is internally consistent, not who issued it (issuer
 signatures are v0.2). Reliance eligibility travels in
 `metadata["reliance_status"]`; an ineligible warrant is never emitted as
@@ -53,13 +54,33 @@ returns these attestations with every `validate_action` ALLOW / NARROW for an
 action a warranted norm governs, and the gateway signs them into the
 `GovernanceEnvelope`.
 
-Independently of the envelope, each evaluation becomes a kernel
+Each evaluation becomes a kernel
 [`RelianceRecord`](../../gateway/governance/warrant/reliance.py) naming this
 source (`provider_name: provider_05_warrant`). It is written into the routing
 seal's evidence record (covered by `record_hash`), the DEFER token and its
 `GOVERNANCE_DEFERRAL` evidence event, or the refusal receipt, with the same
 fields whether the warrant was eligible or not, and always
 `verification_status: UNVERIFIED`.
+
+The record carries every Warrant Contract v0.1 evidence field
+(`WARRANT_CONTRACT_EVIDENCE_FIELDS` maps contract names to record keys):
+
+| Contract field | Record key | Notes |
+|---|---|---|
+| `warrant_id` | `warrant_id` | |
+| `norm_id` | `norm_id` | |
+| `digest` | `warrant_digest` | issuer-declared, never computed by CAGE |
+| `reliance_status` | `reliance_status` | |
+| `governing_version` | `warrant_governing_version` | what the warrant declares |
+| `residual_risk_ref` | `residual_risk_ref` | opaque (Q5): recorded verbatim, never resolved |
+| `attested_at` | `attested_at` | when CAGE evaluated standing |
+
+`required_governing_version` (what the deployment's binding requires) is
+recorded apart from `warrant_governing_version`; they differ on
+`INELIGIBLE_VERSION_MISMATCH` (VEC-005). The record also carries
+`issuing_authority`, `authority_basis` and `revocation_ref`. With no warrant
+(`INELIGIBLE_MISSING`, or the source failed before answering) every
+warrant-declared field is `""`; `attested_at` is always set.
 
 ### Freshness (60 s window)
 

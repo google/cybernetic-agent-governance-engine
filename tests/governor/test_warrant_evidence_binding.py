@@ -105,8 +105,13 @@ _RELIANCE_KEYS = {
     "warrant_status",
     "reliance_status",
     "reason",
-    "governing_version",
-    "evaluated_at",
+    "required_governing_version",
+    "warrant_governing_version",
+    "issuing_authority",
+    "authority_basis",
+    "revocation_ref",
+    "residual_risk_ref",
+    "attested_at",
     "observed_at",
     "age_seconds",
     "max_age_seconds",
@@ -248,7 +253,7 @@ def _record(warrant: Any = None, **standing: Any) -> RelianceRecord:
         "eligible": False,
         "reliance_status": RelianceStatus.INELIGIBLE_MISSING,
         "reason": "Warrant is missing",
-        "evaluated_at": WARRANT_TEST_NOW.isoformat(),
+        "attested_at": WARRANT_TEST_NOW.isoformat(),
         **standing,
     }
     if warrant is not None:
@@ -257,7 +262,7 @@ def _record(warrant: Any = None, **standing: Any) -> RelianceRecord:
         fields.setdefault("warrant_digest", warrant.digest)
     return RelianceRecord(
         norm_id=TRADE_CONFIDENCE_NORM_ID,
-        governing_version=WARRANT_TEST_GOVERNING_VERSION,
+        required_governing_version=WARRANT_TEST_GOVERNING_VERSION,
         provider_name="static_test_source",
         standing=StandingVerificationResult(**fields),
     )
@@ -293,12 +298,12 @@ def test_record_is_always_unverified_and_cannot_be_upgraded() -> None:
 
 
 @pytest.mark.parametrize(
-    "field", ["norm_id", "governing_version", "provider_name"], ids=str
+    "field", ["norm_id", "required_governing_version", "provider_name"], ids=str
 )
 def test_record_refuses_empty_identity(field: str) -> None:
     kwargs: dict[str, Any] = {
         "norm_id": "n",
-        "governing_version": "v",
+        "required_governing_version": "v",
         "provider_name": "p",
         "standing": _record().standing,
         field: "",
@@ -343,8 +348,13 @@ async def test_allow_seal_evidence_carries_the_eligible_reliance_record(
         "warrant_status": "ACTIVE",
         "reliance_status": "ELIGIBLE",
         "reason": reliance["reason"],
-        "governing_version": WARRANT_TEST_GOVERNING_VERSION,
-        "evaluated_at": WARRANT_TEST_NOW.isoformat(),
+        "required_governing_version": WARRANT_TEST_GOVERNING_VERSION,
+        "warrant_governing_version": warrant.governing_version,
+        "issuing_authority": warrant.issuing_authority,
+        "authority_basis": warrant.authority_basis,
+        "revocation_ref": "",
+        "residual_risk_ref": "",
+        "attested_at": WARRANT_TEST_NOW.isoformat(),
         "observed_at": WARRANT_TEST_NOW.isoformat(),
         "age_seconds": "0.000",
         "max_age_seconds": "60.000",
@@ -417,7 +427,7 @@ async def test_generate_seal_refuses_non_json_reliance_before_committing(
 ) -> None:
     with pytest.raises(rs.SealCanonicalizationError):
         await rs.generate_seal_with_evidence(
-            _ACTION, _trade(), reliance=[{"evaluated_at": WARRANT_TEST_NOW}]
+            _ACTION, _trade(), reliance=[{"attested_at": WARRANT_TEST_NOW}]
         )
     assert await chain.records() == []
 
