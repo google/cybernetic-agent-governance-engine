@@ -18,7 +18,7 @@ import json
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.market_service import get_market_data
+from src.cage_finance.tools.portfolio_valuation import (
+    PortfolioValuationUnavailable,
+    resolve_portfolio_total,
+)
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
     dispatch_actuation,
@@ -49,7 +53,10 @@ get_actuator_registry().register(_broker_actuator, claims={"execute_trade"})
 
 
 #: Params an approval binds exactly; the amount may only shrink (see _approval_covers_trade).
-_APPROVAL_BOUND_FIELDS = ("symbol", "currency", "trader_id", "trader_role")
+#: ``side`` is bound so an approved buy can never be re-hydrated as a sell.
+_APPROVAL_BOUND_FIELDS = ("symbol", "currency", "trader_id", "trader_role", "side")
+
+TradeSide = Literal["buy", "sell"]
 
 
 def _approval_covers_trade(approved: dict, requested: dict) -> bool:
@@ -81,6 +88,7 @@ async def execute_trade_action(
     deferred_id: str | None = None,
     latency_ms: float | None = None,
     drawdown: float | None = None,
+    side: TradeSide = "buy",
     *,
     governor: "SymbolicGovernor",
 ) -> str:
@@ -114,6 +122,11 @@ async def execute_trade_action(
             full run fails closed on the missing parameter.
         drawdown: Daily drawdown, an STPA input (UCA-5). Omitted, the full
             run fails closed on the missing parameter.
+        side: Order side, ``"buy"`` (default) or ``"sell"``. A sell is held
+            to the regional FIN-1 sell-fraction limit (UCA-13) against the
+            portfolio value the gateway reads from the custodian ledger; the
+            caller cannot supply that value. When the ledger is unavailable
+            the sell is refused.
         governor: The assembled governor that seals the trade and settles its
             reservations once the broker has answered.
     """
@@ -123,12 +136,15 @@ async def execute_trade_action(
     )
 
     logger.info(
-        "Tool Call: execute_trade(%s, %s, confidence=%s, deferred_id=%s)",
+        "Tool Call: execute_trade(%s, %s, side=%s, confidence=%s, deferred_id=%s)",
         symbol,
         amount,
+        side,
         confidence,
         deferred_id,
     )
+    if side not in ("buy", "sell"):
+        return f"BLOCKED: invalid trade side {side!r}; expected 'buy' or 'sell'."
     if not transaction_id:
         transaction_id = str(uuid.uuid4())
 
@@ -141,11 +157,24 @@ async def execute_trade_action(
         "trader_id": trader_id,
         "trader_role": trader_role,
         "dry_run": dry_run,
+        "side": side,
     }
     if latency_ms is not None:
         params["latency_ms"] = latency_ms
     if drawdown is not None:
         params["drawdown"] = drawdown
+    if side == "sell":
+        # FIN-1 / UCA-13 input. Only the server-side ledger value is used; an
+        # unavailable ledger leaves it unset so the governor's STPA stage
+        # refuses the sell (and records the refusal) rather than this tool.
+        try:
+            params["portfolio_total"] = await resolve_portfolio_total(governor)
+        except PortfolioValuationUnavailable as exc:
+            logger.warning(
+                "execute_trade: portfolio valuation unavailable for sell "
+                "(UCA-13 will refuse): %s",
+                exc,
+            )
 
     # Step 1: Enforce governance (commit + seal) and obtain the seal
     try:
@@ -346,6 +375,7 @@ class FinancialToolProvider(DomainToolProvider):
             deferred_id: str | None = None,
             latency_ms: float | None = None,
             drawdown: float | None = None,
+            side: TradeSide = "buy",
         ) -> str:
             return await execute_trade_action(
                 symbol,
@@ -359,6 +389,7 @@ class FinancialToolProvider(DomainToolProvider):
                 deferred_id,
                 latency_ms,
                 drawdown,
+                side,
                 governor=governor,
             )
 

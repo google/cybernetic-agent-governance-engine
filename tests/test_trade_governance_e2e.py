@@ -242,6 +242,7 @@ class Gateway:
             deferred_id,
             params.get("latency_ms"),
             params.get("drawdown"),
+            params.get("side", "buy"),
             governor=self.governor,
         )
 
@@ -256,6 +257,8 @@ def trade(amount: float, role: str = "senior", **extra: Any) -> dict[str, Any]:
         "trader_role": role,
         "latency_ms": 10.0,
         "drawdown": 0.0,
+        # The tool always sends a side, and an approval binds it.
+        "side": "buy",
         **extra,
     }
 
