@@ -351,7 +351,7 @@ src/cage_finance/
 ├── tiers/
 │   └── bounding_tier.py       # BoundingContractTier (phase 1, order 3)
 ├── tools/
-│   └── bounded_execution.py   # execute_trade_bounded verb
+│   └── bounded_execution.py   # execute_trade_bounded verb (removed 2026-10-06, POAM-2026-109)
 └── opa/
     └── bounding_contracts.rego
 ```
@@ -509,7 +509,7 @@ independently testable.
 | **7** | `bounding/contracts.py` — B7, B10 (kernel-service dependent) | Highest coupling, lands last |
 | **8** | `bounding/registry.py` + config block | Wires contracts to configuration |
 | **9** | `tiers/bounding_tier.py` + plugin registration | Integrates into the dispatch loop |
-| **10** | `tools/bounded_execution.py` — the verb itself | Depends on all of the above |
+| **10** | `tools/bounded_execution.py` — the verb itself (later removed: it called the broker with a literal seal, bypassing `verify_and_consume_seal()`; see POAM-2026-109) | Depends on all of the above |
 | **11** | Terminal registry row + re-sign | Activates `EXTERNALLY_REVERSIBLE` classification |
 | **12** | `opa/bounding_contracts.rego` + policy tests | Defence in depth alongside the Python tier |
 | **13** | STPA regeneration, OSCAL update, regional report extension | Compliance closure |

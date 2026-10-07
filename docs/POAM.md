@@ -188,6 +188,7 @@ The following findings have been remediated and verified via Lula validation and
 | POAM-2026-106 | SI-10 / CM-6 | ✅ **CLOSED — UCA-6 (order size vs. daily volume) is evaluated on every trade.** No path supplied `order_size` / `daily_vol`, and the generated rule skipped when both were absent, so the regional `stpa.uca6_max_order_volume_fraction` (US_FED 0.01, EU_ECB 0.005, APAC_MAS 0.008) was never applied. UCA-6 now has `require_params: true` (a missing input is a HARD refusal), and the finance [`TradeInputResolver`](../src/cage_finance/tools/trade_inputs.py) owns both keys: `order_size` = notional `amount` / verified quote price, `daily_vol` = the symbol's average daily volume from the market-data feed. Narrow proposals are re-bound so derived inputs describe the clamped amount. Lula: not run (see detail section). Remediation: `fix/uca6-server-inputs`. | 2026-10-06 |
 | POAM-2026-107 | CA-2 / AC-3 / AU-10 | ✅ **CLOSED — The warrant reliance path is verified end to end.** Verification of the EU_ECB warrant reliance gate (POAM-2026-104) rested on stage-level tests over hand-built governors (`make_governor`) and an inline "Test C" in `test_provider_05_warrant_contract.py` that computed the DEFER it then asserted. Nothing showed that the composition root wires `WarrantStage`, `WarrantCache` and the `CAGE_WARRANT_SOURCE` adapter, or that the gateway and the trade tool honour them. [`test_warrant_reliance_e2e.py`](../tests/governor/test_warrant_reliance_e2e.py) now builds the governor with `bootstrap_governor()` (real finance plugin, regional thresholds and jurisdiction, seeded `Provider05WarrantSource` holding the VEIP v0.1 vectors) and drives `POST /governance/validate-action` and `execute_trade_action()`. The simulation is deleted. The warrant source is seeded, not the partner wire (VEIP has no live endpoint; Tier 1 over-the-wire conformance stays a POAM-2026-104 closure criterion). Lula: not run (see detail section). Remediation: `test/warrant-reliance-e2e`. | 2026-10-06 |
 | POAM-2026-108 | SI-10 / CM-6 | ✅ **CLOSED — A bounded trade's drawdown is measured by the gateway and B2 reads it.** `execute_trade_bounded` had no server-input resolver (the finance plugin registered one for `execute_trade` only), so the kernel passed a caller's `drawdown` and aliases through unchanged, and bounding contract B2 (daily drawdown circuit breaker) was never given any measured drawdown. The finance plugin now registers its [`TradeInputResolver`](../src/cage_finance/tools/trade_inputs.py) for every trade action (`TRADE_ACTIONS`), and the bounding tier passes B2 the bound `drawdown` (as a fraction) to compare with the regional `drawdown.limit` (US_FED 5 %, APAC_MAS 4.5 %, EU_ECB 4 %). A guard test fails if any STPA rule or tier reads an owned key for an action without a resolver. Lula: not run (see detail section). Remediation: `fix/bounded-trade-server-inputs`. | 2026-10-06 |
+| POAM-2026-109 | AC-3 / SI-10 / CM-7 | ✅ **CLOSED — No code path reaches the broker with a hard-coded routing seal.** `src/cage_finance/tools/bounded_execution.py` (`execute_trade_bounded()`) had no callers, but it called the broker's `trade_executor.execute_trade` directly with the literal seal `"INTERNAL_BOUNDED_EXECUTION"`. The broker only checks that the seal is a non-empty string, so that call skipped `verify_and_consume_seal()` and `ActuatorRegistry` (ADR-008), and the actuator-seam invariant allowlisted the file. The module is deleted, the allowlist entry removed, and [`test_architectural_invariants.py`](../tests/test_architectural_invariants.py) now pins `BrokerActuator.actuate` as the only call site (scope-aware, `__init__.py` included, no other module may import `trade_executor`) and refuses any string-literal `routing_seal` in `src/`. The `execute_trade_bounded` action itself (bounding tier, terminal registry) is unchanged. Lula: not run (see detail section). Remediation: `refactor/remove-bounded-execution`. | 2026-10-06 |
 
 ---
 
@@ -516,6 +517,28 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
+
+### POAM-2026-109: Dead Bounded Execution Module Bypassed Routing Seal
+
+**Control:** NIST AC-3 (Access Enforcement), SI-10, CM-7 (Least Functionality)
+**Risk Level:** Low
+**Status:** Closed
+**Date Opened:** 2026-10-06
+**Date Closed:** 2026-10-06
+**Related Commit:** `refactor/remove-bounded-execution` (pending squash merge)
+
+**Description:**
+`src/cage_finance/tools/bounded_execution.py` defined `execute_trade_bounded()`, a Phase 5 wrapper that built a `TradeOrder` and called the broker's [`execute_trade()`](../src/cage_finance/tools/trade_executor.py) with `routing_seal="INTERNAL_BOUNDED_EXECUTION"`. `execute_trade()` refuses only a missing, non-string or blank seal, so this call reached the broker without [`verify_and_consume_seal()`](../src/gateway/governance/routing_seal.py) or [`ActuatorRegistry`](../src/gateway/governance/execution_actuator.py) dispatch, breaking the ADR-008 fail-closed execution boundary. The actuator-seam invariant in [`test_architectural_invariants.py`](../tests/test_architectural_invariants.py) allowlisted the file as a "legacy bounding contract wrapper". Nothing imported the module or called the function (no tool binding, MCP registration, server route or test), so the path was not reachable at runtime; the risk was latent: one import away from an ungoverned trade.
+
+**Remediation:**
+1. The module is deleted. The `execute_trade_bounded` action (bounding tier [`bounding_tier.py`](../src/cage_finance/tiers/bounding_tier.py), terminal registry classification, cost resolver, OPA policy) is unchanged; only the ungoverned wrapper is gone.
+2. `test_actuator_seam_isolation_execute_trade` no longer allowlists the file. It now tracks the enclosing class and method correctly (the previous `ast.walk` stacks were never popped), allows exactly `BrokerActuator.actuate` in [`broker_actuator.py`](../src/cage_finance/actuators/broker_actuator.py), scans `__init__.py` files too, and fails if any other `src/` module imports `trade_executor` (so an aliased call cannot slip past a name check).
+3. New guard `test_no_literal_routing_seal_in_src` fails if any call in `src/` passes a string literal as `routing_seal`.
+
+**Verification (2026-10-06):**
+1. With the module restored, both invariant tests fail and name `src/cage_finance/tools/bounded_execution.py`; with it deleted they pass.
+2. A repository-wide search (src, tests, docs, scripts, config, deployment, compliance, examples, Makefile) found no import of the module or the function; remaining `execute_trade_bounded` matches are the governed action name. No OSCAL statement referenced the module or the allowlist, so no OSCAL change was required.
+3. **Lula: not run.** The `lula` CLI is not installed. No Kubernetes resource was added, removed or renamed, so no Lula manifest change was required.
 
 ### POAM-2026-108: Bounded Trade Measured Inputs Not Server-Bound
 
