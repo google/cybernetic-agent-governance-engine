@@ -14,10 +14,11 @@
 
 """Server-side STPA inputs for a governed trade.
 
-UCA-2 / FIN-2 read ``latency_ms``, UCA-5 reads ``drawdown`` and, for a sell,
-UCA-13 / FIN-1 reads ``portfolio_total`` from the trade params. The trade tool
-never takes any of these values from its caller. It measures or reads them
-here, at the gateway tool boundary, for every committing run (including the
+UCA-2 / FIN-2 read ``latency_ms``, UCA-5 reads ``drawdown``, UCA-6 reads
+``order_size`` and ``daily_vol`` and, for a sell, UCA-13 / FIN-1 reads
+``portfolio_total`` from the trade params. The gateway never takes any of
+these values from its caller. It measures or derives them here for every
+evaluation of a trade: each preview and each committing run (including the
 POST_HITL re-run after an approval).
 
 ``latency_ms`` (UCA-2 / FIN-2)
@@ -52,6 +53,27 @@ POST_HITL re-run after an approval).
     A NAV of zero is a valid drawdown reading but no basis for a sell
     fraction, so it leaves ``portfolio_total`` unset.
 
+``order_size`` (UCA-6)
+    The order's size in shares, derived from the caller's notional ``amount``
+    and the verified quote price of the same quote that gives ``latency_ms``::
+
+        order_size = amount / quote.price
+
+    ``amount`` is caller intent (how much to trade), so it stays the
+    caller's. ``order_size`` is what UCA-6 compares with market volume, so
+    the gateway derives it and the caller cannot state it. The amount is
+    taken to be in the quote currency; no FX conversion is applied (a
+    non-USD order against a USD quote is a commercial-deployment concern).
+
+``daily_vol`` (UCA-6)
+    The traded symbol's average daily volume in shares, from the market-data
+    feed (:meth:`MarketQuoteFeed.average_daily_volume`). UCA-6 refuses an
+    order larger than ``stpa.uca6_max_order_volume_fraction`` of it. The
+    reading must come from a verified source, be for the traded symbol, be
+    finite and positive, be no older than :data:`MAX_DAILY_VOLUME_AGE_S`
+    (an average published once per session, allowing for a weekend and a
+    holiday), and be dated no more than :data:`MAX_CLOCK_SKEW_S` ahead.
+
 Every NAV reading gets the checks the reconciler applies before it trusts a
 ground-truth snapshot (:func:`fetch_verified_nav`): verified source, finite
 values, positive opening NAV, an age within the reconciler's TTL, and no more
@@ -68,9 +90,10 @@ and ``current_drawdown``, so a preview and the binding run see the same
 measured values.
 
 Fail closed: if a source is missing, times out, or returns a reading that
-fails validation, the input is left out of the params. The generated UCA-2 /
-UCA-5 rules then refuse the trade inside the governor, which records the
-refusal in the evidence chain.
+fails validation, or ``amount`` is not a usable number, the input is left out
+of the params. The generated UCA-2 / UCA-5 / UCA-6 / UCA-13 rules then refuse
+the trade inside the governor, which records the refusal in the evidence
+chain.
 """
 
 from __future__ import annotations
@@ -96,6 +119,10 @@ MAX_CLOCK_SKEW_S: float = 5.0
 #: Oldest NAV reading accepted, matching the reconciler's verified-state TTL.
 MAX_NAV_AGE_S: float = float(TTL_SECONDS)
 
+#: Oldest average-daily-volume reading accepted: published once per session,
+#: so four days spans a weekend plus a market holiday.
+MAX_DAILY_VOLUME_AGE_S: float = 4 * 24 * 3600.0
+
 
 @dataclass(frozen=True)
 class MarketQuote:
@@ -105,6 +132,26 @@ class MarketQuote:
     price: float
     #: Feed publication time of the quote (Unix epoch seconds).
     published_at: float
+    source_id: str
+
+
+@dataclass(frozen=True)
+class VerifiedQuote:
+    """A quote that passed validation, with its measured age."""
+
+    price: float
+    latency_ms: float
+
+
+@dataclass(frozen=True)
+class DailyVolume:
+    """A symbol's average daily traded volume, as published by the feed."""
+
+    symbol: str
+    #: Average shares traded per session.
+    shares: float
+    #: When the feed computed the average (Unix epoch seconds).
+    as_of: float
     source_id: str
 
 
@@ -121,9 +168,11 @@ class NavSnapshot:
 
 @runtime_checkable
 class MarketQuoteFeed(Protocol):
-    """Latest-quote reader for the traded instrument."""
+    """Market-data reader for the traded instrument."""
 
     async def latest_quote(self, symbol: str) -> MarketQuote: ...
+
+    async def average_daily_volume(self, symbol: str) -> DailyVolume: ...
 
 
 @runtime_checkable
@@ -152,6 +201,20 @@ async def measure_market_data_latency_ms(
     clock: Callable[[], float] = time.time,
 ) -> float:
     """Return the age in ms of ``symbol``'s latest quote at the tool boundary.
+
+    Raises:
+        TradeInputUnavailable: as :func:`fetch_verified_quote`.
+    """
+    return (await fetch_verified_quote(feed, symbol, clock=clock)).latency_ms
+
+
+async def fetch_verified_quote(
+    feed: MarketQuoteFeed,
+    symbol: str,
+    *,
+    clock: Callable[[], float] = time.time,
+) -> VerifiedQuote:
+    """Fetch ``symbol``'s latest quote; return its price and measured age.
 
     Raises:
         TradeInputUnavailable: the fetch fails or times out, or the quote is
@@ -183,7 +246,73 @@ async def measure_market_data_latency_ms(
     age_s = t_received - published_at
     if age_s < -MAX_CLOCK_SKEW_S:
         raise TradeInputUnavailable(f"quote timestamp {-age_s:.1f}s in the future")
-    return max(age_s, 0.0) * 1000.0
+    return VerifiedQuote(price=price, latency_ms=max(age_s, 0.0) * 1000.0)
+
+
+async def fetch_verified_daily_volume(
+    feed: MarketQuoteFeed,
+    symbol: str,
+    *,
+    clock: Callable[[], float] = time.time,
+) -> float:
+    """Return ``symbol``'s average daily volume in shares, if it can be trusted.
+
+    Raises:
+        TradeInputUnavailable: the fetch fails or times out, or the reading is
+            for another symbol, unverified, non-finite or not positive, older
+            than :data:`MAX_DAILY_VOLUME_AGE_S`, or dated in the future.
+    """
+    try:
+        vol = await asyncio.wait_for(feed.average_daily_volume(symbol), FETCH_TIMEOUT_S)
+    except Exception as exc:
+        raise TradeInputUnavailable(
+            f"daily-volume fetch failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(vol.symbol, str) or vol.symbol.upper() != symbol.upper():
+        raise TradeInputUnavailable(
+            f"daily volume is for {vol.symbol!r}, not {symbol!r}"
+        )
+    if not _verified(vol.source_id):
+        raise TradeInputUnavailable(f"unverified daily-volume source {vol.source_id!r}")
+    try:
+        shares = float(vol.shares)
+        as_of = float(vol.as_of)
+    except (TypeError, ValueError) as exc:
+        raise TradeInputUnavailable(f"malformed daily volume: {exc}") from exc
+    if not math.isfinite(shares) or shares <= 0.0:
+        raise TradeInputUnavailable(f"invalid daily volume {shares!r}")
+    if not math.isfinite(as_of):
+        raise TradeInputUnavailable("non-finite daily-volume timestamp")
+    age_s = clock() - as_of
+    if age_s > MAX_DAILY_VOLUME_AGE_S:
+        raise TradeInputUnavailable(
+            f"stale daily volume: age {age_s:.0f}s > {MAX_DAILY_VOLUME_AGE_S:.0f}s"
+        )
+    if age_s < -MAX_CLOCK_SKEW_S:
+        raise TradeInputUnavailable(
+            f"daily-volume timestamp {-age_s:.1f}s in the future"
+        )
+    return shares
+
+
+def order_size_shares(amount: object, price: float) -> float:
+    """Return the order size in shares for a notional ``amount`` at ``price``.
+
+    Raises:
+        TradeInputUnavailable: ``amount`` is not a finite, non-negative number
+            (booleans are rejected), or ``price`` is not positive.
+    """
+    if isinstance(amount, bool) or not isinstance(amount, (int, float, str)):
+        raise TradeInputUnavailable(f"amount {amount!r} is not a number")
+    try:
+        notional = float(amount)
+    except ValueError as exc:
+        raise TradeInputUnavailable(f"amount {amount!r} is not a number") from exc
+    if not math.isfinite(notional) or notional < 0.0:
+        raise TradeInputUnavailable(f"invalid amount {notional!r}")
+    if not price > 0.0:
+        raise TradeInputUnavailable(f"invalid quote price {price!r}")
+    return notional / price
 
 
 async def fetch_verified_nav(
@@ -270,6 +399,32 @@ async def resolve_portfolio_total(
     return portfolio_total(await fetch_verified_nav(source, clock=clock))
 
 
+async def _resolve_market(
+    feed: MarketQuoteFeed, symbol: str, amount: object, inputs: dict[str, float]
+) -> None:
+    """Add ``latency_ms`` / ``order_size`` (one quote) and ``daily_vol``."""
+    try:
+        quote = await fetch_verified_quote(feed, symbol)
+    except TradeInputUnavailable as exc:
+        logger.warning(
+            "trade inputs: quote unavailable (UCA-2 / UCA-6 will refuse): %s", exc
+        )
+    else:
+        inputs["latency_ms"] = quote.latency_ms
+        try:
+            inputs["order_size"] = order_size_shares(amount, quote.price)
+        except TradeInputUnavailable as exc:
+            logger.warning(
+                "trade inputs: order_size unavailable (UCA-6 will refuse): %s", exc
+            )
+    try:
+        inputs["daily_vol"] = await fetch_verified_daily_volume(feed, symbol)
+    except TradeInputUnavailable as exc:
+        logger.warning(
+            "trade inputs: daily_vol unavailable (UCA-6 will refuse): %s", exc
+        )
+
+
 @dataclass(frozen=True)
 class ServerTradeInputs:
     """The gateway's sources for the STPA inputs of a governed trade.
@@ -281,28 +436,26 @@ class ServerTradeInputs:
     market_feed: MarketQuoteFeed | None
     nav_source: PortfolioNavSource | None
 
-    async def resolve(self, symbol: str, *, side: str) -> dict[str, float]:
-        """Return the measurable inputs for a ``side`` trade in ``symbol``.
+    async def resolve(
+        self, symbol: str, *, side: str, amount: object
+    ) -> dict[str, float]:
+        """Return the measurable inputs for a ``side`` trade of ``amount`` in ``symbol``.
 
-        ``latency_ms`` and ``drawdown`` are resolved for every trade;
-        ``portfolio_total`` only for a sell, from the same NAV snapshot as
-        ``drawdown``. An input that cannot be measured or trusted is left out
-        and logged; the governor's STPA stage then refuses the trade.
+        ``latency_ms``, ``order_size``, ``daily_vol`` and ``drawdown`` are
+        resolved for every trade; ``portfolio_total`` only for a sell, from
+        the same NAV snapshot as ``drawdown``. ``order_size`` uses the price
+        of the quote that gives ``latency_ms``. An input that cannot be
+        measured or trusted is left out and logged; the governor's STPA stage
+        then refuses the trade.
         """
         inputs: dict[str, float] = {}
         if self.market_feed is None:
             logger.warning(
-                "trade inputs: no market-data feed assembled (UCA-2 will refuse)"
+                "trade inputs: no market-data feed assembled "
+                "(UCA-2 / UCA-6 will refuse)"
             )
         else:
-            try:
-                inputs["latency_ms"] = await measure_market_data_latency_ms(
-                    self.market_feed, symbol
-                )
-            except TradeInputUnavailable as exc:
-                logger.warning(
-                    "trade inputs: latency_ms unavailable (UCA-2 will refuse): %s", exc
-                )
+            await _resolve_market(self.market_feed, symbol, amount, inputs)
         refusing = "UCA-5 / UCA-13" if side == "sell" else "UCA-5"
         if self.nav_source is None:
             logger.warning(
@@ -329,15 +482,17 @@ class ServerTradeInputs:
         return inputs
 
 
-#: Every ``execute_trade`` param a UCA-2 / UCA-5 / UCA-13 rule reads as measured
-#: state, including UCA-5's aliases (``trade_hazards.yaml``). Only the gateway
-#: sets these; a caller value is always dropped.
+#: Every ``execute_trade`` param a UCA-2 / UCA-5 / UCA-6 / UCA-13 rule reads as
+#: measured state, including UCA-5's aliases (``trade_hazards.yaml``). Only the
+#: gateway sets these; a caller value is always dropped.
 TRADE_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
     {
         "latency_ms",
         "drawdown",
         "portfolio_drawdown_pct",
         "current_drawdown",
+        "order_size",
+        "daily_vol",
         "portfolio_total",
     }
 )
@@ -347,8 +502,9 @@ TRADE_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
 class TradeInputResolver:
     """``execute_trade`` server-input resolver over :class:`ServerTradeInputs`.
 
-    Reads ``symbol`` and ``side`` from the (already stripped) params. A
-    missing symbol resolves nothing, so UCA-2 / UCA-5 refuse. ``side`` is
+    Reads ``symbol``, ``side`` and ``amount`` from the (already stripped)
+    params. A missing symbol resolves nothing, so UCA-2 / UCA-5 / UCA-6
+    refuse; an unusable ``amount`` leaves ``order_size`` unset. ``side`` is
     matched case-insensitively, like UCA-13's ``applies_when``, so every
     request UCA-13 treats as a sell gets ``portfolio_total``.
     """
@@ -364,14 +520,16 @@ class TradeInputResolver:
             )
             return {}
         side = str(params.get("side") or "buy").lower()
-        return await self.inputs.resolve(symbol, side=side)
+        return await self.inputs.resolve(symbol, side=side, amount=params.get("amount"))
 
 
 __all__ = [
     "FETCH_TIMEOUT_S",
     "MAX_CLOCK_SKEW_S",
+    "MAX_DAILY_VOLUME_AGE_S",
     "MAX_NAV_AGE_S",
     "TRADE_SERVER_INPUT_KEYS",
+    "DailyVolume",
     "MarketQuote",
     "MarketQuoteFeed",
     "NavSnapshot",
@@ -379,9 +537,13 @@ __all__ = [
     "ServerTradeInputs",
     "TradeInputResolver",
     "TradeInputUnavailable",
+    "VerifiedQuote",
     "daily_drawdown_pct",
+    "fetch_verified_daily_volume",
     "fetch_verified_nav",
+    "fetch_verified_quote",
     "measure_market_data_latency_ms",
+    "order_size_shares",
     "portfolio_total",
     "resolve_daily_drawdown_pct",
     "resolve_portfolio_total",

@@ -24,7 +24,9 @@ seedable and supports fault injection for every fail-closed path in
 The trade tool *measures* latency against these sources the same way it
 would against a live feed. The simulation only decides when a quote was
 published (``published_at``); the gateway computes the age from its own
-clock.
+clock. The market feed also publishes each symbol's average daily volume
+(UCA-6), with its own fault channel so the quote and the volume can fail
+independently.
 """
 
 from __future__ import annotations
@@ -35,17 +37,23 @@ import time
 from collections.abc import Callable
 
 from src.cage_finance.invariants import CashBarrier
-from src.cage_finance.tools.trade_inputs import MarketQuote, NavSnapshot
+from src.cage_finance.tools.trade_inputs import DailyVolume, MarketQuote, NavSnapshot
 from src.gateway.governance.seams.ground_truth import FaultMode
 
 _FAULT_SHIFT_S = 3600.0
+#: A stale daily-volume reading must be older than the four-day acceptance window.
+_VOLUME_STALE_SHIFT_S = 30 * 24 * 3600.0
 
 
 class SimulatedMarketQuoteFeed:
-    """Deterministic latest-quote feed with a seeded publication delay.
+    """Deterministic market-data feed: latest quote and average daily volume.
 
     Each quote is published ``uniform(*publication_delay_ms)`` before the
-    fetch, so its measured age lands in that range plus the fetch time.
+    fetch, so its measured age lands in that range plus the fetch time. Every
+    symbol's average daily volume is ``daily_volume`` shares (settable with
+    :meth:`set_daily_volume`), computed at the start of the current day.
+    :meth:`inject_fault` faults quotes; :meth:`inject_volume_fault` faults
+    daily-volume readings.
     """
 
     source_id = "simulated:finance_market_feed"
@@ -56,6 +64,7 @@ class SimulatedMarketQuoteFeed:
         seed: int | None = None,
         publication_delay_ms: tuple[float, float] = (5.0, 40.0),
         base_price: float = 100.0,
+        daily_volume: float = 2_000_000.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         lo, hi = publication_delay_ms
@@ -66,6 +75,8 @@ class SimulatedMarketQuoteFeed:
         self._base_price = float(base_price)
         self._clock = clock
         self._fault = FaultMode.NONE
+        self._volume_fault = FaultMode.NONE
+        self.set_daily_volume(daily_volume)
 
     @property
     def fault_mode(self) -> FaultMode:
@@ -76,6 +87,48 @@ class SimulatedMarketQuoteFeed:
 
     def clear_fault(self) -> None:
         self._fault = FaultMode.NONE
+
+    def set_daily_volume(self, shares: float) -> None:
+        if not float(shares) > 0.0:
+            raise ValueError("daily_volume must be positive")
+        self._daily_volume = float(shares)
+
+    @property
+    def volume_fault_mode(self) -> FaultMode:
+        return self._volume_fault
+
+    def inject_volume_fault(self, mode: FaultMode | str) -> None:
+        self._volume_fault = FaultMode(mode)
+
+    def clear_volume_fault(self) -> None:
+        self._volume_fault = FaultMode.NONE
+
+    async def average_daily_volume(self, symbol: str) -> DailyVolume:
+        mode = self._volume_fault
+        if mode is FaultMode.TIMEOUT:
+            raise TimeoutError("simulated daily-volume timeout")
+        if mode is FaultMode.CONNECTION_ERROR:
+            raise ConnectionError("simulated daily-volume connection error")
+        now = self._clock()
+        as_of = now - (now % 86400.0)  # computed at the start of the UTC day
+        shares = self._daily_volume
+        source_id = self.source_id
+        volume_symbol = symbol.upper()
+        if mode is FaultMode.STALE_TIMESTAMP:
+            as_of -= _VOLUME_STALE_SHIFT_S
+        elif mode is FaultMode.FUTURE_TIMESTAMP:
+            as_of = now + _FAULT_SHIFT_S
+        elif mode is FaultMode.NAN_VALUE:
+            shares = float("nan")
+        elif mode is FaultMode.NEGATIVE_VALUE:
+            shares = -shares
+        elif mode is FaultMode.MALFORMED_PAYLOAD:
+            volume_symbol = ""
+        elif mode is FaultMode.UNVERIFIED_SOURCE:
+            source_id = "unverified_rogue_feed"
+        return DailyVolume(
+            symbol=volume_symbol, shares=shares, as_of=as_of, source_id=source_id
+        )
 
     async def latest_quote(self, symbol: str) -> MarketQuote:
         mode = self._fault

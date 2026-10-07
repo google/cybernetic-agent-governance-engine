@@ -246,6 +246,17 @@ class SymbolicGovernor:
             )
             return await verdict if inspect.isawaitable(verdict) else verdict
 
+    async def _rebind(self, action: str, proposal: dict[str, Any]) -> dict[str, Any]:
+        """A narrower's proposal with its server inputs resolved afresh.
+
+        A proposal copies the request's bound params and clamps some of them;
+        any server input derived from a clamped value would otherwise describe
+        the original request.
+        """
+        return await bind_server_inputs(
+            self._components.server_inputs, action, copy.deepcopy(proposal)
+        )
+
     async def _reverified_narrow_hint(
         self, action: str, meta: dict[str, Any]
     ) -> dict[str, Any]:
@@ -264,7 +275,9 @@ class SymbolicGovernor:
         proposal = hint.get("narrowed_params")
         if not isinstance(proposal, dict):
             return without
-        verified = copy.deepcopy(proposal)  # the exact params the response names
+        # The exact params the response names, server inputs re-bound so the
+        # derived values describe the clamped request, not the original one.
+        verified = await self._rebind(action, proposal)
         ctx = StageContext(
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
         )
@@ -302,7 +315,7 @@ class SymbolicGovernor:
                 GovernanceDecision.DENY,
             )
             await _deny(action, params, result)
-        verified = copy.deepcopy(proposal)  # the exact params the response names
+        verified = await self._rebind(action, proposal)  # the params the response names
         ctx = StageContext(
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
         )
@@ -426,7 +439,8 @@ class SymbolicGovernor:
                 result, action, Profile.FULL, "govern", GovernanceDecision.DENY
             )
             await _deny(action, params, result)
-        narrowed = copy.deepcopy(proposal)  # the exact params the seal and receipt name
+        # The exact params the seal and receipt name, server inputs re-bound.
+        narrowed = await self._rebind(action, proposal)
 
         async def _deliver(seal: str) -> None:
             await issue_narrow_receipt(

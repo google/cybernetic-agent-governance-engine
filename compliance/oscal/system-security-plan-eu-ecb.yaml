@@ -556,7 +556,13 @@ system-security-plan:
         value for latency_ms, drawdown, its aliases and portfolio_total before
         resolving them, in POST /governance/validate-action, the MCP
         simulate_governance_check dry run and the trade tool before its
-        committing run. No STPA input is defaulted on a dry run.
+        committing run. No STPA input is defaulted on a dry run. UCA-6
+        (order-volume fraction 0.005) is evaluated on every trade and refuses
+        one lacking either input (POAM-2026-106 closed): order_size is the
+        caller''s notional amount divided by the verified quote price, and
+        daily_vol is the symbol''s average daily volume from the market-data
+        feed (verified source, traded symbol, finite and positive, at most four
+        days old), both bound server-side by TradeInputResolver.
         The overlay fails closed: a missing or malformed EU_ECB_BASELINE.json,
         a regional section with no global counterpart, or a shape change aborts
         threshold loading; an unknown or invalid key fails governor assembly

@@ -242,8 +242,12 @@ unsafe_control_actions:
     description: "Agent submits market order exceeding allowable fraction of daily volume."
     # FTRA: execute_trade — irreversible external financial commitment.
     terminal_classification: IRREVERSIBLE_TERMINAL
+    # order_size (shares) = notional amount / verified quote price and daily_vol
+    # (shares, average daily volume) are bound server-side by the finance
+    # plugin's TradeInputResolver; a trade missing either fails closed.
     condition:
       composite: "order_size > threshold_ref(stpa.uca6_max_order_volume_fraction) * daily_vol"
+      require_params: true
     enforcement: [opa, python]
     opa_rule:
       decision: DENY
