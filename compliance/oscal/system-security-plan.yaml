@@ -1051,10 +1051,11 @@ system-security-plan:
         stage is assembled in this region. The generated finance STPA rules (src/cage_finance/stpa/uca_rules.py)
         read the effective values: UCA-2/FIN-2 latency, UCA-5 drawdown, UCA-6 order-volume
         fraction and UCA-13/FIN-1 sell fraction (US_FED 0.10; a sell lacking a numeric
-        amount or portfolio_total fails closed; the gateway reads portfolio_total
-        from the custodian ledger snapshot, src/cage_finance/tools/portfolio_valuation.py,
-        never from the caller). For UCA-2 and UCA-5, the gateway trade tool supplies
-        both inputs itself on every committing run, never from the caller (src/cage_finance/tools/trade_inputs.py):
+        amount or portfolio_total fails closed; portfolio_total = current NAV from
+        the server-side NAV source, src/cage_finance/tools/trade_inputs.py, never
+        from the caller, and an unavailable NAV leaves it unset so UCA-13 refuses).
+        For UCA-2 and UCA-5, the gateway trade tool supplies both inputs itself on
+        every committing run, never from the caller (src/cage_finance/tools/trade_inputs.py):
         latency_ms is the measured age of the traded symbol''s latest quote at the
         tool boundary and drawdown is the daily NAV drawdown in percent; an unavailable
         or untrustworthy source leaves the input unset and UCA-2 / UCA-5 refuse the
