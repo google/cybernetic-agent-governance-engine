@@ -59,6 +59,14 @@ than :data:`MAX_CLOCK_SKEW_S` of future skew. One snapshot is fetched per
 trade, so ``drawdown`` and ``portfolio_total`` always describe the same
 moment.
 
+:class:`TradeInputResolver` is the finance plugin's ``execute_trade``
+:class:`~src.gateway.governance.contracts.ServerInputResolver`. The kernel
+applies it on every path that evaluates a trade (``validate-action`` and the
+other previews, and the committing run in the trade tool). It drops any caller
+value for these keys, including the UCA-5 aliases ``portfolio_drawdown_pct``
+and ``current_drawdown``, so a preview and the binding run see the same
+measured values.
+
 Fail closed: if a source is missing, times out, or returns a reading that
 fails validation, the input is left out of the params. The generated UCA-2 /
 UCA-5 rules then refuse the trade inside the governor, which records the
@@ -71,9 +79,9 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from src.gateway.governance.reconciliation.daemon import TTL_SECONDS
 
@@ -321,15 +329,55 @@ class ServerTradeInputs:
         return inputs
 
 
+#: Every ``execute_trade`` param a UCA-2 / UCA-5 / UCA-13 rule reads as measured
+#: state, including UCA-5's aliases (``trade_hazards.yaml``). Only the gateway
+#: sets these; a caller value is always dropped.
+TRADE_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
+    {
+        "latency_ms",
+        "drawdown",
+        "portfolio_drawdown_pct",
+        "current_drawdown",
+        "portfolio_total",
+    }
+)
+
+
+@dataclass(frozen=True)
+class TradeInputResolver:
+    """``execute_trade`` server-input resolver over :class:`ServerTradeInputs`.
+
+    Reads ``symbol`` and ``side`` from the (already stripped) params. A
+    missing symbol resolves nothing, so UCA-2 / UCA-5 refuse. ``side`` is
+    matched case-insensitively, like UCA-13's ``applies_when``, so every
+    request UCA-13 treats as a sell gets ``portfolio_total``.
+    """
+
+    inputs: ServerTradeInputs
+    owned_keys: frozenset[str] = TRADE_SERVER_INPUT_KEYS
+
+    async def resolve(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        symbol = params.get("symbol")
+        if not isinstance(symbol, str) or not symbol.strip():
+            logger.warning(
+                "trade inputs: no symbol in %s; nothing resolved", sorted(params)
+            )
+            return {}
+        side = str(params.get("side") or "buy").lower()
+        return await self.inputs.resolve(symbol, side=side)
+
+
 __all__ = [
     "FETCH_TIMEOUT_S",
     "MAX_CLOCK_SKEW_S",
     "MAX_NAV_AGE_S",
+    "TRADE_SERVER_INPUT_KEYS",
     "MarketQuote",
     "MarketQuoteFeed",
     "NavSnapshot",
     "PortfolioNavSource",
     "ServerTradeInputs",
+    "TradeInputResolver",
     "TradeInputUnavailable",
     "daily_drawdown_pct",
     "fetch_verified_nav",

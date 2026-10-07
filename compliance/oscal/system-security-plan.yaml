@@ -1060,12 +1060,19 @@ system-security-plan:
         amount or portfolio_total fails closed; portfolio_total = current NAV from
         the server-side NAV source, src/cage_finance/tools/trade_inputs.py, never
         from the caller, and an unavailable NAV leaves it unset so UCA-13 refuses).
-        For UCA-2 and UCA-5, the gateway trade tool supplies both inputs itself on
-        every committing run, never from the caller (src/cage_finance/tools/trade_inputs.py):
-        latency_ms is the measured age of the traded symbol''s latest quote at the
-        tool boundary and drawdown is the daily NAV drawdown in percent; an unavailable
-        or untrustworthy source leaves the input unset and UCA-2 / UCA-5 refuse the
-        trade. Kubernetes ConfigMaps and Cloud Secret Manager provide the configuration
+        For UCA-2 and UCA-5, the gateway supplies both inputs itself, never from the
+        caller (src/cage_finance/tools/trade_inputs.py): latency_ms is the measured
+        age of the traded symbol''s latest quote and drawdown is the daily NAV drawdown
+        in percent; an unavailable or untrustworthy source leaves the input unset
+        and UCA-2 / UCA-5 refuse the trade. Previews and the committing run evaluate
+        the same server-side inputs (POAM-2026-105 closed): the finance plugin contributes
+        TradeInputResolver through PluginContribution.server_inputs, and the kernel
+        bind_server_inputs() (src/gateway/governance/governor/server_inputs.py) drops
+        every caller value for latency_ms, drawdown, its aliases and portfolio_total
+        before resolving them, in SymbolicGovernor.validate_action() (POST /governance/validate-action),
+        SymbolicGovernor.verify() (the MCP simulate_governance_check dry run) and
+        the trade tool before its committing run. No STPA input is defaulted on a
+        dry run. Kubernetes ConfigMaps and Cloud Secret Manager provide the configuration
         injection mechanism. IaC (Terraform) manages infrastructure configuration
         in version-controlled HCL.
 

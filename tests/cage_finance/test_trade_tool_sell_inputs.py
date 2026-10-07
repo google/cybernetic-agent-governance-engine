@@ -51,12 +51,14 @@ from src.cage_finance.tools.tool_provider import (
 from src.cage_finance.tools.trade_inputs import (
     NavSnapshot,
     ServerTradeInputs,
+    TradeInputResolver,
     TradeInputUnavailable,
     resolve_portfolio_total,
 )
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
+from tests.fixtures.trade_inputs import trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -121,8 +123,10 @@ def _inputs(nav_source: Any = None, *, no_nav: bool = False) -> ServerTradeInput
     )
 
 
-def _governor(providers: dict[str, Any] | None = None) -> MagicMock:
-    governor = MagicMock(settle=AsyncMock(return_value=[]))
+def _governor(
+    inputs: ServerTradeInputs, providers: dict[str, Any] | None = None
+) -> MagicMock:
+    governor = trade_governor({"execute_trade": TradeInputResolver(inputs)})
     governor.components.ground_truth_providers = providers or {}
     return governor
 
@@ -139,8 +143,7 @@ async def _trade(
         amount=amount,
         currency="USD",
         confidence=0.99,
-        inputs=inputs or _inputs(),
-        governor=governor or _governor(),
+        governor=governor or _governor(inputs or _inputs()),
         **kwargs,
     )
 
@@ -224,7 +227,9 @@ async def test_cash_balance_is_not_the_denominator(
     ledger.fetch_snapshot = AsyncMock(side_effect=AssertionError("cash ledger read"))
     with pytest.raises(_Cleared) as cleared:
         await _trade(
-            _limit(region) * 0.9, side="sell", governor=_governor({_CASH: ledger})
+            _limit(region) * 0.9,
+            side="sell",
+            governor=_governor(_inputs(), {_CASH: ledger}),
         )
     assert cleared.value.params["portfolio_total"] == pytest.approx(_OPEN_NAV)
     ledger.fetch_snapshot.assert_not_awaited()
@@ -337,9 +342,7 @@ def test_registered_mcp_tool_takes_no_caller_portfolio_total() -> None:
 
             return _register
 
-    tool_provider.FinancialToolProvider(_inputs()).register_tools(
-        _Server(), MagicMock()
-    )  # type: ignore[arg-type]
+    tool_provider.FinancialToolProvider().register_tools(_Server(), MagicMock())  # type: ignore[arg-type]
     params = inspect.signature(registered["execute_trade_action"]).parameters
     assert "side" in params
     assert "portfolio_total" not in params

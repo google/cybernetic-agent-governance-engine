@@ -14,13 +14,12 @@
 
 import dataclasses
 import logging
-import os
 import time
 
 from opentelemetry import trace
 
 from src.gateway.governance.contracts import Violation, ViolationKind
-from src.gateway.governance.governor.pipeline import Profile, Stage, StageContext
+from src.gateway.governance.governor.pipeline import Stage, StageContext
 from src.gateway.governance.stpa_validator import STPAValidator
 
 logger = logging.getLogger(__name__)
@@ -46,12 +45,10 @@ class StpaStage(Stage):
             stpa_span.set_attribute("governance.tool", ctx.action)
             _t0 = time.perf_counter()
 
+            # Previews and committing runs evaluate the same params: measured
+            # inputs are bound server-side before the pipeline runs
+            # (``bind_server_inputs``), never defaulted here.
             check_params = dict(ctx.params)
-            # Default latency_ms for DRY_RUN profile or sim_mode
-            if ctx.profile == Profile.DRY_RUN and "latency_ms" not in check_params:
-                check_params["latency_ms"] = float(
-                    os.getenv("GOVERNANCE_SIM_LATENCY_MS", "10.0")
-                )
 
             try:
                 stpa_violations = self.validator.validate(ctx.action, check_params)

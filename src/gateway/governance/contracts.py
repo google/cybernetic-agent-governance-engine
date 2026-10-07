@@ -578,6 +578,32 @@ class NormBinding:
         return action in self.actions
 
 
+@runtime_checkable
+class ServerInputResolver(Protocol):
+    """Supplies, from server-side sources, the params a domain never trusts.
+
+    A domain contributes one resolver per action whose governance reads
+    measured state (a quote age, a drawdown, a portfolio value) rather than
+    caller intent. The kernel (:func:`~src.gateway.governance.governor.
+    server_inputs.bind_server_inputs`) removes every ``owned_keys`` entry the
+    caller sent, on the preview and the committing path alike, then merges
+    what :meth:`resolve` returns for those keys only. A key the resolver
+    leaves out stays absent, so the domain's rules must refuse a missing
+    value (fail closed).
+    """
+
+    #: Params this resolver alone may set for its action.
+    owned_keys: frozenset[str]
+
+    async def resolve(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Return values for (a subset of) ``owned_keys``.
+
+        ``params`` is the caller's request with every owned key removed,
+        read-only. Raising is treated as "nothing resolved".
+        """
+        ...
+
+
 @dataclass(frozen=True)
 class PluginContribution:
     """Everything one domain plugin hands to the kernel, as data.
@@ -617,6 +643,9 @@ class PluginContribution:
         norm_bindings: Norms this domain enforces that a region may require
             a warrant for (:class:`NormBinding`); ``norm_id`` is unique
             across contributions.
+        server_inputs: Per-action resolvers for params that only the gateway
+            may supply (:class:`ServerInputResolver`); an action has at most
+            one across contributions.
     """
 
     domain: str
@@ -639,6 +668,7 @@ class PluginContribution:
     )
     rail_providers: tuple[Any, ...] = ()
     norm_bindings: tuple[NormBinding, ...] = ()
+    server_inputs: Mapping[str, ServerInputResolver] = field(default_factory=dict)
 
 
 @runtime_checkable

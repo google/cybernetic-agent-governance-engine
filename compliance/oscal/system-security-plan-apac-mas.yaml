@@ -356,12 +356,19 @@ system-security-plan:
         src/cage_finance/tiers/consensus_tier.py); STPA UCA-5 drawdown
         4.0%, UCA-6 order-volume fraction 0.008 and FIN-2 /
         UCA-2 latency 175 ms (src/cage_finance/stpa/uca_rules.py).
-        The gateway trade tool supplies both inputs itself on every committing run,
-        never from the caller (src/cage_finance/tools/trade_inputs.py):
-        latency_ms is the measured age of the traded symbol''s latest quote at
-        the tool boundary and drawdown is the daily NAV drawdown in percent; an
-        unavailable or untrustworthy source leaves the input unset and UCA-2 /
-        UCA-5 refuse the trade.
+        The gateway supplies both inputs itself, never from the caller
+        (src/cage_finance/tools/trade_inputs.py): latency_ms is the measured age
+        of the traded symbol''s latest quote and drawdown is the daily NAV
+        drawdown in percent; an unavailable or untrustworthy source leaves the
+        input unset and UCA-2 / UCA-5 refuse the trade. Previews and the
+        committing run evaluate the same server-side inputs (POAM-2026-105
+        closed): the finance plugin contributes TradeInputResolver through
+        PluginContribution.server_inputs, and the kernel bind_server_inputs()
+        (src/gateway/governance/governor/server_inputs.py) drops every caller
+        value for latency_ms, drawdown, its aliases and portfolio_total before
+        resolving them, in POST /governance/validate-action, the MCP
+        simulate_governance_check dry run and the trade tool before its
+        committing run. No STPA input is defaulted on a dry run.
         The overlay fails closed: a missing or malformed APAC_MAS_BASELINE.json,
         a regional section with no global counterpart, or a shape change aborts
         threshold loading; an unknown or invalid key fails governor assembly
