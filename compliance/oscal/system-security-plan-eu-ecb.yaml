@@ -325,9 +325,28 @@ system-security-plan:
         configured source, Provider05WarrantSource
         (src/integrations/provider_05/warrant_source.py), has no implemented
         HTTP path, so in a deployed EU_ECB gateway every trade action defers
-        (INELIGIBLE_MISSING) until a live warrant source exists; (3) the
-        warrant identity and digest are not yet bound into the evidence
-        record. Tracked as POAM-2026-104.'
+        (INELIGIBLE_MISSING) until a live warrant source exists. Tracked as
+        POAM-2026-104. Since commit 0cdb5aaa (#427) every warranted norm the
+        decision relied on yields a RelianceRecord
+        (src/gateway/governance/warrant/reliance.py: norm_id, warrant_id,
+        declared digest, warrant status, reliance status, governing_version,
+        evaluated_at, provider_name, verification_status always UNVERIFIED).
+        ALLOW and NARROW seals carry it in their evidence record, covered by
+        record_hash, so altering or dropping it breaks seal verification
+        (verify_seal_against_evidence, src/gateway/governance/routing_seal.py);
+        the ALLOW envelope carries a WARRANT ExternalAttestation with status
+        UNVERIFIED. Refusals are primary evidence: DEFER and REQUIRE_APPROVAL
+        tokens and a hash-chained GOVERNANCE_DEFERRAL record carry the same
+        record, and a DENY receipt with a co-occurring warrant failure carries
+        it inside proof_hash. Refusal and deferral evidence writes are
+        non-blocking (neither executes anything) but a failed write logs at
+        ERROR and increments
+        cage_governance_evidence_publish_failures_total{kind}
+        (src/gateway/governance/governor/metrics.py). Whether an action is
+        governed is resolved over the full stage set before POST_HITL
+        filtering (resolve_claims, src/gateway/governance/governor/pipeline.py,
+        shared with revalidate_post_hitl), so the warrant stage re-runs after
+        approval even when only read-only tiers claim the action.'
       purpose: 'Ensures CAGE relies on the EU_ECB trade-confidence norm only
         while a current, in-scope warrant for the governing version is
         presented, failing closed (DEFER) otherwise.'
@@ -348,6 +367,8 @@ system-security-plan:
         value: UNVERIFIED
       - name: remediation-commit
         value: a0deb7ad
+      - name: evidence-binding-commit
+        value: 0cdb5aaa
       links:
       - href: ../../src/gateway/governance/governor/stages/warrant.py
         rel: reference
@@ -361,6 +382,12 @@ system-security-plan:
       - href: ../../tests/governor/test_warrant_reliance_gate.py
         rel: reference
         text: Warrant reliance gate tests
+      - href: ../../src/gateway/governance/warrant/reliance.py
+        rel: reference
+        text: RelianceRecord (reliance evidence)
+      - href: ../../tests/governor/test_warrant_evidence_binding.py
+        rel: reference
+        text: Warrant evidence binding tests
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -578,7 +605,11 @@ system-security-plan:
         provider_05 source has no live HTTP path (all EU_ECB trades defer),
         and a post-approval warrant refusal burns the approval token
         (src/gateway/server/governance_middleware.py consumes it before
-        revalidation). See POAM-2026-104.'
+        revalidation). See POAM-2026-104. Every admit and every refusal is
+        evidenced: since 0cdb5aaa the reliance record is bound into the seal''s
+        evidence record (record_hash), the DEFER/REQUIRE_APPROVAL token, the
+        GOVERNANCE_DEFERRAL record and any co-occurring DENY receipt''s
+        proof_hash, always with verification_status UNVERIFIED.'
       props:
       - name: implementation-status
         value: partially-implemented
@@ -603,7 +634,18 @@ system-security-plan:
           governing_version pair. proof/model.py claims 12
           (warranted_norm_never_fabricates_deny) and 13
           (post_hitl_rechecks_warrant) hold, with runtime parity in
-          tests/test_formal_profile_parity.py.'
+          tests/test_formal_profile_parity.py. Observed in
+          tests/governor/test_warrant_evidence_binding.py: tampering with or
+          dropping the reliance record breaks seal verification
+          (test_tampered_reliance_record_breaks_seal_verification,
+          test_dropping_the_reliance_record_breaks_seal_verification), DEFER
+          tokens and GOVERNANCE_DEFERRAL records carry the ineligible record
+          (test_defer_carries_the_ineligible_reliance_record), a post-approval
+          revocation is refused with no seal when only read-only tiers claim
+          the action
+          (test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim),
+          and a failed deferral evidence write is counted while the deferral
+          proceeds (test_deferral_proceeds_and_is_counted_when_the_sink_fails).'
         implementation-status:
           state: partially-implemented
         links:
@@ -613,6 +655,9 @@ system-security-plan:
         - href: ../../proof/model.py
           rel: reference
           text: Formal model claims 12 and 13
+        - href: ../../tests/governor/test_warrant_evidence_binding.py
+          rel: reference
+          text: Warrant evidence binding tests
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001
