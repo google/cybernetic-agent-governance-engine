@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Server-side STPA inputs for a governed trade: ``latency_ms`` and ``drawdown``.
+"""Server-side STPA inputs for a governed trade.
 
-UCA-2 / FIN-2 and UCA-5 read ``latency_ms`` and ``drawdown`` from the trade
-params. The trade tool never takes either value from its caller. It measures
-or reads them here, at the gateway tool boundary, for every committing run
-(including the POST_HITL re-run after an approval).
+UCA-2 / FIN-2 read ``latency_ms``, UCA-5 reads ``drawdown`` and, for a sell,
+UCA-13 / FIN-1 reads ``portfolio_total`` from the trade params. The trade tool
+never takes any of these values from its caller. It measures or reads them
+here, at the gateway tool boundary, for every committing run (including the
+POST_HITL re-run after an approval).
 
 ``latency_ms`` (UCA-2 / FIN-2)
     FIN-2: "Agent must not execute trade if latency exceeds max_latency_ms";
@@ -42,6 +43,21 @@ or reads them here, at the gateway tool boundary, for every committing run
     The value comes from a :class:`PortfolioNavSource`, not from the custodian
     cash ledger. A cash ledger falls when the account *buys* securities, so
     deriving drawdown from it would count purchases as losses.
+
+``portfolio_total`` (UCA-13 / FIN-1, sells only)
+    The portfolio's current net asset value, ``current_nav``, from the same
+    NAV snapshot as ``drawdown``. FIN-1 bounds a sell to
+    ``stpa.max_sell_portfolio_fraction`` of the whole portfolio, so the
+    denominator is NAV (cash plus marked positions), not the cash balance.
+    A NAV of zero is a valid drawdown reading but no basis for a sell
+    fraction, so it leaves ``portfolio_total`` unset.
+
+Every NAV reading gets the checks the reconciler applies before it trusts a
+ground-truth snapshot (:func:`fetch_verified_nav`): verified source, finite
+values, positive opening NAV, an age within the reconciler's TTL, and no more
+than :data:`MAX_CLOCK_SKEW_S` of future skew. One snapshot is fetched per
+trade, so ``drawdown`` and ``portfolio_total`` always describe the same
+moment.
 
 Fail closed: if a source is missing, times out, or returns a reading that
 fails validation, the input is left out of the params. The generated UCA-2 /
@@ -162,16 +178,18 @@ async def measure_market_data_latency_ms(
     return max(age_s, 0.0) * 1000.0
 
 
-async def resolve_daily_drawdown_pct(
+async def fetch_verified_nav(
     source: PortfolioNavSource,
     *,
     clock: Callable[[], float] = time.time,
-) -> float:
-    """Return the portfolio's daily NAV drawdown in percent (0 when up on the day).
+) -> NavSnapshot:
+    """Fetch one NAV snapshot and return it, normalised, if it can be trusted.
 
     Raises:
         TradeInputUnavailable: the fetch fails or times out, or the snapshot
-            is unverified, non-finite, non-positive, stale, or future-dated.
+            is unverified, non-finite, has a non-positive opening NAV or a
+            negative current NAV, is older than the reconciler TTL, or is
+            dated more than :data:`MAX_CLOCK_SKEW_S` in the future.
     """
     try:
         snap = await asyncio.wait_for(source.fetch_nav(), FETCH_TIMEOUT_S)
@@ -200,7 +218,48 @@ async def resolve_daily_drawdown_pct(
         )
     if age_s < -MAX_CLOCK_SKEW_S:
         raise TradeInputUnavailable(f"NAV timestamp {-age_s:.1f}s in the future")
-    return max(0.0, (open_nav - current_nav) / open_nav * 100.0)
+    return NavSnapshot(
+        open_nav=open_nav,
+        current_nav=current_nav,
+        observed_at=observed_at,
+        source_id=snap.source_id,
+    )
+
+
+def daily_drawdown_pct(snap: NavSnapshot) -> float:
+    """Return the daily NAV drawdown in percent (0 when up on the day)."""
+    return max(0.0, (snap.open_nav - snap.current_nav) / snap.open_nav * 100.0)
+
+
+def portfolio_total(snap: NavSnapshot) -> float:
+    """Return the FIN-1 denominator: the current NAV.
+
+    Raises:
+        TradeInputUnavailable: the current NAV is not positive.
+    """
+    if snap.current_nav <= 0.0:
+        raise TradeInputUnavailable(
+            f"current NAV {snap.current_nav!r} is no basis for a sell fraction"
+        )
+    return snap.current_nav
+
+
+async def resolve_daily_drawdown_pct(
+    source: PortfolioNavSource,
+    *,
+    clock: Callable[[], float] = time.time,
+) -> float:
+    """Return the daily NAV drawdown in percent from one verified snapshot."""
+    return daily_drawdown_pct(await fetch_verified_nav(source, clock=clock))
+
+
+async def resolve_portfolio_total(
+    source: PortfolioNavSource,
+    *,
+    clock: Callable[[], float] = time.time,
+) -> float:
+    """Return the current NAV from one verified snapshot (FIN-1 denominator)."""
+    return portfolio_total(await fetch_verified_nav(source, clock=clock))
 
 
 @dataclass(frozen=True)
@@ -214,11 +273,13 @@ class ServerTradeInputs:
     market_feed: MarketQuoteFeed | None
     nav_source: PortfolioNavSource | None
 
-    async def resolve(self, symbol: str) -> dict[str, float]:
-        """Return the measurable inputs for a trade in ``symbol``.
+    async def resolve(self, symbol: str, *, side: str) -> dict[str, float]:
+        """Return the measurable inputs for a ``side`` trade in ``symbol``.
 
-        An input that cannot be measured or trusted is left out and logged;
-        the governor's STPA stage then refuses the trade.
+        ``latency_ms`` and ``drawdown`` are resolved for every trade;
+        ``portfolio_total`` only for a sell, from the same NAV snapshot as
+        ``drawdown``. An input that cannot be measured or trusted is left out
+        and logged; the governor's STPA stage then refuses the trade.
         """
         inputs: dict[str, float] = {}
         if self.market_feed is None:
@@ -234,14 +295,28 @@ class ServerTradeInputs:
                 logger.warning(
                     "trade inputs: latency_ms unavailable (UCA-2 will refuse): %s", exc
                 )
+        refusing = "UCA-5 / UCA-13" if side == "sell" else "UCA-5"
         if self.nav_source is None:
-            logger.warning("trade inputs: no NAV source assembled (UCA-5 will refuse)")
-        else:
+            logger.warning(
+                "trade inputs: no NAV source assembled (%s will refuse)", refusing
+            )
+            return inputs
+        try:
+            nav = await fetch_verified_nav(self.nav_source)
+        except TradeInputUnavailable as exc:
+            logger.warning(
+                "trade inputs: NAV unavailable (%s will refuse): %s", refusing, exc
+            )
+            return inputs
+        inputs["drawdown"] = daily_drawdown_pct(nav)
+        if side == "sell":
             try:
-                inputs["drawdown"] = await resolve_daily_drawdown_pct(self.nav_source)
+                inputs["portfolio_total"] = portfolio_total(nav)
             except TradeInputUnavailable as exc:
                 logger.warning(
-                    "trade inputs: drawdown unavailable (UCA-5 will refuse): %s", exc
+                    "trade inputs: portfolio_total unavailable (UCA-13 will "
+                    "refuse): %s",
+                    exc,
                 )
         return inputs
 
@@ -256,6 +331,10 @@ __all__ = [
     "PortfolioNavSource",
     "ServerTradeInputs",
     "TradeInputUnavailable",
+    "daily_drawdown_pct",
+    "fetch_verified_nav",
     "measure_market_data_latency_ms",
+    "portfolio_total",
     "resolve_daily_drawdown_pct",
+    "resolve_portfolio_total",
 ]

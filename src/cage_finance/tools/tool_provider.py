@@ -28,10 +28,6 @@ if TYPE_CHECKING:
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools.market_service import get_market_data
-from src.cage_finance.tools.portfolio_valuation import (
-    PortfolioValuationUnavailable,
-    resolve_portfolio_total,
-)
 from src.cage_finance.tools.trade_inputs import ServerTradeInputs
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
@@ -119,15 +115,16 @@ async def execute_trade_action(
             that approval exactly once and re-validates the fresh params under
             the POST_HITL profile; without it, the trade is governed in full.
         side: Order side, ``"buy"`` (default) or ``"sell"``. A sell is held
-            to the regional FIN-1 sell-fraction limit (UCA-13) against the
-            portfolio value the gateway reads from the custodian ledger; the
-            caller cannot supply that value. When the ledger is unavailable
-            the sell is refused.
+            to the regional FIN-1 sell-fraction limit (UCA-13) against
+            ``portfolio_total``, the current NAV the gateway reads from its NAV
+            source; the caller cannot supply that value. When the NAV is
+            unavailable the sell is refused.
         governor: The assembled governor that seals the trade and settles its
             reservations once the broker has answered.
         inputs: The gateway's sources for the STPA inputs ``latency_ms``
-            (UCA-2 / FIN-2: measured age of the symbol's latest quote) and
-            ``drawdown`` (UCA-5: daily NAV drawdown, percent). A caller can
+            (UCA-2 / FIN-2: measured age of the symbol's latest quote),
+            ``drawdown`` (UCA-5: daily NAV drawdown, percent) and, for a sell,
+            ``portfolio_total`` (UCA-13 / FIN-1: current NAV). A caller can
             never supply these values. A source that is unavailable leaves
             its input unset, and the governor refuses the trade.
     """
@@ -161,20 +158,9 @@ async def execute_trade_action(
         "side": side,
     }
     # STPA inputs measured server-side for every committing run; a missing
-    # one is refused by UCA-2 / UCA-5 inside the governor.
-    params.update(await inputs.resolve(symbol))
-    if side == "sell":
-        # FIN-1 / UCA-13 input. Only the server-side ledger value is used; an
-        # unavailable ledger leaves it unset so the governor's STPA stage
-        # refuses the sell (and records the refusal) rather than this tool.
-        try:
-            params["portfolio_total"] = await resolve_portfolio_total(governor)
-        except PortfolioValuationUnavailable as exc:
-            logger.warning(
-                "execute_trade: portfolio valuation unavailable for sell "
-                "(UCA-13 will refuse): %s",
-                exc,
-            )
+    # one is refused by UCA-2 / UCA-5 / UCA-13 inside the governor, which
+    # records the refusal, rather than by this tool.
+    params.update(await inputs.resolve(symbol, side=side))
 
     # Step 1: Enforce governance (commit + seal) and obtain the seal
     try:
