@@ -89,7 +89,24 @@ async def test_resolver_returns_nothing_without_a_symbol() -> None:
 async def test_resolver_resolves_sell_inputs_for_a_mixed_case_side() -> None:
     resolver = trade_server_inputs()["execute_trade"]
 
-    resolved = await resolver.resolve({"symbol": "AAPL", "side": "SELL"})
+    resolved = await resolver.resolve(
+        {"symbol": "AAPL", "side": "SELL", "amount": 500.0}
+    )
 
-    assert {"latency_ms", "drawdown", "portfolio_total"} <= set(resolved)
+    assert {
+        "latency_ms",
+        "drawdown",
+        "order_size",
+        "daily_vol",
+        "portfolio_total",
+    } <= set(resolved)
     assert set(resolved) <= TRADE_SERVER_INPUT_KEYS
+
+
+def test_owned_keys_cover_the_uca_6_operands() -> None:
+    condition = _ucas()["UCA-6"]["condition"]
+
+    assert condition.get("require_params") is True
+    for operand in ("order_size", "daily_vol"):
+        assert operand in condition["composite"]
+        assert operand in TRADE_SERVER_INPUT_KEYS

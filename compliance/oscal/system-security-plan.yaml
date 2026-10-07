@@ -1072,9 +1072,14 @@ system-security-plan:
         before resolving them, in SymbolicGovernor.validate_action() (POST /governance/validate-action),
         SymbolicGovernor.verify() (the MCP simulate_governance_check dry run) and
         the trade tool before its committing run. No STPA input is defaulted on a
-        dry run. Kubernetes ConfigMaps and Cloud Secret Manager provide the configuration
-        injection mechanism. IaC (Terraform) manages infrastructure configuration
-        in version-controlled HCL.
+        dry run. UCA-6 (US_FED order-volume fraction 0.01) is evaluated on every trade
+        and refuses one lacking either input (POAM-2026-106 closed): order_size is
+        the caller''s notional amount divided by the verified quote price, and daily_vol
+        is the symbol''s average daily volume from the market-data feed (verified
+        source, traded symbol, finite and positive, at most four days old), both bound
+        server-side by TradeInputResolver. Kubernetes ConfigMaps and Cloud Secret
+        Manager provide the configuration injection mechanism. IaC (Terraform) manages
+        infrastructure configuration in version-controlled HCL.
 
         '
       props:

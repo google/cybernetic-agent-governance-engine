@@ -318,7 +318,7 @@ async def test_one_nav_snapshot_per_trade() -> None:
         return await real()
 
     nav.fetch_nav = _counting  # type: ignore[method-assign]
-    resolved = await _inputs(nav).resolve("AAPL", side="sell")
+    resolved = await _inputs(nav).resolve("AAPL", side="sell", amount=1_000.0)
     assert calls == 1
     assert resolved["portfolio_total"] == pytest.approx(_OPEN_NAV * 0.99)
     assert resolved["drawdown"] == pytest.approx(1.0)

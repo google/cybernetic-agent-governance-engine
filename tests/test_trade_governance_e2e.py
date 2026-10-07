@@ -67,7 +67,10 @@ from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools.tool_provider import execute_trade_action
-from src.cage_finance.tools.trade_inputs import TradeInputResolver
+from src.cage_finance.tools.trade_inputs import (
+    TRADE_SERVER_INPUT_KEYS,
+    TradeInputResolver,
+)
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.causal.gatekeeper import CausalDecision
@@ -979,8 +982,10 @@ async def test_require_approval_carries_a_reverified_narrow_hint(gw: Gateway) ->
     narrowed = body["narrowed_params"]
     # The re-verified proposal carries the server-bound STPA inputs it was
     # evaluated against; they are re-bound (caller values dropped) on resubmit.
-    assert set(narrowed) - set(params) <= {"latency_ms", "drawdown"}
+    assert set(narrowed) - set(params) <= TRADE_SERVER_INPUT_KEYS
     assert {k: narrowed[k] for k in params} == {**params, "amount": 10_000.0}
+    # Re-bound for the clamped amount: ~100 shares at the ~$100 simulated quote.
+    assert narrowed["order_size"] == pytest.approx(100.0, rel=0.02)
     meta = body["classification_meta"]
     assert [v["bound"] for v in meta["barrier_preview_violations"]] == [10_000.0]
     token = await DeferQueue(gw.defer_redis).get(body["deferred_id"])

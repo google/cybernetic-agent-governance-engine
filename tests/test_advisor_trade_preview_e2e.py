@@ -297,3 +297,26 @@ async def test_nav_fault_refuses_a_sell_with_uca_5_and_uca_13(
     # input was resolved, and none was taken from the caller.
     (receipt,) = advisor.refusals.await_args_list
     assert not {"drawdown", "portfolio_total"} & set(receipt.kwargs["params"])
+
+
+async def test_the_regional_volume_fraction_binds_the_preview(
+    advisor: Gateway, region: str
+) -> None:
+    # 70 shares (~$7,000 at ~$100) of a 10,000-share average day is 0.7 %:
+    # inside US_FED (1 %) and APAC_MAS (0.8 %), outside EU_ECB (0.5 %).
+    advisor.market_feed.set_daily_volume(10_000.0)
+
+    safety = await safety_check_node({"execution_plan_output": _plan(amount=7_000.0)})
+
+    if region == "EU_ECB":
+        assert safety["safety_status"] == "BLOCKED", safety
+        assert "STPA_UCA_UCA_6" in safety["last_violation"]["evidence"]
+    else:
+        assert safety["safety_status"] == "APPROVED", safety
+
+
+async def test_daily_volume_fault_refuses_with_uca_6(
+    advisor: Gateway, region: str
+) -> None:
+    advisor.market_feed.inject_volume_fault(FaultMode.STALE_TIMESTAMP)
+    await _assert_refused_everywhere(advisor, ("STPA_UCA_UCA_6",))

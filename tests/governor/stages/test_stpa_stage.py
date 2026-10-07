@@ -61,6 +61,8 @@ async def test_stpa_stage_evaluates_contributed_finance_uca_rules():
         params={
             "latency_ms": 10.0,
             "current_drawdown": 0.02,
+            "order_size": 10.0,
+            "daily_vol": 1_000_000.0,
             "risk_assessed": True,
             "compliance_checked": True,
         },
