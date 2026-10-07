@@ -134,7 +134,10 @@ async def test_output_rail_fails_closed_when_redaction_errors(monkeypatch) -> No
     def broken(text: str) -> tuple[str, list[str]]:
         raise RuntimeError("presidio down")
 
+    semantics_calls: list[str] = []
+
     async def semantics(rails: Any, text: str) -> tuple[bool, str]:
+        semantics_calls.append(text)
         return True, ""
 
     monkeypatch.setattr(f, "_redact_pii", broken)
@@ -144,3 +147,13 @@ async def test_output_rail_fails_closed_when_redaction_errors(monkeypatch) -> No
     out = await node({"messages": [AIMessage(content="Dear John Smith", id="a1")]})
     (replacement,) = out["messages"]
     assert "John Smith" not in replacement.content
+    assert semantics_calls == []
+
+
+def test_presidio_hooks_share_single_engine_singleton() -> None:
+    analyzer, anonymizer = pii_redactor.get_presidio_engines()
+    assert analyzer is not None
+    assert anonymizer is not None
+    assert pii_redactor.get_analyzer_patch() is analyzer
+    assert pii_redactor._presidio_analyzer is analyzer
+

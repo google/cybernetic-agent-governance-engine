@@ -272,12 +272,10 @@ async def mask_pii_action(
             return ""
 
         try:
-            from presidio_analyzer import AnalyzerEngine
-            from presidio_analyzer.nlp_engine import NlpEngineProvider
-            from presidio_anonymizer import AnonymizerEngine
             from presidio_anonymizer.entities import (
                 RecognizerResult as AnonymizerResult,
             )
+            from src.integrations.presidio.redactor import get_presidio_engines
         except ImportError:
             logger.warning(
                 "MaskPIIAction: presidio_analyzer / presidio_anonymizer not installed. "
@@ -287,16 +285,11 @@ async def mask_pii_action(
             return text
 
         try:
-            # Configure Presidio to use the installed en_core_web_sm model
-            configuration: dict[str, Any] = {
-                "nlp_engine_name": "spacy",
-                "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
-            }
-            provider = NlpEngineProvider(nlp_configuration=configuration)
-            nlp_engine = provider.create_engine()
+            analyzer, anonymizer = get_presidio_engines()
+            if analyzer is None or anonymizer is None:
+                span.set_attribute("nemo.action.outcome", "SKIPPED_NO_PRESIDIO")
+                return text
 
-            analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-            anonymizer = AnonymizerEngine()
             results = analyzer.analyze(text=text, language="en")
             if results:
                 compat_results = cast(list[AnonymizerResult], results)

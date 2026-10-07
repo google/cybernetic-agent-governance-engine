@@ -18,6 +18,7 @@ from src.integrations.presidio.redactor import (
     build_presidio_sdd_action,
     ensure_presidio_engines,
     get_analyzer_patch,
+    get_presidio_engines,
     redact_pii,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "build_presidio_sdd_action",
     "ensure_presidio_engines",
     "get_analyzer_patch",
+    "get_presidio_engines",
     "redact_pii",
 ]

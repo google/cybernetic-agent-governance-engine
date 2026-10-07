@@ -54,7 +54,13 @@ _presidio_init_done: bool = False
 
 
 def ensure_presidio_engines() -> None:
-    """Lazy-initialise Microsoft Presidio engines on first use."""
+    """Lazy-initialise Microsoft Presidio engines once on first use.
+
+    All callers (``redact_pii``, ``get_presidio_engines``, ``get_analyzer_patch``,
+    ``build_presidio_sdd_action``, and ``MaskPIIAction``) share this single
+    ``AnalyzerEngine`` + ``AnonymizerEngine`` pair so spaCy is loaded at most
+    once per process.
+    """
     global _presidio_analyzer, _presidio_anonymizer, _presidio_init_done
     if _presidio_init_done:
         return
@@ -64,6 +70,18 @@ def ensure_presidio_engines() -> None:
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
         from presidio_anonymizer import AnonymizerEngine
+
+        class _SafeAnalyzer(AnalyzerEngine):
+            """AnalyzerEngine that guards None input and defaults entity list when omitted."""
+
+            _ENTITIES = list(_PII_ENTITIES)
+
+            def analyze(self, text, entities=None, **kwargs):  # type: ignore[override, no-untyped-def]
+                if text is None:
+                    return []
+                if not entities:
+                    entities = self._ENTITIES
+                return super().analyze(text=text, entities=entities, **kwargs)
 
         _spacy_model = (
             "en_core_web_lg"
@@ -76,13 +94,13 @@ def ensure_presidio_engines() -> None:
                 "models": [{"lang_code": "en", "model_name": _spacy_model}],
             }
         )
-        _presidio_analyzer = AnalyzerEngine(
+        _presidio_analyzer = _SafeAnalyzer(
             nlp_engine=_nlp_provider.create_engine(),
             default_score_threshold=0.3,
         )
         _presidio_anonymizer = AnonymizerEngine()
         logger.info(
-            "✅ Presidio input-PII engines initialised (model=%s, entities=%d)",
+            "✅ Presidio PII engines initialised (model=%s, entities=%d)",
             _spacy_model,
             len(_PII_ENTITIES),
         )
@@ -96,6 +114,12 @@ def ensure_presidio_engines() -> None:
             "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
             _presidio_init_exc,
         )
+
+
+def get_presidio_engines() -> tuple[Any, Any]:
+    """Return the shared lazy-initialised ``(analyzer, anonymizer)`` singleton pair."""
+    ensure_presidio_engines()
+    return _presidio_analyzer, _presidio_anonymizer
 
 
 def redact_pii(text: str) -> tuple[str, list[str]]:
@@ -128,103 +152,29 @@ def redact_pii(text: str) -> tuple[str, list[str]]:
 
 
 def get_analyzer_patch() -> Any:
-    """Create a Presidio AnalyzerEngine configured with en_core_web_lg or en_core_web_sm."""
-    try:
-        import spacy
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
-
-        if spacy.util.is_package("en_core_web_lg"):
-            model_name = "en_core_web_lg"
-        else:
-            model_name = "en_core_web_sm"
-
-        configuration = {
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": model_name}],
-        }
-        provider = NlpEngineProvider(nlp_configuration=configuration)
-        nlp_engine = provider.create_engine()
-        return AnalyzerEngine(nlp_engine=nlp_engine, default_score_threshold=0.3)
-    except Exception as exc:
-        logger.warning("⚠️ get_analyzer_patch failed: %s", exc)
-        return None
+    """Return the shared Presidio ``AnalyzerEngine`` singleton for NeMo SDD hooks."""
+    ensure_presidio_engines()
+    return _presidio_analyzer
 
 
 def build_presidio_sdd_action() -> Any:
-    """Build a sensitive-data-detection coroutine backed by Microsoft Presidio."""
-    try:
-        import spacy
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
+    """Build a sensitive-data-detection coroutine backed by the shared Presidio singleton."""
 
-        class _SafeAnalyzer(AnalyzerEngine):
-            """AnalyzerEngine that guards None input and expands the default entity set."""
-
-            _ENTITIES = [
-                "PHONE_NUMBER",
-                "CREDIT_CARD",
-                "EMAIL_ADDRESS",
-                "LOCATION",
-                "PERSON",
-                "DATE_TIME",
-                "NRP",
-                "CRYPTO",
-                "US_SSN",
-                "US_ITIN",
-                "US_PASSPORT",
-                "US_BANK_NUMBER",
-                "US_DRIVER_LICENSE",
-                "IBAN_CODE",
-                "IP_ADDRESS",
-            ]
-
-            def analyze(self, text, entities=None, **kwargs):  # type: ignore[override, no-untyped-def]
-                if text is None:
-                    return []
-                if not entities:
-                    entities = self._ENTITIES
-                return super().analyze(text=text, entities=entities, **kwargs)
-
-        if spacy.util.is_package("en_core_web_lg"):
-            model_name = "en_core_web_lg"
-        elif spacy.util.is_package("en_core_web_sm"):
-            logger.warning(
-                "en_core_web_lg not found; falling back to en_core_web_sm for PII detection."
-            )
-            model_name = "en_core_web_sm"
-        else:
-            logger.warning("No spaCy NLP model found; PII detection may fail.")
-            model_name = "en_core_web_sm"
-
-        configuration = {
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": model_name}],
-        }
-        provider = NlpEngineProvider(nlp_configuration=configuration)
-        nlp_engine = provider.create_engine()
-        analyzer = _SafeAnalyzer(nlp_engine=nlp_engine, default_score_threshold=0.3)
-
-        async def detect_sensitive_data(  # type: ignore[no-untyped-def]
-            text: str = "",
-            entities: list = None,  # type: ignore[assignment]
-            score_threshold: float = 0.3,
-            **kwargs,
-        ) -> list:
-            if not text:
-                return []
-            results = analyzer.analyze(text=text, entities=entities or [])
-            return [r for r in results if r.score >= score_threshold]
-
-        logger.info(
-            "✅ Presidio SDD action built (model=%s, score_threshold=0.3)", model_name
+    async def detect_sensitive_data(  # type: ignore[no-untyped-def]
+        text: str = "",
+        entities: list = None,  # type: ignore[assignment]
+        score_threshold: float = 0.3,
+        **kwargs,
+    ) -> list:
+        if not text:
+            return []
+        ensure_presidio_engines()
+        if _presidio_analyzer is None:
+            return []
+        results = _presidio_analyzer.analyze(
+            text=text, entities=entities or _PII_ENTITIES, language="en"
         )
-        return detect_sensitive_data
-    except ImportError as exc:
-        logger.warning(
-            "⚠️ Presidio/spaCy not available; SDD action not registered: %s", exc
-        )
-        return None
-    except Exception as exc:
-        logger.warning("⚠️ Failed to build Presidio SDD action: %s", exc)
-        return None
+        return [r for r in results if r.score >= score_threshold]
+
+    return detect_sensitive_data
+
