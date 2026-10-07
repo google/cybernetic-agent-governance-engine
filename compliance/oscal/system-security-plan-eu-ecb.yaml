@@ -263,6 +263,10 @@ system-security-plan:
         value: EU_ECB
       - name: min-trade-confidence
         value: '0.97'
+      - name: min-trade-confidence-requires-warrant
+        value: 'true'
+      - name: min-trade-confidence-governing-version
+        value: cage-policy-2.1.0
       - name: cbf-gamma
         value: '0.6'
       - name: drawdown-limit
@@ -281,6 +285,82 @@ system-security-plan:
       - href: ../../src/cage_finance/tiers/trade_confidence_tier.py
         rel: reference
         text: TradeConfidenceTier (CTRL_AGT_001)
+    - uuid: eu-ecb-comp-0006-4000-8000-000000000006
+      type: software
+      title: CAGE Warrant Reliance Gate (WarrantStage)
+      description: 'Since commit a0deb7ad (#423) the EU_ECB trade-confidence
+        floor is a warranted norm: config/thresholds/EU_ECB_BASELINE.json sets
+        domains.finance.confidence.min_trade_confidence to value 0.97,
+        requires_warrant true, governing_version cage-policy-2.1.0. The
+        finance plugin contributes it as a kernel NormBinding
+        (src/gateway/governance/contracts.py) for execute_trade and
+        execute_trade_bounded. For every request to one of those actions the
+        kernel WarrantStage (src/gateway/governance/governor/stages/warrant.py)
+        fetches the norm''s warrant through the WarrantSource seam
+        (src/gateway/governance/seams/warrant.py; adapter selected by
+        CAGE_WARRANT_SOURCE, src/gateway/governance/warrant/source_factory.py)
+        and evaluates its standing with WarrantStandingVerifier
+        (src/gateway/governance/warrant/verifier.py) against the deployment
+        jurisdiction and the binding''s governing_version. A missing, revoked,
+        suspended, expired, out-of-scope, version-mismatched or
+        digest-mismatched warrant, a warrant for another norm, a source error
+        or a fetch timeout yields one RELIANCE_INELIGIBLE finding. The
+        classifier ranks HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE >
+        DEFERRABLE and answers DEFER with DeferReason.WARRANT_INELIGIBLE
+        (quorum 3, not resolvable by data injection) regardless of model
+        confidence; no seal is minted. The gate never short-circuits, so FTRA,
+        STPA and OPA still run and a HARD finding still denies. WarrantStage
+        is in POST_HITL_READ_ONLY_STAGES
+        (src/gateway/governance/governor/pipeline.py), so a warrant revoked
+        between human approval and execution is refused at
+        revalidate_post_hitl() with no seal and no phase-2 commit.
+        assemble_governor() (src/gateway/governance/governor/assembly.py)
+        refuses to assemble when a warranted norm has no WarrantSource, when
+        DEFER is disabled, when it lacks a governing_version, or when no domain
+        tier claims its actions. Limits stated plainly: (1) warrant
+        authenticity is not verified: the digest check proves internal
+        consistency only, and issuer signature verification against a
+        kid-resolved trust anchor is VEIP v0.2, so warrant attestations are
+        UNVERIFIED (src/gateway/governance/warrant/evidence.py); (2) the
+        configured source, Provider05WarrantSource
+        (src/integrations/provider_05/warrant_source.py), has no implemented
+        HTTP path, so in a deployed EU_ECB gateway every trade action defers
+        (INELIGIBLE_MISSING) until a live warrant source exists; (3) the
+        warrant identity and digest are not yet bound into the evidence
+        record. Tracked as POAM-2026-104.'
+      purpose: 'Ensures CAGE relies on the EU_ECB trade-confidence norm only
+        while a current, in-scope warrant for the governing version is
+        presented, failing closed (DEFER) otherwise.'
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: compliance-engineer
+      props:
+      - name: applicable-regions
+        value: EU_ECB
+      - name: warranted-norm
+        value: confidence.min_trade_confidence
+      - name: governing-version
+        value: cage-policy-2.1.0
+      - name: warrant-source
+        value: provider_05
+      - name: warrant-attestation-status
+        value: UNVERIFIED
+      - name: remediation-commit
+        value: a0deb7ad
+      links:
+      - href: ../../src/gateway/governance/governor/stages/warrant.py
+        rel: reference
+        text: WarrantStage (kernel warrant reliance gate)
+      - href: ../../src/gateway/governance/seams/warrant.py
+        rel: reference
+        text: WarrantSource seam
+      - href: ../../src/gateway/governance/warrant/verifier.py
+        rel: reference
+        text: WarrantStandingVerifier
+      - href: ../../tests/governor/test_warrant_reliance_gate.py
+        rel: reference
+        text: Warrant reliance gate tests
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -449,11 +529,16 @@ system-security-plan:
         (src/cage_finance/tiers/trade_confidence_tier.py, phase 1, order 1)
         refuses execute_trade and execute_trade_bounded when the confidence
         score is below the effective
-        domains.finance.confidence.min_trade_confidence of 0.97: a
+        domains.finance.confidence.min_trade_confidence.value of 0.97: a
         score at or above the universal defer floor requires human approval
         (HITL), a lower score defers, and a missing or malformed score is a
         HARD violation. The kernel ConfidenceStage still enforces the universal
-        confidence band (0.95) for every action.'
+        confidence band (0.95) for every action. Since commit a0deb7ad the
+        tier is built from the same NormBinding the warrant gate checks, so it
+        enforces exactly the value the warrant refers to; changing that value
+        requires a new governing_version and a re-issued warrant
+        (test_eu_warranted_value_is_pinned_to_its_governing_version). Reliance
+        on the floor is gated by the warrant reliance gate (eu-ecb-req-0007).'
       props:
       - name: implementation-status
         value: implemented
@@ -476,6 +561,56 @@ system-security-plan:
         - href: ../../tests/cage_finance/test_trade_confidence_tier.py
           rel: reference
           text: TradeConfidenceTier tests
+    - uuid: eu-ecb-req-0007-4000-8000-000000000007
+      control-id: ac-3
+      description: 'Access enforcement for reliance on a warranted norm (NIST
+        SP 800-53 AC-3). In EU_ECB an execute_trade or execute_trade_bounded
+        request is admitted only while WarrantStage finds an eligible warrant
+        for confidence.min_trade_confidence (governing_version
+        cage-policy-2.1.0); otherwise the governor defers with
+        DeferReason.WARRANT_INELIGIBLE, mints no seal and commits no phase-2
+        reservation, including at post-approval revalidation. Status is
+        partially implemented: the enforcement path is complete and fails
+        closed, but warrant authenticity is UNVERIFIED (digest-only, no issuer
+        signature or kid trust anchor until VEIP v0.2), the configured
+        provider_05 source has no live HTTP path (all EU_ECB trades defer),
+        and a post-approval warrant refusal burns the approval token
+        (src/gateway/server/governance_middleware.py consumes it before
+        revalidation). See POAM-2026-104.'
+      props:
+      - name: implementation-status
+        value: partially-implemented
+      - name: regulatory-citation
+        value: NIST SP 800-53 Rev 5 AC-3 (Access Enforcement)
+      - name: applicable-regions
+        value: EU_ECB
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: eu-ecb-comp-0006-4000-8000-000000000006
+        uuid: eu-ecb-bycomp-0007-4000-8000-000000000007
+        description: 'Observed in tests/governor/test_warrant_reliance_gate.py:
+          the failure matrix (test_every_ineligible_standing_is_one_reliance_finding,
+          test_source_timeout_is_ineligible), a revoked warrant at confidence
+          0.99 defers rather than denies
+          (test_revoked_warrant_with_high_confidence_defers_not_denies), a HARD
+          finding still denies, govern() mints no seal on a warrant failure, a
+          warrant revoked after approval is refused with no seal and no commit
+          (test_warrant_revoked_after_approval_is_refused_without_seal), the
+          assembly refusals, and the pinned EU_ECB (norm_id, value) to
+          governing_version pair. proof/model.py claims 12
+          (warranted_norm_never_fabricates_deny) and 13
+          (post_hitl_rechecks_warrant) hold, with runtime parity in
+          tests/test_formal_profile_parity.py.'
+        implementation-status:
+          state: partially-implemented
+        links:
+        - href: ../../tests/governor/test_warrant_reliance_gate.py
+          rel: reference
+          text: Warrant reliance gate tests
+        - href: ../../proof/model.py
+          rel: reference
+          text: Formal model claims 12 and 13
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001

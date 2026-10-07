@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-07T00:25:10Z'
+    last-modified: '2026-10-07T00:44:16Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -861,7 +861,11 @@ system-security-plan:
         with tamper-evident issue_narrow_receipt inside ReservationScope). OPA decisions
         are logged to stdout and captured by Cloud Logging for audit. All OPA enforce
         decisions are emitted as OTel spans tagged with control-id AC-3 for automated
-        compliance verification via Lula.
+        compliance verification via Lula. Since commit a0deb7ad the classifier ranks
+        findings HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE > DEFERRABLE; RELIANCE_INELIGIBLE
+        (no eligible warrant for a norm a region marks requires_warrant) defers with
+        DeferReason.WARRANT_INELIGIBLE and is re-checked under Profile.POST_HITL.
+        No US_FED norm is warranted, so it cannot arise in this region (see system-security-plan-eu-ecb.yaml).
 
         '
       props:
@@ -1040,8 +1044,11 @@ system-security-plan:
         assembly, and assemble_governor() (src/gateway/governance/governor/assembly.py)
         refuses to assemble when the thresholds region differs from the jurisdiction
         region. For US_FED the regional overlay sets only domains.finance.confidence.min_trade_confidence
-        = 0.95, equal to the universal confidence band, so US_FED effective values
-        are the global values. The generated finance STPA rules (src/cage_finance/stpa/uca_rules.py)
+        (value 0.95, requires_warrant false), equal to the universal confidence band,
+        so US_FED effective values are the global values. Since commit a0deb7ad a
+        norm a region marks requires_warrant must carry a governing_version and is
+        gated by the kernel WarrantStage; no US_FED norm is warranted, so no warrant
+        stage is assembled in this region. The generated finance STPA rules (src/cage_finance/stpa/uca_rules.py)
         read the effective values: UCA-2/FIN-2 latency, UCA-5 drawdown, UCA-6 order-volume
         fraction and UCA-13/FIN-1 sell fraction (US_FED 0.10; a sell lacking a numeric
         amount or portfolio_total fails closed; the gateway reads portfolio_total
@@ -1296,7 +1303,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-07T00:25:10Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-07T00:44:15Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1340,7 +1347,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-07T00:25:10Z'
+        value: '2026-10-07T00:44:15Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
