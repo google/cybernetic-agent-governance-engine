@@ -168,6 +168,28 @@ class HazardModel(BaseModel):
     severity: Literal["critical", "high", "medium", "low"]
 
 
+class AppliesWhenModel(BaseModel):
+    """Scope a UCA condition to requests whose ``param`` equals ``equals``.
+
+    The match is a case-insensitive comparison of a string parameter. A request
+    whose ``param`` is absent, not a string, or a different value is outside the
+    UCA's scope, so the condition is not evaluated for it.
+    """
+
+    param: str
+    equals: str
+
+    @field_validator("param")
+    @classmethod
+    def _v_param(cls, v: str) -> str:
+        return _require_pattern(v, _IDENT_RE, "condition.applies_when.param")
+
+    @field_validator("equals")
+    @classmethod
+    def _v_equals(cls, v: str) -> str:
+        return _require_pattern(v, _IDENT_RE, "condition.applies_when.equals")
+
+
 class ConditionModel(BaseModel):
     param: str | None = None
     param_aliases: list[str] = Field(default_factory=list)
@@ -181,6 +203,11 @@ class ConditionModel(BaseModel):
     semantic_pattern: str | None = None
     # ``<lhs> > threshold_ref(<path>) * <rhs>`` only (see _COMPOSITE_SCALED_THRESHOLD_RE)
     composite: str | None = None
+    # composite only: a missing operand is a violation (fail closed) instead of
+    # leaving the UCA unevaluated when both operands are absent.
+    require_params: bool = False
+    # Evaluate the condition only for requests in this scope (e.g. one order side).
+    applies_when: AppliesWhenModel | None = None
 
     @field_validator("param")
     @classmethod
@@ -227,6 +254,14 @@ class ConditionModel(BaseModel):
                 "unenforced"
             )
         return v
+
+    @model_validator(mode="after")
+    def _v_require_params(self) -> ConditionModel:
+        if self.require_params and not self.composite:
+            raise ValueError(
+                "condition.require_params applies only to a composite condition"
+            )
+        return self
 
 
 class OpaRuleModel(BaseModel):
@@ -720,8 +755,14 @@ def generate_opa(cs: ControlStructureModel) -> str:
 
             # Build the violation rule
             rule_name = f"stpa_violation_{uca.id.lower().replace('-', '_')}"
+            scope_lines = [f'    input.action == "{action}"']
+            if cond.applies_when:
+                scope_lines.append(
+                    f"    lower(input.{cond.applies_when.param}) == "
+                    f'"{cond.applies_when.equals.lower()}"'
+                )
             lines.append(f"{rule_name} := msg if {{")
-            lines.append(f'    input.action == "{action}"')
+            lines.extend(scope_lines)
 
             if cond.param and cond.operator:
                 param = cond.param
@@ -757,6 +798,16 @@ def generate_opa(cs: ControlStructureModel) -> str:
             lines.append(f'    msg := "{uca.opa_rule.message}"')
             lines.append("}")
             lines.append("")
+
+            if cond.composite and cond.require_params:
+                # Fail closed: a missing or non-numeric operand fires the rule.
+                for operand in _composite_parts(cond.composite)[::2]:
+                    lines.append(f"{rule_name} := msg if {{")
+                    lines.extend(scope_lines)
+                    lines.append(f"    not is_number(input.{operand})")
+                    lines.append(f'    msg := "{uca.opa_rule.message}"')
+                    lines.append("}")
+                    lines.append("")
 
     # Aggregate deny rule
     lines += [
@@ -1000,6 +1051,15 @@ def generate_python(cs: ControlStructureModel) -> str:
             body_lines.append(f'            if action_name != "{uca.action}":')
             body_lines.append("                return None")
 
+        if cond.applies_when:
+            scope_param = cond.applies_when.param
+            scope_value = cond.applies_when.equals.lower()
+            body_lines += [
+                f'            scope_val = params.get("{scope_param}")',
+                f'            if not (isinstance(scope_val, str) and scope_val.strip().lower() == "{scope_value}"):',
+                "                return None",
+            ]
+
         param = cond.param
         op = cond.operator
 
@@ -1173,18 +1233,35 @@ def generate_python(cs: ControlStructureModel) -> str:
         elif cond.composite:
             lhs_param, raw_thresh_ref, rhs_param = _composite_parts(cond.composite)
             thresh_ref = _qualify_threshold_ref(raw_thresh_ref, cs.system.domain)
+            missing_check = (
+                "            if lhs_val is None or rhs_val is None:"
+                if cond.require_params
+                else "            if (lhs_val is None) != (rhs_val is None):"
+            )
+            missing_message = (
+                f"Missing required composite param `{lhs_param}` / `{rhs_param}`."
+                if cond.require_params
+                else f"Incomplete composite params `{lhs_param}` / `{rhs_param}`."
+            )
             body_lines += [
                 f"            # Composite condition: {cond.composite}",
                 f'            lhs_val = params.get("{lhs_param}")',
                 f'            rhs_val = params.get("{rhs_param}")',
-                "            if (lhs_val is None) != (rhs_val is None):",
+                missing_check,
                 "                return Violation(",
                 '                    tier="stpa",',
                 f'                    code="{uca_code}",',
-                f'                    message="Incomplete composite params `{lhs_param}` / `{rhs_param}`.",',
+                f'                    message="{missing_message}",',
                 "                    kind=ViolationKind.HARD,",
                 "                )",
                 "            if lhs_val is not None and rhs_val is not None:",
+                "                if any(isinstance(v, bool) or not isinstance(v, (int, float, str)) for v in (lhs_val, rhs_val)):",
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="Invalid non-numeric composite param `{lhs_param}` or `{rhs_param}`.",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
                 "                f_lhs = float(lhs_val)",
                 "                f_rhs = float(rhs_val)",
                 "                if not (math.isfinite(f_lhs) and math.isfinite(f_rhs)):",
@@ -1804,6 +1881,15 @@ def generate_agp(cs: ControlStructureModel) -> str:
             # Cannot map — skip with a comment
             lines.append(f"# UCA {uca.id}: condition not mappable to AGP NL — omitted.")
             continue
+
+        if cond.applies_when:
+            sentence = (
+                f'When "{cond.applies_when.param}" is "{cond.applies_when.equals}": '
+                f"{sentence}"
+            )
+        if cond.require_params and cond.composite:
+            lhs, _, rhs = _composite_parts(cond.composite)
+            sentence += f' Also do not execute it if "{lhs}" or "{rhs}" is missing.'
 
         lines.append(f"# {uca.id}: {uca.description}")
         lines.append(sentence)

@@ -302,11 +302,32 @@ unsafe_control_actions:
       decision: DENY
       message: "UCA-12: Bounding contract violation — trade blocked."
 
+  - id: UCA-13
+    action: execute_trade
+    uca_type: unsafe_action
+    hazard_refs: [H-4, H-5]
+    description: "Agent executes sell order exceeding the allowable fraction of portfolio value."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
+    # FIN-1. Applies to sells only (side == sell, case-insensitive). A sell
+    # without a numeric amount or portfolio_total fails closed.
+    condition:
+      composite: "amount > threshold_ref(stpa.max_sell_portfolio_fraction) * portfolio_total"
+      require_params: true
+      applies_when:
+        param: side
+        equals: sell
+    enforcement: [opa, python]
+    opa_rule:
+      decision: DENY
+      message: "UCA-13: Sell order exceeds maximum portfolio fraction — trade blocked."
+
 safety_constraints:
   - id: FIN-1
-    description: "Cannot sell more than max_sell_portfolio_fraction of portfolio without explicit confirmation."
-    logic: "sell_percentage <= stpa.max_sell_portfolio_fraction"
-    scope: [execute_sell]
+    uca_ref: UCA-13
+    description: "Agent must not sell more than max_sell_portfolio_fraction of portfolio_total in one order."
+    logic: "amount <= stpa.max_sell_portfolio_fraction * portfolio_total"
+    scope: [execute_trade]
 
   - id: FIN-2
     uca_ref: UCA-2
