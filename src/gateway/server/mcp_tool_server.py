@@ -146,7 +146,9 @@ def _install_contributions(governor: SymbolicGovernor) -> None:
     Compliance overlays are process-wide and registered by ``bootstrap_governor``.
     """
     from src.gateway.governance.background_tasks import register_background_task
-    from src.integrations.nemo.action_registry import register_rail_provider
+    from src.gateway.governance.semantic_rail_factory import (
+        register_semantic_rail_provider as register_rail_provider,
+    )
 
     for contribution in governor.components.contributions:
         for name, worker in contribution.background_tasks.items():
@@ -187,7 +189,9 @@ async def _activate_domain() -> SymbolicGovernor:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-    from src.integrations.nemo.manager import initialize_rails
+    from src.gateway.governance.semantic_rail_factory import (
+        initialize_semantic_rails as initialize_rails,
+    )
 
     # 1. Tracing bootstrap (Phase 5.1)
     setup_tracing()
@@ -431,7 +435,9 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
 @mcp.tool()
 async def verify_content_safety(text: str) -> str:
     """Verify safety of a given text using NeMo Guardrails."""
-    from src.integrations.nemo.manager import validate_with_nemo
+    from src.gateway.governance.semantic_rail_factory import (
+        validate_with_semantic_rail as validate_with_nemo,
+    )
 
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:

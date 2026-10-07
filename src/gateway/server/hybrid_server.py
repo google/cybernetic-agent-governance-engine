@@ -110,7 +110,9 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     evidence_sink = await start_evidence_sink()
 
     # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
-    from src.integrations.nemo.manager import initialize_rails
+    from src.gateway.governance.semantic_rail_factory import (
+        initialize_semantic_rails as initialize_rails,
+    )
 
     logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
     nemo_rails = initialize_rails()

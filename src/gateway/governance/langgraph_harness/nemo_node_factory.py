@@ -51,27 +51,35 @@ _NEMO_AVAILABLE = False
 
 
 def create_nemo_manager(config_path: str = "config/rails") -> Any:
-    from src.integrations.nemo.manager import create_nemo_manager as _create
+    from src.gateway.governance.semantic_rail_factory import (
+        create_semantic_rail_manager,
+    )
 
-    return _create(config_path)
+    return create_semantic_rail_manager(config_path)
 
 
 async def validate_with_nemo(user_input: str, rails: Any) -> tuple[bool, str, bool]:
-    from src.integrations.nemo.manager import validate_with_nemo as _validate
+    from src.gateway.governance.semantic_rail_factory import (
+        validate_with_semantic_rail,
+    )
 
-    return await _validate(user_input, rails)
+    return await validate_with_semantic_rail(user_input, rails)
 
 
 async def verify_and_mask_output(rails: Any, text: str) -> str:
-    from src.integrations.nemo.manager import verify_and_mask_output as _verify
+    from src.gateway.governance.semantic_rail_factory import (
+        verify_and_mask_semantic_output,
+    )
 
-    return await _verify(rails, text)
+    return await verify_and_mask_semantic_output(rails, text)
 
 
 async def validate_output_semantics(rails: Any, output_text: str) -> tuple[bool, str]:
-    from src.integrations.nemo.manager import validate_output_semantics as _validate_sem
+    from src.gateway.governance.semantic_rail_factory import (
+        validate_semantic_output_semantics,
+    )
 
-    return await _validate_sem(rails, output_text)
+    return await validate_semantic_output_semantics(rails, output_text)
 
 
 _NEMO_AVAILABLE = True

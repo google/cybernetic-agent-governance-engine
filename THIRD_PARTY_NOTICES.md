@@ -221,7 +221,8 @@ Packages used by one or more of the Python services (`src/gateway`,
 ### nemoguardrails ≥0.20,<1.0
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/NVIDIA/NeMo-Guardrails
-- **Usage:** NVIDIA NeMo Guardrails runtime for Colang-based rail enforcement in the gateway.
+- **Usage:** NVIDIA NeMo Guardrails runtime for Colang-based semantic rail enforcement in Layer 3 (`src/integrations/nemo/`), invoked by the gateway via `SemanticRailProvider` (`src/gateway/governance/semantic_rail_factory.py`).
+- **Trademark Notice:** NVIDIA and NeMo are trademarks and/or registered trademarks of NVIDIA Corporation in the U.S. and other countries.
 
 ### nest-asyncio ≥1.6
 - **License:** BSD-3-Clause
