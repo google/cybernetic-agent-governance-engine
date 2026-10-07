@@ -48,6 +48,91 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+_SRC_ROOT = Path(__file__).parent.parent / "src"
+_REPO_ROOT = _SRC_ROOT.parent
+
+# The single place in src/ allowed to call the broker's execute_trade. The
+# actuator is reached only through ActuatorRegistry after
+# verify_and_consume_seal() has verified the routing seal and consumed its
+# nonce (ADR-008). Do not add entries: a second call site is a second path to
+# the broker that the seal check does not cover.
+_EXECUTE_TRADE_CALL_SITES = frozenset(
+    {("src/cage_finance/actuators/broker_actuator.py", "BrokerActuator", "actuate")}
+)
+_TRADE_EXECUTOR_MODULE = "src.cage_finance.tools.trade_executor"
+
+
+class _ExecuteTradeScan(ast.NodeVisitor):
+    """Record execute_trade calls/imports and literal routing seals in one module."""
+
+    def __init__(self, rel_path: str) -> None:
+        self.rel_path = rel_path
+        self.scope: list[tuple[str, str]] = []  # (kind, name)
+        self.calls: list[tuple[int, str | None, str | None]] = []
+        self.imports: list[int] = []
+        self.literal_seals: list[int] = []
+
+    def _enclosing(self, kind: str) -> str | None:
+        return next((n for k, n in reversed(self.scope) if k == kind), None)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.scope.append(("class", node.name))
+        self.generic_visit(node)
+        self.scope.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.scope.append(("func", node.name))
+        self.generic_visit(node)
+        self.scope.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module == _TRADE_EXECUTOR_MODULE or (
+            node.module == "src.cage_finance.tools"
+            and any(a.name == "trade_executor" for a in node.names)
+        ):
+            self.imports.append(node.lineno)
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        if any(a.name == _TRADE_EXECUTOR_MODULE for a in node.names):
+            self.imports.append(node.lineno)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if name == "execute_trade":
+            self.calls.append(
+                (node.lineno, self._enclosing("class"), self._enclosing("func"))
+            )
+        for kw in node.keywords:
+            if (
+                kw.arg == "routing_seal"
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+            ):
+                self.literal_seals.append(node.lineno)
+        self.generic_visit(node)
+
+
+def _scan_src() -> list[_ExecuteTradeScan]:
+    scans = []
+    for py_file in sorted(_SRC_ROOT.rglob("*.py")):
+        rel = str(py_file.relative_to(_REPO_ROOT))
+        scan = _ExecuteTradeScan(rel)
+        scan.visit(ast.parse(py_file.read_text(), filename=rel))
+        scans.append(scan)
+    return scans
+
+
 def test_actuator_seam_isolation_execute_trade():
     """
     Verify that execute_trade() is called ONLY within BrokerActuator.actuate().
@@ -55,80 +140,55 @@ def test_actuator_seam_isolation_execute_trade():
     Architectural Invariant:
         trade_executor.execute_trade is the domain execution layer and must
         NEVER be invoked directly from governance kernel or any module outside
-        the broker actuator seam.
+        the broker actuator seam. The broker only checks that the routing seal
+        is non-empty, so any other caller bypasses verify_and_consume_seal()
+        (ADR-008). The dead ``bounded_execution`` wrapper did exactly that
+        (POAM-2026-109).
 
     Enforcement:
-        Parse AST of all .py files in src/ and assert that execute_trade is
-        invoked only from broker_actuator.py::BrokerActuator.actuate.
+        Parse every .py file in src/ (including ``__init__.py``) and assert
+        that execute_trade is invoked only from
+        broker_actuator.py::BrokerActuator.actuate, and that only
+        broker_actuator.py imports trade_executor (no aliased call sites).
     """
-    src_root = Path(__file__).parent.parent / "src"
     violations: list[str] = []
-
-    # Allowed call sites: BrokerActuator.actuate and bounded_execution (legacy wrapper)
-    allowed_files = {
-        "src/cage_finance/actuators/broker_actuator.py",
-        "src/cage_finance/tools/bounded_execution.py",  # Legacy bounding contract wrapper
-    }
-
-    for py_file in src_root.rglob("*.py"):
-        if py_file.name == "__init__.py":
-            continue
-
-        try:
-            tree = ast.parse(py_file.read_text(), filename=str(py_file))
-        except SyntaxError:
-            # Skip files that fail to parse (non-Python or broken syntax)
-            continue
-
-        # Track current class and method for context
-        class_stack: list[str] = []
-        method_stack: list[str] = []
-
-        for node in ast.walk(tree):
-            # Track class definitions
-            if isinstance(node, ast.ClassDef):
-                class_stack.append(node.name)
-
-            # Track function/method definitions
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                method_stack.append(node.name)
-
-            # Look for calls to execute_trade
-            if isinstance(node, ast.Call):
-                # Check for direct function call: execute_trade(...)
-                if isinstance(node.func, ast.Name) and node.func.id == "execute_trade":
-                    file_path = str(py_file.relative_to(src_root.parent))
-
-                    if file_path not in allowed_files:
-                        current_class = class_stack[-1] if class_stack else None
-                        current_method = (
-                            method_stack[-1] if method_stack else "<module>"
-                        )
-                        violations.append(
-                            f"{file_path}:{node.lineno} "
-                            f"→ execute_trade called from {current_class or '<module>'}.{current_method}"
-                        )
-
-                # Check for module.execute_trade(...) calls
-                if (
-                    isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "execute_trade"
-                ):
-                    file_path = str(py_file.relative_to(src_root.parent))
-
-                    if file_path not in allowed_files:
-                        current_class = class_stack[-1] if class_stack else None
-                        current_method = (
-                            method_stack[-1] if method_stack else "<module>"
-                        )
-                        violations.append(
-                            f"{file_path}:{node.lineno} "
-                            f"→ execute_trade called from {current_class or '<module>'}.{current_method}"
-                        )
+    for scan in _scan_src():
+        for lineno, cls, func in scan.calls:
+            if (scan.rel_path, cls, func) not in _EXECUTE_TRADE_CALL_SITES:
+                violations.append(
+                    f"{scan.rel_path}:{lineno} → execute_trade called from "
+                    f"{cls or '<module>'}.{func or '<module>'}"
+                )
+        allowed_importers = {path for path, _, _ in _EXECUTE_TRADE_CALL_SITES}
+        if scan.rel_path not in allowed_importers:
+            violations.extend(
+                f"{scan.rel_path}:{lineno} → imports trade_executor"
+                for lineno in scan.imports
+            )
 
     assert not violations, (
         "execute_trade must be called ONLY from BrokerActuator.actuate. "
         "Violations found:\n" + "\n".join(violations)
+    )
+
+
+def test_no_literal_routing_seal_in_src():
+    """
+    Verify no module in src/ passes a string literal as ``routing_seal``.
+
+    A routing seal is minted by the governor and verified and consumed by
+    verify_and_consume_seal(). A hard-coded string (the removed
+    ``"INTERNAL_BOUNDED_EXECUTION"``) satisfies the broker's non-empty check
+    without any governance decision behind it (POAM-2026-109).
+    """
+    violations = [
+        f"{scan.rel_path}:{lineno} → routing_seal is a string literal"
+        for scan in _scan_src()
+        for lineno in scan.literal_seals
+    ]
+    assert not violations, (
+        "routing_seal must come from a verified governance decision, never a "
+        "literal. Violations found:\n" + "\n".join(violations)
     )
 
 
