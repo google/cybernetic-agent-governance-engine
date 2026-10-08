@@ -437,5 +437,19 @@ CAGE has no integration with Google Agent Gateway's Service Extensions mechanism
 |---|---|---|---|
 | GKE + Linkerd mTLS Boundary | HIGH | Phase 1 | [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) ✅ shipped |
 | ACS / AAIF / OSCAL Ingress Adapters | HIGH | Phase 1 | [`src/gateway/governance/ingress/`](../../src/gateway/governance/ingress/) ✅ shipped |
+| Foundation Model RLVR & DPO Alignment Harness | HIGH | Phase 1 | [`src/gateway/governance/eval_harness.py`](../../src/gateway/governance/eval_harness.py) ✅ shipped |
 
 **Change Management:** The AGW Service Extension adapter is a new external API integration, which constitutes a **Cat-M (Major)** change requiring AO pre-approval in a real deployment's own change-management process. The IaC module for AGW constitutes a new cloud provider service integration, also **Cat-M**. Both items apply only to GCP deployments; operators on other platforms are unaffected.
+
+---
+
+## 10. The Isomorphic Invariant Moat: Dual-Lifecycle Runtime & Alignment Flywheel
+
+Standalone evaluation frameworks (e.g., academic benchmarks, LLM-as-a-judge harnesses) suffer from **Eval-Prod Drift**: models are aligned offline against heuristic reward models that differ from the hard state invariants enforced in production. Conversely, standalone runtime firewalls block bad actions in flight (`DENY`) without producing structured counterfactual preference data to improve the underlying foundation model.
+
+CAGE bridges both markets via [`FoundationModelEvalHarness`](../../src/gateway/governance/eval_harness.py) (see [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md)):
+
+1. **Zero Eval-Prod Drift:** The exact same [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py) stages, STPA-compiled Rego rules, and discrete-time Control Barrier Functions execute offline under `Profile.DRY_RUN` (`validate_action()`) to score multi-turn rollouts as a step-level Process Reward Model (PRM) and online under `Profile.FULL` (`govern()`) to guard authoritative state stores.
+2. **Counterfactual DPO Synthesis Without Rejection Sampling:** When an evaluated rollout or live production call triggers `GovernanceDecision.NARROW`, CAGE's [`NarrowerRegistry`](../../src/gateway/governance/narrower.py) projects the violating parameters onto the nearest admissible boundary and re-verifies zero violations, emitting minimal-edit `(prompt, chosen=y_w, rejected=y_l)` triplets from a single rollout.
+3. **Runtime-to-Alignment Harvesting:** Live [`RefusalReceipt`](../../src/gateway/governance/contracts.py) records are harvested via `FoundationModelEvalHarness.harvest_refusal_receipts()` and scrubbed via [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py) into Hugging Face TRL `DPOTrainer` JSONL datasets, turning every production safety interception into verifiable post-training alignment signal.
+
