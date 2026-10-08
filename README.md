@@ -1,11 +1,12 @@
 # Cybernetic Agent Governance Engine (CAGE)
 
 
-> **A domain-agnostic, application-free AI governance platform providing runtime safety boundaries, compliance enforcement, and explainable oversight for autonomous AI systems.**
+> **A domain-agnostic, application-free AI Consequence Governance & Verifiable Alignment Substrate: enforcing formal runtime safety boundaries (`Profile.FULL`) while operating as a deterministic Process Reward Oracle and Counterfactual DPO Generator (`Profile.DRY_RUN`) for foundation models.**
 
-CAGE is an application-agnostic governance substrate that contains **zero built-in applications**. It provides pure, domain-neutral governance mechanisms:
+CAGE is an application-agnostic governance and alignment substrate that contains **zero built-in applications**. It provides pure, domain-neutral governance and evaluation mechanisms:
 
 - **Universal safety mechanisms** — Control Barrier Functions, consensus arbitration, causal reasoning, FTRA reachability analysis, and pipeline orchestration that operate on abstract action primitives and require no domain knowledge.
+- **Dual-Lifecycle Flywheel (Runtime $\leftrightarrow$ Alignment)** — The identical formal barriers execute online to govern live production tool invocations (`SymbolicGovernor.govern`) and offline to score multi-turn rollouts and synthesize counterfactual DPO/RLVR preference pairs (`FoundationModelEvalHarness`).
 - **Domain plugins** — Extensible safety tiers, barriers, rails, and tools for finance, healthcare, or any custom domain, loaded through the `cage.plugins` entry-point group.
 - **Regional compliance** — Configurable postures for US Federal, EU, APAC, or custom jurisdictions, selected at deploy time with a single environment variable.
 - **Runtime enforcement** — Non-bypassable pipeline orchestration with cryptographic evidence sealing and automated Human-in-the-Loop escalation.
@@ -43,18 +44,32 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 | **Declarative A2A Authorization** | `config/opa/agent_catalog.rego` | Subagents declare `authorized_parent_prefixes`; OPA authorizes via `startswith()` prefix matching, keeping ephemeral instance IDs out of policy bodies. |
 | **Egress Credential Broker Seam** | `src/gateway/governance/seams/credential_broker.py` | Layer 1 holds the `CredentialBrokerAdapter` protocol; the Layer 3 reference actuator invokes it as a pre-dispatch gate keyed on agent SVID and tool name, masks values in logs, keeps them out of the audit record, and fails closed on denial. |
 | **CAGE Guard for LangGraph** | `packages/cage-client/` | Governance enforcement wrapped around LangGraph nodes via the CAGE Client SDK. |
-| **Foundation Model Eval & Alignment Harness (RLVR / DPO)** | `src/gateway/governance/eval_harness.py` | Out-of-process trajectory evaluation harness (`FoundationModelEvalHarness`) that runs multi-turn rollouts through `SymbolicGovernor.validate_action()` (`Profile.DRY_RUN`) as a deterministic Process Reward Model (PRM) and synthesizes counterfactual DPO preference triplets `(prompt, chosen=y_w, rejected=y_l)` from reverified `NARROW` clamps for Hugging Face TRL (`export_hf_trl_jsonl()`). |
+| **Foundation Model Eval & Alignment Harness (RLVR / DPO)** | `src/gateway/governance/eval_harness.py` | Out-of-process trajectory evaluation harness (`FoundationModelEvalHarness`) that runs multi-turn rollouts through `SymbolicGovernor.validate_action()` (`Profile.DRY_RUN`) with cumulative shadow-state tracking, synthesizes counterfactual DPO preference triplets `(prompt, chosen=y_w, rejected=y_l)` from reverified `NARROW` clamps, harvests runtime `RefusalReceipt` records (`harvest_refusal_receipts()`), and exports PII-sanitized JSONL for Hugging Face TRL (`export_hf_trl_jsonl()`). |
 
 ---
 
 ## Foundation Model Evaluation & Alignment Harness (RLVR / DPO / GRPO)
 
-Beyond online runtime enforcement, CAGE operates as a deterministic **Foundation Model Evaluation Harness and Adversarial Validation Sandbox** ([`src/gateway/governance/eval_harness.py`](src/gateway/governance/eval_harness.py)):
+Beyond online runtime enforcement, CAGE operates as a **Dual-Lifecycle Governance & Alignment Substrate** ([`src/gateway/governance/eval_harness.py`](src/gateway/governance/eval_harness.py) · full specification in [`docs/architecture/EVALUATION_AND_ALIGNMENT_HARNESS.md`](docs/architecture/EVALUATION_AND_ALIGNMENT_HARNESS.md)):
+
+```text
+      PRE-DEPLOYMENT EVALUATION & POST-TRAINING                 LIVE ENTERPRISE RUNTIME
+   ┌──────────────────────────────────────────────┐        ┌────────────────────────────────────────┐
+   │ CAGE Evaluation Harness (Profile.DRY_RUN)    │        │ CAGE Substrate Governor (Profile.FULL) │
+   │ • FoundationModelEvalHarness (PRM Scoring)   │        │ • Linkerd mTLS + Single-Use JWS Seals  │
+   │ • FTRA DAG & CBF Barrier Preview (Zero-Harm) │───────▶│ • 5-State Engine (ALLOW/NARROW/DEFER…) │
+   │ • Counterfactual DPO Triplets via NARROW     │ Shared │ • Atomic Redis Lua CBFs & LIFO Undo    │
+   └──────────────────────────────────────────────┘ Formal └────────────────────────────────────────┘
+                          ▲                        Barriers                     │
+                          │                                                     │
+                          └─────────── Continuous Alignment Flywheel ───────────┘
+                              (Live RefusalReceipts & NarrowReceipts → TRL JSONL)
+```
 
 1. **Deterministic Process Reward Oracle (RLVR):** Instead of relying on stochastic "Judge LLMs" vulnerable to reward hacking and prompt injection, `FoundationModelEvalHarness` evaluates multi-turn agent tool trajectories against formal discrete-time Control Barrier Functions ($h(x_{t+1}) \ge (1-\gamma)h(x_t)$), STPA-compiled OPA/Rego invariants, and fault-tree reachability graphs (`PlanGraphAnalyzer`), emitting dense step-level process rewards (`EvaluationStepResult.process_reward`).
-2. **Counterfactual DPO & RLHF Preference Generation via `NARROW`:** When a model proposes an out-of-bounds tool invocation ($y_l$), CAGE's `NarrowerRegistry` deterministically projects the parameters onto the nearest admissible boundary ($y_w$) and re-verifies zero violations under `Profile.DRY_RUN`. This produces minimal-edit contrastive preference pairs `(prompt, chosen=y_w, rejected=y_l)` from a **single rollout** without expensive $K$-sample rejection sampling, exported directly to Hugging Face TRL format via `FoundationModelEvalHarness.export_hf_trl_jsonl()`.
-3. **Causal Failure Attribution (`gatekeeper.py`):** Uses Microsoft DoWhy with 50-simulation placebo refutations ($p < 0.05$) in [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py) to isolate true sensitivity to parameter magnitude drift ($\beta > 0$) from confounded environmental noise.
-4. **Zero-Harm Stateful Sandbox:** Executes multi-turn rollouts side-effect-free via `Profile.DRY_RUN` barrier previews (`BarrierPreview`) and shielded LIFO compensating rollbacks (`ReservationScope`).
+2. **Counterfactual DPO & RLHF Preference Generation via `NARROW`:** When a model proposes an out-of-bounds tool invocation ($y_l$), CAGE's `NarrowerRegistry` deterministically projects the parameters onto the nearest admissible boundary ($y_w$) and re-verifies zero violations under `Profile.DRY_RUN`. This produces minimal-edit contrastive preference pairs `(prompt, chosen=y_w, rejected=y_l)` from a **single rollout** without expensive $K$-sample rejection sampling.
+3. **Runtime-to-Alignment Harvesting (`harvest_refusal_receipts`):** Converts live production [`RefusalReceipt`](src/gateway/governance/contracts.py) records into counterfactual DPO training triplets and scrubs customer PII via [`PIISanitizer`](src/gateway/governance/pii_sanitizer.py) during JSONL export (`export_hf_trl_jsonl(sanitize_pii=True)`).
+4. **Stateful Multi-Turn Sandbox & Causal Attribution:** Tracks cumulative multi-turn resource depletion via isolated shadow state (`ShadowStateReducer`) and uses Microsoft DoWhy with 50-simulation placebo refutations ($p < 0.05$) in [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py) to isolate true parameter sensitivity ($\beta > 0$) from confounded noise. Run the standalone benchmark via `uv run python scripts/run_eval_benchmark.py`.
 
 ---
 
