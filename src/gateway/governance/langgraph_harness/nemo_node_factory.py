@@ -488,7 +488,9 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                         span.set_attribute("output.semantic_blocked", True)
                         final_text = cfg.output_blocked_sentinel
                     else:
-                        logger.debug("nemo_output_rail_node: semantic validation PASSED")
+                        logger.debug(
+                            "nemo_output_rail_node: semantic validation PASSED"
+                        )
                 except Exception as sem_exc:
                     logger.error(
                         "nemo_output_rail_node: validate_output_semantics raised — "

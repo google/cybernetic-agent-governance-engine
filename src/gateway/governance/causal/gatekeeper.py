@@ -610,6 +610,37 @@ class CausalGatekeeper:
             logger.error("Causal validation failed due to error: %s", e)
             return CausalDecision(False, REASON_CHECK_ERROR)
 
+    def telemetry_readiness(
+        self, current_telemetry: pd.DataFrame | None = None
+    ) -> dict[str, Any]:
+        """Report whether the causal telemetry window has reached warmup threshold.
+
+        Allows health checks and evaluation harnesses to distinguish cold-start
+        telemetry starvation (``n_samples < min_samples``) from steady-state
+        DoWhy placebo refutation failures.
+        """
+        min_samples = get_causal_min_samples()
+        posture = resolve_posture()
+        synthetic_permitted = not is_enforcing(posture) and (
+            self.spec.synthetic_telemetry_factory is not None
+        )
+        if current_telemetry is not None and len(current_telemetry) > 0:
+            n_samples = len(current_telemetry)
+        elif synthetic_permitted and self.spec.synthetic_telemetry_factory is not None:
+            try:
+                n_samples = len(self.spec.synthetic_telemetry_factory())
+            except Exception:
+                n_samples = 0
+        else:
+            n_samples = 0
+        return {
+            "warmed_up": n_samples >= min_samples,
+            "samples_available": n_samples,
+            "min_samples_required": min_samples,
+            "posture": posture.value,
+            "synthetic_fallback_permitted": synthetic_permitted,
+        }
+
     # ------------------------------------------------------------------
     # Per-request inputs
     # ------------------------------------------------------------------

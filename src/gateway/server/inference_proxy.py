@@ -194,7 +194,11 @@ async def chat_completions(
     """OpenAI-compatible governed inference endpoint."""
     from src.gateway.governance.semantic_rail_factory import (
         initialize_semantic_rails as _init_rails,
+    )
+    from src.gateway.governance.semantic_rail_factory import (
         verify_and_mask_semantic_output as verify_and_mask_output,
+    )
+    from src.gateway.governance.semantic_rail_factory import (
         verify_semantic_input as verify_input,
     )
 

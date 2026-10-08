@@ -67,8 +67,35 @@ class FiscalTierPlugin(MutatingTier):
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); reserves nothing."""
+        import math
+
         amount = self._cost(action, params)
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
+        shadow_spend = params.get("_shadow_daily_spend_usd")
+        if (
+            shadow_spend is not None
+            and not isinstance(shadow_spend, bool)
+            and isinstance(shadow_spend, (int, float))
+            and math.isfinite(float(shadow_spend))
+            and float(shadow_spend) >= 0.0
+        ):
+            cap_usd = float(getattr(self.guard, "_daily_cap_usd", 0.0))
+            if float(shadow_spend) + amount <= cap_usd:
+                return []
+            headroom = max(0.0, cap_usd - float(shadow_spend))
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="FISCAL_LIMIT_EXCEEDED",
+                    message=(
+                        f"Daily fiscal limit exceeded for {agent_id} "
+                        f"(shadow spend {float(shadow_spend):.2f} + {amount:.2f} > {cap_usd:.2f}). "
+                        "Fiscal Limit Pre-Reservation REJECTED"
+                    ),
+                    kind=ViolationKind.NARROWABLE,
+                    bound=coerce_bound(headroom),
+                )
+            ]
         if await self.guard.would_accept(amount_usd=amount):
             return []
         return [await self._limit_violation(agent_id)]

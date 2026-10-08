@@ -55,9 +55,7 @@ class SemanticRailProvider(Protocol):
         """Create a rail manager from the specified configuration directory."""
         ...
 
-    async def verify_input(
-        self, rails: Any, user_input: str
-    ) -> SemanticRailVerdict:
+    async def verify_input(self, rails: Any, user_input: str) -> SemanticRailVerdict:
         """Validate user input against configured semantic input rails."""
         ...
 

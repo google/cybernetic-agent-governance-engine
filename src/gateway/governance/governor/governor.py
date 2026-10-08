@@ -535,12 +535,16 @@ class SymbolicGovernor:
         params: dict[str, Any],
         *,
         approval: PostHitlApproval,
+        rebind_inputs: bool = False,
     ) -> str:
         """The post-approval committing run: POST_HITL commit + seal, or not.
 
         ``approval`` is the verified, unspent human approval
-        (:class:`~.approval.PostHitlApproval`). The run decides first and
-        spends second:
+        (:class:`~.approval.PostHitlApproval`). When ``rebind_inputs=True``,
+        server-owned keys (e.g., quote staleness, drawdown, portfolio NAV) are
+        resolved afresh via :func:`bind_server_inputs` before ``OpaStage`` and
+        phase-2 barriers execute, preventing stale telemetry across the human
+        review window. The run decides first and spends second:
 
         * **ALLOW** — the run is clean; ``approval.spend()`` consumes the
           approval atomically inside the run's ``ReservationScope``, before
@@ -566,6 +570,10 @@ class SymbolicGovernor:
         ``narrow_hint``'s clamped params) is honoured only if the barriers
         now admit the executed params.
         """
+        if rebind_inputs:
+            params = await bind_server_inputs(
+                self._components.server_inputs, action, params
+            )
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
         ) as span:
@@ -575,6 +583,7 @@ class SymbolicGovernor:
                 OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
             )
             span.set_attribute("toctou.revalidation.scope", "opa+warrant+phase2")
+            span.set_attribute("toctou.server_inputs_rebound", rebind_inputs)
             span.set_attribute("toctou.approval_id", approval.approval_id)
             if approval.thread_id is not None:
                 span.set_attribute("toctou.revalidation.trace_id", approval.thread_id)
