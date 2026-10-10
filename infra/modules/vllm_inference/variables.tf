@@ -184,9 +184,14 @@ variable "shared_memory_size" {
 
 # Model Configuration
 variable "model_path" {
-  description = "Path to the model (GCS gs:// URI, HuggingFace ID, or local path)"
+  description = "Path to the model (must be a GCS gs:// URI in the model bucket)"
   type        = string
   default     = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
+
+  validation {
+    condition     = can(regex("^gs://[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]/", var.model_path))
+    error_message = "model_path must be a valid GCS URI starting with 'gs://<bucket>/' to prevent pulling unvetted models from Hugging Face or public repositories."
+  }
 }
 
 variable "served_model_name" {

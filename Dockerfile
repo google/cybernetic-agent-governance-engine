@@ -70,9 +70,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --extra compliance --no-install-project
 
 # Install spaCy large model via direct wheel URL (avoids CDN redirect failures).
-# `uv pip install` targets the venv; a bare `pip` here used to resolve to the
-# base image's system pip and install the model outside the venv.
-RUN uv pip install --no-cache \
+# Target the venv explicitly so the package lands in /app/.venv.
+RUN uv pip install --python /app/.venv --no-cache \
     "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 # ---------------------------------------------------------------------------
