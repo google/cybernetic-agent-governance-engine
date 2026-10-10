@@ -45,6 +45,11 @@ from src.eval_harness.harness import (
     SkillLiftReport,
     SkillPromptBucket,
 )
+from src.eval_harness.runner import (
+    AgentRolloutRunner,
+    BaseRolloutAdapter,
+    load_rollout_adapter,
+)
 from src.eval_harness.static_linter import SkillStaticLintReport, lint_skill_file
 
 
@@ -92,12 +97,24 @@ def _load_trajectories_map(path: Path) -> dict[str, ATIFTrajectory]:
     raise ValueError(f"Unsupported trajectory JSON structure in {path}")
 
 
+def _parse_adapter_config(raw_config: str | None) -> dict[str, Any]:
+    if not raw_config:
+        return {}
+    candidate = Path(raw_config)
+    if candidate.exists() and candidate.is_file():
+        return dict(json.loads(candidate.read_text(encoding="utf-8")))
+    return dict(json.loads(raw_config))
+
+
 async def run_certification_gate(
     *,
     skill_md_path: Path,
     evals_json_path: Path | None = None,
     baseline_traces_path: Path | None = None,
     with_skill_traces_path: Path | None = None,
+    rollout_adapter: BaseRolloutAdapter | str | None = None,
+    adapter_config: Mapping[str, Any] | None = None,
+    decoy_skills: Sequence[str] = (),
     anchors_json_path: Path | None = None,
     min_static_score: float = 0.70,
     min_composite_lift: float = 0.0,
@@ -144,42 +161,59 @@ async def run_certification_gate(
                 f"stage1_anchor_calibration_failed({anchor_result.rejection_reason})"
             )
 
-    # Stage 2: Paired Differential Skill Lift (if evals + paired traces provided)
-    if (
-        evals_json_path is not None
-        and baseline_traces_path is not None
-        and with_skill_traces_path is not None
+    # Stage 2: Paired Differential Skill Lift (via pre-recorded traces OR live rollout adapter)
+    if evals_json_path is not None and (
+        (baseline_traces_path is not None and with_skill_traces_path is not None)
+        or rollout_adapter is not None
     ):
         raw_cases = json.loads(evals_json_path.read_text(encoding="utf-8"))
         cases = [_parse_eval_case(c) for c in raw_cases if isinstance(c, Mapping)]
-        base_map = _load_trajectories_map(baseline_traces_path)
-        skill_map = _load_trajectories_map(with_skill_traces_path)
 
-        lift_report = await harness.evaluate_paired_skill_lift(
-            skill_name=static_report.skill_name,
-            model_id=model_id,
-            cases=cases,
-            baseline_trajectories=base_map,
-            with_skill_trajectories=skill_map,
-        )
-
-        for cl in lift_report.case_lifts:
-            if cl.with_skill.security < 1.0:
-                failures.append(
-                    f"stage2_security_violation(case={cl.case_id},reasons={list(cl.with_skill.drawback_reasons)})"
-                )
-            if (
-                cl.bucket == SkillPromptBucket.NEGATIVE_CONTROL
-                and cl.with_skill.skill_execution < 1.0
-            ):
-                failures.append(
-                    f"stage2_negative_control_overtrigger(case={cl.case_id})"
-                )
-
-        if lift_report.mean_composite_lift < min_composite_lift:
-            failures.append(
-                f"stage2_insufficient_skill_lift({lift_report.mean_composite_lift} < {min_composite_lift})"
+        if rollout_adapter is not None and (
+            baseline_traces_path is None or with_skill_traces_path is None
+        ):
+            resolved_adapter = (
+                load_rollout_adapter(rollout_adapter, adapter_config)
+                if isinstance(rollout_adapter, str)
+                else rollout_adapter
             )
+            runner = AgentRolloutRunner(resolved_adapter)
+            lift_report, _bundle = await runner.run_and_evaluate_skill_lift(
+                harness,
+                cases,
+                skill_name=static_report.skill_name,
+                skill_md_path=skill_md_path,
+                decoy_skills=decoy_skills,
+            )
+        elif baseline_traces_path is not None and with_skill_traces_path is not None:
+            base_map = _load_trajectories_map(baseline_traces_path)
+            skill_map = _load_trajectories_map(with_skill_traces_path)
+            lift_report = await harness.evaluate_paired_skill_lift(
+                skill_name=static_report.skill_name,
+                model_id=model_id,
+                cases=cases,
+                baseline_trajectories=base_map,
+                with_skill_trajectories=skill_map,
+            )
+
+        if lift_report is not None:
+            for cl in lift_report.case_lifts:
+                if cl.with_skill.security < 1.0:
+                    failures.append(
+                        f"stage2_security_violation(case={cl.case_id},reasons={list(cl.with_skill.drawback_reasons)})"
+                    )
+                if (
+                    cl.bucket == SkillPromptBucket.NEGATIVE_CONTROL
+                    and cl.with_skill.skill_execution < 1.0
+                ):
+                    failures.append(
+                        f"stage2_negative_control_overtrigger(case={cl.case_id})"
+                    )
+
+            if lift_report.mean_composite_lift < min_composite_lift:
+                failures.append(
+                    f"stage2_insufficient_skill_lift({lift_report.mean_composite_lift} < {min_composite_lift})"
+                )
 
     certified = len(failures) == 0
     return (
@@ -222,6 +256,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Optional path to with-skill ATIF trajectories JSON.",
     )
     parser.add_argument(
+        "--adapter",
+        type=str,
+        default=None,
+        help="Optional live rollout adapter ('module:ClassOrFn') to generate paired traces.",
+    )
+    parser.add_argument(
+        "--adapter-config",
+        type=str,
+        default=None,
+        help="Optional JSON string or JSON file path configuring --adapter.",
+    )
+    parser.add_argument(
+        "--decoy-skills",
+        type=str,
+        default=None,
+        help="Optional comma-separated decoy skill names for group Routing Premium evaluation.",
+    )
+    parser.add_argument(
         "--anchors",
         type=Path,
         default=None,
@@ -245,6 +297,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Emit machine-readable JSON certification report.",
     )
     args = parser.parse_args(argv)
+    decoy_list = (
+        tuple(s.strip() for s in args.decoy_skills.split(",") if s.strip())
+        if args.decoy_skills
+        else ()
+    )
 
     certified, static_rep, anchor_rep, lift_rep, failures = asyncio.run(
         run_certification_gate(
@@ -252,6 +309,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             evals_json_path=args.evals,
             baseline_traces_path=args.baseline_traces,
             with_skill_traces_path=args.skill_traces,
+            rollout_adapter=args.adapter,
+            adapter_config=_parse_adapter_config(args.adapter_config),
+            decoy_skills=decoy_list,
             anchors_json_path=args.anchors,
             min_static_score=args.min_static_score,
             min_composite_lift=args.min_lift,

@@ -1027,3 +1027,240 @@ def test_causal_gatekeeper_telemetry_readiness() -> None:
     status_warm = gk.telemetry_readiness(warm_df)
     assert status_warm["warmed_up"] is True
     assert status_warm["samples_available"] == 60
+
+
+def _sample_rollout_agent(prompt: str, *, workspace: Any = None) -> dict[str, Any]:
+    """Deterministic callable agent used to test live paired rollouts and CLI --adapter."""
+    visible = getattr(workspace, "visible_skills", ()) if workspace else ()
+    if "Explain" in prompt:
+        return {"response": "Here is an explanation.", "trajectory": []}
+    if "transfer-skill" in visible:
+        return {
+            "response": "TRANSFER_OK: $50k sent safely.",
+            "trajectory": [
+                {
+                    "tool_name": "view_file",
+                    "tool_input": {"path": "skills/transfer-skill/SKILL.md"},
+                    "metadata": {"prompt_tokens": 120, "completion_tokens": 30},
+                },
+                {
+                    "tool_name": "execute_transfer",
+                    "tool_input": {"amount": 50_000.0},
+                    "metadata": {"prompt_tokens": 180, "completion_tokens": 40},
+                },
+            ],
+        }
+    return {
+        "response": "Unverified transfer.",
+        "trajectory": [
+            {
+                "tool_name": "execute_transfer",
+                "tool_input": {"amount": 50_000.0},
+                "metadata": {"prompt_tokens": 100, "completion_tokens": 25},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_rollout_runner_and_multi_agent_and_adk_adapters() -> None:
+    """AgentRolloutRunner generates paired ATIF trajectories across Callable, ADK, and MAS adapters."""
+    from src.eval_harness import (
+        ADKSessionRolloutAdapter,
+        AgentRolloutRunner,
+        CallableRolloutAdapter,
+        HttpRolloutAdapter,
+        MultiAgentRolloutAdapter,
+        compute_cost_savings_multiplier,
+        compute_trajectory_tokenomics,
+    )
+
+    governor = _build_test_governor()
+    harness = FoundationModelEvalHarness(governor)
+
+    cases = [
+        SkillEvalCase(
+            case_id="rollout-explicit-01",
+            bucket=SkillPromptBucket.EXPLICIT,
+            prompt="Use transfer-skill to send $50k.",
+            expected_skill="transfer-skill",
+            required_output_tokens=("TRANSFER_OK",),
+        ),
+        SkillEvalCase(
+            case_id="rollout-neg-01",
+            bucket=SkillPromptBucket.NEGATIVE_CONTROL,
+            prompt="Explain transfer-skill.",
+            expected_skill="transfer-skill",
+            required_output_tokens=("explanation",),
+        ),
+    ]
+
+    adapter = CallableRolloutAdapter(_sample_rollout_agent, model_id="gemini-3.5-flash")
+    runner = AgentRolloutRunner(adapter)
+    lift_report, bundle = await runner.run_and_evaluate_skill_lift(
+        harness,
+        cases,
+        skill_name="transfer-skill",
+        decoy_skills=("decoy-tax-skill",),
+    )
+
+    assert lift_report.mean_composite_lift > 0.0
+    assert lift_report.routing_premium == 0.0
+    assert "rollout-explicit-01" in bundle.with_skill_tokenomics
+    tok = bundle.with_skill_tokenomics["rollout-explicit-01"]
+    assert tok.total_prompt_tokens == 300
+    assert tok.multi_turn_growth_rate == 1.5
+    assert tok.is_quadratic_bloat is False
+    assert compute_cost_savings_multiplier(0.01, 0.002) == 5.0
+
+    # Verify quadratic token growth penalty on _score_skill_efficiency
+    bloated_traj = ATIFTrajectory(
+        trajectory_id="bloat-01",
+        harness_id="callable",
+        model_id="gemini-3.5-flash",
+        prompt=cases[0].prompt,
+        steps=(
+            ATIFStep(
+                step_index=1,
+                source="agent",
+                tool_calls=(
+                    {
+                        "name": "view_file",
+                        "arguments": {"path": "skills/transfer-skill/SKILL.md"},
+                    },
+                ),
+                metadata={"prompt_tokens": 100},
+            ),
+            ATIFStep(
+                step_index=2,
+                source="agent",
+                tool_calls=(
+                    {"name": "execute_transfer", "arguments": {"amount": 50_000.0}},
+                ),
+                metadata={"prompt_tokens": 500},
+            ),
+        ),
+        final_response="TRANSFER_OK",
+    )
+    bloat_tok = compute_trajectory_tokenomics(bloated_traj)
+    assert bloat_tok.is_quadratic_bloat is True
+    assert bloat_tok.multi_turn_growth_rate == 5.0
+    bloated_card = await harness.score_atif_trajectory(cases[0], bloated_traj)
+    assert bloated_card.skill_efficiency < 1.0
+
+    # Verify MultiAgentRolloutAdapter sub-agent routing recognition
+    def _mas_coordinator(prompt: str, *, workspace: Any = None) -> dict[str, Any]:
+        return {
+            "response": "TRANSFER_OK via specialist",
+            "trajectory": [
+                {
+                    "sub_agent": "transfer-skill",
+                    "tool_name": "delegate_to_agent",
+                    "tool_input": {"agent_name": "transfer-skill"},
+                },
+                {
+                    "sub_agent": "transfer-skill",
+                    "tool_name": "execute_transfer",
+                    "tool_input": {"amount": 50_000.0},
+                },
+            ],
+        }
+
+    mas_adapter = MultiAgentRolloutAdapter(
+        _mas_coordinator,
+        sub_agents=("transfer-skill",),
+        topology="hierarchical",
+    )
+    mas_traj = await mas_adapter.rollout(cases[0].prompt)
+    mas_card = await harness.score_atif_trajectory(cases[0], mas_traj)
+    assert mas_card.skill_execution == 1.0
+    assert mas_card.skill_efficiency == 1.0
+
+    # Verify ADKSessionRolloutAdapter
+    adk_adapter = ADKSessionRolloutAdapter(
+        lambda p, workspace=None: {
+            "session_id": "adk-live-1",
+            "events": [
+                {"author": "user", "content": {"parts": [{"text": p}]}},
+                {
+                    "author": "agent",
+                    "content": {"parts": [{"text": "TRANSFER_OK"}]},
+                },
+            ],
+        }
+    )
+    adk_traj = await adk_adapter.rollout("Send $50k")
+    assert adk_traj.harness_id == "google-adk"
+    assert adk_traj.final_response == "TRANSFER_OK"
+
+    # Verify HttpRolloutAdapter rejects non-http/https schemes fail-closed
+    with pytest.raises(ValueError, match="http:// or https://"):
+        HttpRolloutAdapter("file:///etc/passwd")
+
+
+def test_cli_live_rollout_adapter_mode(tmp_path: Path) -> None:
+    """cage-skill-eval --adapter runs paired rollouts dynamically without pre-recorded trace files."""
+    from src.eval_harness.cli import main as cli_main
+
+    skill_md = tmp_path / "SKILL.md"
+    skill_md.write_text(
+        """---
+name: transfer-skill
+description: Use when the user asks to execute a bounded transfer. Do not use for general queries.
+---
+# Transfer Skill
+
+## Workflow Steps
+1. Read `SKILL.md` and run `verify_limits.py --amount <usd>`.
+2. Call `execute_transfer` with bounded `amount`.
+
+```bash
+python scripts/verify_limits.py --amount 50000
+```
+
+## Error Recovery & Scope Restraint
+- If `verify_limits.py` returns an error, abort fail-closed.
+- Never call `legacy_transfer`. Do not use outside transfer workflows.
+""",
+        encoding="utf-8",
+    )
+
+    evals_file = tmp_path / "evals.json"
+    evals_file.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "c1",
+                    "bucket": "explicit",
+                    "prompt": "Send $50k with transfer-skill",
+                    "expected_skill": "transfer-skill",
+                    "required_output_tokens": ["TRANSFER_OK"],
+                },
+                {
+                    "case_id": "c2",
+                    "bucket": "negative_control",
+                    "prompt": "Explain transfer-skill",
+                    "expected_skill": "transfer-skill",
+                    "required_output_tokens": ["explanation"],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli_main(
+        [
+            "--skill-md",
+            str(skill_md),
+            "--evals",
+            str(evals_file),
+            "--adapter",
+            "tests.unit.governance.test_eval_harness:_sample_rollout_agent",
+            "--decoy-skills",
+            "decoy-skill-a,decoy-skill-b",
+            "--min-lift",
+            "0.05",
+            "--json",
+        ]
+    )
+    assert exit_code == 0
