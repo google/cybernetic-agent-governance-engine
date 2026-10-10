@@ -275,6 +275,7 @@ async def mask_pii_action(
             from presidio_anonymizer.entities import (
                 RecognizerResult as AnonymizerResult,
             )
+
             from src.integrations.presidio.redactor import get_presidio_engines
         except ImportError:
             logger.warning(

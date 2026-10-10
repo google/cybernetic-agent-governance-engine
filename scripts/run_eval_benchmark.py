@@ -221,7 +221,9 @@ async def _run_benchmark(output_jsonl: Path) -> None:
 
     print(f"=== CAGE Foundation Model Evaluation Report ({report.model_id}) ===")
     print(f"Trajectory ID       : {report.trajectory_id}")
-    print(f"Steps Passed        : {report.passed_steps}/{report.total_steps} ({report.step_pass_rate:.0%})")
+    print(
+        f"Steps Passed        : {report.passed_steps}/{report.total_steps} ({report.step_pass_rate:.0%})"
+    )
     print(f"Mean Process Reward : {report.mean_process_reward:+.2f}")
     print(f"First Violating Step: {report.first_violating_step}")
     print(f"Final Shadow State  : {report.final_shadow_state}")

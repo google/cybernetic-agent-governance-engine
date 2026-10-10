@@ -177,4 +177,3 @@ def build_presidio_sdd_action() -> Any:
         return [r for r in results if r.score >= score_threshold]
 
     return detect_sensitive_data
-
