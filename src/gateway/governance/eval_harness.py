@@ -127,9 +127,7 @@ class FoundationModelEvalHarness:
         reasons: list[str] = []
 
         try:
-            response = await self._governor.validate_action(
-                tool_name, merged_params
-            )
+            response = await self._governor.validate_action(tool_name, merged_params)
             raw_verdict = response.get("verdict", GovernanceDecision.DENY)
             decision = GovernanceDecision(raw_verdict)
             for v in response.get("violations", ()):
@@ -144,9 +142,7 @@ class FoundationModelEvalHarness:
                 candidate = response.get("narrowed_params")
                 if isinstance(candidate, dict):
                     narrowed_args = {
-                        k: candidate[k]
-                        for k in arguments
-                        if k in candidate
+                        k: candidate[k] for k in arguments if k in candidate
                     }
         except GovernanceError as exc:
             decision = GovernanceDecision.DENY
@@ -205,7 +201,10 @@ class FoundationModelEvalHarness:
             if is_pass and state_reducer is not None:
                 applied_args = (
                     narrowed_args
-                    if (decision == GovernanceDecision.NARROW and narrowed_args is not None)
+                    if (
+                        decision == GovernanceDecision.NARROW
+                        and narrowed_args is not None
+                    )
                     else dict(step.arguments)
                 )
                 shadow_state = dict(

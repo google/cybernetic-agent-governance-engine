@@ -18,12 +18,12 @@ import os
 import signal
 import tempfile
 from pathlib import Path
-from google.cloud import storage
 
 import vllm.config as vllm_config
 import vllm.model_executor.model_loader.loader as vllm_loader
 import vllm.transformers_utils.s3_utils as s3_utils
 import vllm.transformers_utils.utils as tu_utils
+from google.cloud import storage
 
 _orig_is_s3 = tu_utils.is_s3
 
@@ -73,7 +73,6 @@ def _patched_glob(s3=None, path: str = "", allow_pattern=None):
 
 
 class _PatchedS3Model(_orig_S3Model):
-
     def __init__(self) -> None:
         self.s3 = None
         for sig in (signal.SIGINT, signal.SIGTERM):

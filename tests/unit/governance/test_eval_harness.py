@@ -200,9 +200,7 @@ async def test_eval_harness_generates_narrow_dpo_pair(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_eval_harness_multi_turn_deny_and_noop_pair() -> None:
     governor = _build_test_governor()
-    harness = FoundationModelEvalHarness(
-        governor, include_denial_noop_pairs=True
-    )
+    harness = FoundationModelEvalHarness(governor, include_denial_noop_pairs=True)
     steps = [
         ToolActionStep(
             step_id=1,
@@ -236,7 +234,9 @@ async def test_eval_harness_multi_turn_deny_and_noop_pair() -> None:
 
 
 @pytest.mark.asyncio
-async def test_eval_harness_cumulative_shadow_state_catches_multi_turn_depletion() -> None:
+async def test_eval_harness_cumulative_shadow_state_catches_multi_turn_depletion() -> (
+    None
+):
     """Phase 3: Cumulative shadow state catches multi-step budget exhaustion."""
     governor = _build_test_governor()
     harness = FoundationModelEvalHarness(governor)
@@ -282,10 +282,15 @@ async def test_eval_harness_cumulative_shadow_state_catches_multi_turn_depletion
 
     # Step 1: 60k <= 100k -> ALLOW (headroom becomes 40k)
     assert report.step_results[0].decision == GovernanceDecision.ALLOW
-    assert report.step_results[0].shadow_state_snapshot["remaining_headroom"] == 40_000.0
+    assert (
+        report.step_results[0].shadow_state_snapshot["remaining_headroom"] == 40_000.0
+    )
     # Step 2: 60k > 40k -> NARROW to 40k (headroom becomes 0k), emits 1 DPO triplet
     assert report.step_results[1].decision == GovernanceDecision.NARROW
-    assert report.step_results[1].narrowed_arguments == {"amount": 40_000.0, "currency": "USD"}
+    assert report.step_results[1].narrowed_arguments == {
+        "amount": 40_000.0,
+        "currency": "USD",
+    }
     assert report.step_results[1].shadow_state_snapshot["remaining_headroom"] == 0.0
     # Step 3: headroom is 0k -> DENY
     assert report.step_results[2].decision == GovernanceDecision.DENY
@@ -308,7 +313,11 @@ async def test_eval_harness_harvest_refusal_receipts_and_pii_sanitization(
         action="execute_transfer",
         violated_tier="bounded_transfer_tier",
         violated_rule="SOFT_LIMIT_EXCEEDED",
-        attempted_params={"amount": 300_000.0, "currency": "USD", "memo": "SSN 123-45-6789"},
+        attempted_params={
+            "amount": 300_000.0,
+            "currency": "USD",
+            "memo": "SSN 123-45-6789",
+        },
         standing_snapshot={"remaining_headroom": 100_000.0},
     )
 
