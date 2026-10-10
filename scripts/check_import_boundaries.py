@@ -54,6 +54,7 @@ LAYER_2_CAGE_PATTERN = re.compile(r"^(src\.)?cage_\w+")
 LAYER_3_BRIDGE_PATTERN = re.compile(r"^(src\.)?compliance_bridge")
 LAYER_3_INTEGRATIONS_PATTERN = re.compile(r"^(src\.)?integrations\b")
 LAYER_4_GFA_PATTERN = re.compile(r"^(src\.)?governed_financial_advisor")
+OFFLINE_EVAL_PATTERN = re.compile(r"^(src\.)?eval_harness\b")
 
 # Forbidden vendor SDKs for Layer 1 Kernel (src/gateway/)
 FORBIDDEN_VENDOR_SDKS = (
@@ -376,6 +377,18 @@ def check_file_boundaries(
                 line_number=lineno,
                 imported_module=imp,
                 rule_violated="Layer 1 → Layer 4 (gateway must not import governed_financial_advisor)",
+            )
+            violations.append(v)
+            if verbose:
+                print(f"❌ {filepath_str}:{lineno}: imports {imp} ({v.rule_violated})")
+
+        # Check Online Enforcement (Layer 1) -> Offline Evaluation System (src/eval_harness/)
+        if OFFLINE_EVAL_PATTERN.match(imp):
+            v = BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module=imp,
+                rule_violated="Online → Offline (gateway must not import offline eval_harness)",
             )
             violations.append(v)
             if verbose:

@@ -44,32 +44,33 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 | **Declarative A2A Authorization** | `config/opa/agent_catalog.rego` | Subagents declare `authorized_parent_prefixes`; OPA authorizes via `startswith()` prefix matching, keeping ephemeral instance IDs out of policy bodies. |
 | **Egress Credential Broker Seam** | `src/gateway/governance/seams/credential_broker.py` | Layer 1 holds the `CredentialBrokerAdapter` protocol; the Layer 3 reference actuator invokes it as a pre-dispatch gate keyed on agent SVID and tool name, masks values in logs, keeps them out of the audit record, and fails closed on denial. |
 | **CAGE Guard for LangGraph** | `packages/cage-client/` | Governance enforcement wrapped around LangGraph nodes via the CAGE Client SDK. |
-| **Foundation Model Eval & Alignment Harness (RLVR / DPO)** | `src/gateway/governance/eval_harness.py` | Out-of-process trajectory evaluation harness (`FoundationModelEvalHarness`) that runs multi-turn rollouts through `SymbolicGovernor.validate_action()` (`Profile.DRY_RUN`) with cumulative shadow-state tracking, synthesizes counterfactual DPO preference triplets `(prompt, chosen=y_w, rejected=y_l)` from reverified `NARROW` clamps, harvests runtime `RefusalReceipt` records (`harvest_refusal_receipts()`), and exports PII-sanitized JSONL for Hugging Face TRL (`export_hf_trl_jsonl()`). |
+| **Foundation Model & Skill Eval Harness (`src/eval_harness/`)** | `src/eval_harness/` | Standalone offline trajectory & skill certification system (`FoundationModelEvalHarness`, `lint_skill_markdown`, `adk_session_to_atif`, `gemini_cli_jsonl_to_atif`, and the `cage-skill-eval` CLI). Runs 100% standalone (`governor=None`) for Stage 0 `SKILL.md` linting, Double Ratchet Anchor Calibration, and 4-bucket Paired Skill Lift over ATIF trajectories—or optionally links `SymbolicGovernor.validate_action()` (`Profile.DRY_RUN`) for stateful PRM scoring and counterfactual `NARROW` DPO dataset synthesis. |
 
 ---
 
-## Foundation Model Evaluation & Alignment Harness (RLVR / DPO / GRPO)
+## Foundation Model & Agent Skill Evaluation Harness (`src/eval_harness/`)
 
-Beyond online runtime enforcement, CAGE operates as a **Dual-Lifecycle Governance & Alignment Substrate** ([`src/gateway/governance/eval_harness.py`](src/gateway/governance/eval_harness.py) · full specification in [`docs/architecture/EVALUATION_AND_ALIGNMENT_HARNESS.md`](docs/architecture/EVALUATION_AND_ALIGNMENT_HARNESS.md)):
+CAGE enforces a strict **Split-Plane Architecture** between **Online Runtime Enforcement** ([`src/gateway/`](src/gateway/), $<10\text{ ms}$ hot path, packaged in [`src/gateway/Dockerfile`](src/gateway/Dockerfile)) and **Offline Evaluation, Skill Certification & Alignment** ([`src/eval_harness/`](src/eval_harness/__init__.py) · full specification in [`docs/architecture/EVALUATION_AND_ALIGNMENT_HARNESS.md`](docs/architecture/EVALUATION_AND_ALIGNMENT_HARNESS.md)):
 
 ```text
-      PRE-DEPLOYMENT EVALUATION & POST-TRAINING                 LIVE ENTERPRISE RUNTIME
+      OFFLINE EVALUATION & CERTIFICATION PLANE                ONLINE RUNTIME ENFORCEMENT PLANE
+         (src/eval_harness/ — Batch / CI)                      (src/gateway/ — <10ms Hot Path)
    ┌──────────────────────────────────────────────┐        ┌────────────────────────────────────────┐
-   │ CAGE Evaluation Harness (Profile.DRY_RUN)    │        │ CAGE Substrate Governor (Profile.FULL) │
-   │ • FoundationModelEvalHarness (PRM Scoring)   │        │ • Linkerd mTLS + Single-Use JWS Seals  │
-   │ • FTRA DAG & CBF Barrier Preview (Zero-Harm) │───────▶│ • 5-State Engine (ALLOW/NARROW/DEFER…) │
-   │ • Counterfactual DPO Triplets via NARROW     │ Shared │ • Atomic Redis Lua CBFs & LIFO Undo    │
-   └──────────────────────────────────────────────┘ Formal └────────────────────────────────────────┘
-                          ▲                        Barriers                     │
-                          │                                                     │
-                          └─────────── Continuous Alignment Flywheel ───────────┘
-                              (Live RefusalReceipts & NarrowReceipts → TRL JSONL)
+   │ • Stage 0 SKILL.md Linter (static_linter.py) │        │ CAGE Substrate Governor (Profile.FULL) │
+   │ • ATIF Trace Adapters (ADK & Gemini CLI)     │ Static │ • Linkerd mTLS + Single-Use JWS Seals  │
+   │ • 4-Bucket Paired Skill Lift & Routing Prem. │───────▶│ • 5-State Engine (ALLOW/NARROW/DEFER…) │
+   │ • Double Ratchet Anchor Calibration Guard    │ Config │ • Atomic Redis Lua CBFs & LIFO Undo    │
+   │ • Optional DRY_RUN PRM & NARROW DPO Export   │        │ • Emits RefusalReceipt JSONL Stream    │
+   └──────────────────────────────────────────────┘        └────────────────────────────────────────┘
+                          ▲                                                     │
+                          └─────────── Asynchronous Receipt Harvest ────────────┘
+                                 (harvest_refusal_receipts → TRL JSONL)
 ```
 
-1. **Deterministic Process Reward Oracle (RLVR):** Instead of relying on stochastic "Judge LLMs" vulnerable to reward hacking and prompt injection, `FoundationModelEvalHarness` evaluates multi-turn agent tool trajectories against formal discrete-time Control Barrier Functions ($h(x_{t+1}) \ge (1-\gamma)h(x_t)$), STPA-compiled OPA/Rego invariants, and fault-tree reachability graphs (`PlanGraphAnalyzer`), emitting dense step-level process rewards (`EvaluationStepResult.process_reward`).
-2. **Counterfactual DPO & RLHF Preference Generation via `NARROW`:** When a model proposes an out-of-bounds tool invocation ($y_l$), CAGE's `NarrowerRegistry` deterministically projects the parameters onto the nearest admissible boundary ($y_w$) and re-verifies zero violations under `Profile.DRY_RUN`. This produces minimal-edit contrastive preference pairs `(prompt, chosen=y_w, rejected=y_l)` from a **single rollout** without expensive $K$-sample rejection sampling.
-3. **Runtime-to-Alignment Harvesting (`harvest_refusal_receipts`):** Converts live production [`RefusalReceipt`](src/gateway/governance/contracts.py) records into counterfactual DPO training triplets and scrubs customer PII via [`PIISanitizer`](src/gateway/governance/pii_sanitizer.py) during JSONL export (`export_hf_trl_jsonl(sanitize_pii=True)`).
-4. **Stateful Multi-Turn Sandbox & Causal Attribution:** Tracks cumulative multi-turn resource depletion via isolated shadow state (`ShadowStateReducer`) and uses Microsoft DoWhy with 50-simulation placebo refutations ($p < 0.05$) in [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py) to isolate true parameter sensitivity ($\beta > 0$) from confounded noise. Run the standalone benchmark via `uv run python scripts/run_eval_benchmark.py`.
+1. **Stage 0 Intrinsic `SKILL.md` Quality & Security Gate ([`static_linter.py`](src/eval_harness/static_linter.py)):** Evaluates `SKILL.md` files at zero LLM cost across 6 intrinsic dimensions (structural integrity, routing trigger clarity, ordered workflow actionability, tool cohesiveness, error-recovery guidance, and secret/PII/spoofing hygiene) with length-bias normalization (`information_density_multiplier`).
+2. **ATIF Normalization & Paired 4-Bucket Skill Lift ([`harness.py`](src/eval_harness/harness.py), [`adapters.py`](src/eval_harness/adapters.py)):** Converts native Google ADK sessions (`adk_session_to_atif`) and Gemini CLI JSONL transcripts (`gemini_cli_jsonl_to_atif`) into canonical `ATIFTrajectory` objects, computing differential **Skill Lift**, **Instruction-Following Lift**, and **Group Decoy Routing Premium** across `Explicit`, `Implicit`, `Contextual`, and `Negative Control` prompts (`evaluate_paired_skill_lift()`).
+3. **Composable Drawback Detectors & Anti-Collapse Anchor Calibration:** Grades trajectories via typed atomic drawback detectors (`ComposedDrawbackEvaluator`) validated against a locked golden anchor set (`calibrate_on_anchors()`), failing closed on vacuous always-pass collapse or anchor abstention. Run standalone in CI with `governor=None` via `uv run cage-skill-eval --skill-md <path>`.
+4. **Optional Dry-Run Process Reward Oracle (RLVR) & Counterfactual DPO Synthesis:** When linked with an in-memory `SymbolicGovernor` (`Profile.DRY_RUN`), `FoundationModelEvalHarness` tracks cumulative multi-turn resource depletion (`ShadowStateReducer`), computes step-level process rewards, projects out-of-bounds tool calls onto the nearest admissible boundary via `NarrowerRegistry` (`NARROW`) to emit single-rollout DPO pairs `(prompt, chosen=y_w, rejected=y_l)`, and harvests production [`RefusalReceipt`](src/gateway/governance/contracts.py) logs into PII-scrubbed JSONL datasets via [`PIISanitizer`](src/gateway/governance/pii_sanitizer.py). Run the full benchmark via `uv run python scripts/run_eval_benchmark.py`.
 
 ---
 
