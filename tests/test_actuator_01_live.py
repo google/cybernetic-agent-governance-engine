@@ -25,6 +25,7 @@ import secrets
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -35,6 +36,10 @@ from src.gateway.governance.execution_actuator import (
 )
 from src.integrations.actuator_01.adapter import Actuator01Adapter
 from src.integrations.actuator_01.envelope_builder import build_and_canonicalize
+from src.integrations.actuator_01.signatures import (
+    SandboxSigningBundle,
+    build_webauthn_approval,
+)
 
 pytestmark = [
     pytest.mark.partner_integration,
@@ -50,10 +55,24 @@ _REQUIRED_ENV_VARS = (
     "ACTUATOR_01_TENANT_ID",
 )
 
+_DEFAULT_CERTS_DIR = (
+    Path(__file__).resolve().parent.parent / "deployment" / "certs" / "actuator_01"
+)
+
 
 def _is_configured() -> bool:
     """Check if all required Actuator 01 live environment variables are set."""
     return all(os.environ.get(var, "").strip() for var in _REQUIRED_ENV_VARS)
+
+
+def _load_optional_bundle() -> SandboxSigningBundle | None:
+    """Load sandbox Ed25519 signing bundle from env or default cert directory if available."""
+    keys_dir = os.environ.get("ACTUATOR_01_SIGNING_KEYS_DIR", "").strip()
+    candidate = Path(keys_dir) if keys_dir else _DEFAULT_CERTS_DIR
+    try:
+        return SandboxSigningBundle.from_directory(candidate)
+    except (FileNotFoundError, ValueError, KeyError):
+        return None
 
 
 def _operator_urns() -> list[str]:
@@ -91,8 +110,16 @@ async def live_adapter() -> Actuator01Adapter:
             "Actuator 01 credentials not configured — missing: " + ", ".join(missing)
         )
 
+    bundle = _load_optional_bundle()
     try:
-        adapter = Actuator01Adapter.from_env()
+        if bundle is not None:
+            adapter = Actuator01Adapter.from_env(
+                signer=bundle.assertion_signer,
+                signer_resolver=bundle.resolve_signer,
+                policy_signer=bundle.policy_signer,
+            )
+        else:
+            adapter = Actuator01Adapter.from_env()
     except RuntimeError as exc:
         pytest.skip(f"Actuator 01 adapter initialization failed: {exc}")
 
@@ -129,13 +156,49 @@ async def test_live_wire_dispatch_roundtrip(
     now_unix = int(time.time())
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     endpoint = os.environ["ACTUATOR_01_ENDPOINT"].strip()
+    bundle = _load_optional_bundle()
+
+    action = "test.wire.dispatch"
+    target = "sandbox://test-target"
+    if bundle is not None and bundle.approver_signer.is_kms_active:
+        primary_approval = build_webauthn_approval(
+            action=action,
+            target=target,
+            approver_urn=urns[0],
+            webauthn_approver_urn=bundle.approver_urn,
+            decision="ALLOW",
+            issued_at=now_unix,
+            approved_at_utc=now_iso,
+            signer=bundle.approver_signer,
+        )
+    elif live_adapter._signer.is_kms_active:
+        primary_approval = build_webauthn_approval(
+            action=action,
+            target=target,
+            approver_urn=urns[0],
+            decision="ALLOW",
+            issued_at=now_unix,
+            approved_at_utc=now_iso,
+            signer=live_adapter._signer,
+        )
+    else:
+        primary_approval = {
+            "approver_urn": urns[0],
+            "approved_at_utc": now_iso,
+            "auth_method": "WEBAUTHN",
+            "credential_id": "test-credential-alice",
+            "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
+            "authenticator_data": "dGVzdC1hdXRoLWRhdGEtYWxpY2U",
+            "challenge_binding": "07" * 32,
+            "signature": "dGVzdC1zaWduYXR1cmUtYWxpY2U",
+        }
 
     clearance = ExecutionClearance(
         thread_id=f"test-live-thread-{secrets.token_hex(4)}",
         decision="ALLOW",
         decision_path="ESCALATE",
-        action="test.wire.dispatch",
-        target="sandbox://test-target",
+        action=action,
+        target=target,
         operator_urn=urns[0],
         issued_at=now_unix,
         issued_at_provenance="CHALLENGE_TIME",
@@ -146,27 +209,12 @@ async def test_live_wire_dispatch_roundtrip(
         nonce=secrets.token_hex(16),
         params={"test": True, "environment": "sandbox"},
         approvals=[
-            {
-                "approver_urn": urns[0],
-                "approved_at_utc": now_iso,
-                "auth_method": "WEBAUTHN",
-                "auth_principal_hash": "d" * 64,
-                "credential_id": "test-credential-alice",
-                "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
-                "authenticator_data": "dGVzdC1hdXRoLWRhdGEtYWxpY2U",
-                "challenge_binding": "07" * 32,
-                "signature": "dGVzdC1zaWduYXR1cmUtYWxpY2U",
-            },
+            primary_approval,
             {
                 "approver_urn": urns[1],
                 "approved_at_utc": now_iso,
                 "auth_method": "WEBAUTHN",
                 "auth_principal_hash": "e" * 64,
-                "credential_id": "test-credential-bob",
-                "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLi4uIn0",
-                "authenticator_data": "dGVzdC1hdXRoLWRhdGEtYm9i",
-                "challenge_binding": "07" * 32,
-                "signature": "dGVzdC1zaWduYXR1cmUtYm9i",
             },
         ],
         required_quorum=2,
@@ -234,9 +282,12 @@ async def test_live_jcs_canonicalization(
         ttl_seconds=30,
     )
 
-    canonical_bytes, expected_digest = build_and_canonicalize(clearance)
+    canonical_bytes, expected_digest = build_and_canonicalize(
+        clearance, policy_signer=live_adapter._policy_signer
+    )
     assert len(canonical_bytes) <= 4096
     assert len(expected_digest) == 64
+    assert b'"approval"' not in canonical_bytes
 
     receipt = await live_adapter.actuate(clearance)
     assert receipt.envelope_digest == expected_digest
