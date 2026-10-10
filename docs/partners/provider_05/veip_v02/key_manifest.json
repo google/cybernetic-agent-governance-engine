@@ -1,0 +1,22 @@
+{
+  "schema_version": "veip-key-manifest/0.2",
+  "environment": "SANDBOX",
+  "manifest_id": "veip-sandbox-manifest-2026-10-07",
+  "issuer": "Veraxis",
+  "generated_at": "2026-10-07T14:00:00Z",
+  "valid_until": "2026-11-07T14:00:00Z",
+  "root_kid": "veip-sandbox-manifest-root-2026-10",
+  "keys": [
+    {
+      "kid": "veip-sandbox-issuer-2026-10",
+      "alg": "Ed25519",
+      "public_key_b64u": "J4RtpB51zP1atj_1hwsj4on1Hx1aARMEMMgXEWWs6G0",
+      "status": "ACTIVE",
+      "not_before": "2026-10-07T00:00:00Z",
+      "not_after": "2026-12-31T23:59:59Z",
+      "revoked_at": ""
+    }
+  ],
+  "manifest_digest": "fa6c4e0c1d03a6f760792738c2de00fc6f6c2d4fea7455098981986a91744b6d",
+  "signature": "nR4kr_YC_fk9knXqTvJMCmRVt_EYtcjeevuRZwohm40oOv04RQM35ShwMxQolQxrJch99AU52iH9dx6MhTalDQ"
+}

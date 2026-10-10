@@ -324,22 +324,33 @@ system-security-plan:
         (POAM-2026-110). assemble_governor() (src/gateway/governance/governor/assembly.py)
         refuses to assemble when a warranted norm has no WarrantSource, when
         DEFER is disabled, when it lacks a governing_version, or when no domain
-        tier claims its actions. Limits stated plainly: (1) warrant
-        authenticity is not verified: the digest check proves internal
-        consistency only, and issuer signature verification against a
-        kid-resolved trust anchor is VEIP v0.2, so warrant attestations are
-        UNVERIFIED (src/gateway/governance/warrant/reliance.py); (2) the
-        configured source, Provider05WarrantSource
-        (src/integrations/provider_05/warrant_source.py), has no implemented
-        HTTP path, so in a deployed EU_ECB gateway every trade action defers
-        (INELIGIBLE_MISSING) until a live warrant source exists. Tracked as
-        POAM-2026-104. Since commit 0cdb5aaa (#427) every warranted norm the
+        tier claims its actions. Since 2026-10-10 (VEIP v0.2 conformance,
+        closing POAM-2026-104): (1) warrant authenticity is cryptographically
+        verified against an out-of-band WarrantTrustAnchor
+        (src/gateway/governance/warrant/trust_anchor.py, pinned by raw 32-byte
+        Ed25519 SHA-256 fingerprint) and an independently fetched,
+        JCS-canonicalized and Ed25519-signed VerifiedKeyManifest
+        (/.well-known/veip/key-manifest.json) cached out-of-band in
+        WarrantCache; WarrantStandingVerifier resolves warrant.kid from the
+        verified key manifest (failing closed on unknown, revoked or expired
+        kid), verifies the 18-field JCS digest and the Ed25519 signature over
+        JCS(warrant_with_digest), verifies issuer state_as_of freshness (<= 60
+        s, else INELIGIBLE_STALE) and norm_parameters value parity, and sets
+        verification_status to VERIFIED only after cryptographic verification
+        succeeds; (2) Provider05WarrantSource
+        (src/integrations/provider_05/warrant_source.py) implements the live
+        HTTP path (GET /v0.2/warrants/{norm_id} and GET
+        /.well-known/veip/key-manifest.json) and is verified over the wire
+        against the live VEIP v0.2 sandbox across all eight conformance
+        scenarios (ACTIVE, REVOKED, SUSPENDED, EXPIRED, STALE_STATE,
+        TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING). Since commit 0cdb5aaa (#427) every warranted norm the
         decision relied on yields a RelianceRecord
         (src/gateway/governance/warrant/reliance.py: norm_id, warrant_id,
         declared digest, warrant status, reliance status, governing_version,
-        evaluated_at, provider_name, verification_status always UNVERIFIED;
+        evaluated_at, provider_name, verification_status VERIFIED when v0.2
+        signature verified or UNVERIFIED otherwise;
         since 9ddefb8c also observed_at, age_seconds and max_age_seconds;
-        since POAM-2026-111 every Warrant Contract v0.1 evidence field, with
+        since POAM-2026-111 every Warrant Contract v0.1/v0.2 evidence field, with
         evaluated_at renamed attested_at, residual_risk_ref, issuing_authority,
         authority_basis and revocation_ref added, and governing_version split
         into required_governing_version (what the binding requires) and
@@ -350,7 +361,7 @@ system-security-plan:
         record_hash, so altering or dropping it breaks seal verification
         (verify_seal_against_evidence, src/gateway/governance/routing_seal.py);
         the ALLOW envelope carries a WARRANT ExternalAttestation with status
-        UNVERIFIED. Refusals are primary evidence: DEFER and REQUIRE_APPROVAL
+        matching verification_status (VERIFIED under v0.2). Refusals are primary evidence: DEFER and REQUIRE_APPROVAL
         tokens and a hash-chained GOVERNANCE_DEFERRAL record carry the same
         record, and a DENY receipt with a co-occurring warrant failure carries
         it inside proof_hash. Refusal and deferral evidence writes are
@@ -362,13 +373,13 @@ system-security-plan:
         filtering (resolve_claims, src/gateway/governance/governor/pipeline.py,
         shared with revalidate_post_hitl), so the warrant stage re-runs after
         approval even when only read-only tiers claim the action. Since commit
-        9ddefb8c (#430) the Warrant Contract v0.1 Q2 60 s freshness window is
+        9ddefb8c (#430) the Warrant Contract v0.1/v0.2 Q2 60 s freshness window is
         enforced: assemble_governor() wraps the configured WarrantSource in
         one WarrantCache per governor (built at the composition root, no
         module singleton). The cache stamps each warrant with CAGE''s own
         receipt time (a monotonic clock for age, a UTC wall clock for the
-        observed_at evidence field), not an issuer-declared time, because the
-        v0.1 schema has no issuer state_as_of. It serves a cached warrant only
+        observed_at evidence field), and in v0.2 WarrantStandingVerifier also
+        enforces the issuer-signed state_as_of window (<= 60 s). It serves a cached warrant only
         while its age is at most warrant.max_age_seconds and re-fetches past
         that, so a revocation returned by the re-fetch is refused on that
         request. A re-fetch that raises or does not answer within
@@ -405,7 +416,7 @@ system-security-plan:
       - name: warrant-source
         value: provider_05
       - name: warrant-attestation-status
-        value: UNVERIFIED
+        value: VERIFIED
       - name: remediation-commit
         value: a0deb7ad
       - name: evidence-binding-commit
@@ -421,6 +432,9 @@ system-security-plan:
       - href: ../../src/gateway/governance/seams/warrant.py
         rel: reference
         text: WarrantSource seam
+      - href: ../../src/gateway/governance/warrant/trust_anchor.py
+        rel: reference
+        text: WarrantTrustAnchor and VerifiedKeyManifest (v0.2 trust anchor)
       - href: ../../src/gateway/governance/warrant/verifier.py
         rel: reference
         text: WarrantStandingVerifier
@@ -442,6 +456,9 @@ system-security-plan:
       - href: ../../tests/governor/test_warrant_reliance_e2e.py
         rel: reference
         text: Warrant reliance end-to-end matrix (composition root, gateway, trade tool)
+      - href: ../../tests/integrations/provider_05/test_provider_05_live.py
+        rel: reference
+        text: VEIP v0.2 Tier 1 over-the-wire conformance suite
   control-implementation:
     description: 'CAGE EU_ECB compliance control implementations. ISO 42001
       universal controls are inherited from component-definition.yaml. The
@@ -670,11 +687,11 @@ system-security-plan:
         cage-policy-2.1.0); otherwise the governor defers with
         DeferReason.WARRANT_INELIGIBLE, mints no seal and commits no phase-2
         reservation, including at post-approval revalidation. Status is
-        partially implemented: the enforcement path is complete and fails
-        closed, but warrant authenticity is UNVERIFIED (digest-only, no issuer
-        signature or kid trust anchor until VEIP v0.2), the configured
-        provider_05 source has no live HTTP path (all EU_ECB trades defer).
-        See POAM-2026-104. Since 2026-10-07 a post-approval warrant deferral
+        implemented (2026-10-10, closing POAM-2026-104): warrant authenticity
+        is verified against an out-of-band WarrantTrustAnchor and
+        kid-resolved VerifiedKeyManifest (VEIP v0.2, verification_status
+        VERIFIED), and Provider05WarrantSource implements the live HTTP path
+        verified over the wire against the VEIP v0.2 sandbox. Since 2026-10-07 a post-approval warrant deferral
         no longer spends the approval token: SymbolicGovernor.revalidate_post_hitl()
         receives an unspent PostHitlApproval and spends it (atomic
         DeferQueue.consume_approval()) only when the run is about to seal, so
@@ -684,16 +701,18 @@ system-security-plan:
         evidenced: since 0cdb5aaa the reliance record is bound into the seal''s
         evidence record (record_hash), the DEFER/REQUIRE_APPROVAL token, the
         GOVERNANCE_DEFERRAL record and any co-occurring DENY receipt''s
-        proof_hash, always with verification_status UNVERIFIED. Since 9ddefb8c
+        proof_hash, with verification_status VERIFIED when v0.2 Ed25519
+        signature verification succeeds and UNVERIFIED otherwise. Since 9ddefb8c
         reliance is also bounded in time: a warrant is relied on for at most
-        warrant.max_age_seconds (<= 60 s, Warrant Contract v0.1 Q2) after CAGE
-        received it; past that it is re-fetched, and a failed or timed-out
-        re-fetch is INELIGIBLE_STALE and defers. The reliance record carries
+        warrant.max_age_seconds (<= 60 s, Warrant Contract v0.1/v0.2 Q2) after CAGE
+        received it (and in v0.2 also within 60 s of the issuer''s signed
+        state_as_of); past that it is re-fetched, and a failed or timed-out
+        re-fetch (or stale state_as_of) is INELIGIBLE_STALE and defers. The reliance record carries
         observed_at, age_seconds and max_age_seconds, so the evidence shows
         how fresh the relied-on warrant state was.'
       props:
       - name: implementation-status
-        value: partially-implemented
+        value: implemented
       - name: regulatory-citation
         value: NIST SP 800-53 Rev 5 AC-3 (Access Enforcement)
       - name: applicable-regions
@@ -748,17 +767,18 @@ system-security-plan:
           warrant-declared field empty, VEC-005 records the required and the
           declared governing_version apart, VEC-006 names both full digests,
           and the WARRANT attestation metadata equals the record. Observed end to end in
-          tests/governor/test_warrant_reliance_e2e.py (2026-10-06): the
+          tests/governor/test_warrant_reliance_e2e.py (2026-10-06, updated
+          2026-10-10 for v0.2): the
           governor is built by bootstrap_governor() with the real finance
           plugin, the EU_ECB thresholds and jurisdiction and the
-          CAGE_WARRANT_SOURCE=provider_05 adapter seeded with the VEIP v0.1
-          vectors; requests enter through POST /governance/validate-action
+          CAGE_WARRANT_SOURCE=provider_05 adapter; requests enter through POST /governance/validate-action
           behind workload identity and through execute_trade_action(). VEC-001
-          at confidence 0.98 is admitted, the signed envelope carries an
-          UNVERIFIED WARRANT attestation with the VEIP-published digest, and
-          the seal consumed by the actuation verifies against an evidence
-          record holding the ELIGIBLE reliance record; VEC-002 to VEC-006,
-          a missing warrant and a stale state (61 s, source failing) defer
+          at confidence 0.98 is admitted, and with a signed VEIP v0.2 ACTIVE
+          warrant and verified key manifest (test_veip_v02_active_warrant_is_verified_and_executes_e2e)
+          the signed envelope and sealed GOVERNANCE_DECISION record carry
+          verification_status VERIFIED; VEC-002 to VEC-006, the v0.2 REVOKED,
+          SUSPENDED, EXPIRED, STALE_STATE, TAMPERED_SIGNATURE and UNKNOWN_KID
+          scenarios, a missing warrant and a stale state (61 s, source failing) defer
           with WARRANT_INELIGIBLE, the reliance record in the DEFER token and
           the GOVERNANCE_DEFERRAL record, and nothing sealed or actuated, as
           do source faults injected through Provider05WarrantSource
@@ -778,11 +798,17 @@ system-security-plan:
           concurrent redemptions execute once; the 0.97 floor applies
           with an eligible warrant; APAC_MAS (0.96) and US_FED (0.95) never
           consult a warrant; and bootstrap refuses an EU_ECB governor with no
-          warrant source or with DEFER disabled. The warrant source is the
-          seeded adapter, not the VEIP wire: this is not over-the-wire
-          conformance evidence (VEIP has no live endpoint).'
+          warrant source or with DEFER disabled. Observed over the physical wire
+          in tests/integrations/provider_05/test_provider_05_live.py
+          (2026-10-10, Tier 1 conformance against
+          https://veip-cage-sandbox.am-43b.workers.dev): /.well-known/veip/key-manifest.json
+          verifies against the out-of-band root fingerprint
+          sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85,
+          and all eight live v0.2 scenarios (ACTIVE, REVOKED, SUSPENDED,
+          EXPIRED, STALE_STATE, TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING)
+          produce the expected reliance and verification statuses.'
         implementation-status:
-          state: partially-implemented
+          state: implemented
         links:
         - href: ../../tests/governor/test_warrant_reliance_gate.py
           rel: reference
@@ -799,6 +825,9 @@ system-security-plan:
         - href: ../../tests/governor/test_warrant_reliance_e2e.py
           rel: reference
           text: Warrant reliance end-to-end matrix
+        - href: ../../tests/integrations/provider_05/test_provider_05_live.py
+          rel: reference
+          text: VEIP v0.2 Tier 1 over-the-wire conformance suite
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001

@@ -193,3 +193,179 @@ async def test_live_jcs_canonical_binding(live_client: Provider05Client) -> None
         int(record.ao_signature_hash, 16)
     except ValueError:
         pytest.fail(f"AO signature hash is not valid hex: {record.ao_signature_hash}")
+
+
+# ── VEIP v0.2 Tier 1 Over-the-Wire Warrant Conformance Suite ─────────────────
+
+from datetime import datetime, timezone  # noqa: E402
+
+from src.cage_finance.tiers.trade_confidence_tier import (  # noqa: E402
+    TRADE_CONFIDENCE_NORM_ID,
+)
+from src.gateway.governance.contracts import NormBinding, ViolationKind  # noqa: E402
+from src.gateway.governance.governor.pipeline import Profile, StageContext  # noqa: E402
+from src.gateway.governance.governor.stages.warrant import WarrantStage  # noqa: E402
+from src.gateway.governance.warrant import (  # noqa: E402
+    RelianceStatus,
+    VerifiedKeyManifest,
+    WarrantCache,
+)
+from src.integrations.provider_05 import (  # noqa: E402
+    VEIP_SANDBOX_BASE_URL,
+    VEIP_SANDBOX_ROOT_FINGERPRINT,
+    VEIP_SANDBOX_TRUST_ANCHOR,
+    Provider05WarrantSource,
+)
+
+VEIP_V02_EVAL_TIME = datetime(2026, 10, 7, 14, 0, 10, tzinfo=timezone.utc)
+
+_EU_ECB_BINDING = NormBinding(
+    norm_id=TRADE_CONFIDENCE_NORM_ID,
+    value=0.97,
+    requires_warrant=True,
+    actions=frozenset({"execute_trade", "execute_trade_bounded"}),
+    governing_version="cage-policy-2.1.0",
+)
+
+
+def _veip_sandbox_url() -> str:
+    return (
+        os.environ.get("PROVIDER_05_ATTESTATION_ENDPOINT", "").strip()
+        or VEIP_SANDBOX_BASE_URL
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_veip_v02_key_manifest_fetch_and_root_verification() -> None:
+    """Fetch /.well-known/veip/key-manifest.json over the wire and verify root signature."""
+    source = Provider05WarrantSource(endpoint=_veip_sandbox_url())
+    assert source.trust_anchor is not None
+    assert source.trust_anchor.fingerprint == VEIP_SANDBOX_ROOT_FINGERPRINT
+
+    raw_manifest = await source.fetch_key_manifest()
+    assert raw_manifest is not None and isinstance(raw_manifest, dict)
+
+    verified = VerifiedKeyManifest.verify(
+        raw_manifest,
+        VEIP_SANDBOX_TRUST_ANCHOR,
+        now=VEIP_V02_EVAL_TIME,
+    )
+    assert verified.schema_version == "veip-key-manifest/0.2"
+    assert verified.manifest_id == "veip-sandbox-manifest-2026-10-07"
+    assert (
+        verified.manifest_digest
+        == "fa6c4e0c1d03a6f760792738c2de00fc6f6c2d4fea7455098981986a91744b6d"
+    )
+    key_entry = verified.resolve_key("veip-sandbox-issuer-2026-10")
+    assert key_entry is not None
+    assert key_entry.is_active_at(VEIP_V02_EVAL_TIME)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_verified", "reason_substring"),
+    [
+        pytest.param(
+            "ACTIVE",
+            RelianceStatus.ELIGIBLE,
+            "VERIFIED",
+            "eligible for reliance",
+            id="LIVE-ACTIVE",
+        ),
+        pytest.param(
+            "REVOKED",
+            RelianceStatus.INELIGIBLE_REVOKED,
+            "VERIFIED",
+            "Emergency Risk Notice #912",
+            id="LIVE-REVOKED",
+        ),
+        pytest.param(
+            "SUSPENDED",
+            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            "VERIFIED",
+            "Temporary Suspension #S-17",
+            id="LIVE-SUSPENDED",
+        ),
+        pytest.param(
+            "EXPIRED",
+            RelianceStatus.INELIGIBLE_EXPIRED,
+            "VERIFIED",
+            "temporal window invalid",
+            id="LIVE-EXPIRED",
+        ),
+        pytest.param(
+            "STALE_STATE",
+            RelianceStatus.INELIGIBLE_STALE,
+            "VERIFIED",
+            "state_as_of stale",
+            id="LIVE-STALE_STATE",
+        ),
+        pytest.param(
+            "TAMPERED_SIGNATURE",
+            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            "UNVERIFIED",
+            "SIGNATURE_INVALID",
+            id="LIVE-TAMPERED_SIGNATURE",
+        ),
+        pytest.param(
+            "UNKNOWN_KID",
+            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            "UNVERIFIED",
+            "UNKNOWN_KID",
+            id="LIVE-UNKNOWN_KID",
+        ),
+        pytest.param(
+            "MISSING",
+            RelianceStatus.INELIGIBLE_MISSING,
+            "UNVERIFIED",
+            "Warrant is missing",
+            id="LIVE-MISSING",
+        ),
+    ],
+)
+async def test_live_veip_v02_all_eight_scenarios_over_the_wire(
+    scenario: str,
+    expected_status: RelianceStatus,
+    expected_verified: str,
+    reason_substring: str,
+) -> None:
+    """Exercise all 8 VEIP v0.2 scenarios over the wire through WarrantCache and WarrantStage."""
+    source = Provider05WarrantSource(
+        endpoint=_veip_sandbox_url(),
+        scenario="" if scenario == "ACTIVE" else scenario,
+    )
+    cache = WarrantCache(source, wall_clock=lambda: VEIP_V02_EVAL_TIME)
+    stage = WarrantStage(
+        [_EU_ECB_BINDING],
+        cache,
+        jurisdiction="EU_ECB",
+        clock=lambda: VEIP_V02_EVAL_TIME,
+    )
+
+    output = await stage.run(
+        StageContext(
+            action="execute_trade",
+            params={"confidence": 0.98},
+            profile=Profile.FULL,
+        )
+    )
+    assert len(output.reliance) == 1
+    record = output.reliance[0]
+    assert record.reliance_status is expected_status, record.reason
+    assert record.verification_status == expected_verified
+    assert reason_substring in record.reason
+
+    if expected_status is RelianceStatus.ELIGIBLE:
+        assert output.violations == ()
+        att = record.attestation()
+        assert att is not None
+        assert att.status == "VERIFIED"
+        assert (
+            record.warrant_digest
+            == "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e"
+        )
+    else:
+        assert len(output.violations) == 1
+        violation = output.violations[0]
+        assert violation.kind is ViolationKind.RELIANCE_INELIGIBLE
+        assert violation.code == f"RELIANCE_{expected_status.value}"

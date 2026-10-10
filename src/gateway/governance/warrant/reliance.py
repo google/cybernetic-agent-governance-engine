@@ -202,8 +202,8 @@ class RelianceRecord:
 
     @property
     def verification_status(self) -> str:
-        """Always ``UNVERIFIED`` until issuer signatures exist (v0.2)."""
-        return RELIANCE_VERIFICATION_STATUS
+        """``VERIFIED`` when v0.2 signature verified against key manifest, else ``UNVERIFIED``."""
+        return self.standing.verification_status
 
     # ── warrant-declared (``""`` when no warrant was received) ──────────────
 
@@ -284,14 +284,13 @@ class RelianceRecord:
         """The envelope ``WARRANT`` attestation, or ``None`` with no warrant.
 
         Its metadata is exactly :meth:`to_dict`, so the signed envelope and
-        the hash-chained evidence carry the same fields and values. Always
-        ``UNVERIFIED`` (see the module docstring).
+        the hash-chained evidence carry the same fields and values.
         """
         if self.warrant is None:
             return None
         return ExternalAttestation(
             attestation_type=WARRANT_ATTESTATION_TYPE,
-            status=RELIANCE_VERIFICATION_STATUS,
+            status=self.verification_status,
             receipt_id=self.warrant_id,
             attested_at=self.attested_at,
             provider_name=self.provider_name,

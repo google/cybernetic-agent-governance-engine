@@ -56,8 +56,12 @@ from enum import Enum
 
 from src.gateway.governance.seams.warrant import WarrantSource
 from src.gateway.governance.warrant.model import Warrant
+from src.gateway.governance.warrant.trust_anchor import (
+    VerifiedKeyManifest,
+    WarrantTrustAnchor,
+)
 
-#: Longest reliance window the frozen Warrant Contract v0.1 permits (Q2).
+#: Longest reliance window the frozen Warrant Contract v0.1/v0.2 permits (Q2).
 CONTRACT_MAX_AGE_SECONDS: float = 60.0
 
 #: Default reliance window: the contract maximum.
@@ -117,6 +121,8 @@ class WarrantObservation:
     on), and ``None`` when ``UNRESOLVED``. ``observed_at`` and
     ``age_seconds`` describe that answer's receipt; both are ``None`` when
     nothing was observed. ``error`` names the fetch failure, if any.
+    ``key_manifest`` is the out-of-band verified key manifest when the source
+    operates under Warrant Contract v0.2.
     """
 
     norm_id: str
@@ -126,6 +132,8 @@ class WarrantObservation:
     age_seconds: float | None
     max_age_seconds: float
     error: str = ""
+    key_manifest: VerifiedKeyManifest | None = None
+    manifest_error: str = ""
 
     @property
     def fresh(self) -> bool:
@@ -137,6 +145,12 @@ class _Entry:
     warrant: Warrant
     observed_monotonic: float
     observed_at: datetime
+
+
+@dataclass(frozen=True)
+class _ManifestEntry:
+    manifest: VerifiedKeyManifest
+    observed_monotonic: float
 
 
 class WarrantCache:
@@ -174,6 +188,7 @@ class WarrantCache:
         self._wall_clock = wall_clock
         self._entries: dict[str, _Entry] = {}
         self._inflight: dict[str, asyncio.Task[WarrantObservation]] = {}
+        self._manifest_entry: _ManifestEntry | None = None
 
     @property
     def provider_name(self) -> str:
@@ -198,8 +213,82 @@ class WarrantCache:
         if entry is not None:
             age = self._age_of(entry)
             if age <= self._max_age:
-                return self._observation(norm_id, WarrantFreshness.FRESH, entry, age)
-        return await self._refresh_once(norm_id)
+                obs = self._observation(norm_id, WarrantFreshness.FRESH, entry, age)
+                return await self._attach_manifest(obs)
+        obs = await self._refresh_once(norm_id)
+        return await self._attach_manifest(obs)
+
+    async def _attach_manifest(
+        self, observation: WarrantObservation
+    ) -> WarrantObservation:
+        warrant = observation.warrant
+        trust_anchor = getattr(self._source, "trust_anchor", None)
+        if not observation.fresh or warrant is None:
+            return observation
+        if not warrant.is_v02 and trust_anchor is None:
+            return observation
+        manifest, manifest_error = await self._resolve_key_manifest(trust_anchor)
+        return WarrantObservation(
+            norm_id=observation.norm_id,
+            freshness=observation.freshness,
+            warrant=observation.warrant,
+            observed_at=observation.observed_at,
+            age_seconds=observation.age_seconds,
+            max_age_seconds=observation.max_age_seconds,
+            error=observation.error,
+            key_manifest=manifest,
+            manifest_error=manifest_error,
+        )
+
+    async def _resolve_key_manifest(
+        self, trust_anchor: WarrantTrustAnchor | None
+    ) -> tuple[VerifiedKeyManifest | None, str]:
+        if trust_anchor is None:
+            return (
+                None,
+                f"warrant source {self.provider_name!r} has no trust_anchor "
+                "configured for v0.2 signature verification",
+            )
+        now = self._wall_clock()
+        cached = self._manifest_entry
+        if cached is not None:
+            age = max(0.0, self._monotonic() - cached.observed_monotonic)
+            if (
+                age <= self._max_age
+                and cached.manifest.anchor_fingerprint == trust_anchor.fingerprint
+                and cached.manifest.is_valid_at(now)
+            ):
+                return cached.manifest, ""
+        fetch_fn = getattr(self._source, "fetch_key_manifest", None)
+        if not callable(fetch_fn):
+            return (
+                None,
+                f"warrant source {self.provider_name!r} does not implement "
+                "fetch_key_manifest()",
+            )
+        try:
+            raw_manifest = await asyncio.wait_for(fetch_fn(), timeout=self._timeout)
+            if raw_manifest is None:
+                return None, "key manifest is missing"
+            if isinstance(raw_manifest, VerifiedKeyManifest):
+                if raw_manifest.anchor_fingerprint != trust_anchor.fingerprint:
+                    return (
+                        None,
+                        "key manifest anchor fingerprint does not match source trust_anchor",
+                    )
+                if not raw_manifest.is_valid_at(now):
+                    return None, "key manifest is outside its validity window"
+                verified = raw_manifest
+            else:
+                verified = VerifiedKeyManifest.verify(
+                    raw_manifest, trust_anchor, now=now
+                )
+        except Exception as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+        self._manifest_entry = _ManifestEntry(
+            manifest=verified, observed_monotonic=self._monotonic()
+        )
+        return verified, ""
 
     def _age_of(self, entry: _Entry) -> float:
         # A clock reading earlier than the receipt never yields a negative age.

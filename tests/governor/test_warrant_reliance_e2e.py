@@ -1147,3 +1147,75 @@ async def test_contract_fields_in_the_chained_post_hitl_deferral(
     }
     assert reliance["revocation_ref"] == "Emergency Risk Notice #912"
     assert reliance["required_governing_version"] == "cage-policy-2.1.0"
+
+
+# ── VEIP v0.2 signed warrant & key manifest E2E ──────────────────────────────
+
+
+@pytest.mark.eu_ecb
+async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
+    build: StackFactory,
+) -> None:
+    """VEIP v0.2 ACTIVE warrant + verified key manifest -> VERIFIED reliance & ALLOW."""
+    from tests.integrations.provider_05.test_provider_05_veip_vectors import (
+        VEIP_V02_EVAL_TIME,
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_V02_WARRANTS,
+    )
+
+    clock = _Clock(wall=VEIP_V02_EVAL_TIME)
+    stack = await build(seed=_vec(VEIP_V02_WARRANTS["ACTIVE"]), clock=clock)
+    stack.source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+
+    response = await stack.validate(trade(0.98))
+    assert response.status_code == 200
+    envelope = response.json()
+    (attestation,) = envelope["external_attestations"]
+    assert attestation["status"] == "VERIFIED"
+    assert attestation["verification_status"] == "VERIFIED"
+    assert attestation["reliance_status"] == "ELIGIBLE"
+    assert attestation["warrant_id"] == "warrant-veip-2026-002"
+    assert (
+        attestation["warrant_digest"]
+        == "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e"
+    )
+
+    out = await stack.execute(trade(0.98))
+    assert out.startswith("EXECUTED:")
+    stack.actuate.assert_awaited_once()
+    (decision,) = await stack.records("GOVERNANCE_DECISION")
+    (reliance,) = _payload(decision)["reliance"]
+    assert reliance["verification_status"] == "VERIFIED"
+    assert reliance["reliance_status"] == "ELIGIBLE"
+
+
+@pytest.mark.eu_ecb
+@pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_verified"),
+    [
+        ("REVOKED", "INELIGIBLE_REVOKED", "VERIFIED"),
+        ("SUSPENDED", "INELIGIBLE_UNRESOLVED", "VERIFIED"),
+        ("EXPIRED", "INELIGIBLE_EXPIRED", "VERIFIED"),
+        ("STALE_STATE", "INELIGIBLE_STALE", "VERIFIED"),
+        ("TAMPERED_SIGNATURE", "INELIGIBLE_UNRESOLVED", "UNVERIFIED"),
+        ("UNKNOWN_KID", "INELIGIBLE_UNRESOLVED", "UNVERIFIED"),
+    ],
+)
+async def test_veip_v02_ineligible_scenarios_defer_e2e(
+    build: StackFactory,
+    scenario: str,
+    expected_status: str,
+    expected_verified: str,
+) -> None:
+    from tests.integrations.provider_05.test_provider_05_veip_vectors import (
+        VEIP_V02_EVAL_TIME,
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_V02_WARRANTS,
+    )
+
+    clock = _Clock(wall=VEIP_V02_EVAL_TIME)
+    stack = await build(seed=_vec(VEIP_V02_WARRANTS[scenario]), clock=clock)
+    stack.source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+
+    committed = await assert_commit_defers(stack, trade(0.98), expected_status)
+    assert committed["verification_status"] == expected_verified
