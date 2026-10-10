@@ -34,9 +34,25 @@ from src.integrations.provider_05.client import (
 )
 from src.integrations.provider_05.key_provider import Provider05KeyProvider
 from src.integrations.provider_05.physics_provider import Provider05PhysicsProvider
-from src.integrations.provider_05.warrant_source import Provider05WarrantSource
+from src.integrations.provider_05.warrant_source import (
+    VEIP_SANDBOX_BASE_URL,
+    VEIP_SANDBOX_ISSUER_KID,
+    VEIP_SANDBOX_ISSUER_PUBLIC_KEY_B64,
+    VEIP_SANDBOX_ROOT_FINGERPRINT,
+    VEIP_SANDBOX_ROOT_KID,
+    VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64,
+    VEIP_SANDBOX_TRUST_ANCHOR,
+    Provider05WarrantSource,
+)
 
 __all__ = [
+    "VEIP_SANDBOX_BASE_URL",
+    "VEIP_SANDBOX_ISSUER_KID",
+    "VEIP_SANDBOX_ISSUER_PUBLIC_KEY_B64",
+    "VEIP_SANDBOX_ROOT_FINGERPRINT",
+    "VEIP_SANDBOX_ROOT_KID",
+    "VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64",
+    "VEIP_SANDBOX_TRUST_ANCHOR",
     "AdmissibilityGrant",
     "Provider05BlueprintProvider",
     "Provider05Client",

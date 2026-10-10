@@ -231,14 +231,27 @@ class WarrantStage(Stage):
                 warrant_id=warrant.warrant_id,
                 warrant_digest=warrant.digest,
             )
+        if observation.manifest_error and observation.key_manifest is None:
+            return StandingVerificationResult(
+                eligible=False,
+                reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
+                reason=f"key manifest verification failed: {observation.manifest_error}",
+                attested_at=attested_at,
+                warrant=warrant,
+                warrant_id=warrant.warrant_id if warrant is not None else "",
+                warrant_digest=warrant.digest if warrant is not None else "",
+            )
         return WarrantStandingVerifier.verify_standing(
             warrant,
             context={
                 "action": action,
                 "jurisdiction": self._jurisdiction,
                 "governing_version": binding.governing_version,
+                "norm_value": binding.value,
             },
             now=now,
+            key_manifest=observation.key_manifest,
+            max_age_seconds=observation.max_age_seconds,
         )
 
     def _violation(self, record: RelianceRecord) -> Violation:

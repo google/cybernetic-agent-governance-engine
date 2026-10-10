@@ -265,3 +265,263 @@ def test_warrant_is_immutable_after_verification() -> None:
         w.status = "REVOKED"  # type: ignore[misc]
     with pytest.raises(dataclasses.FrozenInstanceError):
         w.scope.jurisdictions = ("*",)  # type: ignore[misc, union-attr]
+
+
+# --- VEIP v0.2 Eight-Scenario Conformance Suite ------------------------------
+
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from src.gateway.governance.warrant import (  # noqa: E402
+    KeyManifestVerificationError,
+    RelianceRecord,
+    StandingVerificationResult,
+    VerifiedKeyManifest,
+    WarrantCache,
+    WarrantTrustAnchor,
+)
+from src.integrations.provider_05 import (  # noqa: E402
+    VEIP_SANDBOX_ROOT_FINGERPRINT,
+    VEIP_SANDBOX_ROOT_KID,
+    VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64,
+    VEIP_SANDBOX_TRUST_ANCHOR,
+    Provider05WarrantSource,
+)
+
+_V02_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "docs"
+    / "partners"
+    / "provider_05"
+    / "veip_v02"
+)
+VEIP_V02_KEY_MANIFEST: dict[str, Any] = json.loads(
+    (_V02_DIR / "key_manifest.json").read_text(encoding="utf-8")
+)
+VEIP_V02_WARRANTS: dict[str, dict[str, Any]] = json.loads(
+    (_V02_DIR / "warrants_v02_vectors.json").read_text(encoding="utf-8")
+)
+VEIP_V02_EVAL_TIME = datetime(2026, 10, 7, 14, 0, 10, tzinfo=timezone.utc)
+VEIP_V02_CONTEXT: dict[str, Any] = {
+    "action": "execute_trade",
+    "jurisdiction": "EU_ECB",
+    "governing_version": "cage-policy-2.1.0",
+    "norm_value": 0.97,
+    "actor": "agent:governed_financial_advisor",
+    "system": "cage-gateway",
+}
+
+VEIP_V02_SCENARIOS = [
+    pytest.param(
+        "ACTIVE",
+        RelianceStatus.ELIGIBLE,
+        "VERIFIED",
+        "eligible for reliance",
+        id="V02-ACTIVE",
+    ),
+    pytest.param(
+        "REVOKED",
+        RelianceStatus.INELIGIBLE_REVOKED,
+        "VERIFIED",
+        "Emergency Risk Notice #912",
+        id="V02-REVOKED",
+    ),
+    pytest.param(
+        "SUSPENDED",
+        RelianceStatus.INELIGIBLE_UNRESOLVED,
+        "VERIFIED",
+        "Temporary Suspension #S-17",
+        id="V02-SUSPENDED",
+    ),
+    pytest.param(
+        "EXPIRED",
+        RelianceStatus.INELIGIBLE_EXPIRED,
+        "VERIFIED",
+        "temporal window invalid",
+        id="V02-EXPIRED",
+    ),
+    pytest.param(
+        "STALE_STATE",
+        RelianceStatus.INELIGIBLE_STALE,
+        "VERIFIED",
+        "state_as_of stale",
+        id="V02-STALE_STATE",
+    ),
+    pytest.param(
+        "TAMPERED_SIGNATURE",
+        RelianceStatus.INELIGIBLE_UNRESOLVED,
+        "UNVERIFIED",
+        "SIGNATURE_INVALID",
+        id="V02-TAMPERED_SIGNATURE",
+    ),
+    pytest.param(
+        "UNKNOWN_KID",
+        RelianceStatus.INELIGIBLE_UNRESOLVED,
+        "UNVERIFIED",
+        "UNKNOWN_KID",
+        id="V02-UNKNOWN_KID",
+    ),
+    pytest.param(
+        "MISSING",
+        RelianceStatus.INELIGIBLE_MISSING,
+        "UNVERIFIED",
+        "Warrant is missing",
+        id="V02-MISSING",
+    ),
+]
+
+
+def test_veip_v02_key_manifest_verifies_against_out_of_band_root_anchor() -> None:
+    assert VEIP_SANDBOX_TRUST_ANCHOR.fingerprint == VEIP_SANDBOX_ROOT_FINGERPRINT
+    manifest = VerifiedKeyManifest.verify(
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_SANDBOX_TRUST_ANCHOR,
+        now=VEIP_V02_EVAL_TIME,
+    )
+    assert manifest.manifest_id == "veip-sandbox-manifest-2026-10-07"
+    assert (
+        manifest.manifest_digest
+        == "fa6c4e0c1d03a6f760792738c2de00fc6f6c2d4fea7455098981986a91744b6d"
+    )
+    entry = manifest.resolve_key("veip-sandbox-issuer-2026-10")
+    assert entry is not None
+    assert entry.is_active_at(VEIP_V02_EVAL_TIME)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_verified", "reason_substring"),
+    VEIP_V02_SCENARIOS,
+)
+def test_veip_v02_scenario_vector(
+    scenario: str,
+    expected_status: RelianceStatus,
+    expected_verified: str,
+    reason_substring: str,
+) -> None:
+    manifest = VerifiedKeyManifest.verify(
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_SANDBOX_TRUST_ANCHOR,
+        now=VEIP_V02_EVAL_TIME,
+    )
+    raw_warrant = VEIP_V02_WARRANTS.get(scenario)
+    warrant = Warrant(**raw_warrant) if raw_warrant is not None else None
+    result = WarrantStandingVerifier.verify_standing(
+        warrant,
+        context=VEIP_V02_CONTEXT,
+        now=VEIP_V02_EVAL_TIME,
+        key_manifest=manifest,
+        max_age_seconds=60.0,
+    )
+    assert result.reliance_status is expected_status, result.reason
+    assert result.eligible is (expected_status is RelianceStatus.ELIGIBLE)
+    assert result.verification_status == expected_verified
+    assert reason_substring in result.reason
+
+    record = RelianceRecord(
+        norm_id="confidence.min_trade_confidence",
+        required_governing_version="cage-policy-2.1.0",
+        provider_name="provider_05_warrant",
+        standing=result,
+    )
+    assert record.verification_status == expected_verified
+    assert record.to_dict()["verification_status"] == expected_verified
+    att = record.attestation()
+    if warrant is None:
+        assert att is None
+    else:
+        assert att is not None
+        assert att.status == expected_verified
+
+
+def test_veip_v02_trust_anchor_type_system_invariants() -> None:
+    with pytest.raises(ValueError, match="fingerprint mismatch"):
+        WarrantTrustAnchor(
+            root_kid=VEIP_SANDBOX_ROOT_KID,
+            public_key_b64=VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64,
+            expected_fingerprint="sha256:" + "0" * 64,
+        )
+
+    with pytest.raises(TypeError, match="cannot be instantiated directly"):
+        VerifiedKeyManifest(
+            schema_version="veip-key-manifest/0.2",
+            environment="SANDBOX",
+            manifest_id="m",
+            issuer="Veraxis",
+            generated_at="2026-10-07T14:00:00Z",
+            valid_until="2026-11-07T14:00:00Z",
+            root_kid=VEIP_SANDBOX_ROOT_KID,
+            manifest_digest="0" * 64,
+            signature="sig",
+            keys={},
+            anchor_fingerprint=VEIP_SANDBOX_ROOT_FINGERPRINT,
+        )
+
+    w_v02 = Warrant(**VEIP_V02_WARRANTS["ACTIVE"])
+    with pytest.raises(TypeError, match="must be a VerifiedKeyManifest"):
+        WarrantStandingVerifier.verify_standing(
+            w_v02,
+            context=VEIP_V02_CONTEXT,
+            now=VEIP_V02_EVAL_TIME,
+            key_manifest=VEIP_V02_KEY_MANIFEST,  # type: ignore[arg-type]
+        )
+
+    # v0.2 warrant without a key manifest fails closed as UNVERIFIED
+    no_manifest = WarrantStandingVerifier.verify_standing(
+        w_v02, context=VEIP_V02_CONTEXT, now=VEIP_V02_EVAL_TIME
+    )
+    assert no_manifest.reliance_status is RelianceStatus.INELIGIBLE_UNRESOLVED
+    assert no_manifest.verification_status == "UNVERIFIED"
+
+    # Downgrade protection: unsigned v0.1 warrant rejected when key_manifest is active
+    manifest = VerifiedKeyManifest.verify(
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_SANDBOX_TRUST_ANCHOR,
+        now=VEIP_V02_EVAL_TIME,
+    )
+    downgraded = WarrantStandingVerifier.verify_standing(
+        Warrant(**SHARED_WARRANT),
+        context=VEIP_V02_CONTEXT,
+        now=VEIP_V02_EVAL_TIME,
+        key_manifest=manifest,
+    )
+    assert downgraded.reliance_status is RelianceStatus.INELIGIBLE_UNRESOLVED
+    assert downgraded.verification_status == "UNVERIFIED"
+    assert "Unsigned v0.1 warrant rejected" in downgraded.reason
+
+    # Tampered key manifest signature is rejected at verification
+    tampered_manifest = {
+        **VEIP_V02_KEY_MANIFEST,
+        "signature": "A" + VEIP_V02_KEY_MANIFEST["signature"][1:],
+    }
+    with pytest.raises(KeyManifestVerificationError, match="signature verification"):
+        VerifiedKeyManifest.verify(
+            tampered_manifest,
+            VEIP_SANDBOX_TRUST_ANCHOR,
+            now=VEIP_V02_EVAL_TIME,
+        )
+
+    # StandingVerificationResult refuses forged VERIFIED status on unsigned warrant
+    with pytest.raises(ValueError, match="cannot claim VERIFIED"):
+        StandingVerificationResult(
+            eligible=True,
+            reliance_status=RelianceStatus.ELIGIBLE,
+            reason="forged",
+            attested_at=VEIP_V02_EVAL_TIME.isoformat(),
+            warrant=Warrant(**SHARED_WARRANT),
+            warrant_id="warrant-veip-2026-001",
+            warrant_digest=VEIP_ACTIVE_DIGEST,
+            verification_status="VERIFIED",
+        )
+
+
+@pytest.mark.asyncio
+async def test_veip_v02_cache_resolves_and_caches_verified_key_manifest() -> None:
+    source = Provider05WarrantSource()
+    source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+    source.seed(Warrant(**VEIP_V02_WARRANTS["ACTIVE"]))
+    cache = WarrantCache(source, wall_clock=lambda: VEIP_V02_EVAL_TIME)
+    obs = await cache.observe("confidence.min_trade_confidence")
+    assert obs.fresh
+    assert obs.warrant is not None and obs.warrant.is_v02
+    assert isinstance(obs.key_manifest, VerifiedKeyManifest)
+    assert obs.manifest_error == ""

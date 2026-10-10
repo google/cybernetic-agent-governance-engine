@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veraxis.io/schemas/veip-warrant-v0.2.schema.json",
+  "title": "VEIP Warrant v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "environment",
+    "warrant_id",
+    "norm_id",
+    "issuing_authority",
+    "authority_basis",
+    "scope",
+    "norm_parameters",
+    "valid_from",
+    "valid_until",
+    "governing_version",
+    "status",
+    "revocation_ref",
+    "residual_risk_ref",
+    "state_as_of",
+    "issued_at",
+    "alg",
+    "kid",
+    "digest",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "veip-warrant/0.2"
+    },
+    "environment": {
+      "enum": [
+        "SANDBOX",
+        "PRODUCTION"
+      ]
+    },
+    "warrant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "norm_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issuing_authority": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_basis": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actions",
+        "actors",
+        "systems",
+        "jurisdictions"
+      ],
+      "properties": {
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "actors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "systems": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "jurisdictions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "norm_parameters": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "value"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "decimal",
+              "integer",
+              "string",
+              "boolean"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "governing_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "ACTIVE",
+        "REVOKED",
+        "SUSPENDED"
+      ]
+    },
+    "revocation_ref": {
+      "type": "string"
+    },
+    "residual_risk_ref": {
+      "type": "string"
+    },
+    "state_as_of": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "alg": {
+      "const": "Ed25519"
+    },
+    "kid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  }
+}

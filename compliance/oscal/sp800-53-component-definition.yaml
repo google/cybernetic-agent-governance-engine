@@ -328,18 +328,25 @@ component-definition:
                 audit trail binding between governance decisions and their supporting external
                 attestations.
 
-                Warrant reliance (0cdb5aaa, #427): for a warranted norm, the
-                RelianceRecord (src/gateway/governance/warrant/reliance.py) naming the
-                warrant_id, declared digest, standing and provider_name is bound into
-                the routing seal's evidence record and covered by record_hash, so
-                the seal commits to the reliance the decision made; the envelope's
-                WARRANT attestation is recorded with status UNVERIFIED until issuer
-                signatures are verified (VEIP v0.2, POAM-2026-104). Since 9ddefb8c
+                Warrant reliance (0cdb5aaa, #427; VEIP v0.2 conformance 2026-10-10):
+                for a warranted norm, the RelianceRecord
+                (src/gateway/governance/warrant/reliance.py) naming the warrant_id,
+                declared digest, standing and provider_name is bound into the routing
+                seal's evidence record and covered by record_hash, so the seal commits
+                to the reliance the decision made; under VEIP v0.2
+                (src/gateway/governance/warrant/trust_anchor.py, POAM-2026-104 closed
+                2026-10-10) the record and the envelope's WARRANT attestation carry
+                status VERIFIED once the Ed25519 warrant signature is verified against
+                a kid-resolved VerifiedKeyManifest anchored to an out-of-band
+                WarrantTrustAnchor (or UNVERIFIED when unsigned or signature
+                verification fails). Since 9ddefb8c
                 (#430) the record also carries observed_at (CAGE's receipt time of
                 the warrant state), age_seconds and max_age_seconds, so the seal
                 commits to how fresh the relied-on state was; a warrant older than
-                the 60 s window whose re-fetch failed is recorded as
-                INELIGIBLE_STALE (src/gateway/governance/warrant/cache.py).
+                the 60 s window whose re-fetch failed (or whose v0.2 issuer
+                state_as_of exceeds 60 s) is recorded as
+                INELIGIBLE_STALE (src/gateway/governance/warrant/cache.py,
+                src/gateway/governance/warrant/verifier.py).
                 Since POAM-2026-111 (2026-10-07) the hash-chained record carries
                 every Warrant Contract v0.1 evidence field (warrant_id, norm_id,
                 digest as warrant_digest, reliance_status, governing_version as

@@ -43,6 +43,7 @@ from src.gateway.governance.warrant.cache import (
 from src.gateway.governance.warrant.model import (
     REQUIRED_CONTEXT_KEYS,
     SCOPE_DIMENSIONS,
+    WARRANT_SCHEMA_VERSION_V02,
     RelianceStatus,
     StandingVerificationResult,
     Warrant,
@@ -57,18 +58,30 @@ from src.gateway.governance.warrant.reliance import (
     reliance_attestations,
     reliance_evidence,
 )
+from src.gateway.governance.warrant.trust_anchor import (
+    MANIFEST_SCHEMA_VERSION_V02,
+    KeyManifestVerificationError,
+    ManifestKeyEntry,
+    VerifiedKeyManifest,
+    WarrantTrustAnchor,
+)
 from src.gateway.governance.warrant.verifier import WarrantStandingVerifier
 
 __all__ = [
     "CONTRACT_MAX_AGE_SECONDS",
+    "MANIFEST_SCHEMA_VERSION_V02",
     "RELIANCE_VERIFICATION_STATUS",
     "REQUIRED_CONTEXT_KEYS",
     "SCOPE_DIMENSIONS",
     "WARRANT_ATTESTATION_TYPE",
     "WARRANT_CONTRACT_EVIDENCE_FIELDS",
+    "WARRANT_SCHEMA_VERSION_V02",
+    "KeyManifestVerificationError",
+    "ManifestKeyEntry",
     "RelianceRecord",
     "RelianceStatus",
     "StandingVerificationResult",
+    "VerifiedKeyManifest",
     "Warrant",
     "WarrantCache",
     "WarrantClock",
@@ -77,6 +90,7 @@ __all__ = [
     "WarrantScope",
     "WarrantStandingVerifier",
     "WarrantStatus",
+    "WarrantTrustAnchor",
     "reliance_attestations",
     "reliance_evidence",
 ]

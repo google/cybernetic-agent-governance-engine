@@ -27,6 +27,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+import httpx
 import pytest
 
 from src.gateway.governance.seams.ground_truth import FaultMode
@@ -75,22 +76,27 @@ async def test_unseeded_norm_is_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_configured_endpoint_still_fails_closed(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The HTTP path is unimplemented: an endpoint never yields a warrant."""
-    source = Provider05WarrantSource(endpoint="https://veip.invalid/")
-    with caplog.at_level(logging.WARNING):
-        assert await source.fetch(NORM_ID) is None
-    assert "unimplemented" in caplog.text
+async def test_configured_unreachable_endpoint_raises_connection_error() -> None:
+    """An unreachable HTTP endpoint raises ConnectionError so WarrantCache fails closed."""
+    transport = httpx.MockTransport(
+        lambda request: (_ for _ in ()).throw(httpx.ConnectError("unreachable"))
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        source = Provider05WarrantSource(
+            endpoint="https://veip.invalid/", http_client=client
+        )
+        with pytest.raises(ConnectionError, match="VEIP HTTP request failed"):
+            await source.fetch(NORM_ID)
 
 
 @pytest.mark.asyncio
-async def test_endpoint_env_var_does_not_enable_fetch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PROVIDER_05_ATTESTATION_ENDPOINT", "https://veip.invalid")
-    assert await Provider05WarrantSource().fetch(NORM_ID) is None
+async def test_http_404_resolves_as_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTP 404 from the VEIP v0.2 endpoint returns None (INELIGIBLE_MISSING)."""
+    monkeypatch.setenv("PROVIDER_05_ATTESTATION_ENDPOINT", "https://veip.example")
+    transport = httpx.MockTransport(lambda request: httpx.Response(404))
+    async with httpx.AsyncClient(transport=transport) as client:
+        source = Provider05WarrantSource(http_client=client)
+        assert await source.fetch(NORM_ID) is None
 
 
 @pytest.mark.asyncio

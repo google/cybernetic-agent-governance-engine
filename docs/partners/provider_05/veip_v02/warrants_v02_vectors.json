@@ -1,0 +1,296 @@
+{
+  "ACTIVE": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "ACTIVE",
+    "revocation_ref": "",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T14:00:00Z",
+    "issued_at": "2026-10-07T14:00:00Z",
+    "alg": "Ed25519",
+    "kid": "veip-sandbox-issuer-2026-10",
+    "digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+    "signature": "GRui5pA_sYDRz0IqpyP6y7_B6bvAxRkIX_GYBdhOWwWscTIgiG9gh03iucwwONRhQTY0QnIznWABO94bGaKeBQ"
+  },
+  "REVOKED": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "REVOKED",
+    "revocation_ref": "Emergency Risk Notice #912",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T14:00:10Z",
+    "issued_at": "2026-10-07T14:00:10Z",
+    "alg": "Ed25519",
+    "kid": "veip-sandbox-issuer-2026-10",
+    "digest": "1886394fda14961d98627ed228f2105c20af65f80287955d4ddabf11bf0110f9",
+    "signature": "SexPpR-siW4zPmj78k7xmB4IuzT3sX5iCe6Z_Jd77r71D_X3lNHpaYbC2kvsupw8Pn3C1HnqGxXD0_dWBtZ7Ag"
+  },
+  "SUSPENDED": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "SUSPENDED",
+    "revocation_ref": "Temporary Suspension #S-17",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T14:00:10Z",
+    "issued_at": "2026-10-07T14:00:10Z",
+    "alg": "Ed25519",
+    "kid": "veip-sandbox-issuer-2026-10",
+    "digest": "0544c300cff5b6212a003b99905a529854a765be2699dc7561be5f6c0c0ed433",
+    "signature": "CtKDcG7hozhh76l9PunhvHPzX-yxriCwEOVXSu7xN0yc7DcFhtxVxWbug1za0UJ6YalGsWfxUNE2SPNc770ODQ"
+  },
+  "EXPIRED": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-10-07T13:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "ACTIVE",
+    "revocation_ref": "",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T14:00:00Z",
+    "issued_at": "2026-10-07T14:00:00Z",
+    "alg": "Ed25519",
+    "kid": "veip-sandbox-issuer-2026-10",
+    "digest": "aa092cdb1685c454f6a835952d51e8ee6d5c4efc3d6c801b2616071dfc6cd7c1",
+    "signature": "eA9-sZ0sferRFfkPR8oiP09BoX1gIYRCJUN8xmxKMuCq1DpxhOJN-7G-_jztuW89AFIXMwVdoOKQlA2esIVeBg"
+  },
+  "STALE_STATE": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "ACTIVE",
+    "revocation_ref": "",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T13:58:00Z",
+    "issued_at": "2026-10-07T13:58:00Z",
+    "alg": "Ed25519",
+    "kid": "veip-sandbox-issuer-2026-10",
+    "digest": "9c18b8e27d4d621bd720763e01c83c5fa81844f5bf1da4c21ce22d89c5b26032",
+    "signature": "_EtfRl0E-wS5SGGhdOS0A42leRlKB7eqvSqpAq0tZqCLKJa4PTwwi9KPhJ5CCR-1mnt8KZqsJ2wSHUcuY2e3AQ"
+  },
+  "TAMPERED_SIGNATURE": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "ACTIVE",
+    "revocation_ref": "",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T14:00:00Z",
+    "issued_at": "2026-10-07T14:00:00Z",
+    "alg": "Ed25519",
+    "kid": "veip-sandbox-issuer-2026-10",
+    "digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+    "signature": "ARui5pA_sYDRz0IqpyP6y7_B6bvAxRkIX_GYBdhOWwWscTIgiG9gh03iucwwONRhQTY0QnIznWABO94bGaKeBQ"
+  },
+  "UNKNOWN_KID": {
+    "schema_version": "veip-warrant/0.2",
+    "environment": "SANDBOX",
+    "warrant_id": "warrant-veip-2026-002",
+    "norm_id": "confidence.min_trade_confidence",
+    "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+    "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+    "scope": {
+      "actions": [
+        "execute_trade",
+        "execute_trade_bounded"
+      ],
+      "actors": [
+        "agent:governed_financial_advisor"
+      ],
+      "systems": [
+        "cage-gateway"
+      ],
+      "jurisdictions": [
+        "EU_ECB"
+      ]
+    },
+    "norm_parameters": {
+      "min_trade_confidence": {
+        "type": "decimal",
+        "value": "0.97",
+        "unit": "ratio"
+      }
+    },
+    "valid_from": "2026-10-07T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+    "governing_version": "cage-policy-2.1.0",
+    "status": "ACTIVE",
+    "revocation_ref": "",
+    "residual_risk_ref": "RRR-2026-08-01-A1",
+    "state_as_of": "2026-10-07T14:00:00Z",
+    "issued_at": "2026-10-07T14:00:00Z",
+    "alg": "Ed25519",
+    "kid": "unknown-kid",
+    "digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+    "signature": "GRui5pA_sYDRz0IqpyP6y7_B6bvAxRkIX_GYBdhOWwWscTIgiG9gh03iucwwONRhQTY0QnIznWABO94bGaKeBQ"
+  }
+}
