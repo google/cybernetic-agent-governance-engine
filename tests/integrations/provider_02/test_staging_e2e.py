@@ -77,10 +77,17 @@ pytestmark = [
     pytest.mark.partner,
 ]
 
-# Skip condition
+# Skip conditions
 SKIP_REASON = "PROVIDER_02_API_ENDPOINT not configured"
 skip_if_no_endpoint = pytest.mark.skipif(
     not os.getenv("PROVIDER_02_API_ENDPOINT"), reason=SKIP_REASON
+)
+skip_if_no_api_key = pytest.mark.skipif(
+    not (
+        os.getenv("PROVIDER_02_API_ENDPOINT")
+        and os.getenv("PROVIDER_02_API_KEY_SECRET")
+    ),
+    reason="PROVIDER_02_API_ENDPOINT and PROVIDER_02_API_KEY_SECRET required for POST /api/attest",
 )
 
 # Fixture directory
@@ -119,6 +126,12 @@ def assert_verified(verdict: AttestationVerdict) -> None:
     assert verdict.verification_url.startswith("https://")
 
 
+def assert_stateless_verified(verdict: AttestationVerdict) -> None:
+    assert verdict.verified, f"not verified: {verdict.code}: {verdict.error}"
+    assert verdict.certificate_hash.startswith("sha256:")
+    assert verdict.code == "OK"
+
+
 def assert_rejected(verdict: AttestationVerdict) -> None:
     assert not verdict.verified, "node attested a bundle CAGE expected rejected"
     assert verdict.code != "EXECUTION_MUTATION_DETECTED", (
@@ -127,11 +140,11 @@ def assert_rejected(verdict: AttestationVerdict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Happy Path Tests
+# Happy Path Tests (POST /api/attest — authenticated, persisting)
 # ---------------------------------------------------------------------------
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc01_single_path_happy(provider: Provider02AttestationProvider) -> None:
     """TC-01: Single-path happy bundle is attested and verified."""
@@ -139,7 +152,7 @@ async def test_tc01_single_path_happy(provider: Provider02AttestationProvider) -
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc02_cbf_block(provider: Provider02AttestationProvider) -> None:
     """TC-02: CBF barrier violation bundle is attested and verified."""
@@ -148,7 +161,7 @@ async def test_tc02_cbf_block(provider: Provider02AttestationProvider) -> None:
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc03_loop_breaker(provider: Provider02AttestationProvider) -> None:
     """TC-03: Loop-breaker bundle (unique stepIds across cycles) is verified."""
@@ -159,7 +172,7 @@ async def test_tc03_loop_breaker(provider: Provider02AttestationProvider) -> Non
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc04_policy_block(provider: Provider02AttestationProvider) -> None:
     """TC-04: Policy-block bundle with policy signals intact is verified."""
@@ -169,7 +182,7 @@ async def test_tc04_policy_block(provider: Provider02AttestationProvider) -> Non
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc05_large_dag(provider: Provider02AttestationProvider) -> None:
     """TC-05: 22-node fan-in DAG bundle is verified."""
@@ -179,7 +192,7 @@ async def test_tc05_large_dag(provider: Provider02AttestationProvider) -> None:
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["runtime", "fixture"])
 async def test_tc06_hitl_approval(
@@ -201,16 +214,8 @@ async def test_tc06_hitl_approval(
     assert verdict.governed_verification["causalGraphValidity"] == "valid"
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Partner node v0.30.0 rejects cyclic topology (TOPOLOGY_ERROR "
-        "'cycle includes evaluator'); its SDK README allows cycles. Open with "
-        "the partner; submit_attested_bundle() omits topology until resolved."
-    ),
-)
 async def test_tc07_hitl_with_topology(provider: Provider02AttestationProvider) -> None:
     """TC-07: HITL bundle with the cyclic financial-advisor topology supplied."""
     bundle = fresh(build_hitl_approval_bundle())
@@ -218,14 +223,15 @@ async def test_tc07_hitl_with_topology(provider: Provider02AttestationProvider) 
         bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
     )
     assert_verified(verdict)
+    assert verdict.governed_verification["topologyValidation"] == "valid"
 
 
 # ---------------------------------------------------------------------------
-# Error Handling Tests
+# Error Handling Tests (POST /api/attest — authenticated)
 # ---------------------------------------------------------------------------
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc_err_01_invalid_parent(
     provider: Provider02AttestationProvider,
@@ -238,7 +244,7 @@ async def test_tc_err_01_invalid_parent(
     assert verdict.code == "CAUSAL_ERROR", verdict
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc_err_02_non_canonical_jcs(
     provider: Provider02AttestationProvider,
@@ -253,7 +259,7 @@ async def test_tc_err_02_non_canonical_jcs(
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc_err_03_unknown_terminal_path(
     provider: Provider02AttestationProvider,
@@ -264,7 +270,7 @@ async def test_tc_err_03_unknown_terminal_path(
     assert_verified(await provider.attest_bundle(bundle))
 
 
-@skip_if_no_endpoint
+@skip_if_no_api_key
 @pytest.mark.asyncio
 async def test_tc_err_04_malformed_hitl_state_hash(
     provider: Provider02AttestationProvider,
@@ -276,6 +282,128 @@ async def test_tc_err_04_malformed_hitl_state_hash(
     verdict = await provider.attest_bundle(bundle)
     assert_rejected(verdict)
     assert verdict.code == "SCHEMA_ERROR", verdict
+
+
+# ---------------------------------------------------------------------------
+# Stateless Non-Persisting Verification (POST /v1/cer/verify)
+# ---------------------------------------------------------------------------
+
+
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["runtime", "fixture"])
+async def test_verify_tc07_hitl_with_topology(
+    provider: Provider02AttestationProvider, source: str
+) -> None:
+    """Stateless verification of HITL bundle with cyclic FINANCIAL_ADVISOR_TOPOLOGY."""
+    bundle = (
+        fresh(build_hitl_approval_bundle())
+        if source == "runtime"
+        else load_fixture("06_hitl_approval.json")
+    )
+    assert not hitl_invariant_violations(bundle)
+    verdict = await provider.verify_bundle(
+        bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+    )
+    assert_stateless_verified(verdict)
+    assert verdict.governed_verification["topologyValidation"] == "valid"
+    assert verdict.governed_verification["causalGraphValidity"] == "valid"
+
+
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+async def test_verify_tc08_multi_iteration_loop_with_topology(
+    provider: Provider02AttestationProvider,
+) -> None:
+    """Two-iteration execution_analyst <-> evaluator loop verifies against cyclic topology."""
+    from src.integrations.provider_02.adapter import Provider02AttestationCallback
+    from tests.integrations.provider_02.state_commitment_support import (
+        InProcessCommitter,
+    )
+
+    cb = Provider02AttestationCallback(
+        committer=InProcessCommitter(),
+        topology=FINANCIAL_ADVISOR_TOPOLOGY,
+        thread_id="live-loop-topology-test",
+    )
+    state: dict[str, Any] = {
+        "messages": [],
+        "transaction_details": {"symbol": "AAPL", "amount": 1000},
+    }
+    for node in [
+        "nemo_guardrail",
+        "thinker_node",
+        "doer_node",
+        "execution_analyst",
+        "evaluator",
+        "execution_analyst",
+        "evaluator",
+        "ftra_node",
+        "safety_check",
+        "governed_trader",
+        "explainer",
+        "nemo_output_rail",
+    ]:
+        cb.on_chain_start(node, state)
+        cb.on_chain_end(node, state)
+    await cb.seal()
+    bundle = fresh(cb.get_bundle().to_dict())
+
+    verdict = await provider.verify_bundle(
+        bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+    )
+    assert_stateless_verified(verdict)
+    assert verdict.governed_verification["topologyValidation"] == "valid"
+
+
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+async def test_verify_err_forbidden_executed_edge(
+    provider: Provider02AttestationProvider,
+) -> None:
+    """An executed edge not legal under FINANCIAL_ADVISOR_TOPOLOGY is rejected (TOPOLOGY_ERROR)."""
+    bundle = fresh(build_hitl_approval_bundle())
+    # explainer -> nemo_guardrail is not a legal contracted edge in FINANCIAL_ADVISOR_TOPOLOGY
+    bundle["steps"][-2]["parentStepIds"] = [bundle["steps"][0]["stepId"]]
+    verdict = await provider.verify_bundle(
+        bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+    )
+    assert_rejected(verdict)
+    assert verdict.code == "TOPOLOGY_ERROR", verdict
+    assert verdict.governed_verification.get("topologyValidation") == "invalid"
+
+
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+async def test_verify_err_dangling_parent(
+    provider: Provider02AttestationProvider,
+) -> None:
+    """Dangling parentStepIds with topology supplied is rejected (CAUSAL_ERROR)."""
+    bundle = fresh(build_hitl_approval_bundle())
+    bundle["steps"][-1]["parentStepIds"] = [str(uuid.uuid4())]
+    verdict = await provider.verify_bundle(
+        bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+    )
+    assert_rejected(verdict)
+    assert verdict.code == "CAUSAL_ERROR", verdict
+    assert verdict.governed_verification.get("causalGraphValidity") == "invalid"
+
+
+@skip_if_no_endpoint
+@pytest.mark.asyncio
+async def test_verify_err_malformed_hitl_state_hash(
+    provider: Provider02AttestationProvider,
+) -> None:
+    """Malformed hitl_interrupt.stateHash with topology supplied is rejected (SCHEMA_ERROR)."""
+    bundle = fresh(build_hitl_approval_bundle())
+    hitl = next(s for s in bundle["steps"] if s["nodeName"] == "hitl_interrupt")
+    hitl["stateHash"] = "hitl-paused"
+    verdict = await provider.verify_bundle(
+        bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+    )
+    assert_rejected(verdict)
+    assert verdict.code == "SCHEMA_ERROR", verdict
+    assert verdict.governed_verification.get("cageSchemaValidity") == "invalid"
 
 
 # ---------------------------------------------------------------------------

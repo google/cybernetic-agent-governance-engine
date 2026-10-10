@@ -306,19 +306,11 @@ def verify_attestation(
             "verification envelope signature does not verify",
         )
 
-    checks = response.get("governedVerification")
-    if not isinstance(checks, Mapping):
-        return reject("GOVERNED_VERIFICATION_MISSING", "governedVerification missing")
-    for name in _REQUIRED_VALID_CHECKS:
-        if checks.get(name) != "valid":
-            return reject("GOVERNED_CHECK_FAILED", f"{name}={checks.get(name)!r}")
-    expected_topology = "valid" if topology_supplied else "not-supplied"
-    if checks.get("topologyValidation") != expected_topology:
-        return reject(
-            "GOVERNED_CHECK_FAILED",
-            f"topologyValidation={checks.get('topologyValidation')!r}, "
-            f"expected {expected_topology!r}",
-        )
+    checks, check_err = _check_governed_verification(
+        response, topology_supplied=topology_supplied
+    )
+    if check_err is not None:
+        return reject(check_err[0], check_err[1])
 
     return AttestationVerdict(
         verified=True,
@@ -326,6 +318,106 @@ def verify_attestation(
         attestation_id=str(attestation_id),
         kid=kid,
         verification_url=str(response.get("verificationUrl", "")),
-        governed_verification=dict(checks),
+        governed_verification=checks,
         receipt=dict(receipt),
+    )
+
+
+def _check_governed_verification(
+    response: Mapping[str, Any], *, topology_supplied: bool
+) -> tuple[dict[str, Any], tuple[str, str] | None]:
+    checks = response.get("governedVerification")
+    if not isinstance(checks, Mapping):
+        return {}, ("GOVERNED_VERIFICATION_MISSING", "governedVerification missing")
+    checks_dict = dict(checks)
+    for name in _REQUIRED_VALID_CHECKS:
+        if checks_dict.get(name) != "valid":
+            return checks_dict, (
+                "GOVERNED_CHECK_FAILED",
+                f"{name}={checks_dict.get(name)!r}",
+            )
+    expected_topology = "valid" if topology_supplied else "not-supplied"
+    if checks_dict.get("topologyValidation") != expected_topology:
+        return checks_dict, (
+            "GOVERNED_CHECK_FAILED",
+            f"topologyValidation={checks_dict.get('topologyValidation')!r}, "
+            f"expected {expected_topology!r}",
+        )
+    return checks_dict, None
+
+
+def verify_governed_cer(
+    cer: Mapping[str, Any],
+    response: Mapping[str, Any],
+    *,
+    topology_supplied: bool,
+) -> AttestationVerdict:
+    """Verify a stateless ``POST /v1/cer/verify`` response against ``cer``.
+
+    ``POST /v1/cer/verify`` validates a caller-sealed ``cer.governed.execution.v1``
+    CER without persisting it or issuing a node-signed receipt. CAGE verifies:
+
+    * the submitted CER hashes to its own ``certificateHash``;
+    * the node reported ``status == "verified"`` and ``reasonCode == "OK"``;
+    * ``certificateHash``, ``submittedCertificateHash`` and
+      ``computedCertificateHash`` all match CAGE's JCS digest byte-for-byte; and
+    * every ``governedVerification`` check (including ``topologyValidation:
+      "valid"`` when topology was supplied) passed.
+    """
+    expected_hash = str(cer.get("certificateHash", ""))
+    if certificate_hash_of(cer) != expected_hash:
+        return AttestationVerdict.reject(
+            "CER_HASH_INCONSISTENT",
+            "submitted CER does not hash to its certificateHash",
+        )
+
+    raw_checks = response.get("governedVerification")
+    checks_dict = dict(raw_checks) if isinstance(raw_checks, Mapping) else {}
+
+    def reject(code: str, error: str) -> AttestationVerdict:
+        return AttestationVerdict(
+            verified=False,
+            certificate_hash=expected_hash,
+            code=code,
+            error=error,
+            governed_verification=checks_dict,
+        )
+
+    if response.get("status") != "verified" or response.get("reasonCode") != "OK":
+        code = str(
+            response.get("reasonCode")
+            or response.get("code")
+            or response.get("error")
+            or "VERIFY_FAILED"
+        )
+        error = str(
+            response.get("reason")
+            or response.get("classificationReason")
+            or response.get("message")
+            or "stateless CER verification failed"
+        )
+        return reject(code, error)
+
+    for where in (
+        "certificateHash",
+        "submittedCertificateHash",
+        "computedCertificateHash",
+    ):
+        if response.get(where) != expected_hash:
+            return reject(
+                "CERTIFICATE_HASH_MISMATCH",
+                f"{where} does not match the submitted CER",
+            )
+
+    verified_checks, check_err = _check_governed_verification(
+        response, topology_supplied=topology_supplied
+    )
+    if check_err is not None:
+        return reject(check_err[0], check_err[1])
+
+    return AttestationVerdict(
+        verified=True,
+        certificate_hash=expected_hash,
+        code="OK",
+        governed_verification=verified_checks,
     )

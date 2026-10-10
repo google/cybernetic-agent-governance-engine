@@ -45,6 +45,7 @@ from src.integrations.provider_02.governed_cer import (
     seal_governed_execution,
     topology_to_wire,
     verify_attestation,
+    verify_governed_cer,
 )
 from src.integrations.provider_02.provider import (
     JWKCache,
@@ -280,3 +281,83 @@ class TestAttestBundle:
             )
         assert verdict.code == "CER_SEAL_FAILED"
         client.post.assert_not_called()
+
+
+def _verify_response(
+    cer: dict[str, Any], *, topology_validation: str = "valid"
+) -> dict[str, Any]:
+    cert_hash = cer["certificateHash"]
+    return {
+        "status": "verified",
+        "reason": "All checks passed",
+        "reasonCode": "OK",
+        "certificateHash": cert_hash,
+        "submittedCertificateHash": cert_hash,
+        "computedCertificateHash": cert_hash,
+        "governedVerification": {
+            "certificateIntegrity": "valid",
+            "cageSchemaValidity": "valid",
+            "causalGraphValidity": "valid",
+            "topologyValidation": topology_validation,
+            "resourceSafety": "valid",
+        },
+    }
+
+
+class TestVerifyGovernedCer:
+    def test_valid_with_cyclic_topology(self) -> None:
+        topo = topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+        cer = seal_governed_execution(_bundle(), topo)
+        resp = _verify_response(cer, topology_validation="valid")
+        verdict = verify_governed_cer(cer, resp, topology_supplied=True)
+        assert verdict.verified, verdict
+        assert verdict.code == "OK"
+        assert verdict.certificate_hash == cer["certificateHash"]
+        assert verdict.governed_verification["topologyValidation"] == "valid"
+
+    def test_computed_hash_mismatch_rejected(self) -> None:
+        topo = topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+        cer = seal_governed_execution(_bundle(), topo)
+        resp = _verify_response(cer, topology_validation="valid")
+        resp["computedCertificateHash"] = "sha256:" + "0" * 64
+        verdict = verify_governed_cer(cer, resp, topology_supplied=True)
+        assert not verdict.verified
+        assert verdict.code == "CERTIFICATE_HASH_MISMATCH"
+
+    def test_failed_status_maps_reason_code_and_preserves_checks(self) -> None:
+        topo = topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+        cer = seal_governed_execution(_bundle(), topo)
+        resp = _verify_response(cer, topology_validation="invalid")
+        resp["status"] = "failed"
+        resp["reasonCode"] = "TOPOLOGY_ERROR"
+        resp["reason"] = "ILLEGAL_EXECUTED_EDGE"
+        resp["computedCertificateHash"] = None
+        verdict = verify_governed_cer(cer, resp, topology_supplied=True)
+        assert not verdict.verified
+        assert verdict.code == "TOPOLOGY_ERROR"
+        assert "ILLEGAL_EXECUTED_EDGE" in verdict.error
+        assert verdict.governed_verification["topologyValidation"] == "invalid"
+
+
+class TestVerifyBundle:
+    @pytest.mark.asyncio
+    async def test_posts_sealed_cer_to_v1_cer_verify(self) -> None:
+        topo = topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
+        cer = seal_governed_execution(_bundle(), topo)
+        resp = _verify_response(cer, topology_validation="valid")
+        patcher, client = _mock_http(_http_response(200, resp))
+        with patcher:
+            verdict = await _provider_with_k1().verify_bundle(_bundle(), topo)
+        assert verdict.verified, verdict
+        url = client.post.call_args.args[0]
+        assert url == "https://provider02.example.com/v1/cer/verify"
+        assert client.post.call_args.kwargs["json"] == {"bundle": cer}
+        assert verdict.governed_verification["topologyValidation"] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_transport_error_fails_closed(self) -> None:
+        patcher, _ = _mock_http(httpx.ConnectError("refused"))
+        with patcher:
+            verdict = await _provider_with_k1().verify_bundle(_bundle())
+        assert not verdict.verified
+        assert verdict.code == "TRANSPORT_ERROR"

@@ -46,6 +46,7 @@ from .governed_cer import (
     seal_governed_execution,
     topology_to_wire,
     verify_attestation,
+    verify_governed_cer,
 )
 from .provider import (
     CERReceipt,
@@ -73,4 +74,5 @@ __all__ = [
     "submit_attested_bundle",
     "topology_to_wire",
     "verify_attestation",
+    "verify_governed_cer",
 ]
