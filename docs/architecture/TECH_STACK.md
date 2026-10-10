@@ -200,6 +200,17 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 > [!NOTE]
 > An in-tree mirror of the same client lives at [`src/gateway/client/`](../../src/gateway/client) and is what the reference advisor imports (`from src.gateway.client.adapters.langgraph import cage_guard`). The two trees are near-identical but not byte-identical; `packages/cage-client/` is the published artifact.
 
+### 5.3 Standalone Offline Evaluation & Skill Certification Plane (`src/eval_harness/`)
+
+CAGE's offline evaluation, 3P skill certification, and post-training alignment subsystem lives in an isolated top-level package ([`src/eval_harness/`](../../src/eval_harness/__init__.py)) that is excluded from the online Gateway container image ([`src/gateway/Dockerfile`](../../src/gateway/Dockerfile)) and forbidden from being imported by `src/gateway/` under Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)).
+
+| Module / Entrypoint | Path | Responsibility |
+| ------------------- | ---- | -------------- |
+| **Core Evaluation & Alignment Engine** | [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py) | [`FoundationModelEvalHarness`](../../src/eval_harness/harness.py) (`governor=None` trace-only mode or `Profile.DRY_RUN` governance replay), [`ATIFTrajectory`](../../src/eval_harness/harness.py), [`ComposedDrawbackEvaluator`](../../src/eval_harness/harness.py) + [`calibrate_on_anchors()`](../../src/eval_harness/harness.py), 4-bucket [`evaluate_paired_skill_lift()`](../../src/eval_harness/harness.py), and counterfactual `NARROW` DPO synthesis |
+| **Stage 0 `SKILL.md` Static Linter** | [`src/eval_harness/static_linter.py`](../../src/eval_harness/static_linter.py) | [`lint_skill_markdown()`](../../src/eval_harness/static_linter.py) and [`lint_skill_file()`](../../src/eval_harness/static_linter.py) — zero-LLM-cost 6-dimension quality/safety rubric with `information_density_multiplier` length-bias orthogonalization |
+| **ATIF Trace Adapters** | [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) | [`adk_session_to_atif()`](../../src/eval_harness/adapters.py) (Google ADK sessions) and [`gemini_cli_jsonl_to_atif()`](../../src/eval_harness/adapters.py) (Gemini CLI / Antigravity JSONL logs) |
+| **Certification Gate CLI** | [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py) | `cage-skill-eval` CLI (`[project.scripts]` in [`pyproject.toml`](../../pyproject.toml)) and [`run_certification_gate()`](../../src/eval_harness/cli.py) (`lint-skill`, `calibrate-anchors`, `eval-lift`, `certify`) |
+
 ---
 
 ## 6. Frontend Stack (AgentSight UI)
