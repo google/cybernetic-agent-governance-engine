@@ -22,7 +22,8 @@ Third-Party Source Code Adapted or Vendored Into This Repository
 
 LalaSkye / no-direct-bind — Copyright (c) LalaSkye contributors. Apache License 2.0.
   Source: https://github.com/LalaSkye/no-direct-bind/commit/7fe9ff99636798accd5e04136991e1d3d3079417
-  Note: proof/model.py was adapted from the NoDirectBind BFS state-space enumerator.
+  Note: proof/model.py (BFS state-space enumerator) and the NoDirectBind TLA+
+  safety invariant in proof/LangGraphHarness.tla were adapted from NoDirectBind.
   Modifications: Extended for CAGE 8-tier governance architecture with Gap 1/2/3/4 sub-proofs.
 
 ---

@@ -1108,10 +1108,25 @@ class TestInferThetaPartnerContractVectors:
         )
         assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.094135)
 
-    def test_step1_unsigned_blocked_in_production(self) -> None:
-        """allow_step1_unsigned strictly fails fast when CAGE_ENV is production."""
-        with patch.dict(os.environ, {"CAGE_ENV": "production"}):
-            with pytest.raises(RuntimeError, match="cannot be enabled in production"):
+    @pytest.mark.parametrize(
+        "env_overrides",
+        [
+            {"CAGE_ENV": "production"},
+            {"CAGE_ENV": "prod"},
+            {"CAGE_ENV": "staging"},
+            {"CAGE_ENV": "stage"},
+            {"CAGE_ENV": "typo-unrecognized"},
+            {"CAGE_ENV": "", "KUBERNETES_SERVICE_HOST": "10.96.0.1"},
+        ],
+    )
+    def test_step1_unsigned_blocked_in_production(
+        self, env_overrides: dict[str, str]
+    ) -> None:
+        """Issue #406: allow_step1_unsigned strictly fails fast whenever is_enforcing() is True."""
+        with patch.dict(os.environ, env_overrides, clear=False):
+            with pytest.raises(
+                RuntimeError, match="cannot be enabled in enforcing environments"
+            ):
                 Provider07NormativeProvider(
                     endpoint="http://localhost:8087",
                     allow_step1_unsigned=True,

@@ -1337,6 +1337,48 @@ def _parse_nonce_record(raw: Any) -> dict[str, Any]:
     return record if isinstance(record, dict) else {}
 
 
+def _verified_jwt_claims_for_revocation(seal: str) -> dict[str, Any]:
+    """Verify a JWT seal's ``kid`` and signature before trusting ``nonce`` or ``exp``.
+
+    For a JWT seal, ``nonce`` and ``exp`` are readable claims in the payload.
+    Without signature verification, an observer who has seen a genuine seal's
+    ``nonce`` could forge an unsigned/junk-signed JWT carrying that ``nonce``
+    (and a short ``exp``) to revoke the genuine seal (issue #405).
+    """
+    from src.gateway.governance.jwks import (
+        extract_kid_from_jwt,
+        get_verification_key_for_jwt,
+        pem_to_jwk,
+    )
+
+    kid = extract_kid_from_jwt(seal)
+    pem = get_verification_key_for_jwt(seal)
+    if pem is None:
+        raise SymbolicGovernorViolation(f"unknown kid: {kid!r}")
+    jwk = pem_to_jwk(pem)
+    kty = jwk.get("kty", "EC")
+    if kty == "EC":
+        algs = ["ES256", "ES384", "ES512"]
+    elif kty == "OKP":
+        algs = ["EdDSA"]
+    else:
+        algs = ["RS256", "PS256"]
+    try:
+        claims: dict[str, Any] = pyjwt.decode(
+            seal,
+            pem,
+            algorithms=algs,
+            options={"verify_exp": True, "verify_aud": False},
+        )
+    except pyjwt.ExpiredSignatureError as exc:
+        raise SymbolicGovernorViolation("expired") from exc
+    except pyjwt.InvalidTokenError as exc:
+        raise SymbolicGovernorViolation(
+            f"malformed seal or invalid signature: {exc}"
+        ) from exc
+    return claims
+
+
 async def revoke_seal(seal: str, reason: str, redis_client: Any = None) -> bool:
     """Revoke an unconsumed seal before it expires.
 
@@ -1346,9 +1388,13 @@ async def revoke_seal(seal: str, reason: str, redis_client: Any = None) -> bool:
     and a consumed seal cannot be revoked after the fact, because the action
     it authorised may already have run.
 
-    The key outlives the seal's own expiry, after which ``verify_seal`` refuses
-    it anyway. Revocation never requires the seal to verify: refusing a forged
-    or malformed seal costs nothing.
+    Trust boundary: callers of this kernel primitive must be authenticated at
+    the transport boundary. For JWT seals (where ``nonce`` and ``exp`` are
+    plaintext claims), ``revoke_seal`` additionally verifies the token's
+    signature against its ``kid``-resolved JWKS trust anchor so a forged JWT
+    carrying a genuine seal's ``nonce`` cannot revoke it or spoof its TTL.
+    For HMAC seals, the nonce is ``sha256(seal)``, which is unreachable
+    without holding the full seal string.
 
     Args:
         seal: The seal to revoke.
@@ -1360,9 +1406,15 @@ async def revoke_seal(seal: str, reason: str, redis_client: Any = None) -> bool:
         or revoked.
 
     Raises:
-        SymbolicGovernorViolation: If the seal is malformed or Redis fails.
+        SymbolicGovernorViolation: If the seal is malformed, a JWT seal fails
+            signature/kid verification, or Redis fails.
     """
     nonce = seal_nonce(seal)
+    if _is_jwt_seal(seal):
+        verified_claims = _verified_jwt_claims_for_revocation(seal)
+        remaining_ttl = int(verified_claims.get("exp", 0)) - int(time.time())
+    else:
+        remaining_ttl = _seal_remaining_ttl(seal)
     record = json.dumps(
         {
             "state": SealState.REVOKED.value,
@@ -1377,7 +1429,7 @@ async def revoke_seal(seal: str, reason: str, redis_client: Any = None) -> bool:
             f"{_NONCE_PREFIX}{nonce}",
             record,
             nx=True,
-            ex=max(_seal_remaining_ttl(seal) + 60, 60),
+            ex=max(remaining_ttl + 60, 60),
         )
     except Exception as exc:
         raise SymbolicGovernorViolation(

@@ -437,3 +437,72 @@ async def test_default_store_uses_raw_client_behind_shared_wrapper(monkeypatch):
     assert await rs.verify_and_consume_seal(seal, ACTION, PARAMS)
     assert await rs.seal_state(seal) is rs.SealState.CONSUMED
     assert await rs.revoke_seal(seal, "late") is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_jwt_rejects_unverified_token_claiming_victim_nonce(
+    redis, monkeypatch
+):
+    """Issue #405: An unsigned/forged JWT cannot poison a legitimate seal's nonce or pin a 68-year TTL."""
+    import time
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    legit_key = ec.generate_private_key(ec.SECP256R1())
+    attacker_key = ec.generate_private_key(ec.SECP256R1())
+    legit_pem = legit_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    monkeypatch.setattr(
+        "src.gateway.governance.jwks.get_verification_key_for_jwt",
+        lambda token: legit_pem,
+    )
+
+    now = int(time.time())
+    victim_nonce = "11" * 16
+    forged_jwt = pyjwt.encode(
+        {
+            "action_hash": rs.compute_action_hash(ACTION, PARAMS),
+            "canon": rs.SEAL_CANON,
+            "record_hash": RH,
+            "nonce": victim_nonce,
+            "iat": now,
+            "exp": 2**31 - 1,
+            "iss": "cage-gateway",
+            "aud": f"cage-actuator:{ACTION}",
+        },
+        attacker_key,
+        algorithm="ES256",
+        headers={"kid": "gw-key-1"},
+    )
+
+    with pytest.raises(
+        rs.SymbolicGovernorViolation, match="malformed seal or invalid signature"
+    ):
+        await rs.revoke_seal(forged_jwt, "attacker poison", redis_client=redis)
+
+    assert await redis.get(f"cage:seal:nonce:{victim_nonce}") is None
+
+    # A legitimately signed JWT with the trusted kid CAN be revoked and has a bounded TTL.
+    legit_jwt = pyjwt.encode(
+        {
+            "action_hash": rs.compute_action_hash(ACTION, PARAMS),
+            "canon": rs.SEAL_CANON,
+            "record_hash": RH,
+            "nonce": victim_nonce,
+            "iat": now,
+            "exp": now + 30,
+            "iss": "cage-gateway",
+            "aud": f"cage-actuator:{ACTION}",
+        },
+        legit_key,
+        algorithm="ES256",
+        headers={"kid": "gw-key-1"},
+    )
+    assert await rs.revoke_seal(legit_jwt, "legit revoke", redis_client=redis) is True
+    assert await rs.seal_state(legit_jwt, redis_client=redis) is rs.SealState.REVOKED
+

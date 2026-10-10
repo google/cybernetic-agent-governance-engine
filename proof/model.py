@@ -42,7 +42,7 @@
 CAGE No-Direct-Bind Proof — Exhaustive State-Space Enumerator
 ==============================================================
 
-Theorem (No-Direct-Bind):
+Model property (No-Direct-Bind):
     In any run of the CAGE gated architecture, the system reaches an EXECUTED
     state only via a transition guarded by resolvedAllow = TRUE.
     Equivalently: there is no reachable state in which an effect has occurred
@@ -55,9 +55,9 @@ This file:
   1. Defines the CAGE 8-tier governance state machine (FTRA + 7 in-pipeline tiers).
   2. Enumerates every reachable state via BFS.
   3. Asserts the invariant holds in ALL reachable states.
-  4. Defines an ungated (direct-bind) variant and proves it VIOLATES the
-     invariant, producing an explicit counterexample — confirming the gate is
-     load-bearing, not decorative.
+  4. Defines an ungated (direct-bind) variant and shows it VIOLATES the
+     invariant by producing an explicit counterexample — confirming the gate
+     transition is load-bearing in this finite-state model.
   5. Instantiates the same transition relation over any runtime plan
      (``reachable_over()``), so a governance trace can be checked for
      membership in the model (``proof/trace_conformance.py``).
