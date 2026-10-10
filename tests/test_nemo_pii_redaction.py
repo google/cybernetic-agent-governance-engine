@@ -156,4 +156,3 @@ def test_presidio_hooks_share_single_engine_singleton() -> None:
     assert anonymizer is not None
     assert pii_redactor.get_analyzer_patch() is analyzer
     assert pii_redactor._presidio_analyzer is analyzer
-

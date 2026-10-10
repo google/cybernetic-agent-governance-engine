@@ -63,6 +63,36 @@ class CBFTierPlugin(MutatingTier):
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         """Read-only preview of commit() (DRY_RUN); spends no barrier headroom."""
+        import math
+
+        from src.gateway.governance.contracts import ViolationKind, coerce_bound
+
+        shadow_cash = params.get("_shadow_cash_balance_usd")
+        if (
+            shadow_cash is not None
+            and not isinstance(shadow_cash, bool)
+            and isinstance(shadow_cash, (int, float))
+            and math.isfinite(float(shadow_cash))
+        ):
+            cost = self._cost(action, params)
+            balance = float(shadow_cash)
+            safe, h_next, required_h_next = self.cbf.admits(balance, cost)
+            if safe:
+                return []
+            h_t = self.cbf.evaluate_barrier(balance)
+            raw_bound = h_t - max((1.0 - self.cbf.gamma) * h_t, 0.0)
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code="CBF_BARRIER_VIOLATED",
+                    message=(
+                        f"Safety Violation (RBC/CBF shadow preview). "
+                        f"h(next)={h_next:.2f} < threshold={required_h_next:.2f}"
+                    ),
+                    kind=ViolationKind.HARD,
+                    bound=coerce_bound(raw_bound if raw_bound > 0 else 0.0),
+                )
+            ]
         return await preview_barrier(
             self.cbf,
             tier=self.tier_name,
