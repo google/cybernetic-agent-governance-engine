@@ -349,3 +349,53 @@ class TestAdapterReceiptVerification:
     def test_capability_absent_without_trust_anchor(self) -> None:
         adapter = _adapter(lambda d: (200, {}))
         assert ActuatorCapability.SIGNED_RECEIPTS not in adapter.get_capabilities()
+
+    async def test_archytan_flat_signature_and_ingress_signature_unverified_without_resolver(
+        self,
+    ) -> None:
+        """Always-on flat signature + ingress_signature stays ACCEPTED when no manifest URL is set."""
+        receipt = await _adapter(
+            lambda d: (
+                200,
+                {
+                    "receipt_id": "r-archytan-1",
+                    "session_uuid": "s-archytan-1",
+                    "status": "ACCEPTED",
+                    "envelope_digest": d,
+                    "signature": "a" * 128,
+                    "ingress_signature": "b" * 128,
+                },
+            ),
+            receipt_key_resolver=None,
+        ).actuate(_clearance())
+        assert receipt.accepted is True
+        assert receipt.outcome is ActuationOutcome.ACCEPTED
+        assert receipt.verification is ReceiptVerification.UNVERIFIED
+
+    async def test_archytan_flat_hex_signature_with_ingress_signature_verifies(
+        self,
+    ) -> None:
+        """Flat 128-char hex signature verifies even when ingress_signature is appended after signing."""
+        resolver = _StaticResolver({"default": _PARTNER_KEY.public_key()})
+
+        def respond(d: str):
+            base = _body(digest=d)
+            sig_hex = (
+                _PARTNER_KEY.sign(
+                    RECEIPT_SIGNATURE_DOMAIN_TAG + jcs_canonicalize_plan(base)
+                )
+                .hex()
+                .lower()
+            )
+            return 200, {
+                **base,
+                "signature": sig_hex,
+                "ingress_signature": "c" * 128,
+            }
+
+        receipt = await _adapter(respond, receipt_key_resolver=resolver).actuate(
+            _clearance()
+        )
+        assert receipt.accepted is True
+        assert receipt.outcome is ActuationOutcome.ACCEPTED
+        assert receipt.verification is ReceiptVerification.VERIFIED

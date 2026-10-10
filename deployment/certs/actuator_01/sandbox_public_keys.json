@@ -1,0 +1,30 @@
+{
+  "generated_at_utc": "2026-10-10T19:07:17Z",
+  "algorithm": "Ed25519",
+  "keys": {
+    "policy_authority": {
+      "urn": "urn:archytan:cage:policy-authority",
+      "public_key_hex": "7fa435d87e24fc449f3647a89df3d5c11dfef73bc23d6a704ff6877829e43b1b",
+      "private_key_file": "ed25519_policy.key",
+      "purpose": "governance.decision_signature (ARCHYTAN_POLICY_DECISION_V1:)"
+    },
+    "operator_1_and_assertion": {
+      "urn": "urn:archytan:cage:operator:test-alice",
+      "public_key_hex": "881f69168575951e04489968ca1e23e32e9d8eecd97f92b7fea80c4f4637625f",
+      "private_key_file": "ed25519_op1.key",
+      "purpose": "X-Execution-Assertion (ARCHYTAN_ASSERTION_V1:) & X-Archytan-Signatures[0] (ARCHYTAN_QUORUM_V1:)"
+    },
+    "operator_2": {
+      "urn": "urn:archytan:cage:operator:test-bob",
+      "public_key_hex": "0a2ccd4450bca72a1a3dd8c39a66621eee6d0d9d6de748b6246cfc0b682405c9",
+      "private_key_file": "ed25519_op2.key",
+      "purpose": "X-Archytan-Signatures[1] (ARCHYTAN_QUORUM_V1:)"
+    },
+    "step_up_approver": {
+      "urn": "urn:archytan:cage:operator:test-approver",
+      "public_key_hex": "5ade098f09d5d2f03b6d6c4bafae3261dac116fe65d880526233d1ce576bd7c5",
+      "private_key_file": "ed25519_approver.key",
+      "purpose": "approval.signature (WebAuthn FIDO2 Ed25519 over authenticator_data || SHA-256(client_data_json))"
+    }
+  }
+}

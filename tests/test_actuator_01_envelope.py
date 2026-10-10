@@ -230,6 +230,16 @@ class TestBuildEnvelopeDict:
         # Per Vector 1: DIRECT path does NOT include "approval" key at all
         assert "approval" not in envelope
 
+    def test_direct_path_with_quorum_approvals_omits_approval_key(
+        self, valid_clearance
+    ):
+        """DIRECT path with ≥2 quorum approvals (for X-Operator-URNs) still omits approval key."""
+        assert valid_clearance.decision_path == "DIRECT"
+        assert len(valid_clearance.approvals) == 2
+
+        envelope = build_envelope_dict(valid_clearance)
+        assert "approval" not in envelope
+
     def test_parameters_from_params_field(self, valid_clearance):
         """Parameters are populated at root level from clearance.params."""
         valid_clearance.params = {"amount_minor": 12345, "currency": "USD"}

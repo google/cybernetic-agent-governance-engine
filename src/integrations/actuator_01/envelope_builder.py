@@ -206,13 +206,19 @@ def build_envelope_dict(
         "ttl_seconds": clearance.ttl_seconds,
     }
 
-    # Approval block - construct ONLY if clearance.approvals is non-empty (ESCALATE path)
-    # Per Vector 1: DIRECT path omits the "approval" key entirely (not null)
-    if clearance.approvals:
-        # Extract from first approval (primary operator)
+    # Approval block - construct ONLY on ESCALATE path (or when explicit WebAuthn
+    # credential_id is attached to the primary approval record).
+    # Per Vector 1: DIRECT path omits the "approval" key entirely (not null),
+    # even when clearance.approvals carries the quorum operator URNs.
+    if clearance.approvals and (
+        clearance.decision_path == "ESCALATE"
+        or clearance.approvals[0].get("credential_id") is not None
+    ):
+        # Extract from first approval (primary operator or step-up approver)
         approval = clearance.approvals[0]
         envelope["approval"] = {
-            "approver_urn": approval.get("approver_urn", clearance.operator_urn),
+            "approver_urn": approval.get("webauthn_approver_urn")
+            or approval.get("approver_urn", clearance.operator_urn),
             "authenticator_data": approval.get("authenticator_data"),
             "challenge_binding": approval.get("challenge_binding"),
             "client_data_json": approval.get("client_data_json"),

@@ -85,7 +85,10 @@ from src.integrations.actuator_01.response_classifier import (
     classify_network_error,
     classify_response,
 )
-from src.integrations.actuator_01.signatures import sign_for_quorum
+from src.integrations.actuator_01.signatures import (
+    SandboxSigningBundle,
+    sign_for_quorum,
+)
 from src.integrations.trust.key_manifest import (
     Ed25519KeyManifestClient,
     Ed25519KeyResolver,
@@ -102,6 +105,7 @@ _ENV_CERT_PATH = "ACTUATOR_01_CERT_PATH"
 _ENV_KEY_PATH = "ACTUATOR_01_KEY_PATH"
 _ENV_CA_PATH = "ACTUATOR_01_CA_PATH"
 _ENV_TENANT_ID = "ACTUATOR_01_TENANT_ID"
+_ENV_SIGNING_KEYS_DIR = "ACTUATOR_01_SIGNING_KEYS_DIR"
 _ENV_RECEIPT_KEY_MANIFEST_URL = "ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL"
 _ENV_REQUIRE_SIGNED_RECEIPTS = "ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS"
 
@@ -146,6 +150,9 @@ class Actuator01Adapter:
     - ``ACTUATOR_01_KEY_PATH``: Client private key PEM (required)
     - ``ACTUATOR_01_CA_PATH``: CA bundle PEM (required)
     - ``ACTUATOR_01_TENANT_ID``: Secure tenant identifier (required)
+    - ``ACTUATOR_01_SIGNING_KEYS_DIR``: Optional directory containing
+      ``sandbox_public_keys.json`` and Ed25519 ``*.key`` files for multi-key
+      policy, assertion, and per-operator quorum signing
     - ``ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL``: Partner receipt-signing JWKS
       (optional; enables receipt signature verification)
     - ``ACTUATOR_01_REQUIRE_SIGNED_RECEIPTS``: ``true`` to treat any partner
@@ -214,6 +221,16 @@ class Actuator01Adapter:
             ValueError: Strict receipts requested without a manifest URL, or a
                 manifest URL with a disallowed scheme.
         """
+        signing_keys_dir = os.environ.get(_ENV_SIGNING_KEYS_DIR, "").strip()
+        if signing_keys_dir:
+            bundle = SandboxSigningBundle.from_directory(signing_keys_dir)
+            if signer is None:
+                signer = bundle.assertion_signer
+            if signer_resolver is None:
+                signer_resolver = bundle.resolve_signer
+            if policy_signer is None:
+                policy_signer = bundle.policy_signer
+
         if signer is None:
             from src.gateway.governance.kms_signer import get_governance_signer
 
