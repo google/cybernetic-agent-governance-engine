@@ -181,7 +181,7 @@ class TestFailClosed:
 
 
 class TestSubmitPath:
-    def test_seals_before_attesting(self) -> None:
+    def test_seals_and_includes_wire_topology_by_default(self) -> None:
         cb = _callback(InProcessCommitter())
         _drive(cb)
         attestor = AsyncMock()
@@ -191,19 +191,19 @@ class TestSubmitPath:
 
         assert result.verified
         (submitted, topology), _ = attestor.attest_bundle.call_args
-        assert topology is None
+        assert topology == topology_to_wire(cb.topology)
         assert all(len(s["stateHash"]) == 64 for s in submitted["steps"])
 
-    def test_include_topology_sends_wire_topology(self) -> None:
+    def test_include_topology_false_omits_wire_topology(self) -> None:
         cb = _callback(InProcessCommitter())
         _drive(cb)
         attestor = AsyncMock()
         attestor.attest_bundle.return_value = AttestationVerdict(verified=True)
 
-        asyncio.run(submit_attested_bundle(cb, attestor, include_topology=True))
+        asyncio.run(submit_attested_bundle(cb, attestor, include_topology=False))
 
         (_, topology), _ = attestor.attest_bundle.call_args
-        assert topology == topology_to_wire(cb.topology)
+        assert topology is None
 
     def test_unverified_attestation_raises(self) -> None:
         cb = _callback(InProcessCommitter())

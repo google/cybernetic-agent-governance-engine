@@ -776,7 +776,7 @@ async def submit_attested_bundle(
     callback: Provider02AttestationCallback,
     attestor: BundleAttestor,
     *,
-    include_topology: bool = False,
+    include_topology: bool = True,
 ) -> AttestationVerdict:
     """Seal ``callback``'s steps through the gateway, then attest the bundle.
 
@@ -784,11 +784,10 @@ async def submit_attested_bundle(
     so Provider 02 never receives a ``stateHash`` whose preimage is not
     retained in the evidence chain.
 
-    ``include_topology`` defaults to False: the attestation node currently
-    rejects topologies containing a cycle (``TOPOLOGY_ERROR``), and the
-    financial-advisor graph has an ``execution_analyst`` <-> ``evaluator``
-    loop. CAGE's own lineage checks (``LineageError``) still enforce the
-    topology locally before anything is submitted.
+    ``include_topology`` defaults to True: the wire topology (including the
+    ``execution_analyst`` <-> ``evaluator`` static refinement loop) is sealed
+    into ``evidence.topology`` so the node verifies ``topologyValidation:
+    "valid"`` alongside CAGE's own local ``LineageError`` checks.
 
     Raises:
         StateCommitmentError: A state commitment failed; nothing was submitted.

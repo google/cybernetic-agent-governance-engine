@@ -80,6 +80,7 @@ from src.integrations.provider_02.governed_cer import (
     GovernedCerError,
     seal_governed_execution,
     verify_attestation,
+    verify_governed_cer,
 )
 from src.integrations.provider_02.resolver import Provider02CERResolver
 
@@ -100,6 +101,7 @@ _JWK_CACHE_TTL_HOURS: float = float(
 )
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_TIMEOUT_SECONDS", "5.0"))
 _ATTEST_PATH: str = os.environ.get("PROVIDER_02_ATTEST_PATH", "/api/attest")
+_VERIFY_PATH: str = os.environ.get("PROVIDER_02_VERIFY_PATH", "/v1/cer/verify")
 
 
 def _node_rejection(status: int, body: Any) -> tuple[str, str]:
@@ -246,6 +248,7 @@ class Provider02AttestationProvider(AttestationProvider):
         self._ca_bundle = os.getenv("PROVIDER_02_CA_BUNDLE", "")
 
         self._attest_path = _ATTEST_PATH
+        self._verify_path = _VERIFY_PATH
 
         # CER resolver for fetching receipts during verification
         # Extract base URL without the /v1 suffix if present
@@ -834,6 +837,53 @@ class Provider02AttestationProvider(AttestationProvider):
                 cer, body, self._resolve_public_key, topology_supplied=supplied
             )
         return verdict
+
+    async def verify_bundle(
+        self,
+        bundle: Mapping[str, Any],
+        topology: Mapping[str, Any] | None = None,
+    ) -> AttestationVerdict:
+        """Seal ``bundle`` into a governed CER and verify it via ``POST /v1/cer/verify``.
+
+        This is the node's stateless, non-persisting verification route. It
+        validates CER integrity, CAGE schema, causal graph, wire topology (when
+        supplied) and resource safety, and confirms RFC 8785 JCS hash parity
+        without persisting a certificate on the node.
+        """
+        import httpx
+
+        try:
+            cer = seal_governed_execution(bundle, topology)
+        except GovernedCerError as exc:
+            return AttestationVerdict.reject("CER_SEAL_FAILED", str(exc))
+        certificate_hash = str(cer["certificateHash"])
+
+        url = f"{self._base_url()}{self._verify_path}"
+        try:
+            async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
+                resp = await client.post(
+                    url, json={"bundle": cer}, headers=self._headers()
+                )
+        except httpx.HTTPError as exc:
+            logger.error("[Provider02] verify_bundle failed: %s %s", url, exc)
+            return AttestationVerdict.reject(
+                "TRANSPORT_ERROR", str(exc), certificate_hash
+            )
+
+        try:
+            body: Any = resp.json()
+        except ValueError:
+            body = None
+        if resp.status_code != 200 or not isinstance(body, dict):
+            code, error = _node_rejection(resp.status_code, body)
+            logger.warning(
+                "[Provider02] verify_bundle HTTP error: status=%d code=%s",
+                resp.status_code,
+                code,
+            )
+            return AttestationVerdict.reject(code, error, certificate_hash)
+
+        return verify_governed_cer(cer, body, topology_supplied=topology is not None)
 
     # ------------------------------------------------------------------
     # JWK sync daemon

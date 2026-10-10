@@ -21,7 +21,6 @@ when configured via environment variables.
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import pytest
 
@@ -112,60 +111,19 @@ async def test_live_cer_verification_signature(
 
 
 @pytest.mark.asyncio
-async def test_live_certify_decision(
+async def test_live_verify_bundle_with_cyclic_topology(
     live_provider: Provider02AttestationProvider,
 ) -> None:
-    """Verify live CER creation via certify_decision endpoint."""
-    evidence_payload: dict[str, Any] = {
-        "correlation_id": "test-cage-live-provider02-001",
-        "action": "test.action.verify",
-        "decision": "APPROVED",
-        "context": {"test": True},
-    }
+    """Verify stateless CER verification via POST /v1/cer/verify with cyclic topology."""
+    from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
+    from src.integrations.provider_02.governed_cer import topology_to_wire
+    from tests.integrations.provider_02.hitl_bundle import build_hitl_approval_bundle
 
-    cer_receipt = await live_provider.certify_decision(evidence_payload)
-
-    # Assert CER receipt is valid
-    assert not cer_receipt.error, f"CER creation failed: {cer_receipt.error}"
-    assert cer_receipt.certificate_hash, "Certificate hash should be present"
-    assert len(cer_receipt.certificate_hash) == 64, "Hash should be 64-char hex"
-    assert cer_receipt.signer_key_id, "Signer key ID should be present"
-
-
-@pytest.mark.asyncio
-async def test_live_fetch_attestations(
-    live_provider: Provider02AttestationProvider,
-) -> None:
-    """Verify fetch_attestations protocol implementation with live CER.
-
-    This test creates a CER, then fetches attestations for it to validate
-    the AttestationProvider protocol.
-    """
-    # Create a test CER first
-    evidence_payload: dict[str, Any] = {
-        "correlation_id": "test-cage-live-provider02-002",
-        "action": "test.action.attest",
-        "decision": "APPROVED",
-        "context": {"test": True},
-    }
-
-    cer_receipt = await live_provider.certify_decision(evidence_payload)
-    assert not cer_receipt.error, f"CER creation failed: {cer_receipt.error}"
-
-    # Fetch attestations using the AttestationProvider protocol
-    attestations = await live_provider.fetch_attestations(
-        {"certificate_hash": cer_receipt.certificate_hash}
+    bundle = build_hitl_approval_bundle()
+    verdict = await live_provider.verify_bundle(
+        bundle, topology_to_wire(FINANCIAL_ADVISOR_TOPOLOGY)
     )
-
-    # Assert attestation structure
-    assert len(attestations) == 1, "Should return exactly one attestation"
-    attestation = attestations[0]
-
-    assert attestation.attestation_type == "CER"
-    assert attestation.provider_name == "provider_02"
-    assert attestation.status in ("VERIFIED", "UNVERIFIED"), (
-        f"Unexpected status: {attestation.status}"
-    )
-    assert attestation.receipt_id == cer_receipt.certificate_hash[:16]
-    assert attestation.metadata.get("signer")
-    assert attestation.metadata.get("key_id")
+    assert verdict.verified, f"verify_bundle failed: {verdict.code}: {verdict.error}"
+    assert verdict.certificate_hash.startswith("sha256:")
+    assert verdict.governed_verification.get("topologyValidation") == "valid"
+    assert verdict.governed_verification.get("causalGraphValidity") == "valid"

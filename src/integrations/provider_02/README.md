@@ -35,6 +35,7 @@ an optional `error` string ([`provider.py`](provider.py:100)).
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `attest_bundle()` | `POST {base}/api/attest` | Seal a completed bundle into a `cer.governed.execution.v1` CER, attest it, and verify both Ed25519 receipt signatures against the `kid`-resolved manifest key ([`governed_cer.py`](governed_cer.py)). Returns an `AttestationVerdict` |
+| `verify_bundle()` | `POST {base}/v1/cer/verify` | Stateless, non-persisting verification of a sealed `cer.governed.execution.v1` CER (`{"bundle": cer}`). Validates CER integrity, CAGE schema, causal graph, wire topology (including bounded static cycles) and RFC 8785 JCS hash parity |
 | `certify_decision()` | `POST {base}/certifyDecision` | Submit a governance decision, receive a `CERReceipt`. **Route returns 404 on the live node (2026-10-06)** |
 | `verify_cer()` | *(local)* → falls back to `GET {base}/verify/{hash}` | Verify against the cached JWK set; remote only when the cache is empty. **Remote route returns 404 on the live node** |
 
@@ -74,8 +75,9 @@ Every step also carries `stateHashAlg: sha256`,
 failed gateway commit means no step and no bundle (fail-closed).
 [`submit_attested_bundle()`](adapter.py) (seal → attest → verify) is the single
 submit path; it raises `Provider02Error(code="ATTESTATION_REJECTED")` unless
-CAGE verified the node's receipt. Topology is omitted by default because the
-node currently rejects cyclic topologies (see
+CAGE verified the node's receipt. Wire topology (`evidence.topology`) is
+included by default (`include_topology=True`, verified against Node v0.30.1 /
+SDK 0.4.2; see
 [`HITL_INTEROP_STATUS.md`](../../../docs/partners/provider_02/nexart/HITL_INTEROP_STATUS.md)). The advisor holds no cold store and no Google Cloud identity.
 
 `parentStepIds` records **executed** parents only: the callback tracks the
