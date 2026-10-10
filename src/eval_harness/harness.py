@@ -563,12 +563,25 @@ class ComposedDrawbackEvaluator:
 
 
 def _extract_skill_reads(trajectory: ATIFTrajectory) -> list[tuple[int, str]]:
-    """Return ``(step_index, skill_name)`` for every ``SKILL.md`` read in ``trajectory``."""
+    """Return ``(step_index, skill_or_subagent_name)`` for every ``SKILL.md`` read or sub-agent delegation."""
     reads: list[tuple[int, str]] = []
     for step in trajectory.steps:
+        sub_agent_meta = (step.metadata or {}).get("sub_agent")
+        if isinstance(sub_agent_meta, str) and sub_agent_meta:
+            reads.append((step.step_index, sub_agent_meta))
         for tc in step.tool_calls:
             name = str(tc.get("name") or tc.get("tool_name") or "")
             args = tc.get("arguments") or {}
+            if name in ("transfer_to_agent", "delegate_to_agent"):
+                target_agent = str(
+                    args.get("agent_name")
+                    or args.get("sub_agent")
+                    or args.get("target")
+                    or ""
+                )
+                if target_agent:
+                    reads.append((step.step_index, target_agent))
+                continue
             path = str(
                 args.get("path")
                 or args.get("file_path")
@@ -852,7 +865,14 @@ def _score_skill_execution(
         for tc in step.tool_calls:
             tname = str(tc.get("name") or tc.get("tool_name") or "")
             targs = tc.get("arguments") or {}
-            if tname not in ("read_skill", "view_file", "read_file", "load_skill"):
+            if tname not in (
+                "read_skill",
+                "view_file",
+                "read_file",
+                "load_skill",
+                "transfer_to_agent",
+                "delegate_to_agent",
+            ):
                 non_skill_tool_indices.append(step.step_index)
             if case.expected_script and (
                 case.expected_script in tname
@@ -877,7 +897,7 @@ def _score_skill_efficiency(
     case: SkillEvalCase,
     trajectory: ATIFTrajectory,
 ) -> float:
-    """Deterministic ACES skill_efficiency score (routing discipline + tool efficiency)."""
+    """Deterministic ACES skill_efficiency score (routing discipline + tool & token efficiency)."""
     reads = _extract_skill_reads(trajectory)
     read_skills = [s for _, s in reads]
 
@@ -894,7 +914,11 @@ def _score_skill_efficiency(
 
     total_calls = 0
     waste_calls = 0
+    explicit_prompt_tokens: list[float] = []
     for step in trajectory.steps:
+        p_tok = (step.metadata or {}).get("prompt_tokens")
+        if isinstance(p_tok, (int, float)) and p_tok > 0:
+            explicit_prompt_tokens.append(float(p_tok))
         for tc in step.tool_calls:
             total_calls += 1
             raw = json.dumps(tc).lower()
@@ -902,6 +926,11 @@ def _score_skill_efficiency(
                 waste_calls += 1
 
     tool_eff = (total_calls - waste_calls) / total_calls if total_calls > 0 else 1.0
+    if len(explicit_prompt_tokens) >= 2:
+        growth_rate = explicit_prompt_tokens[-1] / explicit_prompt_tokens[0]
+        if growth_rate > 2.5:
+            tool_eff = tool_eff * (2.5 / growth_rate)
+
     return round(((1.0 if routing_ok else 0.0) + tool_eff) / 2.0, 4)
 
 
@@ -1333,9 +1362,11 @@ class FoundationModelEvalHarness:
                         group_with_skill_trajectories[case.case_id],
                         state_reducer=state_reducer,
                     )
-                    grp_deltas.append(g_skill.composite_score - g_base.composite_score)
+                    grp_deltas.append(
+                        round(g_skill.composite_score - g_base.composite_score, 4)
+                    )
             if grp_deltas:
-                mean_grp_lift = sum(grp_deltas) / len(grp_deltas)
+                mean_grp_lift = round(sum(grp_deltas) / len(grp_deltas), 4)
                 routing_premium = round(mean_grp_lift - mean_comp_lift, 4)
 
         return SkillLiftReport(

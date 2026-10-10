@@ -1,7 +1,7 @@
 # Foundation Model & Agent Skill Evaluation Harness (`src/eval_harness/`)
 
 **Package Root:** [`src/eval_harness/__init__.py`](../../src/eval_harness/__init__.py)  
-**Core Modules:** [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py) · [`src/eval_harness/static_linter.py`](../../src/eval_harness/static_linter.py) · [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) · [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)  
+**Core Modules:** [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py) · [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) · [`src/eval_harness/static_linter.py`](../../src/eval_harness/static_linter.py) · [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) · [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)  
 **Test Suite:** [`tests/unit/governance/test_eval_harness.py`](../../tests/unit/governance/test_eval_harness.py)  
 **System Plane:** Standalone Offline Evaluation & Skill Certification System (`src/eval_harness/`) — strictly decoupled from Online Enforcement (`src/gateway/`)
 
@@ -11,12 +11,12 @@
 
 Enterprise AI platforms and foundation model teams face two opposing requirements:
 1. **Online Runtime Enforcement (`src/gateway/`)** must execute synchronously on the hot path in **$<10\text{ ms}$**, enforcing atomic state invariants (`FTRA`, `STPA`, `CBF`, `OPA`, `RoutingSeal`) with zero dependency on batch trajectory evaluators or dataset exporters.
-2. **Offline Evaluation, Skill Certification & Post-Training Alignment (`src/eval_harness/`)** must inspect full multi-turn trajectories, score `SKILL.md` specifications, compute paired differential **Skill Lift**, calibrate evaluators against golden anchors, and export counterfactual DPO datasets in CI or batch pipelines.
+2. **Offline Evaluation, Skill Certification & Post-Training Alignment (`src/eval_harness/`)** must inspect full multi-turn trajectories, orchestrate paired live rollouts (`baseline` vs. `with_skill`), score `SKILL.md` specifications, compute paired differential **Skill Lift** and tokenomics, calibrate evaluators against golden anchors, and export counterfactual DPO datasets in CI or batch pipelines.
 
 CAGE resolves this tension via a **Modular Monorepo with a Hard System Cut**:
 - **Strict Non-Interference (Gate G3):** [`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py) enforces at the AST level (`OFFLINE_EVAL_PATTERN`) that `src/gateway/` **never** imports from `src/eval_harness/`. Furthermore, [`src/gateway/Dockerfile`](../../src/gateway/Dockerfile) does not copy `src/eval_harness/` into the production Gateway container.
 - **Two Offline Execution Modes in [`FoundationModelEvalHarness`](../../src/eval_harness/harness.py):**
-  - **Standalone Trace-Only Mode (`governor=None`):** Grades recorded [`ATIFTrajectory`](../../src/eval_harness/harness.py) logs, lints `SKILL.md` files ([`lint_skill_markdown`](../../src/eval_harness/static_linter.py)), calibrates drawback detectors ([`calibrate_on_anchors`](../../src/eval_harness/harness.py)), and computes 4-bucket paired [`SkillLiftReport`](../../src/eval_harness/harness.py) with **zero** `SymbolicGovernor`, Redis, or OPA dependencies.
+  - **Standalone Trace-Only Mode (`governor=None`):** Grades recorded or dynamically generated [`ATIFTrajectory`](../../src/eval_harness/harness.py) logs, lints `SKILL.md` files ([`lint_skill_markdown`](../../src/eval_harness/static_linter.py)), calibrates drawback detectors ([`calibrate_on_anchors`](../../src/eval_harness/harness.py)), and computes 4-bucket paired [`SkillLiftReport`](../../src/eval_harness/harness.py) with **zero** `SymbolicGovernor`, Redis, or OPA dependencies.
   - **Dry-Run Counterfactual Mode (`governor=<SymbolicGovernor>`):** Replays tool actions through [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py) (`Profile.DRY_RUN`) with isolated shadow-state tracking (`ShadowStateReducer`) to compute step-level Process Rewards (PRM) and synthesize minimal-edit counterfactual DPO pairs.
 
 ```text
@@ -24,10 +24,11 @@ CAGE resolves this tension via a **Modular Monorepo with a Hard System Cut**:
          (src/eval_harness/ — Batch / CI)                      (src/gateway/ — <10ms Hot Path)
    ┌──────────────────────────────────────────────┐        ┌────────────────────────────────────────┐
    │ • Stage 0 SKILL.md Linter (static_linter.py) │        │ CAGE Substrate Governor (Profile.FULL) │
-   │ • ATIF Trace Adapters (ADK & Gemini CLI)     │ Static │ • Linkerd mTLS + Single-Use JWS Seals  │
-   │ • 4-Bucket Paired Skill Lift & Routing Prem. │───────▶│ • 5-State Engine (ALLOW/NARROW/DEFER…) │
-   │ • Double Ratchet Anchor Calibration Guard    │ Config │ • Atomic Redis Lua CBFs & LIFO Undo    │
-   │ • Optional DRY_RUN PRM & NARROW DPO Export   │        │ • Emits RefusalReceipt JSONL Stream    │
+   │ • Rollout Runner & Adapters (runner.py)      │ Static │ • Linkerd mTLS + Single-Use JWS Seals  │
+   │ • ATIF Trace Adapters & Tokenomics Engine    │───────▶│ • 5-State Engine (ALLOW/NARROW/DEFER…) │
+   │ • 4-Bucket Paired Skill Lift & Routing Prem. │ Config │ • Atomic Redis Lua CBFs & LIFO Undo    │
+   │ • Double Ratchet Anchor Calibration Guard    │        │ • Emits RefusalReceipt JSONL Stream    │
+   │ • Optional DRY_RUN PRM & NARROW DPO Export   │        │                                        │
    └──────────────────────────────────────────────┘        └────────────────────────────────────────┘
                           ▲                                                     │
                           └─────────── Asynchronous Receipt Harvest ────────────┘
@@ -51,19 +52,26 @@ Before running any LLM rollout, [`lint_skill_markdown()`](../../src/eval_harness
 
 ---
 
-## 3. Cross-Harness ATIF Normalization & Composable Drawback Calibration
+## 3. Cross-Harness ATIF Normalization, Live Rollout Runner & Drawback Calibration
 
-### 3.1 Agent Trajectory Interchange Format (`ATIFTrajectory`) & Native Adapters
-[`ATIFTrajectory`](../../src/eval_harness/harness.py) and [`ATIFStep`](../../src/eval_harness/harness.py) provide a harness-agnostic representation of multi-turn agent rollouts, including intermediate tool calls, observations, `visible_skills`, and `intermediate_artifacts`. [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) ships native converters:
+### 3.1 Agent Trajectory Interchange Format (`ATIFTrajectory`), Trace Converters & Rollout Runner (`runner.py`)
+[`ATIFTrajectory`](../../src/eval_harness/harness.py) and [`ATIFStep`](../../src/eval_harness/harness.py) provide a harness-agnostic representation of multi-turn agent rollouts, including intermediate tool calls, observations, `visible_skills`, and `intermediate_artifacts`. [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) ships static transcript converters:
 - [`adk_session_to_atif()`](../../src/eval_harness/adapters.py): Normalizes Google ADK session/event payloads (`text`, `function_call`, `function_response`, artifacts) into `ATIFTrajectory`.
 - [`gemini_cli_jsonl_to_atif()`](../../src/eval_harness/adapters.py): Normalizes Gemini CLI / Antigravity JSONL step records into `ATIFTrajectory`.
+
+To generate paired trajectories dynamically without cloud-locked dependencies, [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) provides [`AgentRolloutRunner`](../../src/eval_harness/runner.py) and the [`BaseRolloutAdapter`](../../src/eval_harness/runner.py) hierarchy (resolved via [`load_rollout_adapter()`](../../src/eval_harness/runner.py)):
+- [`CallableRolloutAdapter`](../../src/eval_harness/runner.py): Wraps any sync/async Python callable, LangGraph runnable, or `"module:function"` target.
+- [`ADKSessionRolloutAdapter`](../../src/eval_harness/runner.py): Wraps Google ADK session runners and normalizes event payloads via [`adk_session_to_atif()`](../../src/eval_harness/adapters.py).
+- [`MultiAgentRolloutAdapter`](../../src/eval_harness/runner.py): Wraps hierarchical/sequential coordinator + specialist sub-agent topologies, recording sub-agent delegation edges in `ATIFStep.metadata["sub_agent"]` for unified skill and sub-agent routing evaluation.
+- [`HttpRolloutAdapter`](../../src/eval_harness/runner.py): Invokes remote HTTP/REST/A2A agent endpoints with strict `http://` / `https://` scheme validation.
+- **Tokenomics & Multi-Turn Growth Engine:** [`compute_trajectory_tokenomics()`](../../src/eval_harness/runner.py) and [`compute_cost_savings_multiplier()`](../../src/eval_harness/runner.py) compute [`TrajectoryTokenomics`](../../src/eval_harness/runner.py) (`total_prompt_tokens`, `total_completion_tokens`, `estimated_cost_usd` via [`MODEL_PRICING_CATALOG`](../../src/eval_harness/runner.py), `multi_turn_growth_rate`, and `is_quadratic_bloat`). Super-linear multi-turn prompt token bloat (`growth_rate > 2.5`) is automatically penalized in [`SkillTrajectoryScorecard.skill_efficiency`](../../src/eval_harness/harness.py).
 
 ### 3.2 Composable Drawback Detectors & Fail-Closed Anchor Calibration
 In accordance with Double Ratchet (`arXiv:2607.12790`), [`ComposedDrawbackEvaluator`](../../src/eval_harness/harness.py) evaluates trajectories through a disjunction of typed atomic [`DrawbackDetectorSpec`](../../src/eval_harness/harness.py) functions, each returning [`DrawbackVerdict`](../../src/eval_harness/harness.py) (`DRAWBACK`, `CLEAN`, or `ABSTAIN`). [`build_default_drawback_detectors()`](../../src/eval_harness/harness.py) provides five deterministic detectors:
 1. `trace_security_and_canary_hygiene` (leaked secrets/canaries in responses or `intermediate_artifacts`, unsanitized PII, destructive shell patterns),
 2. `adversarial_claim_spoofing` (confidence and RBAC claim spoofing),
 3. `governor_admissibility` (denies when dry-run `TrajectoryBenchmarkReport.trajectory_cleared` is `False`; abstains when `governor=None`),
-4. `skill_routing_and_negative_control` (false-positive skill activation on `SkillPromptBucket.NEGATIVE_CONTROL`, decoy skill misrouting, or invocation of `forbidden_tools`), and
+4. `skill_routing_and_negative_control` (false-positive skill or sub-agent activation on `SkillPromptBucket.NEGATIVE_CONTROL`, decoy skill misrouting, or invocation of `forbidden_tools`), and
 5. `required_output_contract` (missing `required_output_tokens`).
 
 To prevent **Evaluator Collapse** (graders degenerating into vacuous always-pass or always-fail functions), [`ComposedDrawbackEvaluator.calibrate_on_anchors()`](../../src/eval_harness/harness.py) validates the detector suite against a locked [`AnchorItem`](../../src/eval_harness/harness.py) set, returning [`AnchorCalibrationResult`](../../src/eval_harness/harness.py) and failing closed on class imbalance, any abstention (`ANCHOR_ABSTENTION`), `recall_fail == 0` (`VACUOUS_ALWAYS_PASS_COLLAPSE`), `recall_pass == 0` (`DEGENERATE_ALWAYS_FAIL_COLLAPSE`), or recall-weighted agreement below threshold ($w_{\text{fail}}=2.0, w_{\text{pass}}=1.0$).
@@ -72,21 +80,30 @@ To prevent **Evaluator Collapse** (graders degenerating into vacuous always-pass
 
 ## 4. Paired Differential Skill Lift & Group Routing Premium
 
-[`FoundationModelEvalHarness.evaluate_paired_skill_lift()`](../../src/eval_harness/harness.py) implements paired differential evaluation across the four [`SkillPromptBucket`](../../src/eval_harness/harness.py) categories (`EXPLICIT`, `IMPLICIT`, `CONTEXTUAL`, `NEGATIVE_CONTROL`) defined in [`SkillEvalCase`](../../src/eval_harness/harness.py):
+[`FoundationModelEvalHarness.evaluate_paired_skill_lift()`](../../src/eval_harness/harness.py) (or [`AgentRolloutRunner.run_and_evaluate_skill_lift()`](../../src/eval_harness/runner.py) for live rollouts) implements paired differential evaluation across the four [`SkillPromptBucket`](../../src/eval_harness/harness.py) categories (`EXPLICIT`, `IMPLICIT`, `CONTEXTUAL`, `NEGATIVE_CONTROL`) defined in [`SkillEvalCase`](../../src/eval_harness/harness.py):
 
 $$\Delta S_{\text{composite}} = S_{\text{with\_skill}} - S_{\text{baseline}}, \quad \text{RoutingPremium} = \Delta S_{\text{group}} - \Delta S_{\text{isolation}}$$
 
 Each trajectory is graded into a six-metric [`SkillTrajectoryScorecard`](../../src/eval_harness/harness.py) (`security`, `skill_execution`, `skill_efficiency`, `instruction_following`, `goal_accuracy`, `admissibility_prm`) and aggregated into a [`SkillLiftReport`](../../src/eval_harness/harness.py) with per-case [`PairedCaseLift`](../../src/eval_harness/harness.py) breakdowns.
 
-Partners and CI pipelines can execute the full Stage 0 + Stage 1 + Stage 2 certification gate via [`run_certification_gate()`](../../src/eval_harness/cli.py) or the standalone CLI (`cage-skill-eval` in [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)):
+Partners and CI pipelines can execute the full Stage 0 + Stage 1 + Stage 2 certification gate via [`run_certification_gate()`](../../src/eval_harness/cli.py) or the standalone CLI (`cage-skill-eval` in [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)), either against pre-recorded ATIF trace files or by driving a live rollout adapter (`--adapter`):
 
 ```bash
+# Mode A: Offline certification from pre-recorded ATIF trace files
 uv run cage-skill-eval \
   --skill-md path/to/SKILL.md \
   --evals path/to/evals.json \
   --baseline-traces path/to/baseline.json \
   --skill-traces path/to/with_skill.json \
   --anchors path/to/anchors.json \
+  --json
+
+# Mode B: Dynamic paired rollout & certification via a live rollout adapter
+uv run cage-skill-eval \
+  --skill-md path/to/SKILL.md \
+  --evals path/to/evals.json \
+  --adapter my_package.agent:run_agent \
+  --decoy-skills decoy-skill-a,decoy-skill-b \
   --json
 ```
 
