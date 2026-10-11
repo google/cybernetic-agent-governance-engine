@@ -176,3 +176,15 @@ def test_every_structurally_valid_labelled_bic_is_redacted(
     bic = f"{bank}{country}{location}{branch}"
     assert sanitizer.sanitize(f"SWIFT: {bic}") == f"SWIFT: {REDACTED}"
     assert sanitizer.sanitize_dict({"bic": bic}) == {"bic": REDACTED}
+
+
+def test_repeated_swift_labels_do_not_backtrack_quadratically() -> None:
+    """Issue #405: 'swift ' * n without a trailing BIC must scan in linear time."""
+    import time
+
+    payload = "swift " * 5000
+    t0 = time.perf_counter()
+    result = sanitizer.sanitize(payload)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    assert result == payload
+    assert elapsed_ms < 250.0, f"_BIC_LABELLED took {elapsed_ms:.1f} ms on 30 KB input"

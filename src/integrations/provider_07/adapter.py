@@ -119,16 +119,18 @@ class Provider07NormativeProvider:
         self._allow_step1_unsigned = allow_step1_unsigned
 
         if self._allow_step1_unsigned:
-            cage_env = os.environ.get("CAGE_ENV", "development").lower()
-            if cage_env in ("production", "prod"):
+            from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+            posture = resolve_posture()
+            if is_enforcing():
                 raise RuntimeError(
-                    f"allow_step1_unsigned cannot be enabled in production environments (CAGE_ENV={cage_env!r}). "
+                    f"allow_step1_unsigned cannot be enabled in enforcing environments (posture={posture.value!r}). "
                     "Cryptographic signatures and JWKS resolution are strictly required."
                 )
             logger.warning(
-                "⚠️  Provider 07 allow_step1_unsigned active (CAGE_ENV=%s) — "
+                "⚠️  Provider 07 allow_step1_unsigned active (posture=%s) — "
                 "Step 1 unsigned responses will be accepted for dev/testing only.",
-                cage_env,
+                posture.value,
             )
 
         # JWKS client for out-of-band key resolution

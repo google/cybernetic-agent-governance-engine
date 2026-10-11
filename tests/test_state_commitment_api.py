@@ -162,6 +162,26 @@ class TestEndpointErrors:
         )
         assert response.status_code == 413
 
+    def test_oversized_snapshot_rejected_before_pii_sanitization(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #405: MAX_PREIMAGE_BYTES is checked before PII regex sanitization runs."""
+        from src.gateway.governance.evidence import state_commitment as sc
+
+        called = False
+
+        def _forbid_sanitize(_val: Any) -> Any:
+            nonlocal called
+            called = True
+            raise AssertionError("_sanitize must not run on oversized snapshots")
+
+        monkeypatch.setattr(sc, "_sanitize", _forbid_sanitize)
+        with pytest.raises(
+            StateCommitmentError, match="canonical preimage is .* bytes; limit"
+        ):
+            sc.canonicalize_state({"blob": "x" * (sc.MAX_PREIMAGE_BYTES + 1)})
+        assert called is False
+
 
 class TestGatewayClientCommitState:
     """``GatewayClient.commit_state`` against the real endpoint (ASGI transport)."""

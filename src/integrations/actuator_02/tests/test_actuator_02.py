@@ -482,3 +482,23 @@ class TestSealProfile:
             ).hexdigest()
             != claims["action_hash"]
         )
+
+    def test_ocsf_metadata_exceeding_cap_rejected(self) -> None:
+        """Issue #405: OcsfEventModel caps metadata at MAX_OCSF_METADATA_BYTES (64 KB)."""
+        from pydantic import ValidationError
+
+        from src.integrations.actuator_02.ocsf_ingestor import (
+            MAX_OCSF_METADATA_BYTES,
+            OcsfEventModel,
+        )
+
+        with pytest.raises(ValidationError, match="OCSF metadata is .* bytes; limit"):
+            OcsfEventModel(
+                class_uid=1007,
+                activity_id=1,
+                severity_id=4,
+                sandbox_id="sbx-1",
+                thread_id="thread-1",
+                governance_decision_digest="d" * 64,
+                metadata={"blob": "A" * (MAX_OCSF_METADATA_BYTES + 1)},
+            )

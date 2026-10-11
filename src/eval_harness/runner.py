@@ -234,6 +234,10 @@ def _resolve_symbol(target: str) -> Any:
             f"Target {target!r} must be a qualified 'module:symbol' or 'module.Symbol' path"
         )
     module_path, attr_name = target.rsplit(sep, 1)
+    if not all(part.isidentifier() for part in (*module_path.split("."), attr_name)):
+        raise ValueError(f"Invalid Python module/symbol identifier in {target!r}")
+    # Offline CLI harness symbol loader; dotted identifier segments validated above.
+    # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
     module = importlib.import_module(module_path)
     return getattr(module, attr_name)
 
@@ -578,9 +582,10 @@ class HttpRolloutAdapter(BaseRolloutAdapter):
             headers=req_headers,
             method="POST",
         )
-        # Bandit B310 compliance: scheme is strictly validated to http/https in __init__
+        # Bandit B310 / Semgrep compliance: scheme is strictly validated to http/https in __init__ and here.
         if not self.endpoint_url.startswith(("http://", "https://")):
             raise ValueError("Unsupported URL scheme")
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # nosec B310
             raw_bytes = resp.read()
         payload = json.loads(raw_bytes.decode("utf-8"))

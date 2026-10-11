@@ -36,6 +36,7 @@ from typing import Any
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
+from src.gateway.governance.routing_seal import _strict_json
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,11 @@ def mint_consequence_token_finding(
             raise ValueError("authority_record_id missing from FlowSignal response")
         if not action_payload:
             raise ValueError("action_payload is required")
+
+        # Reject IEEE-754 unsafe integers (|v| > 2^53 - 1) and non-finite floats
+        # before RFC 8785 JCS canonicalization so two distinct large integers
+        # cannot collide on the same action_digest.
+        _strict_json(action_payload, "action_payload")
 
         # Compute action digest: SHA-256 over JCS-canonicalized action_payload
         action_digest = hashlib.sha256(

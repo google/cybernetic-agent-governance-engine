@@ -406,26 +406,38 @@ _refinement_proposals: dict[str, dict[str, Any]] = {}
 
 
 @root_app.post("/v1/nemo/propose-refinement")
-async def propose_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, Any]:
+async def propose_nemo_refinement(
+    request: Request, req: NeMoApplyRefinementRequest
+) -> dict[str, Any]:
     """Stage a NeMo Guardrails refinement proposal for human review."""
+    from src.gateway.server.workload_identity import extract_client_identity
+
+    try:
+        proposer_identity = extract_client_identity(request.scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     proposal_id = str(_uuid.uuid4())
     proposal = {
         "proposal_id": proposal_id,
         "control_id": req.control_id,
         "verdict": req.verdict,
         "source": req.source,
+        "proposer_identity": proposer_identity,
         "staged_at": datetime.now(timezone.utc).isoformat(),
         "status": "staged",
         "reviewer": None,
+        "approver_identity": None,
         "rationale": None,
     }
     _refinement_proposals[proposal_id] = proposal
 
     logger.info(
-        "[NeMo/Refinement] Proposal STAGED: id=%s control_id=%s source=%s",
+        "[NeMo/Refinement] Proposal STAGED: id=%s control_id=%s source=%s proposer=%s",
         proposal_id,
         req.control_id,
         req.source,
+        proposer_identity,
     )
 
     current_span = _otel_trace.get_current_span()
@@ -433,12 +445,14 @@ async def propose_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, 
         current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
         current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
         current_span.set_attribute("ai.refinement.apply.source", req.source)
+        current_span.set_attribute("ai.refinement.proposer_identity", proposer_identity)
         current_span.set_attribute("ai.refinement.status", "staged")
 
     return {
         "status": "staged",
         "proposal_id": proposal_id,
         "control_id": req.control_id,
+        "proposer_identity": proposer_identity,
         "message": (
             "Refinement proposal staged. A risk officer must approve via "
             f"POST /v1/nemo/approve-refinement/{proposal_id}"
@@ -450,8 +464,34 @@ async def propose_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, 
 async def approve_nemo_refinement(
     proposal_id: str,
     req: NeMoApproveRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Approve or reject a staged NeMo refinement proposal and reload gateway NeMo rails."""
+    from src.gateway.server.workload_identity import extract_client_identity
+
+    try:
+        approver_identity = extract_client_identity(request.scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    allowed_approvers_raw = os.environ.get("CAGE_NEMO_APPROVER_IDENTITIES", "").strip()
+    if allowed_approvers_raw:
+        allowed_approvers = {
+            part.strip() for part in allowed_approvers_raw.split(",") if part.strip()
+        }
+        if approver_identity not in allowed_approvers:
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: caller workload identity is not authorized to approve NeMo refinements.",
+            )
+
+    reviewer = req.reviewer.strip() if req.reviewer else ""
+    if not reviewer:
+        raise HTTPException(
+            status_code=400,
+            detail="reviewer is required — provide the risk officer identity approving or rejecting this proposal.",
+        )
+
     if not req.rationale or not req.rationale.strip():
         raise HTTPException(
             status_code=400,
@@ -466,18 +506,35 @@ async def approve_nemo_refinement(
             detail=f"Proposal '{proposal_id}' not found or already processed.",
         )
 
-    proposal["reviewer"] = req.reviewer
-    proposal["rationale"] = req.rationale
+    proposer_identity = proposal.get("proposer_identity")
+    if proposer_identity and approver_identity == proposer_identity:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Separation-of-duties violation: the workload identity that staged "
+                "a NeMo refinement proposal cannot approve or reject its own proposal."
+            ),
+        )
+
+    proposal["reviewer"] = reviewer
+    proposal["approver_identity"] = approver_identity
+    proposal["rationale"] = req.rationale.strip()
     proposal["reviewed_at"] = datetime.now(timezone.utc).isoformat()
 
     if not req.approved:
         proposal["status"] = "rejected"
         logger.info(
-            "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s",
+            "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s approver_identity=%s",
             proposal_id,
-            req.reviewer,
+            reviewer,
+            approver_identity,
         )
-        return {"status": "rejected", "proposal_id": proposal_id}
+        return {
+            "status": "rejected",
+            "proposal_id": proposal_id,
+            "reviewer": reviewer,
+            "approver_identity": approver_identity,
+        }
 
     try:
         from src.gateway.governance.langgraph_harness.nemo_node_factory import (
@@ -492,9 +549,10 @@ async def approve_nemo_refinement(
         mcp_app.state.nemo_rails = new_rails
         proposal["status"] = "applied"
         logger.info(
-            "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s control_id=%s",
+            "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s approver_identity=%s control_id=%s",
             proposal_id,
-            req.reviewer,
+            reviewer,
+            approver_identity,
             proposal["control_id"],
         )
     except Exception as exc:
@@ -509,7 +567,8 @@ async def approve_nemo_refinement(
         "status": "applied",
         "proposal_id": proposal_id,
         "control_id": proposal["control_id"],
-        "reviewer": req.reviewer,
+        "reviewer": reviewer,
+        "approver_identity": approver_identity,
     }
 
 
@@ -521,12 +580,22 @@ async def list_pending_nemo_proposals() -> dict[str, Any]:
 
 
 @root_app.post("/v1/nemo/apply-refinement")
-async def apply_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, Any]:
+async def apply_nemo_refinement(
+    request: Request, req: NeMoApplyRefinementRequest
+) -> dict[str, Any]:
     """Stage a NeMo refinement proposal and return pending_approval."""
+    from src.gateway.server.workload_identity import extract_client_identity
+
+    try:
+        proposer_identity = extract_client_identity(request.scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     logger.info(
-        "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s",
+        "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s proposer=%s",
         req.control_id,
         req.source,
+        proposer_identity,
     )
 
     proposal_id = str(_uuid.uuid4())
@@ -535,9 +604,11 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, An
         "control_id": req.control_id,
         "verdict": req.verdict,
         "source": req.source,
+        "proposer_identity": proposer_identity,
         "staged_at": datetime.now(timezone.utc).isoformat(),
         "status": "staged",
         "reviewer": None,
+        "approver_identity": None,
         "rationale": None,
     }
     _refinement_proposals[proposal_id] = proposal
@@ -546,12 +617,14 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest) -> dict[str, An
     if current_span and current_span.is_recording():
         current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
         current_span.set_attribute("ai.refinement.apply.source", req.source)
+        current_span.set_attribute("ai.refinement.proposer_identity", proposer_identity)
         current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
 
     return {
         "status": "pending_approval",
         "proposal_id": proposal_id,
         "control_id": req.control_id,
+        "proposer_identity": proposer_identity,
         "message": (
             "Refinement proposal staged. A risk officer must "
             f"approve via POST /v1/nemo/approve-refinement/{proposal_id}"

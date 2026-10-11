@@ -21,6 +21,7 @@ records into CAGE's ``EvidenceStreamSink`` bound to ``governance_decision_digest
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -28,6 +29,9 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from src.integrations.actuator_02.constants import ALLOWED_OCSF_CLASS_UIDS
+
+MAX_OCSF_METADATA_BYTES = 64 * 1024
+"""Maximum serialized UTF-8 byte length of ``OcsfEventModel.metadata`` (#405)."""
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(?:secret|token|password|credential|authorization|api_key|private_key)",
@@ -74,6 +78,16 @@ class OcsfEventModel(BaseModel):
         if v not in ALLOWED_OCSF_CLASS_UIDS:
             raise ValueError(
                 f"Unsupported OCSF class_uid={v}; expected one of {sorted(ALLOWED_OCSF_CLASS_UIDS)}"
+            )
+        return v
+
+    @field_validator("metadata")
+    @classmethod
+    def _v_metadata_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        serialized = json.dumps(v, default=str).encode("utf-8")
+        if len(serialized) > MAX_OCSF_METADATA_BYTES:
+            raise ValueError(
+                f"OCSF metadata is {len(serialized)} bytes; limit {MAX_OCSF_METADATA_BYTES}"
             )
         return v
 

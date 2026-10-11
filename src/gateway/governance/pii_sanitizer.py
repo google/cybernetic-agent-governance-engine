@@ -148,9 +148,11 @@ _BIC_END = r"(?![A-Za-z0-9_])"
 
 # "BIC", "SWIFT", "SWIFT/BIC", "SWIFT code", "BIC no.", ... (case-insensitive),
 # then ":", "=", "#" or whitespace, then an upper-case BIC.
+# Label chain and separator runs are length-bounded to guarantee O(n) scanning
+# on repeated label tokens without a trailing BIC (issue #405).
 _BIC_LABELLED = re.compile(
-    r"(?P<label>(?i:\b(?:swift|bic)(?:[ \t/_-]*(?:swift|bic|code|address|id|number|no\.?))*)"
-    r"(?:[ \t]*[:=#][ \t]*|[ \t]+))"
+    r"(?P<label>(?i:\b(?:swift|bic)(?:[ \t/_-]{0,3}(?:swift|bic|code|address|id|number|no\.?)){0,4})"
+    r"(?:[ \t]{0,16}[:=#][ \t]{0,16}|[ \t]{1,16}))"
     rf"(?P<bic>{_BIC_SHAPE}){_BIC_END}"
 )
 _BIC_STANDALONE = re.compile(rf"(?<![A-Za-z0-9_])(?P<bic>{_BIC_SHAPE}){_BIC_END}")

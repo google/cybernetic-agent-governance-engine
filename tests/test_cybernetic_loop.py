@@ -351,6 +351,83 @@ class TestApplyRefinementProposalFlow:
         # Should not raise ValueError if valid UUID
         uuid.UUID(proposal_id)
 
+    def test_approve_refinement_blocks_self_approval_and_allows_distinct_approver(
+        self, monkeypatch
+    ):
+        """Issue #405: proposer workload identity cannot self-approve its own refinement proposal."""
+        from src.gateway.server.workload_identity import (
+            WorkloadIdentityMiddleware,
+            load_identity_policy,
+        )
+
+        approver_id = "compliance-bridge.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+        monkeypatch.setenv(
+            "CAGE_TRUSTED_CLIENT_IDENTITIES", f"{self._TRUSTED_ID},{approver_id}"
+        )
+        import src.gateway.server.hybrid_server as gw_srv
+
+        for mw in gw_srv.root_app.user_middleware:
+            if mw.cls is WorkloadIdentityMiddleware:
+                mw.kwargs["policy"] = load_identity_policy()
+        gw_srv.root_app.middleware_stack = gw_srv.root_app.build_middleware_stack()
+
+        gw_srv._refinement_proposals.clear()
+        tc = TestClient(gw_srv.root_app, raise_server_exceptions=False)
+
+        prop = tc.post(
+            "/v1/nemo/apply-refinement",
+            json={"control_id": "A.5.2", "verdict": "FAIL"},
+            headers={"l5d-client-id": self._TRUSTED_ID},
+        )
+        assert prop.status_code == 200
+        proposal_id = prop.json()["proposal_id"]
+        assert prop.json()["proposer_identity"] == self._TRUSTED_ID
+
+        # Blank reviewer is rejected (400)
+        blank = tc.post(
+            f"/v1/nemo/approve-refinement/{proposal_id}",
+            json={"approved": True, "reviewer": "   ", "rationale": "valid rationale"},
+            headers={"l5d-client-id": approver_id},
+        )
+        assert blank.status_code == 400
+
+        # Self-approval by proposer identity is rejected (403)
+        self_approve = tc.post(
+            f"/v1/nemo/approve-refinement/{proposal_id}",
+            json={
+                "approved": True,
+                "reviewer": "sec-lead@example.com",
+                "rationale": "self approve attempt",
+            },
+            headers={"l5d-client-id": self._TRUSTED_ID},
+        )
+        assert self_approve.status_code == 403
+        assert "Separation-of-duties violation" in self_approve.json()["detail"]
+
+        # Distinct trusted workload identity succeeds (200)
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
+                new=AsyncMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+        ):
+            ok = tc.post(
+                f"/v1/nemo/approve-refinement/{proposal_id}",
+                json={
+                    "approved": True,
+                    "reviewer": "sec-lead@example.com",
+                    "rationale": "approved by risk officer",
+                },
+                headers={"l5d-client-id": approver_id},
+            )
+        assert ok.status_code == 200
+        assert ok.json()["status"] == "applied"
+        assert ok.json()["approver_identity"] == approver_id
+
 
 # ---------------------------------------------------------------------------
 # R-LOOP-6: Cooldown gate — policy flapping prevention

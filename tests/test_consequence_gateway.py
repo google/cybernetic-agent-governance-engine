@@ -653,3 +653,29 @@ async def test_consequence_gateway_fails_closed_when_evidence_chain_unavailable(
     assert result.decision == ConsequenceDecision.BLOCK
     assert result.reason_code == "EVIDENCE_CHAIN_UNAVAILABLE"
     assert "chain head corrupted" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_consequence_gateway_blocks_unsafe_ieee754_integers(
+    gateway: ConsequenceGateway,
+    signer,
+) -> None:
+    """Issue #406: ConsequenceGateway.evaluate rejects action_payloads with integers > 2^53 - 1."""
+    colliding_payload_a = {"action": "transfer", "amount": 9007199254740992}
+    colliding_payload_b = {"action": "transfer", "amount": 9007199254740993}
+    # Even if a token were somehow forged with the raw JCS digest of 2^53, evaluate() blocks both.
+    raw_digest = hashlib.sha256(jcs_canonicalize_plan(colliding_payload_a)).hexdigest()
+    token = ConsequenceToken.mint(
+        sub="actor-123",
+        tid="thread-456",
+        rec="rec-ieee754",
+        act=raw_digest,
+        ver="v1",
+        ttl_seconds=60,
+        signer=signer,
+    )
+
+    res_b = await gateway.evaluate(token=token, action_payload=colliding_payload_b)
+    assert res_b.decision == ConsequenceDecision.BLOCK
+    assert res_b.reason_code == "ACTION_BINDING_MISMATCH"
+    assert "integer outside" in res_b.detail

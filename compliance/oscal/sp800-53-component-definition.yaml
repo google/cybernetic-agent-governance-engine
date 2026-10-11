@@ -131,7 +131,13 @@ component-definition:
                 REQUIRE_APPROVAL verdict is purely advisory: it is dry-run re-verified before
                 surfacing (_reverified_narrow_hint) and re-verified in full by the single
                 committing run (_sealed_narrow with tamper-evident issue_narrow_receipt in
-                src/gateway/governance/narrow_receipt.py inside ReservationScope).
+                src/gateway/governance/narrow_receipt.py inside ReservationScope). Every
+                pipeline run (including Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl())
+                verifies that the action is in governor.claimed_actions
+                (src/gateway/governance/governor/pipeline.py), refusing unclaimed actions with
+                ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]), and assemble_governor()
+                (src/gateway/governance/governor/assembly.py) verifies at startup that every
+                claimed action is registered in the FTRA terminal registry.
               props:
                 - name: implementation-status
                   value: implemented
@@ -532,7 +538,11 @@ component-definition:
 
                 The HMAC-SHA256 seal fallback keyed by GOVERNANCE_SALT
                 (src/gateway/governance/routing_seal.py) is a dev-posture fallback only;
-                enforcing postures refuse it at startup, and it is not evidence for this
+                enforcing postures refuse it at startup via assert_production_posture()
+                (src/gateway/governance/governor/posture.py), which receives kms_signing_mode
+                from KMSGovernanceSigner during bootstrap_governor()
+                (src/gateway/governance/governor/bootstrap.py) and exits 1 unless
+                kms_signing_mode == "strict", and it is not evidence for this
                 control. The former HMAC ingress secret (CAGE_ROUTING_SEAL_SECRET) is
                 retired (POAM-2026-080 closed). The advisor has zero KMS signer bindings
                 and zero seal secrets (POAM-2026-079 closed).

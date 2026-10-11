@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-10T19:54:07Z'
+    last-modified: '2026-10-10T20:57:45Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -867,7 +867,11 @@ system-security-plan:
         > DEFERRABLE; RELIANCE_INELIGIBLE (no eligible warrant for a norm a region
         marks requires_warrant) defers with DeferReason.WARRANT_INELIGIBLE and is
         re-checked under Profile.POST_HITL. No US_FED norm is warranted, so it cannot
-        arise in this region (see system-security-plan-eu-ecb.yaml).
+        arise in this region (see system-security-plan-eu-ecb.yaml). Every pipeline
+        run (including Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl())
+        also verifies that the requested action is in governor.claimed_actions (src/gateway/governance/governor/pipeline.py),
+        refusing any unclaimed action with ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED])
+        before any tier runs or seal is minted.
 
         '
       props:
@@ -1082,9 +1086,20 @@ system-security-plan:
         server-side by TradeInputResolver. The same resolver is registered for execute_trade_bounded,
         and bounding contract B2 compares the drawdown the gateway measured (never
         a caller value) with drawdown.limit (US_FED 5%); an unmeasured drawdown is
-        a HARD refusal (POAM-2026-108 closed). Kubernetes ConfigMaps and Cloud Secret
-        Manager provide the configuration injection mechanism. IaC (Terraform) manages
-        infrastructure configuration in version-controlled HCL.
+        a HARD refusal (POAM-2026-108 closed). Startup posture enforcement (CM-6 /
+        SC-24 / SA-8) is centralized in assert_production_posture() (src/gateway/governance/governor/posture.py),
+        invoked by bootstrap_governor() (src/gateway/governance/governor/bootstrap.py):
+        in enforcing postures (production, staging via is_enforcing()), it validates
+        all seven startup invariant groups (CAGE_DOMAIN=finance, OPA_STRICT_MODE=true,
+        kms_signing_mode=strict passed from KMSGovernanceSigner, EVIDENCE_CHAIN_BLOCKING=true,
+        CBF_ALLOW_STALE_STATE=false, thresholds_meta.fallback_used=False, and GOVERNANCE_SALT
+        set and non-default) and exits 1 with a consolidated violation list if any
+        check fails. assemble_governor() (src/gateway/governance/governor/assembly.py)
+        enforces load-time integrity checks on PluginContribution (non-empty plugin_name,
+        tiers, and claimed_actions; every claimed action registered in FTRA; non-negative
+        tier order; and thresholds_region == jurisdiction.region). Kubernetes ConfigMaps
+        and Cloud Secret Manager provide the configuration injection mechanism. IaC
+        (Terraform) manages infrastructure configuration in version-controlled HCL.
 
         '
       props:
@@ -1327,7 +1342,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-10T19:54:07Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-10T20:57:45Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1371,7 +1386,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-10T19:54:07Z'
+        value: '2026-10-10T20:57:45Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

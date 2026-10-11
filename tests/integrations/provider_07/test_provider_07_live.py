@@ -253,8 +253,11 @@ async def test_live_infer_contract_vectors(
 async def test_live_adapter_step1_unsigned_mode(
     live_credentials: tuple[str, str],
     canonical_vectors: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify Provider07NormativeProvider with allow_step1_unsigned=True against staging."""
+    monkeypatch.setenv("CAGE_ENV", "test")
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
     endpoint, api_key = live_credentials
     adapter = Provider07NormativeProvider(
         endpoint=endpoint,

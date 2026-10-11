@@ -49,6 +49,7 @@ from src.gateway.governance.consequence_token import (
     ConsequenceTokenError,
 )
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.routing_seal import _strict_json
 
 if TYPE_CHECKING:
     from src.gateway.governance.kms_signer import KMSGovernanceSigner
@@ -204,10 +205,29 @@ class ConsequenceGateway:
                 )
             )
 
-        # Steps 3-4: JCS digest re-verification (closes TOCTOU gap)
-        recomputed_digest = hashlib.sha256(
-            jcs_canonicalize_plan(action_payload)
-        ).hexdigest()
+        # Steps 3-4: JCS digest re-verification (closes TOCTOU gap).
+        # Reject IEEE-754 unsafe integers (|v| > 2^53 - 1) and non-finite floats
+        # before RFC 8785 JCS canonicalization so two distinct large integers
+        # cannot collide on the same recomputed_digest.
+        try:
+            _strict_json(action_payload, "action_payload")
+            recomputed_digest = hashlib.sha256(
+                jcs_canonicalize_plan(action_payload)
+            ).hexdigest()
+        except ValueError as exc:
+            logger.warning(
+                "[ConsequenceGateway] ACTION_BINDING_MISMATCH (strict JSON violation) rec=%s: %s",
+                claims.rec,
+                exc,
+            )
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="ACTION_BINDING_MISMATCH",
+                    detail=str(exc),
+                ),
+                claims=claims,
+            )
 
         if recomputed_digest != claims.act:
             logger.warning(

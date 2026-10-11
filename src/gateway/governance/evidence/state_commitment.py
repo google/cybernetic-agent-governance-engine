@@ -142,8 +142,21 @@ def canonicalize_state(
         raise InvalidStateSnapshotError("state snapshot must be a JSON object")
     if not _has_string_keys(snapshot):
         raise InvalidStateSnapshotError("state snapshot keys must all be strings")
-    # Normalize first so tuples become lists the sanitizer can traverse.
-    sanitized = _sanitize(_normalize_for_jcs(dict(snapshot)))
+    # Normalize first so tuples become lists the sanitizer can traverse, and
+    # enforce MAX_PREIMAGE_BYTES before running synchronous regex sanitization
+    # on the event loop (issue #405).
+    normalized = _normalize_for_jcs(dict(snapshot))
+    try:
+        raw_preimage = jcs_canonicalize_plan(normalized)
+    except Exception as exc:
+        raise InvalidStateSnapshotError(
+            f"snapshot is not JCS-canonicalizable: {exc}"
+        ) from exc
+    if len(raw_preimage) > MAX_PREIMAGE_BYTES:
+        raise StateSnapshotTooLargeError(
+            f"canonical preimage is {len(raw_preimage)} bytes; limit {MAX_PREIMAGE_BYTES}"
+        )
+    sanitized = _sanitize(normalized)
     if _sanitize(sanitized) != sanitized:
         raise InvalidStateSnapshotError(
             "PII sanitization is not idempotent on this snapshot; the stored "
