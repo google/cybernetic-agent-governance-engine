@@ -176,3 +176,10 @@ The following patterns are strictly forbidden in production code and will be rej
 
 ## Enforcement
 All prohibited patterns are enforced via static grep checks, pre-commit hooks, CI security jobs, and targeted unit regression suites in `tests/test_*_security.py`.
+
+## Security Research Acknowledgments
+
+The CAGE maintainers thank the following researchers for reporting security and governance boundary observations with reproducible test cases:
+
+- **Daniel Fairbanks (`@danofairanks`)** — Boundary analyses and hardening reports across CAGE's runtime governance, provenance, and offline evaluation planes (`#379`, `#405`, `#406`, `#463`, `#464`, `#465`), including trajectory `NARROW` vs. `ALLOW` metric separation, multi-turn shadow-state tier parity, `RefusalReceipt` `proof_hash` verification and DPO `chosen`-argument sanitization, and offline drawback-detector, `SKILL.md` static-linter, rollout-runner symbol/HTTP bounds, and standalone CLI scoring boundaries.
+

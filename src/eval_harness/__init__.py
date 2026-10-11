@@ -53,6 +53,7 @@ from src.eval_harness.harness import (
     ToolActionStep,
     TrajectoryBenchmarkReport,
     build_default_drawback_detectors,
+    default_shadow_state_reducer,
 )
 from src.eval_harness.runner import (
     MODEL_PRICING_CATALOG,
@@ -71,12 +72,14 @@ from src.eval_harness.runner import (
     load_rollout_adapter,
 )
 from src.eval_harness.static_linter import (
+    DESTRUCTIVE_COMMAND_PATTERN,
     SkillStaticLintReport,
     lint_skill_file,
     lint_skill_markdown,
 )
 
 __all__ = [
+    "DESTRUCTIVE_COMMAND_PATTERN",
     "MODEL_PRICING_CATALOG",
     "ADKSessionRolloutAdapter",
     "ATIFStep",
@@ -112,6 +115,7 @@ __all__ = [
     "build_default_drawback_detectors",
     "compute_cost_savings_multiplier",
     "compute_trajectory_tokenomics",
+    "default_shadow_state_reducer",
     "estimate_token_count",
     "gemini_cli_jsonl_to_atif",
     "lint_skill_file",

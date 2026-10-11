@@ -19,6 +19,7 @@ decoupling the Gateway from the specific application implementations.
 """
 
 import hashlib
+import hmac
 import math
 import time
 from abc import ABC, abstractmethod
@@ -99,56 +100,70 @@ class RefusalReceipt:
     tier_failures: tuple[GovernanceTierFailure, ...] = field(default_factory=tuple)
     reliance: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
+    def compute_proof_hash(self) -> str:
+        """Compute the canonical RFC 8785 JCS SHA-256 hex digest over this receipt's payload."""
+        # NOTE: standing_at_refusal MUST be included in the hashed payload
+        # to ensure the cryptographic proof binds to the actual refused
+        # transaction context (symbol, amount, etc.). Without this, two
+        # RefusalReceipts for the same action/tier/rule/timestamp but
+        # different amounts would produce identical proof_hash values,
+        # breaking the evidentiary chain. (CAGE-SEC-009, plans/unified_implementation_analysis.md:191-193)
+        #
+        # Backward compatibility: Any Decimal values in standing_at_refusal
+        # are serialized via JCS canonicalization (RFC 8785), which
+        # converts Python Decimal to JSON number representation. Receipts
+        # generated after this fix will have different proof_hash values
+        # than hypothetical receipts from an implementation that excluded
+        # standing_at_refusal — this is the intended behavior.
+        payload: dict[str, Any] = {
+            "thread_id": self.thread_id,
+            "action": self.action,
+            "violated_tier": self.violated_tier,
+            "violated_rule": self.violated_rule,
+            "standing_at_refusal": self.standing_at_refusal,
+            "timestamp": self.timestamp,
+        }
+        # Schema v2: include 5-part proof chain fields in the hash
+        # when populated, ensuring the cryptographic binding covers
+        # the full causal chain.
+        if self.schema_version != "v1":
+            payload["schema_version"] = self.schema_version
+            payload["attempted_params"] = self.attempted_params
+            payload["standing_snapshot"] = self.standing_snapshot
+            payload["control_id"] = self.control_id
+            payload["protected_consequence"] = self.protected_consequence
+            payload["non_formation_proof"] = self.non_formation_proof
+            # Serialize tier_failures for hashing
+            payload["tier_failures"] = [
+                {
+                    "tier": tf.tier,
+                    "control_id": tf.control_id,
+                    "rule_description": tf.rule_description,
+                    "governing_state": tf.governing_state,
+                    "protected_consequence": tf.protected_consequence,
+                }
+                for tf in self.tier_failures
+            ]
+        if self.reliance:
+            payload["reliance"] = [dict(record) for record in self.reliance]
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+        canon = jcs_canonicalize_plan(payload)
+        return hashlib.sha256(canon).hexdigest()
+
+    def verify_proof_hash(self) -> bool:
+        """Return True iff ``self.proof_hash`` matches the canonical JCS SHA-256 digest of this receipt."""
+        if not isinstance(self.proof_hash, str) or len(self.proof_hash) != 64:
+            return False
+        try:
+            expected = self.compute_proof_hash()
+        except Exception:
+            return False
+        return hmac.compare_digest(self.proof_hash, expected)
+
     def __post_init__(self) -> None:
         if not self.proof_hash:
-            # NOTE: standing_at_refusal MUST be included in the hashed payload
-            # to ensure the cryptographic proof binds to the actual refused
-            # transaction context (symbol, amount, etc.). Without this, two
-            # RefusalReceipts for the same action/tier/rule/timestamp but
-            # different amounts would produce identical proof_hash values,
-            # breaking the evidentiary chain. (CAGE-SEC-009, plans/unified_implementation_analysis.md:191-193)
-            #
-            # Backward compatibility: Any Decimal values in standing_at_refusal
-            # are serialized via JCS canonicalization (RFC 8785), which
-            # converts Python Decimal to JSON number representation. Receipts
-            # generated after this fix will have different proof_hash values
-            # than hypothetical receipts from an implementation that excluded
-            # standing_at_refusal — this is the intended behavior.
-            payload: dict[str, Any] = {
-                "thread_id": self.thread_id,
-                "action": self.action,
-                "violated_tier": self.violated_tier,
-                "violated_rule": self.violated_rule,
-                "standing_at_refusal": self.standing_at_refusal,
-                "timestamp": self.timestamp,
-            }
-            # Schema v2: include 5-part proof chain fields in the hash
-            # when populated, ensuring the cryptographic binding covers
-            # the full causal chain.
-            if self.schema_version != "v1":
-                payload["schema_version"] = self.schema_version
-                payload["attempted_params"] = self.attempted_params
-                payload["standing_snapshot"] = self.standing_snapshot
-                payload["control_id"] = self.control_id
-                payload["protected_consequence"] = self.protected_consequence
-                payload["non_formation_proof"] = self.non_formation_proof
-                # Serialize tier_failures for hashing
-                payload["tier_failures"] = [
-                    {
-                        "tier": tf.tier,
-                        "control_id": tf.control_id,
-                        "rule_description": tf.rule_description,
-                        "governing_state": tf.governing_state,
-                        "protected_consequence": tf.protected_consequence,
-                    }
-                    for tf in self.tier_failures
-                ]
-            if self.reliance:
-                payload["reliance"] = [dict(record) for record in self.reliance]
-            from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-
-            canon = jcs_canonicalize_plan(payload)
-            object.__setattr__(self, "proof_hash", hashlib.sha256(canon).hexdigest())
+            object.__setattr__(self, "proof_hash", self.compute_proof_hash())
 
 
 # ---------------------------------------------------------------------------

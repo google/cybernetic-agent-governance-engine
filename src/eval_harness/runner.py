@@ -226,17 +226,78 @@ class RolloutWorkspaceContext:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def _resolve_symbol(target: str) -> Any:
-    """Dynamically import ``module.path:attr`` or ``module.path.Attr``."""
+_FORBIDDEN_ROLLOUT_MODULES: frozenset[str] = frozenset(
+    {
+        "builtins",
+        "code",
+        "commands",
+        "ctypes",
+        "importlib",
+        "marshal",
+        "multiprocessing",
+        "nt",
+        "os",
+        "pickle",
+        "popen2",
+        "posix",
+        "pty",
+        "runpy",
+        "shutil",
+        "socket",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "webbrowser",
+    }
+)
+
+DEFAULT_MAX_HTTP_RESPONSE_BYTES: int = 10 * 1024 * 1024
+
+
+def _resolve_symbol(
+    target: str,
+    *,
+    allowed_module_prefixes: Sequence[str] | None = None,
+) -> Any:
+    """Dynamically import ``module.path:attr`` or ``module.path.Attr``.
+
+    Identifier validation prevents syntax/attribute traversal, and
+    ``_FORBIDDEN_ROLLOUT_MODULES`` blocks direct invocation of dangerous stdlib
+    execution primitives (e.g. ``os:system``, ``subprocess:Popen``). Callers
+    loading adapters in multi-tenant environments can further restrict imports
+    via ``allowed_module_prefixes``. Note that importing any Python module
+    executes its top-level statements; only trusted adapter modules should be
+    loaded.
+    """
     sep = ":" if ":" in target else "."
     if sep not in target:
         raise ValueError(
             f"Target {target!r} must be a qualified 'module:symbol' or 'module.Symbol' path"
         )
     module_path, attr_name = target.rsplit(sep, 1)
-    if not all(part.isidentifier() for part in (*module_path.split("."), attr_name)):
+    parts = module_path.split(".")
+    if not all(part.isidentifier() for part in (*parts, attr_name)):
         raise ValueError(f"Invalid Python module/symbol identifier in {target!r}")
-    # Offline CLI harness symbol loader; dotted identifier segments validated above.
+    root_module = parts[0]
+    if (
+        root_module in _FORBIDDEN_ROLLOUT_MODULES
+        or module_path in _FORBIDDEN_ROLLOUT_MODULES
+    ):
+        raise ValueError(
+            f"Module {module_path!r} in target {target!r} is forbidden as a rollout adapter"
+        )
+    if allowed_module_prefixes is not None:
+        normalized_prefixes = tuple(
+            p.strip(".") for p in allowed_module_prefixes if p and p.strip(".")
+        )
+        if not any(
+            module_path == prefix or module_path.startswith(f"{prefix}.")
+            for prefix in normalized_prefixes
+        ):
+            raise ValueError(
+                f"Module {module_path!r} is outside allowed_module_prefixes {list(normalized_prefixes)!r}"
+            )
+    # Offline CLI harness symbol loader; identifier segments and module denylist/allowlist checked above.
     # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
     module = importlib.import_module(module_path)
     return getattr(module, attr_name)
@@ -547,6 +608,7 @@ class HttpRolloutAdapter(BaseRolloutAdapter):
         *,
         headers: Mapping[str, str] | None = None,
         timeout_seconds: float = 30.0,
+        max_response_bytes: int = DEFAULT_MAX_HTTP_RESPONSE_BYTES,
         model_id: str = "gemini-3.5-flash",
     ) -> None:
         super().__init__(harness_id="http-agent", model_id=model_id)
@@ -555,9 +617,12 @@ class HttpRolloutAdapter(BaseRolloutAdapter):
             raise ValueError(
                 f"HttpRolloutAdapter requires an explicit http:// or https:// URL; got {endpoint_url!r}"
             )
+        if max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be a positive integer")
         self.endpoint_url = endpoint_url
         self.headers = dict(headers or {})
         self.timeout_seconds = timeout_seconds
+        self.max_response_bytes = int(max_response_bytes)
 
     async def rollout(
         self,
@@ -587,7 +652,11 @@ class HttpRolloutAdapter(BaseRolloutAdapter):
             raise ValueError("Unsupported URL scheme")
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # nosec B310
-            raw_bytes = resp.read()
+            raw_bytes = resp.read(self.max_response_bytes + 1)
+        if len(raw_bytes) > self.max_response_bytes:
+            raise ValueError(
+                f"HttpRolloutAdapter response exceeded max_response_bytes ({self.max_response_bytes} bytes)"
+            )
         payload = json.loads(raw_bytes.decode("utf-8"))
         return _normalize_raw_output_to_atif(
             payload,
@@ -602,6 +671,8 @@ class HttpRolloutAdapter(BaseRolloutAdapter):
 def load_rollout_adapter(
     adapter_spec: str,
     config: Mapping[str, Any] | None = None,
+    *,
+    allowed_module_prefixes: Sequence[str] | None = None,
 ) -> BaseRolloutAdapter:
     """Instantiate a :class:`BaseRolloutAdapter` from a dot/colon path and optional config.
 
@@ -610,7 +681,15 @@ def load_rollout_adapter(
     it is automatically wrapped in :class:`CallableRolloutAdapter`.
     """
     cfg = dict(config or {})
-    symbol = _resolve_symbol(adapter_spec)
+    effective_prefixes = (
+        allowed_module_prefixes
+        if allowed_module_prefixes is not None
+        else cfg.pop("allowed_module_prefixes", None)
+    )
+    symbol = _resolve_symbol(
+        adapter_spec,
+        allowed_module_prefixes=effective_prefixes,
+    )
     if isinstance(symbol, type) and issubclass(symbol, BaseRolloutAdapter):
         return symbol(**cfg)
     if callable(symbol):

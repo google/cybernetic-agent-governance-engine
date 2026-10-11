@@ -39,13 +39,33 @@ from src.gateway.governance.confidence_claim_detector import (
 from src.gateway.governance.pii_sanitizer import PIISanitizer
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
-_SECRET_OR_INJECTION_RE = re.compile(
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
+_FENCED_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
+_PROHIBITION_LINE_RE = re.compile(
+    r"\b(?:never|do\s+not|don't|must\s+not|shall\s+not|cannot|avoid|forbid(?:den)?|prohibit(?:ed)?)\b",
+    re.IGNORECASE,
+)
+_SECRET_CANARY_RE = re.compile(
     r"(?:nvapi-[A-Za-z0-9_-]{8,}|sk-lf-[A-Za-z0-9_-]{8,}|pk-lf-[A-Za-z0-9_-]{8,}"
-    r"|hf_[A-Za-z0-9]{10,}|CANARY_SECRET_[A-Za-z0-9_-]+"
-    r"|ignore\s+all\s+previous\s+instructions"
-    r"|bypass\s+governance"
-    r"|\brm\s+-[rRf]{1,3}\b"
-    r"|\bcurl\b[^|;\n]*\|\s*(?:ba)?sh\b)",
+    r"|hf_[A-Za-z0-9]{10,}|CANARY_SECRET_[A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+_PROMPT_INJECTION_RE = re.compile(
+    r"(?:ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions"
+    r"|disregard\s+(?:all\s+)?(?:previous|prior|above)\s+instructions"
+    r"|(?:bypass|skip|disable|ignore)\s+governance(?:\s+checks?)?"
+    r"|approve\s+without\s+review)",
+    re.IGNORECASE,
+)
+DESTRUCTIVE_COMMAND_PATTERN = re.compile(
+    r"(?:\brm\s+(?:-[rRf]{1,3}\b|(?:--(?:recursive|force)\b\s*)+)"
+    r"|\bfind\b[^\n;]*\s-delete\b"
+    r"|\bshutil\.rmtree\s*\("
+    r"|\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b"
+    r"|\b(?:curl|wget)\b[^|;\n]*\|\s*(?:(?:ba|z)?sh|python[23]?)\b"
+    r"|\bgit\s+push\b[^\n;]*\s(?:--force(?:-with-lease)?|-f)\b"
+    r"|\bmkfs(?:\.[a-z0-9]+)?\b"
+    r"|\bdd\b[^\n;]*\bof=/dev/)",
     re.IGNORECASE,
 )
 _TRIGGER_KEYWORDS = (
@@ -75,6 +95,40 @@ _SCOPE_BOUNDARY_KEYWORDS = (
     "forbidden",
     "must not",
 )
+
+
+def _find_unsafe_directive_in_markdown(content: str, body: str) -> str | None:
+    """Return the matched secret, injection, or non-prohibited destructive command, if any.
+
+    Secrets, canaries, and prompt-injection directives are unconditionally
+    rejected across the entire file (including HTML comments). Destructive
+    shell/SQL/filesystem patterns are always rejected inside fenced code blocks,
+    and rejected in prose lines unless the line is an explicit negative/restraint
+    warning (e.g. ``Never run `rm -rf` on user data.``).
+    """
+    sec_match = _SECRET_CANARY_RE.search(content)
+    if sec_match is not None:
+        return sec_match.group(0)
+    inj_match = _PROMPT_INJECTION_RE.search(content)
+    if inj_match is not None:
+        return inj_match.group(0)
+
+    # 1. Fenced code blocks: destructive commands are never allowed in executable examples.
+    for block in _FENCED_CODE_BLOCK_RE.findall(body):
+        cmd_match = DESTRUCTIVE_COMMAND_PATTERN.search(block)
+        if cmd_match is not None:
+            return cmd_match.group(0)
+
+    # 2. Outside fenced code blocks (including frontmatter and HTML comments):
+    #    allow explicit prohibition sentences ("Never run `rm -rf`...") while
+    #    rejecting imperative or unguarded occurrences.
+    non_fenced = _FENCED_CODE_BLOCK_RE.sub("", content)
+    for line in non_fenced.splitlines():
+        cmd_match = DESTRUCTIVE_COMMAND_PATTERN.search(line)
+        if cmd_match is not None and not _PROHIBITION_LINE_RE.search(line):
+            return cmd_match.group(0)
+
+    return None
 
 
 @dataclass(frozen=True)
@@ -129,15 +183,20 @@ def lint_skill_markdown(
     """
     violations: list[str] = []
     meta, body = _parse_frontmatter(content)
-    lower_all = content.lower()
-    words = re.findall(r"\S+", body)
+    # Strip HTML comments before evaluating positive rubric dimensions so hidden
+    # comments cannot game keyword checks, while security checks still inspect
+    # the raw `content` (including comments).
+    visible_body = _HTML_COMMENT_RE.sub(" ", body)
+    desc_lower = meta.get("description", "").lower()
+    lower_visible = f"{desc_lower}\n{visible_body.lower()}"
+    words = re.findall(r"\S+", visible_body)
     word_count = len(words)
 
     # 1. Structural Integrity (YAML frontmatter + name + description + headings)
     has_frontmatter = bool(meta)
     has_name = bool(meta.get("name"))
     has_desc = bool(meta.get("description")) and len(meta.get("description", "")) >= 15
-    headings = re.findall(r"^#{1,3}\s+.+$", body, flags=re.MULTILINE)
+    headings = re.findall(r"^#{1,3}\s+.+$", visible_body, flags=re.MULTILINE)
     has_sections = len(headings) >= 2
 
     if not has_frontmatter:
@@ -159,12 +218,11 @@ def lint_skill_markdown(
     )
 
     # 2. Routing Trigger Clarity (positive activation condition + negative boundary)
-    desc_lower = meta.get("description", "").lower()
     has_positive_trigger = any(
-        k in desc_lower or k in lower_all for k in _TRIGGER_KEYWORDS
+        k in desc_lower or k in lower_visible for k in _TRIGGER_KEYWORDS
     )
     has_negative_trigger = any(
-        neg in lower_all
+        neg in lower_visible
         for neg in (
             "do not use",
             "when not to use",
@@ -181,9 +239,9 @@ def lint_skill_markdown(
     )
 
     # 3. Actionability & Parameter Specificity (numbered workflow steps + code/CLI examples)
-    numbered_steps = re.findall(r"^\s*\d+\.\s+.+$", body, flags=re.MULTILINE)
-    code_blocks = re.findall(r"```[\s\S]*?```", body)
-    inline_code = re.findall(r"`[^`\n]+`", body)
+    numbered_steps = re.findall(r"^\s*\d+\.\s+.+$", visible_body, flags=re.MULTILINE)
+    code_blocks = _FENCED_CODE_BLOCK_RE.findall(visible_body)
+    inline_code = re.findall(r"`[^`\n]+`", visible_body)
     has_workflow_order = len(numbered_steps) >= 2
     has_concrete_examples = len(code_blocks) >= 1 or len(inline_code) >= 3
     if not has_workflow_order:
@@ -200,31 +258,31 @@ def lint_skill_markdown(
     has_tool_refs = bool(
         re.search(
             r"(?:scripts/|\.py\b|\.sh\b|--[a-z0-9_-]+|input|output|arguments|parameters)",
-            body,
+            visible_body,
             re.IGNORECASE,
         )
     )
     tool_cohesiveness = 1.0 if has_tool_refs else 0.3
 
     # 5. Robustness & Error Recovery (fallback/error handling instructions)
-    recovery_hits = sum(1 for kw in _RECOVERY_KEYWORDS if kw in lower_all)
+    recovery_hits = sum(1 for kw in _RECOVERY_KEYWORDS if kw in lower_visible)
     if recovery_hits == 0:
         violations.append("missing_error_recovery_or_fallback_guidance")
     robustness_recovery = min(1.0, round(recovery_hits / 2.0, 4))
 
     # 6. Safety & Scope Restraint (zero secrets/PII/spoofing + explicit scope boundaries)
     sanitizer = PIISanitizer()
-    sec_match = _SECRET_OR_INJECTION_RE.search(content)
+    unsafe_directive = _find_unsafe_directive_in_markdown(content, body)
     pii_clean = sanitizer.sanitize(content) == content
     conf_spoof = detect_confidence_claim(content).detected
     auth_spoof = detect_authorization_claim(content).detected
 
     security_clean = (
-        sec_match is None and pii_clean and not conf_spoof and not auth_spoof
+        unsafe_directive is None and pii_clean and not conf_spoof and not auth_spoof
     )
-    if sec_match is not None:
+    if unsafe_directive is not None:
         violations.append(
-            f"embedded_secret_or_unsafe_directive:{sec_match.group(0)[:20]}"
+            f"embedded_secret_or_unsafe_directive:{unsafe_directive[:20]}"
         )
     if not pii_clean:
         violations.append("embedded_pii_in_skill_markdown")
@@ -233,7 +291,7 @@ def lint_skill_markdown(
     if auth_spoof:
         violations.append("embedded_authorization_spoofing_directive")
 
-    has_scope_restraint = any(kw in lower_all for kw in _SCOPE_BOUNDARY_KEYWORDS)
+    has_scope_restraint = any(kw in lower_visible for kw in _SCOPE_BOUNDARY_KEYWORDS)
     if not security_clean:
         safety_restraint = 0.0
     else:

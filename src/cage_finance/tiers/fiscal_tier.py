@@ -71,7 +71,44 @@ class FiscalTierPlugin(MutatingTier):
 
         amount = self._cost(action, params)
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
-        shadow_spend = params.get("_shadow_daily_spend_usd")
+        raw_headroom = (
+            params.get("remaining_headroom")
+            if "remaining_headroom" in params
+            else params.get("autonomous_headroom_usd")
+        )
+        has_valid_headroom = (
+            raw_headroom is not None
+            and not isinstance(raw_headroom, bool)
+            and isinstance(raw_headroom, (int, float))
+            and math.isfinite(float(raw_headroom))
+        )
+        if has_valid_headroom:
+            rem = float(raw_headroom)
+            if rem <= 0.0 or amount > rem:
+                clamped_rem = max(0.0, rem)
+                return [
+                    Violation(
+                        tier=self.tier_name,
+                        code="FISCAL_LIMIT_EXCEEDED",
+                        message=(
+                            f"Daily fiscal limit exceeded for {agent_id} "
+                            f"(amount {amount:.2f} > remaining headroom {rem:.2f}). "
+                            "Fiscal Limit Pre-Reservation REJECTED"
+                        ),
+                        kind=(
+                            ViolationKind.HARD
+                            if clamped_rem <= 0.0
+                            else ViolationKind.NARROWABLE
+                        ),
+                        bound=coerce_bound(clamped_rem),
+                    )
+                ]
+
+        shadow_spend = (
+            params.get("_shadow_daily_spend_usd")
+            if "_shadow_daily_spend_usd" in params
+            else params.get("cumulative_notional")
+        )
         if (
             shadow_spend is not None
             and not isinstance(shadow_spend, bool)
@@ -92,10 +129,16 @@ class FiscalTierPlugin(MutatingTier):
                         f"(shadow spend {float(shadow_spend):.2f} + {amount:.2f} > {cap_usd:.2f}). "
                         "Fiscal Limit Pre-Reservation REJECTED"
                     ),
-                    kind=ViolationKind.NARROWABLE,
+                    kind=(
+                        ViolationKind.HARD
+                        if headroom <= 0.0
+                        else ViolationKind.NARROWABLE
+                    ),
                     bound=coerce_bound(headroom),
                 )
             ]
+        if has_valid_headroom:
+            return []
         if await self.guard.would_accept(amount_usd=amount):
             return []
         return [await self._limit_violation(agent_id)]

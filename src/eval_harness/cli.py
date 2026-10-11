@@ -34,13 +34,14 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.eval_harness.harness import (
     AnchorCalibrationResult,
     AnchorItem,
     ATIFTrajectory,
     FoundationModelEvalHarness,
+    ShadowStateReducer,
     SkillEvalCase,
     SkillLiftReport,
     SkillPromptBucket,
@@ -52,9 +53,13 @@ from src.eval_harness.runner import (
 )
 from src.eval_harness.static_linter import SkillStaticLintReport, lint_skill_file
 
+if TYPE_CHECKING:
+    from src.gateway.governance.governor import SymbolicGovernor
+
 
 def _parse_eval_case(raw: Mapping[str, Any]) -> SkillEvalCase:
     bucket_str = str(raw.get("bucket", "explicit")).lower()
+    raw_shadow = raw.get("initial_shadow_state")
     return SkillEvalCase(
         case_id=str(raw["case_id"]),
         bucket=SkillPromptBucket(bucket_str),
@@ -75,6 +80,9 @@ def _parse_eval_case(raw: Mapping[str, Any]) -> SkillEvalCase:
             str(tok) for tok in (raw.get("required_output_tokens") or ())
         ),
         expected_behaviors=tuple(str(b) for b in (raw.get("expected_behaviors") or ())),
+        initial_shadow_state=(
+            dict(raw_shadow) if isinstance(raw_shadow, Mapping) else {}
+        ),
     )
 
 
@@ -119,6 +127,8 @@ async def run_certification_gate(
     min_static_score: float = 0.70,
     min_composite_lift: float = 0.0,
     model_id: str = "gemini-3.5-flash",
+    governor: SymbolicGovernor | None = None,
+    state_reducer: ShadowStateReducer | None = None,
 ) -> tuple[
     bool,
     SkillStaticLintReport,
@@ -126,7 +136,15 @@ async def run_certification_gate(
     SkillLiftReport | None,
     tuple[str, ...],
 ]:
-    """Run the offline 3P Skill Certification Gate and return `(certified, ...)`."""
+    """Run the offline 3P Skill Certification Gate and return `(certified, ...)`.
+
+    By default ``governor=None`` runs completely standalone over static lint,
+    anchor calibration, and trace-level ACES metrics (with ``governor_evaluated=False``
+    so no vacuous governor score is averaged into ``goal_accuracy``). Callers
+    wishing to enforce ``SymbolicGovernor`` step-level admissibility during
+    Stage 2 can pass ``governor=<SymbolicGovernor>`` (and an optional
+    ``state_reducer``).
+    """
     failures: list[str] = []
 
     # Stage 0: Static SKILL.md Lint
@@ -136,7 +154,7 @@ async def run_certification_gate(
             f"stage0_static_lint_failed(score={static_report.length_adjusted_score},violations={list(static_report.violations)})"
         )
 
-    harness = FoundationModelEvalHarness(governor=None)
+    harness = FoundationModelEvalHarness(governor=governor)
     anchor_result: AnchorCalibrationResult | None = None
     lift_report: SkillLiftReport | None = None
 
@@ -184,6 +202,7 @@ async def run_certification_gate(
                 skill_name=static_report.skill_name,
                 skill_md_path=skill_md_path,
                 decoy_skills=decoy_skills,
+                state_reducer=state_reducer,
             )
         elif baseline_traces_path is not None and with_skill_traces_path is not None:
             base_map = _load_trajectories_map(baseline_traces_path)
@@ -194,6 +213,7 @@ async def run_certification_gate(
                 cases=cases,
                 baseline_trajectories=base_map,
                 with_skill_trajectories=skill_map,
+                state_reducer=state_reducer,
             )
 
         if lift_report is not None:

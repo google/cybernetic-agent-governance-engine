@@ -46,7 +46,7 @@ Before running any LLM rollout, [`lint_skill_markdown()`](../../src/eval_harness
 3. **Actionability & Parameter Specificity (`actionability`):** Requires ordered workflow steps (`1.`, `2.`) and concrete code blocks or CLI parameter flags.
 4. **Tool Cohesiveness (`tool_cohesiveness`):** Verifies explicit references to helper scripts (`scripts/*.py`), tool arguments, or input/output schemas.
 5. **Robustness & Error Recovery (`robustness_recovery`):** Checks for explicit fallback, retry, or fail-closed abort instructions when a tool call fails.
-6. **Safety & Scope Restraint (`safety_restraint`):** Scans for leaked secrets/canaries, embedded PII via [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py), confidence-spoofing directives ([`detect_confidence_claim`](../../src/gateway/governance/confidence_claim_detector.py)), and RBAC authorization claims ([`detect_authorization_claim`](../../src/gateway/governance/authorization_claim_detector.py)).
+6. **Safety & Scope Restraint (`safety_restraint`):** Scans for leaked secrets/canaries, embedded PII via [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py), confidence-spoofing directives ([`detect_confidence_claim`](../../src/gateway/governance/confidence_claim_detector.py)), RBAC authorization claims ([`detect_authorization_claim`](../../src/gateway/governance/authorization_claim_detector.py)), prompt-injection/governance-bypass phrases (`_PROMPT_INJECTION_RE`), and destructive shell/SQL/disk commands ([`DESTRUCTIVE_COMMAND_PATTERN`](../../src/eval_harness/static_linter.py)). Destructive commands inside fenced code blocks are always flagged, whereas explicit prohibition/restraint prose outside code blocks (e.g., *"Never run `rm -rf` on user data"*) is exempted so safety guidance is not penalized. HTML comments (`<!-- ... -->`) are stripped prior to scoring positive rubric keywords while still being scanned for secrets and injections.
 
 **Length-Bias Orthogonalization (`information_density_multiplier`):** To prevent verbose markdown dumps from inflating rubric scores, documents exceeding `optimal_max_words` (default `1800`) without proportional structural density receive a decaying multiplier (`length_adjusted_score = raw_mean_score * information_density_multiplier`), recorded on [`SkillStaticLintReport`](../../src/eval_harness/static_linter.py).
 
@@ -60,19 +60,21 @@ Before running any LLM rollout, [`lint_skill_markdown()`](../../src/eval_harness
 - [`gemini_cli_jsonl_to_atif()`](../../src/eval_harness/adapters.py): Normalizes Gemini CLI / Antigravity JSONL step records into `ATIFTrajectory`.
 
 To generate paired trajectories dynamically without cloud-locked dependencies, [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) provides [`AgentRolloutRunner`](../../src/eval_harness/runner.py) and the [`BaseRolloutAdapter`](../../src/eval_harness/runner.py) hierarchy (resolved via [`load_rollout_adapter()`](../../src/eval_harness/runner.py)):
-- [`CallableRolloutAdapter`](../../src/eval_harness/runner.py): Wraps any sync/async Python callable, LangGraph runnable, or `"module:function"` target.
+- [`CallableRolloutAdapter`](../../src/eval_harness/runner.py): Wraps any sync/async Python callable, LangGraph runnable, or `"module:function"` target. Dynamic symbol resolution (`_resolve_symbol`) validates Python identifiers, blocks dangerous stdlib execution modules (`_FORBIDDEN_ROLLOUT_MODULES`, such as `os:system` or `subprocess:Popen`), and supports optional `allowed_module_prefixes` on [`load_rollout_adapter()`](../../src/eval_harness/runner.py). Because importing a Python module executes its top-level statements, only trusted adapter modules should be loaded.
 - [`ADKSessionRolloutAdapter`](../../src/eval_harness/runner.py): Wraps Google ADK session runners and normalizes event payloads via [`adk_session_to_atif()`](../../src/eval_harness/adapters.py).
 - [`MultiAgentRolloutAdapter`](../../src/eval_harness/runner.py): Wraps hierarchical/sequential coordinator + specialist sub-agent topologies, recording sub-agent delegation edges in `ATIFStep.metadata["sub_agent"]` for unified skill and sub-agent routing evaluation.
-- [`HttpRolloutAdapter`](../../src/eval_harness/runner.py): Invokes remote HTTP/REST/A2A agent endpoints with strict `http://` / `https://` scheme validation.
-- **Tokenomics & Multi-Turn Growth Engine:** [`compute_trajectory_tokenomics()`](../../src/eval_harness/runner.py) and [`compute_cost_savings_multiplier()`](../../src/eval_harness/runner.py) compute [`TrajectoryTokenomics`](../../src/eval_harness/runner.py) (`total_prompt_tokens`, `total_completion_tokens`, `estimated_cost_usd` via [`MODEL_PRICING_CATALOG`](../../src/eval_harness/runner.py), `multi_turn_growth_rate`, and `is_quadratic_bloat`). Super-linear multi-turn prompt token bloat (`growth_rate > 2.5`) is automatically penalized in [`SkillTrajectoryScorecard.skill_efficiency`](../../src/eval_harness/harness.py).
+- [`HttpRolloutAdapter`](../../src/eval_harness/runner.py): Invokes remote HTTP/REST/A2A agent endpoints with strict `http://` / `https://` scheme validation and a bounded response reader (`max_response_bytes`, default `10 MiB`).
+- **Tokenomics & Multi-Turn Growth Engine:** [`compute_trajectory_tokenomics()`](../../src/eval_harness/runner.py) and [`compute_cost_savings_multiplier()`](../../src/eval_harness/runner.py) compute [`TrajectoryTokenomics`](../../src/eval_harness/runner.py) (`total_prompt_tokens`, `total_completion_tokens`, `estimated_cost_usd` via [`MODEL_PRICING_CATALOG`](../../src/eval_harness/runner.py), `multi_turn_growth_rate`, and `is_quadratic_bloat`). Super-linear multi-turn prompt token bloat (`growth_rate > 2.5`) is automatically penalized in [`SkillTrajectoryScorecard.skill_efficiency`](../../src/eval_harness/harness.py). Note that `ATIFTrajectory` step records and `metadata["prompt_tokens"]` are treated as trusted harness-recorded telemetry rather than untrusted agent-authored claims.
 
 ### 3.2 Composable Drawback Detectors & Fail-Closed Anchor Calibration
 In accordance with Double Ratchet (`arXiv:2607.12790`), [`ComposedDrawbackEvaluator`](../../src/eval_harness/harness.py) evaluates trajectories through a disjunction of typed atomic [`DrawbackDetectorSpec`](../../src/eval_harness/harness.py) functions, each returning [`DrawbackVerdict`](../../src/eval_harness/harness.py) (`DRAWBACK`, `CLEAN`, or `ABSTAIN`). [`build_default_drawback_detectors()`](../../src/eval_harness/harness.py) provides five deterministic detectors:
-1. `trace_security_and_canary_hygiene` (leaked secrets/canaries in responses or `intermediate_artifacts`, unsanitized PII, destructive shell patterns),
+1. `trace_security_and_canary_hygiene` (leaked secrets/canaries in responses or `intermediate_artifacts`, unsanitized PII across `final_response`, `intermediate_artifacts`, `ATIFStep.message`, and `ATIFStep.tool_calls` arguments with optional `check_observation_pii=True`, and destructive shell/SQL/Python/disk patterns via [`DESTRUCTIVE_COMMAND_PATTERN`](../../src/eval_harness/static_linter.py)),
 2. `adversarial_claim_spoofing` (confidence and RBAC claim spoofing),
 3. `governor_admissibility` (denies when dry-run `TrajectoryBenchmarkReport.trajectory_cleared` is `False`; abstains when `governor=None`),
-4. `skill_routing_and_negative_control` (false-positive skill or sub-agent activation on `SkillPromptBucket.NEGATIVE_CONTROL`, decoy skill misrouting, or invocation of `forbidden_tools`), and
-5. `required_output_contract` (missing `required_output_tokens`).
+4. `skill_routing_and_negative_control` (false-positive skill or sub-agent activation on `SkillPromptBucket.NEGATIVE_CONTROL`, decoy skill misrouting across file-read tools `view_file`/`read_file`/`Read`/`open_file`/`cat_file`, shell `cat`/`head`/`less` commands, case-insensitive `skill.md`, and POSIX/Windows path separators, or invocation of `forbidden_tools`), and
+5. `required_output_contract` (missing or negated `required_output_tokens`, verified via `_token_present_affirmatively()` so negated substrings such as `"NOT OK"` do not satisfy `"OK"`).
+
+Similarly, `_score_instruction_following()` requires corroborating tool-call or observation evidence when zero tool calls were executed in the trajectory or when an `expected_behaviors` item names a script or tool identifier.
 
 To prevent **Evaluator Collapse** (graders degenerating into vacuous always-pass or always-fail functions), [`ComposedDrawbackEvaluator.calibrate_on_anchors()`](../../src/eval_harness/harness.py) validates the detector suite against a locked [`AnchorItem`](../../src/eval_harness/harness.py) set, returning [`AnchorCalibrationResult`](../../src/eval_harness/harness.py) and failing closed on class imbalance, any abstention (`ANCHOR_ABSTENTION`), `recall_fail == 0` (`VACUOUS_ALWAYS_PASS_COLLAPSE`), `recall_pass == 0` (`DEGENERATE_ALWAYS_FAIL_COLLAPSE`), or recall-weighted agreement below threshold ($w_{\text{fail}}=2.0, w_{\text{pass}}=1.0$).
 
@@ -84,9 +86,9 @@ To prevent **Evaluator Collapse** (graders degenerating into vacuous always-pass
 
 $$\Delta S_{\text{composite}} = S_{\text{with\_skill}} - S_{\text{baseline}}, \quad \text{RoutingPremium} = \Delta S_{\text{group}} - \Delta S_{\text{isolation}}$$
 
-Each trajectory is graded into a six-metric [`SkillTrajectoryScorecard`](../../src/eval_harness/harness.py) (`security`, `skill_execution`, `skill_efficiency`, `instruction_following`, `goal_accuracy`, `admissibility_prm`) and aggregated into a [`SkillLiftReport`](../../src/eval_harness/harness.py) with per-case [`PairedCaseLift`](../../src/eval_harness/harness.py) breakdowns.
+Each trajectory is graded into a [`SkillTrajectoryScorecard`](../../src/eval_harness/harness.py) (`security`, `skill_execution`, `skill_efficiency`, `instruction_following`, `goal_accuracy`, `admissibility_prm`, and `governor_evaluated`) and aggregated into a [`SkillLiftReport`](../../src/eval_harness/harness.py) with per-case [`PairedCaseLift`](../../src/eval_harness/harness.py) breakdowns. When `governor=None`, `governor_evaluated` is `False` and `goal_accuracy`, `outcome_score`, and `composite_score` are computed over the **five active trace-only dimensions** without averaging a vacuous `1.0` governor term into the score. When `governor` is provided, all six dimensions are active.
 
-Partners and CI pipelines can execute the full Stage 0 + Stage 1 + Stage 2 certification gate via [`run_certification_gate()`](../../src/eval_harness/cli.py) or the standalone CLI (`cage-skill-eval` in [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)), either against pre-recorded ATIF trace files or by driving a live rollout adapter (`--adapter`):
+Partners and CI pipelines can execute the full Stage 0 + Stage 1 + Stage 2 certification gate via [`run_certification_gate()`](../../src/eval_harness/cli.py) (which accepts an optional `governor` and `state_reducer`) or the standalone CLI (`cage-skill-eval` in [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)), either against pre-recorded ATIF trace files or by driving a live rollout adapter (`--adapter`):
 
 ```bash
 # Mode A: Offline certification from pre-recorded ATIF trace files
@@ -111,7 +113,7 @@ uv run cage-skill-eval \
 
 ## 5. Mathematical Formulation for Dry-Run PRM & Counterfactual DPO (`governor != None`)
 
-### 5.1 Deterministic Process Reward Model (PRM / RLVR)
+### 5.1 Deterministic Process Reward Model (PRM / RLVR) & Shadow State Isolation
 
 When initialized with a [`SymbolicGovernor`](../../src/gateway/governance/governor/governor.py), `FoundationModelEvalHarness.evaluate_trajectory()` evaluates each intermediate step $t \in \{1 \dots T\}$ via `SymbolicGovernor.validate_action()` under `Profile.DRY_RUN` against the discrete-time Control Barrier Function condition:
 
@@ -127,11 +129,18 @@ and maps the canonical five-state [`GovernanceDecision`](../../src/gateway/gover
 | `DEFER` | Context starvation (`ViolationKind.DEFERRABLE`) | $-0.5$ | Epistemic uncertainty signal |
 | `DENY` | Hard invariant violation (`ViolationKind.HARD`) | $-1.0$ | Hard negative exemplar ($y_l$) |
 
+**Distinguishing Unmodified `ALLOW` vs. Clamped `NARROW` Steps:** [`TrajectoryBenchmarkReport`](../../src/eval_harness/harness.py) reports both admissible totals (`passed_steps`, `step_pass_rate`, `trajectory_cleared`) and unmodified-only metrics (`allow_steps`, `narrowed_steps`, `unmodified_pass_rate`, `strict_trajectory_cleared`). Passing `strict_narrow=True` to `evaluate_trajectory()` requires every step to clear as an unmodified `ALLOW` ($r_t = +1.0$) for `passed_steps` and `trajectory_cleared`.
+
+**Multi-Turn Shadow State (`default_shadow_state_reducer`):** When `initial_shadow_state` is provided to `evaluate_trajectory()` and `state_reducer=None`, [`default_shadow_state_reducer()`](../../src/eval_harness/harness.py) automatically deducts step costs (`amount`, `notional_usd`, `cost_usd`) from `_shadow_cash_balance_usd`, `remaining_headroom`, and `autonomous_headroom_usd` and accumulates spend into `_shadow_daily_spend_usd` and `cumulative_notional`. Both [`CBFTierPlugin`](../../src/cage_finance/tiers/cbf_tier.py) and [`FiscalTierPlugin`](../../src/cage_finance/tiers/fiscal_tier.py) honor all of these shadow keys during `Profile.DRY_RUN` without mutating live Redis state.
+
 ### 5.2 Counterfactual DPO Synthesis & Runtime Receipt Harvesting
 
 When a tool call $y_l = (a_t, u_t)$ triggers a narrowable constraint (`ViolationKind.NARROWABLE`), CAGE's [`NarrowerRegistry`](../../src/gateway/governance/narrower.py) computes the clamped parameter vector $u_t^* = \Pi_{\mathcal{C}}(u_t)$ and re-verifies under `Profile.DRY_RUN` that $y_w = (a_t, u_t^*)$ yields zero violations, producing a [`DPOPreferenceTriplet`](../../src/eval_harness/harness.py) from a **single rollout**:
 
 $$\tau_{\text{DPO}} = \bigl(x, \; s_t, \; y_w = (a_t, \Pi_{\mathcal{C}}(u_t)), \; y_l = (a_t, u_t)\bigr)$$
 
-Similarly, `FoundationModelEvalHarness.harvest_refusal_receipts()` replays production [`RefusalReceipt`](../../src/gateway/governance/contracts.py) records offline and exports PII-scrubbed JSONL datasets via `export_hf_trl_jsonl(sanitize_pii=True)`.
+Similarly, `FoundationModelEvalHarness.harvest_refusal_receipts()` replays production [`RefusalReceipt`](../../src/gateway/governance/contracts.py) records offline and exports PII-scrubbed JSONL datasets via `export_hf_trl_jsonl(sanitize_pii=True)`:
+- **Cryptographic Integrity Check (`verify_receipt_hash=True`):** Verifies each receipt's RFC 8785 JCS SHA-256 `proof_hash` via [`RefusalReceipt.verify_proof_hash()`](../../src/gateway/governance/contracts.py) before replay, failing closed (`ValueError`) on tampered or forged receipts.
+- **Chosen-Target Argument Sanitization:** Strips prompt-injection, policy-override, claim-spoofing, and destructive command strings (as well as any keys outside optional `allowed_param_keys`) from `chosen["arguments"]` while retaining the raw `attempted_params` in `rejected["arguments"]`.
+- **Standing Context Isolation:** Supports `trusted_standing_override` and `trust_receipt_standing=False` so untrusted caller-supplied `standing_snapshot` fields cannot steer the synthetic DPO prompt context.
 
