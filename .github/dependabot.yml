@@ -33,3 +33,5 @@ updates:
       - "ci"
     commit-message:
       prefix: "chore(ci)"
+    cooldown:
+      default-days: 7

@@ -118,7 +118,7 @@ jobs:
             --output pip-audit-compliance-bridge.json || true
 
       - name: Upload pip-audit results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: pip-audit-results
@@ -171,7 +171,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         if: always()
         continue-on-error: true # Fixed: Code scanning not enabled on this private repo
         with:
@@ -188,7 +188,7 @@ jobs:
           output: "sbom-${{ strategy.job-index }}.cdx.json"
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: sbom-${{ strategy.job-index }}
@@ -300,7 +300,7 @@ jobs:
             || echo "::warning::Syft dir scan encountered issues — check SBOM output"
 
       - name: Upload SBOM artifacts (90-day retention — POAM-006 evidence)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: sbom-${{ github.sha }}
@@ -387,7 +387,7 @@ jobs:
           wc -l dependency-snapshot.txt
 
       - name: Upload dependency snapshot artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: dependency-snapshot
