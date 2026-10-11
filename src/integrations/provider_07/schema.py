@@ -182,3 +182,25 @@ class InferThetaBaselineResponse(BaseModel):
     rules: list[NormativeRule]
     baseline_hash: str
     issued_at: int
+
+
+# ============================================================================
+# Evidence Chain Request/Response Models
+# ============================================================================
+
+
+class InferThetaEvidenceResponse(BaseModel):
+    """
+    Evidence seal receipt returned by the provider's audit trail endpoint.
+
+    Maps to: POST /evidence-chain/{thread_id} (response)
+
+    Attributes:
+        thread_id: Echoed LangGraph thread/conversation identifier
+        seal_hash: Content-addressed SHA-256 seal digest persisted by the provider
+        timestamp: Seal issuance timestamp (ISO-8601 UTC string or UNIX epoch float/int)
+    """
+
+    thread_id: str = Field(min_length=1)
+    seal_hash: str = Field(min_length=1)
+    timestamp: float | int | str

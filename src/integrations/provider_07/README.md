@@ -4,7 +4,7 @@
 **Inference Model**: Junction Tree / Belief Propagation  
 **Regulatory Scope**: SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27  
 **Architecture Layer**: Layer 3 (Integrations & Rails)  
-**Phase**: Step 2 Complete — Cryptographic Hardening & Live Staging Verified  
+**Phase**: Step 3 Complete — Cryptographic Hardening, Evidence Chain & Baseline Versioning Verified  
 
 ---
 
@@ -166,10 +166,21 @@ def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
 
 **Response**: [`InferThetaBaselineResponse`](schema.py)
 
-**Key Fields**:
-- **Output**: `region`, `rules` (normative thresholds), `baseline_hash` (SHA-256), `issued_at` (UNIX timestamp)
+**Key Fields & Regional Semantics**:
+- **Output**: `region`, `rules` (normative thresholds), content-addressed `baseline_hash` (`sha256:...` aligned with HTTP `ETag`), `issued_at` (UNIX timestamp)
+- **Regional Coverage**: `US_FED` is populated and versioned. `EU_ECB` and `APAC_MAS` are reserved identifiers that return `HTTP 404` (`BASELINE_NOT_POPULATED`) so the adapter fails closed rather than silently reusing the `US_FED` ruleset.
+
+### Evidence Chain Endpoint: `POST /evidence-chain/{thread_id}`
+
+**Response**: [`InferThetaEvidenceResponse`](schema.py)
+
+**Key Fields & Idempotency**:
+- **Input**: `{"evidence_hash": "sha256:..."}` authenticated via `Authorization: Bearer <api_key>`
+- **Output**: `thread_id`, persisted `seal_hash` (64-char SHA-256 hex), `timestamp` (ISO-8601 UTC string or UNIX epoch)
+- **Idempotency**: Replaying the same `(thread_id, evidence_hash)` returns the identical `seal_hash` and original `timestamp`.
 
 ---
+
 
 ## Cryptographic Verification Workflow
 
@@ -262,10 +273,11 @@ Expected utility scores guide **counterfactual recommendations**:
 
 ### Live External Tests (`pytest.mark.live_external + pytest.mark.partner_integration`)
 - Real InferTheta staging environment (`https://infertheta-cage-staging.onrender.com`)
-- Out-of-band JWKS key resolution (`GET /.well-known/jwks.json`, active `kid = "infertheta-provider07-2026-01"`)
-- Live baseline fetch (`GET /baseline/{region}`)
+- Out-of-band JWKS key resolution (`GET /.well-known/jwks.json`, active `kid = "infertheta-provider07-2026-01"`, multi-key rotation with 24h overlap)
+- Live baseline fetch (`GET /baseline/US_FED` with content-addressed `baseline_hash` + HTTP `ETag`, plus fail-closed verification for reserved `EU_ECB` / `APAC_MAS` regions)
 - Signed canonical test vector validation (`POST /infer` with RFC 8785 JCS + Ed25519 unpadded `base64url` signatures and minted `infertheta-ar-*` authority records)
 - Full enforcing adapter validation (`Provider07NormativeProvider.validate_fria`)
+- Live evidence-chain persistence, idempotent `(thread_id, evidence_hash)` replay, and Bearer auth enforcement (`POST /evidence-chain/{thread_id}`)
 - Live suite located in [`tests/integrations/provider_07/test_provider_07_live.py`](../../../tests/integrations/provider_07/test_provider_07_live.py)
 
 ---
@@ -301,5 +313,7 @@ src/integrations/provider_07/
 - ✅ Step 1 Wire Contract: Confirmed & validated against live staging
 - ✅ Step 1 Dedicated Suitability Graph: Calibrated & deployed on Render
 - ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`) verified live against staging
+- ✅ Step 3 Production-Readiness Increment: `POST /evidence-chain/{thread_id}` (persisted & idempotent), content-addressed `US_FED` `baseline_hash` + HTTP `ETag`, fail-closed reserved regions (`EU_ECB`, `APAC_MAS`), and 24h overlap multi-key JWKS rotation verified live against staging
+
 
 

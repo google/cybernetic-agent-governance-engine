@@ -44,6 +44,7 @@ import hashlib
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -58,12 +59,25 @@ from src.gateway.governance.seams.normative import (
 from .jwks_client import Provider07JwksClient
 from .schema import (
     InferThetaBaselineResponse,
+    InferThetaEvidenceResponse,
     InferThetaInferenceRequest,
     InferThetaInferenceResponse,
 )
 from .signature import verify_inference_signature
 
 logger = logging.getLogger("cage.provider_07.adapter")
+
+
+def _parse_evidence_timestamp(ts: float | int | str) -> float:
+    """Convert a UNIX epoch number or ISO-8601 UTC string to float seconds."""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return float(ts)
+    if isinstance(ts, str):
+        normalized = ts.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        return datetime.fromisoformat(normalized).timestamp()
+    raise ValueError(f"Unsupported evidence timestamp type: {type(ts).__name__}")
 
 
 class NormativeProviderError(Exception):
@@ -530,11 +544,11 @@ class Provider07NormativeProvider:
             Content-Type: application/json
             Body: {"evidence_hash": "sha256..."}
 
-        Response:
+        Response (InferThetaEvidenceResponse):
             {
                 "thread_id": "...",
-                "seal_status": "RECORDED",
-                "timestamp": 1234567890
+                "seal_hash": "8a767c98...",
+                "timestamp": "2026-10-11T17:46:10.883Z" | 1234567890.5
             }
 
         Args:
@@ -542,10 +556,10 @@ class Provider07NormativeProvider:
             evidence_hash: SHA-256 hash of governance evidence
 
         Returns:
-            EvidenceSeal with seal status, or error on failure
+            EvidenceSeal with seal_hash and sealed_at, or error on failure
 
         Note:
-            Never raises exceptions. HTTP/network errors are captured
+            Never raises exceptions. HTTP/network/schema errors are captured
             in EvidenceSeal.error field (fail-closed).
         """
         url = f"{self._endpoint}/evidence-chain/{thread_id}"
@@ -563,16 +577,21 @@ class Provider07NormativeProvider:
                 response.raise_for_status()
                 data = response.json()
 
-            # Extract seal status and timestamp
-            seal_hash = data.get("seal_hash", "")
-            sealed_at = float(data.get("timestamp", time.time()))
+            evidence_response = InferThetaEvidenceResponse(**data)
+            if evidence_response.thread_id != thread_id:
+                raise ValueError(
+                    f"Evidence seal thread_id mismatch: expected={thread_id!r} got={evidence_response.thread_id!r}"
+                )
+            sealed_at = _parse_evidence_timestamp(evidence_response.timestamp)
 
             logger.info(
-                "provider_07: Evidence seal recorded for thread_id=%s", thread_id
+                "provider_07: Evidence seal recorded for thread_id=%s seal_hash=%s",
+                thread_id,
+                evidence_response.seal_hash,
             )
             return EvidenceSeal(
                 thread_id=thread_id,
-                seal_hash=seal_hash,
+                seal_hash=evidence_response.seal_hash,
                 sealed_at=sealed_at,
             )
 

@@ -582,7 +582,7 @@ class TestEvidenceSubmission:
         self,
         adapter: Provider07NormativeProvider,
     ) -> None:
-        """submit_evidence returns EvidenceSeal with seal_hash."""
+        """submit_evidence returns EvidenceSeal with seal_hash for numeric UNIX timestamp."""
         mock_response = _mock_http_response(
             {
                 "thread_id": "thread-123",
@@ -601,7 +601,81 @@ class TestEvidenceSubmission:
         assert isinstance(result, EvidenceSeal)
         assert result.thread_id == "thread-123"
         assert result.seal_hash == "sha256-seal-abc"
+        assert result.sealed_at == pytest.approx(1234567890.5)
         assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_submit_evidence_iso8601_timestamp_and_idempotent_replay(
+        self,
+        adapter: Provider07NormativeProvider,
+    ) -> None:
+        """submit_evidence parses Step 3 ISO-8601 UTC timestamp and preserves idempotent replay semantics."""
+        mock_response = _mock_http_response(
+            {
+                "thread_id": "cage-step3-test-54f91ac9",
+                "seal_hash": "8a767c9834e3b67fa357da1ba7faae50eb71a60b2f9ff104e4420817e128b24f",
+                "timestamp": "2026-10-11T17:46:10.883Z",
+            }
+        )
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            seal_1 = await adapter.submit_evidence(
+                "cage-step3-test-54f91ac9",
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+            seal_2 = await adapter.submit_evidence(
+                "cage-step3-test-54f91ac9",
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+
+        assert seal_1.error is None
+        assert (
+            seal_1.seal_hash
+            == "8a767c9834e3b67fa357da1ba7faae50eb71a60b2f9ff104e4420817e128b24f"
+        )
+        assert seal_1.sealed_at == pytest.approx(1791740770.883)
+        assert seal_2.error is None
+        assert seal_2.seal_hash == seal_1.seal_hash
+        assert seal_2.sealed_at == seal_1.sealed_at
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_payload",
+        [
+            {"thread_id": "thread-123", "seal_hash": "", "timestamp": 1234567890},
+            {
+                "thread_id": "wrong-thread",
+                "seal_hash": "abc123",
+                "timestamp": "2026-10-11T17:46:10.883Z",
+            },
+            {
+                "thread_id": "thread-123",
+                "seal_hash": "abc123",
+                "timestamp": "not-a-timestamp",
+            },
+        ],
+    )
+    async def test_submit_evidence_malformed_response_fails_closed(
+        self,
+        adapter: Provider07NormativeProvider,
+        bad_payload: dict[str, Any],
+    ) -> None:
+        """submit_evidence fails closed (empty seal_hash + error populated) on empty seal_hash, mismatched thread_id, or invalid timestamp."""
+        mock_response = _mock_http_response(bad_payload)
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.submit_evidence("thread-123", "evidence-hash-xyz")
+
+        assert result.seal_hash == ""
+        assert result.error is not None
 
 
 # ---------------------------------------------------------------------------

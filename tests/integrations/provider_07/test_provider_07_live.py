@@ -26,6 +26,7 @@ Markers:
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Any
 
 import httpx
@@ -33,6 +34,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from src.gateway.governance.seams.normative import (
+    EvidenceSeal,
     NormativeBaseline,
     ValidationResult,
 )
@@ -40,6 +42,7 @@ from src.integrations.provider_07.adapter import Provider07NormativeProvider
 from src.integrations.provider_07.jwks_client import Provider07JwksClient
 from src.integrations.provider_07.schema import (
     InferThetaBaselineResponse,
+    InferThetaEvidenceResponse,
     InferThetaInferenceRequest,
     InferThetaInferenceResponse,
 )
@@ -186,19 +189,53 @@ def canonical_vectors() -> list[dict[str, Any]]:
 
 @pytest.mark.asyncio
 async def test_live_fetch_baseline(
+    live_credentials: tuple[str, str],
     live_adapter: Provider07NormativeProvider,
 ) -> None:
-    """Verify live baseline retrieval from staging endpoint."""
+    """Verify live US_FED baseline retrieval, stable content-addressed baseline_hash, and HTTP ETag alignment."""
+    endpoint, api_key = live_credentials
     region = "US_FED"
-    baseline = await live_adapter.fetch_baseline(region)
+    baseline_1 = await live_adapter.fetch_baseline(region)
+    baseline_2 = await live_adapter.fetch_baseline(region)
 
+    assert isinstance(baseline_1, NormativeBaseline)
+    assert baseline_1.region == region
+    assert baseline_1.is_valid, f"Baseline fetch failed: {baseline_1.error}"
+    assert baseline_1.profile, "Baseline profile should not be empty"
+    assert "rules" in baseline_1.profile
+    assert len(baseline_1.profile["rules"]) >= 4
+    assert baseline_1.etag.startswith("sha256:")
+    # Content-addressed baseline_hash must be stable across fetches
+    assert baseline_1.etag == baseline_2.etag
+    assert (
+        baseline_1.profile["baseline_hash"]
+        == "sha256:ca507cf6a254b49d54c025be8989af5a534ca9be0a787764d59a59bb154fe62c"
+    )
+
+    # Verify HTTP ETag header aligns with body baseline_hash
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{endpoint.rstrip('/')}/baseline/{region}", headers=headers
+        )
+        assert resp.status_code == 200
+        http_etag = resp.headers.get("etag", "")
+        assert baseline_1.etag in http_etag
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserved_region", ["EU_ECB", "APAC_MAS"])
+async def test_live_fetch_baseline_reserved_regions_fail_closed(
+    live_adapter: Provider07NormativeProvider,
+    reserved_region: str,
+) -> None:
+    """Verify reserved but unpopulated regional baselines (EU_ECB, APAC_MAS) fail closed rather than reusing US_FED."""
+    baseline = await live_adapter.fetch_baseline(reserved_region)
     assert isinstance(baseline, NormativeBaseline)
-    assert baseline.region == region
-    assert baseline.error is None, f"Baseline fetch failed: {baseline.error}"
-    assert baseline.profile, "Baseline profile should not be empty"
-    assert "rules" in baseline.profile
-    assert len(baseline.profile["rules"]) >= 1
-    assert baseline.etag.startswith("sha256:")
+    assert baseline.region == reserved_region
+    assert not baseline.is_valid
+    assert baseline.error is not None
+    assert "404" in baseline.error
 
 
 @pytest.mark.asyncio
@@ -317,3 +354,44 @@ async def test_live_adapter_step2_enforcing_validation(
             assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
             assert result.findings[0]["needs_human_review"] is True
             assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.257988)
+
+
+@pytest.mark.asyncio
+async def test_live_submit_evidence(
+    live_credentials: tuple[str, str],
+    live_adapter: Provider07NormativeProvider,
+) -> None:
+    """Verify Step 3 POST /evidence-chain/{thread_id} persistence, idempotent replay, and Bearer auth enforcement."""
+    endpoint, _ = live_credentials
+    thread_id = f"cage-live-evidence-{uuid.uuid4().hex[:12]}"
+    evidence_hash = (
+        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+    # 1. Initial evidence submission succeeds and returns persisted seal
+    seal_1 = await live_adapter.submit_evidence(thread_id, evidence_hash)
+    assert isinstance(seal_1, EvidenceSeal)
+    assert seal_1.error is None, f"Evidence seal failed: {seal_1.error}"
+    assert seal_1.thread_id == thread_id
+    assert len(seal_1.seal_hash) == 64
+    assert seal_1.sealed_at > 0
+
+    # 2. Idempotent replay of the same (thread_id, evidence_hash) returns identical seal_hash and timestamp
+    seal_2 = await live_adapter.submit_evidence(thread_id, evidence_hash)
+    assert seal_2.error is None
+    assert seal_2.thread_id == thread_id
+    assert seal_2.seal_hash == seal_1.seal_hash
+    assert seal_2.sealed_at == pytest.approx(seal_1.sealed_at, abs=1e-6)
+
+    # 3. Unauthenticated submission fails closed (HTTP 401)
+    unauthenticated_adapter = Provider07NormativeProvider(
+        endpoint=endpoint,
+        api_key="",
+        timeout_seconds=10.0,
+    )
+    unauth_seal = await unauthenticated_adapter.submit_evidence(
+        thread_id, evidence_hash
+    )
+    assert unauth_seal.seal_hash == ""
+    assert unauth_seal.error is not None
+    assert "401" in unauth_seal.error

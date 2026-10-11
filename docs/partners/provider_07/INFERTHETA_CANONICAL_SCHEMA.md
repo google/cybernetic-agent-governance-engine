@@ -1,7 +1,7 @@
 # InferTheta Canonical Wire Contract & Normative Seam Specification
 
 **Audience**: Integration engineers, compliance auditors, security architects  
-**Status**: Step 2 Validated (Staging Live) — Cryptographic Hardening Complete  
+**Status**: Step 3 Validated (Staging Live) — Cryptographic Hardening, Evidence Chain & Baseline Versioning Complete  
 **Last Updated**: 2026-10-11  
 **Adapter Package**: [`src/integrations/provider_07/`](../../src/integrations/provider_07/)
 
@@ -188,15 +188,50 @@ Retrieves the **normative ruleset** and configuration for a specific regulatory 
 ```
 
 **Field Definitions**:
-- `region` (string): Geographic/regulatory region identifier (e.g., `us-east-1`, `eu-central-1`)
+- `region` (string): Geographic/regulatory region identifier (e.g., `US_FED`, `EU_ECB`, `APAC_MAS`)
 - `rules` (array): Normative rule definitions
   - `rule_id` (string): Canonical regulatory citation or internal rule code
   - `description` (string): Human-readable obligation summary
   - `threshold` (float): Minimum posterior probability or compliance score (0.0–1.0)
-- `baseline_hash` (string): SHA-256 digest of the rule content for tamper detection
+- `baseline_hash` (string): Content-addressed SHA-256 digest of the canonical ruleset, aligned with the HTTP `ETag` header (`W/"sha256:..."`). A `baseline_hash` change represents a normative version change that triggers re-evaluation before admitting new actions.
 - `issued_at` (int): UNIX timestamp of baseline generation
 
+**Regional Coverage & Fail-Closed Semantics**:
+- `US_FED`: Populated and content-addressed (`baseline_hash = "sha256:ca507cf6a254b49d54c025be8989af5a534ca9be0a787764d59a59bb154fe62c"`).
+- `EU_ECB` and `APAC_MAS`: Reserved identifiers that return `HTTP 404` (`{"ok": false, "error": "BASELINE_NOT_POPULATED"}`) until distinct regional baselines are authored, ensuring CAGE fails closed rather than reusing the `US_FED` ruleset across jurisdictions.
+
 ---
+
+### 2.3 Evidence Chain Endpoint: `POST /evidence-chain/{thread_id}`
+
+Persists a tamper-evident governance evidence digest into the provider's audit trail with idempotent replay semantics.
+
+**Request**:
+```http
+POST /evidence-chain/{thread_id}
+Authorization: Bearer <PROVIDER_07_API_KEY>
+Content-Type: application/json
+
+{
+  "evidence_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
+```
+
+**Response Schema** (`InferThetaEvidenceResponse`):
+```json
+{
+  "thread_id": "cage-step3-test-54f91ac9",
+  "seal_hash": "8a767c9834e3b67fa357da1ba7faae50eb71a60b2f9ff104e4420817e128b24f",
+  "timestamp": "2026-10-11T17:46:10.883Z"
+}
+```
+
+**Idempotency & Auth Invariants**:
+- Authenticated via `Authorization: Bearer <PROVIDER_07_API_KEY>` (returns `HTTP 401` if omitted or invalid).
+- Replaying the same `(thread_id, evidence_hash)` tuple is strictly idempotent and returns the identical `seal_hash` and original `timestamp`.
+
+---
+
 
 ## 3. Cryptographic Verification Scheme
 
@@ -352,4 +387,6 @@ Expected utility scores guide **counterfactual recommendations**:
 
 ---
 
-**Document Status**: ✅ Step 2 Complete — Wire Contract, Dedicated Graph, Out-of-Band JWKS (`kid = "infertheta-provider07-2026-01"`), RFC 8785 JCS + Ed25519 Signatures & Minted `authority_record_id` Verified Live Against Staging  
+**Document Status**: ✅ Step 3 Complete — Wire Contract, Dedicated Graph, Out-of-Band JWKS (`kid = "infertheta-provider07-2026-01"`, 24h Rotation Overlap), RFC 8785 JCS + Ed25519 Signatures, Minted `authority_record_id`, Content-Addressed `US_FED` Baseline & Idempotent `POST /evidence-chain/{thread_id}` Verified Live Against Staging  
+**Next Phase**: Production Cutover — Provisioning dedicated production endpoint (`PROVIDER_07_ENDPOINT`), production JWKS (`PROVIDER_07_JWKS_URL`), production Ed25519 signing key, and Bearer credential handoff for GKE manifests
+  
