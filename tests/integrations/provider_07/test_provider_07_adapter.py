@@ -1257,3 +1257,244 @@ class TestInferThetaPartnerContractVectors:
             assert k2 is not None
             assert k2.public_bytes_raw() == pub2.public_bytes_raw()
             assert client_instance.get.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Partner Step 2 Cryptographic Interoperability Vectors (Staging Locked)
+# ---------------------------------------------------------------------------
+
+STEP2_STAGING_JWKS: dict[str, Any] = {
+    "keys": [
+        {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "use": "sig",
+            "alg": "EdDSA",
+            "kid": "infertheta-provider07-2026-01",
+            "x": "8aE-8iy-y7UE1HCSpzebJHvNwup0s_GZpPAqmNlF_qc",
+        }
+    ]
+}
+
+
+@pytest.fixture
+def step2_signed_partner_vectors(
+    partner_contract_vectors: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deterministic Step 2 signed responses captured from InferTheta staging."""
+    by_id = {v["id"]: v["request"] for v in partner_contract_vectors}
+    return [
+        {
+            "id": "allow",
+            "request": by_id["allow"],
+            "jcs_sha256": "164926b8667fd1b16d277221de67b0b5d61c68c7be4e22b9f9d9bb398041599f",
+            "response": {
+                "decision": "ALLOW",
+                "confidence_score": 0.905865,
+                "posterior_risk_score": 0.094135,
+                "marginal_probabilities": {
+                    "drawdown_gt_15pct": 0.098859,
+                    "volatility_spike": 0.113137,
+                    "liquidity_stress": 0.053821,
+                },
+                "utility_rankings": [
+                    {"action": "rebalance_to_proposed", "expected_utility": 1},
+                    {"action": "defer_to_human", "expected_utility": 0.652098},
+                    {"action": "reject_trade", "expected_utility": 0.26286},
+                ],
+                "authority_record_id": "infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a",
+                "kid": "infertheta-provider07-2026-01",
+                "signature": "scFj4-EbLOUXPb-fDXs27OCiAdexov7KbyeTs5K9Ut7XYVgHVqH44UVfry4qqw65XEk2kl33kh4G8D57vrxICA",
+                "findings": [
+                    {
+                        "rule_id": "FINRA-2111-CUSTOMER-SPECIFIC",
+                        "status": "COMPLIANT",
+                        "evidence": "Best EU is rebalance_to_proposed and risk 0.094 < 0.20.",
+                    },
+                    {
+                        "rule_id": "SEC-REGBI-BEST-INTEREST",
+                        "status": "COMPLIANT",
+                        "evidence": "posterior_risk_score 0.094 = 0.5*0.099 + 0.3*0.113 + 0.2*0.054. Best EU=rebalance_to_proposed. Staging demo — not regulated advice.",
+                    },
+                ],
+            },
+        },
+        {
+            "id": "refuse",
+            "request": by_id["refuse"],
+            "jcs_sha256": "2043ede16470b67da549d90163700e3ad1979c22d5b22b43e3e2ba8a0d6512ce",
+            "response": {
+                "decision": "REFUSE",
+                "confidence_score": 0.550543,
+                "posterior_risk_score": 0.449457,
+                "marginal_probabilities": {
+                    "drawdown_gt_15pct": 0.530463,
+                    "volatility_spike": 0.388515,
+                    "liquidity_stress": 0.338353,
+                },
+                "utility_rankings": [
+                    {"action": "reject_trade", "expected_utility": 1},
+                    {"action": "defer_to_human", "expected_utility": 0.623054},
+                    {"action": "rebalance_to_proposed", "expected_utility": 0.191225},
+                ],
+                "authority_record_id": None,
+                "kid": "infertheta-provider07-2026-01",
+                "signature": "zttsaBdfVIxxWRinhls3dYywuJKi26bgrM6fFklRqdIMr-CzaJrIdGcN3lFJLR5LwYvMsmsxqDcpeZPy3uNMDw",
+                "findings": [
+                    {
+                        "rule_id": "FINRA-2111-CUSTOMER-SPECIFIC",
+                        "status": "BREACH",
+                        "evidence": "Best EU action is reject_trade (risk=0.449).",
+                    },
+                    {
+                        "rule_id": "SEC-REGBI-BEST-INTEREST",
+                        "status": "BREACH",
+                        "evidence": "posterior_risk_score 0.449 = 0.5*0.530 + 0.3*0.389 + 0.2*0.338. Best EU=reject_trade. Staging demo — not regulated advice.",
+                    },
+                ],
+            },
+        },
+        {
+            "id": "escalate",
+            "request": by_id["escalate"],
+            "jcs_sha256": "1a48ca54e0ed567691277a388f0b4b31b0cc848acd627fba1e76ec8fe74aec56",
+            "response": {
+                "decision": "ESCALATE",
+                "confidence_score": 0.742012,
+                "posterior_risk_score": 0.257988,
+                "marginal_probabilities": {
+                    "drawdown_gt_15pct": 0.284518,
+                    "volatility_spike": 0.251557,
+                    "liquidity_stress": 0.201311,
+                },
+                "utility_rankings": [
+                    {"action": "defer_to_human", "expected_utility": 1},
+                    {"action": "rebalance_to_proposed", "expected_utility": 0.590234},
+                    {"action": "reject_trade", "expected_utility": 0.580895},
+                ],
+                "authority_record_id": None,
+                "kid": "infertheta-provider07-2026-01",
+                "signature": "dLA7KW7rp0wV7X_K7qW8-sGfPBwus-20UZn4xjg0y4jfY62f-0gvkH8pUv3xjtH45r7UAsRFPN7biw3BVuHDBQ",
+                "findings": [
+                    {
+                        "rule_id": "FINRA-2111-CUSTOMER-SPECIFIC",
+                        "status": "REVIEW",
+                        "evidence": "Best EU action is defer_to_human (risk=0.258).",
+                    },
+                    {
+                        "rule_id": "SEC-REGBI-BEST-INTEREST",
+                        "status": "REVIEW",
+                        "evidence": "posterior_risk_score 0.258 = 0.5*0.285 + 0.3*0.252 + 0.2*0.201. Best EU=defer_to_human. Staging demo — not regulated advice.",
+                    },
+                ],
+            },
+        },
+    ]
+
+
+class TestInferThetaStep2SignedVectors:
+    """Hermetic verification of real InferTheta Step 2 signed vectors and JWK."""
+
+    def _load_staging_public_key(self) -> Ed25519PublicKey:
+        x_b64 = STEP2_STAGING_JWKS["keys"][0]["x"]
+        raw = base64.urlsafe_b64decode(x_b64 + "==")
+        return Ed25519PublicKey.from_public_bytes(raw)
+
+    def test_step2_jcs_canonicalization_and_ed25519_signatures(
+        self,
+        step2_signed_partner_vectors: list[dict[str, Any]],
+    ) -> None:
+        """All 3 Step 2 staging vectors match expected RFC 8785 SHA-256 digests and verify with Ed25519."""
+        import hashlib
+
+        pub_key = self._load_staging_public_key()
+        for vector in step2_signed_partner_vectors:
+            resp = vector["response"]
+            canonical_payload = {k: v for k, v in resp.items() if k != "signature"}
+            canonical_bytes = jcs_canonicalize_plan(canonical_payload)
+            digest = hashlib.sha256(canonical_bytes).hexdigest()
+            assert digest == vector["jcs_sha256"]
+            assert len(resp["signature"]) == 86
+            assert verify_inference_signature(
+                payload=resp,
+                public_key=pub_key,
+                signature_b64=resp["signature"],
+            )
+
+    @pytest.mark.asyncio
+    async def test_step2_signed_vectors_end_to_end_adapter_verification(
+        self,
+        step2_signed_partner_vectors: list[dict[str, Any]],
+    ) -> None:
+        """Provider07NormativeProvider verifies real Step 2 JWKS and signed payloads across allow/refuse/escalate."""
+        jwks_http_resp = _mock_http_response(STEP2_STAGING_JWKS)
+        jwks_client = Provider07JwksClient(
+            jwks_url="https://infertheta-cage-staging.onrender.com/.well-known/jwks.json"
+        )
+        adapter = Provider07NormativeProvider(
+            endpoint="https://infertheta-cage-staging.onrender.com",
+            api_key="test-key",
+            jwks_client=jwks_client,
+        )
+
+        for vector in step2_signed_partner_vectors:
+            infer_http_resp = _mock_http_response(vector["response"])
+            with patch("httpx.AsyncClient") as MockClient:
+                client_instance = AsyncMock()
+                client_instance.get.return_value = jwks_http_resp
+                client_instance.post.return_value = infer_http_resp
+                MockClient.return_value.__aenter__.return_value = client_instance
+
+                result = await adapter.validate_fria(vector["request"])
+
+            if vector["id"] == "allow":
+                assert result.admitted is True
+                assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
+                assert (
+                    result.findings[0]["authority_record_id"]
+                    == "infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a"
+                )
+            elif vector["id"] == "refuse":
+                assert result.admitted is False
+                assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
+            elif vector["id"] == "escalate":
+                assert result.admitted is False
+                assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
+                assert result.findings[0]["needs_human_review"] is True
+
+    @pytest.mark.asyncio
+    async def test_step2_tampered_signed_payload_fails_closed(
+        self,
+        step2_signed_partner_vectors: list[dict[str, Any]],
+    ) -> None:
+        """Mutating any signed field on a real Step 2 payload invalidates the Ed25519 signature."""
+        import copy
+
+        jwks_http_resp = _mock_http_response(STEP2_STAGING_JWKS)
+        jwks_client = Provider07JwksClient(
+            jwks_url="https://infertheta-cage-staging.onrender.com/.well-known/jwks.json"
+        )
+        adapter = Provider07NormativeProvider(
+            endpoint="https://infertheta-cage-staging.onrender.com",
+            api_key="test-key",
+            jwks_client=jwks_client,
+        )
+
+        allow_vec = copy.deepcopy(
+            next(v for v in step2_signed_partner_vectors if v["id"] == "allow")
+        )
+        # Tamper with posterior_risk_score after signing
+        allow_vec["response"]["posterior_risk_score"] = 0.01
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.get.return_value = jwks_http_resp
+            client_instance.post.return_value = _mock_http_response(
+                allow_vec["response"]
+            )
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria(allow_vec["request"])
+
+        assert result.admitted is False
+        assert result.findings[0]["code"] == "INFERTHETA_SIGNATURE_INVALID"

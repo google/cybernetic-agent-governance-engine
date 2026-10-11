@@ -30,23 +30,28 @@ from typing import Any
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from src.gateway.governance.seams.normative import (
     NormativeBaseline,
     ValidationResult,
 )
 from src.integrations.provider_07.adapter import Provider07NormativeProvider
+from src.integrations.provider_07.jwks_client import Provider07JwksClient
 from src.integrations.provider_07.schema import (
     InferThetaBaselineResponse,
     InferThetaInferenceRequest,
     InferThetaInferenceResponse,
 )
+from src.integrations.provider_07.signature import verify_inference_signature
 
 pytestmark = [
     pytest.mark.partner_integration,
     pytest.mark.live_external,
     pytest.mark.partner,
 ]
+
+ACTIVE_STAGING_KID = "infertheta-provider07-2026-01"
 
 
 def _get_live_credentials() -> tuple[str, str]:
@@ -78,7 +83,7 @@ def live_adapter(live_credentials: tuple[str, str]) -> Provider07NormativeProvid
 
 @pytest.fixture
 def canonical_vectors() -> list[dict[str, Any]]:
-    """Three canonical test vectors agreed with partner for Step 1."""
+    """Three canonical test vectors agreed with partner for Step 1 & Step 2."""
     return [
         {
             "id": "allow",
@@ -197,17 +202,40 @@ async def test_live_fetch_baseline(
 
 
 @pytest.mark.asyncio
+async def test_live_jwks_resolution(
+    live_credentials: tuple[str, str],
+) -> None:
+    """Verify live out-of-band JWKS key resolution for Step 2 active key."""
+    endpoint, _ = live_credentials
+    jwks_url = f"{endpoint.rstrip('/')}/.well-known/jwks.json"
+    jwks_client = Provider07JwksClient(jwks_url=jwks_url, timeout_seconds=10.0)
+
+    public_key = await jwks_client.get_key(ACTIVE_STAGING_KID)
+    assert public_key is not None, f"Active key {ACTIVE_STAGING_KID} not found in JWKS"
+    assert isinstance(public_key, Ed25519PublicKey)
+    assert len(public_key.public_bytes_raw()) == 32
+
+    # Unknown kid must return None (fail-closed contract)
+    unknown_key = await jwks_client.get_key("infertheta-unknown-kid-9999")
+    assert unknown_key is None
+
+
+@pytest.mark.asyncio
 async def test_live_infer_contract_vectors(
     live_credentials: tuple[str, str],
     canonical_vectors: list[dict[str, Any]],
 ) -> None:
-    """Verify live HTTP POST /infer against staging parses cleanly with correct decision semantics."""
+    """Verify live HTTP POST /infer against staging parses cleanly with Step 2 signatures and decision semantics."""
     endpoint, api_key = live_credentials
-    url = f"{endpoint}/infer"
+    base_url = endpoint.rstrip("/")
+    url = f"{base_url}/infer"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}" if api_key else "",
     }
+    jwks_client = Provider07JwksClient(
+        jwks_url=f"{base_url}/.well-known/jwks.json", timeout_seconds=10.0
+    )
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         for vector in canonical_vectors:
@@ -218,15 +246,28 @@ async def test_live_infer_contract_vectors(
             assert response.status_code == 200, f"Inference failed: {response.text}"
 
             resp_data = response.json()
+            assert "authority_record_id" in resp_data
             resp_model = InferThetaInferenceResponse(**resp_data)
 
             # Assert tri-state decision matches partner expectation
             assert resp_model.decision == vector["expected_decision"]
 
+            # Step 2 cryptographic invariants: active kid and 86-char unpadded base64url Ed25519 signature
+            assert resp_model.kid == ACTIVE_STAGING_KID
+            assert len(resp_model.signature) == 86
+            assert "=" not in resp_model.signature
+            public_key = await jwks_client.get_key(resp_model.kid)
+            assert public_key is not None
+            assert verify_inference_signature(
+                payload=resp_data,
+                public_key=public_key,
+                signature_b64=resp_model.signature,
+            )
+
             # Token mint invariant: authority_record_id populated only on ALLOW
             if resp_model.decision == "ALLOW":
                 assert resp_model.authority_record_id is not None
-                assert len(resp_model.authority_record_id) > 0
+                assert resp_model.authority_record_id.startswith("infertheta-ar-")
                 assert resp_model.posterior_risk_score < 0.20
                 assert resp_model.utility_rankings[0].action == "rebalance_to_proposed"
             elif resp_model.decision == "REFUSE":
@@ -250,57 +291,29 @@ async def test_live_infer_contract_vectors(
 
 
 @pytest.mark.asyncio
-async def test_live_adapter_step1_unsigned_mode(
-    live_credentials: tuple[str, str],
+async def test_live_adapter_step2_enforcing_validation(
+    live_adapter: Provider07NormativeProvider,
     canonical_vectors: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Verify Provider07NormativeProvider with allow_step1_unsigned=True against staging."""
-    monkeypatch.setenv("CAGE_ENV", "test")
-    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
-    endpoint, api_key = live_credentials
-    adapter = Provider07NormativeProvider(
-        endpoint=endpoint,
-        api_key=api_key,
-        timeout_seconds=15.0,
-        allow_step1_unsigned=True,
-    )
-
+    """Verify default enforcing Provider07NormativeProvider verifies Step 2 signed responses end-to-end."""
     for vector in canonical_vectors:
-        result = await adapter.validate_fria(vector["request"])
+        result = await live_adapter.validate_fria(vector["request"])
         assert isinstance(result, ValidationResult)
 
         if vector["expected_decision"] == "ALLOW":
             assert result.admitted is True
             assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
-            assert result.findings[0].get("step1_demo_mode") is True
-            assert (
-                result.findings[0]["authority_record_id"]
-                == "infertheta-step1-allow-unsigned"
+            assert "step1_demo_mode" not in result.findings[0]
+            assert result.findings[0]["authority_record_id"].startswith(
+                "infertheta-ar-"
             )
+            assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.094135)
         elif vector["expected_decision"] == "REFUSE":
             assert result.admitted is False
             assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
+            assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.449457)
         elif vector["expected_decision"] == "ESCALATE":
             assert result.admitted is False
             assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
             assert result.findings[0]["needs_human_review"] is True
-
-
-@pytest.mark.asyncio
-async def test_live_adapter_default_fail_closed(
-    live_adapter: Provider07NormativeProvider,
-    canonical_vectors: list[dict[str, Any]],
-) -> None:
-    """Verify default adapter posture fails closed against staging because Step 2 signatures are deferred."""
-    allow_vector = next(v for v in canonical_vectors if v["id"] == "allow")
-    result = await live_adapter.validate_fria(allow_vector["request"])
-
-    # Must fail closed because staging does not yet serve a JWKS endpoint (Step 2)
-    assert isinstance(result, ValidationResult)
-    assert result.admitted is False
-    assert result.findings[0]["code"] in (
-        "INFERTHETA_JWKS_ERROR",
-        "INFERTHETA_UNKNOWN_KEY",
-        "INFERTHETA_SIGNATURE_INVALID",
-    )
+            assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.257988)

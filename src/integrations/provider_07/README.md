@@ -4,7 +4,7 @@
 **Inference Model**: Junction Tree / Belief Propagation  
 **Regulatory Scope**: SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27  
 **Architecture Layer**: Layer 3 (Integrations & Rails)  
-**Phase**: Phase 1 — Schema Definition & Documentation  
+**Phase**: Step 2 Complete — Cryptographic Hardening & Live Staging Verified  
 
 ---
 
@@ -261,9 +261,10 @@ Expected utility scores guide **counterfactual recommendations**:
 
 ### Live External Tests (`pytest.mark.live_external + pytest.mark.partner_integration`)
 - Real InferTheta staging environment (`https://infertheta-cage-staging.onrender.com`)
+- Out-of-band JWKS key resolution (`GET /.well-known/jwks.json`, active `kid = "infertheta-provider07-2026-01"`)
 - Live baseline fetch (`GET /baseline/{region}`)
-- Canonical test vector validation (`POST /infer`)
-- Dev/testing Step 1 unsigned mode validation (`PROVIDER_07_ALLOW_STEP1_UNSIGNED=true`)
+- Signed canonical test vector validation (`POST /infer` with RFC 8785 JCS + Ed25519 unpadded `base64url` signatures and minted `infertheta-ar-*` authority records)
+- Full enforcing adapter validation (`Provider07NormativeProvider.validate_fria`)
 - Live suite located in [`tests/integrations/provider_07/test_provider_07_live.py`](../../../tests/integrations/provider_07/test_provider_07_live.py)
 
 ---
@@ -298,5 +299,6 @@ src/integrations/provider_07/
 **Integration Status**:
 - ✅ Step 1 Wire Contract: Confirmed & validated against live staging
 - ✅ Step 1 Dedicated Suitability Graph: Calibrated & deployed on Render
-- ⏳ Step 2 Cryptographic Hardening: Ed25519 signatures, out-of-band JWKS, and real minted `authority_record_id` (deferred)
+- ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`) verified live against staging
+
 

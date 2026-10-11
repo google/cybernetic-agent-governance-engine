@@ -1,8 +1,8 @@
 # InferTheta Canonical Wire Contract & Normative Seam Specification
 
 **Audience**: Integration engineers, compliance auditors, security architects  
-**Status**: Step 1 Validated (Staging Live) — Dedicated Graph Calibrated  
-**Last Updated**: 2026-09-23  
+**Status**: Step 2 Validated (Staging Live) — Cryptographic Hardening Complete  
+**Last Updated**: 2026-10-11  
 **Adapter Package**: [`src/integrations/provider_07/`](../../src/integrations/provider_07/)
 
 ---
@@ -352,5 +352,4 @@ Expected utility scores guide **counterfactual recommendations**:
 
 ---
 
-**Document Status**: ✅ Step 1 Complete — Wire Contract, Dedicated Graph & Staging Validated  
-**Next Phase**: Step 2 — Cryptographic Hardening (Ed25519 signature enforcement, out-of-band JWKS endpoint, minted `authority_record_id`)
+**Document Status**: ✅ Step 2 Complete — Wire Contract, Dedicated Graph, Out-of-Band JWKS (`kid = "infertheta-provider07-2026-01"`), RFC 8785 JCS + Ed25519 Signatures & Minted `authority_record_id` Verified Live Against Staging  
