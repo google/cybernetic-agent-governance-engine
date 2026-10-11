@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
 
 from src.gateway.server.dpop_validator import DPoPValidator, TokenBindingError
@@ -109,10 +109,11 @@ class TestDPoPValidator:
             "jti": jti,
         }
 
-        # Create unsigned JWT (signature validation not implemented in this basic version)
         header_b64 = self._base64url_encode(json.dumps(header).encode("utf-8"))
         payload_b64 = self._base64url_encode(json.dumps(payload).encode("utf-8"))
-        signature_b64 = self._base64url_encode(b"fake_signature")  # Placeholder
+        signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+        signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        signature_b64 = self._base64url_encode(signature)
 
         return f"{header_b64}.{payload_b64}.{signature_b64}"
 
@@ -170,6 +171,72 @@ class TestDPoPValidator:
                 expected_uri="https://api.example.com/resource",
                 http_method="POST",
             )
+
+    @pytest.mark.asyncio
+    async def test_forged_signature_rejected(
+        self, validator, test_keypair, test_cert_pem
+    ):
+        """Reject a proof whose jwk matches the cert but signature is forged.
+
+        The header jwk is the cert's own (public) key, so the thumbprint check
+        passes; only signature verification stands between an attacker and a
+        forged proof-of-possession. Also verify that a forged proof does not
+        consume its jti in the replay cache.
+        """
+        private_key, public_key = test_keypair
+        public_numbers = public_key.public_numbers()
+        jwk = {
+            "kty": "RSA",
+            "n": self._base64url_encode(
+                public_numbers.n.to_bytes(
+                    (public_numbers.n.bit_length() + 7) // 8, "big"
+                )
+            ),
+            "e": self._base64url_encode(
+                public_numbers.e.to_bytes(
+                    (public_numbers.e.bit_length() + 7) // 8, "big"
+                )
+            ),
+        }
+        header = {"typ": "dpop+jwt", "alg": "RS256", "jwk": jwk}
+        payload = {
+            "htm": "POST",
+            "htu": "https://api.example.com/resource",
+            "iat": int(time.time()),
+            "jti": "forged-token-id",
+        }
+        header_b64 = self._base64url_encode(json.dumps(header).encode("utf-8"))
+        payload_b64 = self._base64url_encode(json.dumps(payload).encode("utf-8"))
+        signature_b64 = self._base64url_encode(b"not-a-real-signature")
+        dpop_proof = f"{header_b64}.{payload_b64}.{signature_b64}"
+
+        with pytest.raises(TokenBindingError, match="signature verification failed"):
+            await validator.validate_token_binding(
+                dpop_proof=dpop_proof,
+                client_cert_pem=test_cert_pem,
+                expected_uri="https://api.example.com/resource",
+                http_method="POST",
+            )
+
+        # Legitimate proof with the same jti must still succeed since the
+        # forged proof was rejected prior to recording the jti.
+        valid_proof = self._create_dpop_jwt(
+            private_key=private_key,
+            public_key=public_key,
+            htm="POST",
+            htu="https://api.example.com/resource",
+            iat=int(time.time()),
+            jti="forged-token-id",
+        )
+        assert (
+            await validator.validate_token_binding(
+                dpop_proof=valid_proof,
+                client_cert_pem=test_cert_pem,
+                expected_uri="https://api.example.com/resource",
+                http_method="POST",
+            )
+            is True
+        )
 
     @pytest.mark.asyncio
     async def test_expired_proof(self, validator, test_keypair, test_cert_pem):
