@@ -1,0 +1,268 @@
+{
+  "schema_version": "cage-flowsignal-joint-conformance-record/1.0",
+  "record_id": "CAGE-FLOWSIGNAL-P3V02-P4S1-JCAR-001",
+  "profile": "FlowSignal Phase 3 v0.2 Wire Contract × Phase 4 Step 1 Cross-Boundary Qualification",
+  "recorded_date": "2026-10-11",
+  "status": "STEP1_VERIFIED",
+  "claim_boundary": "Cross-boundary Step 1 qualification over frozen Phase 3 v0.2 wire contract (/cage/validate, 37-field CageAuthorityDetermineRequest) and CAGE Path 1 (ConsequenceGateway + dispatch_actuation) and Path 2 (FriaTier + routing_seal + revalidate_post_hitl) enforcement.",
+  "flowsignal_baseline": {
+    "candidate_package": "docs/partners/provider_01/FlowSignal-CAGE-Phase3-v0.2-Candidate.zip",
+    "candidate_baseline_commit": "87fc133828ca9e8c16a9bda425aa508aa661469e",
+    "wire_contract_doc": "docs/partners/provider_01/FLOWSIGNAL_PARTNER_SPECIFICATION.md",
+    "endpoint_path": "/cage/validate",
+    "ingress_auth_mode": "CLOUD_RUN_DRS_DUAL_HEADER (X-Serverless-Authorization OIDC + Authorization Bearer)",
+    "environment": "STAGING"
+  },
+  "cage_repository": {
+    "repository": "google/cybernetic-agent-governance-engine",
+    "step1_harness_pr": 445,
+    "step1_harness_commit": "5595a82ef907fec25aec7ccc8ed5832303bd9f26",
+    "verification_script": "scripts/verify_flowsignal_wire_and_hostile.py",
+    "adapter_module": "src/integrations/provider_01/provider.py",
+    "consequence_gateway_module": "src/gateway/governance/consequence_gateway.py",
+    "consequence_token_module": "src/gateway/governance/consequence_token.py",
+    "consequence_store_module": "src/gateway/governance/consequence_authority_store.py",
+    "actuator_boundary_module": "src/gateway/governance/execution_actuator.py"
+  },
+  "observed_conformance": {
+    "case_count": 6,
+    "subcase_count": 21,
+    "passed_cases": 6,
+    "failed_cases": 0,
+    "composition_invariant": "EXECUTED => CAGE_GOVERNANCE_ALLOW && FLOWSIGNAL_RUNTIME_AUTHORITY_ALLOW",
+    "fail_closed_rate": 1.0,
+    "false_positive_rate": 0.0
+  },
+  "case_results": [
+    {
+      "case_id": "CASE-1",
+      "title": "ConsequenceToken Issuance & Suppression (Live Wire + Hostile LIVE-P3-004)",
+      "alignment": "PASS",
+      "subcases": [
+        {
+          "subcase_id": "1A",
+          "scenario": "Raw Wire ALLOW (payment.release, 500,000 GBP, MANDATE-TREASURY-001)",
+          "execution_id": "exec-live-wire-allow-001",
+          "thread_id": "thread-live-wire-allow-001",
+          "http_status": 200,
+          "flowsignal_decision": "ALLOW",
+          "authority_record_id": "MANDATE-TREASURY-001",
+          "authority_receipt_present": true,
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "1B",
+          "scenario": "Provider Live ALLOW -> KMS-signed ConsequenceToken JWS minted",
+          "execution_id": "exec-live-wire-allow-001",
+          "admitted": true,
+          "token_minted": true,
+          "finding_code": "CONSEQUENCE_TOKEN",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "1C",
+          "scenario": "Provider Live REFUSE (Unsupported Action DELETE_ACCOUNT)",
+          "execution_id": "exec-live-wire-refuse-action-001",
+          "flowsignal_decision": "REFUSE",
+          "admitted": false,
+          "token_minted": false,
+          "finding_code": "FLOWSIGNAL_REFUSE",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "1D",
+          "scenario": "Provider Live REFUSE (Expired Mandate 2020-01-01T00:00:00Z)",
+          "execution_id": "exec-live-wire-refuse-mandate-001",
+          "flowsignal_decision": "REFUSE",
+          "admitted": false,
+          "token_minted": false,
+          "finding_code": "FLOWSIGNAL_REFUSE",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "1E",
+          "scenario": "Provider Live ESCALATE (Stale Screening 72h > 60s max_age)",
+          "execution_id": "exec-live-wire-escalate-stale-001",
+          "flowsignal_decision": "ESCALATE",
+          "admitted": false,
+          "token_minted": false,
+          "finding_code": "EXTERNAL_HOLD",
+          "needs_human_review": true,
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "1F",
+          "scenario": "Live Wire Hostile Ingress (Malformed Payload & Injected decision=ALLOW / authority_record_id)",
+          "http_status": 422,
+          "admitted": false,
+          "token_minted": false,
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "1G",
+          "scenario": "LIVE-P3-004 Hostile Response Interception (Missing decision, Unknown enum MAYBE, Empty authority_record_id on ALLOW)",
+          "admitted": false,
+          "token_minted": false,
+          "finding_codes": [
+            "cage.endpoint_error",
+            "PARSE_ERROR",
+            "CONSEQUENCE_TOKEN_MINT_FAILED"
+          ],
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-2",
+      "title": "Action-Binding Mutation & Substitution (Path 1, Live-Seeded ConsequenceToken)",
+      "alignment": "PASS",
+      "subcases": [
+        {
+          "subcase_id": "2A",
+          "scenario": "Single-Field Post-ALLOW Parameter Mutation (amount 500,000 -> 950,000 GBP)",
+          "gateway_decision": "BLOCK",
+          "reason_code": "ACTION_BINDING_MISMATCH",
+          "token_consumed_in_redis": false,
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "2B",
+          "scenario": "Composed Consequence Mutation (amount + beneficiary + target)",
+          "gateway_decision": "BLOCK",
+          "reason_code": "ACTION_BINDING_MISMATCH",
+          "token_consumed_in_redis": false,
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-3",
+      "title": "Single-Use Token Consumption, Replay & Substitution Refusal (Path 1)",
+      "alignment": "PASS",
+      "subcases": [
+        {
+          "subcase_id": "3A",
+          "scenario": "First Consumption (Live Token + Unmutated Payload)",
+          "gateway_decision": "EXECUTE",
+          "reason_code": "OK",
+          "redis_key": "flowsignal:token:MANDATE-TREASURY-001",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "3B",
+          "scenario": "Immediate Replay (Same Live Token + Same Payload within 90s TTL)",
+          "gateway_decision": "BLOCK",
+          "reason_code": "ALREADY_CONSUMED",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "3C",
+          "scenario": "Second Live ALLOW Sharing rec=MANDATE-TREASURY-001 Under Distinct Thread/Amount (thread-live-wire-allow-002, 250,000 GBP)",
+          "gateway_decision": "BLOCK",
+          "reason_code": "AUTHORITY_RECORD_BINDING_MISMATCH",
+          "step2_observation": "Confirms single-use binding collision when mandate_id is used as rec; motivates Step 2 separation of authority_receipt.id (rec) and mandate_id (mnd).",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "3D",
+          "scenario": "Expired ConsequenceToken (ttl=-10s)",
+          "gateway_decision": "BLOCK",
+          "reason_code": "TOKEN_INVALID",
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-4",
+      "title": "Route & Executor Drift at Actuator Boundary (dispatch_actuation)",
+      "alignment": "PASS",
+      "subcases": [
+        {
+          "subcase_id": "4A",
+          "scenario": "Unclaimed Action Lookup (DELETE_ACCOUNT on ActuatorRegistry)",
+          "actuator_resolved": false,
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "4B",
+          "scenario": "Executor ID Drift (executor_id='rogue_external_actuator')",
+          "accepted": false,
+          "actuation_outcome": "REJECTED",
+          "finding_code": "EXECUTOR_ID_MISMATCH",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "4C",
+          "scenario": "Target Route Drift (target_route='https://untrusted-egress.example.com/settle')",
+          "accepted": false,
+          "actuation_outcome": "REJECTED",
+          "finding_code": "TARGET_ROUTE_MISMATCH",
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-5",
+      "title": "Path 2 — FriaTier (Live Wire), Routing Seal & Post-HITL Revalidation",
+      "alignment": "PASS",
+      "subcases": [
+        {
+          "subcase_id": "5A",
+          "scenario": "FriaTier Stale Local FRIA Artefact (400d > 365d interval)",
+          "violation_code": "FRIA_ASSESSMENT_STALE",
+          "violation_kind": "HARD",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "5B",
+          "scenario": "FriaTier Live Wire Tri-State Evaluation (ALLOW -> [], REFUSE -> FRIA_REJECTED HARD, ESCALATE -> FRIA_EXTERNAL_HOLD HITL)",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "5C",
+          "scenario": "Routing Seal (cage-action/1) Post-Issuance Parameter Tampering (amount 500,000 -> 999,999 GBP)",
+          "exception_raised": "SymbolicGovernorViolation",
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "5D",
+          "scenario": "SymbolicGovernor.revalidate_post_hitl() Barrier Context Drift (APPROVAL_CONTEXT_DRIFT) & Spent-Approval Replay (APPROVAL_NOT_REDEEMABLE with commit rollback)",
+          "outcome": "PASS"
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-6",
+      "title": "Consequence Refusal & Evidence Stream Recording",
+      "alignment": "PASS",
+      "subcases": [
+        {
+          "subcase_id": "6A",
+          "scenario": "Evidence Stream Emission across EXECUTE and Refusal Paths",
+          "recorded_event_types": [
+            "CONSEQUENCE_GATEWAY_DECISION",
+            "CONSEQUENCE_GATEWAY_REFUSAL",
+            "ACTUATION_REFUSAL_RECEIPT"
+          ],
+          "outcome": "PASS"
+        },
+        {
+          "subcase_id": "6B",
+          "scenario": "Evidence Sink Outage on EXECUTE (EvidenceChainUnavailableError)",
+          "downgraded_decision": "BLOCK",
+          "reason_code": "EVIDENCE_CHAIN_UNAVAILABLE",
+          "outcome": "PASS"
+        }
+      ]
+    }
+  ],
+  "step2_scoping_notes": {
+    "status": "SCOPED_FOR_STEP2_EXERCISE",
+    "summary": "Separate Step 2 design and qualification exercise preserving the frozen Phase 3 contract and Step 1 evidence.",
+    "design_items": [
+      "Use authority_receipt.id as the per-determination consumption identity (rec / jti) in ConsequenceToken and ConsequenceAuthorityStore.",
+      "Retain mandate_id (mnd) and authority_state_version (ver) as distinct bound claims.",
+      "Qualify against (1) per-receipt replay and parameter substitution, (2) mid-flight mandate revocation / authority_state_version epoch fencing, and (3) cumulative consequence limits across multiple unique receipts under the same mandate."
+    ]
+  }
+}

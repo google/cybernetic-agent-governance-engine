@@ -51,6 +51,9 @@ Environment variables
   CAGE_NORMATIVE_GCP_ID_TOKEN           — Google IAM identity token for Cloud Run DRS (optional)
   CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS   — Per-request timeout (default: 5)
   CAGE_NORMATIVE_VALIDATE_PATH          — Validation endpoint path (default: /cage/validate)
+  FLOWSIGNAL_CA_BUNDLE                  — Optional custom CA bundle path for mTLS verification
+  FLOWSIGNAL_CLIENT_CERT                — Optional client certificate path for mTLS authentication
+  FLOWSIGNAL_CLIENT_KEY                 — Optional client private key path for mTLS authentication
 
 Status
 ------
@@ -93,6 +96,9 @@ _VALIDATE_PATH: str = (
     .split("#")[0]
     .strip()
 )
+_CA_BUNDLE: str = os.environ.get("FLOWSIGNAL_CA_BUNDLE", "").split("#")[0].strip()
+_CLIENT_CERT: str = os.environ.get("FLOWSIGNAL_CLIENT_CERT", "").split("#")[0].strip()
+_CLIENT_KEY: str = os.environ.get("FLOWSIGNAL_CLIENT_KEY", "").split("#")[0].strip()
 
 # ---------------------------------------------------------------------------
 # FlowSignal Decision Values (tri-state)
@@ -106,6 +112,7 @@ _FLOWSIGNAL_ESCALATE = "ESCALATE"
 FINDING_CODE_FLOWSIGNAL_REFUSE = "FLOWSIGNAL_REFUSE"
 FINDING_CODE_EXTERNAL_HOLD = "EXTERNAL_HOLD"
 FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
+FINDING_CODE_TLS_CONFIG_ERROR = "TLS_CONFIG_ERROR"
 
 
 def _map_flowsignal_decision(
@@ -286,11 +293,17 @@ class FlowSignalNormativeProvider:
         api_key: str = "",
         timeout: float = _GATE_TIMEOUT_SECONDS,
         gcp_id_token: str = "",
+        ca_bundle: str = "",
+        client_cert: str = "",
+        client_key: str = "",
     ) -> None:
         self._endpoint = (endpoint or _ENDPOINT).rstrip("/")
         self._api_key = api_key or _API_KEY_SECRET
         self._gcp_id_token = gcp_id_token or _GCP_ID_TOKEN
         self._timeout = timeout
+        self._ca_bundle = ca_bundle or _CA_BUNDLE
+        self._client_cert = client_cert or _CLIENT_CERT
+        self._client_key = client_key or _CLIENT_KEY
 
         if not self._endpoint:
             logger.error(
@@ -299,11 +312,44 @@ class FlowSignalNormativeProvider:
             )
 
         logger.info(
-            "[FlowSignal] Initialised: endpoint=%s timeout=%.1fs gcp_iam=%s",
+            "[FlowSignal] Initialised: endpoint=%s timeout=%.1fs gcp_iam=%s mtls=%s",
             self._endpoint or "(not set)",
             self._timeout,
             "configured" if self._gcp_id_token else "none",
+            "configured" if (self._client_cert or self._ca_bundle) else "none",
         )
+
+    def _validate_tls_config(self) -> str | None:
+        """Validate mTLS configuration invariants (fail-closed on incomplete or plain HTTP config).
+
+        Returns:
+            None if configuration is valid, or a descriptive error string if invalid.
+        """
+        if bool(self._client_cert) != bool(self._client_key):
+            return (
+                "Incomplete mTLS configuration: FLOWSIGNAL_CLIENT_CERT and "
+                "FLOWSIGNAL_CLIENT_KEY must both be provided together"
+            )
+
+        has_tls_material = bool(
+            self._ca_bundle or self._client_cert or self._client_key
+        )
+        if has_tls_material and self._endpoint.lower().startswith("http://"):
+            return (
+                "Plain HTTP endpoint rejected when mTLS/TLS material is configured; "
+                "https:// is required"
+            )
+
+        return None
+
+    def _client_kwargs(self) -> dict[str, Any]:
+        """Build httpx.AsyncClient keyword arguments including optional mTLS material."""
+        kwargs: dict[str, Any] = {"timeout": self._timeout}
+        if self._ca_bundle:
+            kwargs["verify"] = self._ca_bundle
+        if self._client_cert and self._client_key:
+            kwargs["cert"] = (self._client_cert, self._client_key)
+        return kwargs
 
     def _headers(self) -> dict[str, str]:
         """Construct authorization headers supporting Cloud Run DRS dual-header auth."""
@@ -318,9 +364,14 @@ class FlowSignalNormativeProvider:
         """Fetch the active legal baseline from provider."""
         import httpx
 
+        tls_error = self._validate_tls_config()
+        if tls_error:
+            logger.error("[FlowSignal] fetch_baseline TLS config error: %s", tls_error)
+            return NormativeBaseline(region=region, profile={}, error=tls_error)
+
         url = f"{self._endpoint}/legal-baseline/{quote(region, safe='')}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._client_kwargs()) as client:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
@@ -366,12 +417,27 @@ class FlowSignalNormativeProvider:
         """
         import httpx
 
+        tls_error = self._validate_tls_config()
+        if tls_error:
+            logger.error("[FlowSignal] validate_fria TLS config error: %s", tls_error)
+            return ValidationResult(
+                admitted=False,
+                error=tls_error,
+                findings=[
+                    {
+                        "code": FINDING_CODE_TLS_CONFIG_ERROR,
+                        "severity": "blocked",
+                        "message": tls_error,
+                    }
+                ],
+            )
+
         # Build full 37-field payload per Phase 3 v0.2 schema
         cage_payload = _build_cage_authority_request(payload)
 
         url = f"{self._endpoint}{_VALIDATE_PATH}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._client_kwargs()) as client:
                 resp = await client.post(
                     url, json=cage_payload, headers=self._headers()
                 )
@@ -479,9 +545,14 @@ class FlowSignalNormativeProvider:
         """Submit governance evidence hash for external sealing."""
         import httpx
 
+        tls_error = self._validate_tls_config()
+        if tls_error:
+            logger.error("[FlowSignal] submit_evidence TLS config error: %s", tls_error)
+            return EvidenceSeal(thread_id=thread_id, error=tls_error)
+
         url = f"{self._endpoint}/evidence-chain/{quote(thread_id, safe='')}"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(**self._client_kwargs()) as client:
                 resp = await client.get(
                     url,
                     headers=self._headers(),

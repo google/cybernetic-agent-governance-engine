@@ -76,10 +76,10 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: provider-07-credentials
-  namespace: cage-prod
+  namespace: governance-stack
 type: Opaque
 stringData:
-  api-key: "pk-lf-REDACTED"  # Example format (actual format may differ)
+  api-key: "<INFERTHETA_BEARER_TOKEN>"
   jwks-url: "https://keys.infertheta.example/v1/jwks.json"
 ```
 
@@ -88,7 +88,8 @@ stringData:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cage-gateway
+  name: gateway
+  namespace: governance-stack
 spec:
   template:
     spec:

@@ -813,3 +813,72 @@ class TestDualHeaderAuthentication:
         )
         headers = provider._headers()
         assert headers == {"Content-Type": "application/json"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (§6.4): mTLS Configuration & Fail-Closed Validation Tests
+# ---------------------------------------------------------------------------
+
+
+class TestMtlsConfiguration:
+    """Tests for Phase 3 mTLS configuration and fail-closed validation."""
+
+    def test_client_kwargs_with_full_mtls_bundle(self) -> None:
+        """Adapter passes verify and cert tuple to httpx.AsyncClient when mTLS is configured."""
+        provider = FlowSignalNormativeProvider(
+            endpoint="https://flowsignal-staging.example.com",
+            api_key="test-key",
+            timeout=5.0,
+            ca_bundle="/etc/cage/tls/ca.pem",
+            client_cert="/etc/cage/tls/client.crt",
+            client_key="/etc/cage/tls/client.key",
+        )
+        assert provider._validate_tls_config() is None
+        assert provider._client_kwargs() == {
+            "timeout": 5.0,
+            "verify": "/etc/cage/tls/ca.pem",
+            "cert": ("/etc/cage/tls/client.crt", "/etc/cage/tls/client.key"),
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_incomplete_mtls_cert_without_key_fails_closed(self) -> None:
+        """Missing client_key when client_cert is set fails closed without making network calls."""
+        provider = FlowSignalNormativeProvider(
+            endpoint="https://flowsignal-staging.example.com",
+            api_key="test-key",
+            client_cert="/etc/cage/tls/client.crt",
+            client_key="",
+        )
+        with patch("httpx.AsyncClient") as MockClient:
+            result = await provider.validate_fria({"action": "trade"})
+            baseline = await provider.fetch_baseline("US_FED")
+            seal = await provider.submit_evidence("thread-1", "hash-1")
+            MockClient.assert_not_called()
+
+        assert result.admitted is False
+        assert result.findings[0]["code"] == "TLS_CONFIG_ERROR"
+        assert result.findings[0]["severity"] == "blocked"
+        assert "Incomplete mTLS configuration" in (result.error or "")
+        assert baseline.error is not None
+        assert seal.error is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_plain_http_rejected_when_mtls_configured(self) -> None:
+        """Plain http:// endpoint is rejected fail-closed when mTLS material is configured."""
+        provider = FlowSignalNormativeProvider(
+            endpoint="http://flowsignal-staging.example.com",
+            api_key="test-key",
+            ca_bundle="/etc/cage/tls/ca.pem",
+            client_cert="/etc/cage/tls/client.crt",
+            client_key="/etc/cage/tls/client.key",
+        )
+        with patch("httpx.AsyncClient") as MockClient:
+            result = await provider.validate_fria({"action": "trade"})
+            MockClient.assert_not_called()
+
+        assert result.admitted is False
+        assert result.findings[0]["code"] == "TLS_CONFIG_ERROR"
+        assert "Plain HTTP endpoint rejected" in (result.error or "")
+
