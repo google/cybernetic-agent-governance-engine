@@ -881,4 +881,3 @@ class TestMtlsConfiguration:
         assert result.admitted is False
         assert result.findings[0]["code"] == "TLS_CONFIG_ERROR"
         assert "Plain HTTP endpoint rejected" in (result.error or "")
-
