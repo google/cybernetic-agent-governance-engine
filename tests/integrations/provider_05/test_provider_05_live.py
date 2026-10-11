@@ -281,7 +281,7 @@ async def test_live_veip_v02_key_manifest_fetch_and_root_verification() -> None:
         ),
         pytest.param(
             "SUSPENDED",
-            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            RelianceStatus.INELIGIBLE_SUSPENDED,
             "VERIFIED",
             "Temporary Suspension #S-17",
             id="LIVE-SUSPENDED",
@@ -302,14 +302,14 @@ async def test_live_veip_v02_key_manifest_fetch_and_root_verification() -> None:
         ),
         pytest.param(
             "TAMPERED_SIGNATURE",
-            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            RelianceStatus.INELIGIBLE_AUTHENTICITY,
             "UNVERIFIED",
             "SIGNATURE_INVALID",
             id="LIVE-TAMPERED_SIGNATURE",
         ),
         pytest.param(
             "UNKNOWN_KID",
-            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            RelianceStatus.INELIGIBLE_AUTHENTICITY,
             "UNVERIFIED",
             "UNKNOWN_KID",
             id="LIVE-UNKNOWN_KID",
