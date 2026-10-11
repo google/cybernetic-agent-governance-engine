@@ -46,11 +46,41 @@ from src.integrations.provider_06.adapter import (
     IntegrityResult,
     IntegrityStatus,
     Provider06AgentIntegrityAdapter,
+    ReleasedResponsePayload,
+    ReleaseRefusalDetail,
+    VerifyReleaseOutcome,
+    VerifyReleaseStatus,
+    compute_sidecar_auth_headers,
+)
+from src.integrations.provider_06.jwks_client import (
+    CAGE_MANIFEST_EXTENSION_URI,
+    CageKeyMetadata,
+    CageManifestExtension,
+    CageReceiptProfile,
+    FileJWKSClient,
+    Provider06KeyManifestClient,
+)
+from src.integrations.provider_06.lifecycle import (
+    ReadinessStatus,
+    SidecarHealthCheck,
 )
 
 __all__ = [
+    "CAGE_MANIFEST_EXTENSION_URI",
+    "CageKeyMetadata",
+    "CageManifestExtension",
+    "CageReceiptProfile",
+    "FileJWKSClient",
     "IntegrityFinding",
     "IntegrityResult",
     "IntegrityStatus",
     "Provider06AgentIntegrityAdapter",
+    "Provider06KeyManifestClient",
+    "ReadinessStatus",
+    "ReleaseRefusalDetail",
+    "ReleasedResponsePayload",
+    "SidecarHealthCheck",
+    "VerifyReleaseOutcome",
+    "VerifyReleaseStatus",
+    "compute_sidecar_auth_headers",
 ]

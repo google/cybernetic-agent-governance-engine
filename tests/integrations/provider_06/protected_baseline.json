@@ -15,10 +15,21 @@
         "src/integrations/provider_06/mock_endpoint.py": "8eda880da72c5bea03b16bcd938abfc00aa29bbf2041ec181ddb6ca4601d9b64"
       },
       "reason": "ruff format (no behavior change) for both files; mock_endpoint.py also defines its module logger before the test-key-pair ImportError fallback that logs, fixing a NameError on that path."
+    },
+    {
+      "sequence": 2,
+      "date": "2026-10-11",
+      "paths": [
+        "src/integrations/provider_06/adapter.py"
+      ],
+      "previousSha256": {
+        "src/integrations/provider_06/adapter.py": "e89bbe7cfb39b18c989f14189a0373d299e2caafd5736583e0fdceb75940bc9e"
+      },
+      "reason": "Phase 2 sidecar contract alignment: add POST /v1/verify-release over UDS/HTTP, HMAC-SHA256 request authentication, mandatory FileJWKSClient receipt verification, signed refusal preservation (REVIEW, BLOCKED, RELEASE_REFUSED), non-200 technical failure handling, and exact returned-byte dispatch."
     }
   ],
   "protectedFiles": {
-    "src/integrations/provider_06/adapter.py": "e89bbe7cfb39b18c989f14189a0373d299e2caafd5736583e0fdceb75940bc9e",
+    "src/integrations/provider_06/adapter.py": "1a77d1f9493b65b485e6d086b49ac5ad39cfee773f80bc5347851e8e71673e01",
     "src/integrations/provider_06/mock_endpoint.py": "236e8646b603a79b4a6016a5d963b39cb23b696942a200de33c985384f55283d",
     "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
     "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"

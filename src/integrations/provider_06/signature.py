@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import re
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -46,54 +47,65 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("cage.provider_06.signature")
 
+_CANONICAL_B64_64_RE = re.compile(r"^[A-Za-z0-9+/]{86}==$")
 
-def verify_receipt_digest(receipt: dict[str, Any]) -> bool:
+
+def verify_receipt_digest(
+    receipt: dict[str, Any],
+    *,
+    strict_v2: bool = False,
+) -> bool:
     """
     Verify receipt digest matches SHA-256 of canonicalized receipt payload.
 
-    Creates a canonical copy of the receipt with "receiptDigest" and "signature"
-    fields removed, canonicalizes it via RFC 8785 JCS, computes SHA-256, and
-    compares against the receipt's receiptDigest field.
+    In upstream Agent Integrity v2-alpha (``build-receipt.ts`` / ``recheck-receipt.ts``),
+    ``receiptDigest`` is computed over the signed receipt object (omitting only
+    ``receiptDigest``). In Phase 1 spike fixtures, ``receiptDigest`` was computed
+    over the unsigned body (omitting both ``receiptDigest`` and ``signature``).
 
-    Args:
-        receipt: Agent Integrity receipt dict (AlphaIntegrityReceipt)
-
-    Returns:
-        True if digest matches, False otherwise (fail-closed on errors)
-
-    Note:
-        This function never raises exceptions. All errors are caught and
-        mapped to False to ensure fail-closed behavior.
+    When ``strict_v2=True`` (used by ``POST /v1/verify-release``), only the
+    upstream signed-receipt digest is accepted.
     """
     try:
-        # Extract expected digest
         expected_digest = receipt.get("receiptDigest", "")
-        if not expected_digest:
+        if not isinstance(expected_digest, str) or not expected_digest:
             logger.warning("provider_06: Receipt missing receiptDigest field")
             return False
 
-        # Step 1: Create canonical copy omitting receiptDigest and signature
-        canonical_receipt = {
-            k: v for k, v in receipt.items() if k not in ("receiptDigest", "signature")
-        }
+        # Upstream v2-alpha: SHA-256 over JCS of receipt omitting receiptDigest
+        signed_copy = {k: v for k, v in receipt.items() if k != "receiptDigest"}
+        signed_digest = hashlib.sha256(jcs_canonicalize_plan(signed_copy)).hexdigest()
+        if signed_digest == expected_digest:
+            logger.debug("provider_06: Receipt digest verification SUCCESS (v2 signed)")
+            return True
 
-        # Step 2: Canonicalize via RFC 8785 JCS
-        canonical_bytes = jcs_canonicalize_plan(canonical_receipt)
-
-        # Step 3: Compute SHA-256 digest
-        computed_digest = hashlib.sha256(canonical_bytes).hexdigest()
-
-        # Step 4: Compare digests
-        if computed_digest != expected_digest:
+        if strict_v2:
             logger.warning(
-                "provider_06: Receipt digest mismatch: expected=%s computed=%s",
+                "provider_06: Receipt digest mismatch (strict_v2): expected=%s computed=%s",
                 expected_digest,
-                computed_digest,
+                signed_digest,
             )
             return False
 
-        logger.debug("provider_06: Receipt digest verification SUCCESS")
-        return True
+        # Phase 1 spike fallback: SHA-256 over JCS omitting receiptDigest and signature
+        unsigned_copy = {
+            k: v for k, v in receipt.items() if k not in ("receiptDigest", "signature")
+        }
+        unsigned_digest = hashlib.sha256(
+            jcs_canonicalize_plan(unsigned_copy)
+        ).hexdigest()
+        if unsigned_digest == expected_digest:
+            logger.debug(
+                "provider_06: Receipt digest verification SUCCESS (legacy unsigned)"
+            )
+            return True
+
+        logger.warning(
+            "provider_06: Receipt digest mismatch: expected=%s computed=%s",
+            expected_digest,
+            signed_digest,
+        )
+        return False
 
     except Exception as exc:
         logger.warning(
@@ -107,49 +119,70 @@ def verify_receipt_digest(receipt: dict[str, Any]) -> bool:
 def verify_receipt_signature(
     receipt: dict[str, Any],
     public_key: Ed25519PublicKey,
+    *,
+    strict_v2: bool = False,
 ) -> bool:
     """
     Verify Ed25519 JCS signature over Agent Integrity receipt.
 
-    Creates a canonical copy of the receipt with "receiptDigest" and "signature"
-    fields removed, canonicalizes it via RFC 8785 JCS, and verifies the Ed25519
-    signature.
-
-    Args:
-        receipt: Agent Integrity receipt dict (AlphaIntegrityReceipt)
-        public_key: Ed25519 public key resolved from out-of-band JWKS
-
-    Returns:
-        True if signature is valid, False otherwise (fail-closed on errors)
-
-    Note:
-        This function never raises exceptions. All cryptographic failures
-        (InvalidSignature, base64 decode errors, etc.) are caught and
-        mapped to False to ensure fail-closed behavior.
+    In upstream Agent Integrity v2-alpha (``build-receipt.ts`` / ``recheck-receipt.ts``),
+    the Ed25519 signature is canonical standard base64 (86 chars + ``==``) over
+    ``jcs_canonicalize({"protected": {"algorithm": "Ed25519", "keyId": keyId}, "body": unsigned_body})``.
+    When ``strict_v2=True``, only this upstream v2-alpha format is accepted.
     """
     try:
-        # Extract signature block
         signature_block = receipt.get("signature", {})
         if not isinstance(signature_block, dict):
             logger.warning("provider_06: Receipt missing signature block")
             return False
 
-        signature_value = signature_block.get("value", "")
-        if not signature_value:
-            logger.warning("provider_06: Receipt signature.value missing")
+        if signature_block.get("algorithm") != "Ed25519":
+            logger.warning("provider_06: Unsupported signature algorithm")
             return False
 
-        # Step 1: Create canonical copy omitting receiptDigest and signature
-        canonical_receipt = {
+        key_id = signature_block.get("keyId", "")
+        signature_value = signature_block.get("value", "")
+        if (
+            not isinstance(key_id, str)
+            or not key_id
+            or not isinstance(signature_value, str)
+            or not signature_value
+        ):
+            logger.warning("provider_06: Receipt signature.keyId or value missing")
+            return False
+
+        unsigned_body = {
             k: v for k, v in receipt.items() if k not in ("receiptDigest", "signature")
         }
 
-        # Step 2: Canonicalize via RFC 8785 JCS
-        canonical_bytes = jcs_canonicalize_plan(canonical_receipt)
+        if strict_v2:
+            if not _CANONICAL_B64_64_RE.fullmatch(signature_value):
+                logger.warning(
+                    "provider_06: Non-canonical base64 signature in strict_v2 mode"
+                )
+                return False
+            signature_bytes = base64.b64decode(signature_value, validate=True)
+            if (
+                len(signature_bytes) != 64
+                or base64.b64encode(signature_bytes).decode("ascii") != signature_value
+            ):
+                logger.warning("provider_06: Invalid signature encoding in strict_v2")
+                return False
+            envelope_payload = jcs_canonicalize_plan(
+                {
+                    "protected": {"algorithm": "Ed25519", "keyId": key_id},
+                    "body": unsigned_body,
+                }
+            )
+            public_key.verify(signature_bytes, envelope_payload)
+            logger.debug("provider_06: Signature verification SUCCESS (strict_v2)")
+            return True
 
-        # Step 3: Decode base64url signature bytes
-        # Ed25519 signatures are 64 bytes. Add padding if needed.
-        signature_bytes = base64.urlsafe_b64decode(signature_value + "==")
+        # Try canonical base64 (v2-alpha) or base64url (Phase 1 spike)
+        if _CANONICAL_B64_64_RE.fullmatch(signature_value):
+            signature_bytes = base64.b64decode(signature_value)
+        else:
+            signature_bytes = base64.urlsafe_b64decode(signature_value + "==")
 
         if len(signature_bytes) != 64:
             logger.warning(
@@ -158,23 +191,33 @@ def verify_receipt_signature(
             )
             return False
 
-        # Step 4: Verify Ed25519 signature
-        # This is constant-time and raises InvalidSignature on failure.
-        public_key.verify(signature_bytes, canonical_bytes)
+        # First check upstream v2-alpha protected+body signature payload
+        v2_payload = jcs_canonicalize_plan(
+            {
+                "protected": {"algorithm": "Ed25519", "keyId": key_id},
+                "body": unsigned_body,
+            }
+        )
+        try:
+            public_key.verify(signature_bytes, v2_payload)
+            logger.debug("provider_06: Signature verification SUCCESS (v2)")
+            return True
+        except InvalidSignature:
+            pass
 
-        logger.debug("provider_06: Signature verification SUCCESS")
+        # Fallback to Phase 1 spike unsigned-body payload
+        legacy_payload = jcs_canonicalize_plan(unsigned_body)
+        public_key.verify(signature_bytes, legacy_payload)
+        logger.debug("provider_06: Signature verification SUCCESS (legacy)")
         return True
 
     except InvalidSignature:
-        # Cryptographic verification failed — signature does not match payload
         logger.warning(
             "provider_06: Signature verification FAILED — InvalidSignature exception"
         )
         return False
 
     except Exception as exc:
-        # Catch-all for base64 decode errors, malformed payloads, etc.
-        # Fail-closed: treat all errors as verification failure.
         logger.warning(
             "provider_06: Signature verification FAILED — %s: %s",
             type(exc).__name__,
