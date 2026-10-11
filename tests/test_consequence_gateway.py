@@ -679,4 +679,3 @@ async def test_consequence_gateway_blocks_unsafe_ieee754_integers(
     assert res_b.decision == ConsequenceDecision.BLOCK
     assert res_b.reason_code == "ACTION_BINDING_MISMATCH"
     assert "integer outside" in res_b.detail
-

@@ -183,7 +183,6 @@ class TestEndpointErrors:
         assert called is False
 
 
-
 class TestGatewayClientCommitState:
     """``GatewayClient.commit_state`` against the real endpoint (ASGI transport)."""
 

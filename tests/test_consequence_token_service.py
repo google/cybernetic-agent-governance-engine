@@ -233,7 +233,9 @@ class TestConsequenceTokenService:
         # Token should be successfully minted with ver="" in claims
         assert "token" in finding
 
-    @pytest.mark.parametrize("unsafe_int", [9007199254740992, 9007199254740993, -(2**53)])
+    @pytest.mark.parametrize(
+        "unsafe_int", [9007199254740992, 9007199254740993, -(2**53)]
+    )
     def test_unsafe_json_integer_rejected_fail_closed(self, unsafe_int: int) -> None:
         """Issue #406: Integers outside IEEE-754 safe range [-(2^53-1), 2^53-1] fail closed before JCS."""
         finding = mint_consequence_token_finding(
@@ -245,4 +247,3 @@ class TestConsequenceTokenService:
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"
         assert "integer outside" in finding["message"]
-

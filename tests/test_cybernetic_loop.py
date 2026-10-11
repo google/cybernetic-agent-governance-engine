@@ -429,7 +429,6 @@ class TestApplyRefinementProposalFlow:
         assert ok.json()["approver_identity"] == approver_id
 
 
-
 # ---------------------------------------------------------------------------
 # R-LOOP-6: Cooldown gate — policy flapping prevention
 # ---------------------------------------------------------------------------

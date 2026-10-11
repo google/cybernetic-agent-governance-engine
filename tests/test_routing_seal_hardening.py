@@ -505,4 +505,3 @@ async def test_revoke_jwt_rejects_unverified_token_claiming_victim_nonce(
     )
     assert await rs.revoke_seal(legit_jwt, "legit revoke", redis_client=redis) is True
     assert await rs.seal_state(legit_jwt, redis_client=redis) is rs.SealState.REVOKED
-

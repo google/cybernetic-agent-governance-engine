@@ -188,4 +188,3 @@ def test_repeated_swift_labels_do_not_backtrack_quadratically() -> None:
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert result == payload
     assert elapsed_ms < 250.0, f"_BIC_LABELLED took {elapsed_ms:.1f} ms on 30 KB input"
-

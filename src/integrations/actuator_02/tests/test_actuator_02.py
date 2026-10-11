@@ -504,4 +504,3 @@ class TestSealProfile:
                 message="syscall blocked",
                 metadata={"blob": "A" * (MAX_OCSF_METADATA_BYTES + 1)},
             )
-
