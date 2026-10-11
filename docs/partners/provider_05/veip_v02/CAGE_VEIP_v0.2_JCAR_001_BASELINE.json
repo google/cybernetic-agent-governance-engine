@@ -1,0 +1,182 @@
+{
+  "schema_version": "cage-veip-joint-conformance-alignment/1.0",
+  "record_id": "CAGE-VEIP-V0.2-JCAR-001",
+  "prepared_date": "2026-10-10",
+  "profile": "VEIP v0.2 CAGE interoperability sandbox",
+  "status": "ALIGNMENT_PENDING",
+  "claim_boundary": "Sandbox interoperability only; not production certification.",
+  "source_evidence": {
+    "frozen_decision_record": {
+      "path": "/CAGE_VEIP/01_VEIP_v0.2_DECISION_RECORD.md",
+      "dropbox_file_id": "id:AdzSIi2kJ_kAAAAAAABBgg",
+      "dropbox_revision": "0165d42316de52a00000002b0e73ac3"
+    },
+    "frozen_test_vectors": {
+      "path": "/CAGE_VEIP/06_VEIP_v0.2_TEST_VECTORS.json",
+      "dropbox_file_id": "id:AdzSIi2kJ_kAAAAAAABBhw",
+      "dropbox_revision": "0165d4232f1261700000002b0e73ac3"
+    },
+    "frozen_runbook": {
+      "path": "/CAGE_VEIP/10_CAGE_v0.2_CONFORMANCE_RUNBOOK.md",
+      "dropbox_file_id": "id:AdzSIi2kJ_kAAAAAAABBiw",
+      "dropbox_revision": "0165d42343fd73b0000002b0e73ac3"
+    },
+    "cage_email_report": {
+      "subject": "Re: Subject: VEIP v0.2 CAGE Sandbox Ready for Live Conformance Testing",
+      "sender": "Lars Ahlfors",
+      "reported_datetime": "2026-10-10T16:14:00-04:00",
+      "preserved_pdf_sha256": "b79868d36ddc952a6d4f98e2d26111ddd3686459150b9f1d3ab0593f75249374"
+    }
+  },
+  "reported_run": {
+    "endpoint": "https://veip-cage-sandbox.am-43b.workers.dev",
+    "evaluation_timestamp": "2026-10-07T14:00:10Z",
+    "reported_live_scenarios_passed": 8,
+    "reported_live_scenarios_total": 8,
+    "manifest_root_fingerprint": "sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85",
+    "manifest_digest": "fa6c4e0c1d03a6f760792738c2de00fc6f6c2d4fea7455098981986a91744b6d",
+    "manifest_signature_verified": true,
+    "issuer_kid": "veip-sandbox-issuer-2026-10",
+    "issuer_key_status": "ACTIVE",
+    "cage_commit_sha": null,
+    "veip_sandbox_package_manifest_sha": null,
+    "raw_envelopes_deposited": false,
+    "evidence_chain_export_deposited": false
+  },
+  "comparison": [
+    {
+      "scenario": "ACTIVE",
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "ELIGIBLE",
+      "expected_reliance_status": "ELIGIBLE",
+      "observed_gateway_consequence": "ALLOW",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "REVOKED",
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_REVOKED",
+      "expected_reliance_status": "INELIGIBLE_REVOKED",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "SUSPENDED",
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_UNRESOLVED",
+      "expected_reliance_status": "INELIGIBLE_SUSPENDED",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": false,
+      "gateway_consequence_match": true,
+      "alignment": "DIVERGENCE"
+    },
+    {
+      "scenario": "EXPIRED",
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_EXPIRED",
+      "expected_reliance_status": "INELIGIBLE_EXPIRED",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "STALE_STATE",
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_STALE",
+      "expected_reliance_status": "INELIGIBLE_STALE",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "TAMPERED_SIGNATURE",
+      "observed_verification_status": "UNVERIFIED",
+      "observed_verification_reason": "SIGNATURE_INVALID",
+      "observed_reliance_status": "INELIGIBLE_UNRESOLVED",
+      "expected_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": false,
+      "gateway_consequence_match": true,
+      "alignment": "DIVERGENCE"
+    },
+    {
+      "scenario": "UNKNOWN_KID",
+      "observed_verification_status": "UNVERIFIED",
+      "observed_verification_reason": "UNKNOWN_KID",
+      "observed_reliance_status": "INELIGIBLE_UNRESOLVED",
+      "expected_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": false,
+      "gateway_consequence_match": true,
+      "alignment": "DIVERGENCE"
+    },
+    {
+      "scenario": "MISSING",
+      "observed_http_status": 404,
+      "observed_verification_status": "UNVERIFIED",
+      "observed_reliance_status": "INELIGIBLE_MISSING",
+      "expected_reliance_status": "INELIGIBLE_MISSING",
+      "observed_gateway_consequence": "DEFER",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    }
+  ],
+  "summary": {
+    "scenario_count": 8,
+    "exact_reliance_status_matches": 5,
+    "reliance_status_divergences": 3,
+    "gateway_consequence_matches": 8,
+    "divergent_scenarios": [
+      "SUSPENDED",
+      "TAMPERED_SIGNATURE",
+      "UNKNOWN_KID"
+    ]
+  },
+  "required_corrections": [
+    {
+      "scenario": "SUSPENDED",
+      "required_reliance_status": "INELIGIBLE_SUSPENDED",
+      "required_gateway_consequence": "DEFER"
+    },
+    {
+      "scenario": "TAMPERED_SIGNATURE",
+      "required_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "required_gateway_consequence": "DEFER"
+    },
+    {
+      "scenario": "UNKNOWN_KID",
+      "required_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "required_gateway_consequence": "DEFER"
+    }
+  ],
+  "required_evidence_for_closure": [
+    "CAGE_VEIP_v0.2_OVER_WIRE_RUN_2026-10-10.json or equivalent dated machine-readable run record",
+    "raw HTTP envelopes and evidence-chain export",
+    "CAGE commit SHA",
+    "VEIP sandbox package manifest SHA used by CAGE",
+    "final pass/fail matrix after correction and rerun",
+    "divergence report or correction note linking the prior and corrected observations"
+  ],
+  "closure_rule": {
+    "all_required": true,
+    "conditions": [
+      "The three divergent mappings equal the frozen expected RelianceStatus values.",
+      "Their gateway consequence remains DEFER absent an independently evidenced hard-safety condition.",
+      "The other five mappings remain unchanged.",
+      "Key-manifest and trust-anchor verification continue to pass.",
+      "The runbook-required evidence package is deposited in /CAGE_VEIP/."
+    ]
+  },
+  "joint_acknowledgement": {
+    "veip_side": "ALIGNMENT_PENDING",
+    "cage_side": "PENDING",
+    "final_joint_closure_date": null
+  }
+}

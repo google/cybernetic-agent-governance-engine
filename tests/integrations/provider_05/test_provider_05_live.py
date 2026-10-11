@@ -369,3 +369,48 @@ async def test_live_veip_v02_all_eight_scenarios_over_the_wire(
         violation = output.violations[0]
         assert violation.kind is ViolationKind.RELIANCE_INELIGIBLE
         assert violation.code == f"RELIANCE_{expected_status.value}"
+
+
+@pytest.mark.asyncio
+async def test_live_veip_v02_alignment_against_jcar_comparison_target() -> None:
+    """Verify all 8 live wire scenarios match the VEIP JCAR-001 expected target."""
+    import json
+    from pathlib import Path
+
+    jcar_path = (
+        Path(__file__).resolve().parents[3]
+        / "docs"
+        / "partners"
+        / "provider_05"
+        / "veip_v02"
+        / "CAGE_VEIP_v0.2_JCAR_001_BASELINE.json"
+    )
+    baseline = json.loads(jcar_path.read_text(encoding="utf-8"))
+
+    for target in baseline["comparison"]:
+        scenario = target["scenario"]
+        source = Provider05WarrantSource(
+            endpoint=_veip_sandbox_url(),
+            scenario="" if scenario == "ACTIVE" else scenario,
+        )
+        cache = WarrantCache(source, wall_clock=lambda: VEIP_V02_EVAL_TIME)
+        stage = WarrantStage(
+            [_EU_ECB_BINDING],
+            cache,
+            jurisdiction="EU_ECB",
+            clock=lambda: VEIP_V02_EVAL_TIME,
+        )
+        output = await stage.run(
+            StageContext(
+                action="execute_trade",
+                params={"confidence": 0.98},
+                profile=Profile.FULL,
+            )
+        )
+        (record,) = output.reliance
+        observed_consequence = "ALLOW" if not output.violations else "DEFER"
+        assert record.reliance_status.value == target["expected_reliance_status"]
+        assert record.verification_status == target["observed_verification_status"]
+        assert observed_consequence == target["observed_gateway_consequence"]
+        if "observed_verification_reason" in target:
+            assert record.reason.startswith(target["observed_verification_reason"])

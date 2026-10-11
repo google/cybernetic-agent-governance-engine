@@ -1,0 +1,225 @@
+{
+  "schema_version": "cage-veip-joint-conformance-alignment/1.0",
+  "record_id": "CAGE-VEIP-V0.2-JCAR-002",
+  "supersedes_record_id": "CAGE-VEIP-V0.2-JCAR-001",
+  "prepared_date": "2026-10-10",
+  "profile": "VEIP v0.2 CAGE interoperability sandbox",
+  "status": "ALIGNED",
+  "claim_boundary": "Sandbox interoperability only; not production certification.",
+  "source_evidence": {
+    "frozen_decision_record": {
+      "path": "/CAGE_VEIP/01_VEIP_v0.2_DECISION_RECORD.md",
+      "dropbox_file_id": "id:AdzSIi2kJ_kAAAAAAABBgg",
+      "dropbox_revision": "0165d42316de52a00000002b0e73ac3"
+    },
+    "frozen_test_vectors": {
+      "path": "/CAGE_VEIP/06_VEIP_v0.2_TEST_VECTORS.json",
+      "dropbox_file_id": "id:AdzSIi2kJ_kAAAAAAABBhw",
+      "dropbox_revision": "0165d4232f1261700000002b0e73ac3"
+    },
+    "frozen_runbook": {
+      "path": "/CAGE_VEIP/10_CAGE_v0.2_CONFORMANCE_RUNBOOK.md",
+      "dropbox_file_id": "id:AdzSIi2kJ_kAAAAAAABBiw",
+      "dropbox_revision": "0165d42343fd73b0000002b0e73ac3"
+    },
+    "cage_email_report": {
+      "subject": "Re: Subject: VEIP v0.2 CAGE Sandbox Ready for Live Conformance Testing",
+      "sender": "Lars Ahlfors",
+      "reported_datetime": "2026-10-10T16:14:00-04:00",
+      "preserved_pdf_sha256": "b79868d36ddc952a6d4f98e2d26111ddd3686459150b9f1d3ab0593f75249374"
+    }
+  },
+  "reported_run": {
+    "endpoint": "https://veip-cage-sandbox.am-43b.workers.dev",
+    "evaluation_timestamp": "2026-10-07T14:00:10Z",
+    "executed_at_utc": "2026-10-10T21:20:00Z",
+    "reported_live_scenarios_passed": 8,
+    "reported_live_scenarios_total": 8,
+    "manifest_root_fingerprint": "sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85",
+    "manifest_digest": "fa6c4e0c1d03a6f760792738c2de00fc6f6c2d4fea7455098981986a91744b6d",
+    "manifest_signature_verified": true,
+    "issuer_kid": "veip-sandbox-issuer-2026-10",
+    "issuer_key_status": "ACTIVE",
+    "cage_commit_sha": "fe9b57e97918681265abb2fb7923e78894feeb5d",
+    "veip_sandbox_package_manifest_sha": "47c1ed5fee93a82dbfcd855e1a25fb55dec2c5a795c248f21422c91fa21ea8e4",
+    "raw_envelopes_deposited": true,
+    "evidence_chain_export_deposited": true,
+    "evidence_export_path": "docs/partners/provider_05/veip_v02/evidence_export_2026-10-10.json"
+  },
+  "comparison": [
+    {
+      "scenario": "ACTIVE",
+      "observed_http_status": 200,
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "ELIGIBLE",
+      "expected_reliance_status": "ELIGIBLE",
+      "observed_gateway_consequence": "ALLOW",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+      "evidence_record_hash": "399a9363dc09d36ccc527a8fa07365dbf07a6ba09a58e31def836fb69b1fbf8d",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "REVOKED",
+      "observed_http_status": 200,
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_REVOKED",
+      "expected_reliance_status": "INELIGIBLE_REVOKED",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "1886394fda14961d98627ed228f2105c20af65f80287955d4ddabf11bf0110f9",
+      "evidence_record_hash": "260c2dd27728d01069c32f5cbe72331d883744626f0232057e2ee5d9aae9a878",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "SUSPENDED",
+      "observed_http_status": 200,
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_SUSPENDED",
+      "expected_reliance_status": "INELIGIBLE_SUSPENDED",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "0544c300cff5b6212a003b99905a529854a765be2699dc7561be5f6c0c0ed433",
+      "evidence_record_hash": "3f682b7588ef2b6770611f5fdd20105c94ba869a57d9a8b64cfba1ed84bf1d3c",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "EXPIRED",
+      "observed_http_status": 200,
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_EXPIRED",
+      "expected_reliance_status": "INELIGIBLE_EXPIRED",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "aa092cdb1685c454f6a835952d51e8ee6d5c4efc3d6c801b2616071dfc6cd7c1",
+      "evidence_record_hash": "786143c4122d1abe80d3d6f299069b5872c4e488c9f7f735594d7b3dcf5e13ae",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "STALE_STATE",
+      "observed_http_status": 200,
+      "observed_verification_status": "VERIFIED",
+      "observed_reliance_status": "INELIGIBLE_STALE",
+      "expected_reliance_status": "INELIGIBLE_STALE",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "9c18b8e27d4d621bd720763e01c83c5fa81844f5bf1da4c21ce22d89c5b26032",
+      "evidence_record_hash": "5e04d9bdc30f19c82ceca01b84ed8940985ae29663361d860d3e1f54eca8df3e",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "TAMPERED_SIGNATURE",
+      "observed_http_status": 200,
+      "observed_verification_status": "UNVERIFIED",
+      "observed_verification_reason": "SIGNATURE_INVALID",
+      "observed_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "expected_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+      "evidence_record_hash": "50078e9e9077bfe7f2d0008131bc745a30d765a8588271c93a3c8974e4763c94",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "UNKNOWN_KID",
+      "observed_http_status": 200,
+      "observed_verification_status": "UNVERIFIED",
+      "observed_verification_reason": "UNKNOWN_KID",
+      "observed_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "expected_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "warrant-veip-2026-002",
+      "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+      "evidence_record_hash": "e047010660a3278824ab47d866c004a567caa229db4e8b9879ceb8329bd41fe8",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "MISSING",
+      "observed_http_status": 404,
+      "observed_verification_status": "UNVERIFIED",
+      "observed_reliance_status": "INELIGIBLE_MISSING",
+      "expected_reliance_status": "INELIGIBLE_MISSING",
+      "observed_gateway_consequence": "DEFER",
+      "warrant_id": "",
+      "warrant_digest": "",
+      "evidence_record_hash": "2e8fcfbfb38d9eb21366e00b82fb3e18161070cc2387b1e0e28f87e490508a54",
+      "reliance_status_exact_match": true,
+      "gateway_consequence_match": true,
+      "alignment": "PASS"
+    }
+  ],
+  "summary": {
+    "scenario_count": 8,
+    "exact_reliance_status_matches": 8,
+    "reliance_status_divergences": 0,
+    "gateway_consequence_matches": 8,
+    "divergent_scenarios": []
+  },
+  "required_corrections": [
+    {
+      "scenario": "SUSPENDED",
+      "prior_observed_reliance_status": "INELIGIBLE_UNRESOLVED",
+      "required_reliance_status": "INELIGIBLE_SUSPENDED",
+      "corrected_observed_reliance_status": "INELIGIBLE_SUSPENDED",
+      "required_gateway_consequence": "DEFER",
+      "corrected_gateway_consequence": "DEFER",
+      "status": "RESOLVED"
+    },
+    {
+      "scenario": "TAMPERED_SIGNATURE",
+      "prior_observed_reliance_status": "INELIGIBLE_UNRESOLVED",
+      "required_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "corrected_observed_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "required_gateway_consequence": "DEFER",
+      "corrected_gateway_consequence": "DEFER",
+      "status": "RESOLVED"
+    },
+    {
+      "scenario": "UNKNOWN_KID",
+      "prior_observed_reliance_status": "INELIGIBLE_UNRESOLVED",
+      "required_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "corrected_observed_reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "required_gateway_consequence": "DEFER",
+      "corrected_gateway_consequence": "DEFER",
+      "status": "RESOLVED"
+    }
+  ],
+  "correction_note": "Aligned the three divergent RelianceStatus mappings in CAGE's kernel WarrantStandingVerifier (src/gateway/governance/warrant/model.py and src/gateway/governance/warrant/verifier.py) with the frozen VEIP v0.2 profile while keeping the DEFER (DeferReason.WARRANT_INELIGIBLE) gateway consequence unchanged: (1) SUSPENDED warrants map to INELIGIBLE_SUSPENDED (previously INELIGIBLE_UNRESOLVED); (2) TAMPERED_SIGNATURE (Ed25519 InvalidSignature) and UNKNOWN_KID (kid not present in verified key manifest) map to INELIGIBLE_AUTHENTICITY (previously INELIGIBLE_UNRESOLVED).",
+  "required_evidence_for_closure": [
+    "CAGE_VEIP_v0.2_OVER_WIRE_RUN_2026-10-10.json or equivalent dated machine-readable run record",
+    "raw HTTP envelopes and evidence-chain export",
+    "CAGE commit SHA",
+    "VEIP sandbox package manifest SHA used by CAGE",
+    "final pass/fail matrix after correction and rerun",
+    "divergence report or correction note linking the prior and corrected observations"
+  ],
+  "closure_rule": {
+    "all_required": true,
+    "conditions": [
+      "The three divergent mappings equal the frozen expected RelianceStatus values.",
+      "Their gateway consequence remains DEFER absent an independently evidenced hard-safety condition.",
+      "The other five mappings remain unchanged.",
+      "Key-manifest and trust-anchor verification continue to pass.",
+      "The runbook-required evidence package is deposited in /CAGE_VEIP/."
+    ]
+  },
+  "joint_acknowledgement": {
+    "veip_side": "ALIGNMENT_PENDING",
+    "cage_side": "ALIGNED",
+    "final_joint_closure_date": "2026-10-10"
+  }
+}

@@ -525,3 +525,52 @@ async def test_veip_v02_cache_resolves_and_caches_verified_key_manifest() -> Non
     assert obs.warrant is not None and obs.warrant.is_v02
     assert isinstance(obs.key_manifest, VerifiedKeyManifest)
     assert obs.manifest_error == ""
+
+
+def test_veip_v02_alignment_against_jcar_comparison_target() -> None:
+    """Compare corrected CAGE verifier outcomes directly against VEIP JCAR-001 target."""
+    baseline = json.loads(
+        (_V02_DIR / "CAGE_VEIP_v0.2_JCAR_001_BASELINE.json").read_text(encoding="utf-8")
+    )
+    aligned = json.loads(
+        (_V02_DIR / "CAGE_VEIP_v0.2_OVER_WIRE_RUN_2026-10-10.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = VerifiedKeyManifest.verify(
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_SANDBOX_TRUST_ANCHOR,
+        now=VEIP_V02_EVAL_TIME,
+    )
+
+    assert aligned["schema_version"] == baseline["schema_version"]
+    assert aligned["status"] == "ALIGNED"
+    assert aligned["summary"]["exact_reliance_status_matches"] == 8
+    assert aligned["summary"]["reliance_status_divergences"] == 0
+    assert aligned["summary"]["gateway_consequence_matches"] == 8
+    assert aligned["summary"]["divergent_scenarios"] == []
+
+    aligned_by_scenario = {item["scenario"]: item for item in aligned["comparison"]}
+    for target in baseline["comparison"]:
+        scenario = target["scenario"]
+        raw_warrant = VEIP_V02_WARRANTS.get(scenario)
+        warrant = Warrant(**raw_warrant) if raw_warrant is not None else None
+        result = WarrantStandingVerifier.verify_standing(
+            warrant,
+            context=VEIP_V02_CONTEXT,
+            now=VEIP_V02_EVAL_TIME,
+            key_manifest=manifest,
+            max_age_seconds=60.0,
+        )
+        observed_consequence = "ALLOW" if result.eligible else "DEFER"
+        assert result.reliance_status.value == target["expected_reliance_status"]
+        assert result.verification_status == target["observed_verification_status"]
+        assert observed_consequence == target["observed_gateway_consequence"]
+        if "observed_verification_reason" in target:
+            assert result.reason.startswith(target["observed_verification_reason"])
+
+        row = aligned_by_scenario[scenario]
+        assert row["observed_reliance_status"] == target["expected_reliance_status"]
+        assert row["reliance_status_exact_match"] is True
+        assert row["gateway_consequence_match"] is True
+        assert row["alignment"] == "PASS"
