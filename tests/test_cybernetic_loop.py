@@ -355,8 +355,6 @@ class TestApplyRefinementProposalFlow:
         self, monkeypatch
     ):
         """Issue #405: proposer workload identity cannot self-approve its own refinement proposal."""
-        from unittest.mock import AsyncMock
-
         from src.gateway.server.workload_identity import (
             WorkloadIdentityMiddleware,
             load_identity_policy,

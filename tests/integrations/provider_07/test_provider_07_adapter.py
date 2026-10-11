@@ -1116,7 +1116,7 @@ class TestInferThetaPartnerContractVectors:
             {"CAGE_ENV": "staging"},
             {"CAGE_ENV": "stage"},
             {"CAGE_ENV": "typo-unrecognized"},
-            {"CAGE_ENV": "", "KUBERNETES_SERVICE_HOST": "10.96.0.1"},
+            {"CAGE_ENV": "", "ENVIRONMENT": "", "KUBERNETES_SERVICE_HOST": "10.96.0.1"},
         ],
     )
     def test_step1_unsigned_blocked_in_production(
