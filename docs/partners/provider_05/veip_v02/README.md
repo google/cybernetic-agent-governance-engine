@@ -24,3 +24,10 @@ Frozen VEIP v0.2 conformance bundle artifacts (delivery ZIP SHA-256: `47c1ed5fee
 | `TAMPERED_SIGNATURE` | `200` | Valid | Invalid (`InvalidSignature`) | `UNVERIFIED` | `INELIGIBLE_AUTHENTICITY` | `DEFER` (`WARRANT_INELIGIBLE`) |
 | `UNKNOWN_KID` | `200` | Mismatch | Unknown `kid` (`unknown-kid`) | `UNVERIFIED` | `INELIGIBLE_AUTHENTICITY` | `DEFER` (`WARRANT_INELIGIBLE`) |
 | `MISSING` | `404` | — | — | `UNVERIFIED` | `INELIGIBLE_MISSING` | `DEFER` (`WARRANT_INELIGIBLE`) |
+
+## Joint Conformance Alignment & Closure Records
+
+- `CAGE_VEIP_v0.2_JCAR_001_BASELINE.json` (`CAGE-VEIP-V0.2-JCAR-001`, `2026-10-10`): Initial comparison baseline identifying 3 `RelianceStatus` divergences (`SUSPENDED`, `TAMPERED_SIGNATURE`, `UNKNOWN_KID`) prior to PR `#458`.
+- `CAGE_VEIP_v0.2_OVER_WIRE_RUN_2026-10-10.json` (`CAGE-VEIP-V0.2-JCAR-002`, `2026-10-10`): Post-`#458` (`fe9b57e9`) over-the-wire run record demonstrating `8/8` exact `RelianceStatus` matches and `8/8` gateway-consequence matches.
+- `CAGE_VEIP_v0.2_JCAR_CLOSURE_001.json` (`CAGE-VEIP-V0.2-JCAR-CLOSURE-001`, `2026-10-11`): Final joint conformance closure record (`status: "JOINTLY_ALIGNED"`, superseding `JCAR-001` and `JCAR-002`) confirming mutual alignment across PR `#458` (`fe9b57e9`) and PR `#459` (`88d6e0fc`).
+

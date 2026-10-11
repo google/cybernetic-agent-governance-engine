@@ -574,3 +574,49 @@ def test_veip_v02_alignment_against_jcar_comparison_target() -> None:
         assert row["reliance_status_exact_match"] is True
         assert row["gateway_consequence_match"] is True
         assert row["alignment"] == "PASS"
+
+
+def test_veip_v02_joint_conformance_closure_record() -> None:
+    """Verify the final joint conformance closure record (CAGE-VEIP-V0.2-JCAR-CLOSURE-001)."""
+    closure = json.loads(
+        (_V02_DIR / "CAGE_VEIP_v0.2_JCAR_CLOSURE_001.json").read_text(encoding="utf-8")
+    )
+    manifest = VerifiedKeyManifest.verify(
+        VEIP_V02_KEY_MANIFEST,
+        VEIP_SANDBOX_TRUST_ANCHOR,
+        now=VEIP_V02_EVAL_TIME,
+    )
+
+    assert closure["schema_version"] == "cage-veip-joint-conformance-closure/1.0"
+    assert closure["record_id"] == "CAGE-VEIP-V0.2-JCAR-CLOSURE-001"
+    assert closure["status"] == "JOINTLY_ALIGNED"
+    assert closure["supersedes"] == [
+        "CAGE-VEIP-V0.2-JCAR-001",
+        "CAGE-VEIP-V0.2-JCAR-002",
+    ]
+    assert closure["joint_acknowledgement"] == {
+        "cage_side": "ALIGNED",
+        "veip_side": "ALIGNED",
+        "final_joint_closure_date": "2026-10-11",
+    }
+    assert closure["observed_conformance"]["scenario_count"] == 8
+    assert closure["observed_conformance"]["exact_reliance_status_matches"] == 8
+    assert closure["observed_conformance"]["gateway_consequence_matches"] == 8
+    assert closure["observed_conformance"]["remaining_divergences"] == 0
+
+    for item in closure["scenario_results"]:
+        scenario = item["scenario"]
+        raw_warrant = VEIP_V02_WARRANTS.get(scenario)
+        warrant = Warrant(**raw_warrant) if raw_warrant is not None else None
+        result = WarrantStandingVerifier.verify_standing(
+            warrant,
+            context=VEIP_V02_CONTEXT,
+            now=VEIP_V02_EVAL_TIME,
+            key_manifest=manifest,
+            max_age_seconds=60.0,
+        )
+        observed_consequence = "ALLOW" if result.eligible else "DEFER"
+        assert result.reliance_status.value == item["reliance_status"]
+        assert result.verification_status == item["verification_status"]
+        assert observed_consequence == item["gateway_consequence"]
+        assert item["alignment"] == "PASS"

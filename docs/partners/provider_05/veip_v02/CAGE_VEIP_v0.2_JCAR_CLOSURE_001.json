@@ -1,0 +1,138 @@
+{
+  "schema_version": "cage-veip-joint-conformance-closure/1.0",
+  "record_id": "CAGE-VEIP-V0.2-JCAR-CLOSURE-001",
+  "profile": "VEIP v0.2 CAGE interoperability sandbox",
+  "closure_date": "2026-10-11",
+  "status": "JOINTLY_ALIGNED",
+  "claim_boundary": "Sandbox interoperability only; not production certification, production authorization, or production readiness.",
+  "supersedes": [
+    "CAGE-VEIP-V0.2-JCAR-001",
+    "CAGE-VEIP-V0.2-JCAR-002"
+  ],
+  "veip_frozen_basis": {
+    "decision_record": "/CAGE_VEIP/01_VEIP_v0.2_DECISION_RECORD.md",
+    "test_vectors": "/CAGE_VEIP/06_VEIP_v0.2_TEST_VECTORS.json",
+    "runbook": "/CAGE_VEIP/10_CAGE_v0.2_CONFORMANCE_RUNBOOK.md"
+  },
+  "veip_sandbox": {
+    "base_url": "https://veip-cage-sandbox.am-43b.workers.dev",
+    "delivery_zip_sha256": "47c1ed5fee93a82dbfcd855e1a25fb55dec2c5a795c248f21422c91fa21ea8e4",
+    "manifest_root_fingerprint": "sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85",
+    "manifest_digest": "fa6c4e0c1d03a6f760792738c2de00fc6f6c2d4fea7455098981986a91744b6d",
+    "issuer_kid": "veip-sandbox-issuer-2026-10",
+    "environment": "SANDBOX"
+  },
+  "cage_repository": {
+    "repository": "google/cybernetic-agent-governance-engine",
+    "runtime_alignment_pr": 458,
+    "runtime_alignment_main_commit": "fe9b57e97918681265abb2fb7923e78894feeb5d",
+    "runtime_alignment_branch_commit_observed": "de702ac3b4d649403593a6dd9276282e5f718bf5",
+    "jcar_record_pr": 459,
+    "jcar_tested_head_commit": "6025530f5272de8f54675f1a60b84eb070815780",
+    "jcar_main_merge_commit": "88d6e0fceef9aef5f8c8ea36bc8f8d3bfdb356f1"
+  },
+  "observed_conformance": {
+    "evaluation_clock_utc": "2026-10-07T14:00:10Z",
+    "scenario_count": 8,
+    "exact_reliance_status_matches": 8,
+    "gateway_consequence_matches": 8,
+    "remaining_divergences": 0,
+    "trust_anchor_verification": "PASS",
+    "key_manifest_verification": "PASS",
+    "over_the_wire_fetch": "PASS",
+    "cryptographic_interop": "PASS"
+  },
+  "scenario_results": [
+    {
+      "scenario": "ACTIVE",
+      "verification_status": "VERIFIED",
+      "reliance_status": "ELIGIBLE",
+      "gateway_consequence": "ALLOW",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "REVOKED",
+      "verification_status": "VERIFIED",
+      "reliance_status": "INELIGIBLE_REVOKED",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "SUSPENDED",
+      "verification_status": "VERIFIED",
+      "reliance_status": "INELIGIBLE_SUSPENDED",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "EXPIRED",
+      "verification_status": "VERIFIED",
+      "reliance_status": "INELIGIBLE_EXPIRED",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "STALE_STATE",
+      "verification_status": "VERIFIED",
+      "reliance_status": "INELIGIBLE_STALE",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "TAMPERED_SIGNATURE",
+      "verification_status": "UNVERIFIED",
+      "reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "UNKNOWN_KID",
+      "verification_status": "UNVERIFIED",
+      "reliance_status": "INELIGIBLE_AUTHENTICITY",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    },
+    {
+      "scenario": "MISSING",
+      "http_status": 404,
+      "verification_status": "UNVERIFIED",
+      "reliance_status": "INELIGIBLE_MISSING",
+      "gateway_consequence": "DEFER",
+      "alignment": "PASS"
+    }
+  ],
+  "prior_divergences_resolved": [
+    {
+      "scenario": "SUSPENDED",
+      "prior": "INELIGIBLE_UNRESOLVED",
+      "final": "INELIGIBLE_SUSPENDED"
+    },
+    {
+      "scenario": "TAMPERED_SIGNATURE",
+      "prior": "INELIGIBLE_UNRESOLVED",
+      "final": "INELIGIBLE_AUTHENTICITY"
+    },
+    {
+      "scenario": "UNKNOWN_KID",
+      "prior": "INELIGIBLE_UNRESOLVED",
+      "final": "INELIGIBLE_AUTHENTICITY"
+    }
+  ],
+  "cage_evidence_records": {
+    "baseline_record": "docs/partners/provider_05/veip_v02/CAGE_VEIP_v0.2_JCAR_001_BASELINE.json",
+    "aligned_over_wire_run": "docs/partners/provider_05/veip_v02/CAGE_VEIP_v0.2_OVER_WIRE_RUN_2026-10-10.json",
+    "evidence_export": "docs/partners/provider_05/veip_v02/evidence_export_2026-10-10.json"
+  },
+  "joint_acknowledgement": {
+    "cage_side": "ALIGNED",
+    "veip_side": "ALIGNED",
+    "final_joint_closure_date": "2026-10-11"
+  },
+  "closure_statement": "VEIP v0.2 and CAGE are jointly aligned for the frozen sandbox interoperability profile: 8/8 exact RelianceStatus mappings, 8/8 gateway-consequence mappings, zero remaining divergences, with trust-anchor, key-manifest, signature/digest, freshness, and over-the-wire behavior evidenced in the preserved records.",
+  "limitations": [
+    "This closure applies only to the frozen VEIP v0.2 CAGE sandbox interoperability profile.",
+    "It does not establish production certification, production key custody, production authorization, production SLA, or general production readiness.",
+    "CAGE operational consequences remain distinct from VEIP reliance/admissibility semantics.",
+    "A warrant ineligibility does not itself manufacture institutional DENY; independent hard-safety logic remains separate."
+  ]
+}
