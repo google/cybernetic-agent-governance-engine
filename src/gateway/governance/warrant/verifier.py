@@ -142,12 +142,12 @@ class WarrantStandingVerifier:
         if warrant.is_v02 or key_manifest is not None:
             if not warrant.is_v02:
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     "Unsigned v0.1 warrant rejected: verified key manifest requires v0.2 signature",
                 )
             if key_manifest is None:
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     "Warrant carries v0.2 signature fields but no VerifiedKeyManifest was supplied",
                 )
             if warrant.schema_version != WARRANT_SCHEMA_VERSION_V02:
@@ -157,39 +157,39 @@ class WarrantStandingVerifier:
                 )
             if not key_manifest.is_valid_at(current_time):
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"Key manifest {key_manifest.manifest_id!r} is outside its validity window",
                 )
             if not warrant.kid:
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     "UNKNOWN_KID: warrant carries no kid",
                 )
             key_entry = key_manifest.resolve_key(warrant.kid)
             if key_entry is None:
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"UNKNOWN_KID: warrant kid {warrant.kid!r} not found in verified key manifest",
                 )
             if not key_entry.is_active_at(current_time):
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"Issuer key {warrant.kid!r} is not active or outside validity window",
                 )
             if warrant.alg != "Ed25519":
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"Unsupported warrant signature algorithm: {warrant.alg!r}",
                 )
             if not warrant.digest:
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     "Warrant carries no declared digest; integrity cannot be established",
                 )
             computed_digest = warrant.compute_digest()
             if warrant.digest != computed_digest:
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"Cryptographic digest mismatch: declared {warrant.digest} "
                     f"vs computed {computed_digest}",
                 )
@@ -197,7 +197,7 @@ class WarrantStandingVerifier:
                 warrant.signature, warrant.to_signed_bytes()
             ):
                 return _ineligible(
-                    RelianceStatus.INELIGIBLE_UNRESOLVED,
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"SIGNATURE_INVALID: Ed25519 signature verification failed for kid {warrant.kid!r}",
                 )
             verified_status = "VERIFIED"
@@ -223,7 +223,7 @@ class WarrantStandingVerifier:
             )
         if warrant.status == WarrantStatus.SUSPENDED:
             return _ineligible(
-                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                RelianceStatus.INELIGIBLE_SUSPENDED,
                 f"Warrant suspended: {warrant.revocation_ref or 'suspension active'}",
             )
         if warrant.status != WarrantStatus.ACTIVE:

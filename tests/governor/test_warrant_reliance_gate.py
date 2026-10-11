@@ -188,7 +188,7 @@ async def test_ungoverned_action_is_not_fetched() -> None:
         ),
         (
             lambda: _source_with(status="SUSPENDED"),
-            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            RelianceStatus.INELIGIBLE_SUSPENDED,
         ),
         (
             lambda: _source_with(valid_until="2026-08-21T00:00:00Z"),

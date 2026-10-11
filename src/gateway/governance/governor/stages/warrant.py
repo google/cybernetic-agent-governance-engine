@@ -234,7 +234,7 @@ class WarrantStage(Stage):
         if observation.manifest_error and observation.key_manifest is None:
             return StandingVerificationResult(
                 eligible=False,
-                reliance_status=RelianceStatus.INELIGIBLE_UNRESOLVED,
+                reliance_status=RelianceStatus.INELIGIBLE_AUTHENTICITY,
                 reason=f"key manifest verification failed: {observation.manifest_error}",
                 attested_at=attested_at,
                 warrant=warrant,

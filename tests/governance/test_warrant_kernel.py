@@ -147,7 +147,7 @@ def test_failure_matrix(sample_warrant: Warrant) -> None:
             verify(
                 _reissue(sample_warrant, status="SUSPENDED"), CONTEXT, now=EVAL_TIME
             ),
-            RelianceStatus.INELIGIBLE_UNRESOLVED,
+            RelianceStatus.INELIGIBLE_SUSPENDED,
         ),
     ]
     for result, expected in cases:

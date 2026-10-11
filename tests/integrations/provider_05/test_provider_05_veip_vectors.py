@@ -328,7 +328,7 @@ VEIP_V02_SCENARIOS = [
     ),
     pytest.param(
         "SUSPENDED",
-        RelianceStatus.INELIGIBLE_UNRESOLVED,
+        RelianceStatus.INELIGIBLE_SUSPENDED,
         "VERIFIED",
         "Temporary Suspension #S-17",
         id="V02-SUSPENDED",
@@ -349,14 +349,14 @@ VEIP_V02_SCENARIOS = [
     ),
     pytest.param(
         "TAMPERED_SIGNATURE",
-        RelianceStatus.INELIGIBLE_UNRESOLVED,
+        RelianceStatus.INELIGIBLE_AUTHENTICITY,
         "UNVERIFIED",
         "SIGNATURE_INVALID",
         id="V02-TAMPERED_SIGNATURE",
     ),
     pytest.param(
         "UNKNOWN_KID",
-        RelianceStatus.INELIGIBLE_UNRESOLVED,
+        RelianceStatus.INELIGIBLE_AUTHENTICITY,
         "UNVERIFIED",
         "UNKNOWN_KID",
         id="V02-UNKNOWN_KID",
@@ -465,11 +465,11 @@ def test_veip_v02_trust_anchor_type_system_invariants() -> None:
             key_manifest=VEIP_V02_KEY_MANIFEST,  # type: ignore[arg-type]
         )
 
-    # v0.2 warrant without a key manifest fails closed as UNVERIFIED
+    # v0.2 warrant without a key manifest fails closed as INELIGIBLE_AUTHENTICITY
     no_manifest = WarrantStandingVerifier.verify_standing(
         w_v02, context=VEIP_V02_CONTEXT, now=VEIP_V02_EVAL_TIME
     )
-    assert no_manifest.reliance_status is RelianceStatus.INELIGIBLE_UNRESOLVED
+    assert no_manifest.reliance_status is RelianceStatus.INELIGIBLE_AUTHENTICITY
     assert no_manifest.verification_status == "UNVERIFIED"
 
     # Downgrade protection: unsigned v0.1 warrant rejected when key_manifest is active
@@ -484,7 +484,7 @@ def test_veip_v02_trust_anchor_type_system_invariants() -> None:
         now=VEIP_V02_EVAL_TIME,
         key_manifest=manifest,
     )
-    assert downgraded.reliance_status is RelianceStatus.INELIGIBLE_UNRESOLVED
+    assert downgraded.reliance_status is RelianceStatus.INELIGIBLE_AUTHENTICITY
     assert downgraded.verification_status == "UNVERIFIED"
     assert "Unsigned v0.1 warrant rejected" in downgraded.reason
 

@@ -1194,11 +1194,11 @@ async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
     ("scenario", "expected_status", "expected_verified"),
     [
         ("REVOKED", "INELIGIBLE_REVOKED", "VERIFIED"),
-        ("SUSPENDED", "INELIGIBLE_UNRESOLVED", "VERIFIED"),
+        ("SUSPENDED", "INELIGIBLE_SUSPENDED", "VERIFIED"),
         ("EXPIRED", "INELIGIBLE_EXPIRED", "VERIFIED"),
         ("STALE_STATE", "INELIGIBLE_STALE", "VERIFIED"),
-        ("TAMPERED_SIGNATURE", "INELIGIBLE_UNRESOLVED", "UNVERIFIED"),
-        ("UNKNOWN_KID", "INELIGIBLE_UNRESOLVED", "UNVERIFIED"),
+        ("TAMPERED_SIGNATURE", "INELIGIBLE_AUTHENTICITY", "UNVERIFIED"),
+        ("UNKNOWN_KID", "INELIGIBLE_AUTHENTICITY", "UNVERIFIED"),
     ],
 )
 async def test_veip_v02_ineligible_scenarios_defer_e2e(

@@ -18,9 +18,9 @@ Frozen VEIP v0.2 conformance bundle artifacts (delivery ZIP SHA-256: `47c1ed5fee
 |---|---|---|---|---|---|---|
 | `ACTIVE` | `200` | Valid | Valid (`veip-sandbox-issuer-2026-10`) | `VERIFIED` | `ELIGIBLE` | `ALLOW` (confidence $\ge 0.97$) |
 | `REVOKED` | `200` | Valid | Valid (`veip-sandbox-issuer-2026-10`) | `VERIFIED` | `INELIGIBLE_REVOKED` | `DEFER` (`WARRANT_INELIGIBLE`) |
-| `SUSPENDED` | `200` | Valid | Valid (`veip-sandbox-issuer-2026-10`) | `VERIFIED` | `INELIGIBLE_UNRESOLVED` | `DEFER` (`WARRANT_INELIGIBLE`) |
+| `SUSPENDED` | `200` | Valid | Valid (`veip-sandbox-issuer-2026-10`) | `VERIFIED` | `INELIGIBLE_SUSPENDED` | `DEFER` (`WARRANT_INELIGIBLE`) |
 | `EXPIRED` | `200` | Valid | Valid (`veip-sandbox-issuer-2026-10`) | `VERIFIED` | `INELIGIBLE_EXPIRED` | `DEFER` (`WARRANT_INELIGIBLE`) |
 | `STALE_STATE` | `200` | Valid | Valid (`veip-sandbox-issuer-2026-10`) | `VERIFIED` | `INELIGIBLE_STALE` | `DEFER` (`WARRANT_INELIGIBLE`) |
-| `TAMPERED_SIGNATURE` | `200` | Valid | Invalid (`InvalidSignature`) | `UNVERIFIED` | `INELIGIBLE_UNRESOLVED` | `DEFER` (`WARRANT_INELIGIBLE`) |
-| `UNKNOWN_KID` | `200` | Mismatch | Unknown `kid` (`unknown-kid`) | `UNVERIFIED` | `INELIGIBLE_UNRESOLVED` | `DEFER` (`WARRANT_INELIGIBLE`) |
+| `TAMPERED_SIGNATURE` | `200` | Valid | Invalid (`InvalidSignature`) | `UNVERIFIED` | `INELIGIBLE_AUTHENTICITY` | `DEFER` (`WARRANT_INELIGIBLE`) |
+| `UNKNOWN_KID` | `200` | Mismatch | Unknown `kid` (`unknown-kid`) | `UNVERIFIED` | `INELIGIBLE_AUTHENTICITY` | `DEFER` (`WARRANT_INELIGIBLE`) |
 | `MISSING` | `404` | — | — | `UNVERIFIED` | `INELIGIBLE_MISSING` | `DEFER` (`WARRANT_INELIGIBLE`) |

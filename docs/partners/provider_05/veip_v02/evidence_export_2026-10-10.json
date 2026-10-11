@@ -1,0 +1,1350 @@
+{
+  "ACTIVE": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-3830e3ba75ac484f8f3b915ee64e0271",
+      "issued_at": "2026-10-11T01:21:50.251Z",
+      "expires_at": "2026-10-11T01:26:50.251Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "warrant",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "ALLOW",
+        "violations": [],
+        "latency_ms": 414.95,
+        "agent_id": "",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "warrant",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+            "warrant_status": "ACTIVE",
+            "reliance_status": "ELIGIBLE",
+            "reason": "Warrant standing verified and active; norm eligible for reliance",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "VERIFIED"
+          }
+        ]
+      },
+      "external_attestations": [
+        {
+          "type": "WARRANT",
+          "status": "VERIFIED",
+          "receipt_id": "warrant-veip-2026-002",
+          "attested_at": "2026-10-07T14:00:10+00:00",
+          "provider_name": "provider_05_warrant",
+          "norm_id": "confidence.min_trade_confidence",
+          "warrant_id": "warrant-veip-2026-002",
+          "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+          "warrant_status": "ACTIVE",
+          "reliance_status": "ELIGIBLE",
+          "reason": "Warrant standing verified and active; norm eligible for reliance",
+          "required_governing_version": "cage-policy-2.1.0",
+          "warrant_governing_version": "cage-policy-2.1.0",
+          "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+          "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+          "revocation_ref": "",
+          "residual_risk_ref": "RRR-2026-08-01-A1",
+          "observed_at": "2026-10-07T14:00:10+00:00",
+          "age_seconds": "0.000",
+          "max_age_seconds": "60.000",
+          "verification_status": "VERIFIED"
+        }
+      ]
+    },
+    "commit_tool_result": "EXECUTED: AAPL x 500.0 (Receipt ID: r-56030dc0)",
+    "chained_evidence_record": {
+      "stream_id": "1791681710256-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "1",
+      "timestamp_utc": "2026-10-11T01:21:50.256384+00:00",
+      "event_type": "GOVERNANCE_DECISION",
+      "control_id": "agentic_scope_statement",
+      "trace_id": "e25e7b002232430599ca087f0f20b5b0",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "744dc5d8dc672355e3ebfefeb1eeb0929717c5ae852428584c277cf461f21354",
+      "record_hash": "399a9363dc09d36ccc527a8fa07365dbf07a6ba09a58e31def836fb69b1fbf8d",
+      "payload": {
+        "action": "execute_trade",
+        "controlId": "agentic_scope_statement",
+        "params_hash": "aa0ac8cab1857a4ce23d63bc792d460449959ce1d7bd3da35930ea7a8bc584f4",
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Warrant standing verified and active; norm eligible for reliance",
+            "reliance_status": "ELIGIBLE",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "VERIFIED",
+            "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "seal_ttl_s": 30,
+        "timestamp_utc": "2026-10-11T01:21:50.256219+00:00",
+        "type": "GOVERNANCE_DECISION"
+      }
+    }
+  },
+  "REVOKED": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-39283d6d517e4138b3c2d1fa37fe6f0e",
+      "issued_at": "2026-10-11T01:21:50.413Z",
+      "expires_at": "2026-10-11T01:26:50.413Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_REVOKED",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 124.17,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_REVOKED",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "9fe0be22-79d0-4939-a62e-80a6cf1cf6f8",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "1886394fda14961d98627ed228f2105c20af65f80287955d4ddabf11bf0110f9",
+            "warrant_status": "REVOKED",
+            "reliance_status": "INELIGIBLE_REVOKED",
+            "reason": "Warrant revoked: Emergency Risk Notice #912",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "Emergency Risk Notice #912",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "VERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as 'b0d238cc-3a39-4556-83c6-be32dfe9bf0b': [RELIANCE_INELIGIBLE_REVOKED] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912",
+    "chained_evidence_record": {
+      "stream_id": "1791681710417-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "8",
+      "timestamp_utc": "2026-10-11T01:21:50.417026+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "291708dff570411f99bb8c4668803ba9",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "e3b1cda2d154b9dd00d695ca1a44f1fc48511b22bb1d76909b96aeb7727b90fa",
+      "record_hash": "260c2dd27728d01069c32f5cbe72331d883744626f0232057e2ee5d9aae9a878",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "b0d238cc-3a39-4556-83c6-be32dfe9bf0b",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:50.416574+00:00",
+        "params_hash": "9f26170138ab833941573183fdc8a05d9736c924dc979f99926e1902f6c44c4e",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Warrant revoked: Emergency Risk Notice #912",
+            "reliance_status": "INELIGIBLE_REVOKED",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "Emergency Risk Notice #912",
+            "verification_status": "VERIFIED",
+            "warrant_digest": "1886394fda14961d98627ed228f2105c20af65f80287955d4ddabf11bf0110f9",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "REVOKED"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "4343bf4e-21f2-4972-94e3-b15a135421b0",
+        "timestamp_utc": "2026-10-11T01:21:50.416865+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_REVOKED",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_REVOKED): Warrant revoked: Emergency Risk Notice #912",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  },
+  "SUSPENDED": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-1b000a6132af4f779fced2b5f0044518",
+      "issued_at": "2026-10-11T01:21:50.582Z",
+      "expires_at": "2026-10-11T01:26:50.582Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_SUSPENDED",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_SUSPENDED): Warrant suspended: Temporary Suspension #S-17",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 141.73,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_SUSPENDED",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_SUSPENDED): Warrant suspended: Temporary Suspension #S-17",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "57715eca-3a6e-4f08-abc3-285be7c5a8c0",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "0544c300cff5b6212a003b99905a529854a765be2699dc7561be5f6c0c0ed433",
+            "warrant_status": "SUSPENDED",
+            "reliance_status": "INELIGIBLE_SUSPENDED",
+            "reason": "Warrant suspended: Temporary Suspension #S-17",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "Temporary Suspension #S-17",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "VERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as '4e66a9c3-9ac1-4c1c-a34c-dfa8f2f17e41': [RELIANCE_INELIGIBLE_SUSPENDED] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_SUSPENDED): Warrant suspended: Temporary Suspension #S-17",
+    "chained_evidence_record": {
+      "stream_id": "1791681710592-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "12",
+      "timestamp_utc": "2026-10-11T01:21:50.591811+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "6ae6f551e8de4a90a8d86e15cc5982fb",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "4f1a527a6fc2f0d01dfb4e1d9608aa4fe8d30e1ee0e47aa42946fc27acea9b3b",
+      "record_hash": "3f682b7588ef2b6770611f5fdd20105c94ba869a57d9a8b64cfba1ed84bf1d3c",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "4e66a9c3-9ac1-4c1c-a34c-dfa8f2f17e41",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:50.590152+00:00",
+        "params_hash": "f6debcb4bafb89750cff099c0f4bb673e80d551c0a95c14f5585c5f1a13d259e",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Warrant suspended: Temporary Suspension #S-17",
+            "reliance_status": "INELIGIBLE_SUSPENDED",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "Temporary Suspension #S-17",
+            "verification_status": "VERIFIED",
+            "warrant_digest": "0544c300cff5b6212a003b99905a529854a765be2699dc7561be5f6c0c0ed433",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "SUSPENDED"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "629e1ff3-703b-43f6-912f-a63ae7382853",
+        "timestamp_utc": "2026-10-11T01:21:50.591512+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_SUSPENDED",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_SUSPENDED): Warrant suspended: Temporary Suspension #S-17",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  },
+  "EXPIRED": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-16cf58f213bc4bb688c8476f166e8b02",
+      "issued_at": "2026-10-11T01:21:50.788Z",
+      "expires_at": "2026-10-11T01:26:50.788Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_EXPIRED",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_EXPIRED): Warrant temporal window invalid: current 2026-10-07T14:00:10+00:00 outside [2026-10-07T00:00:00Z, 2026-10-07T13:59:59Z]",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 168.76,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_EXPIRED",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_EXPIRED): Warrant temporal window invalid: current 2026-10-07T14:00:10+00:00 outside [2026-10-07T00:00:00Z, 2026-10-07T13:59:59Z]",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "656950a3-7274-4ce7-8ac7-8a0739721e44",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "aa092cdb1685c454f6a835952d51e8ee6d5c4efc3d6c801b2616071dfc6cd7c1",
+            "warrant_status": "ACTIVE",
+            "reliance_status": "INELIGIBLE_EXPIRED",
+            "reason": "Warrant temporal window invalid: current 2026-10-07T14:00:10+00:00 outside [2026-10-07T00:00:00Z, 2026-10-07T13:59:59Z]",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "VERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as '85a68d5f-265d-4b9f-aa90-384376a105b4': [RELIANCE_INELIGIBLE_EXPIRED] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_EXPIRED): Warrant temporal window invalid: current 2026-10-07T14:00:10+00:00 outside [2026-10-07T00:00:00Z, 2026-10-07T13:59:59Z]",
+    "chained_evidence_record": {
+      "stream_id": "1791681710794-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "16",
+      "timestamp_utc": "2026-10-11T01:21:50.793913+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "3f2d81cb2de645e4888a2abccffe4f9a",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "64e34be5cca74d4933438959a2197f7854970800ada67dd36bbccc9e6e39a8a2",
+      "record_hash": "786143c4122d1abe80d3d6f299069b5872c4e488c9f7f735594d7b3dcf5e13ae",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "85a68d5f-265d-4b9f-aa90-384376a105b4",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:50.793289+00:00",
+        "params_hash": "7d524db9727a8c85809523958c317fbb23f92d6800cc3654dedbe6e9cb38be7c",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Warrant temporal window invalid: current 2026-10-07T14:00:10+00:00 outside [2026-10-07T00:00:00Z, 2026-10-07T13:59:59Z]",
+            "reliance_status": "INELIGIBLE_EXPIRED",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "VERIFIED",
+            "warrant_digest": "aa092cdb1685c454f6a835952d51e8ee6d5c4efc3d6c801b2616071dfc6cd7c1",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "890bfcd4-5928-4ef0-8762-181113b378d9",
+        "timestamp_utc": "2026-10-11T01:21:50.793703+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_EXPIRED",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_EXPIRED): Warrant temporal window invalid: current 2026-10-07T14:00:10+00:00 outside [2026-10-07T00:00:00Z, 2026-10-07T13:59:59Z]",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  },
+  "STALE_STATE": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-88a73d921d714b948c3acc5c5ec30b68",
+      "issued_at": "2026-10-11T01:21:50.970Z",
+      "expires_at": "2026-10-11T01:26:50.970Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_STALE",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_STALE): Warrant state_as_of stale: 2026-10-07T13:58:00Z is 130.000s old at 2026-10-07T14:00:10+00:00 (max 60s)",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 149.65,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_STALE",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_STALE): Warrant state_as_of stale: 2026-10-07T13:58:00Z is 130.000s old at 2026-10-07T14:00:10+00:00 (max 60s)",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "df71758c-f059-4628-8d3a-894b66b4436d",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "9c18b8e27d4d621bd720763e01c83c5fa81844f5bf1da4c21ce22d89c5b26032",
+            "warrant_status": "ACTIVE",
+            "reliance_status": "INELIGIBLE_STALE",
+            "reason": "Warrant state_as_of stale: 2026-10-07T13:58:00Z is 130.000s old at 2026-10-07T14:00:10+00:00 (max 60s)",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "VERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as '1f477d2a-a9ee-450c-8483-c3a522eb9162': [RELIANCE_INELIGIBLE_STALE] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_STALE): Warrant state_as_of stale: 2026-10-07T13:58:00Z is 130.000s old at 2026-10-07T14:00:10+00:00 (max 60s)",
+    "chained_evidence_record": {
+      "stream_id": "1791681710976-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "20",
+      "timestamp_utc": "2026-10-11T01:21:50.976198+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "7ed84864940a4e5ca19e9390f7b27d0b",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "bb5fc425259bb4cb8804cbce99f0c6e3310efeccdb408a643aa5795cb078391d",
+      "record_hash": "5e04d9bdc30f19c82ceca01b84ed8940985ae29663361d860d3e1f54eca8df3e",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "1f477d2a-a9ee-450c-8483-c3a522eb9162",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:50.975581+00:00",
+        "params_hash": "22978097549f6ea734a2ad8895819535e65007d795873648da8e1712be14b0e0",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Warrant state_as_of stale: 2026-10-07T13:58:00Z is 130.000s old at 2026-10-07T14:00:10+00:00 (max 60s)",
+            "reliance_status": "INELIGIBLE_STALE",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "VERIFIED",
+            "warrant_digest": "9c18b8e27d4d621bd720763e01c83c5fa81844f5bf1da4c21ce22d89c5b26032",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "812d3bac-142f-493a-95bc-dae7aefcd27a",
+        "timestamp_utc": "2026-10-11T01:21:50.975978+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_STALE",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_STALE): Warrant state_as_of stale: 2026-10-07T13:58:00Z is 130.000s old at 2026-10-07T14:00:10+00:00 (max 60s)",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  },
+  "TAMPERED_SIGNATURE": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-012ca779ba484b809769a2d934c474a9",
+      "issued_at": "2026-10-11T01:21:51.139Z",
+      "expires_at": "2026-10-11T01:26:51.139Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_AUTHENTICITY",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): SIGNATURE_INVALID: Ed25519 signature verification failed for kid 'veip-sandbox-issuer-2026-10'",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 135.53,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_AUTHENTICITY",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): SIGNATURE_INVALID: Ed25519 signature verification failed for kid 'veip-sandbox-issuer-2026-10'",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "a3939633-96f3-490e-ac60-960f9c92f053",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+            "warrant_status": "ACTIVE",
+            "reliance_status": "INELIGIBLE_AUTHENTICITY",
+            "reason": "SIGNATURE_INVALID: Ed25519 signature verification failed for kid 'veip-sandbox-issuer-2026-10'",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "UNVERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as 'ca00b75c-c635-4fd9-b62f-4af2175cd67d': [RELIANCE_INELIGIBLE_AUTHENTICITY] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): SIGNATURE_INVALID: Ed25519 signature verification failed for kid 'veip-sandbox-issuer-2026-10'",
+    "chained_evidence_record": {
+      "stream_id": "1791681711145-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "24",
+      "timestamp_utc": "2026-10-11T01:21:51.145175+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "51844d5cd6b74584b83ce2e3fea15716",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "24c6d22ff1bca0d082677fe2b4c2fe2d936fc7ec5b5a431eeb3ed320093f80b2",
+      "record_hash": "50078e9e9077bfe7f2d0008131bc745a30d765a8588271c93a3c8974e4763c94",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "ca00b75c-c635-4fd9-b62f-4af2175cd67d",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:51.144600+00:00",
+        "params_hash": "0e932fc43ecff60c416af3578988311121a7f38ff530c0b91babc69ca6517c7b",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "SIGNATURE_INVALID: Ed25519 signature verification failed for kid 'veip-sandbox-issuer-2026-10'",
+            "reliance_status": "INELIGIBLE_AUTHENTICITY",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "UNVERIFIED",
+            "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "bbb927ae-8ff0-4590-9c97-e5b0f2fefcd0",
+        "timestamp_utc": "2026-10-11T01:21:51.144974+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_AUTHENTICITY",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): SIGNATURE_INVALID: Ed25519 signature verification failed for kid 'veip-sandbox-issuer-2026-10'",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  },
+  "UNKNOWN_KID": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-c9fe1a978ee54fcbafb229a59036f03e",
+      "issued_at": "2026-10-11T01:21:51.291Z",
+      "expires_at": "2026-10-11T01:26:51.291Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_AUTHENTICITY",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): UNKNOWN_KID: warrant kid 'unknown-kid' not found in verified key manifest",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 119.47,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_AUTHENTICITY",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): UNKNOWN_KID: warrant kid 'unknown-kid' not found in verified key manifest",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "f9f20f1a-c96a-4bc3-b814-7b60be630941",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+            "warrant_status": "ACTIVE",
+            "reliance_status": "INELIGIBLE_AUTHENTICITY",
+            "reason": "UNKNOWN_KID: warrant kid 'unknown-kid' not found in verified key manifest",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "revocation_ref": "",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "UNVERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as '95230301-f561-4a74-9220-6be161e78674': [RELIANCE_INELIGIBLE_AUTHENTICITY] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): UNKNOWN_KID: warrant kid 'unknown-kid' not found in verified key manifest",
+    "chained_evidence_record": {
+      "stream_id": "1791681711295-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "28",
+      "timestamp_utc": "2026-10-11T01:21:51.295342+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "05a32488974144e887b5f886233b18eb",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "09fd9240439bcc6f168abc402a8faa72a2a45025b011bd2f2ea4d7716ad77acd",
+      "record_hash": "e047010660a3278824ab47d866c004a567caa229db4e8b9879ceb8329bd41fe8",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "95230301-f561-4a74-9220-6be161e78674",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:51.294765+00:00",
+        "params_hash": "12f8b721e300257e07ed9fd97f0041ce255e98e943c5f373c6a05588cc68329c",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "EU AI Act Art. 9 Risk Management Instrument #442",
+            "issuing_authority": "Risk Oversight Committee (EU_ECB)",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "UNKNOWN_KID: warrant kid 'unknown-kid' not found in verified key manifest",
+            "reliance_status": "INELIGIBLE_AUTHENTICITY",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "RRR-2026-08-01-A1",
+            "revocation_ref": "",
+            "verification_status": "UNVERIFIED",
+            "warrant_digest": "076b4ac5515f57f900f8afa4a5dcae2be2b0d1da5367de13d5882436b16bcd6e",
+            "warrant_governing_version": "cage-policy-2.1.0",
+            "warrant_id": "warrant-veip-2026-002",
+            "warrant_status": "ACTIVE"
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "6fa964db-a755-40df-b760-6afc404c8f36",
+        "timestamp_utc": "2026-10-11T01:21:51.295146+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_AUTHENTICITY",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_AUTHENTICITY): UNKNOWN_KID: warrant kid 'unknown-kid' not found in verified key manifest",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  },
+  "MISSING": {
+    "preview_governance_envelope": {
+      "envelope_version": "3.0",
+      "envelope_type": "cage_governance_decision",
+      "envelope_id": "cage-9b563f2b44ad48fc92f36ed53f0ac0a2",
+      "issued_at": "2026-10-11T01:21:51.381Z",
+      "expires_at": "2026-10-11T01:26:51.381Z",
+      "issuer": {
+        "service": "cage-gateway",
+        "instance_id": "local-9afcb1f2",
+        "region": "EU_ECB"
+      },
+      "subject": {
+        "action": "execute_trade",
+        "action_hash": "sha256:304355b075b3063f48c4e2ece60750315176de8f42d7a3a3f30da9daef75c033",
+        "consequence_ceiling": "LOW_INFORMATIONAL",
+        "target_route": "local://default",
+        "executor_id": "kernel"
+      },
+      "governance_context": {
+        "policy_version": "sha256:9abbb59be5d53126117b4767fa8cf85d1d3eb317ceaad5a12f1bd29756917a2d",
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ],
+        "deployment_region": "EU_ECB",
+        "controls_satisfied": []
+      },
+      "payload": {
+        "verdict": "DEFER",
+        "violations": [
+          {
+            "tier": "warrant",
+            "code": "RELIANCE_INELIGIBLE_MISSING",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_MISSING): Warrant is missing; cannot ground reliance on norm",
+            "kind": "reliance_ineligible"
+          }
+        ],
+        "latency_ms": 59.09,
+        "classification_meta": {
+          "terminal_classification": "IRREVERSIBLE_TERMINAL",
+          "requires_hitl": false,
+          "bypassed_ftra_node": false,
+          "in_registry": true,
+          "ftra_registry_state": "registered",
+          "ftra_auto_cleared": true,
+          "barrier_preview": "PASS",
+          "barrier_preview_violations": [],
+          "classification_reason": "reliance_ineligible",
+          "deferrable": true,
+          "reliance_ineligible": [
+            {
+              "tier": "warrant",
+              "code": "RELIANCE_INELIGIBLE_MISSING",
+              "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_MISSING): Warrant is missing; cannot ground reliance on norm",
+              "kind": "reliance_ineligible"
+            }
+          ]
+        },
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "defer_token": "a2cd66fa-6d49-4bb3-91c1-29be7d28d3d0",
+        "deferrable": true,
+        "retry_after_seconds": 300,
+        "agent_id": "",
+        "reliance": [
+          {
+            "norm_id": "confidence.min_trade_confidence",
+            "warrant_id": "",
+            "warrant_digest": "",
+            "warrant_status": "",
+            "reliance_status": "INELIGIBLE_MISSING",
+            "reason": "Warrant is missing; cannot ground reliance on norm",
+            "required_governing_version": "cage-policy-2.1.0",
+            "warrant_governing_version": "",
+            "issuing_authority": "",
+            "authority_basis": "",
+            "revocation_ref": "",
+            "residual_risk_ref": "",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "age_seconds": "0.000",
+            "max_age_seconds": "60.000",
+            "provider_name": "provider_05_warrant",
+            "verification_status": "UNVERIFIED"
+          }
+        ],
+        "tiers_passed": [
+          "ftra",
+          "stpa",
+          "opa",
+          "confidence",
+          "trade_confidence",
+          "consensus",
+          "causal",
+          "fria",
+          "cbf",
+          "fiscal"
+        ]
+      }
+    },
+    "commit_tool_result": "DEFERRED: Governance Deferred: [WARRANT_INELIGIBLE] committing run deferred as '27f8f560-4fc0-487f-a952-e24566840175': [RELIANCE_INELIGIBLE_MISSING] norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_MISSING): Warrant is missing; cannot ground reliance on norm",
+    "chained_evidence_record": {
+      "stream_id": "1791681711445-0",
+      "schema": "cage-audit/3.0",
+      "chain_id": "3a1e2c74-f7d5-4b62-aa40-d3a1f7331a86",
+      "sequence": "32",
+      "timestamp_utc": "2026-10-11T01:21:51.444894+00:00",
+      "event_type": "GOVERNANCE_DEFERRAL",
+      "control_id": "CTRL_AGT_001",
+      "trace_id": "4c4643c5f17041d6bb3fd7b42b22bb86",
+      "hash_algorithm": "SHA-256",
+      "canonicalization": "RFC8785",
+      "evidence_class": "GOVERNANCE",
+      "prev_hash": "6a6cf64b860421f6c9a7a020219e001dbae3c653d706865a6a675f1d62673dde",
+      "record_hash": "2e8fcfbfb38d9eb21366e00b82fb3e18161070cc2387b1e0e28f87e490508a54",
+      "classification_reason": "reliance_ineligible",
+      "payload": {
+        "action": "execute_trade",
+        "barrier_preview": null,
+        "classification_reason": "reliance_ineligible",
+        "controlId": "CTRL_AGT_001",
+        "defer_id": "27f8f560-4fc0-487f-a952-e24566840175",
+        "defer_reason": "WARRANT_INELIGIBLE",
+        "deferred_at_utc": "2026-10-11T01:21:51.444398+00:00",
+        "params_hash": "eec96b4bfcf82f518478fee11dd44b4514b758861df7ba6ea9eea52c591dfb54",
+        "persisted": true,
+        "reliance": [
+          {
+            "age_seconds": "0.000",
+            "attested_at": "2026-10-07T14:00:10+00:00",
+            "authority_basis": "",
+            "issuing_authority": "",
+            "max_age_seconds": "60.000",
+            "norm_id": "confidence.min_trade_confidence",
+            "observed_at": "2026-10-07T14:00:10+00:00",
+            "provider_name": "provider_05_warrant",
+            "reason": "Warrant is missing; cannot ground reliance on norm",
+            "reliance_status": "INELIGIBLE_MISSING",
+            "required_governing_version": "cage-policy-2.1.0",
+            "residual_risk_ref": "",
+            "revocation_ref": "",
+            "verification_status": "UNVERIFIED",
+            "warrant_digest": "",
+            "warrant_governing_version": "",
+            "warrant_id": "",
+            "warrant_status": ""
+          }
+        ],
+        "required_quorum": 3,
+        "thread_id": "db27a3e4-bed8-4f89-ac86-5fc4c5a29add",
+        "timestamp_utc": "2026-10-11T01:21:51.444735+00:00",
+        "type": "GOVERNANCE_DEFERRAL",
+        "violations": [
+          {
+            "code": "RELIANCE_INELIGIBLE_MISSING",
+            "kind": "reliance_ineligible",
+            "message": "norm 'confidence.min_trade_confidence' is ineligible for reliance (INELIGIBLE_MISSING): Warrant is missing; cannot ground reliance on norm",
+            "tier": "warrant"
+          }
+        ]
+      }
+    }
+  }
+}
