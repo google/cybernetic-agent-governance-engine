@@ -159,6 +159,71 @@ class TestOperatorIdentityProvenance:
         assert exc_info.value.status_code == 401
 
 
+class TestOperatorIdentitySvidHardening:
+    """The SVID channel must only trust a single, well-formed principal header."""
+
+    def _request(self, raw_headers: list[tuple[bytes, bytes]]) -> MagicMock:
+        from starlette.datastructures import Headers
+
+        request = MagicMock()
+        request.headers = Headers(raw=raw_headers)
+        request.attributes = None
+        return request
+
+    @pytest.mark.asyncio
+    async def test_single_well_formed_svid_accepted(self):
+        request = self._request(
+            [(b"x-cage-source-principal", b"spiffe://cage.example/operator/alice")]
+        )
+
+        principal = await require_operator_identity(request)
+
+        assert principal.operator_urn == "spiffe://cage.example/operator/alice"
+        assert principal.channel_provenance == "SVID"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_principal_headers_rejected(self, monkeypatch):
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
+        # A caller smuggles a forged principal alongside the mesh-injected one.
+        request = self._request(
+            [
+                (
+                    b"x-cage-source-principal",
+                    b"spiffe://cage.example/operator/attacker",
+                ),
+                (b"x-cage-source-principal", b"spiffe://cage.example/operator/alice"),
+            ]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(request)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value",
+        [
+            b"spiffe://",  # empty trust domain
+            b"spiffe://cage.example/operator/al ice",  # embedded space
+            b"https://cage.example/operator/alice",  # wrong scheme
+            b"spiffe://CAGE.EXAMPLE/operator/alice",  # non-lowercase trust domain
+            b"spiffe://cage.example/operator/../bob",  # dot-segment traversal
+            b"spiffe://cage.example/operator/alice\n",  # trailing newline
+        ],
+    )
+    async def test_malformed_svid_rejected(self, monkeypatch, value):
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
+        request = self._request([(b"x-cage-source-principal", value)])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(request)
+
+        assert exc_info.value.status_code == 401
+
+
 class TestDualControlQuorumIntegrity:
     """Test quorum enforcement and distinct operator validation."""
 

@@ -71,9 +71,10 @@ jobs:
           
           # Pattern matches AGENTS.md enforcement rules.
           # Hotfix has different structure (version-desc), so use alternation:
-          # Standard: (type)/(description)
-          # Hotfix:   hotfix/(version)-(description)
-          PATTERN='^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$'
+          # Standard:   (type)/(description)
+          # Hotfix:     hotfix/(version)-(description)
+          # Dependabot: dependabot/(ecosystem)/(group-or-package)
+          PATTERN='^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^dependabot/[a-z0-9._/-]+$'
           
           if ! echo "$BRANCH_NAME" | grep -qE "$PATTERN"; then
             echo "::error::Branch name '$BRANCH_NAME' does not follow the project's naming convention."

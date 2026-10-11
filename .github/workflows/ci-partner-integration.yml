@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 name: Partner Integration Tests
 
 # This workflow runs live integration tests against external partner sandboxes.
@@ -23,6 +37,9 @@ on:
           - provider_05
           - actuator_01
 
+permissions:
+  contents: read
+
 jobs:
   partner-integration:
     name: Partner Integration Tests
@@ -31,17 +48,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@93c32ef79a93e8b9cd720e0d03bac7b406f26370  # v5.3.0
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
-          version: "0.4.18"
           enable-cache: true
 
       - name: Install dependencies
@@ -50,6 +68,7 @@ jobs:
 
       - name: Configure partner credentials
         env:
+          PARTNER_FILTER: ${{ inputs.partner_filter }}
           # Provider 01 (FlowSignal / EU ECB)
           PROVIDER_01_ENDPOINT: ${{ secrets.PROVIDER_01_ENDPOINT }}
           PROVIDER_01_API_KEY: ${{ secrets.PROVIDER_01_API_KEY }}
@@ -82,23 +101,30 @@ jobs:
           LANGCHAIN_TRACING_V2: "false"
         run: |
           echo "Partner credentials configured via GitHub Secrets"
-          echo "Filter: ${{ github.event.inputs.partner_filter }}"
+          echo "Filter: ${PARTNER_FILTER}"
 
       - name: Run partner integration tests
+        env:
+          FILTER: ${{ inputs.partner_filter }}
         run: |
-          FILTER="${{ github.event.inputs.partner_filter }}"
-          
-          if [ "$FILTER" = "all" ]; then
-            echo "Running all partner integration tests..."
-            uv run pytest tests/ -m partner_integration --run-partner-integration -v --tb=short
-          else
-            echo "Running $FILTER partner integration tests..."
-            uv run pytest tests/test_${FILTER}_live.py -m partner_integration --run-partner-integration -v --tb=short
-          fi
+          case "$FILTER" in
+            all)
+              echo "Running all partner integration tests..."
+              uv run pytest tests/ -m partner_integration --run-partner-integration -v --tb=short
+              ;;
+            provider_01|provider_02|provider_03|provider_05|actuator_01)
+              echo "Running $FILTER partner integration tests..."
+              uv run pytest "tests/test_${FILTER}_live.py" -m partner_integration --run-partner-integration -v --tb=short
+              ;;
+            *)
+              echo "Invalid partner_filter: $FILTER" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: partner-integration-results
           path: |
@@ -114,10 +140,12 @@ jobs:
     
     steps:
       - name: Report status
+        env:
+          PARTNER_RESULT: ${{ needs.partner-integration.result }}
         run: |
-          if [ "${{ needs.partner-integration.result }}" = "success" ]; then
+          if [ "$PARTNER_RESULT" = "success" ]; then
             echo "✅ Partner integration tests passed"
-          elif [ "${{ needs.partner-integration.result }}" = "skipped" ]; then
+          elif [ "$PARTNER_RESULT" = "skipped" ]; then
             echo "⏭️  Partner integration tests skipped (credentials not configured)"
           else
             echo "❌ Partner integration tests failed"

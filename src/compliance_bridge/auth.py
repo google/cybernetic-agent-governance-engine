@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -28,6 +29,43 @@ from fastapi import Header, HTTPException, Request
 logger = logging.getLogger(__name__)
 
 _CAGE_ENV = os.environ.get("CAGE_ENV", "dev")
+
+# Strict SPIFFE ID grammar for the operator SVID carried in
+# ``x-cage-source-principal``: a lowercase trust domain followed by zero or
+# more non-dot path segments, anchored end to end. A bare ``spiffe://`` prefix
+# check accepted empty trust domains and values carrying whitespace or CR/LF,
+# so the operator_urn that seeds dual-control quorum distinctness and the audit
+# hash was never required to be a well-formed identity.
+_SPIFFE_ID = re.compile(
+    r"^spiffe://[a-z0-9][a-z0-9._-]{0,254}(?:/(?!\.\.?(?:/|\Z))[A-Za-z0-9._-]+)*\Z"
+)
+
+
+def _source_principal_header(request: Request) -> tuple[str | None, bool]:
+    """Return ``(svid, duplicate_detected)`` for ``x-cage-source-principal``.
+
+    The mesh writes exactly one principal header; additional copies mean a
+    caller tried to smuggle a forged identity alongside it, so any count
+    greater than one flags ``duplicate_detected=True`` to fail closed. This
+    mirrors the gateway's ``extract_client_identity`` invariant for
+    ``l5d-client-id``.
+    """
+    headers = request.headers
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        values = [v for v in getlist("x-cage-source-principal") if v]
+    else:  # pragma: no cover - real requests always expose getlist
+        single = headers.get("x-cage-source-principal")
+        values = [single] if single else []
+    if len(values) > 1:
+        logger.warning(
+            "Multiple x-cage-source-principal headers presented (%d) — rejecting",
+            len(values),
+        )
+        return None, True
+    if len(values) == 1:
+        return values[0], False
+    return None, False
 
 
 @dataclass(frozen=True)
@@ -127,15 +165,21 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
     """
     # Channel 1: SPIFFE SVID from mTLS client certificate (primary)
     # Linkerd populates request.attributes.source.principal with spiffe://... from peer cert
+    header_svid, duplicate_headers = _source_principal_header(request)
+    if duplicate_headers:
+        raise HTTPException(
+            status_code=401,
+            detail="Multiple x-cage-source-principal headers presented",
+        )
     try:
         # In FastAPI with Envoy ext_authz, we receive grpc metadata as headers
         # The SPIFFE ID should be in x-forwarded-client-cert or a similar header
         # For now, we'll check if the source principal is available via a custom header
-        svid = request.headers.get("x-cage-source-principal") or getattr(
+        svid = header_svid or getattr(
             getattr(request, "attributes", None), "source", {}
         ).get("principal")
 
-        if svid and svid.startswith("spiffe://"):
+        if isinstance(svid, str) and _SPIFFE_ID.fullmatch(svid):
             principal_hash = hashlib.sha256(svid.encode()).hexdigest()
             logger.info(f"✅ Operator identity verified via SVID: {svid[:30]}...")
             return OperatorPrincipal(
