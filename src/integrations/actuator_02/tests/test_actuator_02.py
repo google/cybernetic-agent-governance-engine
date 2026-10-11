@@ -497,10 +497,8 @@ class TestSealProfile:
                 class_uid=1007,
                 activity_id=1,
                 severity_id=4,
-                status_id=2,
                 sandbox_id="sbx-1",
                 thread_id="thread-1",
                 governance_decision_digest="d" * 64,
-                message="syscall blocked",
                 metadata={"blob": "A" * (MAX_OCSF_METADATA_BYTES + 1)},
             )
