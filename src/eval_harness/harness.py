@@ -38,6 +38,7 @@ evaluation:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -45,7 +46,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from src.eval_harness.static_linter import (
     _PROMPT_INJECTION_RE,
@@ -61,6 +62,7 @@ from src.gateway.governance.confidence_claim_detector import (
 from src.gateway.governance.contracts import RefusalReceipt
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.pii_sanitizer import PIISanitizer
 
 if TYPE_CHECKING:
@@ -1832,6 +1834,157 @@ class FoundationModelEvalHarness:
                 f.write(json.dumps(row) + "\n")
 
 
+@dataclass(frozen=True)
+class SkillCertificationReceipt:
+    """Cryptographic Skill Certification Receipt (`.cer`) for the Static Artifact Handshake.
+
+    Signed via RFC 8785 JCS canonicalization over ``{"protected": {"algorithm": ..., "keyId": ...}, "body": unsigned_body}``
+    and verified out-of-band by ``kid`` without embedding a public key in the receipt.
+    """
+
+    skill_name: str
+    skill_sha256: str
+    evals_sha256: str
+    model_id: str
+    static_lint_score: float
+    mean_composite_lift: float
+    mean_instruction_following_lift: float
+    issued_at: str
+    anchors_sha256: str | None = None
+    anchor_weighted_agreement: float | None = None
+    routing_premium: float | None = None
+    schema_version: str = "cage.skill.cer.v1"
+    signature: dict[str, str] = field(default_factory=dict)
+    receipt_digest: str = ""
+
+    def to_unsigned_body(self) -> dict[str, Any]:
+        """Return the deterministic unsigned body dictionary for JCS signing."""
+        return {
+            "schema_version": self.schema_version,
+            "skill_name": self.skill_name,
+            "skill_sha256": self.skill_sha256,
+            "evals_sha256": self.evals_sha256,
+            "anchors_sha256": self.anchors_sha256,
+            "model_id": self.model_id,
+            "static_lint_score": round(float(self.static_lint_score), 4),
+            "anchor_weighted_agreement": (
+                round(float(self.anchor_weighted_agreement), 4)
+                if self.anchor_weighted_agreement is not None
+                else None
+            ),
+            "mean_composite_lift": round(float(self.mean_composite_lift), 4),
+            "mean_instruction_following_lift": round(
+                float(self.mean_instruction_following_lift), 4
+            ),
+            "routing_premium": (
+                round(float(self.routing_premium), 4)
+                if self.routing_premium is not None
+                else None
+            ),
+            "issued_at": self.issued_at,
+        }
+
+    def compute_signed_digest(self) -> str:
+        """Compute RFC 8785 JCS SHA-256 digest over unsigned body + signature block."""
+        payload = {
+            **self.to_unsigned_body(),
+            "signature": dict(self.signature),
+        }
+        return hashlib.sha256(jcs_canonicalize_plan(payload)).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this `.cer` receipt into its canonical JSON representation."""
+        digest = self.receipt_digest or self.compute_signed_digest()
+        return {
+            **self.to_unsigned_body(),
+            "signature": dict(self.signature),
+            "receiptDigest": digest,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> SkillCertificationReceipt:
+        """Parse a `.cer` JSON dictionary into a :class:`SkillCertificationReceipt`."""
+        sig_raw = payload.get("signature")
+        sig_dict = (
+            {str(k): str(v) for k, v in sig_raw.items()}
+            if isinstance(sig_raw, Mapping)
+            else {}
+        )
+        raw_anchor_agree = payload.get("anchor_weighted_agreement")
+        raw_routing_prem = payload.get("routing_premium")
+        return cls(
+            schema_version=str(payload.get("schema_version", "cage.skill.cer.v1")),
+            skill_name=str(payload["skill_name"]),
+            skill_sha256=str(payload["skill_sha256"]),
+            evals_sha256=str(payload.get("evals_sha256", "")),
+            anchors_sha256=(
+                str(payload["anchors_sha256"])
+                if payload.get("anchors_sha256") is not None
+                else None
+            ),
+            model_id=str(payload.get("model_id", "unknown")),
+            static_lint_score=float(payload.get("static_lint_score", 0.0)),
+            anchor_weighted_agreement=(
+                float(raw_anchor_agree) if raw_anchor_agree is not None else None
+            ),
+            mean_composite_lift=float(payload.get("mean_composite_lift", 0.0)),
+            mean_instruction_following_lift=float(
+                payload.get("mean_instruction_following_lift", 0.0)
+            ),
+            routing_premium=(
+                float(raw_routing_prem) if raw_routing_prem is not None else None
+            ),
+            issued_at=str(payload.get("issued_at", "")),
+            signature=sig_dict,
+            receipt_digest=str(
+                payload.get("receiptDigest") or payload.get("receipt_digest") or ""
+            ),
+        )
+
+
+class EvalBackendProtocol(Protocol):
+    """Pluggable evaluation backend seam (local deterministic vs. managed cloud Eval service)."""
+
+    async def evaluate_paired_skill_lift(
+        self,
+        *,
+        harness: FoundationModelEvalHarness,
+        skill_name: str,
+        model_id: str,
+        cases: Sequence[SkillEvalCase],
+        baseline_trajectories: Mapping[str, ATIFTrajectory],
+        with_skill_trajectories: Mapping[str, ATIFTrajectory],
+        group_baseline_trajectories: Mapping[str, ATIFTrajectory] | None = None,
+        group_with_skill_trajectories: Mapping[str, ATIFTrajectory] | None = None,
+        state_reducer: ShadowStateReducer | None = None,
+    ) -> SkillLiftReport:
+        """Compute paired Differential Skill Lift across the 4 ACES prompt buckets."""
+        ...
+
+
+class TrajectoryHarvesterProtocol(Protocol):
+    """Asynchronous telemetry harvester seam (Online -> Offline Double Ratchet flywheel)."""
+
+    async def fetch_refusal_receipts(
+        self,
+        *,
+        since_iso: str,
+        limit: int = 500,
+    ) -> Sequence[RefusalReceipt]:
+        """Fetch live RefusalReceipts from offline telemetry storage."""
+        ...
+
+    async def fetch_eval_prod_drift_anchors(
+        self,
+        *,
+        skill_name: str,
+        since_iso: str,
+        limit: int = 100,
+    ) -> Sequence[AnchorItem]:
+        """Harvest production failure trajectories into new negative Golden Anchors."""
+        ...
+
+
 __all__ = [
     "ATIFStep",
     "ATIFTrajectory",
@@ -1842,17 +1995,20 @@ __all__ = [
     "DrawbackDetectorFn",
     "DrawbackDetectorSpec",
     "DrawbackVerdict",
+    "EvalBackendProtocol",
     "EvaluationStepResult",
     "FoundationModelEvalHarness",
     "PRMRewardSchedule",
     "PairedCaseLift",
     "ShadowStateReducer",
+    "SkillCertificationReceipt",
     "SkillEvalCase",
     "SkillLiftReport",
     "SkillPromptBucket",
     "SkillTrajectoryScorecard",
     "ToolActionStep",
     "TrajectoryBenchmarkReport",
+    "TrajectoryHarvesterProtocol",
     "build_default_drawback_detectors",
     "default_shadow_state_reducer",
 ]

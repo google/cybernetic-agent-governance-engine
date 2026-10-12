@@ -40,8 +40,10 @@ from src.eval_harness.harness import (
     AnchorCalibrationResult,
     AnchorItem,
     ATIFTrajectory,
+    EvalBackendProtocol,
     FoundationModelEvalHarness,
     ShadowStateReducer,
+    SkillCertificationReceipt,
     SkillEvalCase,
     SkillLiftReport,
     SkillPromptBucket,
@@ -114,6 +116,24 @@ def _parse_adapter_config(raw_config: str | None) -> dict[str, Any]:
     return dict(json.loads(raw_config))
 
 
+def _resolve_eval_backend(
+    eval_backend: EvalBackendProtocol | str | None,
+) -> EvalBackendProtocol | None:
+    if eval_backend is None or eval_backend == "local":
+        return None
+    if isinstance(eval_backend, str):
+        if eval_backend.lower() == "vertex":
+            from src.integrations.gcp_eval.vertex_evaluator import (
+                VertexGenAIEvalBackend,
+            )
+
+            return VertexGenAIEvalBackend()
+        raise ValueError(
+            f"Unsupported eval_backend={eval_backend!r}; expected 'local' or 'vertex'"
+        )
+    return eval_backend
+
+
 async def run_certification_gate(
     *,
     skill_md_path: Path,
@@ -129,6 +149,7 @@ async def run_certification_gate(
     model_id: str = "gemini-3.5-flash",
     governor: SymbolicGovernor | None = None,
     state_reducer: ShadowStateReducer | None = None,
+    eval_backend: EvalBackendProtocol | str | None = None,
 ) -> tuple[
     bool,
     SkillStaticLintReport,
@@ -155,6 +176,7 @@ async def run_certification_gate(
         )
 
     harness = FoundationModelEvalHarness(governor=governor)
+    resolved_backend = _resolve_eval_backend(eval_backend)
     anchor_result: AnchorCalibrationResult | None = None
     lift_report: SkillLiftReport | None = None
 
@@ -196,25 +218,55 @@ async def run_certification_gate(
                 else rollout_adapter
             )
             runner = AgentRolloutRunner(resolved_adapter)
-            lift_report, _bundle = await runner.run_and_evaluate_skill_lift(
-                harness,
-                cases,
-                skill_name=static_report.skill_name,
-                skill_md_path=skill_md_path,
-                decoy_skills=decoy_skills,
-                state_reducer=state_reducer,
-            )
+            if resolved_backend is not None:
+                bundle = await runner.run_paired_rollouts(
+                    cases,
+                    skill_name=static_report.skill_name,
+                    skill_md_path=skill_md_path,
+                    decoy_skills=decoy_skills,
+                )
+                lift_report = await resolved_backend.evaluate_paired_skill_lift(
+                    harness=harness,
+                    skill_name=static_report.skill_name,
+                    model_id=bundle.model_id,
+                    cases=cases,
+                    baseline_trajectories=bundle.baseline_trajectories,
+                    with_skill_trajectories=bundle.with_skill_trajectories,
+                    group_baseline_trajectories=bundle.group_baseline_trajectories,
+                    group_with_skill_trajectories=bundle.group_with_skill_trajectories,
+                    state_reducer=state_reducer,
+                )
+            else:
+                lift_report, _bundle = await runner.run_and_evaluate_skill_lift(
+                    harness,
+                    cases,
+                    skill_name=static_report.skill_name,
+                    skill_md_path=skill_md_path,
+                    decoy_skills=decoy_skills,
+                    state_reducer=state_reducer,
+                )
         elif baseline_traces_path is not None and with_skill_traces_path is not None:
             base_map = _load_trajectories_map(baseline_traces_path)
             skill_map = _load_trajectories_map(with_skill_traces_path)
-            lift_report = await harness.evaluate_paired_skill_lift(
-                skill_name=static_report.skill_name,
-                model_id=model_id,
-                cases=cases,
-                baseline_trajectories=base_map,
-                with_skill_trajectories=skill_map,
-                state_reducer=state_reducer,
-            )
+            if resolved_backend is not None:
+                lift_report = await resolved_backend.evaluate_paired_skill_lift(
+                    harness=harness,
+                    skill_name=static_report.skill_name,
+                    model_id=model_id,
+                    cases=cases,
+                    baseline_trajectories=base_map,
+                    with_skill_trajectories=skill_map,
+                    state_reducer=state_reducer,
+                )
+            else:
+                lift_report = await harness.evaluate_paired_skill_lift(
+                    skill_name=static_report.skill_name,
+                    model_id=model_id,
+                    cases=cases,
+                    baseline_trajectories=base_map,
+                    with_skill_trajectories=skill_map,
+                    state_reducer=state_reducer,
+                )
 
         if lift_report is not None:
             for cl in lift_report.case_lifts:
@@ -300,6 +352,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Optional path to golden anchors.json for Double Ratchet calibration.",
     )
     parser.add_argument(
+        "--eval-backend",
+        type=str,
+        default="local",
+        choices=("local", "vertex"),
+        help="Evaluation backend ('local' or 'vertex' GenAI Evaluation Service).",
+    )
+    parser.add_argument(
+        "--emit-cer",
+        type=Path,
+        default=None,
+        help="Optional output path to emit a signed .cer receipt when certified.",
+    )
+    parser.add_argument(
+        "--kms-key-id",
+        type=str,
+        default="cage-dev-ed25519-k1",
+        help="Key ID (kid) used when signing a .cer receipt via --emit-cer.",
+    )
+    parser.add_argument(
         "--min-static-score",
         type=float,
         default=0.70,
@@ -335,11 +406,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             anchors_json_path=args.anchors,
             min_static_score=args.min_static_score,
             min_composite_lift=args.min_lift,
+            eval_backend=args.eval_backend,
         )
     )
 
+    cer_receipt: SkillCertificationReceipt | None = None
+    if certified and args.emit_cer is not None:
+        from src.integrations.gcp_eval.cer_publisher import GcpSkillCertifier
+
+        certifier = GcpSkillCertifier(key_id=args.kms_key_id)
+        cer_receipt = certifier.create_and_sign_receipt(
+            skill_md_path=args.skill_md,
+            static_report=static_rep,
+            lift_report=lift_rep,
+            anchor_report=anchor_rep,
+            evals_json_path=args.evals,
+            anchors_json_path=args.anchors,
+        )
+        cer_target = args.emit_cer.resolve()
+        cer_target.parent.mkdir(parents=True, exist_ok=True)
+        cer_target.write_text(
+            json.dumps(cer_receipt.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
     if args.json:
-        payload = {
+        payload: dict[str, Any] = {
             "certified": certified,
             "failures": list(failures),
             "stage0_static_lint": asdict(static_rep),
@@ -347,6 +439,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 asdict(anchor_rep) if anchor_rep is not None else None
             ),
             "stage2_paired_lift": (asdict(lift_rep) if lift_rep is not None else None),
+            "cer_receipt": (cer_receipt.to_dict() if cer_receipt is not None else None),
         }
         print(json.dumps(payload, indent=2))
     else:
@@ -369,6 +462,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"Stage 2 Skill Lift  : {lift_rep.mean_composite_lift:+.4f} "
                 f"(IF Lift={lift_rep.mean_instruction_following_lift:+.4f})"
             )
+        if cer_receipt is not None:
+            print(f"CER Receipt Digest  : {cer_receipt.receipt_digest}")
         if failures:
             print("Failures:")
             for f in failures:
