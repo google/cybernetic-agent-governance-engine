@@ -818,4 +818,198 @@ class TestGenerateRegistryManifest:
         assert "_schema_version" in manifest
 
 
+# ===========================================================================
+# TestGenerateIapCelPolicies (Module M3)
+# ===========================================================================
+
+
+class TestGenerateIapCelPolicies:
+    @pytest.fixture(autouse=True)
+    def _cs(self):
+        self.cs = _load_stpa_cs()
+
+    def test_iap_cel_policies_has_required_keys(self):
+        from src.gateway.governance.stpa_compiler import generate_iap_cel_policies
+
+        payload = json.loads(generate_iap_cel_policies(self.cs))
+        assert payload["role"] == "roles/iap.egressor"
+        assert payload["permission"] == "iap.webServiceVersions.egressViaIAP"
+        assert "read_only_tools" in payload
+        assert "mutating_tools" in payload
+        assert "read_only_cel_expression" in payload
+        assert 'resource.type == "networkservices"' in payload["read_only_cel_expression"]
+        assert "role_bindings" in payload
+
+    def test_iap_cel_policies_cli_target(self, tmp_path):
+        from src.gateway.governance.stpa_compiler import main
+
+        out_file = tmp_path / "generated_iap_cel_policies.json"
+        stpa_path = (
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "stpa_control_structure.yaml"
+        )
+        if not stpa_path.exists():
+            pytest.skip("stpa_control_structure.yaml not found")
+
+        rc = main(
+            [
+                "compile",
+                "--targets",
+                "iap-cel",
+                "--input",
+                str(stpa_path),
+                "--iap-cel-out",
+                str(out_file),
+            ]
+        )
+        assert rc == 0
+        assert out_file.exists()
+        payload = json.loads(out_file.read_text())
+        assert payload["role"] == "roles/iap.egressor"
+        assert isinstance(payload["role_bindings"], list)
+
+
+# ===========================================================================
+# TestGeapAgentRegistryThreeResourceTypes (Module M3)
+# ===========================================================================
+
+
+class TestGeapAgentRegistryThreeResourceTypes:
+    def test_parses_agents_mcp_servers_and_endpoints(self):
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryAdapter,
+            RegistryCatalog,
+        )
+
+        raw = {
+            "agents": [
+                {
+                    "name": "projects/12345/locations/us-central1/agents/advisor-agent",
+                    "principal": "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/my-proj/locations/us-central1/reasoningEngines/98765",
+                    "displayName": "Governed Advisor",
+                    "version": "1.2.0",
+                    "framework": "google-adk",
+                    "labels": {"role": "advisor"},
+                    "skills": [
+                        {
+                            "id": "portfolio-analysis",
+                            "name": "Portfolio Analysis",
+                            "description": "Analyze risk and returns",
+                        }
+                    ],
+                    "toolSpecs": [
+                        {
+                            "name": "get_portfolio_summary",
+                            "description": "Fetch read-only summary",
+                            "behavioralHints": {
+                                "readOnlyHint": True,
+                                "destructiveHint": False,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "mcpServers": [
+                {
+                    "mcpServerId": "urn:geap:mcp:crm-service",
+                    "displayName": "CRM MCP Server",
+                    "interfaces": [{"url": "https://mcp.crm-service.internal/sse"}],
+                    "tools": [
+                        {
+                            "name": "lookup_customer",
+                            "description": "Read customer record",
+                            "behavioralHints": {
+                                "readOnlyHint": True,
+                                "destructiveHint": False,
+                            },
+                        },
+                        {
+                            "name": "delete_customer",
+                            "description": "Delete customer record",
+                            "behavioralHints": {
+                                "readOnlyHint": False,
+                                "destructiveHint": True,
+                            },
+                        },
+                    ],
+                }
+            ],
+            "endpoints": [
+                {
+                    "endpointId": "urn:geap:endpoint:pubsub",
+                    "displayName": "Cloud Pub/Sub Endpoint",
+                    "destinationUrls": ["https://pubsub.googleapis.com"],
+                }
+            ],
+        }
+
+        adapter = AgentRegistryAdapter()
+        agents = adapter._parse_registry_response(raw)
+        mcp_servers = adapter._parse_mcp_servers_response(raw)
+        endpoints = adapter._parse_endpoints_response(raw)
+
+        catalog = RegistryCatalog(
+            agents=agents,
+            fetched_at=time.time(),
+            registry_resource_name="projects/my-proj/locations/us-central1/agentRegistries/reg",
+            mcp_servers=mcp_servers,
+            endpoints=endpoints,
+        )
+
+        principal_key = "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/my-proj/locations/us-central1/reasoningEngines/98765"
+        assert principal_key in catalog.agents
+        assert catalog.agents[principal_key]["framework"] == "google-adk"
+        assert "get_portfolio_summary" in catalog.agents[principal_key]["allowed_tools"]
+
+        ftra_overrides = catalog.to_ftra_terminal_overrides()
+        assert ftra_overrides["lookup_customer"] == "READ_ONLY"
+        assert ftra_overrides["get_portfolio_summary"] == "READ_ONLY"
+        assert ftra_overrides["delete_customer"] == "IRREVERSIBLE_TERMINAL"
+
+        opa_doc = catalog.to_opa_data_document()
+        assert "agents" in opa_doc
+        assert "mcp_servers" in opa_doc
+        assert "endpoints" in opa_doc
+
+    @pytest.mark.asyncio
+    async def test_associate_toolspec_validates_behavioral_hints(self):
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryAdapter,
+        )
+
+        adapter = AgentRegistryAdapter()
+        res = await adapter.associate_toolspec(
+            agent_id="principal://agents.global.org-123/resources/aiplatform/projects/p/locations/l/reasoningEngines/1",
+            toolspec={
+                "mcpServerId": "urn:geap:mcp:ledger",
+                "tools": [
+                    {
+                        "name": "query_ledger",
+                        "description": "Query ledger entries",
+                        "behavioralHints": {"readOnlyHint": True},
+                    },
+                    {
+                        "name": "mutate_ledger",
+                        "description": "Commit ledger mutation",
+                        "behavioralHints": {
+                            "readOnlyHint": False,
+                            "destructiveHint": True,
+                        },
+                    },
+                ],
+            },
+        )
+        assert res["status"] == "dry_run"
+        tools = {t["name"]: t for t in res["association"]["tools"]}
+        assert tools["query_ledger"]["ftraClassification"] == "READ_ONLY"
+        assert tools["mutate_ledger"]["ftraClassification"] == "IRREVERSIBLE_TERMINAL"
+
+        with pytest.raises(ValueError, match="behavioralHints"):
+            await adapter.associate_toolspec(
+                agent_id="agent-1",
+                toolspec={"tools": [{"name": "missing_hints_tool"}]},
+            )
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

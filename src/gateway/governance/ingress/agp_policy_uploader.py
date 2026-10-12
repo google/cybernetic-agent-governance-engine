@@ -49,8 +49,11 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+from src.gateway.governance.ingress.agent_registry_adapter import RegistryCatalog
 
 logger = logging.getLogger("Gateway.Governance.Ingress.AGPPolicyUploader")
 
@@ -63,6 +66,200 @@ _AGP_CHAR_BUDGET = 5_000
 
 # AGP API base URL (Vertex AI Agent Platform)
 _AGP_API_BASE = "https://{location}-aiplatform.googleapis.com/v1beta1"
+
+
+@dataclass(frozen=True)
+class GatewayEnforcementTransitionResult:
+    """Result of evaluating GEAP Agent Gateway ``DRY_RUN`` -> ``ENFORCED`` readiness.
+
+    Attributes:
+        gateway_id: Identifier of the GEAP Agent Gateway resource.
+        previous_mode: Mode prior to evaluation (typically ``DRY_RUN``).
+        effective_mode: Resulting mode (``ENFORCED`` only when all gates pass;
+            otherwise remains ``DRY_RUN``).
+        transition_allowed: True iff inventory, IAP CEL bindings, and ``.cer``
+            certifications all passed.
+        unregistered_targets: Outbound targets observed in dry-run logs that
+            are not registered in the ``RegistryCatalog``.
+        missing_iap_bindings: Targets lacking a valid ``roles/iap.egressor``
+            binding or required CEL condition.
+        cer_verified: True iff all required skill ``.cer`` artifacts verified.
+        blocking_reasons: Human-readable list of fail-closed blockers.
+    """
+
+    gateway_id: str
+    previous_mode: str
+    effective_mode: str
+    transition_allowed: bool
+    unregistered_targets: tuple[str, ...] = field(default_factory=tuple)
+    missing_iap_bindings: tuple[str, ...] = field(default_factory=tuple)
+    cer_verified: bool = False
+    blocking_reasons: tuple[str, ...] = field(default_factory=tuple)
+
+
+def verify_and_transition_gateway_mode(
+    gateway_id: str,
+    discovered_targets: list[str],
+    catalog: RegistryCatalog,
+    iap_bindings: list[dict[str, Any]],
+    *,
+    current_mode: str = "DRY_RUN",
+    require_cel_conditions: bool = True,
+    cer_verified: bool = True,
+    cer_artifacts: list[dict[str, Any]] | None = None,
+    cer_verifier: Callable[[dict[str, Any]], tuple[bool, str]] | None = None,
+) -> GatewayEnforcementTransitionResult:
+    """Gate the GEAP 4-step ``DRY_RUN`` -> ``ENFORCED`` Agent Gateway transition.
+
+    Enforces three fail-closed preconditions before flipping a GEAP Agent
+    Gateway from observation (``DRY_RUN``) to active blocking (``ENFORCED``):
+
+      1. **Registry Coverage**: Every target in ``discovered_targets`` (from
+         Cloud Logging ``gapi.core.services`` / MCP egress logs) must match a
+         registered MCP server, endpoint destination URL/ID, or agent in
+         ``catalog``.
+      2. **IAM + CEL Egress Binding**: Every discovered target must have an
+         explicit ``roles/iap.egressor`` binding in ``iap_bindings`` with at
+         least one ``principal://`` or ``principalSet://`` member and (when
+         ``require_cel_conditions=True``) a non-empty CEL ``condition.expression``.
+      3. **Skill Certification (``.cer``)**: ``cer_verified`` must be True and
+         any provided ``cer_artifacts`` must carry ``status == "CERTIFIED"``
+         (and pass ``cer_verifier`` when supplied).
+    """
+    blocking_reasons: list[str] = []
+
+    if not catalog.is_valid:
+        blocking_reasons.append(
+            f"RegistryCatalog is invalid or empty (error={catalog.error!r})."
+        )
+
+    # Collect all registered identifiers and hostnames/URLs from the catalog
+    registered_tokens: set[str] = set()
+    for agent_id, agent_data in catalog.agents.items():
+        registered_tokens.add(agent_id)
+        if isinstance(agent_data, dict) and agent_data.get("registry_resource_name"):
+            registered_tokens.add(str(agent_data["registry_resource_name"]))
+
+    for srv_id, srv_data in catalog.mcp_servers.items():
+        registered_tokens.add(srv_id)
+        if isinstance(srv_data, dict):
+            if srv_data.get("registry_resource_name"):
+                registered_tokens.add(str(srv_data["registry_resource_name"]))
+            for iface in srv_data.get("interfaces", []):
+                if isinstance(iface, dict) and iface.get("url"):
+                    registered_tokens.add(str(iface["url"]))
+                elif isinstance(iface, str):
+                    registered_tokens.add(iface)
+
+    for ep_id, ep_data in catalog.endpoints.items():
+        registered_tokens.add(ep_id)
+        if isinstance(ep_data, dict):
+            if ep_data.get("registry_resource_name"):
+                registered_tokens.add(str(ep_data["registry_resource_name"]))
+            for url in ep_data.get("destination_urls", []):
+                registered_tokens.add(str(url))
+
+    def _is_target_registered(target: str) -> bool:
+        if target in registered_tokens:
+            return True
+        return any(target in token or token in target for token in registered_tokens if token)
+
+    unregistered: list[str] = []
+    for target in discovered_targets:
+        if not _is_target_registered(target):
+            unregistered.append(target)
+
+    if unregistered:
+        blocking_reasons.append(
+            f"Unregistered outbound targets discovered in DRY_RUN logs: {unregistered}"
+        )
+
+    # Check roles/iap.egressor bindings per discovered target
+    missing_bindings: list[str] = []
+    for target in discovered_targets:
+        matched_valid_binding = False
+        for binding in iap_bindings:
+            if not isinstance(binding, dict):
+                continue
+            if binding.get("role") != "roles/iap.egressor":
+                continue
+            b_target = str(binding.get("target") or binding.get("resource") or "*")
+            if b_target != "*" and target not in b_target and b_target not in target:
+                continue
+            members = binding.get("members", [])
+            has_agent_principal = isinstance(members, list) and any(
+                isinstance(m, str)
+                and m.startswith(("principal://", "principalSet://", "spiffe://"))
+                for m in members
+            )
+            if not has_agent_principal:
+                continue
+            if require_cel_conditions:
+                cond = binding.get("condition")
+                expr = cond.get("expression", "") if isinstance(cond, dict) else ""
+                if not isinstance(expr, str) or not expr.strip():
+                    continue
+            matched_valid_binding = True
+            break
+
+        if not matched_valid_binding:
+            missing_bindings.append(target)
+
+    if missing_bindings:
+        blocking_reasons.append(
+            "Missing valid roles/iap.egressor binding (or CEL condition) for targets: "
+            f"{missing_bindings}"
+        )
+
+    # Check .cer skill certifications
+    effective_cer_ok = bool(cer_verified)
+    if not effective_cer_ok:
+        blocking_reasons.append("Skill .cer certification flag is False.")
+
+    if cer_artifacts is not None:
+        if not cer_artifacts:
+            effective_cer_ok = False
+            blocking_reasons.append("No .cer artifacts provided for verification.")
+        for idx, artifact in enumerate(cer_artifacts):
+            if not isinstance(artifact, dict):
+                effective_cer_ok = False
+                blocking_reasons.append(f".cer artifact[{idx}] is not a dictionary.")
+                continue
+            if cer_verifier is not None:
+                ok, reason = cer_verifier(artifact)
+                if not ok:
+                    effective_cer_ok = False
+                    blocking_reasons.append(
+                        f".cer artifact[{idx}] failed verifier: {reason}"
+                    )
+            else:
+                status = artifact.get("status") or artifact.get("certification_status")
+                sig = artifact.get("signature") or artifact.get(" signature_b64")
+                if status != "CERTIFIED" or not sig:
+                    effective_cer_ok = False
+                    blocking_reasons.append(
+                        f".cer artifact[{idx}] is not CERTIFIED or lacks signature."
+                    )
+
+    transition_allowed = (
+        catalog.is_valid
+        and not unregistered
+        and not missing_bindings
+        and effective_cer_ok
+        and not blocking_reasons
+    )
+    effective_mode = "ENFORCED" if transition_allowed else "DRY_RUN"
+
+    return GatewayEnforcementTransitionResult(
+        gateway_id=gateway_id,
+        previous_mode=current_mode,
+        effective_mode=effective_mode,
+        transition_allowed=transition_allowed,
+        unregistered_targets=tuple(unregistered),
+        missing_iap_bindings=tuple(missing_bindings),
+        cer_verified=effective_cer_ok,
+        blocking_reasons=tuple(blocking_reasons),
+    )
 
 
 def _get_credentials() -> Any:

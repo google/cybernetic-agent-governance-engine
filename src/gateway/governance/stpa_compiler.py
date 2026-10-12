@@ -81,6 +81,9 @@ _DEFAULT_FTRA_OUT = (
 _DEFAULT_REGISTRY_OUT = (
     _REPO_ROOT / "config" / "registry" / "generated_tool_authorizations.json"
 )
+_DEFAULT_IAP_CEL_OUT = (
+    _REPO_ROOT / "config" / "registry" / "generated_iap_cel_policies.json"
+)
 _DEFAULT_SANDBOX_OUT = (
     _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml"
 )
@@ -2169,6 +2172,127 @@ def generate_registry_manifest(cs: ControlStructureModel) -> str:
     return _json.dumps(manifest, indent=2)
 
 
+def generate_iap_cel_policies(cs: ControlStructureModel) -> str:
+    """Generate GCP IAM CEL conditions for GEAP ``roles/iap.egressor`` bindings.
+
+    Compiles STPA control action terminal classifications (``READ_ONLY`` vs.
+    mutating) and RBAC role memberships into deterministic IAM Common Expression
+    Language (CEL) expressions compatible with GEAP Agent Gateway egress policy
+    enforcement (`roles/iap.egressor`, `iap.webServiceVersions.egressViaIAP`).
+
+    Output format::
+
+        {
+          "_generated_by": "CAGE stpa_compiler",
+          "_source": "config/stpa_control_structure.yaml",
+          "_generated_at": "2026-07-23T00:00:00Z",
+          "_schema_version": "1.0.0",
+          "role": "roles/iap.egressor",
+          "permission": "iap.webServiceVersions.egressViaIAP",
+          "read_only_tools": ["read_resource"],
+          "mutating_tools": ["mutate_record"],
+          "read_only_cel_expression": "resource.type == \\"networkservices\\" && (destination.mcp.tool.name in [\\"read_resource\\"] || request.headers[\\"mcp-method\\"] in [\\"tools/list\\", \\"prompts/list\\"])",
+          "role_bindings": [
+            {
+              "role_name": "operator",
+              "allowed_tools": ["mutate_record", "read_resource"],
+              "read_only_tools": ["read_resource"],
+              "mutating_tools": ["mutate_record"],
+              "cel_expression": "resource.type == \\"networkservices\\" && destination.mcp.tool.name in [\\"mutate_record\\", \\"read_resource\\"]"
+            }
+          ]
+        }
+    """
+    import datetime as _dt
+    import json as _json
+
+    now_utc = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    # Determine worst-case terminal classification per action (fail-closed)
+    action_ucas: dict[str, list[UCAModel]] = {}
+    for uca in cs.unsafe_control_actions:
+        if uca.action != "*":
+            action_ucas.setdefault(uca.action, []).append(uca)
+
+    ca_by_name = {ca["name"]: ca for ca in cs.control_actions if "name" in ca}
+    all_actions = sorted(set(ca_by_name.keys()) | set(action_ucas.keys()))
+
+    read_only_tools: list[str] = []
+    mutating_tools: list[str] = []
+
+    for action in all_actions:
+        classifications: list[str] = []
+        ca = ca_by_name.get(action)
+        if ca and ca.get("terminal_classification"):
+            classifications.append(str(ca["terminal_classification"]))
+        for u in action_ucas.get(action, []):
+            if u.terminal_classification:
+                classifications.append(u.terminal_classification)
+
+        if (
+            classifications
+            and all(c == "READ_ONLY" for c in classifications)
+        ):
+            read_only_tools.append(action)
+        else:
+            mutating_tools.append(action)
+
+    ro_list_literal = ", ".join(_json.dumps(t) for t in read_only_tools)
+    if read_only_tools:
+        read_only_cel = (
+            'resource.type == "networkservices" && ('
+            f"destination.mcp.tool.name in [{ro_list_literal}] || "
+            'request.headers["mcp-method"] in ["tools/list", "prompts/list"])'
+        )
+    else:
+        read_only_cel = (
+            'resource.type == "networkservices" && '
+            'request.headers["mcp-method"] in ["tools/list", "prompts/list"]'
+        )
+
+    role_bindings: list[dict[str, Any]] = []
+    if cs.rbac_rules:
+        for role in sorted(cs.rbac_rules.roles, key=lambda r: r.name):
+            allowed = sorted(set(role.allowed_actions))
+            role_ro = [t for t in allowed if t in read_only_tools]
+            role_mut = [t for t in allowed if t not in read_only_tools]
+            allowed_literal = ", ".join(_json.dumps(t) for t in allowed)
+            if allowed:
+                cel_expr = (
+                    'resource.type == "networkservices" && '
+                    f"destination.mcp.tool.name in [{allowed_literal}]"
+                )
+            else:
+                cel_expr = 'resource.type == "networkservices" && false'
+
+            binding: dict[str, Any] = {
+                "role_name": role.name,
+                "allowed_tools": allowed,
+                "read_only_tools": role_ro,
+                "mutating_tools": role_mut,
+                "cel_expression": cel_expr,
+            }
+            if role.limits and role.limits.get("manual_review_below") is not None:
+                binding["manual_review_below"] = float(
+                    role.limits["manual_review_below"]
+                )
+            role_bindings.append(binding)
+
+    payload: dict[str, Any] = {
+        "_generated_by": "CAGE stpa_compiler",
+        "_source": "config/stpa_control_structure.yaml",
+        "_generated_at": now_utc,
+        "_schema_version": "1.0.0",
+        "role": "roles/iap.egressor",
+        "permission": "iap.webServiceVersions.egressViaIAP",
+        "read_only_tools": read_only_tools,
+        "mutating_tools": mutating_tools,
+        "read_only_cel_expression": read_only_cel,
+        "role_bindings": role_bindings,
+    }
+    return _json.dumps(payload, indent=2)
+
+
 # ---------------------------------------------------------------------------
 # Sandbox / OpenShell Supervisor policy generator
 # ---------------------------------------------------------------------------
@@ -2331,6 +2455,7 @@ class CompileResult:
     agp_content: str = ""
     ftra_content: str = ""
     registry_content: str = ""
+    iap_cel_content: str = ""
     sandbox_content: str = ""
     errors: list[str] = field(default_factory=list)
 
@@ -2425,6 +2550,12 @@ def compile_control_structure(
         except Exception as exc:
             result.errors.append(f"Agent Registry manifest generation failed: {exc}")
 
+    if "iap-cel" in effective_targets:
+        try:
+            result.iap_cel_content = generate_iap_cel_policies(cs)
+        except Exception as exc:
+            result.errors.append(f"IAP CEL policy generation failed: {exc}")
+
     if "sandbox" in effective_targets or "openshell" in effective_targets:
         try:
             result.sandbox_content = generate_sandbox_policy(cs)
@@ -2468,6 +2599,7 @@ def write_artifacts(
     agp_out: Path | None = None,
     ftra_out: Path | None = None,
     registry_out: Path | None = None,
+    iap_cel_out: Path | None = None,
     sandbox_out: Path | None = None,
 ) -> None:
     """Write generated artifacts to disk, creating parent dirs as needed."""
@@ -2525,6 +2657,12 @@ def write_artifacts(
         effective_registry_out.parent.mkdir(parents=True, exist_ok=True)
         effective_registry_out.write_text(result.registry_content)
         logger.info("✅ Agent Registry manifest written → %s", effective_registry_out)
+
+    if result.iap_cel_content:
+        effective_iap_cel_out = iap_cel_out or _DEFAULT_IAP_CEL_OUT
+        effective_iap_cel_out.parent.mkdir(parents=True, exist_ok=True)
+        effective_iap_cel_out.write_text(result.iap_cel_content)
+        logger.info("✅ IAP CEL policies written → %s", effective_iap_cel_out)
 
     if result.sandbox_content:
         effective_sandbox_out = sandbox_out or _DEFAULT_SANDBOX_OUT
@@ -2605,6 +2743,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "agp",
             "ftra",
             "registry",
+            "iap-cel",
             "sandbox",
             "openshell",
             "all",
@@ -2616,6 +2755,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "Use 'ftra' for FTRA terminal registry (config/ftra/terminal_registry.json). "
             "Use 'registry' for GEAP Agent Registry tool authorization manifest "
             "(GCP Adaptation — config/registry/generated_tool_authorizations.json). "
+            "Use 'iap-cel' for GEAP IAM CEL egress conditions "
+            "(GCP Adaptation — config/registry/generated_iap_cel_policies.json). "
             "Use 'sandbox' (or 'openshell') for OpenShell Supervisor sandbox policy "
             "(config/sandbox/generated_sandbox_policy.yaml)."
         ),
@@ -2670,6 +2811,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             f"Agent Registry manifest output path (default: {_DEFAULT_REGISTRY_OUT}). "
             "GCP Adaptation — only used when --targets registry is specified."
+        ),
+    )
+    compile_p.add_argument(
+        "--iap-cel-out",
+        type=Path,
+        default=_DEFAULT_IAP_CEL_OUT,
+        metavar="FILE",
+        help=(
+            f"IAP CEL policies output path (default: {_DEFAULT_IAP_CEL_OUT}). "
+            "GCP Adaptation — only used when --targets iap-cel is specified."
         ),
     )
     compile_p.add_argument(
@@ -2805,6 +2956,13 @@ def cmd_compile(args: argparse.Namespace) -> int:
                 + sep
                 + result.registry_content
             )
+        if result.iap_cel_content:
+            print(
+                sep
+                + "IAP CEL POLICIES (JSON) [GCP Adaptation]"
+                + sep
+                + result.iap_cel_content
+            )
         if result.sandbox_content:
             print(sep + "SANDBOX POLICY (YAML)" + sep + result.sandbox_content)
         return 0
@@ -2826,6 +2984,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
         agp_out=args.agp_out,
         ftra_out=ftra_out,
         registry_out=args.registry_out,
+        iap_cel_out=getattr(args, "iap_cel_out", _DEFAULT_IAP_CEL_OUT),
         sandbox_out=args.sandbox_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
@@ -2843,6 +3002,10 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"   FTRA terminal registry → {ftra_out}")
     if result.registry_content:
         print(f"   Agent Registry manifest [GCP] → {args.registry_out}")
+    if result.iap_cel_content:
+        print(
+            f"   IAP CEL policies [GCP] → {getattr(args, 'iap_cel_out', _DEFAULT_IAP_CEL_OUT)}"
+        )
     if result.sandbox_content:
         print(f"   Sandbox policy → {args.sandbox_out}")
     return 0

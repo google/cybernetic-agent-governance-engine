@@ -261,3 +261,137 @@ class TestGetCredentials:
                 sys.modules.pop("google.auth", None)
             else:
                 sys.modules["google.auth"] = original
+
+
+# ---------------------------------------------------------------------------
+# Tests: verify_and_transition_gateway_mode (Module M3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.local
+class TestGatewayEnforcementTransition:
+    """Tests for GEAP 4-step DRY_RUN -> ENFORCED Agent Gateway transition gate."""
+
+    def _build_valid_catalog(self):
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            RegistryCatalog,
+        )
+
+        return RegistryCatalog(
+            agents={
+                "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/p/locations/l/reasoningEngines/1": {
+                    "display_name": "Advisor Agent",
+                    "allowed_tools": ["lookup_customer"],
+                    "roles": ["advisor"],
+                }
+            },
+            fetched_at=1_700_000_000.0,
+            registry_resource_name="projects/p/locations/l/agentRegistries/reg",
+            mcp_servers={
+                "urn:geap:mcp:crm-service": {
+                    "display_name": "CRM MCP",
+                    "interfaces": [{"url": "https://mcp.crm-service.internal/sse"}],
+                    "tools": [],
+                }
+            },
+            endpoints={
+                "urn:geap:endpoint:pubsub": {
+                    "display_name": "PubSub Endpoint",
+                    "destination_urls": ["https://pubsub.googleapis.com"],
+                }
+            },
+        )
+
+    def test_transitions_to_enforced_when_all_gates_pass(self):
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            verify_and_transition_gateway_mode,
+        )
+
+        catalog = self._build_valid_catalog()
+        discovered = ["mcp.crm-service.internal", "pubsub.googleapis.com"]
+        bindings = [
+            {
+                "role": "roles/iap.egressor",
+                "target": "*",
+                "members": [
+                    "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/p/locations/l/reasoningEngines/1"
+                ],
+                "condition": {
+                    "expression": 'resource.type == "networkservices" && destination.mcp.tool.name in ["lookup_customer"]'
+                },
+            }
+        ]
+        cer_artifacts = [{"status": "CERTIFIED", "signature": "sig-ed25519-ok"}]
+
+        res = verify_and_transition_gateway_mode(
+            gateway_id="cage-egress-gw-01",
+            discovered_targets=discovered,
+            catalog=catalog,
+            iap_bindings=bindings,
+            cer_artifacts=cer_artifacts,
+        )
+        assert res.transition_allowed is True
+        assert res.effective_mode == "ENFORCED"
+        assert res.unregistered_targets == ()
+        assert res.missing_iap_bindings == ()
+        assert res.cer_verified is True
+        assert res.blocking_reasons == ()
+
+    def test_blocks_transition_on_unregistered_target(self):
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            verify_and_transition_gateway_mode,
+        )
+
+        catalog = self._build_valid_catalog()
+        discovered = ["mcp.crm-service.internal", "rogue-exfil.external.io"]
+        bindings = [
+            {
+                "role": "roles/iap.egressor",
+                "target": "*",
+                "members": ["principal://agents.global.org-12345"],
+                "condition": {"expression": 'resource.type == "networkservices"'},
+            }
+        ]
+
+        res = verify_and_transition_gateway_mode(
+            gateway_id="cage-egress-gw-01",
+            discovered_targets=discovered,
+            catalog=catalog,
+            iap_bindings=bindings,
+        )
+        assert res.transition_allowed is False
+        assert res.effective_mode == "DRY_RUN"
+        assert "rogue-exfil.external.io" in res.unregistered_targets
+
+    def test_blocks_transition_on_missing_cel_or_unverified_cer(self):
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            verify_and_transition_gateway_mode,
+        )
+
+        catalog = self._build_valid_catalog()
+        discovered = ["mcp.crm-service.internal"]
+        # Binding has empty CEL expression
+        bindings = [
+            {
+                "role": "roles/iap.egressor",
+                "target": "mcp.crm-service.internal",
+                "members": ["principal://agents.global.org-12345"],
+                "condition": {"expression": ""},
+            }
+        ]
+
+        res = verify_and_transition_gateway_mode(
+            gateway_id="cage-egress-gw-01",
+            discovered_targets=discovered,
+            catalog=catalog,
+            iap_bindings=bindings,
+            cer_verified=False,
+        )
+        assert res.transition_allowed is False
+        assert res.effective_mode == "DRY_RUN"
+        assert "mcp.crm-service.internal" in res.missing_iap_bindings
+        assert res.cer_verified is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

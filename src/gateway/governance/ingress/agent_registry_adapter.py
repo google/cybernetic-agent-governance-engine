@@ -74,7 +74,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -99,34 +99,102 @@ _OPA_AGENT_CATALOG_PATH: str = "/v1/data/agent_catalog_data"
 # ---------------------------------------------------------------------------
 
 
+def _classify_behavioral_hints(hints: dict[str, Any] | None) -> str:
+    """Translate GEAP MCP tool ``behavioralHints`` into an FTRA classification.
+
+    Fail-closed mapping:
+      - ``destructiveHint=True`` or ``readOnlyHint=False`` -> ``IRREVERSIBLE_TERMINAL``
+      - ``readOnlyHint=True`` (and ``destructiveHint`` not True) -> ``READ_ONLY``
+      - Missing or ambiguous hints -> ``IRREVERSIBLE_TERMINAL``
+    """
+    if not isinstance(hints, dict) or not hints:
+        return "IRREVERSIBLE_TERMINAL"
+    if hints.get("destructiveHint") is True:
+        return "IRREVERSIBLE_TERMINAL"
+    if hints.get("readOnlyHint") is False:
+        return "IRREVERSIBLE_TERMINAL"
+    if hints.get("readOnlyHint") is True:
+        return "READ_ONLY"
+    return "IRREVERSIBLE_TERMINAL"
+
+
 @dataclass
 class RegistryCatalog:
     """Fetched agent catalog from GEAP Agent Registry.
 
     Attributes:
-        agents: dict mapping SPIFFE ID → {display_name, allowed_tools, roles, ...}
+        agents: dict mapping agent identity (SPIFFE ID or ``principal://``) →
+            {display_name, allowed_tools, roles, skills, toolspecs, ...}
         fetched_at: Unix timestamp when the catalog was fetched.
         registry_resource_name: full GCP resource name for OSCAL audit reference.
         error: error message if fetch failed; None on success.
+        mcp_servers: dict mapping MCP server ID → {display_name, interfaces, tools, ...}
+        endpoints: dict mapping endpoint ID → {display_name, interfaces, destination_urls, ...}
     """
 
     agents: dict[str, Any]
     fetched_at: float
     registry_resource_name: str
     error: str | None = None
+    mcp_servers: dict[str, Any] = field(default_factory=dict)
+    endpoints: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_valid(self) -> bool:
-        """True if the fetch succeeded and the agents dict is non-empty."""
-        return self.error is None and bool(self.agents)
+        """True if the fetch succeeded and at least one registry collection is non-empty."""
+        return self.error is None and bool(
+            self.agents or self.mcp_servers or self.endpoints
+        )
 
     def to_opa_data_document(self) -> dict[str, Any]:
         """Translate to the data.agent_catalog_data shape consumed by agent_catalog.rego.
 
         Returns:
             {"agents": {spiffe_id: {"allowed_tools": [...], "roles": [...], ...}}}
+            Includes "mcp_servers" and "endpoints" when populated.
         """
-        return {"agents": self.agents}
+        doc: dict[str, Any] = {"agents": self.agents}
+        if self.mcp_servers:
+            doc["mcp_servers"] = self.mcp_servers
+        if self.endpoints:
+            doc["endpoints"] = self.endpoints
+        return doc
+
+    def to_ftra_terminal_overrides(self) -> dict[str, str]:
+        """Derive FTRA terminal action classifications from GEAP MCP ``behavioralHints``.
+
+        Inspects ``mcp_servers[*].tools`` and ``agents[*].toolspecs`` in a
+        fail-closed manner: if any definition marks a tool as
+        ``IRREVERSIBLE_TERMINAL``, that classification wins over ``READ_ONLY``.
+        """
+        overrides: dict[str, str] = {}
+
+        def _record(tool_name: str, hints: dict[str, Any] | None) -> None:
+            if not tool_name:
+                return
+            classification = _classify_behavioral_hints(hints)
+            existing = overrides.get(tool_name)
+            if existing == "IRREVERSIBLE_TERMINAL":
+                return
+            overrides[tool_name] = classification
+
+        for server in self.mcp_servers.values():
+            for tool in server.get("tools", []):
+                if isinstance(tool, dict):
+                    _record(
+                        str(tool.get("name", "")),
+                        tool.get("behavioral_hints") or tool.get("behavioralHints"),
+                    )
+
+        for agent in self.agents.values():
+            for tool in agent.get("toolspecs", []):
+                if isinstance(tool, dict):
+                    _record(
+                        str(tool.get("name", "")),
+                        tool.get("behavioral_hints") or tool.get("behavioralHints"),
+                    )
+
+        return overrides
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +251,7 @@ class AgentRegistryAdapter:
         otherwise returns a stub response for testability.
 
         Returns:
-            RegistryCatalog with agents dict or error set.
+            RegistryCatalog with agents, mcp_servers, and endpoints dicts or error set.
         """
         if not self.is_configured:
             logger.debug(
@@ -221,14 +289,20 @@ class AgentRegistryAdapter:
                 raw = response.json()
 
             agents = self._parse_registry_response(raw)
+            mcp_servers = self._parse_mcp_servers_response(raw)
+            endpoints = self._parse_endpoints_response(raw)
             catalog = RegistryCatalog(
                 agents=agents,
                 fetched_at=time.time(),
                 registry_resource_name=self.registry_resource_name,
+                mcp_servers=mcp_servers,
+                endpoints=endpoints,
             )
             logger.info(
-                "✅ agent_registry_adapter: fetched %d agents from registry (region=%s)",
+                "✅ agent_registry_adapter: fetched %d agents, %d mcp_servers, %d endpoints from registry (region=%s)",
                 len(agents),
+                len(mcp_servers),
+                len(endpoints),
                 deployment_region,
             )
             self._last_catalog = catalog
@@ -289,48 +363,39 @@ class AgentRegistryAdapter:
         """Parse the GEAP Agent Registry API response into the OPA catalog shape.
 
         The GEAP API returns a list of agent resources.  This method translates
-        them into the {spiffe_id: {allowed_tools, roles, ...}} shape expected by
+        them into the {agent_identity: {allowed_tools, roles, ...}} shape expected by
         agent_catalog.rego.
 
-        NOTE: The exact response schema must be verified against the live API at
-        deployment time.  This implementation assumes the following shape:
-          {
-            "agents": [
-              {
-                "name": "projects/.../agents/spiffe://...",
-                "displayName": "...",
-                "labels": {"role": "..."},
-                "toolAuthorizations": [{"toolName": "..."}]
-              }
-            ]
-          }
+        Supports both SPIFFE workload identities (``spiffe://...``) and GEAP
+        native agent principals (``principal://agents.global.org-...``), as well
+        as A2A ``skills`` and MCP ``toolSpecs`` metadata.
         """
         agents: dict[str, Any] = {}
         agent_list = raw.get("agents", [])
 
         for agent in agent_list:
-            # The GEAP resource name embeds the full SPIFFE identity, e.g.
-            #   projects/.../agents/spiffe://trust-domain/ns/default/sa/trader-agent
-            # agent_catalog.rego (approved_agents[input.caller_identity.sub]) and
-            # config/agent_catalog.json both key on the FULL spiffe:// identity, so
-            # the catalog key must be that whole identity.  Taking only the final
-            # "/"-segment collapses distinct identities that share a trailing
-            # component — the same service-account name in two namespaces or trust
-            # domains — onto one key, and the later entry silently overwrites the
-            # earlier one's allowed_tools/roles (grant substitution).
             resource_name: str = agent.get("name", "")
-            marker = resource_name.find("spiffe://")
-            spiffe_id = resource_name[marker:] if marker != -1 else resource_name
+            principal_id: str = agent.get("principal", "") or agent.get("agentId", "")
+            spiffe_marker = resource_name.find("spiffe://")
+            principal_marker = resource_name.find("principal://")
+            if spiffe_marker != -1:
+                agent_id = resource_name[spiffe_marker:]
+            elif principal_marker != -1:
+                agent_id = resource_name[principal_marker:]
+            elif principal_id.startswith(("principal://", "spiffe://")):
+                agent_id = principal_id
+            else:
+                agent_id = resource_name or principal_id
 
-            if not spiffe_id:
+            if not agent_id:
                 continue
 
-            if spiffe_id in agents:
+            if agent_id in agents:
                 logger.warning(
                     "agent_registry_adapter: duplicate agent identity '%s' in "
                     "registry response — keeping the first entry and skipping the "
                     "later one to avoid authorization grant substitution.",
-                    spiffe_id,
+                    agent_id,
                 )
                 continue
 
@@ -340,19 +405,213 @@ class AgentRegistryAdapter:
                 if ta.get("toolName")
             ]
 
+            raw_toolspecs = agent.get("toolSpecs") or agent.get("toolspecs") or []
+            parsed_toolspecs: list[dict[str, Any]] = []
+            for ts in raw_toolspecs:
+                if isinstance(ts, dict):
+                    t_name = str(ts.get("name") or ts.get("toolName") or "")
+                    hints = ts.get("behavioralHints") or ts.get("behavioral_hints") or {}
+                    parsed_toolspecs.append(
+                        {
+                            "name": t_name,
+                            "description": str(ts.get("description", "")),
+                            "behavioral_hints": dict(hints)
+                            if isinstance(hints, dict)
+                            else {},
+                        }
+                    )
+                    if t_name and t_name not in allowed_tools:
+                        allowed_tools.append(t_name)
+
             roles: list[str] = []
             labels = agent.get("labels", {})
             if "role" in labels:
                 roles = [labels["role"]]
 
-            agents[spiffe_id] = {
-                "display_name": agent.get("displayName", spiffe_id),
+            entry: dict[str, Any] = {
+                "display_name": agent.get("displayName", agent_id),
                 "allowed_tools": allowed_tools,
                 "roles": roles,
                 "registry_resource_name": resource_name,
             }
+            if agent.get("skills"):
+                entry["skills"] = list(agent["skills"])
+            if parsed_toolspecs:
+                entry["toolspecs"] = parsed_toolspecs
+            if agent.get("version"):
+                entry["version"] = str(agent["version"])
+            if agent.get("framework"):
+                entry["framework"] = str(agent["framework"])
+
+            agents[agent_id] = entry
 
         return agents
+
+    def _parse_mcp_servers_response(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Parse GEAP Agent Registry ``mcpServers`` entries into canonical dicts.
+
+        Captures MCP Server ID, interfaces, and tool specifications including
+        ``behavioralHints`` (``readOnlyHint``, ``destructiveHint``,
+        ``idempotentHint``, ``openWorldHint``).
+        """
+        servers: dict[str, Any] = {}
+        server_list = raw.get("mcpServers") or raw.get("mcp_servers") or []
+
+        for srv in server_list:
+            if not isinstance(srv, dict):
+                continue
+            server_id = str(
+                srv.get("mcpServerId")
+                or srv.get("mcp_server_id")
+                or srv.get("name")
+                or ""
+            )
+            if not server_id:
+                continue
+            if server_id in servers:
+                logger.warning(
+                    "agent_registry_adapter: duplicate MCP server '%s' — keeping first entry.",
+                    server_id,
+                )
+                continue
+
+            tools: list[dict[str, Any]] = []
+            for tool in srv.get("tools", []):
+                if not isinstance(tool, dict):
+                    continue
+                t_name = str(tool.get("name", ""))
+                if not t_name:
+                    continue
+                hints = tool.get("behavioralHints") or tool.get("behavioral_hints") or {}
+                tools.append(
+                    {
+                        "name": t_name,
+                        "description": str(tool.get("description", "")),
+                        "behavioral_hints": dict(hints)
+                        if isinstance(hints, dict)
+                        else {},
+                        "ftra_classification": _classify_behavioral_hints(
+                            hints if isinstance(hints, dict) else None
+                        ),
+                    }
+                )
+
+            servers[server_id] = {
+                "display_name": str(srv.get("displayName", server_id)),
+                "description": str(srv.get("description", "")),
+                "interfaces": list(srv.get("interfaces", [])),
+                "tools": tools,
+                "registry_resource_name": str(srv.get("name", server_id)),
+            }
+
+        return servers
+
+    def _parse_endpoints_response(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Parse GEAP Agent Registry ``endpoints`` entries into canonical dicts."""
+        endpoints: dict[str, Any] = {}
+        endpoint_list = raw.get("endpoints") or []
+
+        for ep in endpoint_list:
+            if not isinstance(ep, dict):
+                continue
+            ep_id = str(
+                ep.get("endpointId")
+                or ep.get("endpoint_id")
+                or ep.get("name")
+                or ""
+            )
+            if not ep_id:
+                continue
+            if ep_id in endpoints:
+                logger.warning(
+                    "agent_registry_adapter: duplicate endpoint '%s' — keeping first entry.",
+                    ep_id,
+                )
+                continue
+
+            dest_urls = ep.get("destinationUrls") or ep.get("destination_urls") or []
+            endpoints[ep_id] = {
+                "display_name": str(ep.get("displayName", ep_id)),
+                "interfaces": list(ep.get("interfaces", [])),
+                "destination_urls": [str(u) for u in dest_urls],
+                "registry_resource_name": str(ep.get("name", ep_id)),
+            }
+
+        return endpoints
+
+    async def associate_toolspec(
+        self,
+        agent_id: str,
+        toolspec: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Associate a custom MCP ``toolspec`` with an Agent Registry resource.
+
+        Implements the GEAP Agent Registry toolspec association contract:
+        validates that every tool in ``toolspec.get("tools", [])`` carries
+        explicit ``behavioralHints`` and derives its FTRA terminal
+        classification before submitting to the registry API (or returning a
+        deterministic dry-run payload when unconfigured).
+        """
+        tools = toolspec.get("tools", [])
+        if not isinstance(tools, list) or not tools:
+            raise ValueError(
+                "associate_toolspec: toolspec must contain a non-empty 'tools' list."
+            )
+
+        normalized_tools: list[dict[str, Any]] = []
+        for tool in tools:
+            if not isinstance(tool, dict) or not tool.get("name"):
+                raise ValueError(
+                    "associate_toolspec: each tool entry must be a dict with a non-empty 'name'."
+                )
+            hints = tool.get("behavioralHints") or tool.get("behavioral_hints")
+            if not isinstance(hints, dict):
+                raise ValueError(
+                    f"associate_toolspec: tool '{tool['name']}' is missing 'behavioralHints'."
+                )
+            normalized_tools.append(
+                {
+                    "name": str(tool["name"]),
+                    "description": str(tool.get("description", "")),
+                    "behavioralHints": dict(hints),
+                    "ftraClassification": _classify_behavioral_hints(hints),
+                }
+            )
+
+        payload: dict[str, Any] = {
+            "agentId": agent_id,
+            "mcpServerId": str(toolspec.get("mcpServerId", "")),
+            "tools": normalized_tools,
+        }
+
+        if not self.is_configured:
+            logger.debug(
+                "agent_registry_adapter.associate_toolspec: not configured — returning validated payload."
+            )
+            return {"status": "dry_run", "association": payload}
+
+        try:
+            import httpx
+
+            auth_headers = await self._get_auth_headers()
+            auth_headers["Content-Type"] = "application/json"
+            api_url = (
+                f"https://aiplatform.googleapis.com/v1beta1"
+                f"/{self.registry_resource_name}:associateToolspec"
+            )
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    api_url,
+                    headers=auth_headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+            return {"status": "associated", "association": payload}
+        except ImportError:
+            logger.warning(
+                "agent_registry_adapter.associate_toolspec: httpx not available — returning dry_run."
+            )
+            return {"status": "dry_run", "association": payload}
 
     async def push_tool_authorizations(self, manifest: dict[str, Any]) -> None:
         """Push STPA-derived tool authorization manifest to the registry.
