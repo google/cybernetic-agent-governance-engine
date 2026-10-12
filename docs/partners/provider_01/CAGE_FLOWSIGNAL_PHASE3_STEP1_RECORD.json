@@ -2,12 +2,38 @@
   "schema_version": "cage-flowsignal-joint-conformance-record/1.0",
   "record_id": "CAGE-FLOWSIGNAL-P3V02-P4S1-JCAR-001",
   "profile": "FlowSignal Phase 3 v0.2 Wire Contract × Phase 4 Step 1 Cross-Boundary Qualification",
-  "recorded_date": "2026-10-11",
+  "recorded_date": "2026-10-12",
   "status": "STEP1_VERIFIED",
   "claim_boundary": "Cross-boundary Step 1 qualification over frozen Phase 3 v0.2 wire contract (/cage/validate, 37-field CageAuthorityDetermineRequest) and CAGE Path 1 (ConsequenceGateway + dispatch_actuation) and Path 2 (FriaTier + routing_seal + revalidate_post_hitl) enforcement.",
   "flowsignal_baseline": {
     "candidate_package": "docs/partners/provider_01/FlowSignal-CAGE-Phase3-v0.2-Candidate.zip",
     "candidate_baseline_commit": "87fc133828ca9e8c16a9bda425aa508aa661469e",
+    "phase3_staging_reference": {
+      "service": "flowsignal-cage-phase3-staging",
+      "cloud_run_revision": "flowsignal-cage-phase3-staging-00005-8mp",
+      "region": "europe-west2",
+      "deployed_date": "2026-09-17",
+      "preflight_evidence_file": "run_live.json",
+      "preflight_date": "2026-10-09",
+      "authentication_gate_verdict": "AS_EXPECTED",
+      "observed_compatibility_notes": [
+        "unknown-field acceptance (observation only)",
+        "authority_record_id present on REFUSE (SCB-001 behaviour)",
+        "identical-request replay returns ALLOW (stateless evaluation; duplicate consequence blocked downstream by CAGE ConsequenceGateway)"
+      ]
+    },
+    "step1_exercised_deployment": {
+      "service": "flowsignal-cage-phase4-staging",
+      "endpoint_url": "https://flowsignal-cage-phase4-staging-jtw7fsky5a-nw.a.run.app",
+      "cloud_run_revision": "flowsignal-cage-phase4-staging-00001-8nr",
+      "region": "europe-west2",
+      "qualified_adaptation_commit": "ea836ab023cc63d966e23f5f3ba481041138998e",
+      "container_image_digest": "sha256:d681fd2df24f4585ac40c43a76c1eb73ffb7bdb7611f67d4ba2a717cd43d951d",
+      "preflight_evidence_file": "run_phase4_live.json",
+      "preflight_evidence_sha256": "5e4966ca5f101ed4181241b6970240c4cefccf645fe44c59ce269f23be167141",
+      "cloud_run_trace_anchor": "28828a4f97ed3c72df551128b70d44a1;o=1",
+      "sample_authority_receipt_id": "fbf79b89-6de5-490c-a57e-fb6debe65f72"
+    },
     "wire_contract_doc": "docs/partners/provider_01/FLOWSIGNAL_PARTNER_SPECIFICATION.md",
     "endpoint_path": "/cage/validate",
     "ingress_auth_mode": "CLOUD_RUN_DRS_DUAL_HEADER (X-Serverless-Authorization OIDC + Authorization Bearer)",
@@ -47,7 +73,9 @@
           "http_status": 200,
           "flowsignal_decision": "ALLOW",
           "authority_record_id": "MANDATE-TREASURY-001",
+          "authority_receipt_id": "fbf79b89-6de5-490c-a57e-fb6debe65f72",
           "authority_receipt_present": true,
+          "cloud_run_trace_context": "28828a4f97ed3c72df551128b70d44a1;o=1",
           "outcome": "PASS"
         },
         {
