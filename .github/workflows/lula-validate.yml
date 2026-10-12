@@ -54,7 +54,7 @@ jobs:
         run: |
           # Download lula binary from defenseunicorns-labs/lula1 GitHub releases.
           LULA_VERSION="v0.16.0"
-          curl -fsSL \
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
             "https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64" \
             -o /usr/local/bin/lula
           chmod +x /usr/local/bin/lula
