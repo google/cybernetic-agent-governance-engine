@@ -1,7 +1,7 @@
 # CAGE × Gemini Enterprise Agent Platform (GEAP) Integration Architecture
 
 **Document type:** Architectural Specification & Modular Implementation Blueprint  
-**Status:** ACTIVE — Phase 1 (Modules M5 & M6) Implemented at HEAD; Modules M1–M4, M7–M8 Specified  
+**Status:** ACTIVE — Phases 1–3 (Modules M1–M6) Implemented at HEAD; Modules M7–M8 Specified  
 **Date:** 2026-10-12  
 **Authority:** Supplements [`SUBSTRATE_MOAT_STRATEGY.md`](SUBSTRATE_MOAT_STRATEGY.md), [`GOVERNANCE_SUBSTRATE_DUALITY.md`](GOVERNANCE_SUBSTRATE_DUALITY.md), and [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md)
 
@@ -71,10 +71,10 @@ flowchart TB
 
 | Module | Name | Layer & Package Location | Status at HEAD |
 |---|---|---|---|
-| **M1** | **AGW `REQUEST_AUTHZ` Service Extension & Seal Injector** | Layer 1 Ingress ([`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py)) + Layer 3 Adapter | Phase 3 Specification |
-| **M2** | **GEAP Tri-Identity (`ID-1`/`ID-2`/`ID-3`) Envelope Binder** | Layer 1 Seam ([`workload_identity.py`](../../src/gateway/server/workload_identity.py), [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py)) | Phase 3 Specification |
+| **M1** | **AGW `REQUEST_AUTHZ` Service Extension & Seal Injector** | Layer 1 Ingress ([`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py)) | ✅ **Implemented (Phase 3)** |
+| **M2** | **GEAP Tri-Identity (`ID-1`/`ID-2`/`ID-3`) Envelope Binder** | Layer 1 Seam ([`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py), [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py)) | ✅ **Implemented (Phase 3)** |
 | **M3** | **Agent Registry Toolspec & IAP CEL / SGP Bidirectional Compiler** | Layer 1 Ingress ([`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py), [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py), [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)) | ✅ **Implemented (Phase 2)** |
-| **M4** | **FastMCP Seal Verification Middleware & Memory Bank Guard** | Layer 1 Seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py), [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)) + Layer 3 ADK Middleware | Phase 3 Specification |
+| **M4** | **FastMCP Seal Verification Middleware & Memory Bank Guard** | Layer 3 GEAP Runtime ([`runtime_guards.py`](../../src/integrations/gcp_geap/runtime_guards.py)) + Layer 1 Seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py), [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)) | ✅ **Implemented (Phase 3)** |
 | **M5** | **Failure Cluster Harvester & 3-Tier Simulated CI/CD Eval Gate** | Layer 3 GCP Eval ([`bq_harvester.py`](../../src/integrations/gcp_eval/bq_harvester.py), [`vertex_evaluator.py`](../../src/integrations/gcp_eval/vertex_evaluator.py)) | ✅ **Implemented (Phase 1)** |
 | **M6** | **GEPA Evolutionary Prompt Governor (`GovernedGEPAOptimizer`)** | Layer 3 GCP Eval ([`gepa_governor.py`](../../src/integrations/gcp_eval/gepa_governor.py)) | ✅ **Implemented (Phase 1)** |
 | **M7** | **OTel Cloud Trace & Sovereign Telemetry Bridge** | Layer 1 Telemetry Seam ([`telemetry_provider.py`](../../src/gateway/governance/telemetry_provider.py)) + Layer 3 Exporter | Phase 4 Specification |
@@ -82,7 +82,7 @@ flowchart TB
 
 ---
 
-## 4. Phase 1 & Phase 2 Detailed Design: Modules M5, M6 & M3 (Implemented at HEAD)
+## 4. Phase 1–3 Detailed Design: Modules M1–M6 (Implemented at HEAD)
 
 ### 4.1 Module M5: Failure Cluster Harvester & 3-Tier Simulated CI/CD Eval Gate
 
@@ -123,22 +123,31 @@ Module M3 bridges CAGE's STPA control structure and FTRA reachability engine wit
 3. **Fail-Closed `DRY_RUN` → `ENFORCED` Gateway Transition Gate ([`verify_and_transition_gateway_mode`](../../src/gateway/governance/ingress/agp_policy_uploader.py))**:
    * Returns a [`GatewayEnforcementTransitionResult`](../../src/gateway/governance/ingress/agp_policy_uploader.py) that blocks transitioning an Agent Gateway from `DRY_RUN` to `ENFORCED` unless: (a) every target observed in `discovered_targets` is registered in `RegistryCatalog`, (b) every target has an explicit `roles/iap.egressor` binding with a valid agent principal and non-empty CEL condition, and (c) all associated skill `.cer` artifacts are verified.
 
+### 4.4 Modules M1 & M2: AGW `REQUEST_AUTHZ` Service Extension & Tri-Identity Envelope Binder
+
+GEAP's **Agent Gateway (`AGENT_TO_ANYWHERE` egress mode)** intercepts outbound MCP tool calls on Secure Web Proxy and invokes an IAP `authzExtension` (`policyProfile: REQUEST_AUTHZ`, `action: CUSTOM`, `failOpen: false`) while propagating GEAP's Three-Identity model (`ID-1` end-user identity, `ID-2` Agent Runtime principal `principal://agents.global.org-...` or `spiffe://...`, and `ID-3` delegated OAuth 2.0 scope/token).
+
+Modules M1 and M2 implement the online runtime callout and identity binding:
+1. **Out-of-Band `kid`-Resolved OIDC Verification ([`AgwAdapter.validate_oidc_token`](../../src/gateway/governance/ingress/agw_adapter.py))**:
+   * Enforces CAGE's Trust Anchor invariant: rejects any JWT header containing embedded keys (`jwk`, `x5c`, `x5u`, `jku`) or `none` algorithms, resolves public keys strictly by `kid` from `key_resolver` / `_jwks_cache`, and fails closed (`(False, {})`) on unknown `kid` or unconfigured issuer.
+2. **GEAP Tri-Identity Context & PreCredentials Broker Seam ([`GeapTriIdentityContext`](../../src/gateway/governance/ingress/agw_adapter.py), [`TriIdentityCredentialBinding`](../../src/gateway/governance/seams/credential_broker.py))**:
+   * [`AgwAdapter.extract_tri_identity`](../../src/gateway/governance/ingress/agw_adapter.py) binds `ID-1` (`user_id`), `ID-2` (`agent_principal`), and `ID-3` (`oauth_scopes` + SHA-256 digest of the delegated OAuth token — never persisting the raw token) into a deterministic RFC 8785 JCS digest (`compute_binding_digest()`).
+   * [`validate_tri_identity_binding`](../../src/gateway/governance/seams/credential_broker.py) enforces that `ID-3` outbound credential release is gated on a valid `ID-2` principal, `ID-1` user delegation, and a non-empty `PreCredentials` `X-CAGE-Routing-Seal`.
+3. **MCP JSON-RPC 2.0 `tools/call` Callout & Seal Injection ([`AgwAdapter.evaluate_request_authz`](../../src/gateway/governance/ingress/agw_adapter.py))**:
+   * Normalizes decoded MCP JSON-RPC 2.0 `tools/call` payloads (`params.name`, `params.arguments`), enforces `failOpen: false`, evaluates `governor.validate_action(tool_name, governed_params)`, and returns [`AgwRequestAuthzDecision`](../../src/gateway/governance/ingress/agw_adapter.py) injecting `X-CAGE-Routing-Seal` and `X-CAGE-Tri-Identity-Digest` on `ALLOW` (`HTTP 200`) or failing closed on `DENY` / `DEFER` / `UNAUTHENTICATED` (`HTTP 403`).
+
+### 4.5 Module M4: FastMCP Seal Verification Middleware & ADK Memory Bank Guard ([`src/integrations/gcp_geap/runtime_guards.py`](../../src/integrations/gcp_geap/runtime_guards.py))
+
+1. **FastMCP Seal Verification Middleware ([`FastMcpSealVerificationMiddleware`](../../src/integrations/gcp_geap/runtime_guards.py))**:
+   * Enforces ADR-009 tiered actuation on Cloud Run FastMCP (`StreamableHTTP`) servers: read-only MCP methods (`tools/list`, `resources/list`, `prompts/list`, and configured `read_only_tools`) pass through when `require_seal_for_read_only=False`, whereas mutating tools require `X-CAGE-Routing-Seal` and pass [`verify_and_consume_seal`](../../src/gateway/governance/routing_seal.py) (or [`verify_seal`](../../src/gateway/governance/routing_seal.py)) plus constant-time `X-CAGE-Tri-Identity-Digest` verification.
+2. **ADK Vertex Memory Bank Guard ([`GovernedMemoryBankGuard`](../../src/integrations/gcp_geap/runtime_guards.py))**:
+   * `guard_save_session_to_memory()` scans all session events via [`detect_prompt_injection`](../../src/gateway/governance/prompt_injection_detector.py) — failing closed and skipping `ctx.add_session_to_memory()` if any event contains a prompt injection payload — and scrubs all PII via [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py) prior to persistence.
+   * `guard_preloaded_memories()` filters or blocks poisoned memories returned by `PreloadMemoryTool` (`before_model_callback`) and redacts PII before prompt injection.
+
 ---
 
-## 5. Phase 3–4 Modular Specifications (Future Work Packages)
+## 5. Phase 4 Modular Specifications (Future Work Packages)
 
-### 5.1 Module M1: AGW `REQUEST_AUTHZ` Service Extension & Seal Injector
-* **GEAP Integration Seam**: Agent Gateway in `AGENT_TO_ANYWHERE` (egress) mode configured with `policyProfile: REQUEST_AUTHZ`, `action: CUSTOM`, `failOpen: false`.
-* **CAGE Target**: Extend [`AgwAdapter`](../../src/gateway/governance/ingress/agw_adapter.py) and [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) to parse decoded MCP JSON-RPC 2.0 tool invocations (`tools/call`), execute [`SymbolicGovernor.validate_action`](../../src/gateway/governance/governor/governor.py), and return `X-CAGE-Routing-Seal` minted via [`routing_seal.py`](../../src/gateway/governance/routing_seal.py).
-
-### 5.2 Module M2: GEAP Tri-Identity (`ID-1`/`ID-2`/`ID-3`) Envelope Binder
-* **GEAP Integration Seam**: `ID-1` (end-user identity), `ID-2` (Agent Runtime SPIFFE principal `principal://agents.global.org-.../reasoningEngines/...`), and `ID-3` (OAuth 2.0 user-delegated token).
-* **CAGE Target**: Extend [`AgwAdapter.validate_oidc_token`](../../src/gateway/governance/ingress/agw_adapter.py) using out-of-band `kid` resolution ([`Ed25519KeyManifestClient`](../../src/integrations/trust/key_manifest.py)) and bind all three identity claims into [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py) and [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) while preserving [`WorkloadIdentityMiddleware`](../../src/gateway/server/workload_identity.py).
-
-### 5.3 Module M4: FastMCP Seal Verification Middleware & ADK Memory Bank Guard
-* **GEAP Integration Seam**: Cloud Run FastMCP tool servers (`StreamableHTTP`), Vertex Memory Bank (`PreloadMemoryTool`, `save_memories_callback`), and ADK model callbacks (`before_model_callback`, `after_model_callback`).
-* **CAGE Target**: Provide a Layer 3 FastMCP middleware invoking [`verify_and_consume_seal`](../../src/gateway/governance/routing_seal.py) on mutating tool calls, and a Memory Bank callback wrapper applying [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py) and prompt-injection checks ([`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py)) before `ctx.add_session_to_memory()`.
-
-### 5.4 Modules M7 & M8: OTel Cloud Trace Bridge, IaC, Lula & OSCAL
+### 5.1 Modules M7 & M8: OTel Cloud Trace Bridge, IaC, Lula & OSCAL
 * **GEAP Integration Seam**: OpenTelemetry GenAI spans exported to Cloud Trace and BigQuery; Terraform and compliance assertions for Agent Gateway and Model Armor.
 * **CAGE Target**: Inject `cage.receipt_digest` and `cage.deployment_region` into OTel spans via [`telemetry_provider.py`](../../src/gateway/governance/telemetry_provider.py) (keeping `LANGSMITH_TRACING=false`), add Lula validations under `compliance/lula/`, and export updated NIST SP 800-53 mappings via [`oscal_ssp_exporter.py`](../../src/gateway/governance/oscal_ssp_exporter.py).

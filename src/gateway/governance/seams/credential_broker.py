@@ -32,6 +32,7 @@ Security Model:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -51,6 +52,53 @@ class CredentialAccessDenied(CredentialBrokerError):
     """Raised when the SVID is not authorized to access the requested credential."""
 
     pass
+
+
+@dataclass(frozen=True)
+class TriIdentityCredentialBinding:
+    """GEAP Three-Identity outbound credential binding contract (Module M2).
+
+    Binds ``ID-1`` (end-user identity), ``ID-2`` (agent SPIFFE / GEAP
+    ``principal://agents.global.org-...`` SVID), and ``ID-3`` (requested OAuth
+    scopes) to a verified ``X-CAGE-Routing-Seal`` prior to credential release.
+    """
+
+    user_id: str
+    agent_svid: str
+    tool_name: str
+    routing_seal: str
+    oauth_scopes: tuple[str, ...] = field(default_factory=tuple)
+
+
+def validate_tri_identity_binding(
+    binding: TriIdentityCredentialBinding,
+    *,
+    require_user_delegation: bool = True,
+) -> None:
+    """Validate that a ``TriIdentityCredentialBinding`` satisfies fail-closed preconditions.
+
+    Raises:
+        CredentialAccessDenied: If the agent SVID, user delegation, tool name,
+            or ``PreCredentials`` routing seal is missing or malformed.
+    """
+    if not binding.agent_svid or not binding.agent_svid.startswith(
+        ("spiffe://", "principal://agents.global.org-")
+    ):
+        raise CredentialAccessDenied(
+            f"Invalid ID-2 agent workload identity for credential brokering: {binding.agent_svid!r}"
+        )
+    if require_user_delegation and not binding.user_id.strip():
+        raise CredentialAccessDenied(
+            "Missing ID-1 end-user identity required for delegated ID-3 OAuth token brokering"
+        )
+    if not binding.tool_name.strip():
+        raise CredentialAccessDenied(
+            "Missing tool_name for scoped credential brokering"
+        )
+    if not binding.routing_seal.strip():
+        raise CredentialAccessDenied(
+            "Missing PreCredentials X-CAGE-Routing-Seal required before credential release"
+        )
 
 
 class CredentialBrokerAdapter(Protocol):
