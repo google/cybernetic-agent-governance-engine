@@ -412,13 +412,13 @@ def compute_sidecar_auth_headers(
     digest = hmac.new(secret, signing_input, hashlib.sha256).digest()
     mac_b64url = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     return {
-        "Content-Type": "application/json; charset=utf-8",
+        "Content-Type": "application/json",
         "Accept": "application/json",
-        "X-Agent-Integrity-Client-Id": client_id,
+        "X-Agent-Integrity-Client": client_id,
         "X-Agent-Integrity-Key-Id": key_id,
-        "X-Agent-Integrity-Timestamp-Ms": ts_str,
+        "X-Agent-Integrity-Timestamp": ts_str,
         "X-Agent-Integrity-Nonce": nonce,
-        "X-Agent-Integrity-Mac": mac_b64url,
+        "X-Agent-Integrity-Signature": mac_b64url,
     }
 
 
@@ -669,7 +669,7 @@ class Provider06AgentIntegrityAdapter:
             )
         else:
             headers = {
-                "Content-Type": "application/json; charset=utf-8",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             }
 

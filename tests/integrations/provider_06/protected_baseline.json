@@ -37,10 +37,21 @@
         "src/integrations/provider_06/adapter.py": "1a77d1f9493b65b485e6d086b49ac5ad39cfee773f80bc5347851e8e71673e01"
       },
       "reason": "Enforce strict_v2=True on verify_receipt_digest and verify_receipt_signature in _verify_v1_receipt so POST /v1/verify-release rejects legacy Phase 1 unsigned-body receipt signatures."
+    },
+    {
+      "sequence": 4,
+      "date": "2026-10-15",
+      "paths": [
+        "src/integrations/provider_06/adapter.py"
+      ],
+      "previousSha256": {
+        "src/integrations/provider_06/adapter.py": "d45681d32dedce17dc26951d2b2cf1a81c8a4df9e9107b16c874aad5e88b218f"
+      },
+      "reason": "Rebase the narrow verify-release Content-Type and client/timestamp/signature wire-header corrections onto PR #481 while preserving its strict_v2 receipt digest/signature validation. HMAC framing, public schemas, trust anchors, legacy headers and dispatch behavior are unchanged. This re-attestation does not establish full adapter admission or deployment readiness."
     }
   ],
   "protectedFiles": {
-    "src/integrations/provider_06/adapter.py": "d45681d32dedce17dc26951d2b2cf1a81c8a4df9e9107b16c874aad5e88b218f",
+    "src/integrations/provider_06/adapter.py": "a7377dbdde9afe1f25e21f878ebbd96e6916a3a077b35d50233d6b213d6fca7d",
     "src/integrations/provider_06/mock_endpoint.py": "236e8646b603a79b4a6016a5d963b39cb23b696942a200de33c985384f55283d",
     "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
     "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"
