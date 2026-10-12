@@ -23,7 +23,7 @@ workflow:
    Golden Anchor datasets.
 3. ``stage2_tier1_isolation_eval``: Paired Skill Lift evaluation in isolation.
 4. ``stage2_tier2_decoy_collision_eval``: Paired Skill Lift + Routing Premium
-   with 15–20 decoy skills injected to guard against ACES 50-Skill Routing Collapse.
+   with 15-20 decoy skills injected to guard against ACES 50-Skill Routing Collapse.
 5. ``stage3_publish_or_export``: Conditional branch publishing a KMS-signed
    `.cer` receipt to GCS on pass, or exporting PII-sanitized DPO/RLVR JSONL
    datasets on failure/narrowing.

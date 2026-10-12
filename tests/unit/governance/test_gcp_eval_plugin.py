@@ -654,3 +654,238 @@ def test_cli_emit_cer_with_vertex_backend(
     assert cer_data["skill_name"] == "gcp-deploy-skill"
     assert cer_data["signature"]["keyId"] == "cage-cli-test-kid"
     assert len(cer_data["receiptDigest"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_langgraph_and_adk_rollout_adapters_with_vertex_backend(
+    tmp_path: Path,
+) -> None:
+    """Verify both LangGraphRolloutAdapter (StateGraph .ainvoke) and ADKSessionRolloutAdapter work with VertexGenAIEvalBackend."""
+    from src.eval_harness import (
+        ADKSessionRolloutAdapter,
+        AgentRolloutRunner,
+        LangGraphRolloutAdapter,
+        langgraph_state_to_atif,
+    )
+
+    skill_md = _write_valid_skill_md(tmp_path)
+    case_exp = SkillEvalCase(
+        case_id="lg-exp-1",
+        bucket=SkillPromptBucket.EXPLICIT,
+        prompt="Use gcp-deploy-skill to deploy the gateway",
+        expected_skill="gcp-deploy-skill",
+        expected_script="deploy_cloudbuild.py",
+        forbidden_tools=("legacy_docker_push",),
+        required_output_tokens=("DEPLOY_STATUS=VERIFIED",),
+        expected_behaviors=("deploy_cloudbuild.py",),
+    )
+
+    class _FakeBaseMessage:
+        def __init__(
+            self,
+            msg_type: str,
+            content: str,
+            *,
+            name: str | None = None,
+            tool_calls: list[dict[str, Any]] | None = None,
+            tool_call_id: str | None = None,
+            usage_metadata: dict[str, int] | None = None,
+        ) -> None:
+            self.type = msg_type
+            self.content = content
+            self.name = name
+            self.tool_calls = tool_calls or []
+            self.tool_call_id = tool_call_id
+            self.usage_metadata = usage_metadata or {}
+            self.response_metadata: dict[str, Any] = {}
+            self.additional_kwargs: dict[str, Any] = {}
+
+    class _CompiledLangGraphStub:
+        async def ainvoke(
+            self,
+            state: dict[str, Any],
+            config: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            msgs = list(state.get("messages") or [])
+            has_skill = any(
+                isinstance(m, dict)
+                and m.get("role") == "system"
+                and "gcp-deploy-skill" in str(m.get("content", ""))
+                for m in msgs
+            )
+            if has_skill:
+                return {
+                    "messages": [
+                        _FakeBaseMessage("human", case_exp.prompt),
+                        _FakeBaseMessage(
+                            "ai",
+                            "Reading SKILL.md and deploying via cloud-build.",
+                            name="deploy_node",
+                            tool_calls=[
+                                {
+                                    "id": "tc_1",
+                                    "name": "view_file",
+                                    "args": {
+                                        "path": "skills/gcp-deploy-skill/SKILL.md"
+                                    },
+                                },
+                                {
+                                    "id": "tc_2",
+                                    "name": "run_command",
+                                    "args": {
+                                        "command": "python scripts/deploy_cloudbuild.py --env prod"
+                                    },
+                                },
+                            ],
+                            usage_metadata={"input_tokens": 120, "output_tokens": 35},
+                        ),
+                        _FakeBaseMessage(
+                            "tool",
+                            "# gcp-deploy-skill",
+                            name="view_file",
+                            tool_call_id="tc_1",
+                        ),
+                        _FakeBaseMessage(
+                            "tool",
+                            "Cloud build succeeded",
+                            name="run_command",
+                            tool_call_id="tc_2",
+                        ),
+                        _FakeBaseMessage(
+                            "ai",
+                            "Deployment complete: DEPLOY_STATUS=VERIFIED",
+                            name="deploy_node",
+                            usage_metadata={"input_tokens": 160, "output_tokens": 10},
+                        ),
+                    ]
+                }
+            return {
+                "messages": [
+                    _FakeBaseMessage("human", case_exp.prompt),
+                    _FakeBaseMessage(
+                        "ai",
+                        "Pushing locally.",
+                        tool_calls=[
+                            {
+                                "id": "tc_bad",
+                                "name": "legacy_docker_push",
+                                "args": {"tag": "latest"},
+                            }
+                        ],
+                    ),
+                    _FakeBaseMessage(
+                        "tool",
+                        "Pushed",
+                        name="legacy_docker_push",
+                        tool_call_id="tc_bad",
+                    ),
+                    _FakeBaseMessage("ai", "Done local push."),
+                ]
+            }
+
+    lg_adapter = LangGraphRolloutAdapter(_CompiledLangGraphStub())
+    lg_runner = AgentRolloutRunner(lg_adapter)
+    lg_bundle = await lg_runner.run_paired_rollouts(
+        [case_exp],
+        skill_name="gcp-deploy-skill",
+        skill_md_path=skill_md,
+    )
+
+    skill_traj = lg_bundle.with_skill_trajectories["lg-exp-1"]
+    assert skill_traj.harness_id == "langgraph"
+    assert len(skill_traj.steps) == 2
+    assert skill_traj.steps[0].source == "deploy_node"
+    assert skill_traj.steps[0].metadata["prompt_tokens"] == 120
+    assert "Cloud build succeeded" in skill_traj.steps[0].observation
+    assert lg_bundle.with_skill_tokenomics["lg-exp-1"].total_prompt_tokens == 280
+
+    harness = FoundationModelEvalHarness(governor=None)
+    backend = VertexGenAIEvalBackend(experiment_name="langgraph-vertex-eval")
+    lg_lift = await backend.evaluate_paired_skill_lift(
+        harness=harness,
+        skill_name="gcp-deploy-skill",
+        model_id=lg_bundle.model_id,
+        cases=[case_exp],
+        baseline_trajectories=lg_bundle.baseline_trajectories,
+        with_skill_trajectories=lg_bundle.with_skill_trajectories,
+    )
+    assert lg_lift.mean_composite_lift > 0.4
+
+    # Verify ADKSessionRolloutAdapter produces equivalent positive lift on the same backend
+    def _adk_runner(prompt: str, workspace: Any) -> dict[str, Any]:
+        if "gcp-deploy-skill" in workspace.visible_skills:
+            return {
+                "id": "adk-1",
+                "events": [
+                    {
+                        "author": "agent",
+                        "content": {
+                            "parts": [
+                                {
+                                    "function_call": {
+                                        "name": "view_file",
+                                        "args": {
+                                            "path": "skills/gcp-deploy-skill/SKILL.md"
+                                        },
+                                    }
+                                },
+                                {
+                                    "function_call": {
+                                        "name": "run_command",
+                                        "args": {
+                                            "command": "python scripts/deploy_cloudbuild.py --env prod"
+                                        },
+                                    }
+                                },
+                                {
+                                    "function_response": {
+                                        "response": {"status": "DEPLOY_STATUS=VERIFIED"}
+                                    }
+                                },
+                            ]
+                        },
+                    },
+                    {
+                        "author": "agent",
+                        "content": {
+                            "parts": [{"text": "Done: DEPLOY_STATUS=VERIFIED"}]
+                        },
+                    },
+                ],
+            }
+        return {
+            "id": "adk-0",
+            "events": [
+                {
+                    "author": "agent",
+                    "content": {
+                        "parts": [
+                            {
+                                "function_call": {
+                                    "name": "legacy_docker_push",
+                                    "args": {},
+                                }
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+    adk_runner = AgentRolloutRunner(ADKSessionRolloutAdapter(_adk_runner))
+    adk_bundle = await adk_runner.run_paired_rollouts(
+        [case_exp],
+        skill_name="gcp-deploy-skill",
+        skill_md_path=skill_md,
+    )
+    adk_lift = await backend.evaluate_paired_skill_lift(
+        harness=harness,
+        skill_name="gcp-deploy-skill",
+        model_id=adk_bundle.model_id,
+        cases=[case_exp],
+        baseline_trajectories=adk_bundle.baseline_trajectories,
+        with_skill_trajectories=adk_bundle.with_skill_trajectories,
+    )
+    assert adk_lift.mean_composite_lift > 0.4
+    assert langgraph_state_to_atif({"messages": [("user", "hi"), ("ai", "hello")]}).final_response == "hello"
+

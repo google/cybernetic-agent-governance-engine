@@ -29,6 +29,7 @@ if str(_REPO_ROOT) not in _sys.path:
 from src.eval_harness.adapters import (
     adk_session_to_atif,
     gemini_cli_jsonl_to_atif,
+    langgraph_state_to_atif,
 )
 from src.eval_harness.cli import run_certification_gate
 from src.eval_harness.harness import (
@@ -65,6 +66,7 @@ from src.eval_harness.runner import (
     BaseRolloutAdapter,
     CallableRolloutAdapter,
     HttpRolloutAdapter,
+    LangGraphRolloutAdapter,
     MultiAgentRolloutAdapter,
     PairedRolloutBundle,
     RolloutWorkspaceContext,
@@ -101,6 +103,7 @@ __all__ = [
     "EvaluationStepResult",
     "FoundationModelEvalHarness",
     "HttpRolloutAdapter",
+    "LangGraphRolloutAdapter",
     "MultiAgentRolloutAdapter",
     "PRMRewardSchedule",
     "PairedCaseLift",
@@ -124,6 +127,7 @@ __all__ = [
     "default_shadow_state_reducer",
     "estimate_token_count",
     "gemini_cli_jsonl_to_atif",
+    "langgraph_state_to_atif",
     "lint_skill_file",
     "lint_skill_markdown",
     "load_rollout_adapter",

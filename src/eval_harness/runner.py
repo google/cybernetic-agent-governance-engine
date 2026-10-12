@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from src.eval_harness.adapters import adk_session_to_atif
+from src.eval_harness.adapters import adk_session_to_atif, langgraph_state_to_atif
 from src.eval_harness.harness import (
     ATIFStep,
     ATIFTrajectory,
@@ -345,6 +345,18 @@ def _normalize_raw_output_to_atif(
             session_dict.setdefault("visible_skills", list(visible_skills))
             return adk_session_to_atif(session_dict, default_model_id=model_id)
 
+        if "messages" in raw_output and "steps" not in raw_output:
+            state_dict = dict(raw_output)
+            state_dict.setdefault("trajectory_id", trajectory_id)
+            state_dict.setdefault("model_id", model_id)
+            state_dict.setdefault("prompt", prompt)
+            state_dict.setdefault("visible_skills", list(visible_skills))
+            return langgraph_state_to_atif(
+                state_dict,
+                default_model_id=model_id,
+                default_trajectory_id=trajectory_id,
+            )
+
         if "steps" in raw_output:
             payload = dict(raw_output)
             payload.setdefault("trajectory_id", trajectory_id)
@@ -530,6 +542,107 @@ class ADKSessionRolloutAdapter(BaseRolloutAdapter):
         )
 
 
+class LangGraphRolloutAdapter(BaseRolloutAdapter):
+    """First-class adapter for LangChain / LangGraph ``CompiledStateGraph`` or ``Runnable`` targets.
+
+    Accepts a compiled LangGraph object exposing ``.ainvoke()`` / ``.invoke()``,
+    a callable graph wrapper, or a dot/colon path string (e.g. ``"my_pkg.graph:app"``).
+    Automatically injects ``workspace.skill_markdown_by_name`` as a leading
+    system message during ``with_skill`` rollouts and normalizes the returned
+    ``{"messages": [...]}`` state into a canonical :class:`ATIFTrajectory`.
+    """
+
+    def __init__(
+        self,
+        graph: Any | str,
+        *,
+        model_id: str = "gemini-3.5-flash",
+        include_shadow_state: bool = True,
+    ) -> None:
+        super().__init__(harness_id="langgraph", model_id=model_id)
+        self._target: Any = _resolve_symbol(graph) if isinstance(graph, str) else graph
+        self.include_shadow_state = include_shadow_state
+
+    async def rollout(
+        self,
+        prompt: str,
+        *,
+        workspace: RolloutWorkspaceContext | None = None,
+    ) -> ATIFTrajectory:
+        ws = workspace or RolloutWorkspaceContext(case_id="langgraph", prompt=prompt)
+        traj_id = f"{ws.case_id}-{ws.mode}"
+
+        messages: list[dict[str, str]] = []
+        if ws.skill_markdown_by_name:
+            combined_skill_md = "\n\n".join(
+                f"# Skill: {name}\n{md}"
+                for name, md in ws.skill_markdown_by_name.items()
+                if md
+            )
+            if combined_skill_md:
+                messages.append({"role": "system", "content": combined_skill_md})
+        messages.append({"role": "user", "content": prompt})
+
+        state_input: dict[str, Any] = {"messages": messages}
+        if self.include_shadow_state and ws.initial_shadow_state:
+            for k, v in ws.initial_shadow_state.items():
+                if k != "messages":
+                    state_input[k] = v
+
+        runnable_config = {
+            "configurable": {
+                "thread_id": traj_id,
+                "case_id": ws.case_id,
+                "mode": ws.mode,
+                "visible_skills": list(ws.visible_skills),
+            }
+        }
+
+        if hasattr(self._target, "ainvoke"):
+            ainvoke_fn = self._target.ainvoke
+            sig = inspect.signature(ainvoke_fn)
+            if "config" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                raw_state = await ainvoke_fn(state_input, config=runnable_config)
+            else:
+                raw_state = await ainvoke_fn(state_input)
+        elif hasattr(self._target, "invoke"):
+            invoke_fn = self._target.invoke
+            sig = inspect.signature(invoke_fn)
+            if "config" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                raw_state = invoke_fn(state_input, config=runnable_config)
+            else:
+                raw_state = invoke_fn(state_input)
+            if inspect.isawaitable(raw_state):
+                raw_state = await raw_state
+        elif callable(self._target):
+            sig = inspect.signature(self._target)
+            if "workspace" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                raw_state = self._target(prompt, workspace=ws)
+            else:
+                raw_state = self._target(prompt)
+            if inspect.isawaitable(raw_state):
+                raw_state = await raw_state
+        else:
+            raise TypeError(
+                f"LangGraphRolloutAdapter target {type(self._target).__name__!r} has neither .ainvoke/.invoke nor __call__"
+            )
+
+        return _normalize_raw_output_to_atif(
+            raw_state,
+            trajectory_id=traj_id,
+            harness_id=self.harness_id,
+            model_id=self.model_id,
+            prompt=prompt,
+            visible_skills=ws.visible_skills,
+        )
+
+
 class MultiAgentRolloutAdapter(BaseRolloutAdapter):
     """Adapter for hierarchical / sequential Multi-Agent Systems (MAS).
 
@@ -677,8 +790,10 @@ def load_rollout_adapter(
     """Instantiate a :class:`BaseRolloutAdapter` from a dot/colon path and optional config.
 
     If ``adapter_spec`` resolves to a :class:`BaseRolloutAdapter` subclass, it is
-    instantiated with ``**config``. If it resolves to a plain function or callable,
-    it is automatically wrapped in :class:`CallableRolloutAdapter`.
+    instantiated with ``**config``. If it resolves to a compiled LangGraph
+    ``StateGraph`` / ``Runnable`` (exposing ``.ainvoke`` or ``.invoke``), it is
+    wrapped in :class:`LangGraphRolloutAdapter`. If it resolves to a plain
+    function or callable, it is wrapped in :class:`CallableRolloutAdapter`.
     """
     cfg = dict(config or {})
     effective_prefixes = (
@@ -692,10 +807,12 @@ def load_rollout_adapter(
     )
     if isinstance(symbol, type) and issubclass(symbol, BaseRolloutAdapter):
         return symbol(**cfg)
+    if hasattr(symbol, "ainvoke") or hasattr(symbol, "invoke"):
+        return LangGraphRolloutAdapter(symbol, **cfg)
     if callable(symbol):
         return CallableRolloutAdapter(symbol, **cfg)
     raise TypeError(
-        f"Resolved symbol {adapter_spec!r} is neither a BaseRolloutAdapter subclass nor callable"
+        f"Resolved symbol {adapter_spec!r} is neither a BaseRolloutAdapter subclass, Runnable, nor callable"
     )
 
 
@@ -857,6 +974,7 @@ __all__ = [
     "BaseRolloutAdapter",
     "CallableRolloutAdapter",
     "HttpRolloutAdapter",
+    "LangGraphRolloutAdapter",
     "MultiAgentRolloutAdapter",
     "PairedRolloutBundle",
     "RolloutWorkspaceContext",

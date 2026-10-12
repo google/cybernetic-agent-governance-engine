@@ -1,20 +1,35 @@
 # Hands-On Guide: Evaluating an Agent & Certifying Skills on GCP
 
-This guide walks through how to evaluate an agent and certify a partner skill end-to-end using the **CAGE Offline Agent Evaluation Harness** ([`src/eval_harness/`](../../src/eval_harness/__init__.py)) and its **Layer 3 GCP Evaluation Plugin** ([`src/integrations/gcp_eval/`](../../src/integrations/gcp_eval/__init__.py)).
+This guide walks through how to evaluate an agent (**Google ADK** or **LangChain / LangGraph**) and certify a partner skill end-to-end using the **CAGE Offline Agent Evaluation Harness** ([`src/eval_harness/`](../../src/eval_harness/__init__.py)) and its **Layer 3 GCP Evaluation Plugin** ([`src/integrations/gcp_eval/`](../../src/integrations/gcp_eval/__init__.py)).
 
 > **Architectural Boundary:** The Offline Evaluation & Certification Plane (`src/eval_harness/`) is a standalone product distinct from the `<10 ms` Online Runtime Enforcement Kernel (`src/gateway/`). They never share a database or communicate via synchronous RPCs; instead, they interact strictly through **immutable Cloud Storage (`.cer`) artifacts** and **Cloud Logging / BigQuery asynchronous telemetry sinks**.
 
 ---
 
+## Supported Agent Frameworks (ADK & LangChain / LangGraph)
+
+Both the offline harness and `VertexGenAIEvalBackend` evaluate canonical **`ATIFTrajectory`** (Agent Trajectory Interchange Format) objects defined in [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py). Pluggable adapters in [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) and trace converters in [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) normalize both **Google ADK** and **LangChain / LangGraph** agents automatically:
+
+| Agent Framework | Rollout Adapter (`src/eval_harness/runner.py`) | Trace Normalizer (`src/eval_harness/adapters.py`) | Native Payload Supported |
+|---|---|---|---|
+| **Google ADK (`google-adk`)** | `ADKSessionRolloutAdapter` / `CallableRolloutAdapter` | `adk_session_to_atif` | `{"id": ..., "events": [{"author": ..., "content": {"parts": [{"text": ...}, {"function_call": ...}, {"function_response": ...}]}}]}` |
+| **LangChain / LangGraph** | `LangGraphRolloutAdapter` / `CallableRolloutAdapter` | `langgraph_state_to_atif` | Compiled `StateGraph` / `Runnable` (`.ainvoke` / `.invoke`) or state dicts `{"messages": [HumanMessage, AIMessage(tool_calls=[...]), ToolMessage(...)]}` |
+| **Multi-Agent Supervisor (ADK or LangGraph)** | `MultiAgentRolloutAdapter` | `adk_session_to_atif` / `langgraph_state_to_atif` | Preserves `sub_agent` attribution (`event.author` or `AIMessage.name` / `response_metadata.langgraph_node`) for routing discipline scoring |
+| **Remote Cloud Run / A2A Endpoint** | `HttpRolloutAdapter` | `_normalize_raw_output_to_atif` | JSON over HTTPS returning ADK `events`, LangGraph `messages`, or ATIF `steps` |
+
+---
+
 ## 1. Prerequisites & Environment Setup
 
-All commands run via `uv run` from the repository root and require zero connection to the live online CAGE Gateway (`governor=None` standalone mode).
+All commands run via `uv run` from the repository root and require zero connection to the live online CAGE Gateway (`governor=None` standalone mode). Per repository governance standards, LangSmith tracing is strictly disabled (`LANGSMITH_TRACING=false`).
 
 ```bash
 # 1. Authenticate to GCP (for live Vertex AI / KMS / GCS / BigQuery operations)
 gcloud auth application-default login
 export GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
 export GCP_LOCATION="us-central1"
+export LANGSMITH_TRACING="false"
+export LANGCHAIN_TRACING_V2="false"
 
 # 2. For local/hermetic dry-runs without a live Cloud KMS HSM key, select Ed25519 software signing:
 export KMS_PROVIDER="ed25519"
@@ -169,16 +184,18 @@ EOF
 
 ## 5. Step 4: Run Paired Rollouts & Vertex AI GenAI Evaluation (Stage 2)
 
-You can evaluate pre-recorded ATIF trajectories (`--baseline-traces` / `--skill-traces`) or a live agent rollout adapter (`--adapter` using `ADKSessionRolloutAdapter` or `CallableRolloutAdapter` in [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py)) with `--eval-backend vertex` (`VertexGenAIEvalBackend` in [`src/integrations/gcp_eval/vertex_evaluator.py`](../../src/integrations/gcp_eval/vertex_evaluator.py)).
+You can evaluate either a **Google ADK** agent (`ADKSessionRolloutAdapter` / `adk_session_to_atif`) or a **LangChain / LangGraph** agent (`LangGraphRolloutAdapter` / `langgraph_state_to_atif`) with `--eval-backend vertex` (`VertexGenAIEvalBackend` in [`src/integrations/gcp_eval/vertex_evaluator.py`](../../src/integrations/gcp_eval/vertex_evaluator.py)).
 
-### 5.1 Create an Agent Rollout Adapter
+### 5.1 Option A: Google ADK Agent (`ADKSessionRolloutAdapter`)
+
+ADK agents return session dictionaries with `events` containing `content.parts` (`text`, `function_call`, `function_response`), which `adk_session_to_atif` in [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) normalizes into `ATIFTrajectory`:
 
 ```bash
 cat << 'EOF' > /tmp/cage-gcp-eval-demo/my_adk_agent.py
 from src.eval_harness.runner import RolloutWorkspaceContext
 
 def run_agent(prompt: str, workspace: RolloutWorkspaceContext) -> dict:
-    """Simulated ADK agent session payload."""
+    """Google ADK agent session payload."""
     is_neg = workspace.metadata.get("bucket") == "negative_control"
     has_skill = "gcp-deploy-skill" in workspace.visible_skills
 
@@ -259,11 +276,121 @@ def run_agent(prompt: str, workspace: RolloutWorkspaceContext) -> dict:
 EOF
 ```
 
-### 5.2 Execute the 3-Stage Gate & Emit a Signed Receipt
+### 5.2 Option B: LangChain / LangGraph Agent (`LangGraphRolloutAdapter`)
 
-Run the CLI with `PYTHONPATH=/tmp/cage-gcp-eval-demo`, `--eval-backend vertex`, decoy skills for **Tier 2 Group Routing Premium**, and `--emit-cer` to generate a cryptographically signed certification receipt:
+LangGraph agents expose a compiled `StateGraph` (`app.ainvoke(...)` / `app.invoke(...)`) returning `{"messages": [...]}` (either `langchain_core.messages.BaseMessage` instances like `HumanMessage`, `AIMessage`, `ToolMessage` or serialized message dictionaries). `LangGraphRolloutAdapter` in [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) automatically injects `SKILL.md` as a leading system message during `with_skill` rollouts, pairs `ToolMessage` observations with `AIMessage.tool_calls` by `tool_call_id`, and extracts token counts from `usage_metadata` via `langgraph_state_to_atif` in [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py):
 
 ```bash
+cat << 'EOF' > /tmp/cage-gcp-eval-demo/my_langgraph_agent.py
+from typing import Any
+
+class CompiledLangGraphMock:
+    """Example LangGraph CompiledStateGraph / Runnable exposing .ainvoke()."""
+
+    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        messages = list(state.get("messages") or [])
+        has_skill_system_msg = any(
+            m.get("role") == "system" and "gcp-deploy-skill" in m.get("content", "")
+            for m in messages
+            if isinstance(m, dict)
+        )
+        user_prompt = next(
+            (m.get("content", "") for m in reversed(messages) if isinstance(m, dict) and m.get("role") == "user"),
+            "",
+        )
+
+        if "unrelated" in user_prompt.lower() or "2 + 2" in user_prompt.lower():
+            return {
+                "messages": [
+                    *messages,
+                    {
+                        "type": "ai",
+                        "content": "4",
+                        "usage_metadata": {"input_tokens": 24, "output_tokens": 4},
+                    },
+                ]
+            }
+
+        if has_skill_system_msg:
+            return {
+                "messages": [
+                    *messages,
+                    {
+                        "type": "ai",
+                        "name": "deploy_specialist",
+                        "content": "Reading skill instructions and executing cloud-build deployment.",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "name": "view_file",
+                                "args": {"path": "skills/gcp-deploy-skill/SKILL.md"},
+                            },
+                            {
+                                "id": "call_2",
+                                "name": "run_command",
+                                "args": {"command": "./deploy_all.sh --target gcp-gke --env prod"},
+                            },
+                        ],
+                        "usage_metadata": {"input_tokens": 180, "output_tokens": 45},
+                    },
+                    {
+                        "type": "tool",
+                        "tool_call_id": "call_1",
+                        "name": "view_file",
+                        "content": "# gcp-deploy-skill",
+                    },
+                    {
+                        "type": "tool",
+                        "tool_call_id": "call_2",
+                        "name": "run_command",
+                        "content": "Cloud build succeeded",
+                    },
+                    {
+                        "type": "ai",
+                        "name": "deploy_specialist",
+                        "content": "Completed: DEPLOY_STATUS=VERIFIED",
+                        "usage_metadata": {"input_tokens": 240, "output_tokens": 12},
+                    },
+                ]
+            }
+
+        return {
+            "messages": [
+                *messages,
+                {
+                    "type": "ai",
+                    "content": "Pushing via local docker daemon.",
+                    "tool_calls": [
+                        {
+                            "id": "call_bad",
+                            "name": "legacy_docker_push",
+                            "args": {"tag": "latest"},
+                        }
+                    ],
+                },
+                {
+                    "type": "tool",
+                    "tool_call_id": "call_bad",
+                    "name": "legacy_docker_push",
+                    "content": "Pushed gateway:latest",
+                },
+                {
+                    "type": "ai",
+                    "content": "Pushed container locally.",
+                },
+            ]
+        }
+
+graph = CompiledLangGraphMock()
+EOF
+```
+
+### 5.3 Execute the 3-Stage Gate & Emit a Signed Receipt
+
+Run the CLI with `PYTHONPATH=/tmp/cage-gcp-eval-demo`, `--eval-backend vertex`, decoy skills for **Tier 2 Group Routing Premium**, and `--emit-cer` to generate a cryptographically signed certification receipt. Pass `--adapter my_adk_agent:run_agent` (for Google ADK) or `--adapter my_langgraph_agent:graph` (for LangGraph):
+
+```bash
+# Evaluate the Google ADK agent (or swap --adapter to my_langgraph_agent:graph for LangGraph)
 PYTHONPATH=/tmp/cage-gcp-eval-demo uv run python -m src.eval_harness.cli \
   --skill-md /tmp/cage-gcp-eval-demo/gcp-deploy-skill/SKILL.md \
   --anchors /tmp/cage-gcp-eval-demo/anchors.json \
