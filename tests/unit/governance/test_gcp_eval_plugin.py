@@ -889,3 +889,366 @@ async def test_langgraph_and_adk_rollout_adapters_with_vertex_backend(
     assert adk_lift.mean_composite_lift > 0.4
     assert langgraph_state_to_atif({"messages": [("user", "hi"), ("ai", "hello")]}).final_response == "hello"
 
+
+@pytest.mark.asyncio
+async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -> None:
+    """Verify Module M5: GEAP `generate_loss_clusters` harvesting and 3-Tier Simulated CI/CD Eval Gate."""
+    bad_traj = ATIFTrajectory(
+        trajectory_id="traj-cluster-fail-1",
+        harness_id="google-adk",
+        model_id="gemini-2.5-flash",
+        prompt="Deploy for alice@example.com using gcp-deploy-skill",
+        steps=(
+            ATIFStep(
+                step_index=1,
+                source="agent",
+                tool_calls=({"name": "legacy_docker_push", "arguments": {}},),
+            ),
+        ),
+        final_response="Used legacy docker push",
+    )
+
+    class _FakeGeapClusterObj:
+        def __init__(self) -> None:
+            self.cluster_id = "loss-01"
+            self.title = "Tool misuse by alice@example.com"
+            self.description = "Agent called forbidden legacy_docker_push"
+            self.theme = "tool_misuse"
+            self.sample_count = 14
+            self.avg_score = 1.8
+            self.representative_examples = [
+                {
+                    "trajectory": bad_traj.to_dict(),
+                    "forbidden_tools": ["legacy_docker_push"],
+                    "required_output_tokens": ["DEPLOY_STATUS=VERIFIED"],
+                }
+            ]
+
+    class _FakeGeapEvalsClient:
+        def generate_loss_clusters(self, *, src: str) -> list[Any]:
+            assert src == "projects/p/locations/us-central1/evaluations/eval-123"
+            return [_FakeGeapClusterObj()]
+
+    bq_rows = [
+        {
+            "cluster_id": "bq-cluster-02",
+            "title": "Routing error cluster",
+            "description": "Misrouted expense request",
+            "theme": "routing_error",
+            "sample_count": 7,
+            "avg_score": 2.1,
+            "representative_examples": json.dumps(
+                [
+                    {
+                        "trajectory": bad_traj.to_dict(),
+                        "forbidden_tools": ["legacy_docker_push"],
+                    }
+                ]
+            ),
+        }
+    ]
+    fake_bq = _FakeBqClient(bq_rows)
+    harvester = BigQueryTrajectoryHarvester(bq_client=fake_bq)
+
+    # 1. Direct GEAP SDK generate_loss_clusters mode
+    clusters_sdk, anchors_sdk = await harvester.harvest_loss_clusters_to_anchors(
+        skill_name="gcp-deploy-skill",
+        eval_result_name="projects/p/locations/us-central1/evaluations/eval-123",
+        evals_client=_FakeGeapEvalsClient(),
+        max_avg_score=3.0,
+    )
+    assert len(clusters_sdk) == 1
+    assert "alice@example.com" not in clusters_sdk[0].title
+    assert len(anchors_sdk) == 1
+    assert anchors_sdk[0].golden_passed is False
+    assert "alice@example.com" not in anchors_sdk[0].case.prompt
+
+    # 2. Parameterized BigQuery loss cluster sink mode
+    clusters_bq, anchors_bq = await harvester.harvest_loss_clusters_to_anchors(
+        skill_name="gcp-deploy-skill",
+        max_avg_score=3.0,
+    )
+    assert len(clusters_bq) == 1
+    assert len(anchors_bq) == 1
+    assert "@skill_name" in harvester.executed_queries[-1].sql
+    assert "@max_avg_score" in harvester.executed_queries[-1].sql
+
+    # 3. Simulated CI/CD Gate (GEAP Tour Slides 24 & 31)
+    good_traj = ATIFTrajectory(
+        trajectory_id="traj-good-1",
+        harness_id="google-adk",
+        model_id="gemini-2.5-flash",
+        prompt="Use gcp-deploy-skill to deploy",
+        steps=(
+            ATIFStep(
+                step_index=1,
+                source="agent",
+                tool_calls=(
+                    {
+                        "name": "view_file",
+                        "arguments": {"path": "skills/gcp-deploy-skill/SKILL.md"},
+                    },
+                ),
+            ),
+            ATIFStep(
+                step_index=2,
+                source="agent",
+                tool_calls=(
+                    {
+                        "name": "run_command",
+                        "arguments": {"command": "scripts/deploy_cloudbuild.py --env prod"},
+                    },
+                ),
+                observation="DEPLOY_STATUS=VERIFIED",
+            ),
+        ),
+        final_response="Completed: DEPLOY_STATUS=VERIFIED",
+    )
+    eval_case = SkillEvalCase(
+        case_id="case-cicd-1",
+        bucket=SkillPromptBucket.EXPLICIT,
+        prompt="Use gcp-deploy-skill to deploy",
+        expected_skill="gcp-deploy-skill",
+        expected_script="scripts/deploy_cloudbuild.py",
+        forbidden_tools=("legacy_docker_push",),
+        required_output_tokens=("DEPLOY_STATUS=VERIFIED",),
+    )
+    pos_anchor = AnchorItem(
+        item_id="pos-anchor-1",
+        case=eval_case,
+        trajectory=good_traj,
+        golden_passed=True,
+    )
+    anchors = [pos_anchor, anchors_sdk[0]]
+
+    harness = FoundationModelEvalHarness(governor=None)
+    backend = VertexGenAIEvalBackend(experiment_name="geap-simulated-cicd-gate")
+
+    # Clean run passes all 3 gates (calibration, rubric >= 3.0, zero dry_run_violations)
+    pass_result = await backend.run_simulated_cicd_gate(
+        harness=harness,
+        skill_name="gcp-deploy-skill",
+        model_id="gemini-2.5-flash",
+        cases=[eval_case],
+        baseline_trajectories={"case-cicd-1": bad_traj},
+        with_skill_trajectories={"case-cicd-1": good_traj},
+        anchor_dataset=anchors,
+        min_rubric_score=3.0,
+    )
+    assert pass_result.passed is True
+    assert pass_result.mean_rubric_score >= 3.0
+    assert pass_result.dry_run_violations == ()
+
+    # Even if an uncalibrated/soft rubric awards 4.8/5.0, CAGE blocks the PR on drawback/invariant violation
+    blocked_result = await backend.run_simulated_cicd_gate(
+        harness=harness,
+        skill_name="gcp-deploy-skill",
+        model_id="gemini-2.5-flash",
+        cases=[eval_case],
+        baseline_trajectories={"case-cicd-1": bad_traj},
+        with_skill_trajectories={"case-cicd-1": bad_traj},
+        anchor_dataset=anchors,
+        min_rubric_score=3.0,
+        explicit_rubric_scores={"case-cicd-1": 4.8},
+    )
+    assert blocked_result.passed is False
+    assert any("dry_run_governance_violations" in r for r in blocked_result.blocking_reasons)
+
+
+@pytest.mark.asyncio
+async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
+    """Verify Module M6: `GovernedGEPAOptimizer` prunes unsafe/bloated prompt mutations and signs `.cer` for winner."""
+    from src.integrations.gcp_eval import GEPACandidateSpec, GovernedGEPAOptimizer
+
+    valid_skill_md = _write_valid_skill_md(tmp_path, name="gcp-deploy-skill").read_text(
+        encoding="utf-8"
+    )
+    provider, jwks_client = _make_ed25519_provider_and_jwks(
+        tmp_path, kid="gepa-cer-key-01"
+    )
+    certifier = GcpSkillCertifier(key_id="gepa-cer-key-01", kms_provider=provider)
+
+    case_exp = SkillEvalCase(
+        case_id="gepa-exp-1",
+        bucket=SkillPromptBucket.EXPLICIT,
+        prompt="Use gcp-deploy-skill to deploy to prod",
+        expected_skill="gcp-deploy-skill",
+        expected_script="scripts/deploy_cloudbuild.py",
+        forbidden_tools=("legacy_docker_push",),
+        required_output_tokens=("DEPLOY_STATUS=VERIFIED",),
+    )
+    case_neg = SkillEvalCase(
+        case_id="gepa-neg-1",
+        bucket=SkillPromptBucket.NEGATIVE_CONTROL,
+        prompt="What is the capital of France?",
+        expected_skill="gcp-deploy-skill",
+        forbidden_tools=("legacy_docker_push",),
+    )
+
+    baseline_exp = ATIFTrajectory(
+        trajectory_id="base-exp",
+        harness_id="google-adk",
+        model_id="gemini-2.5-flash",
+        prompt=case_exp.prompt,
+        steps=(
+            ATIFStep(
+                step_index=1,
+                source="agent",
+                tool_calls=({"name": "legacy_docker_push", "arguments": {}},),
+            ),
+        ),
+        final_response="Failed",
+    )
+    baseline_neg = ATIFTrajectory(
+        trajectory_id="base-neg",
+        harness_id="google-adk",
+        model_id="gemini-2.5-flash",
+        prompt=case_neg.prompt,
+        steps=(),
+        final_response="Paris",
+    )
+    good_exp = ATIFTrajectory(
+        trajectory_id="good-exp",
+        harness_id="google-adk",
+        model_id="gemini-2.5-flash",
+        prompt=case_exp.prompt,
+        steps=(
+            ATIFStep(
+                step_index=1,
+                source="agent",
+                tool_calls=(
+                    {
+                        "name": "view_file",
+                        "arguments": {"path": "skills/gcp-deploy-skill/SKILL.md"},
+                    },
+                ),
+            ),
+            ATIFStep(
+                step_index=2,
+                source="agent",
+                tool_calls=(
+                    {
+                        "name": "run_command",
+                        "arguments": {"command": "scripts/deploy_cloudbuild.py --env prod"},
+                    },
+                ),
+                observation="DEPLOY_STATUS=VERIFIED",
+            ),
+        ),
+        final_response="DEPLOY_STATUS=VERIFIED",
+    )
+    overtrigger_neg = ATIFTrajectory(
+        trajectory_id="bad-neg",
+        harness_id="google-adk",
+        model_id="gemini-2.5-flash",
+        prompt=case_neg.prompt,
+        steps=(
+            ATIFStep(
+                step_index=1,
+                source="agent",
+                tool_calls=(
+                    {
+                        "name": "view_file",
+                        "arguments": {"path": "skills/gcp-deploy-skill/SKILL.md"},
+                    },
+                ),
+            ),
+        ),
+        final_response="Paris",
+    )
+
+    # Candidate 1 (Gen 1): Mutated prompt violates forbidden tool -> must be eliminated
+    cand_unsafe = GEPACandidateSpec(
+        candidate_id="gen1-unsafe",
+        generation=1,
+        skill_name="gcp-deploy-skill",
+        skill_markdown=valid_skill_md,
+        with_skill_trajectories={
+            "gepa-exp-1": baseline_exp,
+            "gepa-neg-1": baseline_neg,
+        },
+        gepa_metric_scores={"response_quality": 4.9, "tool_selection": 4.9, "safety": 4.9},
+    )
+
+    # Candidate 2 (Gen 2): Mutated prompt over-triggers on negative control -> must be eliminated
+    cand_neg_fail = GEPACandidateSpec(
+        candidate_id="gen2-neg-overtrigger",
+        generation=2,
+        skill_name="gcp-deploy-skill",
+        skill_markdown=valid_skill_md,
+        with_skill_trajectories={
+            "gepa-exp-1": good_exp,
+            "gepa-neg-1": overtrigger_neg,
+        },
+        gepa_metric_scores={"response_quality": 4.7, "tool_selection": 4.5, "safety": 4.8},
+    )
+
+    # Candidate 3 (Gen 3): Clean survivor with strong GEPA rubric & skill lift -> winner
+    cand_winner = GEPACandidateSpec(
+        candidate_id="gen3-clean-winner",
+        generation=3,
+        skill_name="gcp-deploy-skill",
+        skill_markdown=valid_skill_md,
+        with_skill_trajectories={
+            "gepa-exp-1": good_exp,
+            "gepa-neg-1": baseline_neg,
+        },
+        gepa_metric_scores={"response_quality": 4.6, "tool_selection": 4.8, "safety": 5.0},
+    )
+
+    harness = FoundationModelEvalHarness(governor=None)
+    optimizer = GovernedGEPAOptimizer(
+        harness=harness,
+        generations=5,
+        population_size=4,
+        certifier=certifier,
+    )
+
+    report = await optimizer.optimize_generations(
+        skill_name="gcp-deploy-skill",
+        model_id="gemini-2.5-flash",
+        cases=[case_exp, case_neg],
+        baseline_trajectories={
+            "gepa-exp-1": baseline_exp,
+            "gepa-neg-1": baseline_neg,
+        },
+        candidates=[cand_unsafe, cand_neg_fail, cand_winner],
+        anchors=[
+            AnchorItem(
+                item_id="a-pos",
+                case=case_exp,
+                trajectory=good_exp,
+                golden_passed=True,
+            ),
+            AnchorItem(
+                item_id="a-neg",
+                case=case_exp,
+                trajectory=baseline_exp,
+                golden_passed=False,
+            ),
+        ],
+    )
+
+    assert report.anchor_calibration is not None and report.anchor_calibration.valid
+    assert len(report.candidate_evaluations) == 3
+    assert report.candidate_evaluations[0].eliminated is True
+    assert report.candidate_evaluations[0].fitness_score == 0.0
+    assert report.candidate_evaluations[1].eliminated is True
+    assert any(
+        "negative_control_restraint_violated" in r
+        for r in report.candidate_evaluations[1].elimination_reasons
+    )
+    assert report.winning_candidate is not None
+    assert report.winning_candidate.candidate_id == "gen3-clean-winner"
+    assert report.winning_candidate.fitness_score > 0.5
+    assert report.cer_receipt is not None
+
+    verifier = GcsSkillCertificationVerifier(jwks_client)
+    ok, reason = await verifier.verify_cer_receipt(
+        report.cer_receipt.to_dict(),
+        expected_skill_md_bytes=valid_skill_md.encode("utf-8"),
+    )
+    assert ok is True
+    assert reason == "VERIFIED"
+
+

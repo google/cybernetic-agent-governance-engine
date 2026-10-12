@@ -74,19 +74,34 @@ class BigQueryQuerySpec:
     parameters: tuple[tuple[str, str, Any], ...]
 
 
+@dataclass(frozen=True)
+class LossClusterRecord:
+    """Semantic failure cluster surfaced by GEAP `client.evals.generate_loss_clusters` or Online Monitors."""
+
+    cluster_id: str
+    title: str
+    description: str
+    theme: str
+    sample_count: int
+    avg_score: float
+    representative_trajectories: tuple[ATIFTrajectory, ...] = ()
+
+
 class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
-    """Harvests `RefusalReceipt` and Eval-Prod Drift `AnchorItem` records from BigQuery."""
+    """Harvests `RefusalReceipt`, Eval-Prod Drift, and GEAP `LossClusterRecord` anchors from BigQuery."""
 
     def __init__(
         self,
         *,
         refusal_table_fqn: str = "cage-prod.cage_telemetry.refusal_receipts",
         trajectory_table_fqn: str = "cage-prod.cage_telemetry.atif_trajectories",
+        loss_cluster_table_fqn: str = "cage-prod.cage_telemetry.eval_loss_clusters",
         bq_client: Any = None,
         project_id: str | None = None,
     ) -> None:
         self._refusal_table = _validate_bq_table_fqn(refusal_table_fqn)
         self._trajectory_table = _validate_bq_table_fqn(trajectory_table_fqn)
+        self._loss_cluster_table = _validate_bq_table_fqn(loss_cluster_table_fqn)
         self._bq_client = bq_client
         self._project_id = project_id
         self._sanitizer = PIISanitizer()
@@ -292,6 +307,146 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
             )
         return tuple(anchors)
 
+    async def harvest_loss_clusters_to_anchors(
+        self,
+        *,
+        skill_name: str,
+        eval_result_name: str | None = None,
+        evals_client: Any = None,
+        max_avg_score: float = 3.0,
+        limit: int = 100,
+    ) -> tuple[tuple[LossClusterRecord, ...], tuple[AnchorItem, ...]]:
+        """Harvest GEAP Failure Clusters (`generate_loss_clusters` or BigQuery) into negative Golden Anchors.
+
+        Supports both:
+        1. Direct GEAP SDK objects/mappings returned by ``evals_client.generate_loss_clusters(src=eval_result_name)``
+           (GEAP Tour Slide 28: ``cluster.title``, ``cluster.description``, ``cluster.sample_count``,
+           ``cluster.avg_score``, ``cluster.representative_examples``).
+        2. Parameterized BigQuery queries over the 10-minute Online Monitor loss cluster sink table.
+        """
+        if limit <= 0 or limit > 5_000:
+            raise ValueError("limit must be between 1 and 5,000")
+
+        raw_clusters: list[Any] = []
+        if evals_client is not None:
+            if not eval_result_name or not str(eval_result_name).strip():
+                raise ValueError(
+                    "eval_result_name is required when evals_client is provided"
+                )
+            gen_fn = getattr(evals_client, "generate_loss_clusters", None)
+            if gen_fn is None and hasattr(evals_client, "evals"):
+                gen_fn = getattr(evals_client.evals, "generate_loss_clusters", None)
+            if not callable(gen_fn):
+                raise ValueError(
+                    "evals_client must expose generate_loss_clusters(src=...)"
+                )
+            raw_clusters = list(gen_fn(src=str(eval_result_name).strip()))
+        else:
+            sql_template = (
+                "SELECT cluster_id, title, description, theme, sample_count, "
+                "avg_score, representative_examples "
+                "FROM `__TABLE_FQN__` "
+                "WHERE skill_name = @skill_name "
+                "AND avg_score < @max_avg_score "
+                "ORDER BY sample_count DESC, avg_score ASC "
+                "LIMIT @row_limit"
+            )
+            sql = sql_template.replace("__TABLE_FQN__", self._loss_cluster_table)
+            raw_clusters = list(
+                self._execute_parameterized_query(
+                    sql,
+                    [
+                        ("skill_name", "STRING", str(skill_name)),
+                        ("max_avg_score", "FLOAT64", float(max_avg_score)),
+                        ("row_limit", "INT64", int(limit)),
+                    ],
+                )
+            )
+
+        clusters: list[LossClusterRecord] = []
+        anchors: list[AnchorItem] = []
+
+        for c_idx, raw in enumerate(raw_clusters, start=1):
+            if isinstance(raw, Mapping):
+                c_id = str(raw.get("cluster_id") or f"cluster-{c_idx:04d}")
+                title = self._sanitizer.sanitize(str(raw.get("title") or "Untitled Cluster"))
+                desc = self._sanitizer.sanitize(str(raw.get("description") or ""))
+                theme = str(raw.get("theme") or "policy_violation")
+                sample_count = int(raw.get("sample_count", 1))
+                avg_score = float(raw.get("avg_score", 0.0))
+                rep_raw = self._parse_json_column(
+                    raw.get("representative_examples")
+                    or raw.get("representative_trajectories")
+                    or ()
+                )
+            else:
+                c_id = str(getattr(raw, "cluster_id", None) or f"cluster-{c_idx:04d}")
+                title = self._sanitizer.sanitize(str(getattr(raw, "title", "Untitled Cluster")))
+                desc = self._sanitizer.sanitize(str(getattr(raw, "description", "")))
+                theme = str(getattr(raw, "theme", "policy_violation"))
+                sample_count = int(getattr(raw, "sample_count", 1))
+                avg_score = float(getattr(raw, "avg_score", 0.0))
+                rep_raw = (
+                    getattr(raw, "representative_examples", None)
+                    or getattr(raw, "representative_trajectories", None)
+                    or ()
+                )
+
+            if avg_score >= max_avg_score:
+                continue
+
+            rep_trajs: list[ATIFTrajectory] = []
+            for ex_idx, ex in enumerate(rep_raw, start=1):
+                if isinstance(ex, ATIFTrajectory):
+                    sanitized_dict = self._sanitizer.sanitize_dict(ex.to_dict())
+                    traj = ATIFTrajectory.from_dict(sanitized_dict)
+                    forbidden = ()
+                    req_tokens = ()
+                    bucket_str = "explicit"
+                elif isinstance(ex, Mapping):
+                    raw_traj = ex.get("trajectory") or ex.get("atif_payload") or ex
+                    sanitized_dict = self._sanitizer.sanitize_dict(dict(raw_traj))
+                    traj = ATIFTrajectory.from_dict(sanitized_dict)
+                    forbidden = tuple(str(t) for t in (ex.get("forbidden_tools") or ()))
+                    req_tokens = tuple(
+                        str(t) for t in (ex.get("required_output_tokens") or ())
+                    )
+                    bucket_str = str(ex.get("bucket", "explicit")).lower()
+                else:
+                    continue
+
+                rep_trajs.append(traj)
+                case = SkillEvalCase(
+                    case_id=f"cluster-{c_id}-ex-{ex_idx:02d}",
+                    bucket=SkillPromptBucket(bucket_str),
+                    prompt=self._sanitizer.sanitize(traj.prompt or title),
+                    expected_skill=skill_name,
+                    forbidden_tools=forbidden,
+                    required_output_tokens=req_tokens,
+                )
+                anchors.append(
+                    AnchorItem(
+                        item_id=f"loss-cluster-{c_id}-{traj.trajectory_id}",
+                        case=case,
+                        trajectory=traj,
+                        golden_passed=False,
+                    )
+                )
+
+            clusters.append(
+                LossClusterRecord(
+                    cluster_id=c_id,
+                    title=title,
+                    description=desc,
+                    theme=theme,
+                    sample_count=sample_count,
+                    avg_score=avg_score,
+                    representative_trajectories=tuple(rep_trajs),
+                )
+            )
+
+        return tuple(clusters), tuple(anchors)
+
     async def harvest_and_export_dpo_dataset(
         self,
         harness: FoundationModelEvalHarness,
@@ -317,4 +472,6 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
 __all__ = [
     "BigQueryQuerySpec",
     "BigQueryTrajectoryHarvester",
+    "LossClusterRecord",
 ]
+

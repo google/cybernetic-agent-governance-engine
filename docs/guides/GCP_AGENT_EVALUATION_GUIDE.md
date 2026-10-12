@@ -512,3 +512,17 @@ spec = build_skill_certification_pipeline_spec(
 print(json.dumps(spec.to_kfp_dict(), indent=2))
 EOF
 ```
+
+---
+
+## 9. Step 8: GEAP Failure Clusters, Simulated CI/CD Gate & Governed GEPA Optimization (Modules M5 & M6)
+
+For full architectural context on how CAGE integrates with the **Gemini Enterprise Agent Platform (GEAP)** across both the Online Enforcement Plane and Offline Evaluation Plane, see [`docs/architecture/GEAP_INTEGRATION_ARCHITECTURE.md`](../architecture/GEAP_INTEGRATION_ARCHITECTURE.md).
+
+1. **Harvesting GEAP Failure Clusters (`generate_loss_clusters`) into Golden Anchors (Module M5)**:
+   * [`BigQueryTrajectoryHarvester.harvest_loss_clusters_to_anchors`](../../src/integrations/gcp_eval/bq_harvester.py) ingests semantic failure clusters (`tool_misuse`, `routing_error`, `policy_violation`) from `client.evals.generate_loss_clusters` or BigQuery Online Monitor tables, scrubs PII via [`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py), and produces locked negative [`AnchorItem`](../../src/eval_harness/harness.py) (`golden_passed=False`) fixtures.
+2. **Simulated CI/CD PR Gate (`run_simulated_cicd_gate`, Module M5)**:
+   * [`VertexGenAIEvalBackend.run_simulated_cicd_gate`](../../src/integrations/gcp_eval/vertex_evaluator.py) returns a [`SimulatedEvalGateResult`](../../src/integrations/gcp_eval/vertex_evaluator.py) that blocks PR merges if Double Ratchet anchor calibration fails, if the GEAP 1.0–5.0 `PointwiseMetric` rubric score falls below `3.0`, or if any trajectory triggers a CAGE `Profile.DRY_RUN` invariant violation.
+3. **Governing GEPA Evolutionary Prompt Optimization (`GovernedGEPAOptimizer`, Module M6)**:
+   * [`GovernedGEPAOptimizer`](../../src/integrations/gcp_eval/gepa_governor.py) evaluates each mutated [`GEPACandidateSpec`](../../src/integrations/gcp_eval/gepa_governor.py) across generations, pruning candidates that fail Stage 0 static linting ([`lint_skill_markdown`](../../src/eval_harness/static_linter.py)), trigger `NEGATIVE_CONTROL` false-positive tool calls, or violate CAGE invariants, and signs the winning survivor into a `.cer` receipt via [`GcpSkillCertifier`](../../src/integrations/gcp_eval/cer_publisher.py).
+

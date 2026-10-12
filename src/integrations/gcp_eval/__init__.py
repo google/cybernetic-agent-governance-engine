@@ -28,12 +28,20 @@ from __future__ import annotations
 from src.integrations.gcp_eval.bq_harvester import (
     BigQueryQuerySpec,
     BigQueryTrajectoryHarvester,
+    LossClusterRecord,
 )
 from src.integrations.gcp_eval.cer_publisher import (
     GcpSkillCertifier,
     GcsArtifactHandshakePublisher,
     GcsSkillCertificationVerifier,
     compute_file_sha256,
+)
+from src.integrations.gcp_eval.gepa_governor import (
+    DEFAULT_GEPA_METRICS,
+    GEPACandidateEvaluation,
+    GEPACandidateSpec,
+    GEPAOptimizationReport,
+    GovernedGEPAOptimizer,
 )
 from src.integrations.gcp_eval.pipelines import (
     DEFAULT_DECOY_SKILLS,
@@ -45,6 +53,7 @@ from src.integrations.gcp_eval.synthetic_generator import (
     VertexSyntheticEvalGenerator,
 )
 from src.integrations.gcp_eval.vertex_evaluator import (
+    SimulatedEvalGateResult,
     VertexCustomMetricAdapter,
     VertexGenAIEvalBackend,
     VertexPointwiseRubricSpec,
@@ -54,12 +63,19 @@ from src.integrations.gcp_eval.vertex_evaluator import (
 
 __all__ = [
     "DEFAULT_DECOY_SKILLS",
+    "DEFAULT_GEPA_METRICS",
     "BigQueryQuerySpec",
     "BigQueryTrajectoryHarvester",
+    "GEPACandidateEvaluation",
+    "GEPACandidateSpec",
+    "GEPAOptimizationReport",
     "GcpSkillCertifier",
     "GcsArtifactHandshakePublisher",
     "GcsSkillCertificationVerifier",
+    "GovernedGEPAOptimizer",
+    "LossClusterRecord",
     "PipelineStepSpec",
+    "SimulatedEvalGateResult",
     "VertexCustomMetricAdapter",
     "VertexGenAIEvalBackend",
     "VertexPointwiseRubricSpec",
@@ -70,3 +86,4 @@ __all__ = [
     "build_vertex_drawback_custom_metrics",
     "compute_file_sha256",
 ]
+

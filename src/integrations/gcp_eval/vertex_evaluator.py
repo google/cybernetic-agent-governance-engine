@@ -367,11 +367,134 @@ class VertexGenAIEvalBackend(EvalBackendProtocol):
         }
         return report
 
+    async def run_simulated_cicd_gate(
+        self,
+        *,
+        harness: FoundationModelEvalHarness,
+        skill_name: str,
+        model_id: str,
+        cases: Sequence[SkillEvalCase],
+        baseline_trajectories: Mapping[str, ATIFTrajectory],
+        with_skill_trajectories: Mapping[str, ATIFTrajectory],
+        anchor_dataset: Sequence[AnchorItem | Mapping[str, Any]],
+        group_baseline_trajectories: Mapping[str, ATIFTrajectory] | None = None,
+        group_with_skill_trajectories: Mapping[str, ATIFTrajectory] | None = None,
+        state_reducer: ShadowStateReducer | None = None,
+        min_rubric_score: float = 3.0,
+        min_composite_lift: float = 0.0,
+        min_weighted_agreement: float = 0.70,
+        explicit_rubric_scores: Mapping[str, float] | None = None,
+    ) -> SimulatedEvalGateResult:
+        """Execute GEAP's Simulated Evaluation CI/CD PR Gate (GEAP Tour Slides 24 & 31).
+
+        Enforces three fail-closed gates before allowing a PR merge / production deploy:
+        1. **Double Ratchet Anchor Calibration**: ``anchor_calibration.valid`` must be ``True``.
+        2. **GEAP 1-5 PointwiseMetric Rubric & 4-Bucket Skill Lift**: Mean rubric score
+           (1.0 to 5.0 scale, default threshold ``>= 3.0``) and ``mean_composite_lift >= min_composite_lift``.
+        3. **Zero Eval-Prod Drift Invariant Gate**: Every ``with_skill`` trajectory must clear
+           ``SymbolicGovernor`` (`Profile.DRY_RUN`) and deterministic drawback detectors with
+           zero violations—even if the soft LLM rubric score is >= 3.0.
+        """
+        if min_rubric_score < 1.0 or min_rubric_score > 5.0:
+            raise ValueError("min_rubric_score must be on the GEAP 1.0-5.0 PointwiseMetric scale")
+
+        anchor_cal = self.calibrate_on_vertex_anchor_dataset(
+            harness.drawback_evaluator,
+            anchor_dataset,
+            min_weighted_agreement=min_weighted_agreement,
+        )
+
+        lift_report = await self.evaluate_paired_skill_lift(
+            harness=harness,
+            skill_name=skill_name,
+            model_id=model_id,
+            cases=cases,
+            baseline_trajectories=baseline_trajectories,
+            with_skill_trajectories=with_skill_trajectories,
+            group_baseline_trajectories=group_baseline_trajectories,
+            group_with_skill_trajectories=group_with_skill_trajectories,
+            state_reducer=state_reducer,
+        )
+
+        # Compute GEAP 1.0-5.0 PointwiseMetric score (either from explicit Vertex rubric scores
+        # or mapped linearly from [0.0, 1.0] composite_score -> [1.0, 5.0])
+        if explicit_rubric_scores:
+            scores_1_to_5 = [float(v) for v in explicit_rubric_scores.values()]
+            mean_rubric_score = (
+                round(sum(scores_1_to_5) / len(scores_1_to_5), 4)
+                if scores_1_to_5
+                else 1.0
+            )
+        else:
+            mean_rubric_score = round(
+                1.0 + 4.0 * max(0.0, min(1.0, lift_report.mean_with_skill_composite)),
+                4,
+            )
+
+        dry_run_violations: list[str] = []
+        for cl in lift_report.case_lifts:
+            sc = cl.with_skill
+            if sc.drawback_reasons:
+                for reason in sc.drawback_reasons:
+                    dry_run_violations.append(f"{cl.case_id}:{reason}")
+            if sc.governor_evaluated and sc.admissibility_prm < 1.0:
+                dry_run_violations.append(
+                    f"{cl.case_id}:governor_dry_run_violation(prm={sc.admissibility_prm})"
+                )
+
+        blocking_reasons: list[str] = []
+        if not anchor_cal.valid:
+            blocking_reasons.append(
+                f"anchor_calibration_failed:{anchor_cal.rejection_reason or 'UNKNOWN'}"
+            )
+        if mean_rubric_score < min_rubric_score:
+            blocking_reasons.append(
+                f"rubric_score_below_threshold:{mean_rubric_score:.2f}<{min_rubric_score:.2f}"
+            )
+        if lift_report.mean_composite_lift < min_composite_lift:
+            blocking_reasons.append(
+                f"composite_lift_below_threshold:{lift_report.mean_composite_lift:.4f}<{min_composite_lift:.4f}"
+            )
+        if dry_run_violations:
+            blocking_reasons.append(
+                f"dry_run_governance_violations:{len(dry_run_violations)}"
+            )
+
+        passed = len(blocking_reasons) == 0
+        return SimulatedEvalGateResult(
+            passed=passed,
+            skill_name=skill_name,
+            model_id=model_id,
+            mean_rubric_score=mean_rubric_score,
+            min_rubric_score=min_rubric_score,
+            anchor_calibration=anchor_cal,
+            lift_report=lift_report,
+            dry_run_violations=tuple(dry_run_violations),
+            blocking_reasons=tuple(blocking_reasons),
+        )
+
+
+@dataclass(frozen=True)
+class SimulatedEvalGateResult:
+    """Verdict from GEAP's Simulated Evaluation CI/CD Gate hardened with CAGE invariants."""
+
+    passed: bool
+    skill_name: str
+    model_id: str
+    mean_rubric_score: float
+    min_rubric_score: float
+    anchor_calibration: AnchorCalibrationResult
+    lift_report: SkillLiftReport
+    dry_run_violations: tuple[str, ...] = ()
+    blocking_reasons: tuple[str, ...] = ()
+
 
 __all__ = [
+    "SimulatedEvalGateResult",
     "VertexCustomMetricAdapter",
     "VertexGenAIEvalBackend",
     "VertexPointwiseRubricSpec",
     "build_tessl_dual_rubric_specs",
     "build_vertex_drawback_custom_metrics",
 ]
+
