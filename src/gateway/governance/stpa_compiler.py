@@ -2229,10 +2229,7 @@ def generate_iap_cel_policies(cs: ControlStructureModel) -> str:
             if u.terminal_classification:
                 classifications.append(u.terminal_classification)
 
-        if (
-            classifications
-            and all(c == "READ_ONLY" for c in classifications)
-        ):
+        if classifications and all(c == "READ_ONLY" for c in classifications):
             read_only_tools.append(action)
         else:
             mutating_tools.append(action)

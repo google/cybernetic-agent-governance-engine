@@ -837,7 +837,9 @@ class TestGenerateIapCelPolicies:
         assert "read_only_tools" in payload
         assert "mutating_tools" in payload
         assert "read_only_cel_expression" in payload
-        assert 'resource.type == "networkservices"' in payload["read_only_cel_expression"]
+        assert (
+            'resource.type == "networkservices"' in payload["read_only_cel_expression"]
+        )
         assert "role_bindings" in payload
 
     def test_iap_cel_policies_cli_target(self, tmp_path):

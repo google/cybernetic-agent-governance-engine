@@ -410,7 +410,9 @@ class AgentRegistryAdapter:
             for ts in raw_toolspecs:
                 if isinstance(ts, dict):
                     t_name = str(ts.get("name") or ts.get("toolName") or "")
-                    hints = ts.get("behavioralHints") or ts.get("behavioral_hints") or {}
+                    hints = (
+                        ts.get("behavioralHints") or ts.get("behavioral_hints") or {}
+                    )
                     parsed_toolspecs.append(
                         {
                             "name": t_name,
@@ -482,7 +484,9 @@ class AgentRegistryAdapter:
                 t_name = str(tool.get("name", ""))
                 if not t_name:
                     continue
-                hints = tool.get("behavioralHints") or tool.get("behavioral_hints") or {}
+                hints = (
+                    tool.get("behavioralHints") or tool.get("behavioral_hints") or {}
+                )
                 tools.append(
                     {
                         "name": t_name,
@@ -515,10 +519,7 @@ class AgentRegistryAdapter:
             if not isinstance(ep, dict):
                 continue
             ep_id = str(
-                ep.get("endpointId")
-                or ep.get("endpoint_id")
-                or ep.get("name")
-                or ""
+                ep.get("endpointId") or ep.get("endpoint_id") or ep.get("name") or ""
             )
             if not ep_id:
                 continue

@@ -49,9 +49,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from src.gateway.governance.ingress.agent_registry_adapter import RegistryCatalog
 
@@ -162,7 +163,9 @@ def verify_and_transition_gateway_mode(
     def _is_target_registered(target: str) -> bool:
         if target in registered_tokens:
             return True
-        return any(target in token or token in target for token in registered_tokens if token)
+        return any(
+            target in token or token in target for token in registered_tokens if token
+        )
 
     unregistered: list[str] = []
     for target in discovered_targets:
