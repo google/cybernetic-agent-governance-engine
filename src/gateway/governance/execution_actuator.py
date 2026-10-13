@@ -270,7 +270,10 @@ class ActuatorRegistry:
 
 # ── Thread-safe singleton accessor ──
 
+import threading
+
 _actuator_registry_singleton: ActuatorRegistry | None = None
+_actuator_registry_lock = threading.Lock()
 
 
 def get_actuator_registry() -> ActuatorRegistry:
@@ -285,7 +288,9 @@ def get_actuator_registry() -> ActuatorRegistry:
     """
     global _actuator_registry_singleton
     if _actuator_registry_singleton is None:
-        _actuator_registry_singleton = ActuatorRegistry()
+        with _actuator_registry_lock:
+            if _actuator_registry_singleton is None:
+                _actuator_registry_singleton = ActuatorRegistry()
     return _actuator_registry_singleton
 
 

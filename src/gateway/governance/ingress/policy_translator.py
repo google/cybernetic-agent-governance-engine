@@ -132,12 +132,18 @@ def detect_format(spec: dict[str, Any]) -> PolicyFormat:
     if spec.get("kind") == "LulaValidation":
         return "lula"
     if "component-definition" in spec:
-        # OSCAL-wrapped format (e.g. Lula manifests converted to OSCAL)
+        from src.gateway.governance.ingress.lula_adapter import (
+            _extract_kubernetes_resources,
+            _extract_rego_from_back_matter,
+        )
+
+        # OSCAL-wrapped Lula manifests embed Rego or Kubernetes domain resources in back-matter
+        if _extract_rego_from_back_matter(spec) or _extract_kubernetes_resources(spec):
+            return "lula"
         comp_def = spec["component-definition"]
-        metadata = comp_def.get("metadata") or {}
+        metadata = comp_def.get("metadata") or {} if isinstance(comp_def, dict) else {}
         if "oscal-version" in metadata:
             return "oscal"
-        # Could be OSCAL-wrapped Lula — treat as OSCAL
         return "oscal"
     if "behaviorDeclarations" in spec:
         return "acs"
@@ -313,7 +319,7 @@ def _compile_patch(patch: dict[str, Any], bundle: ArtifactBundle) -> None:
         result = compile_control_structure(cs, list(targets))
         if result.errors:
             for err in result.errors:
-                bundle.warnings.append(f"Compiler warning: {err}")
+                bundle.errors.append(f"Compiler error: {err}")
         bundle.opa_content = result.opa_content
         bundle.nemo_content = result.nemo_content
         bundle.python_content = result.python_content

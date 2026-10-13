@@ -84,12 +84,9 @@ _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
 FENCE_EPOCH_KEY = "safety:fence_epoch"
 _CBF_FENCE_EPOCH_KEY = "safety:cbf_fence_epoch"
 
+# Legacy default fallback when domain plugin discovery is bypassed in isolated unit tests
 _DEFAULT_STATE_KEYS: dict[str, str] = {
     "finance.cash_balance": "safety:current_cash",
-    "healthcare.serum_concentration": "safety:serum_concentration",
-    "physical_ai.spatial_separation": "safety:separation_distance_mm",
-    "physical_ai.kinematic_velocity": "safety:end_effector_velocity_mm_s",
-    "physical_ai.torque_saturation": "safety:joint_torque_nm",
 }
 
 
@@ -465,12 +462,34 @@ class GroundTruthReconciler:
         except Exception:
             pass
 
+    def _resolve_state_key(self, invariant_id: str, provider: Any) -> str | None:
+        source_obj = self._get_source(provider)
+        explicit_key = getattr(
+            provider,
+            "state_key",
+            getattr(source_obj, "state_key", None),
+        )
+        if isinstance(explicit_key, str) and explicit_key:
+            return explicit_key
+        if "." in invariant_id:
+            try:
+                from src.gateway.governance.plugin_loader import load_domain_plugin
+
+                domain_name = invariant_id.partition(".")[0]
+                plugin = load_domain_plugin(domain_name)
+                for inv in plugin.contribute().invariants:
+                    if getattr(inv, "invariant_id", None) == invariant_id:
+                        inv_state_key = getattr(inv, "state_key", None)
+                        if isinstance(inv_state_key, str) and inv_state_key:
+                            return inv_state_key
+            except Exception:
+                pass
+        return _DEFAULT_STATE_KEYS.get(invariant_id)
+
     def _read_self_reported_baseline(
         self, invariant_id: str, provider: Any
     ) -> float | None:
-        state_key = getattr(
-            provider, "state_key", _DEFAULT_STATE_KEYS.get(invariant_id)
-        )
+        state_key = self._resolve_state_key(invariant_id, provider)
         if self._redis is not None and state_key and hasattr(self._redis, "get"):
             try:
                 raw = self._redis.get(state_key)

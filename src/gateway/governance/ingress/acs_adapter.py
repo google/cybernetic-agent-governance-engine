@@ -103,6 +103,8 @@ def _map_constraint(constraint: dict[str, Any]) -> dict[str, Any]:
         return {"composite": constraint.get("expression", str(constraint))}
 
     condition: dict[str, Any] = {"operator": cage_operator}
+    if ctype == "not_null":
+        condition["inverted"] = True
     if param:
         condition["param"] = param
     if value is not None:

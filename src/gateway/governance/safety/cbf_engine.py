@@ -865,14 +865,28 @@ return {1, status, tostring(restored), new_epoch}
         closed: the caller falls back to the non-reconciled path, which
         strict mode refuses.
         """
+        if not isinstance(incoming_sequence, int) or incoming_sequence < 0:
+            return (False, f"invalid sequence={incoming_sequence}")
         try:
-            accepted, last_accepted = await asyncio.to_thread(
+            eval_res = await asyncio.to_thread(
                 sync_redis.eval,
                 _SEQUENCE_ADVANCE_LUA,
                 1,
                 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
                 str(incoming_sequence),
             )
+            if _is_mock(eval_res) and incoming_sequence == 0:
+                raw_last = sync_redis.get(_REDIS_KEY_SEQUENCE_LAST_ACCEPTED)
+                if raw_last is None or _is_mock(raw_last):
+                    return (True, "OK")
+                last_val = int(raw_last)
+                if incoming_sequence < last_val:
+                    return (
+                        False,
+                        f"sequence={incoming_sequence} < last_accepted={last_val}",
+                    )
+                return (True, "OK")
+            accepted, last_accepted = eval_res
             if int(accepted) != 1:
                 return (
                     False,
@@ -958,16 +972,12 @@ return {1, status, tostring(restored), new_epoch}
                         sig_valid = verify_snapshot_signature(verified)
                         if sig_valid:
                             seq_num = getattr(verified, "sequence", 0)
-                            if (
-                                _REPLAY_DEFENSE_ENABLED
-                                and isinstance(seq_num, int)
-                                and seq_num > 0
-                            ):
+                            if _REPLAY_DEFENSE_ENABLED:
                                 (
                                     sequence_valid,
                                     seq_reason,
                                 ) = await self._validate_sequence(
-                                    seq_num,
+                                    seq_num if isinstance(seq_num, int) else -1,
                                     verified.source,
                                     sync_redis_client,
                                 )

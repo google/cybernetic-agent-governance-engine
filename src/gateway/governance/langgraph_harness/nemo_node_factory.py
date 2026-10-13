@@ -107,16 +107,33 @@ def _replace_last_message(state: StateDict, original: str, text: str) -> list[An
     """Return a ``messages`` update that rewrites the last message to ``text``.
 
     The ``add_messages`` reducer replaces a message in place when the update
-    carries the same ``id``. Nothing is rewritten unless the last message is
-    the one whose content was redacted.
+    carries the same ``id``. When ``last`` lacks an ``id`` or is a plain dict,
+    returns the full messages list with the last element replaced so raw PII
+    is never left in state.
     """
-    messages = state.get("messages", [])
+    import copy
+
+    messages = list(state.get("messages", []))
     if not messages:
         return []
     last = messages[-1]
-    if getattr(last, "content", None) != original or not getattr(last, "id", None):
+    if isinstance(last, dict):
+        if last.get("content") != original:
+            return []
+        updated_dict = {**last, "content": text}
+        if last.get("id"):
+            return [updated_dict]
+        return [*messages[:-1], updated_dict]
+    if getattr(last, "content", None) != original:
         return []
-    return [last.model_copy(update={"content": text})]
+    if hasattr(last, "model_copy"):
+        updated_msg = last.model_copy(update={"content": text})
+    else:
+        updated_msg = copy.copy(last)
+        updated_msg.content = text
+    if getattr(last, "id", None):
+        return [updated_msg]
+    return [*messages[:-1], updated_msg]
 
 
 _nemo_reload_lock: asyncio.Lock | None = None
@@ -317,11 +334,22 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         # OTel audit trail — types only, never values
                         span.set_attribute("input.pii_entity_types", str(entity_types))
                 except Exception as pii_exc:
+                    from src.gateway.governance.env_posture import (
+                        is_enforcing,
+                        resolve_posture,
+                    )
+
+                    span.set_attribute("input.pii_redacted", False)
+                    if is_enforcing(resolve_posture()):
+                        logger.error(
+                            "❌ Input PII scan failed in enforcing posture — failing closed: %s",
+                            pii_exc,
+                        )
+                        raise
                     logger.warning(
                         "⚠️ Input PII scan failed — continuing without redaction: %s",
                         pii_exc,
                     )
-                    span.set_attribute("input.pii_redacted", False)
 
                 is_safe, reason, deterministic = await validate_with_nemo(
                     user_input, rails

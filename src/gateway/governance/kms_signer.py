@@ -1112,12 +1112,37 @@ class KMSGovernanceSigner:
                 )
                 return True
             if isinstance(public_key, rsa.RSAPublicKey):
-                public_key.verify(
-                    signature_bytes,
-                    digest,
-                    padding.PKCS1v15(),
-                    asym_utils.Prehashed(hash_alg),
+                pss_padding = padding.PSS(
+                    mgf=padding.MGF1(hash_alg),
+                    salt_length=padding.PSS.MAX_LENGTH,
                 )
+                if self._provider is not None:
+                    rsa_pad = (
+                        pss_padding
+                        if self._provider.uses_rsa_pss
+                        else padding.PKCS1v15()
+                    )
+                    public_key.verify(
+                        signature_bytes,
+                        digest,
+                        rsa_pad,
+                        asym_utils.Prehashed(hash_alg),
+                    )
+                else:
+                    try:
+                        public_key.verify(
+                            signature_bytes,
+                            digest,
+                            padding.PKCS1v15(),
+                            asym_utils.Prehashed(hash_alg),
+                        )
+                    except Exception:
+                        public_key.verify(
+                            signature_bytes,
+                            digest,
+                            pss_padding,
+                            asym_utils.Prehashed(hash_alg),
+                        )
                 return True
 
             logger.warning(

@@ -189,6 +189,9 @@ class WarrantCache:
         self._entries: dict[str, _Entry] = {}
         self._inflight: dict[str, asyncio.Task[WarrantObservation]] = {}
         self._manifest_entry: _ManifestEntry | None = None
+        self._manifest_inflight: (
+            asyncio.Task[tuple[VerifiedKeyManifest | None, str]] | None
+        ) = None
 
     @property
     def provider_name(self) -> str:
@@ -266,6 +269,28 @@ class WarrantCache:
                 f"warrant source {self.provider_name!r} does not implement "
                 "fetch_key_manifest()",
             )
+        loop = asyncio.get_running_loop()
+        task = self._manifest_inflight
+        if task is None or task.done() or task.get_loop() is not loop:
+            task = loop.create_task(
+                self._fetch_and_verify_manifest(fetch_fn, trust_anchor)
+            )
+            self._manifest_inflight = task
+            task.add_done_callback(self._forget_manifest)
+        return await asyncio.shield(task)
+
+    def _forget_manifest(
+        self, task: asyncio.Task[tuple[VerifiedKeyManifest | None, str]]
+    ) -> None:
+        if self._manifest_inflight is task:
+            self._manifest_inflight = None
+
+    async def _fetch_and_verify_manifest(
+        self,
+        fetch_fn: Any,
+        trust_anchor: WarrantTrustAnchor,
+    ) -> tuple[VerifiedKeyManifest | None, str]:
+        now = self._wall_clock()
         try:
             raw_manifest = await asyncio.wait_for(fetch_fn(), timeout=self._timeout)
             if raw_manifest is None:

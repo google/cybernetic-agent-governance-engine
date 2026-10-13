@@ -348,6 +348,29 @@ def _run_ftra(
             for key, value in extra_span_attrs.items():
                 span.set_attribute(key, value)
 
+        def _defer_parse_failure(result_payload: dict[str, Any]) -> dict[str, Any]:
+            defer_id = _park_in_defer_queue(state, result_payload, confidence)
+            try:
+                interrupt(
+                    {
+                        "reason": "FTRA_IRREVERSIBLE_TERMINAL",
+                        "defer_id": defer_id,
+                        "ctrl_id": _CTRL_FTRA_001,
+                        "ftra_result": result_payload,
+                    }
+                )
+            except RuntimeError as exc:
+                if (
+                    "outside of a runnable context" not in str(exc)
+                    and "langgraph is required" not in str(exc)
+                ):
+                    raise
+            return {
+                "ftra_status": "HITL_REQUIRED",
+                "ftra_result": result_payload,
+                "ftra_defer_id": defer_id,
+            }
+
         # Handle blocking parse errors → DEFER (not BLOCKED)
         # Per BUG-FTRA-SCHEMA-001: schema errors should DEFER for review, not auto-BLOCK
         if parse_result.failure_class == ParseFailureClass.JSON_DECODE_ERROR:
@@ -357,17 +380,15 @@ def _run_ftra(
                 parse_result.error_message,
             )
             # JSON_DECODE_ERROR after sanitization → log ERROR, use safe default (DEFER)
-            return {
-                "ftra_status": "HITL_REQUIRED",  # DEFER, not BLOCKED
-                "ftra_result": {
+            return _defer_parse_failure(
+                {
                     "error": parse_result.error_message,
                     "verdict": "HITL_REQUIRED",
                     "ctrl_id": _CTRL_FTRA_001,
                     "parse_failure_class": parse_result.failure_class.value,
                     "sanitization_applied": parse_result.sanitization_applied,
-                },
-                "ftra_defer_id": None,
-            }
+                }
+            )
 
         if parse_result.failure_class == ParseFailureClass.SCHEMA_VALIDATION_ERROR:
             logger.warning(
@@ -375,17 +396,15 @@ def _run_ftra(
                 parse_result.error_message,
             )
             # SCHEMA_VALIDATION_ERROR → DEFER (needs review)
-            return {
-                "ftra_status": "HITL_REQUIRED",  # DEFER, not BLOCKED
-                "ftra_result": {
+            return _defer_parse_failure(
+                {
                     "error": parse_result.error_message,
                     "verdict": "HITL_REQUIRED",
                     "ctrl_id": _CTRL_FTRA_001,
                     "parse_failure_class": parse_result.failure_class.value,
                     "sanitization_applied": parse_result.sanitization_applied,
-                },
-                "ftra_defer_id": None,
-            }
+                }
+            )
 
         # Handle EMPTY_STEPS with high confidence → ALLOW
         # Per spec: empty plan is a valid choice
@@ -415,17 +434,15 @@ def _run_ftra(
                     "FTRA: empty plan with low confidence (%.2f) — DEFER for review.",
                     confidence,
                 )
-                return {
-                    "ftra_status": "HITL_REQUIRED",
-                    "ftra_result": {
+                return _defer_parse_failure(
+                    {
                         "verdict": "HITL_REQUIRED",
                         "ctrl_id": _CTRL_FTRA_001,
                         "parse_failure_class": parse_result.failure_class.value,
                         "confidence_at_analysis": confidence,
                         "total_steps": 0,
-                    },
-                    "ftra_defer_id": None,
-                }
+                    }
+                )
 
         # Handle TRUNCATED_PLAN → DEFER (not BLOCKED)
         if parse_result.failure_class == ParseFailureClass.TRUNCATED_PLAN:
@@ -433,17 +450,15 @@ def _run_ftra(
                 "FTRA: plan appears truncated — DEFER for review. Details: %s",
                 parse_result.error_message,
             )
-            return {
-                "ftra_status": "HITL_REQUIRED",  # DEFER, not BLOCKED
-                "ftra_result": {
+            return _defer_parse_failure(
+                {
                     "error": parse_result.error_message,
                     "verdict": "HITL_REQUIRED",
                     "ctrl_id": _CTRL_FTRA_001,
                     "parse_failure_class": parse_result.failure_class.value,
                     "sanitization_applied": parse_result.sanitization_applied,
-                },
-                "ftra_defer_id": None,
-            }
+                }
+            )
 
         # SUCCESS or TOKENIZER_ARTIFACT (sanitization succeeded) — proceed with analysis
         if parse_result.failure_class == ParseFailureClass.TOKENIZER_ARTIFACT:

@@ -85,15 +85,17 @@ class ExternalAttestation:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict.  Provider metadata is flattened to top level."""
-        result: dict[str, Any] = {
-            "type": self.attestation_type,
-            "status": self.status,
-            "receipt_id": self.receipt_id,
-            "attested_at": self.attested_at,
-            "provider_name": self.provider_name,
-        }
-        result.update(self.metadata)
+        """Serialize to dict.  Provider metadata is flattened to top level without overwriting canonical fields."""
+        result: dict[str, Any] = dict(self.metadata)
+        result.update(
+            {
+                "type": self.attestation_type,
+                "status": self.status,
+                "receipt_id": self.receipt_id,
+                "attested_at": self.attested_at,
+                "provider_name": self.provider_name,
+            }
+        )
         return result
 
 

@@ -54,6 +54,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from urllib.parse import urlparse
+
 from src.gateway.governance.ingress.agent_registry_adapter import RegistryCatalog
 
 logger = logging.getLogger("Gateway.Governance.Ingress.AGPPolicyUploader")
@@ -67,6 +69,17 @@ _AGP_CHAR_BUDGET = 5_000
 
 # AGP API base URL (Vertex AI Agent Platform)
 _AGP_API_BASE = "https://{location}-aiplatform.googleapis.com/v1beta1"
+
+
+def _extract_host(url_or_host: str) -> str:
+    """Extract normalized hostname from a URL or bare host string."""
+    val = url_or_host.strip()
+    if not val:
+        return ""
+    if "://" in val:
+        return (urlparse(val).hostname or "").lower()
+    # Strip optional port/path if bare host:port/path
+    return (urlparse(f"https://{val}").hostname or "").lower()
 
 
 @dataclass(frozen=True)
@@ -134,38 +147,52 @@ def verify_and_transition_gateway_mode(
             f"RegistryCatalog is invalid or empty (error={catalog.error!r})."
         )
 
-    # Collect all registered identifiers and hostnames/URLs from the catalog
+    # Collect all registered identifiers and exact parsed hostnames/URLs from the catalog
     registered_tokens: set[str] = set()
+    registered_hosts: set[str] = set()
+
+    def _register_url_or_token(token_str: str, *, is_url: bool = False) -> None:
+        cleaned = token_str.strip()
+        if not cleaned:
+            return
+        registered_tokens.add(cleaned)
+        if is_url or "://" in cleaned:
+            host = _extract_host(cleaned)
+            if host:
+                registered_hosts.add(host)
+
     for agent_id, agent_data in catalog.agents.items():
-        registered_tokens.add(agent_id)
+        _register_url_or_token(agent_id)
         if isinstance(agent_data, dict) and agent_data.get("registry_resource_name"):
-            registered_tokens.add(str(agent_data["registry_resource_name"]))
+            _register_url_or_token(str(agent_data["registry_resource_name"]))
 
     for srv_id, srv_data in catalog.mcp_servers.items():
-        registered_tokens.add(srv_id)
+        _register_url_or_token(srv_id)
         if isinstance(srv_data, dict):
             if srv_data.get("registry_resource_name"):
-                registered_tokens.add(str(srv_data["registry_resource_name"]))
+                _register_url_or_token(str(srv_data["registry_resource_name"]))
             for iface in srv_data.get("interfaces", []):
                 if isinstance(iface, dict) and iface.get("url"):
-                    registered_tokens.add(str(iface["url"]))
+                    _register_url_or_token(str(iface["url"]), is_url=True)
                 elif isinstance(iface, str):
-                    registered_tokens.add(iface)
+                    _register_url_or_token(iface, is_url=True)
 
     for ep_id, ep_data in catalog.endpoints.items():
-        registered_tokens.add(ep_id)
+        _register_url_or_token(ep_id)
         if isinstance(ep_data, dict):
             if ep_data.get("registry_resource_name"):
-                registered_tokens.add(str(ep_data["registry_resource_name"]))
+                _register_url_or_token(str(ep_data["registry_resource_name"]))
             for url in ep_data.get("destination_urls", []):
-                registered_tokens.add(str(url))
+                _register_url_or_token(str(url), is_url=True)
 
     def _is_target_registered(target: str) -> bool:
-        if target in registered_tokens:
+        cleaned = target.strip()
+        if not cleaned:
+            return False
+        if cleaned in registered_tokens:
             return True
-        return any(
-            target in token or token in target for token in registered_tokens if token
-        )
+        target_host = _extract_host(cleaned)
+        return bool(target_host and target_host in registered_hosts)
 
     unregistered: list[str] = []
     for target in discovered_targets:
@@ -181,14 +208,19 @@ def verify_and_transition_gateway_mode(
     missing_bindings: list[str] = []
     for target in discovered_targets:
         matched_valid_binding = False
+        target_host = _extract_host(target)
         for binding in iap_bindings:
             if not isinstance(binding, dict):
                 continue
             if binding.get("role") != "roles/iap.egressor":
                 continue
-            b_target = str(binding.get("target") or binding.get("resource") or "*")
-            if b_target != "*" and target not in b_target and b_target not in target:
+            b_target = str(binding.get("target") or binding.get("resource") or "").strip()
+            if not b_target:
                 continue
+            if b_target != "*" and b_target != target:
+                b_host = _extract_host(b_target)
+                if not (target_host and b_host and target_host == b_host):
+                    continue
             members = binding.get("members", [])
             has_agent_principal = isinstance(members, list) and any(
                 isinstance(m, str)
@@ -237,7 +269,7 @@ def verify_and_transition_gateway_mode(
                     )
             else:
                 status = artifact.get("status") or artifact.get("certification_status")
-                sig = artifact.get("signature") or artifact.get(" signature_b64")
+                sig = artifact.get("signature") or artifact.get("signature_b64")
                 if status != "CERTIFIED" or not sig:
                     effective_cer_ok = False
                     blocking_reasons.append(

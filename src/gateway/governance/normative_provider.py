@@ -132,6 +132,12 @@ def _verify_policy_integrity(policy_path: Path, raw_bytes: bytes) -> None:
     """
     digest_path = policy_path.with_suffix(policy_path.suffix + ".sha256")
     if not digest_path.exists():
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        if is_enforcing(resolve_posture()):
+            raise PolicyIntegrityError(
+                f"Missing integrity digest file {digest_path.name} for {policy_path.name} in enforcing posture"
+            )
         logger.warning(
             "normative_provider: no integrity digest found for %s — "
             "skipping verification (set CAGE_ENV=prod to enforce)",

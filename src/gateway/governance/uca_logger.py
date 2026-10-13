@@ -118,6 +118,17 @@ class UCALogger:
 
                 signer = KMSGovernanceSigner.from_env()
             except Exception as exc:
+                from src.gateway.governance.env_posture import (
+                    is_enforcing,
+                    resolve_posture,
+                )
+
+                if is_enforcing(resolve_posture()):
+                    logger.error(
+                        "UCALogger: KMS signer unavailable in enforcing posture (%s); failing closed.",
+                        exc,
+                    )
+                    raise
                 logger.warning(
                     "UCALogger: KMS signer unavailable (%s); "
                     "falling back to test-mode HMAC stub. "
@@ -447,8 +458,21 @@ class UCALogger:
         payload_bytes = jcs_canonicalize_plan(payload)
 
         if self._test_mode or self._signer is None:
+            from src.gateway.governance.env_posture import (
+                is_enforcing,
+                resolve_posture,
+            )
+
+            if is_enforcing(resolve_posture()):
+                raise RuntimeError(
+                    "UCALogger: refusing stub HMAC signing in enforcing posture"
+                )
+            ephemeral_key = getattr(self, "_ephemeral_test_key", None)
+            if ephemeral_key is None:
+                ephemeral_key = os.urandom(32)
+                self._ephemeral_test_key = ephemeral_key
             stub_sig = hmac.new(
-                b"test-key",
+                ephemeral_key,
                 payload_bytes,
                 hashlib.sha256,
             ).hexdigest()
@@ -463,13 +487,28 @@ class UCALogger:
                 key_id = getattr(self._signer, "_key_version", "") or ""
                 record["signing_key_id"] = key_id
             except Exception as exc:
+                from src.gateway.governance.env_posture import (
+                    is_enforcing,
+                    resolve_posture,
+                )
+
+                if is_enforcing(resolve_posture()):
+                    logger.error(
+                        "UCALogger: KMS signing failed in enforcing posture — %s.",
+                        exc,
+                    )
+                    raise
                 logger.error(
                     "UCALogger: KMS signing failed — %s. "
                     "Falling back to HMAC stub for this record.",
                     exc,
                 )
+                ephemeral_key = getattr(self, "_ephemeral_test_key", None)
+                if ephemeral_key is None:
+                    ephemeral_key = os.urandom(32)
+                    self._ephemeral_test_key = ephemeral_key
                 stub_sig = hmac.new(
-                    b"test-key",
+                    ephemeral_key,
                     payload_bytes,
                     hashlib.sha256,
                 ).hexdigest()

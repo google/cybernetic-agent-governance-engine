@@ -36,7 +36,7 @@ Gate G3 Compliance:
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from src.gateway.governance.seams.outbound_credential import (
     BearerToken,
@@ -87,9 +87,7 @@ class NullCredentialProvider:
         )
         return BearerToken(
             token="local-dev-token-no-verification",
-            expires_at=datetime.now(timezone.utc).replace(
-                hour=datetime.now(timezone.utc).hour + 1
-            ),
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             audience=target_url,
         )
 

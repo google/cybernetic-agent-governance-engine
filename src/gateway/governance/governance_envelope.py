@@ -290,13 +290,14 @@ class GovernanceEnvelopeBuilder:
 
     def _compute_action_hash(self, action: str, params: dict[str, Any]) -> str:
         """Compute the action hash from action name and parameters."""
-        # Normalize params to safe types
+        from src.gateway.governance.routing_seal import compute_action_hash
+
+        # Normalize params to safe types before nested canonicalization
         safe_params = {
             k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
             for k, v in params.items()
         }
-        canon = jcs_canonicalize_plan({"action": action, **safe_params})
-        return f"sha256:{hashlib.sha256(canon).hexdigest()}"
+        return f"sha256:{compute_action_hash(action, safe_params)}"
 
     def _get_policy_version(self) -> str:
         """Get the current policy version hash."""
@@ -463,11 +464,23 @@ class GovernanceEnvelopeBuilder:
         )
 
         try:
+            from src.gateway.governance.env_posture import (
+                is_enforcing,
+                resolve_posture,
+            )
             from src.gateway.governance.jwks import pem_to_jwk
             from src.gateway.governance.kms_signer import get_governance_signer
 
             signer = get_governance_signer()
-            if not signer.is_kms_active:
+            kms_active = bool(
+                getattr(signer, "is_kms_active", False)
+                and getattr(signer, "kms_active", True) is not False
+            )
+            if not kms_active:
+                if is_enforcing(resolve_posture()):
+                    raise RuntimeError(
+                        "Cannot return unsigned governance envelope in enforcing posture: KMS signer is inactive"
+                    )
                 logger.warning("⚠️ KMS not active — envelope will be unsigned")
                 return envelope
 
@@ -485,7 +498,14 @@ class GovernanceEnvelopeBuilder:
             return self.attach_signature(envelope, signature_bytes, kid, alg)
 
         except Exception as e:
+            from src.gateway.governance.env_posture import (
+                is_enforcing,
+                resolve_posture,
+            )
+
             logger.error("❌ Failed to sign envelope: %s", e)
+            if is_enforcing(resolve_posture()):
+                raise
             return envelope
 
     def verify(

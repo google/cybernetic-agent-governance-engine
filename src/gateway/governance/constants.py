@@ -267,6 +267,8 @@ class ControlRegistry:
                 if cls._instance is None:
                     instance = super().__new__(cls)
                     instance._load_registry()
+                    cls._active_region = instance._region
+                    cls._active_hash = instance._hash
                     cls._instance = instance
         return cls._instance
 
@@ -281,13 +283,13 @@ class ControlRegistry:
         Returns the string identifier (e.g. ``"EU_ECB"``, ``"US_FED"``,
         ``"APAC_MAS"``).
         """
-        return self.__class__._active_region
+        return getattr(self, "_region", self.__class__._active_region)
 
     @property
     def active_hash(self) -> str:
         """Read-only access to the pinned baseline profile hash."""
         with self.__class__._lock:
-            return self.__class__._active_hash
+            return getattr(self, "_hash", self.__class__._active_hash)
 
     @classmethod
     def _coerce_floats(cls, data: Any) -> Any:
@@ -367,16 +369,14 @@ class ControlRegistry:
                 for k, v in raw.items()
                 if not k.startswith("_") and isinstance(v, dict)
             }
-            self.__class__._active_region = region
+            self._region = region
 
             # Canonical stringification: sorted keys, compact separators
             # v3.1.0: Migrated to RFC 8785 JCS canonicalization
             normalized_raw = self._coerce_floats(raw)
             canonical_bytes = jcs_canonicalize_plan(normalized_raw)
             computed_hash = hashlib.sha256(canonical_bytes).hexdigest()
-
-            with self.__class__._lock:
-                self.__class__._active_hash = computed_hash
+            self._hash = computed_hash
 
             logger.info(
                 "✅ ControlRegistry loaded %d control mappings from %s (region: %s, hash: %s)",
@@ -479,17 +479,15 @@ class ControlRegistry:
         # file I/O and JSON parsing which should not block other threads.
         new_instance = object.__new__(cls)
         new_instance._load_registry(region=normalized_region)
-        # _load_registry records the region it actually loaded (an unknown
-        # region falls back to the default); the swap must keep it, or
-        # active_region would name a different profile than _mappings holds.
-        loaded_region = cls._active_region
+        loaded_region = new_instance._region
 
         # Atomically swap: clear the old singleton and install the new one
         # in a single lock acquisition, eliminating the TOCTOU window.
         with cls._lock:
             cls._instance = None
-            cls._mappings = {}
+            cls._mappings = dict(new_instance._mappings)
             cls._active_region = loaded_region
+            cls._active_hash = new_instance._hash
             cls._instance = new_instance
 
         logger.info("ControlRegistry reconfigured to region: %s", loaded_region)
