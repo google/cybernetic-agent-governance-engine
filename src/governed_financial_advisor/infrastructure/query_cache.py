@@ -78,7 +78,10 @@ class QueryCache:
     def __init__(self, redis_client=None):  # type: ignore[no-untyped-def]
         """Initialize with optional Redis backend. Falls back to dict if Redis unavailable."""
         self.redis = redis_client
-        self.local_cache = {}  # Fallback for when Redis not available
+        self.local_cache: dict[str, str] = {}  # Fallback for when Redis not available
+        self.max_local_entries = int(
+            os.environ.get("QUERY_CACHE_MAX_LOCAL_ENTRIES", "1000")
+        )
         self.ttl = int(os.environ.get("QUERY_CACHE_TTL", "3600"))  # 1 hour default
         self.enabled = os.environ.get("ENABLE_QUERY_CACHE", "true").lower() == "true"
 
@@ -165,7 +168,10 @@ class QueryCache:
         # Try Redis first
         if self.redis:
             try:
-                await self.redis.setex(cache_key, self.ttl, response)
+                if hasattr(self.redis, "setex"):
+                    await self.redis.setex(cache_key, self.ttl, response)
+                else:
+                    await self.redis.set(cache_key, response, ttl=self.ttl)
                 logger.info(
                     "QueryCache SET (Redis): %s (TTL=%ds)", query[:50], self.ttl
                 )
@@ -173,7 +179,14 @@ class QueryCache:
             except Exception as e:
                 logger.warning("QueryCache: Redis set failed: %s", e)
 
-        # Fallback to local cache
+        # Fallback to bounded local cache
+        if (
+            cache_key not in self.local_cache
+            and self.max_local_entries > 0
+            and len(self.local_cache) >= self.max_local_entries
+        ):
+            oldest_key = next(iter(self.local_cache))
+            self.local_cache.pop(oldest_key, None)
         self.local_cache[cache_key] = response
         logger.info("QueryCache SET (local): %s", query[:50])
 
@@ -181,12 +194,13 @@ class QueryCache:
         """Clear all cached queries."""
         if self.redis:
             try:
+                raw_redis = getattr(self.redis, "client", None) or self.redis
                 # Delete all keys matching pattern
                 cursor = 0
                 while True:
-                    cursor, keys = await self.redis.scan(cursor, match="query_cache:*")
+                    cursor, keys = await raw_redis.scan(cursor, match="query_cache:*")
                     if keys:
-                        await self.redis.delete(*keys)
+                        await raw_redis.delete(*keys)
                     if cursor == 0:
                         break
                 logger.info("QueryCache: Cleared Redis cache")

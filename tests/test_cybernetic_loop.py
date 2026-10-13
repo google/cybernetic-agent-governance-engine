@@ -167,7 +167,11 @@ class TestLangfuseWebhook:
             ),
         ):
             import src.governed_financial_advisor.server as srv
+            from src.governed_financial_advisor.infrastructure.auth import (
+                require_api_key,
+            )
 
+            srv.app.dependency_overrides[require_api_key] = lambda: "test"
             return TestClient(srv.app, raise_server_exceptions=True)
 
     def test_non_score_event_ignored(self, client):
@@ -471,7 +475,11 @@ class TestWebhookCooldown:
             ),
         ):
             import src.governed_financial_advisor.server as srv
+            from src.governed_financial_advisor.infrastructure.auth import (
+                require_api_key,
+            )
 
+            srv.app.dependency_overrides[require_api_key] = lambda: "test"
             return TestClient(srv.app, raise_server_exceptions=True)
 
     def test_first_trigger_accepted(self, client):
@@ -602,7 +610,11 @@ class TestWebhookMinSamples:
             ),
         ):
             import src.governed_financial_advisor.server as srv
+            from src.governed_financial_advisor.infrastructure.auth import (
+                require_api_key,
+            )
 
+            srv.app.dependency_overrides[require_api_key] = lambda: "test"
             return TestClient(srv.app, raise_server_exceptions=True)
 
     def test_small_sample_deferred(self, client):

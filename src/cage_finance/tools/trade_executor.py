@@ -78,7 +78,8 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
         )
     # C-01: Validate trade side before use — fail closed on invalid values.
     action = order.side
-    assert action in {"buy", "sell"}, f"Invalid trade side: {action}"
+    if action not in {"buy", "sell"}:
+        raise ValueError(f"Invalid trade side: {action}")
     # --- INTERRUPT CHECK (Module 6) ---
     violation = await _redis_get("safety_violation")
     if violation:

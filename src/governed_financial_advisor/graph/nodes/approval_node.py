@@ -46,6 +46,102 @@ from src.governed_financial_advisor.graph.nodes.approval_contract import (
 logger = logging.getLogger(__name__)
 
 
+def create_approval_node(
+    *,
+    approved_target: str = "post_hitl_rehydrate",
+    rejected_target: str = "rejection",
+):
+    """Create a human-in-the-loop approval node with configurable resume targets.
+
+    Defaults to the ``governed_trader`` subgraph targets
+    (``post_hitl_rehydrate`` / ``rejection``) while allowing the parent graph to
+    route to ``governed_trader`` / ``explainer``.
+    """
+
+    def _node(state: dict[str, Any]) -> Command:
+        logger.info("[ApprovalNode] Trade requires human approval — suspending graph.")
+
+        ttl_seconds: int = int(os.getenv("HITL_APPROVAL_TTL_SECONDS", "300"))
+        trade_payload: dict[str, Any] = {
+            "reason": "trade_approval_required",
+            # The gateway-held approval token. The authoritative approval is
+            # recorded against it at POST /v1/defer/{deferred_id}/escalate (the
+            # compliance bridge); this interrupt only pauses the advisor's graph.
+            "deferred_id": state.get("deferred_id"),
+            "trade": {
+                "execution_plan": state.get("execution_plan_output"),
+                "evaluation_result": state.get("evaluation_result"),
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+            ).isoformat(),
+        }
+
+        # Pause the graph here. On first invocation this raises GraphInterrupt.
+        # On resume it returns the value supplied via Command(resume={...}).
+        decision: dict[str, Any] = interrupt(trade_payload)
+
+        # Enforce mandatory rationale validation via ApprovalDecision contract
+        # A resume payload without a rationale will raise a ValidationError here,
+        # protecting the compliance chain from unexplained approvals.
+        validated_decision = ApprovalDecision(**decision)
+
+        approved: bool = validated_decision.approved
+        reviewer: str = validated_decision.reviewer
+        rationale: str = validated_decision.rationale
+        comment: str = validated_decision.comment
+        timestamp: str = decision.get(
+            "timestamp", datetime.now(timezone.utc).isoformat()
+        )
+
+        approval_decision: dict[str, Any] = {
+            "approved": approved,
+            "reviewer": reviewer,
+            "rationale": rationale,
+            "comment": comment,
+            "timestamp": timestamp,
+            "max_slippage_pct": validated_decision.max_slippage_pct,
+        }
+
+        logger.info(
+            "[ApprovalNode] Decision received: approved=%s reviewer=%s rationale=%r",
+            approved,
+            reviewer,
+            rationale[:120],
+        )
+
+        if approved:
+            logger.info(
+                "[ApprovalNode] ✅ Trade approved — routing to %s.",
+                approved_target,
+            )
+            return Command(
+                update={
+                    "approval_decision": approval_decision,
+                    "hitl_expires_at": trade_payload["expires_at"],
+                },
+                goto=approved_target,
+            )
+
+        logger.info(
+            "[ApprovalNode] ❌ Trade rejected — routing to %s.", rejected_target
+        )
+        update_payload: dict[str, Any] = {
+            "approval_decision": approval_decision,
+            "hitl_expires_at": trade_payload["expires_at"],
+        }
+        if rejected_target != "rejection":
+            rejection_update = rejection_node({"approval_decision": approval_decision})
+            update_payload["messages"] = rejection_update["messages"]
+        return Command(
+            update=update_payload,
+            goto=rejected_target,
+        )
+
+    return _node
+
+
 def approval_node(state: dict[str, Any]) -> Command:
     """
     Human-in-the-loop approval gate for high-value or high-risk trades.
@@ -59,76 +155,7 @@ def approval_node(state: dict[str, Any]) -> Command:
     Returns:
         Command that updates approval_decision and routes to the next node.
     """
-    logger.info("[ApprovalNode] Trade requires human approval — suspending graph.")
-
-    ttl_seconds: int = int(os.getenv("HITL_APPROVAL_TTL_SECONDS", "300"))
-    trade_payload: dict[str, Any] = {
-        "reason": "trade_approval_required",
-        # The gateway-held approval token. The authoritative approval is
-        # recorded against it at POST /v1/defer/{deferred_id}/escalate (the
-        # compliance bridge); this interrupt only pauses the advisor's graph.
-        "deferred_id": state.get("deferred_id"),
-        "trade": {
-            "execution_plan": state.get("execution_plan_output"),
-            "evaluation_result": state.get("evaluation_result"),
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "expires_at": (
-            datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-        ).isoformat(),
-    }
-
-    # Pause the graph here. On first invocation this raises GraphInterrupt.
-    # On resume it returns the value supplied via Command(resume={...}).
-    decision: dict[str, Any] = interrupt(trade_payload)
-
-    # Enforce mandatory rationale validation via ApprovalDecision contract
-    # A resume payload without a rationale will raise a ValidationError here,
-    # protecting the compliance chain from unexplained approvals.
-    validated_decision = ApprovalDecision(**decision)
-
-    approved: bool = validated_decision.approved
-    reviewer: str = validated_decision.reviewer
-    rationale: str = validated_decision.rationale
-    comment: str = validated_decision.comment
-    timestamp: str = decision.get("timestamp", datetime.now(timezone.utc).isoformat())
-
-    approval_decision: dict[str, Any] = {
-        "approved": approved,
-        "reviewer": reviewer,
-        "rationale": rationale,
-        "comment": comment,
-        "timestamp": timestamp,
-        "max_slippage_pct": validated_decision.max_slippage_pct,
-    }
-
-    logger.info(
-        "[ApprovalNode] Decision received: approved=%s reviewer=%s rationale=%r",
-        approved,
-        reviewer,
-        rationale[:120],
-    )
-
-    if approved:
-        logger.info(
-            "[ApprovalNode] ✅ Trade approved — routing to post_hitl_rehydrate (TOCTOU remediation)."
-        )
-        return Command(
-            update={
-                "approval_decision": approval_decision,
-                "hitl_expires_at": trade_payload["expires_at"],
-            },
-            goto="post_hitl_rehydrate",
-        )
-
-    logger.info("[ApprovalNode] ❌ Trade rejected — routing to rejection.")
-    return Command(
-        update={
-            "approval_decision": approval_decision,
-            "hitl_expires_at": trade_payload["expires_at"],
-        },
-        goto="rejection",
-    )
+    return create_approval_node()(state)
 
 
 def rejection_node(state: dict[str, Any]) -> dict[str, Any]:

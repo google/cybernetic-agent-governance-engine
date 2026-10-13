@@ -73,7 +73,7 @@ from .nodes.agent_nodes import (
     data_analyst_node,
     execution_analyst_node,
 )
-from .nodes.approval_node import approval_node
+from .nodes.approval_node import approval_node, create_approval_node
 from .nodes.defer_node import defer_node
 from .nodes.evaluator_node import evaluator_node
 from .nodes.explainer_node import explainer_node
@@ -180,7 +180,13 @@ def _build_workflow() -> StateGraph:
     # CAGE-REM-004: DeferQueue 4-state confidence router node
     workflow.add_node("defer_node", defer_node)
     # Phase 2.1: Dynamic approval node with runtime interrupt() — inserted BEFORE governed_trader
-    workflow.add_node("approval_node", approval_node)
+    workflow.add_node(
+        "approval_node",
+        create_approval_node(
+            approved_target="governed_trader",
+            rejected_target="explainer",
+        ),
+    )
     workflow.add_node("governed_trader", create_governed_trader_node())
     workflow.add_node("explainer", explainer_node)
     # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path

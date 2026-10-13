@@ -161,7 +161,10 @@ if (
 app.include_router(tools_router)
 from src.governed_financial_advisor.geap_app import create_geap_runtime_router
 
-app.include_router(create_geap_runtime_router())
+app.include_router(
+    create_geap_runtime_router(),
+    dependencies=[Depends(require_api_key)],
+)
 
 if (
     os.environ.get("CAGE_ENV", "prod").lower() == "dev"
@@ -415,7 +418,10 @@ async def query_agent(  # type: ignore[no-untyped-def]
 
 
 @app.get("/v1/approvals/pending")
-async def list_pending_approvals(request: Request):  # type: ignore[no-untyped-def]
+async def list_pending_approvals(  # type: ignore[no-untyped-def]
+    request: Request,
+    _auth: str = Depends(require_api_key),
+):
     """
     List all graph threads currently interrupted and awaiting human approval.
 
@@ -572,7 +578,10 @@ def _submit_kfp_run(pipeline_id: str, trigger_reason: str, trace_ids: list) -> d
 
 
 @app.post("/v1/refinement/trigger")
-async def trigger_refinement(req: RefinementTriggerRequest):  # type: ignore[no-untyped-def]
+async def trigger_refinement(  # type: ignore[no-untyped-def]
+    req: RefinementTriggerRequest,
+    _auth: str = Depends(require_api_key),
+):
     """Trigger the Green-Stack KFP refinement pipeline.
 
     Accepts a JSON body with ``pipeline_id``, ``trigger_reason``, and an
@@ -661,7 +670,10 @@ _last_refinement_triggered_at: float = -1e9
 
 
 @app.post("/v1/webhooks/langfuse")
-async def langfuse_webhook(req: LangfuseWebhookEvent):  # type: ignore[no-untyped-def]
+async def langfuse_webhook(  # type: ignore[no-untyped-def]
+    req: LangfuseWebhookEvent,
+    _auth: str = Depends(require_api_key),
+):
     """Receive Langfuse outgoing webhook events and trigger KFP refinement.
 
     Configure in the Langfuse UI under **Settings → Webhooks** with:

@@ -382,6 +382,132 @@ class TestGovernedFinancialAdvisorGeapApp:
         assert lines[0]["event"] == {"planner": {"step": "plan_ready"}}
         assert lines[1]["event"] == {"executor": {"step": "executed"}}
 
+    @pytest.mark.asyncio
+    async def test_resume_approval_validates_contract_and_passes_approval_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_graph = MagicMock()
+        fake_msg = MagicMock()
+        fake_msg.content = "Trade approved and executed."
+        fake_graph.ainvoke = AsyncMock(
+            return_value={
+                "messages": [fake_msg],
+                "transaction_status": "EXECUTED",
+            }
+        )
+        monkeypatch.setattr(
+            "src.governed_financial_advisor.geap_app.create_graph",
+            lambda redis_url=None: fake_graph,
+        )
+
+        app = GovernedFinancialAdvisorGeapApp(enable_tracing=False)
+        res = await app.resume_approval(
+            thread_id="thread-hitl-1",
+            decision="APPROVE",
+            approver_id="risk-lead@example.com",
+            deferred_id="defer-123",
+            reason="Verified portfolio drawdown within IPS mandate.",
+        )
+
+        assert res["thread_id"] == "thread-hitl-1"
+        assert res["status"] == "resumed"
+        assert res["decision"] == "APPROVED"
+        assert res["approved"] is True
+        assert res["response"] == "Trade approved and executed."
+        assert res["transaction_status"] == "EXECUTED"
+
+        cmd = fake_graph.ainvoke.call_args.args[0]
+        assert cmd.resume["approved"] is True
+        assert cmd.resume["reviewer"] == "risk-lead@example.com"
+        assert (
+            cmd.resume["rationale"]
+            == "Verified portfolio drawdown within IPS mandate."
+        )
+        assert cmd.resume["ticket_id"] == "defer-123"
+
+    def test_parent_graph_approval_node_routes_to_parent_targets(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            create_approval_node,
+        )
+
+        parent_node = create_approval_node(
+            approved_target="governed_trader",
+            rejected_target="explainer",
+        )
+        monkeypatch.setattr(
+            "src.governed_financial_advisor.graph.nodes.approval_node.interrupt",
+            lambda payload: {
+                "approved": True,
+                "reviewer": "chief-risk@example.com",
+                "rationale": "Approved within daily limit.",
+            },
+        )
+        cmd_ok = parent_node({"execution_plan_output": {}, "evaluation_result": {}})
+        assert cmd_ok.goto == "governed_trader"
+
+        monkeypatch.setattr(
+            "src.governed_financial_advisor.graph.nodes.approval_node.interrupt",
+            lambda payload: {
+                "approved": False,
+                "reviewer": "chief-risk@example.com",
+                "rationale": "Rejected due to concentration limit.",
+            },
+        )
+        cmd_reject = parent_node(
+            {"execution_plan_output": {}, "evaluation_result": {}}
+        )
+        assert cmd_reject.goto == "explainer"
+        assert "messages" in cmd_reject.update
+
+    @pytest.mark.asyncio
+    async def test_query_cache_supports_async_redis_client_wrapper(self) -> None:
+        from src.governed_financial_advisor.infrastructure.query_cache import (
+            QueryCache,
+        )
+
+        class _FakeAsyncRedisClient:
+            def __init__(self) -> None:
+                self.store: dict[str, tuple[str, int | None]] = {}
+
+            async def get(self, key: str) -> str | None:
+                entry = self.store.get(key)
+                return entry[0] if entry else None
+
+            async def set(
+                self, key: str, value: str, ttl: int | None = None
+            ) -> None:
+                self.store[key] = (value, ttl)
+
+        wrapper = _FakeAsyncRedisClient()
+        cache = QueryCache(redis_client=wrapper)
+        query = "What is portfolio diversification?"
+        await cache.set(query, "Diversification spreads risk across assets.")
+        assert len(wrapper.store) == 1
+        assert (
+            await cache.get(query)
+            == "Diversification spreads risk across assets."
+        )
+
+    def test_unknown_tool_returns_http_404(self) -> None:
+        from fastapi import FastAPI
+
+        from src.governed_financial_advisor.infrastructure.auth import (
+            require_api_key,
+        )
+        from src.governed_financial_advisor.tools.api import tools_router
+
+        app = FastAPI()
+        app.include_router(tools_router)
+        app.dependency_overrides[require_api_key] = lambda: "test"
+        client = TestClient(app)
+        resp = client.post(
+            "/tools/execute",
+            json={"tool_name": "nonexistent_tool_xyz", "params": {}},
+        )
+        assert resp.status_code == 404
+
 
 class TestGatewayClientGeapHeaderPropagation:
     """Verify GatewayClient injects GEAP ID-2 OIDC token and ID-1 user header."""

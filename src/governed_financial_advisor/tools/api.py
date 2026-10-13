@@ -190,6 +190,8 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
 
         return {"status": "SUCCESS", "output": str(output)}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             "Tool Execution Error [%s]: %s",

@@ -400,19 +400,31 @@ class GovernedFinancialAdvisorGeapApp:
     ) -> dict[str, Any]:
         """Resume a paused HITL approval graph checkpoint on GEAP Agent Runtime."""
         graph = self._ensure_graph()
+        clean_thread_id = str(thread_id or "").strip()
+        if not clean_thread_id:
+            raise ValueError("thread_id must be a non-empty string")
+        normalized_decision = str(decision or "").strip().upper()
+        if normalized_decision in {"APPROVE", "APPROVED", "TRUE", "ALLOW"}:
+            approved = True
+        elif normalized_decision in {"REJECT", "REJECTED", "FALSE", "DENY", "DENIED"}:
+            approved = False
+        else:
+            raise ValueError(
+                f"Invalid decision {decision!r}; expected APPROVE/APPROVED or REJECT/REJECTED."
+            )
         validated = ApprovalDecision(
-            thread_id=thread_id,
-            decision=decision,  # type: ignore[arg-type]
-            approver_id=approver_id,
-            deferred_id=deferred_id,
-            reason=reason,
+            ticket_id=deferred_id,
+            approved=approved,
+            reviewer=approver_id,
+            rationale=reason if reason is not None else f"Decision: {normalized_decision}",
         )
-        config = {"configurable": {"thread_id": validated.thread_id}}
+        config = {"configurable": {"thread_id": clean_thread_id}}
         resume_payload = {
-            "decision": validated.decision,
-            "approver_id": validated.approver_id,
-            "deferred_id": validated.deferred_id,
-            "reason": validated.reason,
+            **validated.model_dump(),
+            "decision": normalized_decision,
+            "approver_id": validated.reviewer,
+            "deferred_id": validated.ticket_id,
+            "reason": validated.rationale,
         }
         final_state = await graph.ainvoke(Command(resume=resume_payload), config=config)
         messages = final_state.get("messages", [])
@@ -421,9 +433,10 @@ class GovernedFinancialAdvisorGeapApp:
             last_msg = messages[-1]
             response_text = getattr(last_msg, "content", str(last_msg))
         return {
-            "thread_id": validated.thread_id,
+            "thread_id": clean_thread_id,
             "status": "resumed",
-            "decision": validated.decision,
+            "decision": "APPROVED" if validated.approved else "REJECTED",
+            "approved": validated.approved,
             "response": response_text,
             "transaction_status": final_state.get("transaction_status"),
         }
