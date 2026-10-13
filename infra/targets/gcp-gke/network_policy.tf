@@ -775,7 +775,11 @@ resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only"
       }
       ports {
         protocol = "TCP"
-        port     = "8090"
+        port     = "80"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "3001"
       }
       ports {
         protocol = "TCP"

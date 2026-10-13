@@ -769,8 +769,8 @@ module "langfuse" {
   langfuse_public_key = var.langfuse_public_key
   langfuse_secret_key = var.langfuse_secret_key
 
-  langfuse_init_user_email    = "dev-admin@local.com"
-  langfuse_init_user_password = "dev-password-123"
+  langfuse_init_user_email    = var.langfuse_init_user_email
+  langfuse_init_user_password = var.langfuse_init_user_password
   langfuse_init_project_name  = "cybernetic-governance"
   langfuse_init_project_id    = "cybernetic-governance"
   langfuse_init_org_id        = "CAGE"
@@ -1028,6 +1028,11 @@ module "app_secrets" {
   langfuse_secret_key = var.langfuse_secret_key != "" ? var.langfuse_secret_key : module.langfuse.secret_key
   langfuse_host       = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
 
+  otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
+    var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : "Authorization=Basic ${base64encode("${module.langfuse.public_key}:${module.langfuse.secret_key}")}"
+  )
+  redis_password = ""
+
   clickhouse_url           = "http://${module.clickhouse_operator.service_name}:${module.clickhouse_operator.http_port}"
   clickhouse_migration_url = "clickhouse://default:${module.clickhouse_operator.password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}"
   clickhouse_user          = "default"
@@ -1051,7 +1056,7 @@ module "app_secrets" {
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
   langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
 
-  oscal_api_key = "DUMMY_API_KEY_FOR_LOCAL_DEV"
+  oscal_api_key = var.oscal_api_key
 
   opa_url = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
 

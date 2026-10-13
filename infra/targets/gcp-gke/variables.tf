@@ -748,6 +748,26 @@ variable "langfuse_s3_secret_key" {
   default     = ""
 }
 
+variable "langfuse_init_user_email" {
+  description = "Initial Langfuse admin user email (set via gitignored terraform.auto.tfvars in dev only; leave empty in staging/prod)"
+  type        = string
+  default     = ""
+}
+
+variable "langfuse_init_user_password" {
+  description = "Initial Langfuse admin user password (set via gitignored terraform.auto.tfvars in dev only; leave empty in staging/prod)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "oscal_api_key" {
+  description = "OSCAL API key (set via gitignored terraform.auto.tfvars)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # ─── Compliance Bridge Configuration ──────────────────────────────────────────
 
 variable "enable_compliance_bridge" {

@@ -56,6 +56,10 @@ spec:
               value: "${GOOGLE_CLOUD_LOCATION}"
             - name: ENABLE_LOGGING
               value: "true"
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGSMITH_TRACING
+              value: "false"
             - name: OTEL_TRACES_EXPORTER
               value: "otlp"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

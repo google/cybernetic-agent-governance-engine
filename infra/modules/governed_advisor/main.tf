@@ -123,7 +123,7 @@ resource "kubernetes_deployment" "governed_advisor" {
           }
           env {
             name  = "REDIS_URL"
-            value = var.redis_password != "" ? "redis://:${var.redis_password}@${var.redis_host}:${var.redis_port}" : "redis://${var.redis_host}:${var.redis_port}"
+            value = "redis://${var.redis_host}:${var.redis_port}"
           }
 
           # Model Configuration (Tiered)
@@ -217,8 +217,14 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = "http/protobuf"
           }
           env {
-            name  = "OTEL_EXPORTER_OTLP_HEADERS"
-            value = var.otel_exporter_otlp_headers
+            name = "OTEL_EXPORTER_OTLP_HEADERS"
+            value_from {
+              secret_key_ref {
+                name     = "advisor-secrets"
+                key      = "OTEL_EXPORTER_OTLP_HEADERS"
+                optional = true
+              }
+            }
           }
           env {
             name  = "TRACE_SAMPLING_RATE"
@@ -301,8 +307,14 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.mcp_mode
           }
           env {
-            name  = "ALPHAVANTAGE_API_KEY"
-            value = var.alphavantage_api_key
+            name = "ALPHAVANTAGE_API_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "advisor-secrets"
+                key      = "ALPHAVANTAGE_API_KEY"
+                optional = true
+              }
+            }
           }
 
           security_context {

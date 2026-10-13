@@ -16,11 +16,24 @@ spec:
       labels:
         app: compliance-bridge
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: cage-compliance-bridge-sa
       containers:
         - name: compliance-bridge
           image: ${REGISTRY_URL}/compliance-bridge:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 3001
               name: http
@@ -58,6 +71,10 @@ spec:
                   optional: true
             - name: LANGFUSE_HOST
               value: "${LANGFUSE_HOST}"
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGSMITH_TRACING
+              value: "false"
             # Remediation Advisor (Step 5) — LLM-based root cause analysis
             - name: REMEDIATION_MODEL
               value: "${REMEDIATION_MODEL}"

@@ -15,6 +15,10 @@ spec:
       labels:
         app: governed-financial-advisor
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: cage-advisor-sa
       volumes:
         # policy-volume and opa-config-volume removed — OPA sidecar removed.
@@ -25,6 +29,15 @@ spec:
         - name: ingress-agent
           image: ${REGISTRY_URL}/governed-financial-advisor:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 8080
           envFrom:
@@ -97,9 +110,13 @@ spec:
             - name: OTEL_LOGS_EXPORTER
               value: "none"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://otel-collector.governance-stack:4318/v1/traces"
+              value: "http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces"
             - name: OTEL_EXPORTER_OTLP_HEADERS
-              value: "${OTEL_EXPORTER_OTLP_HEADERS}"
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: OTEL_EXPORTER_OTLP_HEADERS
+                  optional: true
             - name: TRACE_SAMPLING_RATE
               value: "${TRACE_SAMPLING_RATE}"
             - name: OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY
@@ -140,7 +157,11 @@ spec:
             - name: MCP_MODE
               value: "${MCP_MODE}"
             - name: ALPHAVANTAGE_API_KEY
-              value: "${ALPHAVANTAGE_API_KEY}"
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: ALPHAVANTAGE_API_KEY
+                  optional: true
 
             # --- Secrets (from K8s Secrets) ---
             - name: HUGGING_FACE_HUB_TOKEN

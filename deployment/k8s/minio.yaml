@@ -29,9 +29,23 @@ spec:
       labels:
         app: minio
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: minio
         image: minio/minio:RELEASE.2024-01-31T20-20-33Z
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
         args:
         - server
         - /data
@@ -39,9 +53,15 @@ spec:
         - :9001
         env:
         - name: MINIO_ROOT_USER
-          value: "minioadmin"
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: root-user
         - name: MINIO_ROOT_PASSWORD
-          value: "minioadmin"
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: root-password
         ports:
         - containerPort: 9000
         - containerPort: 9001

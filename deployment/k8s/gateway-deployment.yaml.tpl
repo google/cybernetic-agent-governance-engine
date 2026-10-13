@@ -15,6 +15,10 @@ spec:
       labels:
         app: gateway
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: cage-gateway-sa
       affinity:
         nodeAffinity:
@@ -29,6 +33,15 @@ spec:
         - name: gateway
           image: ${REGISTRY_URL}/gateway:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 8080
               name: http
@@ -55,10 +68,14 @@ spec:
               value: "${GOOGLE_CLOUD_LOCATION}"
             - name: ENABLE_LOGGING
               value: "${ENABLE_LOGGING}"
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGSMITH_TRACING
+              value: "false"
             - name: OTEL_TRACES_EXPORTER
               value: "otlp"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://otel-collector.governance-stack:4318/v1/traces"
+              value: "http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces"
             - name: OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY
               value: "true"
             - name: OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_RESPONSE_BODY

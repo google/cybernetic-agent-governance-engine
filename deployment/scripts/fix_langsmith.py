@@ -15,36 +15,34 @@
 import subprocess
 from pathlib import Path
 
+def _mask_secret(value: str | None) -> str:
+    if not value:
+        return "<unset>"
+    return value[:4] + "****"
+
+
 # Load .env manually to be 100% sure
 env_path = Path(".env")
-env_vars = {}
-with open(env_path) as f:
-    for line in f:
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        env_vars[k.strip()] = v.strip().strip('"').strip("'")
+env_vars: dict[str, str] = {}
+if env_path.exists():
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env_vars[k.strip()] = v.strip().strip('"').strip("'")
 
 print(f"✅ Loaded {len(env_vars)} vars from .env")
-print(f"LANGCHAIN_API_KEY from .env: {env_vars.get('LANGCHAIN_API_KEY')}")
+print(
+    f"ALPHAVANTAGE_API_KEY from .env: {_mask_secret(env_vars.get('ALPHAVANTAGE_API_KEY'))}"
+)
 
-# Secrets to create
+# Secrets to create — LangSmith is strictly forbidden in CAGE (AGENTS.md §7);
+# enforce LANGCHAIN_TRACING_V2=false and LANGSMITH_TRACING=false.
 advisor_secrets = {
-    "LANGCHAIN_TRACING_V2": env_vars.get("LANGCHAIN_TRACING_V2", "true"),
-    "LANGCHAIN_ENDPOINT": env_vars.get(
-        "LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"
-    ),
-    "LANGCHAIN_API_KEY": env_vars.get("LANGCHAIN_API_KEY", ""),
-    "LANGCHAIN_PROJECT": env_vars.get("LANGCHAIN_PROJECT", "financial-advisor"),
-    "LANGSMITH_TRACING": env_vars.get("LANGCHAIN_TRACING_V2", "true"),  # Alias
-    "LANGSMITH_ENDPOINT": env_vars.get(
-        "LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"
-    ),  # Alias
-    "LANGSMITH_API_KEY": env_vars.get("LANGCHAIN_API_KEY", ""),  # Alias
-    "LANGSMITH_PROJECT": env_vars.get(
-        "LANGCHAIN_PROJECT", "financial-advisor"
-    ),  # Alias
+    "LANGCHAIN_TRACING_V2": "false",
+    "LANGSMITH_TRACING": "false",
     "ALPHAVANTAGE_API_KEY": env_vars.get("ALPHAVANTAGE_API_KEY", ""),
 }
 
@@ -74,14 +72,26 @@ try:
     print("✅ advisor-secrets updated.")
 except subprocess.CalledProcessError as e:
     print(f"❌ Failed to update secrets: {e}")
-    exit(1)
+    raise SystemExit(1) from e
 
-# Now trigger build of backend
+# Trigger SHA-pinned Cloud Build of governed-financial-advisor (never :latest)
 project_id = env_vars.get("GOOGLE_CLOUD_PROJECT", "your-project-id")
-print(f"🏗️ Rebuilding Backend for {project_id} (to remove baked-in .env)...")
-image_uri = f"gcr.io/{project_id}/financial-advisor:latest"
+short_sha = subprocess.check_output(
+    ["git", "rev-parse", "--short", "HEAD"], text=True
+).strip()
+print(f"🏗️ Rebuilding Backend for {project_id} at {short_sha}...")
 subprocess.run(
-    ["gcloud", "builds", "submit", "--tag", image_uri, "--project", project_id, "."],
+    [
+        "gcloud",
+        "builds",
+        "submit",
+        "--config",
+        "deployment/docker/cloudbuild.image.yaml",
+        f"--substitutions=_IMAGE_NAME=governed-financial-advisor,_DOCKERFILE=src/governed_financial_advisor/Dockerfile,_SHORT_SHA={short_sha}",
+        "--project",
+        project_id,
+        ".",
+    ],
     check=True,
 )
 print("✅ Backend Rebuilt.")
@@ -100,3 +110,4 @@ subprocess.run(
     check=True,
 )
 print("✅ Deployment Restarted.")
+

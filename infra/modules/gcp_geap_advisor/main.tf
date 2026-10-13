@@ -159,7 +159,7 @@ resource "terraform_data" "geap_reasoning_engine" {
         --region "${self.input.region}" \
         --agent-id "${self.input.agent_id}" \
         --entrypoint-module "${self.input.entrypoint_module}" \
-        --entrypoint-object "root_agent" \
+        --entrypoint-object "${self.input.entrypoint_object}" \
         --cpu-limit "${self.input.resource_limits.cpu}" \
         --memory-limit "${self.input.resource_limits.memory}" \
         --min-instances "${self.input.min_instances}" \

@@ -188,6 +188,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "LANGCHAIN_TRACING_V2"
+            value = "false"
+          }
+
+          env {
+            name  = "LANGSMITH_TRACING"
+            value = "false"
+          }
+
+          env {
             name  = "REMEDIATION_MODEL"
             value = var.remediation_model
           }

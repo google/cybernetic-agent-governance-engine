@@ -66,6 +66,9 @@ resource "kubernetes_secret" "advisor_secrets" {
     "CAGE_INTERNAL_TOKEN"              = var.cage_internal_token != "" ? var.cage_internal_token : var.governance_salt
     "COMPLIANCE_BRIDGE_INTERNAL_TOKEN" = var.cage_internal_token != "" ? var.cage_internal_token : var.governance_salt
     "EVIDENCE_STREAM_ENABLED"          = "true"
+    "OTEL_EXPORTER_OTLP_HEADERS"       = var.otel_exporter_otlp_headers
+    "LANGFUSE_BASIC_AUTH_B64"          = var.otel_exporter_otlp_headers
+    "REDIS_PASSWORD"                   = var.redis_password
   }
 }
 

@@ -194,6 +194,14 @@ resource "kubernetes_deployment" "gateway" {
             value = var.enable_logging
           }
           env {
+            name  = "LANGCHAIN_TRACING_V2"
+            value = "false"
+          }
+          env {
+            name  = "LANGSMITH_TRACING"
+            value = "false"
+          }
+          env {
             name  = "OTEL_TRACES_EXPORTER"
             value = "otlp"
           }
@@ -207,8 +215,14 @@ resource "kubernetes_deployment" "gateway" {
             value = "http/protobuf"
           }
           env {
-            name  = "OTEL_EXPORTER_OTLP_HEADERS"
-            value = var.otel_exporter_otlp_headers
+            name = "OTEL_EXPORTER_OTLP_HEADERS"
+            value_from {
+              secret_key_ref {
+                name     = "advisor-secrets"
+                key      = "OTEL_EXPORTER_OTLP_HEADERS"
+                optional = true
+              }
+            }
           }
           env {
             name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY"
@@ -247,12 +261,18 @@ resource "kubernetes_deployment" "gateway" {
             value = var.redis_host
           }
           env {
-            name  = "REDIS_PASSWORD"
-            value = var.redis_password
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name     = "advisor-secrets"
+                key      = "REDIS_PASSWORD"
+                optional = true
+              }
+            }
           }
           env {
             name  = "REDIS_URL"
-            value = var.redis_password != "" ? "redis://:${var.redis_password}@${var.redis_host}:${var.redis_port}" : "redis://${var.redis_host}:${var.redis_port}"
+            value = "redis://${var.redis_host}:${var.redis_port}"
           }
           env {
             name  = "VLLM_BASE_URL"

@@ -64,11 +64,17 @@ resource "kubernetes_secret" "langfuse_secrets" {
   }
 
   data = {
-    "nextauth-secret" = random_id.nextauth_secret.hex
-    "salt"            = random_id.salt.hex
-    "encryption-key"  = random_id.encryption_key.hex
-    "public-key"      = coalesce(var.langfuse_public_key, random_id.public_key.hex)
-    "secret-key"      = coalesce(var.langfuse_secret_key, random_id.secret_key.hex)
+    "nextauth-secret"          = random_id.nextauth_secret.hex
+    "salt"                     = random_id.salt.hex
+    "encryption-key"           = random_id.encryption_key.hex
+    "public-key"               = coalesce(var.langfuse_public_key, random_id.public_key.hex)
+    "secret-key"               = coalesce(var.langfuse_secret_key, random_id.secret_key.hex)
+    "init-user-password"       = var.langfuse_init_user_password
+    "clickhouse-password"      = var.clickhouse_password
+    "clickhouse-migration-url" = var.clickhouse_migration_url
+    "s3-access-key"            = var.s3_access_key
+    "s3-secret-key"            = var.s3_secret_key
+    "redis-connection-string"  = var.redis_connection_string
   }
 }
 
@@ -152,8 +158,13 @@ resource "kubernetes_deployment" "langfuse_web" {
           dynamic "env" {
             for_each = var.langfuse_init_user_password != "" ? [1] : []
             content {
-              name  = "LANGFUSE_INIT_USER_PASSWORD"
-              value = var.langfuse_init_user_password
+              name = "LANGFUSE_INIT_USER_PASSWORD"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "init-user-password"
+                }
+              }
             }
           }
 
@@ -192,16 +203,26 @@ resource "kubernetes_deployment" "langfuse_web" {
           dynamic "env" {
             for_each = var.langfuse_public_key != "" ? [1] : []
             content {
-              name  = "LANGFUSE_INIT_PROJECT_PUBLIC_KEY"
-              value = var.langfuse_public_key
+              name = "LANGFUSE_INIT_PROJECT_PUBLIC_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "public-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.langfuse_secret_key != "" ? [1] : []
             content {
-              name  = "LANGFUSE_INIT_PROJECT_SECRET_KEY"
-              value = var.langfuse_secret_key
+              name = "LANGFUSE_INIT_PROJECT_SECRET_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "secret-key"
+                }
+              }
             }
           }
 
@@ -217,8 +238,13 @@ resource "kubernetes_deployment" "langfuse_web" {
           dynamic "env" {
             for_each = var.clickhouse_migration_url != "" ? [1] : []
             content {
-              name  = "CLICKHOUSE_MIGRATION_URL"
-              value = var.clickhouse_migration_url
+              name = "CLICKHOUSE_MIGRATION_URL"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "clickhouse-migration-url"
+                }
+              }
             }
           }
 
@@ -233,8 +259,13 @@ resource "kubernetes_deployment" "langfuse_web" {
           dynamic "env" {
             for_each = var.clickhouse_password != "" ? [1] : []
             content {
-              name  = "CLICKHOUSE_PASSWORD"
-              value = var.clickhouse_password
+              name = "CLICKHOUSE_PASSWORD"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "clickhouse-password"
+                }
+              }
             }
           }
 
@@ -257,16 +288,26 @@ resource "kubernetes_deployment" "langfuse_web" {
           dynamic "env" {
             for_each = var.redis_connection_string != "" ? [1] : []
             content {
-              name  = "REDIS_CONNECTION_STRING"
-              value = var.redis_connection_string
+              name = "REDIS_CONNECTION_STRING"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "redis-connection-string"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.redis_connection_string != "" ? [1] : []
             content {
-              name  = "REDIS_URL"
-              value = var.redis_connection_string
+              name = "REDIS_URL"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "redis-connection-string"
+                }
+              }
             }
           }
 
@@ -330,32 +371,52 @@ resource "kubernetes_deployment" "langfuse_web" {
           dynamic "env" {
             for_each = var.s3_access_key != "" ? [1] : []
             content {
-              name  = "AWS_ACCESS_KEY_ID"
-              value = var.s3_access_key
+              name = "AWS_ACCESS_KEY_ID"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-access-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.s3_secret_key != "" ? [1] : []
             content {
-              name  = "AWS_SECRET_ACCESS_KEY"
-              value = var.s3_secret_key
+              name = "AWS_SECRET_ACCESS_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-secret-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.s3_access_key != "" ? [1] : []
             content {
-              name  = "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID"
-              value = var.s3_access_key
+              name = "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-access-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.s3_secret_key != "" ? [1] : []
             content {
-              name  = "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY"
-              value = var.s3_secret_key
+              name = "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-secret-key"
+                }
+              }
             }
           }
 
@@ -589,8 +650,13 @@ resource "kubernetes_deployment" "langfuse_worker" {
           dynamic "env" {
             for_each = var.clickhouse_password != "" ? [1] : []
             content {
-              name  = "CLICKHOUSE_PASSWORD"
-              value = var.clickhouse_password
+              name = "CLICKHOUSE_PASSWORD"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "clickhouse-password"
+                }
+              }
             }
           }
 
@@ -612,16 +678,26 @@ resource "kubernetes_deployment" "langfuse_worker" {
           dynamic "env" {
             for_each = var.redis_connection_string != "" ? [1] : []
             content {
-              name  = "REDIS_CONNECTION_STRING"
-              value = var.redis_connection_string
+              name = "REDIS_CONNECTION_STRING"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "redis-connection-string"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.redis_connection_string != "" ? [1] : []
             content {
-              name  = "REDIS_URL"
-              value = var.redis_connection_string
+              name = "REDIS_URL"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "redis-connection-string"
+                }
+              }
             }
           }
 
@@ -690,32 +766,52 @@ resource "kubernetes_deployment" "langfuse_worker" {
           dynamic "env" {
             for_each = var.s3_access_key != "" ? [1] : []
             content {
-              name  = "AWS_ACCESS_KEY_ID"
-              value = var.s3_access_key
+              name = "AWS_ACCESS_KEY_ID"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-access-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.s3_secret_key != "" ? [1] : []
             content {
-              name  = "AWS_SECRET_ACCESS_KEY"
-              value = var.s3_secret_key
+              name = "AWS_SECRET_ACCESS_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-secret-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.s3_access_key != "" ? [1] : []
             content {
-              name  = "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID"
-              value = var.s3_access_key
+              name = "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-access-key"
+                }
+              }
             }
           }
 
           dynamic "env" {
             for_each = var.s3_secret_key != "" ? [1] : []
             content {
-              name  = "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY"
-              value = var.s3_secret_key
+              name = "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "s3-secret-key"
+                }
+              }
             }
           }
 

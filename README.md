@@ -31,11 +31,13 @@ Domain specificity and jurisdictional compliance are **configuration, not core r
 > [!WARNING]
 > **Breaking change.** `X-Agent-ID` / `X-SPIFFE-ID` header parsing and the anonymous
 > fallback are removed. Callers must reach the gateway through the Linkerd mesh with an
-> mTLS workload identity (`l5d-client-id`) listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`;
-> requests without a trusted identity fail closed with **403**. The Envoy ext_authz
-> Agent Gateway adapter has since been removed; GKE + Linkerd mTLS is the sole
-> reference deployment. No compatibility shim is provided — the removed path was a
-> spoofing vector.
+> mTLS workload identity (`l5d-client-id`) listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`
+> (or via a verified Google Enterprise Agent Platform Agent Identity principal in
+> `CAGE_TRUSTED_GEAP_AGENT_PRINCIPALS` on [`agw_adapter.py`](src/gateway/governance/ingress/agw_adapter.py));
+> requests without a trusted identity fail closed with **403**. The legacy Envoy `ext_authz`
+> adapter (`agent_gateway_adapter.py`) has been removed; GKE + Linkerd mTLS (with optional
+> GEAP Agent Runtime / Agent Gateway integration) is the reference deployment. No
+> compatibility shim is provided — the removed path was a spoofing vector.
 
 | Capability | Location | Description |
 |---|---|---|
@@ -177,12 +179,9 @@ To prove that CAGE is truly agnostic and that its universal governance engine wo
 Both shipped plugins are **illustrative example domains of equal standing**; neither is privileged by the kernel. A CAGE process runs **exactly one** domain, named by the required `CAGE_DOMAIN` environment variable. Startup aborts if it is unset, lists more than one domain, or names a plugin that declares no `DomainConfig` (its FTRA terminal registry and optional causal graph).
 
 ```bash
-# The only domain that ships a DomainConfig today
+# Both reference domains ship a full DomainConfig (POAM-2026-077 closed 2026-09-30)
 export CAGE_DOMAIN=finance
-
-# Refuse to start until they ship their own FTRA registry (POAM-2026-077)
 export CAGE_DOMAIN=healthcare
-export CAGE_DOMAIN=physical_ai
 ```
 
 [`tests/test_bare_kernel_portability.py`](tests/test_bare_kernel_portability.py) and [`tests/test_cage_plugin_validation.py`](tests/test_cage_plugin_validation.py) provide the standing proof of this claim: they verify that Layer 1 boots cleanly without loading proprietary cloud vendor SDKs and that plugin contracts enforce domain isolation. Companion tests in [`tests/test_healthcare_plugin.py`](tests/test_healthcare_plugin.py) assert the healthcare package contains **zero** Lua files and **zero** KMS imports — it cannot fork the atomicity or signing paths.
@@ -766,7 +765,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 
 | Variable                                         | Description                                          |
 | ------------------------------------------------ | ---------------------------------------------------- |
-| `CAGE_DOMAIN`                                    | **Required.** The single domain plugin this process runs (`finance` today; `healthcare` / `physical_ai` refuse to start, POAM-2026-077) |
+| `CAGE_DOMAIN`                                    | **Required.** The single domain plugin this process runs (`finance` or `healthcare` today; POAM-2026-077 closed 2026-09-30) |
 | `CAGE_DEPLOYMENT_REGION`                         | Deployment region baseline (`US_FED`, `EU_ECB`, `APAC_MAS`, or `LOCAL`) |
 | `CAGE_TRUSTED_CLIENT_IDENTITIES`                 | Linkerd workload identities (`l5d-client-id`) allowed to call the gateway; enforced in every environment |
 | `KMS_GOVERNANCE_KEY`                             | Gateway Cloud KMS key version for routing-seal / envelope signing |

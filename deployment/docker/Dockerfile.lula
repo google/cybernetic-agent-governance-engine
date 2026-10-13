@@ -27,9 +27,17 @@ RUN git clone --depth 1 --branch v${LULA_VERSION} \
     -o /usr/local/bin/lula ./cmd/lula
 
 # ─── Stage 2: Runtime image ───────────────────────────────────────────────────
-FROM gcr.io/distroless/static-debian12:nonroot
+# Minimal Alpine runtime providing /bin/sh, curl, jq, and pgrep (procps) required
+# by the lula-sc4-watch Deployment and lula-compliance-validator CronJob in
+# deployment/k8s/lula-cron.yaml, running as non-root 65532:65532.
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates curl jq procps && \
+    addgroup -g 65532 -S nonroot && \
+    adduser -u 65532 -S -G nonroot -h /home/nonroot nonroot
 
 COPY --from=builder /usr/local/bin/lula /usr/local/bin/lula
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
+USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/lula"]
+

@@ -128,7 +128,7 @@ variable "langfuse_compliance_secret_key" {
 variable "oscal_api_key" {
   type      = string
   sensitive = true
-  default   = "DUMMY_API_KEY_FOR_LOCAL_DEV"
+  default   = ""
 }
 
 variable "opa_url" {
@@ -179,3 +179,16 @@ variable "cage_internal_token" {
   default     = ""
 }
 
+variable "otel_exporter_otlp_headers" {
+  description = "OTLP Authorization header for Langfuse trace ingestion (Authorization=Basic <b64>)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "redis_password" {
+  description = "Redis authentication password when password auth is enabled"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

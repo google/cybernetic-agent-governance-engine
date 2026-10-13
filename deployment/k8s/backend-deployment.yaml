@@ -29,14 +29,11 @@ spec:
       labels:
         app: governed-financial-advisor
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: cage-advisor-sa
-      volumes:
-        - name: policy-volume
-          secret:
-            secretName: finance-policy-rego
-        - name: opa-config-volume
-          secret:
-            secretName: opa-configuration
       containers:
         # Main Agent Container
         - name: governed-financial-advisor
@@ -46,13 +43,30 @@ spec:
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
           image: gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 8080
           env:
+            - name: CAGE_DOMAIN
+              value: "finance"
             - name: USE_MOCK_LLM
               value: "false"
             - name: PORT
               value: "8080"
+            - name: GATEWAY_URL
+              value: "http://gateway.governance-stack.svc.cluster.local:8080"
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGSMITH_TRACING
+              value: "false"
             - name: GOOGLE_CLOUD_PROJECT
               value: ""  # Set to your GCP project ID
             - name: GOOGLE_CLOUD_LOCATION
@@ -68,7 +82,7 @@ spec:
             - name: VLLM_REASONING_API_BASE
               value: "http://vllm-reasoning.governance-stack.svc.cluster.local:8000/v1"
             - name: OPA_URL
-              value: "http://opa-service:8181/v1/data/trade/governance"
+              value: "http://opa-service.governance-stack.svc.cluster.local:8181"
             - name: REDIS_HOST
               valueFrom:
                 secretKeyRef:
@@ -97,34 +111,6 @@ spec:
             limits:
               cpu: "1000m"
               memory: "2Gi"
-
-
-
-        # OPA Sidecar
-        - name: opa
-          image: openpolicyagent/opa:0.68.0-static
-          ports:
-            - containerPort: 8181
-          args:
-            - "run"
-            - "--server"
-            - "--addr=localhost:8181"
-            - "--config-file=/config/opa_config.yaml"
-            - "/policies/finance_policy.rego"
-          volumeMounts:
-            - name: policy-volume
-              mountPath: /policies
-              readOnly: true
-            - name: opa-config-volume
-              mountPath: /config
-              readOnly: true
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "128Mi"
-            limits:
-              cpu: "250m"
-              memory: "256Mi"
 
 ---
 apiVersion: v1

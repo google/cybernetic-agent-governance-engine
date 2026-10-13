@@ -71,6 +71,10 @@ spec:
                   key: secret-key
             - name: LANGFUSE_HOST
               value: "http://langfuse-web.governance-stack.svc.cluster.local"
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGSMITH_TRACING
+              value: "false"
 
             # Dedicated Langfuse compliance project (audit traces isolated from app metrics)
             - name: LANGFUSE_COMPLIANCE_PUBLIC_KEY

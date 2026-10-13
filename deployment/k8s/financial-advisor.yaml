@@ -133,6 +133,10 @@ spec:
             - name: OPA_URL
               value: "http://opa-service.governance-stack.svc.cluster.local:8181"
             # Tracing
+            - name: LANGCHAIN_TRACING_V2
+              value: "false"
+            - name: LANGSMITH_TRACING
+              value: "false"
             - name: ENABLE_TRACING
               value: "true"
             - name: OTEL_TRACES_EXPORTER
