@@ -851,8 +851,13 @@ def build_default_drawback_detectors(
         trajectory: ATIFTrajectory,
         report: TrajectoryBenchmarkReport | None,
     ) -> tuple[DrawbackVerdict, str]:
+        segments: list[str] = [trajectory.final_response]
+        segments.extend(str(v) for v in trajectory.intermediate_artifacts.values())
         for step in trajectory.steps:
-            text_to_scan = f"{step.message}\n{json.dumps(step.tool_calls)}"
+            segments.append(f"{step.message}\n{json.dumps(step.tool_calls)}")
+        for text_to_scan in segments:
+            if not text_to_scan:
+                continue
             conf_res = detect_confidence_claim(text_to_scan)
             if conf_res.detected:
                 return (

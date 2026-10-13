@@ -454,9 +454,10 @@ class TraceAuditor:
             valid_check_found = False
             for gov_span in gov_spans:
                 is_preceding = gov_span["end_time"] <= exec_span["start_time"]
-                is_allowed = (
-                    gov_span["attributes"].get("governance.decision") == "ALLOW"
-                )
+                is_allowed = gov_span["attributes"].get("governance.decision") in {
+                    "ALLOW",
+                    "NARROW",
+                }
 
                 if is_preceding and is_allowed:
                     valid_check_found = True
@@ -479,23 +480,24 @@ class TraceAuditor:
         logger.error(msg)
         self.violations.append({"trace_id": trace_id, "reason": reason})
 
-    def run(self):
+    def run(self, lookback_minutes: int = 60) -> int:
         logger.info("Starting Automated Auditor Loop...")
-        # One-shot for demo; pass sensible defaults for service and lookback
         traces = self.trace_source.fetch_traces(
-            service_name="governance-gateway", lookback_minutes=60
+            service_name="governance-gateway", lookback_minutes=lookback_minutes
         )
         for trace in traces:
             self.audit_trace(trace)
 
         if self.violations:
             logger.info(f"Audit Complete. Found {len(self.violations)} violations.")
-        else:
-            logger.info("Audit Complete. System is Clean.")
+            return 1
+        logger.info("Audit Complete. System is Clean.")
+        return 0
 
 
 if __name__ == "__main__":
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(
         description="CAGE Automated Auditor — AU-12 / SI-4 compliance (POAM-003)"
@@ -526,4 +528,6 @@ if __name__ == "__main__":
         _AUDITOR_TRACE_SOURCE = "mock"
 
     auditor = TraceAuditor()
-    auditor.run()
+    exit_code = auditor.run(lookback_minutes=args.lookback_minutes)
+    if not args.dry_run and exit_code != 0:
+        sys.exit(exit_code)

@@ -149,7 +149,6 @@ CONSTANTS
     MaxFenceEpoch = 4
     MaxStaleFailovers = 1
     SyncReplication = TRUE
-    Reconciled = TRUE
     Fenced = TRUE
     AllowRestart = TRUE
 

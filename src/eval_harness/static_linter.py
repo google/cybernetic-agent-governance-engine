@@ -372,6 +372,7 @@ def lint_skill_file(
 
 
 __all__ = [
+    "DESTRUCTIVE_COMMAND_PATTERN",
     "SkillStaticLintReport",
     "lint_skill_file",
     "lint_skill_markdown",

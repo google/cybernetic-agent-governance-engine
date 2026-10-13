@@ -476,3 +476,42 @@ class TestKernelAstPurityRules:
         violations = check_file_boundaries(test_file)
         assert len(violations) == 1
         assert expected_vendor in violations[0].rule_violated
+
+    @pytest.mark.parametrize(
+        ("code", "expected_module"),
+        [
+            ("from src import eval_harness\n", "src.eval_harness"),
+            ("from src import cage_finance\n", "src.cage_finance"),
+            ("from src import integrations\n", "src.integrations"),
+            ("from src import compliance_bridge\n", "src.compliance_bridge"),
+            (
+                "from src import governed_financial_advisor\n",
+                "src.governed_financial_advisor",
+            ),
+            ("from google import cloud\n", "google.cloud"),
+            ("from .. import cage_finance\n", "cage_finance"),
+        ],
+    )
+    def test_from_namespace_and_relative_imports_detected(
+        self, tmp_path: Path, code: str, expected_module: str
+    ) -> None:
+        """Verify `from src import ...`, `from google import cloud`, and relative imports are caught."""
+        fake_gateway = tmp_path / "src" / "gateway" / "server"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "bypass_attempt.py"
+        test_file.write_text(code, encoding="utf-8")
+
+        violations = check_file_boundaries(test_file)
+        assert len(violations) == 1
+        assert violations[0].imported_module == expected_module
+
+    def test_syntax_error_fails_closed(self, tmp_path: Path) -> None:
+        """Verify SyntaxError in a Layer 1 file produces a BoundaryViolation rather than failing open."""
+        fake_gateway = tmp_path / "src" / "gateway" / "server"
+        fake_gateway.mkdir(parents=True)
+        test_file = fake_gateway / "broken_syntax.py"
+        test_file.write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+        violations = check_file_boundaries(test_file)
+        assert len(violations) == 1
+        assert violations[0].imported_module == "<SyntaxError>"

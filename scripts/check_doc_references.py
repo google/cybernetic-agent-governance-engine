@@ -36,17 +36,16 @@ from pathlib import Path
 
 REPO_ROOT = Path.cwd().resolve()
 
-# Directories and root files to scan
+# Directories and root files to scan by default (mirrors Gate G9 in CI and Makefile docs-check;
+# CHANGELOG.md and docs/partners/** are outside the gate's scope by design).
 DOC_ROOTS = [
-    REPO_ROOT / "docs",
-    REPO_ROOT / "compliance",
     REPO_ROOT / "README.md",
     REPO_ROOT / "AGENTS.md",
-    # CHANGELOG.md is deliberately excluded: a changelog records removals, so it
-    # must be free to name paths that no longer exist on disk.
     REPO_ROOT / "COMPLIANCE.md",
     REPO_ROOT / "SECURITY.md",
     REPO_ROOT / "CONTRIBUTING.md",
+    REPO_ROOT / "docs" / "architecture",
+    REPO_ROOT / "compliance",
 ]
 
 # Markdown link: [text](target)

@@ -37,6 +37,7 @@ import json
 import os
 import sys
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 # Known project IDs — must match live Langfuse instance
@@ -54,7 +55,7 @@ BASE_REQUIRED_VARS = [
     "LANGFUSE_COMPLIANCE_PUBLIC_KEY",
     "LANGFUSE_COMPLIANCE_SECRET_KEY",
 ]
-PROD_EXTRA_VARS = ["GOOG-REDACTED"]
+PROD_EXTRA_VARS = ["LANGFUSE_COMPLIANCE_PROJECT_ID"]
 
 
 def check_env_vars(posture: str) -> bool:
@@ -74,12 +75,15 @@ def check_env_vars(posture: str) -> bool:
 def query_langfuse_projects(host: str, pub_key: str, secret_key: str) -> list | None:
     """Query Langfuse /api/public/projects using Basic Auth via urllib."""
     url = f"{host.rstrip('/')}/api/public/projects"
+    if urlparse(url).scheme not in {"http", "https"}:
+        print(f"⚠️  Invalid URL scheme for Langfuse host: {host!r}")
+        return None
     auth_str = f"{pub_key}:{secret_key}"
     b64_auth = base64.b64encode(auth_str.encode()).decode()
     req = Request(url)
     req.add_header("Authorization", f"Basic {b64_auth}")
     try:
-        with urlopen(req, timeout=5) as response:
+        with urlopen(req, timeout=5) as response:  # nosec B310
             if response.status == 200:
                 data = json.loads(response.read().decode())
                 return [p["id"] for p in data.get("data", [])]

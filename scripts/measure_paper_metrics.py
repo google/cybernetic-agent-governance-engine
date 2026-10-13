@@ -1133,13 +1133,15 @@ def _send_prompt(prompt: str) -> tuple[int, str]:
         headers["Authorization"] = f"Bearer {api_key}"
 
     def _make_request() -> tuple[int, str]:
+        if urllib.parse.urlparse(url).scheme not in {"http", "https"}:
+            raise ValueError(f"Unsupported URL scheme in {url!r}")
         req = urllib.request.Request(
             url,
             data=data,
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:  # nosec B310
             return resp.status, resp.read().decode("utf-8", errors="replace")
 
     # ── First attempt ────────────────────────────────────────────────────────

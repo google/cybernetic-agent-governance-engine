@@ -19,20 +19,25 @@ Replaces the former GCP-specific helpers (gcloud APIs, Cloud Redis, Secret Manag
 with kubectl/Helm-based equivalents that work on any Kubernetes cluster.
 """
 
+import json
+
 from .utils import run_command
 
 
 def ensure_namespace(namespace: str = "governance-stack") -> None:
     """Ensure the K8s namespace exists."""
     print(f"\n--- 🛠️ Ensuring namespace: {namespace} ---")
-    run_command(
+    dry_run = run_command(
         ["kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml"],
         check=False,
+        capture_output=True,
     )
-    run_command(
-        ["kubectl", "apply", "-f", "-"],
-        check=False,
-    )
+    if getattr(dry_run, "returncode", 1) == 0 and getattr(dry_run, "stdout", None):
+        run_command(
+            ["kubectl", "apply", "-f", "-"],
+            check=False,
+            input_data=dry_run.stdout,
+        )
 
 
 def get_redis_host(
@@ -70,12 +75,17 @@ def create_secret_from_env(
     """Create or update a K8s Secret from a dict of env-var key/value pairs."""
     if check_secret_exists(namespace, secret_name):
         print(f"🔒 Secret {secret_name} exists. Updating...")
-        run_command(["kubectl", "delete", "secret", secret_name, "-n", namespace])
-
-    cmd = ["kubectl", "create", "secret", "generic", secret_name, "-n", namespace]
-    for key, value in env_vars.items():
-        cmd.append(f"--from-literal={key}={value}")
-    run_command(cmd)
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": secret_name, "namespace": namespace},
+        "type": "Opaque",
+        "stringData": dict(env_vars),
+    }
+    run_command(
+        ["kubectl", "apply", "-f", "-"],
+        input_data=json.dumps(manifest),
+    )
     print(f"✅ Secret {secret_name} created in namespace {namespace}.")
 
 

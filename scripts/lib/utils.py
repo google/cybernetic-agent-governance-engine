@@ -40,7 +40,14 @@ def load_dotenv():
         print(f"⚠️ No .env file found at {env_path}")
 
 
-def run_command(command, check=True, capture_output=False, env=None):
+def _redact_cmd_arg(arg: str) -> str:
+    if arg.startswith("--from-literal=") and "=" in arg[len("--from-literal=") :]:
+        key_part = arg[len("--from-literal=") :].split("=", 1)[0]
+        return f"--from-literal={key_part}=****"
+    return arg
+
+
+def run_command(command, check=True, capture_output=False, env=None, input_data=None):
     """
     Runs a shell command and prints the output.
 
@@ -49,19 +56,22 @@ def run_command(command, check=True, capture_output=False, env=None):
         check (bool): Whether to raise an exception on failure.
         capture_output (bool): Whether to capture stdout/stderr.
         env (dict): Environment variables to pass.
+        input_data (str | None): Optional stdin payload to pass to the process.
 
     Returns:
         subprocess.CompletedProcess or subprocess.CalledProcessError
     """
     # Safely handle both string and list inputs
     cmd_args = shlex.split(command) if isinstance(command, str) else command
-    print(f"🚀 Running: {' '.join(cmd_args)}")
+    safe_args = [_redact_cmd_arg(str(a)) for a in cmd_args]
+    print(f"🚀 Running: {' '.join(safe_args)}")
     try:
         result = subprocess.run(
             cmd_args,
             check=check,
             capture_output=capture_output,
             text=True,
+            input=input_data,
             env=env or os.environ.copy(),
         )
         if capture_output and result.stdout:

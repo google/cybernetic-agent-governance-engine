@@ -151,18 +151,46 @@ def check_compiled_artifact_drift(
         logger.error("Failed to compile control structure: %s", exc)
         return 2
 
-    # Step 2: Check ControlRegistry.active_hash
+    # Step 2: Verify ControlRegistry.active_hash against on-disk regional baseline
     try:
+        import json as _json
+
         from src.gateway.governance.constants import ControlRegistry
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
         registry = ControlRegistry()
         registry_hash = registry.active_hash
-        logger.info("ControlRegistry.active_hash: %s", registry_hash[:16])
-    except Exception as exc:
-        logger.warning(
-            "Could not load ControlRegistry: %s — skipping registry hash check.", exc
+        if not registry_hash or len(registry_hash) != 64:
+            logger.error(
+                "❌ ControlRegistry.active_hash is empty or invalid: %r",
+                registry_hash,
+            )
+            return 1
+        baseline_file = (
+            _REPO_ROOT
+            / "config"
+            / "compliance"
+            / f"{registry.active_region}_BASELINE.json"
         )
-        registry_hash = None
+        if baseline_file.exists():
+            raw_baseline = _json.loads(baseline_file.read_text(encoding="utf-8"))
+            expected_baseline_hash = hashlib.sha256(
+                jcs_canonicalize_plan(ControlRegistry._coerce_floats(raw_baseline))
+            ).hexdigest()
+            if registry_hash != expected_baseline_hash:
+                logger.error(
+                    "❌ CONTROL REGISTRY DRIFT DETECTED\n"
+                    "   ControlRegistry.active_hash : %s\n"
+                    "   On-disk %s_BASELINE.json   : %s",
+                    registry_hash[:16],
+                    registry.active_region,
+                    expected_baseline_hash[:16],
+                )
+                return 1
+        logger.info("ControlRegistry.active_hash verified: %s", registry_hash[:16])
+    except Exception as exc:
+        logger.error("Failed to verify ControlRegistry.active_hash: %s", exc)
+        return 2
 
     # Step 3: Compare against stored baseline hash
     if update_baseline:

@@ -120,12 +120,20 @@ def _schema(event: Mapping[str, Any]) -> list[str]:
         problems.append(f"unknown profile {event.get('profile')!r}")
     if event.get("verdict") not in VERDICTS:
         problems.append(f"unknown verdict {event.get('verdict')!r}")
+    if not isinstance(event.get("seal_present"), bool):
+        problems.append(f"seal_present is {event.get('seal_present')!r}")
     for key in ("plan", "outcomes"):
-        if not isinstance(event.get(key), list):
+        val = event.get(key)
+        if not isinstance(val, list):
             problems.append(f"{key} is not a list")
-    for name, result in event.get("outcomes") or []:
-        if result not in ("PASS", "FAIL"):
-            problems.append(f"outcome {name}={result!r}")
+        elif any(not isinstance(item, (list, tuple)) or len(item) != 2 for item in val):
+            problems.append(f"{key} items must be 2-element pairs")
+    if isinstance(event.get("outcomes"), list):
+        for item in event["outcomes"]:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                name, result = item
+                if result not in ("PASS", "FAIL"):
+                    problems.append(f"outcome {name}={result!r}")
     return problems
 
 
@@ -206,9 +214,10 @@ def check_trace(events: Iterable[Mapping[str, Any]]) -> list[Finding]:
     issued: dict[str, tuple[Mapping[str, Any], State]] = {}
     executed: set[str] = set()
     for index, event in enumerate(events):
-        findings += [
-            Finding(index, rule, detail) for rule, detail in check_event(event)
-        ]
+        event_problems = check_event(event)
+        findings += [Finding(index, rule, detail) for rule, detail in event_problems]
+        if any(rule == "schema" for rule, _ in event_problems):
+            continue
         if event.get("type") != TRACE_EVENT_TYPE or event.get("phase") not in PHASES:
             continue
         ref = event.get("seal_ref")
@@ -233,7 +242,7 @@ def check_trace(events: Iterable[Mapping[str, Any]]) -> list[Finding]:
             findings.append(
                 Finding(index, "no_direct_bind", "EXECUTED without resolved ALLOW")
             )
-        elif state.phase == "SEAL_ISSUED" and not _in_model(source, after):
+        elif not _in_model(source, after if state.phase == "SEAL_ISSUED" else state):
             findings.append(
                 Finding(index, "no_direct_bind", f"{after} is not reachable")
             )

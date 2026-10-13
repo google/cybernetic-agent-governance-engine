@@ -185,6 +185,7 @@ class ImportVisitor(ast.NodeVisitor):
         self.imports: list[tuple[str, int, bool]] = []
         self.string_literals: list[tuple[str, int]] = []
         self.definitions: list[tuple[str, int, str]] = []
+        self.syntax_error: tuple[int, str] | None = None
         self._scope_depth: int = 0
         self._docstring_ids: set[int] = docstring_ids or set()
 
@@ -198,8 +199,16 @@ class ImportVisitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Visit `from x import y` statements."""
         is_module_scope = self._scope_depth == 0
-        if node.module:
+        if node.module in {"src", "google"} and node.names:
+            for alias in node.names:
+                self.imports.append(
+                    (f"{node.module}.{alias.name}", node.lineno, is_module_scope)
+                )
+        elif node.module:
             self.imports.append((node.module, node.lineno, is_module_scope))
+        else:
+            for alias in node.names:
+                self.imports.append((alias.name, node.lineno, is_module_scope))
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -241,7 +250,11 @@ def _analyze_ast(filepath: Path) -> ImportVisitor | None:
         visitor = ImportVisitor(docstring_ids=docstring_ids)
         visitor.visit(tree)
         return visitor
-    except (SyntaxError, FileNotFoundError):
+    except SyntaxError as exc:
+        visitor = ImportVisitor()
+        visitor.syntax_error = (exc.lineno or 1, exc.msg or "invalid syntax")
+        return visitor
+    except FileNotFoundError:
         return None
 
 
@@ -263,8 +276,19 @@ def check_file_boundaries(
     visitor = _analyze_ast(filepath)
     if visitor is None:
         return violations
-    imports = visitor.imports
     filepath_str = str(filepath)
+    if visitor.syntax_error is not None:
+        lineno, msg = visitor.syntax_error
+        violations.append(
+            BoundaryViolation(
+                file_path=filepath_str,
+                line_number=lineno,
+                imported_module="<SyntaxError>",
+                rule_violated=f"SyntaxError during AST boundary scan (fail-closed): {msg}",
+            )
+        )
+        return violations
+    imports = visitor.imports
 
     is_layer1 = False
     try:

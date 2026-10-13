@@ -474,6 +474,28 @@ def test_post_hitl_must_not_plan_read_only_tiers_beyond_opa() -> None:
     assert "plan" in _rules([_event(profile="POST_HITL", path="revalidate_post_hitl")])
 
 
+def test_malformed_sealing_event_reports_schema_without_keyerror() -> None:
+    bad = {
+        "type": TRACE_EVENT_TYPE,
+        "schema_version": TRACE_SCHEMA_VERSION,
+        "phase": "SEAL_ISSUED",
+        "seal_ref": "ref-bad",
+    }
+    assert _rules([bad]) == {"schema"}
+
+
+def test_executed_bound_to_unreachable_narrow_reports_no_direct_bind() -> None:
+    bad_narrow = _event(
+        verdict="NARROW",
+        phase="NARROW",
+        narrower_present=False,
+        clamped_params_valid=False,
+    )
+    rules = _rules([bad_narrow, _executed()])
+    assert "reachable" in rules
+    assert "no_direct_bind" in rules
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
