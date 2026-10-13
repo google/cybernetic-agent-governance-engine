@@ -74,9 +74,18 @@ tracer = trace.get_tracer("gateway.mcp_tool_server")
 
 _RATE_LIMIT_MAX_CALLS: int = int(os.getenv("MCP_RATE_LIMIT_MAX_CALLS", "60"))
 _RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS", "60"))
+_RATE_LIMIT_MAX_BUCKETS: int = 10000
 
-# client_ip → deque of call timestamps (monotonic)
-_rate_limit_buckets: dict[str, collections.deque] = {}
+# client_ip → deque of call timestamps (monotonic), bounded by TTLCache
+try:
+    from cachetools import TTLCache
+
+    _rate_limit_buckets: Any = TTLCache(
+        maxsize=_RATE_LIMIT_MAX_BUCKETS,
+        ttl=max(1, _RATE_LIMIT_WINDOW_SECONDS * 2),
+    )
+except ImportError:
+    _rate_limit_buckets = {}
 _rate_limit_lock = asyncio.Lock()
 
 # Prometheus metrics (optional — degrades gracefully if prometheus_client unavailable)
@@ -121,10 +130,17 @@ async def _check_rate_limit(client_ip: str) -> bool:
     now = time.monotonic()
     cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
     async with _rate_limit_lock:
-        bucket = _rate_limit_buckets.setdefault(client_ip, collections.deque())
-        # Evict expired timestamps
+        # Evict any expired timestamps across existing bucket for this IP
+        bucket = _rate_limit_buckets.get(client_ip)
+        if bucket is None:
+            bucket = collections.deque()
+            _rate_limit_buckets[client_ip] = bucket
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
+        # Clean up other empty buckets if plain dict fallback is used
+        empty_keys = [k for k, v in _rate_limit_buckets.items() if not v and k != client_ip]
+        for k in empty_keys:
+            _rate_limit_buckets.pop(k, None)
         if _METRICS_AVAILABLE and _rate_limit_active_buckets is not None:
             _rate_limit_active_buckets.set(len(_rate_limit_buckets))
         if len(bucket) >= _RATE_LIMIT_MAX_CALLS:
@@ -426,8 +442,15 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
     """Trigger an immediate safety intervention to lock the system."""
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
 
-    if gw_redis:
-        await gw_redis.set("safety_violation", reason)
+    if gw_redis is None:
+        logger.error(
+            "❌ SAFETY INTERVENTION FAILED: Redis unavailable; cannot persist lock for: %s",
+            reason,
+        )
+        raise RuntimeError(
+            "FAIL-CLOSED: Redis unavailable; cannot persist safety intervention lock"
+        )
+    await gw_redis.set("safety_violation", reason)
     logger.warning("🛑 SAFETY INTERVENTION TRIGGERED: %s", reason)
     return "INTERVENTION_ACK: System Locked."
 

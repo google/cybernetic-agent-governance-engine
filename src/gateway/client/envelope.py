@@ -78,6 +78,10 @@ class GovernanceEnvelope(BaseModel):
         default="cage_governance_decision",
         description="Fixed type identifier for governance decision envelopes",
     )
+    envelope_id: str | None = Field(
+        default=None,
+        description="Unique identifier for the governance envelope",
+    )
     issued_at: datetime = Field(
         ..., description="UTC datetime when the envelope was issued"
     )
@@ -99,8 +103,12 @@ class GovernanceEnvelope(BaseModel):
     payload: dict[str, Any] = Field(
         ..., description="Decision payload (structure depends on decision type)"
     )
-    signature: dict[str, str] = Field(
-        ...,
+    external_attestations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional external normative/attestation records",
+    )
+    signature: dict[str, str] | None = Field(
+        default=None,
         description="Cryptographic signature (algorithm, value, kid)",
     )
 

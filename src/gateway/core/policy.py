@@ -92,30 +92,34 @@ def _opa_cache_enabled() -> bool:
     return os.environ.get("OPA_CACHE_ENABLED", "true").lower() == "true"
 
 
-def _opa_cache_key(input_data: dict) -> str:
+def _normalize_opa_input(obj: Any) -> Any:
+    """Normalize datetime/Decimal values into JSON-safe primitives."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, Decimal):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _normalize_opa_input(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_normalize_opa_input(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        return str(obj)
+
+
+def _opa_cache_key(input_data: dict, package: str | None = None) -> str:
     """Return a deterministic Redis key for an OPA input payload.
 
     v3.1.0: Migrated to RFC 8785 JCS canonicalization with pre-normalization.
+    Includes ``package`` when provided so OPAClient instances targeting
+    different Rego packages do not share cache entries.
     """
-
-    # Normalize datetime/Decimal before JCS canonicalization
-    def _normalize(obj: Any) -> Any:
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        elif isinstance(obj, Decimal):
-            return str(obj)
-        elif isinstance(obj, dict):
-            return {k: _normalize(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [_normalize(item) for item in obj]
-        elif isinstance(obj, (str, int, float, bool, type(None))):
-            return obj
-        else:
-            return str(obj)
-
-    normalized = _normalize(input_data)
+    normalized = _normalize_opa_input(input_data)
     canonical_bytes = jcs_canonicalize_plan(normalized)
     digest = hashlib.sha256(canonical_bytes).hexdigest()[:24]
+    if package:
+        return f"{_OPA_CACHE_PREFIX}{package}:{digest}"
     return f"{_OPA_CACHE_PREFIX}{digest}"
 
 
@@ -550,16 +554,22 @@ class OPAClient:
         # Check Redis for a cached decision before making the HTTP call.
         # Short-circuits the entire OPA round-trip for repeated identical inputs
         # within the 10-second TTL window.
-        cache_key = _opa_cache_key(input_data)
+        normalized_input = _normalize_opa_input(input_data)
+        try:
+            active_pkg: str | None = self.package
+        except Exception:
+            active_pkg = self._package
+        cache_key = _opa_cache_key(normalized_input, package=active_pkg)
         cached = await _read_opa_cache(cache_key)
         if cached is not None:
             logger.debug("⚡ OPA cache hit (key=%s…) → %s", cache_key[-8:], cached)
             return cached
 
+        serialized_input = json.dumps(normalized_input)
         with tracer.start_as_current_span("governance.opa_check") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "opa_policy_check")
-            span.set_attribute(OBSERVATION_INPUT, json.dumps(input_data))
+            span.set_attribute(OBSERVATION_INPUT, serialized_input)
             start_time = time.time()
             span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.10.1")
             span.set_attribute(
@@ -573,7 +583,7 @@ class OPAClient:
             )
             span.set_attribute(
                 TRACE_METADATA_GOVERNANCE_POLICY_INPUT_SIZE,
-                len(json.dumps(input_data)),
+                len(serialized_input),
             )
             span.set_attribute("governance.opa.cache_hit", False)
 
@@ -597,7 +607,7 @@ class OPAClient:
                 client = self._get_client()
                 response = await client.post(
                     query_url,
-                    json={"input": input_data},
+                    json={"input": normalized_input},
                     headers=headers,
                     timeout=5.0,
                 )

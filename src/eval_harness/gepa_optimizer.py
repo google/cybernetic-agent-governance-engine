@@ -49,12 +49,13 @@ Skill Certification Plane (`src/eval_harness/`):
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import hashlib
 import importlib
 import inspect
 import json
 import math
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
@@ -66,12 +67,15 @@ from src.eval_harness.harness import (
     SkillEvalCase,
     SkillTrajectoryScorecard,
     TrajectoryBenchmarkReport,
+    _token_present_affirmatively,
 )
 from src.eval_harness.runner import (
     TrajectoryTokenomics,
     compute_trajectory_tokenomics,
 )
 from src.eval_harness.static_linter import (
+    _FENCED_CODE_BLOCK_RE,
+    _PROHIBITION_LINE_RE,
     _PROMPT_INJECTION_RE,
     _SECRET_CANARY_RE,
     DESTRUCTIVE_COMMAND_PATTERN,
@@ -84,6 +88,9 @@ from src.gateway.governance.confidence_claim_detector import (
     detect_confidence_claim,
 )
 from src.gateway.governance.pii_sanitizer import PIISanitizer
+from src.gateway.governance.prompt_injection_detector import (
+    detect_prompt_injection,
+)
 
 if TYPE_CHECKING:
     from src.gateway.governance.governor.governor import SymbolicGovernor
@@ -101,6 +108,20 @@ class CandidateSecurityReport:
     passed: bool
     violations: tuple[str, ...] = ()
     static_lint_score: float = 1.0
+
+
+def _has_non_prohibited_destructive_command(text: str) -> bool:
+    """Return True if ``text`` has a destructive command in a code fence or non-prohibition line."""
+    for block in _FENCED_CODE_BLOCK_RE.findall(text):
+        if DESTRUCTIVE_COMMAND_PATTERN.search(block) is not None:
+            return True
+    non_fenced = _FENCED_CODE_BLOCK_RE.sub("", text)
+    for line in non_fenced.splitlines():
+        if DESTRUCTIVE_COMMAND_PATTERN.search(
+            line
+        ) is not None and not _PROHIBITION_LINE_RE.search(line):
+            return True
+    return False
 
 
 def screen_candidate_security(
@@ -122,11 +143,12 @@ def screen_candidate_security(
         )
 
     violations: list[str] = []
-    if _PROMPT_INJECTION_RE.search(candidate_text):
+    inj_result = detect_prompt_injection(candidate_text)
+    if _PROMPT_INJECTION_RE.search(candidate_text) or inj_result.detected:
         violations.append("prompt_injection_pattern_detected")
     if _SECRET_CANARY_RE.search(candidate_text):
         violations.append("secret_or_canary_pattern_detected")
-    if DESTRUCTIVE_COMMAND_PATTERN.search(candidate_text):
+    if _has_non_prohibited_destructive_command(candidate_text):
         violations.append("destructive_command_pattern_detected")
 
     auth_claim = detect_authorization_claim(candidate_text)
@@ -148,9 +170,70 @@ def screen_candidate_security(
 
     return CandidateSecurityReport(
         passed=(len(violations) == 0),
-        violations=tuple(violations),
+        violations=tuple(dict.fromkeys(violations)),
         static_lint_score=round(float(static_score), 4),
     )
+
+
+def _screen_candidate_mapping(
+    candidate: Mapping[str, str],
+    *,
+    is_skill_markdown: bool = False,
+    min_skill_static_score: float = 0.70,
+) -> CandidateSecurityReport:
+    """Screen all components of a candidate mapping without breaking SKILL.md frontmatter anchors."""
+    if not candidate:
+        return CandidateSecurityReport(
+            passed=False,
+            violations=("empty_or_non_string_candidate",),
+            static_lint_score=0.0,
+        )
+
+    skill_keys: set[str] = set()
+    if is_skill_markdown:
+        if len(candidate) == 1:
+            skill_keys = set(candidate.keys())
+        else:
+            for k, v in candidate.items():
+                if "skill" in str(k).lower() or str(v).lstrip().startswith("---"):
+                    skill_keys.add(str(k))
+            if not skill_keys:
+                skill_keys = {str(k) for k in candidate.keys()}
+
+    all_violations: list[str] = []
+    lint_scores: list[float] = []
+
+    for k, v in candidate.items():
+        comp_is_skill = str(k) in skill_keys
+        rep = screen_candidate_security(
+            str(v),
+            is_skill_markdown=comp_is_skill,
+            min_skill_static_score=min_skill_static_score,
+        )
+        all_violations.extend(rep.violations)
+        if comp_is_skill:
+            lint_scores.append(rep.static_lint_score)
+
+    if len(candidate) > 1:
+        combined_rep = screen_candidate_security(
+            "\n\n".join(str(v) for v in candidate.values()),
+            is_skill_markdown=False,
+        )
+        all_violations.extend(combined_rep.violations)
+
+    min_score = min(lint_scores) if lint_scores else 1.0
+    dedup_violations = tuple(dict.fromkeys(all_violations))
+    return CandidateSecurityReport(
+        passed=(len(dedup_violations) == 0),
+        violations=dedup_violations,
+        static_lint_score=round(float(min_score), 4),
+    )
+
+
+def _candidate_dict_sha256(candidate: Mapping[str, str]) -> str:
+    """Compute canonical SHA-256 digest for a candidate mapping."""
+    canonical = json.dumps(dict(candidate), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +262,7 @@ class ActionableSideInfo:
     estimated_cost_usd: float = 0.0
     is_quadratic_bloat: bool = False
     extra_diagnostics: tuple[str, ...] = ()
+    generated_output: str = ""
 
     def to_reflective_dict(
         self, *, sanitizer: PIISanitizer | None = None
@@ -230,6 +314,7 @@ class ActionableSideInfo:
         return {
             "case_id": _clean(self.case_id),
             "Inputs": _clean(self.prompt),
+            "Generated Outputs": _clean(self.generated_output),
             "Score": round(float(self.score), 4),
             "Feedback": " | ".join(feedback_parts),
             "governor_cleared": self.governor_cleared,
@@ -352,8 +437,7 @@ class ParetoCandidate:
     @property
     def candidate_sha256(self) -> str:
         """Deterministic SHA-256 digest of the candidate text parameters."""
-        canonical = json.dumps(self.candidate, sort_keys=True, ensure_ascii=False)
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return _candidate_dict_sha256(self.candidate)
 
 
 def compute_pareto_frontier(
@@ -395,7 +479,7 @@ def compute_pareto_frontier(
 
 @dataclass(frozen=True)
 class CageEvaluationBatch:
-    """Batch evaluation result returned by :meth:`CageGEPAAdapter.evaluate`.
+    """Batch evaluation result returned by :meth:`CageGEPAAdapter.evaluate` / :meth:`CageGEPAAdapter.evaluate_async`.
 
     Mirrors ``gepa.core.adapter.EvaluationBatch`` (``outputs``, ``scores``,
     ``trajectories``) while carrying CAGE's :class:`ParetoObjectives` and
@@ -418,7 +502,8 @@ class CageGEPAAdapter:
     """GEPA Adapter connecting :class:`FoundationModelEvalHarness` to reflective optimization.
 
     Implements the ``GEPAAdapter`` contract:
-    * ``evaluate(batch, candidate, capture_traces=False)`` -> :class:`CageEvaluationBatch`
+    * ``evaluate(batch, candidate, capture_traces=True)`` / ``evaluate_async(...)``
+      -> :class:`CageEvaluationBatch`
     * ``make_reflective_dataset(candidate, eval_batch, components_to_update)``
       -> ``Mapping[str, Sequence[Mapping[str, Any]]]``
     """
@@ -439,6 +524,21 @@ class CageGEPAAdapter:
         self._quadratic_growth_threshold = quadratic_growth_threshold
         self._sanitizer = PIISanitizer()
 
+    def evaluate(
+        self,
+        batch: Sequence[SkillEvalCase],
+        candidate: Mapping[str, str],
+        capture_traces: bool = True,
+    ) -> CageEvaluationBatch:
+        """Synchronously evaluate ``candidate`` across ``batch`` (``GEPAAdapter`` protocol)."""
+        coro = self.evaluate_async(batch, candidate, capture_traces=capture_traces)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+
     async def evaluate_async(
         self,
         batch: Sequence[SkillEvalCase],
@@ -446,9 +546,8 @@ class CageGEPAAdapter:
         capture_traces: bool = True,
     ) -> CageEvaluationBatch:
         """Evaluate ``candidate`` across ``batch`` using :class:`FoundationModelEvalHarness`."""
-        combined_text = "\n\n".join(str(v) for v in candidate.values())
-        sec_report = screen_candidate_security(
-            combined_text,
+        sec_report = _screen_candidate_mapping(
+            candidate,
             is_skill_markdown=self._is_skill_markdown,
         )
         if not sec_report.passed:
@@ -496,7 +595,7 @@ class CageGEPAAdapter:
             gov_report: TrajectoryBenchmarkReport | None = None
             narrowed_notes: list[str] = []
             gov_violations: list[str] = []
-            if tool_steps and self._harness._governor is not None:
+            if tool_steps and self._harness.has_governor:
                 gov_report, triplets = await self._harness.evaluate_trajectory(
                     trajectory_id=trajectory.trajectory_id,
                     model_id=trajectory.model_id,
@@ -517,6 +616,7 @@ class CageGEPAAdapter:
                     case,
                     trajectory,
                     state_reducer=self._state_reducer,
+                    gov_report=gov_report,
                 )
             )
             tokenomics: TrajectoryTokenomics = compute_trajectory_tokenomics(
@@ -524,12 +624,12 @@ class CageGEPAAdapter:
                 quadratic_growth_threshold=self._quadratic_growth_threshold,
             )
 
-            # Identify missing required tokens & forbidden tools for ASI
-            final_lower = (trajectory.final_response or "").lower()
+            # Identify missing required tokens (affirmative check) & forbidden tools for ASI
+            final_text = trajectory.final_response or ""
             missing_tokens = tuple(
                 tok
                 for tok in case.required_output_tokens
-                if tok.lower() not in final_lower
+                if not _token_present_affirmatively(tok, final_text)
             )
             called_tools = {
                 str(tc.get("name") or tc.get("tool") or "")
@@ -561,7 +661,7 @@ class CageGEPAAdapter:
             admissibility = scorecard.admissibility_prm
             security = scorecard.security
 
-            outputs.append(trajectory.final_response)
+            outputs.append(final_text)
             scores.append(scorecard.composite_score)
             per_case[case.case_id] = scorecard.composite_score
             quality_vals.append(quality)
@@ -587,6 +687,7 @@ class CageGEPAAdapter:
                     token_growth_rate=tokenomics.multi_turn_growth_rate,
                     estimated_cost_usd=tokenomics.estimated_cost_usd,
                     is_quadratic_bloat=tokenomics.is_quadratic_bloat,
+                    generated_output=final_text,
                 )
             )
 
@@ -615,9 +716,12 @@ class CageGEPAAdapter:
         records: list[dict[str, Any]] = []
         for idx, asi in enumerate(eval_batch.trajectories or ()):
             rec = asi.to_reflective_dict(sanitizer=self._sanitizer)
-            rec["Generated Outputs"] = self._sanitizer.sanitize(
-                eval_batch.outputs[idx] if idx < len(eval_batch.outputs) else ""
+            batch_out = (
+                eval_batch.outputs[idx]
+                if idx < len(eval_batch.outputs) and eval_batch.outputs[idx]
+                else asi.generated_output
             )
+            rec["Generated Outputs"] = self._sanitizer.sanitize(batch_out)
             records.append(rec)
 
         return {comp: list(records) for comp in components_to_update}
@@ -695,7 +799,21 @@ class PresidioPIIOptimizationEvaluator:
         if analyzer is None or anonymizer is None:
             # Fallback to deterministic regex sanitizer when spaCy/Presidio is not installed
             sanitized = PIISanitizer().sanitize(text)
-            detected = ["PII_SANITIZED"] if sanitized != text else []
+            detected: list[str] = []
+            token_map = (
+                ("[REDACTED_SSN]", "US_SSN"),
+                ("[REDACTED_EMAIL]", "EMAIL_ADDRESS"),
+                ("[REDACTED_PHONE]", "PHONE_NUMBER"),
+                ("[REDACTED_CC]", "CREDIT_CARD"),
+                ("[REDACTED_KEY]", "API_KEY"),
+                ("[REDACTED_SWIFT]", "IBAN_CODE"),
+            )
+            for marker, entity_name in token_map:
+                if marker in sanitized and marker not in text:
+                    if not active_entities or entity_name in active_entities:
+                        detected.append(entity_name)
+            if not detected and sanitized != text:
+                detected.append("PII_SANITIZED")
             return sanitized, detected
 
         entities = list(active_entities) if active_entities else list(_PII_ENTITIES)
@@ -749,15 +867,18 @@ class PresidioPIIOptimizationEvaluator:
             if not (0.05 <= score_threshold <= 0.99):
                 raise ValueError("score_threshold must be in [0.05, 0.99]")
             raw_entities = parsed.get("active_entities", [])
-            active_entities = (
-                [str(e) for e in raw_entities]
-                if isinstance(raw_entities, Sequence)
-                else []
-            )
+            if not isinstance(raw_entities, Sequence) or isinstance(
+                raw_entities, (str, bytes)
+            ):
+                raise ValueError("active_entities must be a JSON array of strings")
+            active_entities = [str(e) for e in raw_entities]
+
             raw_allow = parsed.get("allow_list", [])
-            allow_list = (
-                [str(w) for w in raw_allow] if isinstance(raw_allow, Sequence) else []
-            )
+            if not isinstance(raw_allow, Sequence) or isinstance(
+                raw_allow, (str, bytes)
+            ):
+                raise ValueError("allow_list must be a JSON array of strings")
+            allow_list = [str(w) for w in raw_allow]
         except Exception as exc:
             return (
                 ParetoObjectives(0.0, 0.0, 0.0, 0.0),
@@ -776,6 +897,7 @@ class PresidioPIIOptimizationEvaluator:
         preservation_scores: list[float] = []
         per_case: dict[str, float] = {}
         side_infos: list[ActionableSideInfo] = []
+        sanitizer = PIISanitizer()
 
         for sample in self._samples:
             redacted_text, detected_entities = self._run_redaction(
@@ -831,13 +953,25 @@ class PresidioPIIOptimizationEvaluator:
             preservation_scores.append(sample_preservation)
             per_case[sample.sample_id] = sample_score
 
+            # Scrub explicit must_not_contain substrings (e.g. PERSON names not matched by regex)
+            # before constructing ActionableSideInfo so raw PII never enters reflection prompts
+            scrubbed_prompt = sample.text
+            scrubbed_output = redacted_text
+            for sensitive in sample.must_not_contain:
+                if sensitive:
+                    scrubbed_prompt = scrubbed_prompt.replace(sensitive, "<REDACTED>")
+                    scrubbed_output = scrubbed_output.replace(sensitive, "<REDACTED>")
+            scrubbed_prompt = sanitizer.sanitize(scrubbed_prompt)
+            scrubbed_output = sanitizer.sanitize(scrubbed_output)
+
             side_infos.append(
                 ActionableSideInfo(
                     case_id=sample.sample_id,
-                    prompt=sample.text,
+                    prompt=scrubbed_prompt,
                     score=sample_score,
                     governor_cleared=(sample_recall == 1.0),
                     extra_diagnostics=tuple(diagnostics),
+                    generated_output=scrubbed_output,
                 )
             )
 
@@ -909,6 +1043,27 @@ class GEPAEvolutionEngine:
         self._mutator = mutator
         self._is_skill_markdown = is_skill_markdown
 
+    async def _evaluate_candidate_splits(
+        self,
+        candidate: Mapping[str, str],
+        train_cases: tuple[SkillEvalCase, ...],
+        val_cases: tuple[SkillEvalCase, ...] | None,
+    ) -> tuple[ParetoObjectives, tuple[ActionableSideInfo, ...], int]:
+        """Evaluate ``candidate`` on ``train_cases`` (for reflection ASI) and ``val_cases`` (for Pareto objectives)."""
+        train_batch = await self._adapter.evaluate_async(
+            train_cases, candidate, capture_traces=True
+        )
+        calls = len(train_cases)
+        side_info = tuple(train_batch.trajectories or ())
+        if val_cases is None:
+            return train_batch.objectives, side_info, calls
+
+        val_batch = await self._adapter.evaluate_async(
+            val_cases, candidate, capture_traces=False
+        )
+        calls += len(val_cases)
+        return val_batch.objectives, side_info, calls
+
     async def optimize(
         self,
         *,
@@ -923,12 +1078,17 @@ class GEPAEvolutionEngine:
             raise ValueError(
                 "GEPAEvolutionEngine.optimize requires a non-empty trainset"
             )
-        eval_cases = tuple(valset) if valset is not None else tuple(trainset)
+        if valset is not None and not valset:
+            raise ValueError(
+                "GEPAEvolutionEngine.optimize requires a non-empty valset when provided"
+            )
+        train_cases = tuple(trainset)
+        val_cases = tuple(valset) if valset is not None else None
         components = tuple(seed_candidate.keys())
 
         seed_dict = {str(k): str(v) for k, v in seed_candidate.items()}
-        seed_sec = screen_candidate_security(
-            "\n\n".join(seed_dict.values()),
+        seed_sec = _screen_candidate_mapping(
+            seed_dict,
             is_skill_markdown=self._is_skill_markdown,
         )
         if not seed_sec.passed:
@@ -939,15 +1099,17 @@ class GEPAEvolutionEngine:
         metric_calls = 0
         rejected_unsafe = 0
 
-        seed_batch = await self._adapter.evaluate_async(
-            eval_cases, seed_dict, capture_traces=True
-        )
-        metric_calls += len(eval_cases)
+        (
+            seed_objectives,
+            seed_side_info,
+            seed_calls,
+        ) = await self._evaluate_candidate_splits(seed_dict, train_cases, val_cases)
+        metric_calls += seed_calls
         seed_entry = ParetoCandidate(
             candidate_id="cand-0",
             candidate=seed_dict,
-            objectives=seed_batch.objectives,
-            side_info=tuple(seed_batch.trajectories or ()),
+            objectives=seed_objectives,
+            side_info=seed_side_info,
             parent_ids=(),
             reflection_rationale="seed_candidate",
             security_report=seed_sec,
@@ -955,11 +1117,12 @@ class GEPAEvolutionEngine:
 
         pool: list[ParetoCandidate] = [seed_entry]
         frontier: list[ParetoCandidate] = [seed_entry]
+        seen_hashes: set[str] = {seed_entry.candidate_sha256}
 
         for step_idx in range(1, max_iterations + 1):
             parent = frontier[(step_idx - 1) % len(frontier)]
             parent_batch = CageEvaluationBatch(
-                outputs=["" for _ in parent.side_info],
+                outputs=[asi.generated_output for asi in parent.side_info],
                 scores=[asi.score for asi in parent.side_info],
                 trajectories=list(parent.side_info),
                 objectives=parent.objectives,
@@ -977,29 +1140,32 @@ class GEPAEvolutionEngine:
                 for k in components
             }
 
-            sec_report = screen_candidate_security(
-                "\n\n".join(proposed.values()),
+            sec_report = _screen_candidate_mapping(
+                proposed,
                 is_skill_markdown=self._is_skill_markdown,
             )
             if not sec_report.passed:
                 rejected_unsafe += 1
                 continue
 
-            batch_res = await self._adapter.evaluate_async(
-                eval_cases, proposed, capture_traces=True
-            )
-            metric_calls += len(eval_cases)
-            new_cand = ParetoCandidate(
-                candidate_id=f"cand-{step_idx}",
-                candidate=proposed,
-                objectives=batch_res.objectives,
-                side_info=tuple(batch_res.trajectories or ()),
-                parent_ids=(parent.candidate_id,),
-                reflection_rationale=f"mutated_from:{parent.candidate_id}",
-                security_report=sec_report,
-            )
-            pool.append(new_cand)
-            frontier = compute_pareto_frontier(pool)
+            proposed_hash = _candidate_dict_sha256(proposed)
+            if proposed_hash not in seen_hashes:
+                seen_hashes.add(proposed_hash)
+                cand_obj, cand_asi, cand_calls = await self._evaluate_candidate_splits(
+                    proposed, train_cases, val_cases
+                )
+                metric_calls += cand_calls
+                new_cand = ParetoCandidate(
+                    candidate_id=f"cand-{step_idx}",
+                    candidate=proposed,
+                    objectives=cand_obj,
+                    side_info=cand_asi,
+                    parent_ids=(parent.candidate_id,),
+                    reflection_rationale=f"mutated_from:{parent.candidate_id}",
+                    security_report=sec_report,
+                )
+                pool.append(new_cand)
+                frontier = compute_pareto_frontier(pool)
 
             # Optional system-aware merge when candidate has >= 2 text components
             # and the Pareto frontier has >= 2 complementary candidates
@@ -1017,28 +1183,35 @@ class GEPAEvolutionEngine:
                             if comp_i % 2 == 0
                             else cand_b.candidate[comp_name]
                         )
-                    merge_sec = screen_candidate_security(
-                        "\n\n".join(merged_dict.values()),
-                        is_skill_markdown=self._is_skill_markdown,
-                    )
-                    if merge_sec.passed:
-                        merge_batch = await self._adapter.evaluate_async(
-                            eval_cases, merged_dict, capture_traces=True
+                    merged_hash = _candidate_dict_sha256(merged_dict)
+                    if merged_hash not in seen_hashes:
+                        merge_sec = _screen_candidate_mapping(
+                            merged_dict,
+                            is_skill_markdown=self._is_skill_markdown,
                         )
-                        metric_calls += len(eval_cases)
-                        merged_cand = ParetoCandidate(
-                            candidate_id=f"cand-{step_idx}-merge",
-                            candidate=merged_dict,
-                            objectives=merge_batch.objectives,
-                            side_info=tuple(merge_batch.trajectories or ()),
-                            parent_ids=(cand_a.candidate_id, cand_b.candidate_id),
-                            reflection_rationale=(
-                                f"system_aware_merge({cand_a.candidate_id},{cand_b.candidate_id})"
-                            ),
-                            security_report=merge_sec,
-                        )
-                        pool.append(merged_cand)
-                        frontier = compute_pareto_frontier(pool)
+                        if merge_sec.passed:
+                            seen_hashes.add(merged_hash)
+                            (
+                                merge_obj,
+                                merge_asi,
+                                merge_calls,
+                            ) = await self._evaluate_candidate_splits(
+                                merged_dict, train_cases, val_cases
+                            )
+                            metric_calls += merge_calls
+                            merged_cand = ParetoCandidate(
+                                candidate_id=f"cand-{step_idx}-merge",
+                                candidate=merged_dict,
+                                objectives=merge_obj,
+                                side_info=merge_asi,
+                                parent_ids=(cand_a.candidate_id, cand_b.candidate_id),
+                                reflection_rationale=(
+                                    f"system_aware_merge({cand_a.candidate_id},{cand_b.candidate_id})"
+                                ),
+                                security_report=merge_sec,
+                            )
+                            pool.append(merged_cand)
+                            frontier = compute_pareto_frontier(pool)
 
         best = max(
             frontier,

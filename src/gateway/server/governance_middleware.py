@@ -140,8 +140,8 @@ async def enforce_governance(
         ActionDeferred: The committing run deferred (an ineligible warrant).
         PermissionError: If the governor blocks the action.
     """
-    if tool_name in {"check_market_status", "verify_content_safety"}:
-        return ""  # Exempt read-only tools from governance overhead
+    if tool_name in {"verify_content_safety"}:
+        return ""  # Exempt kernel-internal read-only tools from governance overhead
 
     try:
         seal = await governor.govern(tool_name, params)
@@ -923,6 +923,7 @@ except ImportError:
     )
     _jwks_cache: dict[str, Any] = {}  # type: ignore[no-redef]
 _JWKS_CACHE_TTL_S: float = 3600.0  # 1 hour
+_jwks_fetched_at: float = 0.0
 
 
 def _get_jwks_cache_key() -> str:
@@ -955,9 +956,9 @@ async def _fetch_jwks() -> dict[str, Any]:
     Raises:
         RuntimeError: If the JWKS endpoint is unreachable or returns invalid JSON.
     """
+    global _jwks_fetched_at
     now = time.monotonic()
-    fetched_at = _jwks_cache.get("_fetched_at", 0.0)
-    if _jwks_cache and (now - fetched_at) < _JWKS_CACHE_TTL_S:
+    if _jwks_cache and (now - _jwks_fetched_at) < _JWKS_CACHE_TTL_S:
         return dict(_jwks_cache)  # type: ignore[arg-type,return-value]
 
     if not _OIDC_JWKS_URI:
@@ -977,10 +978,11 @@ async def _fetch_jwks() -> dict[str, Any]:
 
     keys: dict[str, Any] = {}
     for key_data in jwks_doc.get("keys", []):
-        kid = key_data.get("kid", "default")
-        keys[kid] = key_data
+        kid = key_data.get("kid")
+        if isinstance(kid, str) and kid.strip():
+            keys[kid] = key_data
 
-    keys["_fetched_at"] = now
+    _jwks_fetched_at = now
     _jwks_cache.clear()
     _jwks_cache.update(keys)
     return dict(_jwks_cache)  # type: ignore[arg-type]
@@ -1072,15 +1074,33 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
             detail={"error": "invalid_token", "message": "Malformed JWT"},
         )
 
-    kid = header.get("kid", "default")
-
     # Step 3: If OIDC is not configured, skip JWKS-dependent validation.
     # This path is only reachable when PyJWT IS installed but no JWKS URI is set
     # (token structure was valid above). Return empty identity — backward compat.
     if not _OIDC_JWKS_URI:
         return {}
 
-    # Step 4: Fetch JWKS and find the matching key.
+    if "jwk" in header:
+        logger.warning("OIDC: rejecting JWT with embedded 'jwk' header")
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={
+                "error": "invalid_token",
+                "message": "Embedded JWK in JWT header is not permitted",
+            },
+        )
+
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid.strip() or kid == "_fetched_at":
+        logger.warning("OIDC: JWT header missing valid 'kid'")
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": "Missing JWT kid header"},
+        )
+
+    # Step 4: Fetch JWKS and find the matching key strictly by kid (fail-closed).
     try:
         jwks = await _fetch_jwks()
     except RuntimeError as exc:
@@ -1091,7 +1111,7 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
             detail={"error": "invalid_token", "message": "JWKS endpoint unavailable"},
         )
 
-    key_data = jwks.get(kid) or jwks.get("default")
+    key_data = jwks.get(kid)
     if not key_data or not isinstance(key_data, dict):
         logger.warning("OIDC: no matching key for kid=%s", kid)
         raise HTTPException(
@@ -1230,7 +1250,7 @@ async def evaluate_agw_request_authz(request: Request) -> JSONResponse:
     from src.gateway.governance.ingress.agw_adapter import get_agw_adapter
 
     payload = await request.json()
-    gov = governor_of(request)
+    gov = governor_of(request.app)
     decision = await get_agw_adapter().evaluate_request_authz(payload, governor=gov)
     return JSONResponse(status_code=decision.http_status, content=asdict(decision))
 

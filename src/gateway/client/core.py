@@ -94,8 +94,10 @@ from src.gateway.client.exceptions import (
     CageGatewayError,
     DeferralPending,
     PolicyViolationException,
+    RoutingSealVerificationError,
 )
 from src.gateway.client.transport import create_mtls_transport
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("CageClient")
 
@@ -120,6 +122,9 @@ class CageClient:
         gateway_url: str,
         mtls_certs: tuple[str, str, str] | None = None,
         timeout_s: float = 5.0,
+        *,
+        public_keys: dict[str, str | bytes] | None = None,
+        verify_expiration: bool = False,
     ):
         """
         Initialize the CAGE Gateway client.
@@ -128,12 +133,18 @@ class CageClient:
             gateway_url: Base URL of the CAGE Gateway API (no trailing slash)
             mtls_certs: Optional tuple of (cert_path, key_path, ca_path) for mutual TLS
             timeout_s: Request timeout in seconds (default: 5.0)
+            public_keys: Optional out-of-band map of kid -> PEM public key for
+                cryptographic verification of returned GovernanceEnvelopes
+            verify_expiration: If True (or when public_keys is provided), enforce
+                wall-clock expiration check against envelope.expires_at
 
         Raises:
             FileNotFoundError: If mTLS certificate paths are invalid (fail-closed)
         """
         self.gateway_url = gateway_url.rstrip("/")
         self.timeout_s = timeout_s
+        self._public_keys = dict(public_keys) if public_keys is not None else None
+        self._verify_expiration = verify_expiration or (public_keys is not None)
 
         # Configure HTTP/2 transport with optional mTLS
         transport_kwargs: dict[str, Any] = {}
@@ -271,11 +282,118 @@ class CageClient:
             f"Unexpected gateway response (status {response.status_code}): {response.text[:200]}"
         )
 
+    def _verify_envelope_integrity(
+        self,
+        raw_envelope_data: dict[str, Any],
+        envelope: GovernanceEnvelope,
+    ) -> None:
+        """Verify envelope expiration and cryptographic signature.
+
+        Raises:
+            RoutingSealVerificationError: If the envelope is expired, lacks a
+                valid signature block, references an unknown kid, or fails
+                cryptographic signature verification.
+        """
+        if envelope.expires_at <= envelope.issued_at:
+            raise RoutingSealVerificationError(
+                "GovernanceEnvelope expires_at must be strictly after issued_at"
+            )
+
+        if self._verify_expiration and envelope.expires_at <= datetime.now(
+            timezone.utc
+        ):
+            raise RoutingSealVerificationError(
+                f"GovernanceEnvelope has expired (expires_at={envelope.expires_at.isoformat()})"
+            )
+
+        sig = envelope.signature
+        if not isinstance(sig, dict):
+            raise RoutingSealVerificationError(
+                "GovernanceEnvelope is missing required 'signature' block"
+            )
+
+        kid = sig.get("kid", "")
+        alg = sig.get("algorithm", "")
+        sig_val = sig.get("value", "")
+        if not kid or not alg or not sig_val:
+            raise RoutingSealVerificationError(
+                "GovernanceEnvelope signature block is incomplete (requires algorithm, kid, value)"
+            )
+
+        if self._public_keys is None:
+            return
+
+        pem_raw = self._public_keys.get(kid)
+        if pem_raw is None:
+            raise RoutingSealVerificationError(
+                f"GovernanceEnvelope signed by unknown kid={kid!r}"
+            )
+
+        try:
+            import base64
+
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import (
+                ec,
+                ed25519,
+                rsa,
+                utils,
+            )
+            from cryptography.hazmat.primitives.asymmetric import (
+                padding as rsa_padding,
+            )
+
+            pem_bytes = (
+                pem_raw.encode("utf-8") if isinstance(pem_raw, str) else pem_raw
+            )
+            public_key = serialization.load_pem_public_key(pem_bytes)
+
+            unsigned_dict = {
+                k: v for k, v in raw_envelope_data.items() if k != "signature"
+            }
+            canonical_bytes = jcs_canonicalize_plan(unsigned_dict)
+            digest = hashlib.sha256(canonical_bytes).digest()
+
+            pad_len = (4 - len(sig_val) % 4) % 4
+            signature_bytes = base64.urlsafe_b64decode(sig_val + ("=" * pad_len))
+
+            if isinstance(public_key, ec.EllipticCurvePublicKey):
+                key_size = (public_key.curve.key_size + 7) // 8
+                if len(signature_bytes) == key_size * 2:
+                    r = int.from_bytes(signature_bytes[:key_size], "big")
+                    s = int.from_bytes(signature_bytes[key_size:], "big")
+                    signature_bytes = utils.encode_dss_signature(r, s)
+                public_key.verify(
+                    signature_bytes,
+                    digest,
+                    ec.ECDSA(utils.Prehashed(hashes.SHA256())),
+                )
+            elif isinstance(public_key, ed25519.Ed25519PublicKey):
+                public_key.verify(signature_bytes, canonical_bytes)
+            elif isinstance(public_key, rsa.RSAPublicKey):
+                public_key.verify(
+                    signature_bytes,
+                    digest,
+                    rsa_padding.PKCS1v15(),
+                    utils.Prehashed(hashes.SHA256()),
+                )
+            else:
+                raise ValueError(f"Unsupported public key type: {type(public_key)}")
+        except RoutingSealVerificationError:
+            raise
+        except Exception as exc:
+            raise RoutingSealVerificationError(
+                f"GovernanceEnvelope signature verification failed: {exc}"
+            ) from exc
+
     async def _handle_allow_response(
         self, response: httpx.Response
     ) -> GovernanceEnvelope:
         """
-        Parse and verify a 200 OK (ALLOW) response from the gateway.
+        Parse and verify a 200 OK response from the gateway.
+
+        Supports both wrapped ``{"envelope": {...}}`` responses and top-level
+        canonical envelopes returned by ``POST /governance/validate-action``.
 
         Args:
             response: httpx.Response object from the gateway
@@ -284,6 +402,9 @@ class CageClient:
             GovernanceEnvelope: Validated governance decision envelope
 
         Raises:
+            RoutingSealVerificationError: Signature or expiration check failed
+            PolicyViolationException: Envelope carries a DENY/DENIED verdict
+            DeferralPending: Envelope carries a DEFER/REQUIRE_APPROVAL verdict
             CageGatewayError: Invalid response structure or missing envelope
         """
         try:
@@ -291,16 +412,85 @@ class CageClient:
         except json.JSONDecodeError as e:
             raise CageGatewayError(f"Invalid JSON in ALLOW response: {e}") from e
 
-        # Extract governance envelope from response
+        if not isinstance(response_data, dict):
+            raise CageGatewayError("ALLOW response must be a JSON object")
+
+        # Extract governance envelope from either wrapped or top-level wire format
         envelope_data = response_data.get("envelope")
         if not envelope_data:
-            raise CageGatewayError("ALLOW response missing required 'envelope' field")
+            if (
+                "envelope_version" in response_data
+                and "payload" in response_data
+                and "subject" in response_data
+            ):
+                envelope_data = response_data
+            else:
+                raise CageGatewayError(
+                    "ALLOW response missing required 'envelope' field"
+                )
 
         # Parse envelope into validated Pydantic model
         try:
             envelope = GovernanceEnvelope(**envelope_data)
         except Exception as e:
             raise CageGatewayError(f"Failed to parse governance envelope: {e}") from e
+
+        # Verify envelope expiration and signature before trusting payload
+        self._verify_envelope_integrity(envelope_data, envelope)
+
+        # Inspect verdict inside payload (server may return HTTP 200 envelopes
+        # for REQUIRE_APPROVAL, DEFER, or DENIED verdicts)
+        verdict = str(
+            envelope.payload.get("verdict")
+            or envelope.payload.get("decision")
+            or "ALLOW"
+        ).upper()
+
+        if verdict in ("DENY", "DENIED"):
+            audit_id = (
+                envelope.payload.get("audit_id")
+                or envelope.subject.get("record_hash")
+                or envelope.envelope_id
+            )
+            if not audit_id:
+                raise CageGatewayError(
+                    "DENY envelope missing required 'audit_id' or 'record_hash'"
+                )
+            reason_code = envelope.payload.get("reason_code", "POLICY_DENIED")
+            details = envelope.payload.get(
+                "details",
+                {"violations": envelope.payload.get("violations", [])},
+            )
+            recoverable = bool(envelope.payload.get("recoverable", True))
+            raise PolicyViolationException(
+                reason_code=reason_code,
+                violation_details=details,
+                audit_id=str(audit_id),
+                recoverable=recoverable,
+            )
+
+        if verdict in ("DEFER", "REQUIRE_APPROVAL"):
+            ticket_id = (
+                envelope.payload.get("defer_id")
+                or envelope.payload.get("ticket_id")
+                or envelope.envelope_id
+            )
+            if not ticket_id:
+                raise CageGatewayError(
+                    "DEFER envelope missing required 'ticket_id' or 'defer_id'"
+                )
+            defer_reason = str(
+                envelope.payload.get("defer_reason")
+                or envelope.payload.get("reason")
+                or "Human approval required"
+            )
+            ttl_seconds = int(envelope.payload.get("ttl_seconds", 14400))
+            raise DeferralPending(
+                ticket_id=str(ticket_id),
+                defer_reason=defer_reason,
+                expires_at=envelope.expires_at,
+                ttl_seconds=ttl_seconds,
+            )
 
         logger.info(
             f"Action ALLOWED: action={envelope.subject.get('action')}, "

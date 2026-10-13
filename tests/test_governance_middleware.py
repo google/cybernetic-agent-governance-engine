@@ -678,17 +678,18 @@ class TestModuleExports:
 class TestEnforceGovernanceHelper:
     """Tests for the enforce_governance() async helper."""
 
-    async def test_exempt_tool_returns_empty_seal(self):
-        """Read-only exempt tools bypass governance and return an empty seal."""
+    async def test_domain_tool_routes_through_governor_not_hardcoded_exempt(self):
+        """Domain read-only tools like check_market_status are not hardcoded in Layer 1."""
         from src.gateway.server.governance_middleware import enforce_governance
 
         gov = _mock_governor()
+        gov.govern = AsyncMock(return_value="domain-read-only-seal")
         seal = await enforce_governance(gov, "check_market_status", {"symbol": "AAPL"})
-        assert seal == ""
-        gov.govern.assert_not_called()
+        assert seal == "domain-read-only-seal"
+        gov.govern.assert_awaited_once_with("check_market_status", {"symbol": "AAPL"})
 
     async def test_exempt_tool_verify_content_safety_returns_empty_seal(self):
-        """verify_content_safety is also exempt from governance overhead."""
+        """verify_content_safety is exempt from governance overhead."""
         from src.gateway.server.governance_middleware import enforce_governance
 
         gov = _mock_governor()
@@ -968,3 +969,50 @@ class TestFlowSignalHttp202Receipt:
         # ADR-008 Phase 3: ALLOW verdicts return canonical envelope
         assert data.get("envelope_version") == "3.0"
         assert data["payload"]["verdict"] == "ALLOW"
+
+    def test_agw_request_authz_uses_governor_from_app_state(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """POST /agw/request-authz resolves governor via governor_of(request.app)."""
+        from src.gateway.governance.ingress.agw_adapter import (
+            AgwRequestAuthzDecision,
+            GeapTriIdentityContext,
+        )
+
+        mock_gov = _mock_governor()
+        fake_decision = AgwRequestAuthzDecision(
+            allowed=True,
+            http_status=200,
+            decision="ALLOW",
+            headers_to_inject={"X-CAGE-Routing-Seal": "agw-seal-123"},
+            agent_id="spiffe://cluster.local/ns/default/sa/agent",
+            tool_name="execute_trade",
+            tri_identity=GeapTriIdentityContext(
+                user_id="user-1",
+                agent_principal="spiffe://cluster.local/ns/default/sa/agent",
+            ),
+            reason="Approved",
+        )
+        mock_adapter = MagicMock()
+        mock_adapter.evaluate_request_authz = AsyncMock(return_value=fake_decision)
+
+        with (
+            _installed_governor(mock_gov),
+            patch(
+                "src.gateway.governance.ingress.agw_adapter.get_agw_adapter",
+                return_value=mock_adapter,
+            ),
+        ):
+            resp = client_for_flowsignal.post(
+                "/agw/request-authz",
+                json={"tool_name": "execute_trade", "parameters": {"amount": 100}},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["decision"] == "ALLOW"
+        mock_adapter.evaluate_request_authz.assert_awaited_once_with(
+            {"tool_name": "execute_trade", "parameters": {"amount": 100}},
+            governor=mock_gov,
+        )
+

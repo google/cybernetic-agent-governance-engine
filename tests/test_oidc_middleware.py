@@ -127,18 +127,38 @@ class TestValidateOidcToken:
 
     @pytest.mark.asyncio
     async def test_no_matching_key_raises_401(self):
-        """No matching JWKS key for kid → HTTP 401."""
+        """No matching JWKS key for kid → HTTP 401 (no fallback to 'default')."""
         import src.gateway.server.governance_middleware as gm
 
         token = _make_jwt_parts({"alg": "RS256", "kid": "unknown-kid"}, {"sub": "user"})
+        fake_default = {"kty": "RSA", "kid": "default", "n": "fake", "e": "AQAB"}
 
         with patch.object(gm, "_OIDC_JWKS_URI", "https://example.com/jwks"):
             with patch.object(
-                gm, "_fetch_jwks", return_value={"_fetched_at": time.monotonic()}
+                gm, "_fetch_jwks", return_value={"default": fake_default}
             ):
                 with pytest.raises(HTTPException) as exc_info:
                     await gm.validate_oidc_token(token)
         assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_missing_kid_or_embedded_jwk_raises_401(self):
+        """Missing kid or embedded jwk header → HTTP 401."""
+        import src.gateway.server.governance_middleware as gm
+
+        token_no_kid = _make_jwt_parts({"alg": "RS256"}, {"sub": "user"})
+        token_with_jwk = _make_jwt_parts(
+            {"alg": "RS256", "kid": "k1", "jwk": {"kty": "RSA"}}, {"sub": "user"}
+        )
+
+        with patch.object(gm, "_OIDC_JWKS_URI", "https://example.com/jwks"):
+            with pytest.raises(HTTPException) as exc_info1:
+                await gm.validate_oidc_token(token_no_kid)
+            assert exc_info1.value.status_code == 401
+
+            with pytest.raises(HTTPException) as exc_info2:
+                await gm.validate_oidc_token(token_with_jwk)
+            assert exc_info2.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_expired_jwt_raises_401(self):

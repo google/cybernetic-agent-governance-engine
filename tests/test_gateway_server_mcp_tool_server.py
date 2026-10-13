@@ -390,6 +390,19 @@ class TestMCPToolServerFunctions:
             assert "INTERVENTION_ACK" in res
 
     @pytest.mark.asyncio
+    async def test_trigger_safety_intervention_fails_closed_without_redis(self):
+        import sys
+
+        stubs = _mcp_import_stubs()
+        stubs["src.gateway.infrastructure.redis_client"] = MagicMock(redis_client=None)
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
+                await mod.trigger_safety_intervention("Emergency stop")
+
+    @pytest.mark.asyncio
     async def test_check_market_status(self):
         import sys
 

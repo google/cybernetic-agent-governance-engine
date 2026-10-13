@@ -1241,6 +1241,11 @@ class FoundationModelEvalHarness:
         )
 
     @property
+    def has_governor(self) -> bool:
+        """Return True if an in-memory SymbolicGovernor is attached for dry-run replay."""
+        return self._governor is not None
+
+    @property
     def reward_schedule(self) -> PRMRewardSchedule:
         return self._reward_schedule
 
@@ -1463,11 +1468,11 @@ class FoundationModelEvalHarness:
         trajectory: ATIFTrajectory,
         *,
         state_reducer: ShadowStateReducer | None = None,
+        gov_report: TrajectoryBenchmarkReport | None = None,
     ) -> SkillTrajectoryScorecard:
         """Score a normalized ATIF trajectory across ACES & Tessl dimensions."""
         tool_steps = trajectory.to_tool_action_steps()
-        gov_report: TrajectoryBenchmarkReport | None = None
-        if tool_steps and self._governor is not None:
+        if gov_report is None and tool_steps and self._governor is not None:
             gov_report, _ = await self.evaluate_trajectory(
                 trajectory_id=trajectory.trajectory_id,
                 model_id=trajectory.model_id,

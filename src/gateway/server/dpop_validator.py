@@ -23,7 +23,7 @@ import base64
 import hashlib
 import json
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -86,9 +86,14 @@ class DPoPValidator(ProofOfPossessionValidator):
             max_age_seconds: Maximum allowed timestamp skew (default: 60s)
         """
         self._max_age_seconds = max_age_seconds
-        self._seen_jti: set[str] = (
-            set()
-        )  # In-memory JTI tracking (production: use Redis)
+        try:
+            from cachetools import TTLCache
+
+            self._seen_jti: Any = TTLCache(
+                maxsize=10000, ttl=max(1, max_age_seconds * 2)
+            )
+        except ImportError:
+            self._seen_jti = {}
 
     async def validate_token_binding(
         self,
@@ -107,11 +112,15 @@ class DPoPValidator(ProofOfPossessionValidator):
         try:
             header = self._decode_base64url(dpop_parts[0])
             payload = self._decode_base64url(dpop_parts[1])
+            dpop_header = json.loads(header)
+            dpop_claims = json.loads(payload)
         except Exception as e:
-            raise TokenBindingError(f"Failed to decode DPoP JWT: {e}")
+            raise TokenBindingError(f"Failed to decode DPoP JWT: {e}") from e
 
-        dpop_header = json.loads(header)
-        dpop_claims = json.loads(payload)
+        if not isinstance(dpop_header, dict) or not isinstance(dpop_claims, dict):
+            raise TokenBindingError(
+                "Invalid DPoP JWT: header and payload must be JSON objects"
+            )
 
         # Extract and validate required claims
         self._validate_required_claims(dpop_header, dpop_claims)
@@ -130,6 +139,10 @@ class DPoPValidator(ProofOfPossessionValidator):
         # Validate timestamp freshness (fail-closed on skew > max_age_seconds)
         current_time = int(time.time())
         proof_time = dpop_claims["iat"]
+        if not isinstance(proof_time, (int, float)) or isinstance(proof_time, bool):
+            raise TokenBindingError(
+                f"Invalid DPoP 'iat' claim: expected numeric timestamp, got {type(proof_time).__name__}"
+            )
         age = current_time - proof_time
 
         if age < 0:
@@ -144,6 +157,8 @@ class DPoPValidator(ProofOfPossessionValidator):
 
         # Validate JTI uniqueness (replay protection)
         jti = dpop_claims["jti"]
+        if not isinstance(jti, str) or not jti.strip():
+            raise TokenBindingError("Invalid DPoP 'jti' claim: must be non-empty string")
         if jti in self._seen_jti:
             raise TokenBindingError(f"JTI replay detected: {jti}")
 
@@ -184,7 +199,7 @@ class DPoPValidator(ProofOfPossessionValidator):
 
         # Record JTI only after cryptographic verification succeeds so forged
         # proofs cannot pollute the replay cache.
-        self._seen_jti.add(jti)
+        self._seen_jti[jti] = True
 
         return True
 

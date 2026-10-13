@@ -453,3 +453,117 @@ def test_parameter_canonicalization():
     params3 = {"nested": {"b": 2, "a": 1}, "top": "value"}
     canon3 = CageClient._canonicalize_params(params3)
     assert '{"nested":{"a":1,"b":2},"top":"value"}' == canon3
+
+
+@respx.mock
+async def test_validate_action_top_level_envelope_with_envelope_id(
+    cage_client: CageClient,
+    mock_gateway_url: str,
+):
+    """Test top-level v3.0 envelope with envelope_id and external_attestations parses cleanly."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["envelope_id"] = "env-uuid-999"
+    envelope_data["external_attestations"] = [{"provider": "provider_01"}]
+
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(status_code=200, json=envelope_data)
+    )
+
+    envelope = await cage_client.validate_action(
+        action="execute_trade",
+        parameters={"symbol": "AAPL", "amount": 100},
+        agent_id="test-agent",
+    )
+    assert envelope.envelope_id == "env-uuid-999"
+    assert envelope.external_attestations == [{"provider": "provider_01"}]
+    assert envelope.payload["decision"] == "ALLOW"
+
+
+@respx.mock
+async def test_validate_action_http_200_require_approval_raises_deferral_pending(
+    cage_client: CageClient,
+    mock_gateway_url: str,
+):
+    """Test HTTP 200 envelope with verdict REQUIRE_APPROVAL raises DeferralPending."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["payload"]["verdict"] = "REQUIRE_APPROVAL"
+    envelope_data["payload"]["defer_id"] = "hitl-ticket-123"
+    envelope_data["payload"]["defer_reason"] = "OPA_MANUAL_REVIEW"
+
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(status_code=200, json=envelope_data)
+    )
+
+    with pytest.raises(DeferralPending) as exc_info:
+        await cage_client.validate_action(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 50000},
+            agent_id="test-agent",
+        )
+    assert exc_info.value.ticket_id == "hitl-ticket-123"
+    assert exc_info.value.defer_reason == "OPA_MANUAL_REVIEW"
+
+
+@respx.mock
+async def test_validate_action_http_200_deny_raises_policy_violation(
+    cage_client: CageClient,
+    mock_gateway_url: str,
+):
+    """Test HTTP 200 envelope with verdict DENY raises PolicyViolationException."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["payload"]["verdict"] = "DENY"
+    envelope_data["payload"]["violations"] = ["CBF_DRAWDOWN_LIMIT"]
+
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(status_code=200, json=envelope_data)
+    )
+
+    with pytest.raises(PolicyViolationException) as exc_info:
+        await cage_client.validate_action(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 50000},
+            agent_id="test-agent",
+        )
+    assert exc_info.value.reason_code == "POLICY_DENIED"
+    assert exc_info.value.violation_details["violations"] == ["CBF_DRAWDOWN_LIMIT"]
+
+
+@respx.mock
+async def test_validate_action_unknown_kid_fails_closed(
+    mock_gateway_url: str,
+    monkeypatch,
+):
+    """Test CageClient configured with public_keys rejects unknown kid."""
+    from src.gateway.client.exceptions import RoutingSealVerificationError
+
+    monkeypatch.setattr(
+        "src.gateway.client.transport.create_mtls_transport",
+        lambda *a, **kw: httpx.HTTPTransport(),
+    )
+    original_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "httpx.AsyncClient",
+        lambda *a, **kw: original_async_client(*a, **{**kw, "http2": False}),
+    )
+
+    now = datetime.now(timezone.utc)
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["issued_at"] = now.isoformat()
+    envelope_data["expires_at"] = (now + timedelta(minutes=5)).isoformat()
+
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(status_code=200, json=envelope_data)
+    )
+
+    client = CageClient(
+        gateway_url=mock_gateway_url,
+        public_keys={"other-kid": "-----BEGIN PUBLIC KEY-----\n..."},
+    )
+    with pytest.raises(RoutingSealVerificationError, match="signed by unknown kid"):
+        await client.validate_action(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 100},
+            agent_id="test-agent",
+        )
+    await client.aclose()
+

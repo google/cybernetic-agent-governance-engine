@@ -145,28 +145,34 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     # External Normative Provider integration (§2.5)
     provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
-    polling_task = None
+    normative_polling_task = None
 
     if provider_name != "static":
         from src.gateway.governance.normative_provider import NormativeProviderDaemon
 
         daemon = NormativeProviderDaemon.from_env()
         await daemon.boot_fetch()
-        polling_task = asyncio.create_task(daemon.start_polling())
+        normative_polling_task = asyncio.create_task(daemon.start_polling())
+        app.state.normative_polling_task = normative_polling_task
         logger.info(
             "✅ Normative provider '%s' initialized with background polling",
             provider_name,
         )
+    else:
+        app.state.normative_polling_task = None
 
     # ── Attestation Aggregator Boot & Polling ──────────────────────────────
     from src.gateway.governance.attestation_aggregator import AttestationAggregator
 
     attestation_aggregator = AttestationAggregator.from_env()
+    attestation_polling_task = None
     if attestation_aggregator.provider_count > 0:
         await attestation_aggregator.boot_fetch()
-        polling_task = asyncio.create_task(attestation_aggregator.start_poll_loop())
+        attestation_polling_task = asyncio.create_task(
+            attestation_aggregator.start_poll_loop()
+        )
         app.state.attestation_aggregator = attestation_aggregator
-        app.state.attestation_polling_task = polling_task
+        app.state.attestation_polling_task = attestation_polling_task
         logger.info(
             "Attestation aggregator initialized with %d provider(s)",
             attestation_aggregator.provider_count,
@@ -256,10 +262,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         await registry_daemon.stop()
 
     # Shutdown: cancel normative provider polling task if running
-    if polling_task is not None:
-        polling_task.cancel()
+    if normative_polling_task is not None:
+        normative_polling_task.cancel()
         try:
-            await polling_task
+            await normative_polling_task
         except asyncio.CancelledError:
             pass
 
@@ -272,6 +278,15 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         except asyncio.CancelledError:
             pass
         logger.info("Attestation aggregator polling task cancelled cleanly.")
+
+    # Shutdown: close OPA HTTP client pool if present
+    opa_client = getattr(getattr(governor, "components", None), "opa", None)
+    if opa_client is not None and hasattr(opa_client, "close"):
+        import inspect
+
+        close_res = opa_client.close()
+        if inspect.isawaitable(close_res):
+            await close_res
 
     if evidence_sink is not None:
         await evidence_sink.stop()

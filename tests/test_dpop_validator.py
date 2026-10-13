@@ -415,3 +415,45 @@ class TestDPoPValidator:
                 expected_uri="https://api.example.com/resource",
                 http_method="POST",
             )
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_payload_raises_token_binding_error(
+        self, validator, test_cert_pem
+    ):
+        """Test fail-closed: invalid JSON inside base64url segment raises TokenBindingError."""
+        bad_header = self._base64url_encode(b"{not-valid-json")
+        bad_payload = self._base64url_encode(b"{}")
+        bad_sig = self._base64url_encode(b"sig")
+        dpop_proof = f"{bad_header}.{bad_payload}.{bad_sig}"
+
+        with pytest.raises(TokenBindingError, match="Failed to decode DPoP JWT"):
+            await validator.validate_token_binding(
+                dpop_proof=dpop_proof,
+                client_cert_pem=test_cert_pem,
+                expected_uri="https://api.example.com/resource",
+                http_method="POST",
+            )
+
+    @pytest.mark.asyncio
+    async def test_boolean_iat_rejected(
+        self, validator, test_keypair, test_cert_pem
+    ):
+        """Test fail-closed: boolean iat claim is rejected as non-numeric."""
+        private_key, public_key = test_keypair
+        dpop_proof = self._create_dpop_jwt(
+            private_key=private_key,
+            public_key=public_key,
+            htm="POST",
+            htu="https://api.example.com/resource",
+            iat=True,  # type: ignore[arg-type]
+            jti="bool-iat-token",
+        )
+
+        with pytest.raises(TokenBindingError, match="Invalid DPoP 'iat' claim"):
+            await validator.validate_token_binding(
+                dpop_proof=dpop_proof,
+                client_cert_pem=test_cert_pem,
+                expected_uri="https://api.example.com/resource",
+                http_method="POST",
+            )
+

@@ -563,9 +563,11 @@ async def test_streaming_request_returns_event_stream(proxy_deps):
 
 @pytest.mark.asyncio
 async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
-    """When vLLM streaming returns 4xx, an SSE error event is yielded."""
+    """When vLLM streaming returns 4xx, an SSE error event is yielded and quota is rolled back."""
     app = proxy_deps["app"]
     mod = proxy_deps["module"]
+    quota_proxy = proxy_deps["quota_proxy"]
+    quota_proxy.rollback_step.reset_mock()
 
     async def _empty_aiter():
         return
@@ -593,6 +595,56 @@ async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
     assert resp.status_code == 200  # streaming path always 200
     body_bytes = resp.content
     assert b"vLLM backend error 503" in body_bytes
+    quota_proxy.rollback_step.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_streaming_tool_calls_filtered_by_nemo(proxy_deps, monkeypatch):
+    """Streamed delta.tool_calls arguments are reassembled and passed through verify_and_mask_output."""
+    app = proxy_deps["app"]
+    mod = proxy_deps["module"]
+
+    sse_chunks = [
+        b'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "transfer", "arguments": "{\\"ssn\\": "}}]}}]}\n\n',
+        b'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "\\"123-45-6789\\"}"}}]}}]}\n\n',
+        b"data: [DONE]\n\n",
+    ]
+
+    async def _fake_aiter_bytes():
+        for chunk in sse_chunks:
+            yield chunk
+
+    fake_stream_resp = MagicMock()
+    fake_stream_resp.status_code = 200
+    fake_stream_resp.aiter_bytes = _fake_aiter_bytes
+    fake_stream_resp.aread = AsyncMock(return_value=b"")
+
+    fake_cm = MagicMock()
+    fake_cm.__aenter__ = AsyncMock(return_value=fake_stream_resp)
+    fake_cm.__aexit__ = AsyncMock(return_value=False)
+
+    stream_client = MagicMock(spec=httpx.AsyncClient)
+    stream_client.is_closed = False
+    stream_client.stream = MagicMock(return_value=fake_cm)
+    mod._get_http_client = lambda: stream_client
+
+    captured_tool_args: list[str] = []
+
+    async def _mask(_rails, text):
+        captured_tool_args.append(text)
+        return text.replace("123-45-6789", "[REDACTED]")
+
+    monkeypatch.setattr("src.integrations.nemo.manager.verify_and_mask_output", _mask)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body(stream=True))
+
+    assert resp.status_code == 200
+    assert any("123-45-6789" in arg for arg in captured_tool_args)
+    assert b"[REDACTED]" in resp.content
+    assert b"123-45-6789" not in resp.content
 
 
 # ---------------------------------------------------------------------------

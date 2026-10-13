@@ -387,19 +387,34 @@ async def chat_completions(
             # applied before returning to the client.  Streaming responses
             # previously bypassed NeMo output filtering (GHSA-hfqj-24cj-693g).
             collected_chunks: list[bytes] = []
-            async for chunk in _stream_vllm(
-                target_url,
-                body,
-                api_key,
-                span=span,
-                request_start_ns=request_start_ns,
-            ):
-                collected_chunks.append(chunk)
+            try:
+                async for chunk in _stream_vllm(
+                    target_url,
+                    body,
+                    api_key,
+                    span=span,
+                    request_start_ns=request_start_ns,
+                ):
+                    collected_chunks.append(chunk)
+            except HTTPException:
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
+                raise
+            except Exception as exc:
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
+                safe_err = _safe_error_response(exc)
+                raise HTTPException(status_code=500, detail=safe_err) from exc
 
-            # Reassemble and attempt to extract the assistant content for
-            # output filtering.  SSE chunks are "data: {...}\n\n" lines.
+            # Reassemble and attempt to extract the assistant content and
+            # tool_calls arguments for output filtering.  SSE chunks are
+            # "data: {...}\n\n" lines.
             raw_stream = b"".join(collected_chunks).decode(errors="replace")
             filtered_content: str | None = None
+            streamed_tool_calls: dict[int, dict[str, str]] = {}
+            stream_backend_error = False
             for line in raw_stream.splitlines():
                 line = line.strip()
                 if not line.startswith("data:"):
@@ -409,15 +424,100 @@ async def chat_completions(
                     break
                 try:
                     chunk_json = json.loads(data_str)
-                    delta = (
-                        chunk_json.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content", "")
-                    )
+                    if isinstance(chunk_json, dict) and str(
+                        chunk_json.get("error", "")
+                    ).startswith("vLLM backend error"):
+                        stream_backend_error = True
+                    delta_obj = chunk_json.get("choices", [{}])[0].get("delta", {})
+                    delta = delta_obj.get("content", "")
                     if delta:
                         filtered_content = (filtered_content or "") + delta
-                except (json.JSONDecodeError, IndexError, KeyError):
+                    for idx, tc in enumerate(delta_obj.get("tool_calls", []) or []):
+                        if not isinstance(tc, dict):
+                            continue
+                        tc_idx = int(tc.get("index", idx))
+                        entry = streamed_tool_calls.setdefault(
+                            tc_idx,
+                            {"id": "", "name": "", "arguments": ""},
+                        )
+                        if tc.get("id"):
+                            entry["id"] = str(tc["id"])
+                        fn = tc.get("function") or {}
+                        if isinstance(fn, dict):
+                            if fn.get("name"):
+                                entry["name"] += str(fn["name"])
+                            if fn.get("arguments"):
+                                entry["arguments"] += str(fn["arguments"])
+                except (json.JSONDecodeError, IndexError, KeyError, TypeError, ValueError):
                     pass
+
+            if stream_backend_error:
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
+
+            # Apply NeMo output filtering to streamed tool_calls arguments
+            if streamed_tool_calls:
+                tool_calls_modified = False
+                sanitized_tool_calls: list[dict[str, Any]] = []
+                for tc_idx in sorted(streamed_tool_calls):
+                    tc_entry = streamed_tool_calls[tc_idx]
+                    raw_args = tc_entry["arguments"]
+                    safe_args_str = raw_args
+                    if raw_args:
+                        safe_args = await verify_and_mask_output(rails, raw_args)
+                        safe_args_str = (
+                            safe_args.strip()
+                            if isinstance(safe_args, str)
+                            else str(safe_args)
+                        )
+                        if safe_args_str != raw_args:
+                            tool_calls_modified = True
+                    sanitized_tool_calls.append(
+                        {
+                            "id": tc_entry["id"] or f"call-{tc_idx}",
+                            "type": "function",
+                            "function": {
+                                "name": tc_entry["name"],
+                                "arguments": safe_args_str,
+                            },
+                        }
+                    )
+                if tool_calls_modified:
+                    logger.info(
+                        "Streaming tool_calls filtered by NeMo: model=%s", model_id
+                    )
+                    ts = int(time.time())
+                    filtered_response = {
+                        "id": f"chatcmpl-{ts}",
+                        "object": "chat.completion",
+                        "created": ts,
+                        "model": model_id,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "tool_calls",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": safe_content
+                                    if filtered_content
+                                    and (
+                                        safe_content := await verify_and_mask_output(
+                                            rails, filtered_content
+                                        )
+                                    )
+                                    else filtered_content,
+                                    "tool_calls": sanitized_tool_calls,
+                                },
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                        },
+                    }
+                    return JSONResponse(content=filtered_response)
 
             # Apply NeMo output filtering to the assembled content
             if filtered_content:

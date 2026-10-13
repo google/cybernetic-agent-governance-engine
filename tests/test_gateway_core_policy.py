@@ -114,6 +114,22 @@ class TestOpaCacheKey:
         expected_key = f"cage:opa:decision:{expected_digest}"
         assert _opa_cache_key(data) == expected_key
 
+    def test_package_scopes_cache_key_and_normalizes_datetime(self) -> None:
+        """Different OPA packages produce distinct cache keys and datetime values normalize."""
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        data = {
+            "action": "execute_trade",
+            "ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "amount": Decimal("10.5"),
+        }
+        key_trade = _opa_cache_key(data, package="trade.governance")
+        key_dosing = _opa_cache_key(data, package="dosing.governance")
+        assert key_trade != key_dosing
+        assert key_trade.startswith("cage:opa:decision:trade.governance:")
+        assert key_dosing.startswith("cage:opa:decision:dosing.governance:")
+
 
 # ===========================================================================
 # TestReadOpaCache
