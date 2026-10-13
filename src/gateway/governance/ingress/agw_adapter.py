@@ -214,9 +214,7 @@ class AgwAdapter:
 
         # Never verify against a key embedded in the signed document
         if any(k in header for k in _EMBEDDED_KEY_HEADERS):
-            logger.warning(
-                "AGW OIDC validation rejected: embedded key header present"
-            )
+            logger.warning("AGW OIDC validation rejected: embedded key header present")
             return False, {}
 
         alg = str(header.get("alg", ""))
@@ -230,9 +228,7 @@ class AgwAdapter:
             return False, {}
 
         pub_key = (
-            key_resolver(kid)
-            if key_resolver is not None
-            else self._jwks_cache.get(kid)
+            key_resolver(kid) if key_resolver is not None else self._jwks_cache.get(kid)
         )
         if not pub_key:
             logger.warning("AGW OIDC validation rejected: unknown kid=%r", kid)
@@ -512,7 +508,9 @@ class AgwAdapter:
         try:
             if seal_minter is not None:
                 seal_res = seal_minter(req.tool_name, req.parameters)
-                seal = await seal_res if inspect.isawaitable(seal_res) else str(seal_res)
+                seal = (
+                    await seal_res if inspect.isawaitable(seal_res) else str(seal_res)
+                )
             else:
                 seal = generate_seal(
                     req.tool_name,

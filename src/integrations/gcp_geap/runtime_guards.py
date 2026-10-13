@@ -273,7 +273,8 @@ class GovernedMemoryBankGuard:
         self,
         session_events: Sequence[Mapping[str, Any] | str],
         *,
-        add_session_callback: Callable[[Sequence[dict[str, Any] | str]], Any] | None = None,
+        add_session_callback: Callable[[Sequence[dict[str, Any] | str]], Any]
+        | None = None,
     ) -> MemoryBankGuardResult:
         """Scan and sanitize session events before committing to Vertex Memory Bank.
 

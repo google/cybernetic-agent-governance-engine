@@ -556,9 +556,7 @@ def test_advisor_pods_receive_no_governance_salt_or_seal_enforcement_vars() -> N
                     offenders.append(f"{path}: {env['name']}")
     for mod_name in ("governed_advisor", "gcp_geap_advisor"):
         module_tf = (_INFRA / "modules" / mod_name / "main.tf").read_text()
-        variables_tf = (
-            _INFRA / "modules" / mod_name / "variables.tf"
-        ).read_text()
+        variables_tf = (_INFRA / "modules" / mod_name / "variables.tf").read_text()
         offenders += [
             f"{mod_name}/main.tf: {v}"
             for v in forbidden

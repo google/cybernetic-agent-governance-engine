@@ -348,7 +348,9 @@ class TestGeapMcpJsonRpcAndTriIdentity:
         assert req.trace_id == "trace-mcp-001"
 
     @pytest.mark.asyncio
-    async def test_validate_oidc_token_kid_resolved_eddsa_and_rejects_embedded_jwk(self):
+    async def test_validate_oidc_token_kid_resolved_eddsa_and_rejects_embedded_jwk(
+        self,
+    ):
         """validate_oidc_token resolves public key by kid and rejects embedded jwk."""
         import time
 
@@ -386,12 +388,12 @@ class TestGeapMcpJsonRpcAndTriIdentity:
             headers={"kid": "geap-key-01"},
         )
 
-        with patch("src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER", issuer):
+        with patch(
+            "src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER", issuer
+        ):
             ok, claims = await adapter.validate_oidc_token(valid_token)
             assert ok is True
-            assert (
-                claims["sub"] == "principal://agents.global.org-12345/agent/advisor"
-            )
+            assert claims["sub"] == "principal://agents.global.org-12345/agent/advisor"
             assert claims["_verified_kid"] == "geap-key-01"
 
             tri = adapter.extract_tri_identity(
@@ -555,4 +557,3 @@ class TestGeapMcpJsonRpcAndTriIdentity:
         )
         with pytest.raises(CredentialAccessDenied):
             validate_tri_identity_binding(bad_binding)
-

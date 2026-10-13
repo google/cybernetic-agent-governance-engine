@@ -240,7 +240,6 @@ class GovernedFinancialAdvisorGeapApp:
             self._graph = graph_fn(redis_url=redis_url)
         return self._graph
 
-
     def register_operations(self) -> dict[str, Sequence[str]]:
         """Declare supported GEAP Agent Runtime operation modes."""
         return {
@@ -415,9 +414,7 @@ class GovernedFinancialAdvisorGeapApp:
             "deferred_id": validated.deferred_id,
             "reason": validated.reason,
         }
-        final_state = await graph.ainvoke(
-            Command(resume=resume_payload), config=config
-        )
+        final_state = await graph.ainvoke(Command(resume=resume_payload), config=config)
         messages = final_state.get("messages", [])
         response_text = ""
         if messages:
@@ -530,4 +527,3 @@ def create_geap_runtime_app(
 # Canonical GEAP `PythonSpec.entrypointObject` instance (`set_up()` runs on the
 # remote GEAP Agent Runtime container, not during `__init__`).
 root_agent = GovernedFinancialAdvisorGeapApp()
-

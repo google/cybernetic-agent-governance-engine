@@ -411,9 +411,9 @@ class TestTerraformGeapAdvisorPosture:
         assert 'variable "advisor_runtime"' in vars_tf
         assert 'default     = "geap"' in vars_tf
 
-        main_tf = (
-            _REPO_ROOT / "infra" / "targets" / "gcp-gke" / "main.tf"
-        ).read_text(encoding="utf-8")
+        main_tf = (_REPO_ROOT / "infra" / "targets" / "gcp-gke" / "main.tf").read_text(
+            encoding="utf-8"
+        )
         assert 'module "gcp_geap_advisor"' in main_tf
         assert 'count  = var.advisor_runtime == "geap" ? 1 : 0' in main_tf
         assert "trusted_geap_principals" in main_tf
@@ -440,9 +440,7 @@ class TestTerraformGeapAdvisorPosture:
             assert f'"{region}"' in mod_main
 
         # Extract runtime_env_vars block and verify no reserved GEAP env vars are set
-        match = re.search(
-            r"runtime_env_vars\s*=\s*\{([^}]*)\}", mod_main, re.DOTALL
-        )
+        match = re.search(r"runtime_env_vars\s*=\s*\{([^}]*)\}", mod_main, re.DOTALL)
         assert match is not None
         env_block = match.group(1)
         env_keys = {
@@ -454,7 +452,6 @@ class TestTerraformGeapAdvisorPosture:
             f"GEAP reserved env vars found in runtime_env_vars: "
             f"{env_keys & GEAP_RESERVED_ENV_VARS}"
         )
-        assert not any(
-            k.startswith(GEAP_RESERVED_ENV_PREFIX) for k in env_keys
-        ), "GOOGLE_CLOUD_AGENT_ENGINE* prefix is reserved by GEAP Agent Runtime"
-
+        assert not any(k.startswith(GEAP_RESERVED_ENV_PREFIX) for k in env_keys), (
+            "GOOGLE_CLOUD_AGENT_ENGINE* prefix is reserved by GEAP Agent Runtime"
+        )

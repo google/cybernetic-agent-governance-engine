@@ -113,7 +113,9 @@ class IdentityPolicy:
                 f"identities: {malformed}."
             )
         malformed_geap = sorted(
-            p for p in self.trusted_geap_principals if not _GEAP_AGENT_PRINCIPAL.match(p)
+            p
+            for p in self.trusted_geap_principals
+            if not _GEAP_AGENT_PRINCIPAL.match(p)
         )
         if malformed_geap:
             raise ValueError(
@@ -170,9 +172,7 @@ def load_identity_policy() -> IdentityPolicy:
             f"{TRUSTED_GEAP_PRINCIPALS_ENV} contains values that are not GEAP agent "
             f"principals: {malformed_geap}. Expected 'principal://agents.global.org-<id>/<agent>'."
         )
-    return IdentityPolicy(
-        trusted=identities, trusted_geap_principals=geap_principals
-    )
+    return IdentityPolicy(trusted=identities, trusted_geap_principals=geap_principals)
 
 
 def _client_identities(scope: Mapping[str, Any]) -> list[str]:

@@ -403,7 +403,9 @@ def delete_reasoning_engine(
         f"https://{region}-aiplatform.googleapis.com/v1beta1/{resource_name}?force=true"
     )
     op = _api_request("DELETE", delete_url, token)
-    logger.info("Deleted GEAP ReasoningEngine %s (op=%s)", resource_name, op.get("name"))
+    logger.info(
+        "Deleted GEAP ReasoningEngine %s (op=%s)", resource_name, op.get("name")
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
