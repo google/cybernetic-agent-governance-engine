@@ -72,9 +72,9 @@ CAGE operates a sovereign, local LLM serving topology using containerized vLLM i
 
 | Library               | License    | Purpose & Governance Justification                                                                  |
 | --------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
-| `presidio-analyzer`   | MIT        | Microsoft Presidio PII detection; 10 entity types configured in `config/rails/config.yml` and wrapped by [`PresidioPIIRedactor`](../../src/integrations/presidio/redactor.py) |
+| `presidio-analyzer`   | MIT        | Microsoft Presidio PII detection; 12 identity entity types (`_PII_ENTITIES`) wrapped by [`redact_pii()`](../../src/integrations/presidio/redactor.py) and [`get_presidio_engines()`](../../src/integrations/presidio/redactor.py) |
 | `presidio-anonymizer` | MIT        | PII anonymization and masking before LLM submission and after response generation                  |
-| `spacy`               | MIT        | Industrial-strength NLP / Named Entity Recognition (`en_core_web_lg` / `en_core_web_sm`) backing [`PresidioPIIRedactor`](../../src/integrations/presidio/redactor.py); confidence thresholds (`score_threshold`), `active_entities`, and `allow_list` are Pareto-optimized offline via [`PresidioPIIOptimizationEvaluator`](../../src/eval_harness/gepa_optimizer.py) |
+| `spacy`               | MIT        | Industrial-strength NLP / Named Entity Recognition (`en_core_web_lg` / `en_core_web_sm`) backing [`redact_pii()`](../../src/integrations/presidio/redactor.py); confidence thresholds (`score_threshold`), `active_entities`, and `allow_list` are Pareto-optimized offline via [`PresidioPIIOptimizationEvaluator`](../../src/eval_harness/gepa_optimizer.py) |
 
 ### 4.3 Policy & Causal
 
@@ -174,7 +174,7 @@ Third-party compliance, attestation, and actuator provider adapters live in `src
 | **Actuator 01** | `src/integrations/actuator_01/` | Actuator-side vendor adapter; envelope builder and signature verification for sealed execution            | Implemented |
 | **GCP Eval & GEAP Optimizer** | `src/integrations/gcp_eval/` | Vertex AI GenAI Eval SDK (`VertexGenAIEvalBackend`), BigQuery Agent Analytics harvester (`BigQueryTrajectoryHarvester`), KMS-signed skill certifier (`GcpSkillCertifier`), GCS WORM certification handshake (`GcsArtifactHandshakePublisher` / `GcsSkillCertificationVerifier`), and governed GEPA optimizer (`GovernedGEPAOptimizer`) | Implemented |
 | **GCP GEAP Runtime Guards** | `src/integrations/gcp_geap/` | FastMCP seal verification middleware (`FastMcpSealVerificationMiddleware`) and Memory Bank poisoning guard (`GovernedMemoryBankGuard`) for Vertex AI Agent Engine | Implemented |
-| **Presidio PII Redactor** | `src/integrations/presidio/` | `PresidioPIIRedactor` (`AnalyzerEngine` + `AnonymizerEngine` with `spaCy` NLP engine) | Implemented |
+| **Presidio PII Redactor** | `src/integrations/presidio/` | `redact_pii()` and `get_presidio_engines()` (`AnalyzerEngine` + `AnonymizerEngine` with `spaCy` NLP engine) | Implemented |
 | **Storage GCS** | `src/integrations/storage_gcs/` | Google Cloud Storage cold-store backend for evidence archives                                             | Implemented |
 | **Storage S3**  | `src/integrations/storage_s3/`  | AWS S3 / MinIO cold-store backend for evidence archives                                                   | Implemented |
 
