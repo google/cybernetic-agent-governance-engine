@@ -888,6 +888,9 @@ module "gateway" {
   trusted_client_identities = [
     "${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
   ]
+  trusted_geap_principals = var.advisor_runtime == "geap" ? [
+    "principal://agents.global.org-${var.gcp_organization_id}/governed-financial-advisor",
+  ] : []
 
   # K-4: wire OTLP auth header so Langfuse trace ingestion returns 200, not 401.
   # If an explicit override is provided use it; otherwise derive from the
@@ -911,9 +914,42 @@ module "gateway" {
   depends_on = [module.app_secrets, module.opa, module.vllm, module.memorystore_governance, module.service_mesh]
 }
 
-# ─── Deploy Governed Financial Advisor ────────────────────────────────────────
+# ─── Deploy Governed Financial Advisor (GEAP Agent Runtime for GCP) ──────────
+
+module "gcp_geap_advisor" {
+  count  = var.advisor_runtime == "geap" ? 1 : 0
+  source = "../../modules/gcp_geap_advisor"
+
+  project_id              = var.project_id
+  organization_id         = var.gcp_organization_id
+  region                  = var.region
+  image                   = var.image_digests["governed-financial-advisor"]
+  vpc_network             = var.network
+  vpc_subnetwork          = var.subnetwork
+  kms_key_name            = local.cmek_key_id
+  enable_logging          = "true"
+  redis_host              = module.memorystore_app.primary_endpoint_ip
+  redis_port              = tostring(module.memorystore_app.primary_endpoint_port)
+  model_fast              = var.served_model_fast
+  model_reasoning         = var.served_model_reasoning
+  model_consensus         = var.served_model_reasoning
+  vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
+  langfuse_host           = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
+  gateway_url             = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
+  cage_env                = var.environment
+
+  otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
+    var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
+  )
+
+  depends_on = [module.gateway, module.langfuse, module.vllm, module.opa, module.service_mesh]
+}
 
 module "governed_advisor" {
+  count  = var.advisor_runtime == "gke" ? 1 : 0
   source = "../../modules/governed_advisor"
 
   namespace                  = module.namespace.name

@@ -277,3 +277,9 @@ variable "deployment_config_map_name" {
   description = "ConfigMap holding CAGE_DEPLOYMENT_REGION (output of modules/deployment_config)."
   type        = string
 }
+
+variable "trusted_geap_principals" {
+  description = "Optional list of GEAP Agent Identity (ID-2) principals ('principal://agents.global.org-<id>/<agent>') required in addition to Linkerd mTLS when advisor runs on GEAP Agent Runtime."
+  type        = list(string)
+  default     = []
+}

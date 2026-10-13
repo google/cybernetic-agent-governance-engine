@@ -1199,4 +1199,21 @@ variable "compliance_bridge_egress_allowed_fqdns" {
   ]
 }
 
+# ─── Governed Financial Advisor Runtime (GEAP Agent Runtime for GCP) ──────────
 
+variable "advisor_runtime" {
+  description = "Execution substrate for governed_financial_advisor on GCP deployments: 'geap' (Vertex AI Agent Engine / GEAP Agent Runtime, default for GCP) or 'gke' (in-cluster Kubernetes Deployment)."
+  type        = string
+  default     = "geap"
+
+  validation {
+    condition     = contains(["geap", "gke"], var.advisor_runtime)
+    error_message = "advisor_runtime must be 'geap' or 'gke'."
+  }
+}
+
+variable "gcp_organization_id" {
+  description = "GCP Organization identifier used to bind GEAP Agent Identity (ID-2) principal ('principal://agents.global.org-<id>/governed-financial-advisor') into CAGE_TRUSTED_GEAP_AGENT_PRINCIPALS."
+  type        = string
+  default     = "cage-sovereign"
+}

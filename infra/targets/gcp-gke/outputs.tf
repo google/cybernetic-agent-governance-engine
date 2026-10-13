@@ -96,6 +96,8 @@ output "deployment_summary" {
     cluster_location        = module.gke.cluster_location
     is_regional             = module.gke.is_regional
     namespace               = module.namespace.name
+    advisor_runtime         = var.advisor_runtime
+    geap_agent_principal    = var.advisor_runtime == "geap" ? module.gcp_geap_advisor[0].geap_agent_principal : "gke-pod"
     nist_compliance_enabled = var.enable_nist_compliance
     gpu_node_pool_enabled   = var.enable_gpu_node_pool
     worm_bucket             = module.worm_bucket.bucket_name
@@ -110,6 +112,17 @@ output "deployment_summary" {
     opa_endpoint            = module.opa.endpoint_url
   }
 }
+
+output "advisor_runtime" {
+  description = "Active runtime for Governed Financial Advisor on GCP ('geap' or 'gke')"
+  value       = var.advisor_runtime
+}
+
+output "geap_agent_principal" {
+  description = "GEAP Agent Identity (ID-2) principal URI when advisor_runtime == 'geap'"
+  value       = var.advisor_runtime == "geap" ? module.gcp_geap_advisor[0].geap_agent_principal : ""
+}
+
 
 
 # ─── Database and Cache ───────────────────────────────────────────────────────

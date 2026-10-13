@@ -91,6 +91,21 @@ class GatewayClient:
             )
         return self._http
 
+    def _build_headers(self) -> dict[str, str]:
+        """Construct outbound request headers with W3C trace context and GEAP ID-2/ID-1 headers."""
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        otel_inject(headers)
+        id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
+        if id2_token:
+            headers["Authorization"] = f"Bearer {id2_token}"
+        if os.environ.get("CAGE_ADVISOR_RUNTIME", "").lower() == "geap":
+            from src.governed_financial_advisor.utils.context import user_context
+
+            uid = user_context.get()
+            if uid:
+                headers["x-geap-user-id"] = uid
+        return headers
+
     @side_effect_node(kind="api_call", external_system="gateway_api")
     async def chat(
         self,
@@ -117,7 +132,11 @@ class GatewayClient:
             "messages": [{"role": "user", "content": message}],
             **extra,
         }
-        response = await client.post("/v1/chat/completions", json=payload)
+        response = await client.post(
+            "/v1/chat/completions",
+            json=payload,
+            headers=self._build_headers(),
+        )
         response.raise_for_status()
         data = response.json()
         choices = data.get("choices", [])
@@ -128,7 +147,11 @@ class GatewayClient:
     async def get_policy_version(self, timeout: float = 10.0) -> str:
         """Queries the Hybrid Gateway's discovery engine for the valid active baseline signature."""
         client = await self._ensure_client()
-        response = await client.get("/governance/policy-version", timeout=timeout)
+        response = await client.get(
+            "/governance/policy-version",
+            headers=self._build_headers(),
+            timeout=timeout,
+        )
         response.raise_for_status()
         return response.json()["active_hash"]
 
@@ -174,8 +197,7 @@ class GatewayClient:
             httpx.TimeoutException: If the Gateway does not respond within timeout.
         """
         client = await self._ensure_client()
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        otel_inject(headers)  # Injects W3C 'traceparent' from current span context
+        headers = self._build_headers()
         payload = {
             "action": action,
             "params": params,
@@ -251,8 +273,7 @@ class GatewayClient:
             The gateway's ``{"status": ..., "output"|"error": ...}`` body.
         """
         client = await self._ensure_client()
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        otel_inject(headers)
+        headers = self._build_headers()
         response = await client.post(
             "/tools/execute",
             json={"tool_name": tool_name, "params": params},
@@ -292,8 +313,7 @@ class GatewayClient:
                 malformed receipt. The caller must not emit the step.
         """
         client = await self._ensure_client()
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        otel_inject(headers)
+        headers = self._build_headers()
         try:
             response = await client.post(
                 "/governance/state-commitments",

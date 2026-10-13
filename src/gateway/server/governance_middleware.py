@@ -1221,6 +1221,20 @@ class OIDCValidationMiddleware:
 # POST /governance/state-commitments — generic state-commitment service.
 governance_app.include_router(state_commitment_router)
 
+
+@governance_app.post("/agw/request-authz")
+async def evaluate_agw_request_authz(request: Request) -> JSONResponse:
+    """Evaluate a GEAP Agent Gateway (AGW) HTTP ext_authz callout via AgwAdapter."""
+    from dataclasses import asdict
+
+    from src.gateway.governance.ingress.agw_adapter import get_agw_adapter
+
+    payload = await request.json()
+    gov = governor_of(request)
+    decision = await get_agw_adapter().evaluate_request_authz(payload, governor=gov)
+    return JSONResponse(status_code=decision.http_status, content=asdict(decision))
+
+
 # Register the OIDC middleware on the governance_app sub-application.
 # It runs before all governance endpoints, injecting caller_identity into
 # request.state for OPA agent catalog evaluation.

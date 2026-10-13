@@ -159,6 +159,9 @@ if (
         excluded_urls="health,docs,openapi.json,favicon.ico,mcp",
     )  # Only trace meaningful agent routes; health/docs/scanners are excluded
 app.include_router(tools_router)
+from src.governed_financial_advisor.geap_app import create_geap_runtime_router
+
+app.include_router(create_geap_runtime_router())
 
 if (
     os.environ.get("CAGE_ENV", "prod").lower() == "dev"

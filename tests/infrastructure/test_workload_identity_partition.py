@@ -454,12 +454,13 @@ def test_advisor_pods_receive_no_signing_key_variable() -> None:
             for env in c.get("env") or []:
                 if env.get("name") in _SIGNING_KEY_VARS:
                     offenders.append(f"{path}: {env['name']}")
-    module_tf = (_INFRA / "modules" / "governed_advisor" / "main.tf").read_text()
-    offenders += [
-        f"governed_advisor module: {v}"
-        for v in _SIGNING_KEY_VARS
-        if f'"{v}"' in module_tf
-    ]
+    for mod_name in ("governed_advisor", "gcp_geap_advisor"):
+        module_tf = (_INFRA / "modules" / mod_name / "main.tf").read_text()
+        offenders += [
+            f"{mod_name} module: {v}"
+            for v in _SIGNING_KEY_VARS
+            if f'"{v}"' in module_tf or f"{v} =" in module_tf
+        ]
     assert offenders == [], f"Advisor receives a signing-key variable: {offenders}"
 
 
@@ -553,16 +554,19 @@ def test_advisor_pods_receive_no_governance_salt_or_seal_enforcement_vars() -> N
             for env in c.get("env") or []:
                 if env.get("name") in forbidden:
                     offenders.append(f"{path}: {env['name']}")
-    module_tf = (_INFRA / "modules" / "governed_advisor" / "main.tf").read_text()
-    variables_tf = (
-        _INFRA / "modules" / "governed_advisor" / "variables.tf"
-    ).read_text()
-    offenders += [
-        f"governed_advisor/main.tf: {v}" for v in forbidden if f'"{v}"' in module_tf
-    ]
-    offenders += [
-        f"governed_advisor/variables.tf: {v}"
-        for v in ("governance_salt", "cage_seal_enforcement")
-        if f'variable "{v}"' in variables_tf
-    ]
+    for mod_name in ("governed_advisor", "gcp_geap_advisor"):
+        module_tf = (_INFRA / "modules" / mod_name / "main.tf").read_text()
+        variables_tf = (
+            _INFRA / "modules" / mod_name / "variables.tf"
+        ).read_text()
+        offenders += [
+            f"{mod_name}/main.tf: {v}"
+            for v in forbidden
+            if f'"{v}"' in module_tf or f" {v} " in module_tf
+        ]
+        offenders += [
+            f"{mod_name}/variables.tf: {v}"
+            for v in ("governance_salt", "cage_seal_enforcement")
+            if f'variable "{v}"' in variables_tf
+        ]
     assert offenders == [], f"Advisor receives governance state variables: {offenders}"

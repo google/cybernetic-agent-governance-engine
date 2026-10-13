@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 
 CLIENT_IDENTITY_HEADER = "l5d-client-id"
 TRUSTED_IDENTITIES_ENV = "CAGE_TRUSTED_CLIENT_IDENTITIES"
+TRUSTED_GEAP_PRINCIPALS_ENV = "CAGE_TRUSTED_GEAP_AGENT_PRINCIPALS"
 
 #: Paths that need no caller identity. Everything else is refused unless the
 #: caller presents a trusted identity. Only exact paths can be open: there is
@@ -84,6 +85,11 @@ _LINKERD_IDENTITY = re.compile(
     r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"  # trust domain
 )
 
+_GEAP_AGENT_PRINCIPAL = re.compile(
+    r"^(?:principal://)?agents\.global\.org-[a-z0-9-]+(?:\.system\.id\.goog)?/[a-zA-Z0-9._/-]+$"
+)
+
+
 Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
@@ -95,6 +101,7 @@ class IdentityPolicy:
     """Which caller identities the gateway admits. Always enforced."""
 
     trusted: frozenset[str]
+    trusted_geap_principals: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.trusted:
@@ -104,6 +111,14 @@ class IdentityPolicy:
             raise ValueError(
                 f"IdentityPolicy contains values that are not Linkerd workload "
                 f"identities: {malformed}."
+            )
+        malformed_geap = sorted(
+            p for p in self.trusted_geap_principals if not _GEAP_AGENT_PRINCIPAL.match(p)
+        )
+        if malformed_geap:
+            raise ValueError(
+                f"IdentityPolicy contains values that are not GEAP agent "
+                f"principals: {malformed_geap}."
             )
 
 
@@ -143,7 +158,21 @@ def load_identity_policy() -> IdentityPolicy:
             f"{TRUSTED_IDENTITIES_ENV} must list the workload identities allowed to call "
             "the gateway (POAM-2026-080). There is no permissive bypass."
         )
-    return IdentityPolicy(trusted=identities)
+    raw_geap = os.environ.get(TRUSTED_GEAP_PRINCIPALS_ENV, "")
+    geap_principals = frozenset(
+        part.strip() for part in raw_geap.split(",") if part.strip()
+    )
+    malformed_geap = sorted(
+        p for p in geap_principals if not _GEAP_AGENT_PRINCIPAL.match(p)
+    )
+    if malformed_geap:
+        raise RuntimeError(
+            f"{TRUSTED_GEAP_PRINCIPALS_ENV} contains values that are not GEAP agent "
+            f"principals: {malformed_geap}. Expected 'principal://agents.global.org-<id>/<agent>'."
+        )
+    return IdentityPolicy(
+        trusted=identities, trusted_geap_principals=geap_principals
+    )
 
 
 def _client_identities(scope: Mapping[str, Any]) -> list[str]:
@@ -176,6 +205,28 @@ class WorkloadIdentityMiddleware:
         self.app = app
         self.policy = policy
 
+    async def _verify_geap_id2_principal(self, scope: Mapping[str, Any]) -> bool:
+        """Verify GEAP ID-2 OIDC Bearer JWT when trusted_geap_principals is configured."""
+        if not self.policy.trusted_geap_principals:
+            return True
+        auth_headers = [
+            v.decode("latin-1")
+            for k, v in scope.get("headers", [])
+            if k.lower() == b"authorization"
+        ]
+        if len(auth_headers) != 1 or not auth_headers[0].startswith("Bearer "):
+            return False
+        token = auth_headers[0][len("Bearer ") :].strip()
+        if not token:
+            return False
+        from src.gateway.governance.ingress.agw_adapter import get_agw_adapter
+
+        valid, claims = await get_agw_adapter().validate_oidc_token(token)
+        if not valid:
+            return False
+        sub = str(claims.get("sub", ""))
+        return sub in self.policy.trusted_geap_principals
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
@@ -187,7 +238,11 @@ class WorkloadIdentityMiddleware:
         presented = _client_identities(scope)
         # Exactly one header, and it must be trusted. Several headers mean
         # something other than the proxy wrote one of them.
-        if len(presented) == 1 and presented[0] in self.policy.trusted:
+        if (
+            len(presented) == 1
+            and presented[0] in self.policy.trusted
+            and await self._verify_geap_id2_principal(scope)
+        ):
             await self.app(scope, receive, send)
             return
         logger.warning(
