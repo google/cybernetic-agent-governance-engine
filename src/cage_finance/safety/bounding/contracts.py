@@ -467,7 +467,13 @@ def contract_b3_liquidity_depth(
     # Staleness check
     timestamp = depth_data.get("timestamp")
     max_staleness = thresholds.get("telemetry", {}).get("max_staleness_seconds", 300)
-    if timestamp is None or (time.time() - timestamp) > max_staleness:
+    if (
+        timestamp is None
+        or isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(timestamp)
+        or (time.time() - timestamp) > max_staleness
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -485,7 +491,12 @@ def contract_b3_liquidity_depth(
     if depth_usd is None:
         depth_usd = depth_data.get("total_bid_usd", 0.0)
 
-    if not math.isfinite(depth_usd) or depth_usd < 0:
+    if (
+        isinstance(depth_usd, bool)
+        or not isinstance(depth_usd, (int, float))
+        or not math.isfinite(depth_usd)
+        or depth_usd < 0
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -598,7 +609,12 @@ def contract_b5_volatility_sizing(
             ],
         )
 
-    if not math.isfinite(max_percentile) or not (0 <= max_percentile <= 100):
+    if (
+        isinstance(max_percentile, bool)
+        or not isinstance(max_percentile, (int, float))
+        or not math.isfinite(max_percentile)
+        or not (0 <= max_percentile <= 100)
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -655,7 +671,13 @@ def contract_b5_volatility_sizing(
     # Staleness check
     timestamp = vol_data.get("timestamp")
     max_staleness = thresholds.get("telemetry", {}).get("max_staleness_seconds", 300)
-    if timestamp is None or (time.time() - timestamp) > max_staleness:
+    if (
+        timestamp is None
+        or isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(timestamp)
+        or (time.time() - timestamp) > max_staleness
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -669,7 +691,11 @@ def contract_b5_volatility_sizing(
         )
 
     current_percentile = vol_data.get("percentile", 100.0)
-    if not math.isfinite(current_percentile):
+    if (
+        isinstance(current_percentile, bool)
+        or not isinstance(current_percentile, (int, float))
+        or not math.isfinite(current_percentile)
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -762,7 +788,12 @@ def contract_b8_twap_slippage(
             ],
         )
 
-    if not math.isfinite(max_slippage_bps) or max_slippage_bps < 0:
+    if (
+        isinstance(max_slippage_bps, bool)
+        or not isinstance(max_slippage_bps, (int, float))
+        or not math.isfinite(max_slippage_bps)
+        or max_slippage_bps < 0
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -823,7 +854,13 @@ def contract_b8_twap_slippage(
     # Staleness check
     timestamp = twap_data.get("timestamp")
     max_staleness = thresholds.get("telemetry", {}).get("max_staleness_seconds", 300)
-    if timestamp is None or (time.time() - timestamp) > max_staleness:
+    if (
+        timestamp is None
+        or isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(timestamp)
+        or (time.time() - timestamp) > max_staleness
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -872,7 +909,11 @@ def contract_b8_twap_slippage(
             ],
         )
 
-    if not math.isfinite(observed_slippage_bps):
+    if (
+        isinstance(observed_slippage_bps, bool)
+        or not isinstance(observed_slippage_bps, (int, float))
+        or not math.isfinite(observed_slippage_bps)
+    ):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -1176,9 +1217,11 @@ def contract_b10_rollback_window(
             ],
         )
 
-    # Validate threshold is non-negative
+    # Validate threshold is finite, non-boolean, and non-negative
     if (
-        not isinstance(min_rollback_window_seconds, (int, float))
+        isinstance(min_rollback_window_seconds, bool)
+        or not isinstance(min_rollback_window_seconds, (int, float))
+        or not math.isfinite(min_rollback_window_seconds)
         or min_rollback_window_seconds < 0
     ):
         return ContractResult(
@@ -1192,6 +1235,17 @@ def contract_b10_rollback_window(
                     "threshold_value": min_rollback_window_seconds,
                 }
             ],
+        )
+
+    if (
+        isinstance(request.rollback_window_seconds, bool)
+        or not isinstance(request.rollback_window_seconds, (int, float))
+        or not math.isfinite(request.rollback_window_seconds)
+    ):
+        return _b10_window_closed(
+            request,
+            "Invalid requested rollback window: must be a finite number",
+            requested_window_seconds=request.rollback_window_seconds,
         )
 
     # Query rollback capability from provider
@@ -1217,7 +1271,12 @@ def contract_b10_rollback_window(
 
     # Validate rollback window is within venue capability (inclusive boundary)
     max_window_seconds = capability.get("max_window_seconds", 0)
-    if request.rollback_window_seconds > max_window_seconds:
+    if (
+        isinstance(max_window_seconds, bool)
+        or not isinstance(max_window_seconds, (int, float))
+        or not math.isfinite(max_window_seconds)
+        or request.rollback_window_seconds > max_window_seconds
+    ):
         return _b10_window_closed(
             request,
             "Requested rollback window exceeds venue capability",

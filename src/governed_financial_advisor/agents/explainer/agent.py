@@ -70,14 +70,19 @@ def create_explainer_agent(model_name: str = Config.MODEL_FAST) -> Any:  # type:
 
     # Relaxed handling of model names - trust the environment config
 
-    _fast_api_base = os.getenv("VLLM_FAST_API_BASE")
-    if not _fast_api_base:
+    if model_name == getattr(Config, "MODEL_REASONING", None):
+        _api_base = os.getenv("VLLM_REASONING_API_BASE") or os.getenv(
+            "VLLM_FAST_API_BASE"
+        )
+    else:
+        _api_base = os.getenv("VLLM_FAST_API_BASE")
+    if not _api_base:
         raise RuntimeError(
             "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
         )
     llm = ChatOpenAI(
         model=model_name,
-        base_url=_fast_api_base,
+        base_url=_api_base,
         api_key=api_key,  # type: ignore[arg-type]  # ChatOpenAI expects SecretStr but str is accepted at runtime
         temperature=0.0,  # type: ignore[call-arg]
         max_tokens=1024,  # Fast model has 4096 total context; cap output to leave room for input

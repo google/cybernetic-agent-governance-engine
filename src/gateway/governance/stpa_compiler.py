@@ -1480,10 +1480,11 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
     stdlib_imports: list[str] = (
         [
             "import asyncio",
+            "import concurrent.futures",
             "import datetime",
             "import hashlib",
             "import logging",
-            "from collections.abc import Generator",
+            "from collections.abc import Coroutine, Generator",
             "from typing import Any",
         ]
         if needs_mcp_imports
@@ -1494,6 +1495,22 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "from collections.abc import Generator",
             "from typing import Any",
         ]
+    )
+
+    run_async_helper_lines: list[str] = (
+        [
+            "def _run_async(coro: Coroutine[Any, Any, dict[str, Any]]) -> dict[str, Any]:",
+            '    """Run an async coroutine from a synchronous WAL generator node."""',
+            "    try:",
+            "        return asyncio.get_event_loop().run_until_complete(coro)",
+            "    except RuntimeError:",
+            "        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:",
+            "            return pool.submit(asyncio.run, coro).result()",
+            "",
+            "",
+        ]
+        if needs_mcp_imports
+        else []
     )
 
     lines: list[str] = [
@@ -1543,6 +1560,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         '    return (max(t["sequence_id"] for t in txns) + 1) if txns else 0',
         "",
         "",
+        *run_async_helper_lines,
     ]
 
     # -----------------------------------------------------------------------
@@ -1611,7 +1629,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
                 "    # (Aho-Corasick → NeMo → STPA → OPA → CBF → Consensus → DoWhy)",
                 "    # before executing the action, ensuring atomicity guarantees are",
                 "    # proven in production and not merely declared in policy documents.",
-                "    result: dict[str, Any] = asyncio.get_event_loop().run_until_complete(",
+                "    result: dict[str, Any] = _run_async(",
                 "        _get_mcp_client().call_tool(",
                 f'            name="{saga.mcp_tool_name}",',
                 "            arguments={",

@@ -16,21 +16,29 @@
 
 from typing import TYPE_CHECKING
 
+from src.gateway.governance.contracts import DomainToolProvider
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
-class ClinicalToolProvider:
+class ClinicalToolProvider(DomainToolProvider):
     """Provides healthcare domain tools to the MCP tool server."""
 
     def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
-        """Register healthcare tools with the MCP server.
+        """Register healthcare tools with the MCP server."""
+        if not hasattr(server, "tool"):
+            return
 
-        Stub implementation — a real provider would register administer_dose,
-        prescribe_medication, adjust_dosage with the server.
-        """
-        # Tools are registered via MCP @server.tool() decorators in practice.
-        # This provider exists to maintain symmetry with FinancialToolProvider.
-        pass
+        @server.tool()
+        async def administer_dose(
+            patient_id: str, medication: str, dose_mg: float
+        ) -> dict[str, object]:
+            return {
+                "status": "GOVERNED",
+                "patient_id": patient_id,
+                "medication": medication,
+                "dose_mg": dose_mg,
+            }

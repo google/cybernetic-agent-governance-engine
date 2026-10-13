@@ -52,6 +52,16 @@ async def submit_governance_pipeline(strategy_name: str, **kwargs: Any) -> None:
         governance_pipeline,
     )
 
+    prev_path = demo_state.pipeline_status.get("pipeline_path")
+    if isinstance(prev_path, str) and prev_path:
+        try:
+            import os
+
+            if os.path.exists(prev_path):
+                os.unlink(prev_path)
+        except OSError:
+            pass
+
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         pipeline_path = tmp.name
 

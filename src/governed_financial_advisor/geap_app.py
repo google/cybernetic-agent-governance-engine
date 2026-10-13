@@ -292,7 +292,7 @@ class GovernedFinancialAdvisorGeapApp:
                 "messages": [("user", prompt)],
                 "user_id": user_id,
                 "execution_Mode": "advisor",
-                "Explainability_Mode": "verbos",
+                "Explainability_Mode": "verbose",
             }
             if safe_memories:
                 inputs["preloaded_memories"] = safe_memories
@@ -354,7 +354,7 @@ class GovernedFinancialAdvisorGeapApp:
                 "messages": [("user", prompt)],
                 "user_id": user_id,
                 "execution_Mode": "advisor",
-                "Explainability_Mode": "verbos",
+                "Explainability_Mode": "verbose",
             }
             if safe_memories:
                 inputs["preloaded_memories"] = safe_memories
@@ -416,7 +416,9 @@ class GovernedFinancialAdvisorGeapApp:
             ticket_id=deferred_id,
             approved=approved,
             reviewer=approver_id,
-            rationale=reason if reason is not None else f"Decision: {normalized_decision}",
+            rationale=reason
+            if reason is not None
+            else f"Decision: {normalized_decision}",
         )
         config = {"configurable": {"thread_id": clean_thread_id}}
         resume_payload = {
@@ -467,7 +469,16 @@ def create_geap_runtime_router(
 
     @router.post("/api/reasoning_engine")
     async def handle_reasoning_engine(request: Request) -> JSONResponse:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except (ValueError, TypeError) as exc:
+            return JSONResponse(
+                {"error": f"Invalid JSON request body: {exc}"}, status_code=400
+            )
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"error": "Request body must be a JSON object."}, status_code=400
+            )
         method_name = str(body.get("class_method") or "query")
         input_kwargs = body.get("input") or {}
         if not isinstance(input_kwargs, dict):
@@ -485,14 +496,26 @@ def create_geap_runtime_router(
         # Prefer async_query when "query" is invoked inside an active event loop
         target_name = "async_query" if method_name == "query" else method_name
         method = getattr(runtime_agent, target_name)
-        result = method(**input_kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        try:
+            result = method(**input_kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         return JSONResponse({"output": jsonable_encoder(result)})
 
     @router.post("/api/stream_reasoning_engine")
     async def handle_stream_reasoning_engine(request: Request) -> Any:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except (ValueError, TypeError) as exc:
+            return JSONResponse(
+                {"error": f"Invalid JSON request body: {exc}"}, status_code=400
+            )
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"error": "Request body must be a JSON object."}, status_code=400
+            )
         method_name = str(body.get("class_method") or "stream_query")
         input_kwargs = body.get("input") or {}
         if not isinstance(input_kwargs, dict):
@@ -508,6 +531,11 @@ def create_geap_runtime_router(
                 {"error": f"Stream method '{method_name}' not found on agent."},
                 status_code=400,
             )
+
+        try:
+            inspect.signature(runtime_agent.async_stream_query).bind(**input_kwargs)
+        except TypeError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
 
         async def _ndjson_generator() -> AsyncIterator[str]:
             # Execute via async_stream_query when running inside FastAPI's event loop

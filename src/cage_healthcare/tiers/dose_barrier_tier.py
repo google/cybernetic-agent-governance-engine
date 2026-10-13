@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
+from src.cage_healthcare.constants import REGISTERED_ACTIONS
 from src.gateway.governance.contracts import (
     CommitReceipt,
     MutatingTier,
@@ -50,10 +50,7 @@ class DoseBarrierTier(MutatingTier):
         return 3
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action in HEALTHCARE_GOVERNED_ACTIONS or action in (
-            "administer_medication",
-            "dose_order",
-        )
+        return action in REGISTERED_ACTIONS
 
     def _unconfigured(self) -> Violation:
         from src.gateway.governance.contracts import ViolationKind

@@ -79,9 +79,19 @@ def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
         return 0.0
 
     if "amount_minor" in payload and payload["amount_minor"] is not None:
-        cost = float(payload["amount_minor"]) / 100.0
+        raw_minor = payload["amount_minor"]
+        if isinstance(raw_minor, bool):
+            raise ValueError(
+                f"invalid trade amount {raw_minor!r} — must be a finite, non-negative number"
+            )
+        cost = float(raw_minor) / 100.0
     else:
-        cost = float(payload.get("amount", 0.0))
+        raw_amount = payload.get("amount", 0.0)
+        if isinstance(raw_amount, bool):
+            raise ValueError(
+                f"invalid trade amount {raw_amount!r} — must be a finite, non-negative number"
+            )
+        cost = float(raw_amount)
 
     if not math.isfinite(cost) or cost < 0:
         raise ValueError(

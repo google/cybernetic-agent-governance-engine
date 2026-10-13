@@ -22,6 +22,7 @@ build it here.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -54,12 +55,22 @@ def trade_params(source: Mapping[str, Any]) -> dict[str, Any]:
     ``currency`` to evaluate a trade. A missing role is an explicit DENY.
 
     Raises:
-        ValueError: ``amount`` is not a number. Callers fail closed.
+        ValueError: ``amount`` is missing, boolean, non-finite, or not positive. Callers fail closed.
     """
+    raw_amount = source.get("amount")
+    if raw_amount is None or isinstance(raw_amount, bool):
+        raise ValueError(
+            f"Invalid trade amount {raw_amount!r}: must be a positive finite number"
+        )
+    amount = float(raw_amount)
+    if not math.isfinite(amount) or amount <= 0.0:
+        raise ValueError(
+            f"Invalid trade amount {raw_amount!r}: must be a positive finite number"
+        )
     return {
         "action": TRADE_ACTION,
         "symbol": str(source.get("symbol") or "UNKNOWN"),
-        "amount": float(source.get("amount") or 0),
+        "amount": amount,
         "currency": str(source.get("currency") or "USD"),
         "trader_role": DEFAULT_TRADER_ROLE,
         "confidence": source.get("confidence", 1.0),

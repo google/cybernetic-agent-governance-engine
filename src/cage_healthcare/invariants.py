@@ -22,7 +22,7 @@ into the atomic Redis Lua hop.
 import math
 from typing import Any
 
-from src.cage_healthcare.constants import HEALTHCARE_GOVERNED_ACTIONS
+from src.cage_healthcare.constants import REGISTERED_ACTIONS
 
 
 class SerumConcentrationBarrier:
@@ -43,9 +43,7 @@ class SerumConcentrationBarrier:
 
 DoseCeilingBarrier = SerumConcentrationBarrier
 
-_HEALTHCARE_DOSE_ACTIONS: frozenset[str] = HEALTHCARE_GOVERNED_ACTIONS | frozenset(
-    {"administer_medication", "dose_order"}
-)
+_HEALTHCARE_DOSE_ACTIONS: frozenset[str] = REGISTERED_ACTIONS
 
 
 def healthcare_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:

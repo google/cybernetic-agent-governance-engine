@@ -19,12 +19,18 @@ package dosing.governance
 
 default allow = false
 
-allow {
-    input.action == "administer_dose"
-    input.dose_mg > 0
-    input.dose_mg < 500  # simple range check
+governed_dosing_actions := {
+    "administer_dose",
+    "prescribe_medication",
+    "adjust_dosage",
+    "administer_medication",
+    "dose_order",
+    "order_controlled_substance",
 }
 
 allow {
-    input.action == "prescribe_medication"
+    governed_dosing_actions[input.action]
+    input.dose_mg > 0
+    input.dose_mg < 500
+    not input.contraindication_present
 }

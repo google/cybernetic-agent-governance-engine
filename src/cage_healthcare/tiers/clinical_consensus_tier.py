@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from src.cage_healthcare.constants import (
-    HEALTHCARE_GOVERNED_ACTIONS,
     HIGH_STAKES_CLINICAL_ACTIONS,
+    REGISTERED_ACTIONS,
 )
 from src.gateway.governance.consensus import (
     ConsensusGate,
@@ -73,10 +73,7 @@ class ClinicalConsensusTier(ReadOnlyTier):
         return 5
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return (
-            action in HEALTHCARE_GOVERNED_ACTIONS
-            or action in HIGH_STAKES_CLINICAL_ACTIONS
-        )
+        return action in REGISTERED_ACTIONS
 
     def _reject(
         self, message: str, kind: ViolationKind = ViolationKind.HARD

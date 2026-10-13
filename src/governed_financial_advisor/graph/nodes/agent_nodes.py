@@ -301,9 +301,16 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
         ),  # M-06: fail-closed default
         "governance_signature": state.get("governance_signature"),
         "data_analyst_ticker": state.get("data_analyst_ticker"),  # TOCTOU: re-hydration
+        "deferred_id": state.get("deferred_id"),
+        "approval_decision": state.get("approval_decision"),
     }
 
     # Invoke natively
     result = await subgraph.ainvoke(subgraph_state, {"recursion_limit": 10})
 
-    return {"messages": result["messages"]}
+    out: dict[str, Any] = {"messages": result["messages"]}
+    if "deferred_id" in result:
+        out["deferred_id"] = result["deferred_id"]
+    if "approval_decision" in result:
+        out["approval_decision"] = result["approval_decision"]
+    return out

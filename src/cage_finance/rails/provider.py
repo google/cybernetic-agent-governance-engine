@@ -14,7 +14,9 @@
 
 """Financial domain NeMo Guardrails provider."""
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 
 class FinancialRailsProvider:
@@ -22,12 +24,12 @@ class FinancialRailsProvider:
 
     @staticmethod
     def get_config_path() -> Path | None:
-        """Return path to financial rails config directory."""
-        # Placeholder - would return actual config path
-        return None
+        """Return path to financial rails config directory if present."""
+        candidate = Path(__file__).resolve().parents[3] / "config" / "rails"
+        return candidate if candidate.is_dir() else None
 
     @staticmethod
-    def get_actions() -> dict:
+    def get_actions() -> dict[str, Callable[..., Any]]:
         """Return financial domain actions for NeMo."""
         from src.cage_finance.rails import actions
 
@@ -36,3 +38,7 @@ class FinancialRailsProvider:
             "validate_market_hours": actions.validate_market_hours,
             "check_portfolio_exposure": actions.check_portfolio_exposure,
         }
+
+    def provide_rail_actions(self) -> list[tuple[str, Callable[..., Any]]]:
+        """Return ``(action_name, callable)`` pairs for NeMo registration."""
+        return list(self.get_actions().items())

@@ -58,6 +58,9 @@ allow = "MANUAL_REVIEW" if {
     # authorization claim with an unresolved amount cannot be meaningfully
     # reviewed for fiscal appropriateness.
     input.amount != 0
+    not _rbac_deny
+    not _speculative_deny
+    not _quota_exhausted
 }
 
 # ---------------------------------------------------------------------------
@@ -90,6 +93,7 @@ allow = "DENY" if {
 allow = "ALLOW" if {
     input.action == "market_analysis"
     not input.claimed_authorization_present
+    not _speculative_deny
 }
 
 # ---------------------------------------------------------------------------
@@ -99,6 +103,7 @@ allow = "ALLOW" if {
 # ---------------------------------------------------------------------------
 allow = "DENY" if {
     input.action != "market_analysis"
+    input.action != "prompt_injection_check"
     not lower(input.trader_role) in allowed_roles
 }
 
@@ -115,6 +120,9 @@ allow = "ALLOW" if {
     input.amount <= 5000
     input.currency != "BTC"
     not input.claimed_authorization_present
+    not _speculative_deny
+    not _quota_exhausted
+    not _quota_below_reserve
 }
 
 # Junior MANUAL_REVIEW: $5 001 – $10 000, non-BTC
@@ -124,6 +132,8 @@ allow = "MANUAL_REVIEW" if {
     input.amount > 5000
     input.amount <= 10000
     input.currency != "BTC"
+    not _speculative_deny
+    not _quota_exhausted
 }
 
 # Junior DENY: > $10 000  (implicit via default, stated for clarity)
@@ -147,6 +157,8 @@ allow = "ALLOW" if {
     input.amount <= 500000
     input.currency != "BTC"
     not input.claimed_authorization_present
+    not _quota_exhausted
+    not _quota_below_reserve
 }
 
 # Senior MANUAL_REVIEW: $500 001 – $1 000 000, non-BTC
@@ -157,6 +169,7 @@ allow = "MANUAL_REVIEW" if {
     input.amount > 500000
     input.amount <= 1000000
     input.currency != "BTC"
+    not _quota_exhausted
 }
 
 # Senior DENY: > $1 000 000 (implicit via default)
@@ -171,25 +184,36 @@ allow = "MANUAL_REVIEW" if {
 
 allow = "ALLOW" if {
     input.action != "execute_trade"
+    input.action != "prompt_injection_check"
     lower(input.risk_profile) == "aggressive"
     not input.claimed_authorization_present
+    not _rbac_deny
 }
 
 allow = "ALLOW" if {
     input.action != "execute_trade"
+    input.action != "prompt_injection_check"
     lower(input.risk_profile) == "moderate"
     not input.claimed_authorization_present
+    not _rbac_deny
 }
 
 allow = "ALLOW" if {
     input.action != "execute_trade"
+    input.action != "prompt_injection_check"
     lower(input.risk_profile) == "conservative"
     not input.claimed_authorization_present
+    not _rbac_deny
+}
+
+_speculative_deny if {
+    lower(input.risk_profile) == "speculative"
+    not lower(input.trader_role) == "senior"
 }
 
 allow = "DENY" if {
-    lower(input.risk_profile) == "speculative"
-    not lower(input.trader_role) == "senior"
+    input.action != "prompt_injection_check"
+    _speculative_deny
 }
 
 # ---------------------------------------------------------------------------
@@ -225,25 +249,35 @@ allow = "GOVERNANCE_VIOLATION" if {
 # Related: CTRL_TQP_007 (lula-validation-tqp007.yaml), H-7 STPA hazard
 # ---------------------------------------------------------------------------
 
-# Token quota exhausted → hard DENY (H-7: prevent uncapped resource consumption)
-allow = "DENY" if {
+_quota_exhausted if {
     input.action == "execute_trade"
     quota := input.token_quota
     quota.quota_available == true
     quota.quota_exhausted == true
 }
 
-# Token quota below minimum reserve → degrade to MANUAL_REVIEW
-# (preserves human oversight when budget is nearly exhausted)
-allow = "MANUAL_REVIEW" if {
+_quota_below_reserve if {
     input.action == "execute_trade"
     quota := input.token_quota
     quota.quota_available == true
     quota.quota_exhausted == false
     quota.below_min_reserve == true
+}
+
+# Token quota exhausted → hard DENY (H-7: prevent uncapped resource consumption)
+allow = "DENY" if {
+    _quota_exhausted
+}
+
+# Token quota below minimum reserve → degrade to MANUAL_REVIEW
+# (preserves human oversight when budget is nearly exhausted)
+allow = "MANUAL_REVIEW" if {
+    _quota_below_reserve
     # Only override if primary RBAC gate would otherwise ALLOW
     # (avoid overriding existing DENY decisions)
     not _rbac_deny
+    not _speculative_deny
+    not input.claimed_authorization_present
 }
 
 # Internal helper: primary RBAC gate would deny this request
@@ -257,6 +291,11 @@ _rbac_deny if {
     input.action == "execute_trade"
     lower(input.trader_role) == "senior"
     input.amount > 1000000
+}
+
+_rbac_deny if {
+    input.action == "execute_trade"
+    input.currency == "BTC"
 }
 
 _rbac_deny if {

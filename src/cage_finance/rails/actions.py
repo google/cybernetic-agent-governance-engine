@@ -14,24 +14,40 @@
 
 """Financial domain-specific NeMo Guardrails actions."""
 
+import math
+
 
 def check_trade_risk_level(amount: float, asset: str) -> str:
-    """Assess risk level for a proposed trade."""
-    # Placeholder implementation - would integrate with risk models
+    """Assess risk level for a proposed trade (fail-closed on invalid amount)."""
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or not math.isfinite(amount)
+        or amount <= 0
+        or not asset
+    ):
+        return "HIGH_RISK"
     if amount > 1000000:
         return "HIGH_RISK"
-    elif amount > 100000:
+    if amount > 100000:
         return "MEDIUM_RISK"
     return "LOW_RISK"
 
 
 def validate_market_hours(asset: str) -> bool:
-    """Check if trading is allowed based on market hours."""
-    # Placeholder - would integrate with market data
-    return True
+    """Check if trading is allowed based on asset symbol presence."""
+    return bool(asset and str(asset).strip())
 
 
 def check_portfolio_exposure(asset: str, amount: float) -> str | None:
-    """Verify portfolio exposure limits."""
-    # Placeholder - would query portfolio state
+    """Verify portfolio exposure limits (fail-closed on invalid amount)."""
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or not math.isfinite(amount)
+        or amount <= 0
+    ):
+        return "INVALID_EXPOSURE_AMOUNT"
+    if amount > 1000000:
+        return "EXPOSURE_LIMIT_EXCEEDED"
     return None

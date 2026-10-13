@@ -300,12 +300,15 @@ _NEMO_ACTION_TEMPLATE = textwrap.dedent(
         Constraint: {variable} {operator} {threshold}
         \"\"\"
         value = context.get("{variable}")
-        if value is None:
+        if value is None or isinstance(value, bool):
             return False  # fail-closed
         try:
-            return not (float(value) {operator} {threshold})
+            fval = float(value)
         except (TypeError, ValueError):
             return False
+        if fval != fval or fval in (float("inf"), float("-inf")):
+            return False
+        return not (fval {operator} {threshold})
     """
 )
 

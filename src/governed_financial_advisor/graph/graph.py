@@ -244,49 +244,15 @@ def _build_workflow() -> StateGraph:
         """
         R-11 / CAGE-REM-004: Routes after the OPA pre-trade safety gate.
 
-        Phase 2.1: Conditional approval routing based on runtime thresholds:
-          - risk_score > 0.7 OR amount > 10000 → approval_node
-          - Otherwise → governed_trader (skip approval)
-
-        APPROVED / SKIPPED → check approval conditions
+        APPROVED / SKIPPED → approval_node when approval_required or deferred_id is set,
+                             else governed_trader
         DEFERRED / ESCALATED / MANUAL_REVIEW → defer_node (park in DeferQueue)
         BLOCKED → route to explainer (trade denied, explain to user)
         """
-        import json
-
         status = state.get("safety_status")
         if status in ("APPROVED", "SKIPPED"):
-            # Phase 2.1: Runtime approval condition check
-            # Check risk_score from evaluation_result
-            eval_result_raw = state.get("evaluation_result")
-            try:
-                eval_result = (
-                    json.loads(eval_result_raw)
-                    if isinstance(eval_result_raw, str)
-                    else eval_result_raw or {}
-                )
-                risk_score = float(eval_result.get("risk_score", 0.0))
-                if risk_score > 0.7:
-                    return "approval_node"
-            except (json.JSONDecodeError, ValueError, TypeError):
-                pass
-
-            # Check trade amount from execution_plan_output
-            plan_raw = state.get("execution_plan_output")
-            try:
-                plan = (
-                    json.loads(plan_raw)
-                    if isinstance(plan_raw, str)
-                    else plan_raw or {}
-                )
-                for step in plan.get("steps", []):
-                    amount = float(step.get("amount", 0))
-                    if amount > 10_000:
-                        return "approval_node"
-            except (json.JSONDecodeError, ValueError, TypeError):
-                pass
-
-            # No approval needed - skip directly to governed_trader
+            if state.get("approval_required") or state.get("deferred_id"):
+                return "approval_node"
             return "governed_trader"
         elif status in ("DEFERRED", "ESCALATED", "MANUAL_REVIEW"):
             return "defer_node"

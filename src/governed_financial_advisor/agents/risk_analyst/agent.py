@@ -83,7 +83,10 @@ def _load_hazards() -> list[dict[str, Any]]:
 def get_risk_analyst_instruction() -> str:
     """Build the Risk Analyst system prompt including current STAMP hazards."""
     hazards = _load_hazards()
-    hazard_lines = "\n".join(f"  - {h['hazard']}: {h['description']}" for h in hazards)
+    hazard_lines = "\n".join(
+        f"  - {h.get('hazard') or h.get('id', 'UNKNOWN')}: {h.get('description', '')}"
+        for h in hazards
+    )
     return (
         "You are a Risk Analyst specialising in STAMP/STPA for AI-driven financial systems.\n\n"
         "Your goal is to identify Unsafe Control Actions (UCAs) by analysing system behaviour\n"

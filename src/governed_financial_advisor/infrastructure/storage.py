@@ -82,7 +82,13 @@ class StorageInterface(ABC):
 
 
 class GCSStorage(StorageInterface):
-    """Google Cloud Storage backend using the native GCS SDK."""
+    """Google Cloud Storage backend using the native GCS SDK.
+
+    Note: Per AGENTS.md ('Advisor Holds No Governance State'), the runtime
+    advisor container holds no Google Cloud identity and should use ``local``
+    or ``s3`` storage. ``GCSStorage`` is restricted to offline pipelines or
+    explicit opt-in (``CAGE_ALLOW_DIRECT_GCS=true``).
+    """
 
     def __init__(self, bucket_name: str | None = None):
         self.bucket_name = bucket_name or os.environ.get("GCS_BUCKET_NAME", "")

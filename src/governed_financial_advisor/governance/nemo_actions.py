@@ -28,6 +28,7 @@ Threshold loading: reads from GovernanceThresholds singleton (60s TTL cache).
 """
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -81,7 +82,7 @@ def _get_drawdown_limit() -> float:
         val = float(raw)
     except (TypeError, ValueError):
         return DEFAULT_DRAWDOWN_LIMIT
-    if not (0.0 < val <= 1.0):
+    if not math.isfinite(val) or not (0.0 < val <= 1.0):
         logger.warning(
             "drawdown_limit=%s out of range (0, 1] — using default %s",
             val,
@@ -107,9 +108,9 @@ def check_drawdown_limit(context: dict[str, Any]) -> bool:
         False — drawdown exceeds limit OR data is missing (fail-closed).
     """
     drawdown_pct = context.get("drawdown_pct")
-    if drawdown_pct is None:
+    if drawdown_pct is None or isinstance(drawdown_pct, bool):
         logger.warning(
-            "check_drawdown_limit: drawdown_pct missing — DENY (fail-closed)"
+            "check_drawdown_limit: drawdown_pct missing or bool — DENY (fail-closed)"
         )
         return False
 
@@ -118,6 +119,13 @@ def check_drawdown_limit(context: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         logger.warning(
             "check_drawdown_limit: invalid drawdown_pct=%s — DENY", drawdown_pct
+        )
+        return False
+
+    if not math.isfinite(pct) or pct < 0.0:
+        logger.warning(
+            "check_drawdown_limit: non-finite or negative drawdown_pct=%s — DENY",
+            drawdown_pct,
         )
         return False
 
@@ -148,7 +156,12 @@ def check_slippage_risk(context: dict[str, Any]) -> bool:
     order_size = context.get("order_size")
     daily_volume = context.get("daily_volume")
 
-    if order_size is None or daily_volume is None:
+    if (
+        order_size is None
+        or daily_volume is None
+        or isinstance(order_size, bool)
+        or isinstance(daily_volume, bool)
+    ):
         logger.warning("check_slippage_risk: missing order_size or daily_volume — DENY")
         return False
 
@@ -157,6 +170,10 @@ def check_slippage_risk(context: dict[str, Any]) -> bool:
         volume = float(daily_volume)
     except (TypeError, ValueError):
         logger.warning("check_slippage_risk: invalid numeric values — DENY")
+        return False
+
+    if not math.isfinite(size) or not math.isfinite(volume) or size < 0.0:
+        logger.warning("check_slippage_risk: non-finite or negative values — DENY")
         return False
 
     if volume <= 0:
@@ -190,20 +207,30 @@ def check_data_latency(context: dict[str, Any]) -> bool:
 
     # Prefer explicit latency_ms
     if "latency_ms" in context:
+        raw_latency = context["latency_ms"]
+        if isinstance(raw_latency, bool):
+            return False
         try:
-            latency = float(context["latency_ms"])
+            latency = float(raw_latency)
         except (TypeError, ValueError):
+            return False
+        if not math.isfinite(latency) or latency < 0.0:
             return False
         return latency <= max_latency_ms
 
     # Fall back to tick_timestamp (Unix epoch seconds)
     if "tick_timestamp" in context:
+        raw_ts = context["tick_timestamp"]
+        if isinstance(raw_ts, bool):
+            return False
         try:
-            ts = float(context["tick_timestamp"])
+            ts = float(raw_ts)
         except (TypeError, ValueError):
             return False
+        if not math.isfinite(ts):
+            return False
         age_ms = (time.time() - ts) * 1000.0
-        return age_ms <= max_latency_ms
+        return 0.0 <= age_ms <= max_latency_ms
 
     logger.warning("check_data_latency: no latency info — DENY (fail-closed)")
     return False
@@ -224,6 +251,9 @@ def check_atomic_execution(context: dict[str, Any]) -> bool:
 
     if leg_index is None:
         return True  # Single-leg trade — atomic by definition
+
+    if isinstance(leg_index, bool):
+        return False
 
     try:
         leg = int(leg_index)

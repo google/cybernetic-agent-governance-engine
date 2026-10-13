@@ -217,12 +217,15 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             verdict,
             result.get("envelope_id", "unknown"),
         )
-        return {
+        out: dict[str, Any] = {
             "safety_status": "APPROVED",
             "consecutive_denials": 0,
             "last_violation": None,
             "governance_signature": str(result.get("signature") or ""),
         }
+        if result.get("deferred_id"):
+            out["deferred_id"] = str(result["deferred_id"])
+        return out
 
     if verdict == "DEFER" and result.get("defer_id"):
         logger.info(
