@@ -226,7 +226,10 @@ class GovernedGEPAOptimizer:
                 )
 
             case_obj = cases_by_id.get(cl.case_id)
-            if case_obj is not None and case_obj.bucket == SkillPromptBucket.NEGATIVE_CONTROL:
+            if (
+                case_obj is not None
+                and case_obj.bucket == SkillPromptBucket.NEGATIVE_CONTROL
+            ):
                 traj = candidate.with_skill_trajectories.get(cl.case_id)
                 if traj is not None and any(step.tool_calls for step in traj.steps):
                     neg_control_violations.append(
@@ -283,7 +286,11 @@ class GovernedGEPAOptimizer:
                 if lift_report.routing_premium is not None
                 else 1.0
             )
-            gepa_term = mean_gepa if candidate.gepa_metric_scores else lift_report.mean_with_skill_composite
+            gepa_term = (
+                mean_gepa
+                if candidate.gepa_metric_scores
+                else lift_report.mean_with_skill_composite
+            )
             raw_fitness = (
                 0.35 * max(0.0, lift_report.mean_with_skill_composite)
                 + 0.25 * max(0.0, lift_report.mean_composite_lift)
@@ -328,7 +335,9 @@ class GovernedGEPAOptimizer:
         """
         safe_skill = _validate_safe_identifier(skill_name, "skill_name")
         if not candidates:
-            raise ValueError("GovernedGEPAOptimizer requires at least one GEPACandidateSpec")
+            raise ValueError(
+                "GovernedGEPAOptimizer requires at least one GEPACandidateSpec"
+            )
 
         anchor_cal: AnchorCalibrationResult | None = None
         if anchors is not None:
@@ -379,7 +388,11 @@ class GovernedGEPAOptimizer:
             markdown_by_cid[winning.candidate_id] if winning is not None else None
         )
         receipt: SkillCertificationReceipt | None = None
-        if winning is not None and winning_md is not None and self._certifier is not None:
+        if (
+            winning is not None
+            and winning_md is not None
+            and self._certifier is not None
+        ):
             with tempfile.TemporaryDirectory() as tmp_dir:
                 skill_md_path = Path(tmp_dir) / "SKILL.md"
                 skill_md_path.write_text(winning_md, encoding="utf-8")

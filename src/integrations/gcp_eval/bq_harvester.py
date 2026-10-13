@@ -200,9 +200,7 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 if isinstance(tf, Mapping)
             )
             raw_reliance = self._parse_json_column(row.get("reliance")) or ()
-            reliance = tuple(
-                dict(r) for r in raw_reliance if isinstance(r, Mapping)
-            )
+            reliance = tuple(dict(r) for r in raw_reliance if isinstance(r, Mapping))
             receipt = RefusalReceipt(
                 thread_id=str(row["thread_id"]),
                 action=str(row["action"]),
@@ -292,8 +290,7 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 required_output_tokens=tuple(
                     str(t)
                     for t in (
-                        self._parse_json_column(row.get("required_output_tokens"))
-                        or ()
+                        self._parse_json_column(row.get("required_output_tokens")) or ()
                     )
                 ),
             )
@@ -369,7 +366,9 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
         for c_idx, raw in enumerate(raw_clusters, start=1):
             if isinstance(raw, Mapping):
                 c_id = str(raw.get("cluster_id") or f"cluster-{c_idx:04d}")
-                title = self._sanitizer.sanitize(str(raw.get("title") or "Untitled Cluster"))
+                title = self._sanitizer.sanitize(
+                    str(raw.get("title") or "Untitled Cluster")
+                )
                 desc = self._sanitizer.sanitize(str(raw.get("description") or ""))
                 theme = str(raw.get("theme") or "policy_violation")
                 sample_count = int(raw.get("sample_count", 1))
@@ -381,7 +380,9 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 )
             else:
                 c_id = str(getattr(raw, "cluster_id", None) or f"cluster-{c_idx:04d}")
-                title = self._sanitizer.sanitize(str(getattr(raw, "title", "Untitled Cluster")))
+                title = self._sanitizer.sanitize(
+                    str(getattr(raw, "title", "Untitled Cluster"))
+                )
                 desc = self._sanitizer.sanitize(str(getattr(raw, "description", "")))
                 theme = str(getattr(raw, "theme", "policy_violation"))
                 sample_count = int(getattr(raw, "sample_count", 1))
@@ -474,4 +475,3 @@ __all__ = [
     "BigQueryTrajectoryHarvester",
     "LossClusterRecord",
 ]
-

@@ -277,7 +277,9 @@ def test_gcs_handshake_publisher_atomic_immutability_and_path_hygiene(
         terminal_registry={"allowed_skills": ["gcp-deploy-skill"]},
         rego_policy_text="package cage.finance\ndefault allow = false\n",
     )
-    assert reg_uri == "gs://cage-certified-skills/manifests/finance/terminal_registry.json"
+    assert (
+        reg_uri == "gs://cage-certified-skills/manifests/finance/terminal_registry.json"
+    )
     assert rego_uri == "gs://cage-certified-skills/policies/finance.rego"
 
     # Reject path traversal in domain identifier
@@ -488,7 +490,9 @@ class _SimpleCapNarrower:
     def can_narrow(
         self, violation: Violation, action: str, params: dict[str, Any]
     ) -> bool:
-        return action == "execute_transfer" and violation.kind == ViolationKind.NARROWABLE
+        return (
+            action == "execute_transfer" and violation.kind == ViolationKind.NARROWABLE
+        )
 
     def narrow(
         self, violation: Violation, action: str, params: dict[str, Any]
@@ -608,9 +612,7 @@ async def test_bigquery_harvester_parameterized_queries_and_flywheel(
                     {
                         "step_index": 1,
                         "source": "agent",
-                        "tool_calls": [
-                            {"name": "legacy_docker_push", "arguments": {}}
-                        ],
+                        "tool_calls": [{"name": "legacy_docker_push", "arguments": {}}],
                     }
                 ],
                 "final_response": "Failed deployment",
@@ -887,7 +889,12 @@ async def test_langgraph_and_adk_rollout_adapters_with_vertex_backend(
         with_skill_trajectories=adk_bundle.with_skill_trajectories,
     )
     assert adk_lift.mean_composite_lift > 0.4
-    assert langgraph_state_to_atif({"messages": [("user", "hi"), ("ai", "hello")]}).final_response == "hello"
+    assert (
+        langgraph_state_to_atif(
+            {"messages": [("user", "hi"), ("ai", "hello")]}
+        ).final_response
+        == "hello"
+    )
 
 
 @pytest.mark.asyncio
@@ -996,7 +1003,9 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
                 tool_calls=(
                     {
                         "name": "run_command",
-                        "arguments": {"command": "scripts/deploy_cloudbuild.py --env prod"},
+                        "arguments": {
+                            "command": "scripts/deploy_cloudbuild.py --env prod"
+                        },
                     },
                 ),
                 observation="DEPLOY_STATUS=VERIFIED",
@@ -1052,7 +1061,9 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
         explicit_rubric_scores={"case-cicd-1": 4.8},
     )
     assert blocked_result.passed is False
-    assert any("dry_run_governance_violations" in r for r in blocked_result.blocking_reasons)
+    assert any(
+        "dry_run_governance_violations" in r for r in blocked_result.blocking_reasons
+    )
 
 
 @pytest.mark.asyncio
@@ -1129,7 +1140,9 @@ async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
                 tool_calls=(
                     {
                         "name": "run_command",
-                        "arguments": {"command": "scripts/deploy_cloudbuild.py --env prod"},
+                        "arguments": {
+                            "command": "scripts/deploy_cloudbuild.py --env prod"
+                        },
                     },
                 ),
                 observation="DEPLOY_STATUS=VERIFIED",
@@ -1167,7 +1180,11 @@ async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
             "gepa-exp-1": baseline_exp,
             "gepa-neg-1": baseline_neg,
         },
-        gepa_metric_scores={"response_quality": 4.9, "tool_selection": 4.9, "safety": 4.9},
+        gepa_metric_scores={
+            "response_quality": 4.9,
+            "tool_selection": 4.9,
+            "safety": 4.9,
+        },
     )
 
     # Candidate 2 (Gen 2): Mutated prompt over-triggers on negative control -> must be eliminated
@@ -1180,7 +1197,11 @@ async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
             "gepa-exp-1": good_exp,
             "gepa-neg-1": overtrigger_neg,
         },
-        gepa_metric_scores={"response_quality": 4.7, "tool_selection": 4.5, "safety": 4.8},
+        gepa_metric_scores={
+            "response_quality": 4.7,
+            "tool_selection": 4.5,
+            "safety": 4.8,
+        },
     )
 
     # Candidate 3 (Gen 3): Clean survivor with strong GEPA rubric & skill lift -> winner
@@ -1193,7 +1214,11 @@ async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
             "gepa-exp-1": good_exp,
             "gepa-neg-1": baseline_neg,
         },
-        gepa_metric_scores={"response_quality": 4.6, "tool_selection": 4.8, "safety": 5.0},
+        gepa_metric_scores={
+            "response_quality": 4.6,
+            "tool_selection": 4.8,
+            "safety": 5.0,
+        },
     )
 
     harness = FoundationModelEvalHarness(governor=None)
@@ -1250,5 +1275,3 @@ async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
     )
     assert ok is True
     assert reason == "VERIFIED"
-
-

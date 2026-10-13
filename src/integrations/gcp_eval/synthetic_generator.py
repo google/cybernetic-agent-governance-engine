@@ -88,7 +88,9 @@ class VertexSyntheticEvalGenerator:
             ]
 
         cases: list[SkillEvalCase] = []
-        clean_forbidden = tuple(self._sanitizer.sanitize(str(t)) for t in forbidden_tools)
+        clean_forbidden = tuple(
+            self._sanitizer.sanitize(str(t)) for t in forbidden_tools
+        )
         clean_tokens = tuple(
             self._sanitizer.sanitize(str(t)) for t in required_output_tokens
         )
@@ -100,7 +102,9 @@ class VertexSyntheticEvalGenerator:
             bucket = _FOUR_BUCKETS[idx % len(_FOUR_BUCKETS)]
             case_id = f"{skill_name}-{bucket.value}-{idx + 1:04d}"
             if bucket == SkillPromptBucket.EXPLICIT:
-                prompt = f"Use the {skill_name} skill to execute workflow case #{idx + 1}."
+                prompt = (
+                    f"Use the {skill_name} skill to execute workflow case #{idx + 1}."
+                )
                 expected_skill: str | None = skill_name
             elif bucket == SkillPromptBucket.IMPLICIT:
                 prompt = f"Complete the domain task described in {skill_name} scenario #{idx + 1}."
@@ -143,7 +147,9 @@ class VertexSyntheticEvalGenerator:
         bucket = SkillPromptBucket(str(raw.get("bucket", "explicit")).lower())
         raw_expected = raw.get(
             "expected_skill",
-            None if bucket == SkillPromptBucket.NEGATIVE_CONTROL else default_skill_name,
+            None
+            if bucket == SkillPromptBucket.NEGATIVE_CONTROL
+            else default_skill_name,
         )
         return SkillEvalCase(
             case_id=self._sanitizer.sanitize(

@@ -211,9 +211,7 @@ def _normalize_lc_message(msg: Any) -> dict[str, Any]:
         }
 
     # Duck-typed LangChain BaseMessage (HumanMessage, AIMessage, ToolMessage, SystemMessage)
-    role = str(
-        getattr(msg, "type", None) or getattr(msg, "role", None) or "ai"
-    ).lower()
+    role = str(getattr(msg, "type", None) or getattr(msg, "role", None) or "ai").lower()
     raw_tcalls = list(getattr(msg, "tool_calls", None) or ())
     raw_add_kwargs = getattr(msg, "additional_kwargs", None)
     add_kwargs = dict(raw_add_kwargs) if isinstance(raw_add_kwargs, Mapping) else {}
@@ -311,9 +309,7 @@ def langgraph_state_to_atif(
         )
         prompt = str(state_payload.get("prompt") or "")
         final_response = str(
-            state_payload.get("final_response")
-            or state_payload.get("response")
-            or ""
+            state_payload.get("final_response") or state_payload.get("response") or ""
         )
         raw_artifacts = state_payload.get(
             "intermediate_artifacts"

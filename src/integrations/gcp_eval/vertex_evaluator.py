@@ -396,7 +396,9 @@ class VertexGenAIEvalBackend(EvalBackendProtocol):
            zero violations—even if the soft LLM rubric score is >= 3.0.
         """
         if min_rubric_score < 1.0 or min_rubric_score > 5.0:
-            raise ValueError("min_rubric_score must be on the GEAP 1.0-5.0 PointwiseMetric scale")
+            raise ValueError(
+                "min_rubric_score must be on the GEAP 1.0-5.0 PointwiseMetric scale"
+            )
 
         anchor_cal = self.calibrate_on_vertex_anchor_dataset(
             harness.drawback_evaluator,
@@ -497,4 +499,3 @@ __all__ = [
     "build_tessl_dual_rubric_specs",
     "build_vertex_drawback_custom_metrics",
 ]
-

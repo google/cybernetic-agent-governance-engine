@@ -431,6 +431,7 @@ from src.integrations.gcp_eval import (
 )
 from src.integrations.trust.key_manifest import Ed25519KeyManifestClient
 
+
 async def publish_and_verify() -> None:
     cer_path = Path("/tmp/cage-gcp-eval-demo/gcp-deploy-skill.cer")
     skill_md_path = Path("/tmp/cage-gcp-eval-demo/gcp-deploy-skill/SKILL.md")
@@ -464,6 +465,7 @@ When the online `SymbolicGovernor` runs in production, it emits structured `Refu
 from pathlib import Path
 from src.eval_harness import FoundationModelEvalHarness
 from src.integrations.gcp_eval import BigQueryTrajectoryHarvester
+
 
 async def run_offline_flywheel(governor) -> None:
     harvester = BigQueryTrajectoryHarvester(
