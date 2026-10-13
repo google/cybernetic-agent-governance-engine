@@ -465,9 +465,10 @@ The ingress adapter layer normalizes external governance signals from heterogene
 | **ACS Adapter** | [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | Ingests ACS (Agent Capability Statement) declarations |
 | **OSCAL Adapter** | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | Parses OSCAL component definitions and assessment results into internal policy objects |
 | **Lula Adapter** | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Ingests Lula validation results and maps them to CAGE control verdicts |
-| **AGP Policy Uploader** | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | Uploads translated policies to the Agent Gateway Protocol policy store |
+| **AGP Policy Uploader** | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | Uploads translated policies to the Agent Gateway Protocol policy store and orchestrates fail-closed `AUDIT_ONLY -> ENFORCING` mode transitions via [`verify_and_transition_gateway_mode()`](../../src/gateway/governance/ingress/agp_policy_uploader.py) |
+| **AGW Service Extension Adapter** | [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Evaluates Google Agent Gateway (`ext_authz`) callouts via [`AgwAdapter.evaluate_request_authz()`](../../src/gateway/governance/ingress/agw_adapter.py), verifies tri-identity OIDC context (`GeapTriIdentityContext`, `validate_oidc_token()`), and injects `X-CAGE-Routing-Seal` on approval |
 | **Policy Translator** | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Translates between OSCAL/Lula/AAIF representations and OPA Rego |
-| **Agent Registry Adapter** | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | SPIFFE trust-domain agent catalog integration |
+| **Agent Registry Adapter** | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | SPIFFE trust-domain agent catalog (`RegistryCatalog`), FTRA terminal-class overrides ([`to_ftra_terminal_overrides()`](../../src/gateway/governance/ingress/agent_registry_adapter.py)), and `ToolSpec` association ([`associate_toolspec()`](../../src/gateway/governance/ingress/agent_registry_adapter.py)) |
 
 ### 7.2 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
@@ -532,7 +533,7 @@ src/gateway/
 │   ├── consensus/          # Multi-model consensus engine & critic registry
 │   ├── evidence/           # Tamper-evident evidence stream producer & cold-store protocol
 │   ├── ftra/               # Forward-Looking Trajectory Reachability Analyzer
-│   ├── ingress/            # Normalization adapters (AAIF, ACS, OSCAL, Lula, AGP)
+│   ├── ingress/            # Normalization adapters (AAIF, ACS, OSCAL, Lula, AGP, AGW, Agent Registry)
 │   ├── langgraph_harness/  # Reusable OPA and NeMo graph node factories
 │   ├── nemo/               # NeMo Guardrails lifecycle manager
 │   ├── reconciliation/     # GroundTruthReconciler daemon & reconciler trust anchors
@@ -540,7 +541,7 @@ src/gateway/
 │   ├── seams/              # Vendor-neutral seam contracts (zero kernel imports)
 │   │   ├── actuation.py        # ExecutionActuator protocol & clearance/receipt records
 │   │   ├── attestation.py      # AttestationProvider base class & attestation records
-│   │   ├── credential_broker.py # CredentialBrokerAdapter protocol & error taxonomy
+│   │   ├── credential_broker.py # CredentialBrokerAdapter protocol, TriIdentityCredentialBinding & error taxonomy
 │   │   ├── graph_topology.py   # Domain-agnostic GraphTopology structure
 │   │   └── normative.py        # NormativeProvider protocol, baselines & evidence seals
 │   ├── consequence_gateway.py # Atomic execution authorization & token consumption
@@ -585,4 +586,4 @@ src/gateway/
 | `src/gateway/observability/mcp_tracing.py` | Distributed Tracing | W3C `traceparent` context extraction and child span creation across SSE transports. |
 | `src/gateway/server/workload_identity.py` | Agent Identity | Linkerd mTLS workload identity ingress gate (`WorkloadIdentityMiddleware`) and caller identity extraction (`extract_client_identity(scope)`), enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment. |
 | `src/gateway/server/dpop_validator.py` | Token Binding | `ProofOfPossessionValidator` protocol and RFC 9449 `DPoPValidator` binding DPoP proofs to the client certificate (not yet wired into middleware). |
-| `src/gateway/governance/seams/` | Seam Contracts | Vendor-neutral protocol and dataclass contracts (`actuation.py`, `attestation.py`, `credential_broker.py`, `graph_topology.py`, `normative.py`) with zero kernel imports. |
+| `src/gateway/governance/seams/` | Seam Contracts | Vendor-neutral protocol and dataclass contracts (`actuation.py`, `attestation.py`, `credential_broker.py` including `TriIdentityCredentialBinding`, `graph_topology.py`, `normative.py`) with zero kernel imports. |

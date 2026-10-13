@@ -1,8 +1,9 @@
 # Foundation Model & Agent Skill Evaluation Harness (`src/eval_harness/`)
 
 **Package Root:** [`src/eval_harness/__init__.py`](../../src/eval_harness/__init__.py)  
-**Core Modules:** [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py) · [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) · [`src/eval_harness/static_linter.py`](../../src/eval_harness/static_linter.py) · [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) · [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)  
-**Test Suite:** [`tests/unit/governance/test_eval_harness.py`](../../tests/unit/governance/test_eval_harness.py)  
+**Core Modules:** [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py) · [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) · [`src/eval_harness/static_linter.py`](../../src/eval_harness/static_linter.py) · [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) · [`src/eval_harness/gepa_optimizer.py`](../../src/eval_harness/gepa_optimizer.py) · [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)  
+**Layer 3 GCP Eval & GEAP Plugin:** [`src/integrations/gcp_eval/`](../../src/integrations/gcp_eval/__init__.py) ([`vertex_evaluator.py`](../../src/integrations/gcp_eval/vertex_evaluator.py), [`bq_harvester.py`](../../src/integrations/gcp_eval/bq_harvester.py), [`cer_publisher.py`](../../src/integrations/gcp_eval/cer_publisher.py), [`gepa_governor.py`](../../src/integrations/gcp_eval/gepa_governor.py), [`synthetic_generator.py`](../../src/integrations/gcp_eval/synthetic_generator.py), [`pipelines.py`](../../src/integrations/gcp_eval/pipelines.py))  
+**Test Suite:** [`tests/unit/governance/test_eval_harness.py`](../../tests/unit/governance/test_eval_harness.py) · [`tests/unit/governance/test_gepa_optimizer.py`](../../tests/unit/governance/test_gepa_optimizer.py) · [`tests/unit/governance/test_gcp_eval_plugin.py`](../../tests/unit/governance/test_gcp_eval_plugin.py)  
 **System Plane:** Standalone Offline Evaluation & Skill Certification System (`src/eval_harness/`) — strictly decoupled from Online Enforcement (`src/gateway/`)
 
 ---
@@ -11,13 +12,13 @@
 
 Enterprise AI platforms and foundation model teams face two opposing requirements:
 1. **Online Runtime Enforcement (`src/gateway/`)** must execute synchronously on the hot path in **$<10\text{ ms}$**, enforcing atomic state invariants (`FTRA`, `STPA`, `CBF`, `OPA`, `RoutingSeal`) with zero dependency on batch trajectory evaluators or dataset exporters.
-2. **Offline Evaluation, Skill Certification & Post-Training Alignment (`src/eval_harness/`)** must inspect full multi-turn trajectories, orchestrate paired live rollouts (`baseline` vs. `with_skill`), score `SKILL.md` specifications, compute paired differential **Skill Lift** and tokenomics, calibrate evaluators against golden anchors, and export counterfactual DPO datasets in CI or batch pipelines.
+2. **Offline Evaluation, Skill Certification & Post-Training Alignment (`src/eval_harness/`)** must inspect full multi-turn trajectories, orchestrate paired live rollouts (`baseline` vs. `with_skill`), score `SKILL.md` specifications, compute paired differential **Skill Lift** and tokenomics, calibrate evaluators against golden anchors, evolve native prompts / `SKILL.md` files / Presidio PII configs via **GEPA (Genetic-Pareto)** reflective optimization ([`gepa_optimizer.py`](../../src/eval_harness/gepa_optimizer.py)), and export counterfactual DPO datasets in CI or batch pipelines.
 
 CAGE resolves this tension via a **Modular Monorepo with a Hard System Cut**:
 - **Strict Non-Interference (Gate G3):** [`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py) enforces at the AST level (`OFFLINE_EVAL_PATTERN`) that `src/gateway/` **never** imports from `src/eval_harness/`. Furthermore, [`src/gateway/Dockerfile`](../../src/gateway/Dockerfile) does not copy `src/eval_harness/` into the production Gateway container.
 - **Two Offline Execution Modes in [`FoundationModelEvalHarness`](../../src/eval_harness/harness.py):**
   - **Standalone Trace-Only Mode (`governor=None`):** Grades recorded or dynamically generated [`ATIFTrajectory`](../../src/eval_harness/harness.py) logs, lints `SKILL.md` files ([`lint_skill_markdown`](../../src/eval_harness/static_linter.py)), calibrates drawback detectors ([`calibrate_on_anchors`](../../src/eval_harness/harness.py)), and computes 4-bucket paired [`SkillLiftReport`](../../src/eval_harness/harness.py) with **zero** `SymbolicGovernor`, Redis, or OPA dependencies.
-  - **Dry-Run Counterfactual Mode (`governor=<SymbolicGovernor>`):** Replays tool actions through [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py) (`Profile.DRY_RUN`) with isolated shadow-state tracking (`ShadowStateReducer`) to compute step-level Process Rewards (PRM) and synthesize minimal-edit counterfactual DPO pairs.
+  - **Dry-Run Counterfactual Mode (`governor=<SymbolicGovernor>`):** Replays tool actions through [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py) (`Profile.DRY_RUN`) with isolated shadow-state tracking (`ShadowStateReducer`) to compute step-level Process Rewards (PRM), emit diagnostic [`ActionableSideInfo`](../../src/eval_harness/gepa_optimizer.py) (ASI) for GEPA reflective optimization, and synthesize minimal-edit counterfactual DPO pairs.
 
 ```text
       OFFLINE EVALUATION & CERTIFICATION PLANE                ONLINE RUNTIME ENFORCEMENT PLANE
@@ -27,7 +28,8 @@ CAGE resolves this tension via a **Modular Monorepo with a Hard System Cut**:
    │ • Rollout Runner & Adapters (runner.py)      │ Static │ • Linkerd mTLS + Single-Use JWS Seals  │
    │ • ATIF Trace Adapters & Tokenomics Engine    │───────▶│ • 5-State Engine (ALLOW/NARROW/DEFER…) │
    │ • 4-Bucket Paired Skill Lift & Routing Prem. │ Config │ • Atomic Redis Lua CBFs & LIFO Undo    │
-   │ • Double Ratchet Anchor Calibration Guard    │        │ • Emits RefusalReceipt JSONL Stream    │
+   │ • Double Ratchet Anchor Calibration Guard    │   &    │ • Emits RefusalReceipt JSONL Stream    │
+   │ • GEPA Reflective Optimizer (gepa_optimizer) │  .cer  │                                        │
    │ • Optional DRY_RUN PRM & NARROW DPO Export   │        │                                        │
    └──────────────────────────────────────────────┘        └────────────────────────────────────────┘
                           ▲                                                     │
@@ -57,11 +59,13 @@ Before running any LLM rollout, [`lint_skill_markdown()`](../../src/eval_harness
 ### 3.1 Agent Trajectory Interchange Format (`ATIFTrajectory`), Trace Converters & Rollout Runner (`runner.py`)
 [`ATIFTrajectory`](../../src/eval_harness/harness.py) and [`ATIFStep`](../../src/eval_harness/harness.py) provide a harness-agnostic representation of multi-turn agent rollouts, including intermediate tool calls, observations, `visible_skills`, and `intermediate_artifacts`. [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) ships static transcript converters:
 - [`adk_session_to_atif()`](../../src/eval_harness/adapters.py): Normalizes Google ADK session/event payloads (`text`, `function_call`, `function_response`, artifacts) into `ATIFTrajectory`.
+- [`langgraph_state_to_atif()`](../../src/eval_harness/adapters.py): Normalizes LangChain / LangGraph `StateGraph` message histories (`HumanMessage`, `AIMessage` with `tool_calls` and `usage_metadata`, `ToolMessage` paired by `tool_call_id`) into `ATIFTrajectory`.
 - [`gemini_cli_jsonl_to_atif()`](../../src/eval_harness/adapters.py): Normalizes Gemini CLI / Antigravity JSONL step records into `ATIFTrajectory`.
 
 To generate paired trajectories dynamically without cloud-locked dependencies, [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) provides [`AgentRolloutRunner`](../../src/eval_harness/runner.py) and the [`BaseRolloutAdapter`](../../src/eval_harness/runner.py) hierarchy (resolved via [`load_rollout_adapter()`](../../src/eval_harness/runner.py)):
 - [`CallableRolloutAdapter`](../../src/eval_harness/runner.py): Wraps any sync/async Python callable, LangGraph runnable, or `"module:function"` target. Dynamic symbol resolution (`_resolve_symbol`) validates Python identifiers, blocks dangerous stdlib execution modules (`_FORBIDDEN_ROLLOUT_MODULES`, such as `os:system` or `subprocess:Popen`), and supports optional `allowed_module_prefixes` on [`load_rollout_adapter()`](../../src/eval_harness/runner.py). Because importing a Python module executes its top-level statements, only trusted adapter modules should be loaded.
 - [`ADKSessionRolloutAdapter`](../../src/eval_harness/runner.py): Wraps Google ADK session runners and normalizes event payloads via [`adk_session_to_atif()`](../../src/eval_harness/adapters.py).
+- [`LangGraphRolloutAdapter`](../../src/eval_harness/runner.py): Wraps compiled LangGraph `StateGraph` / `Runnable` objects (`.ainvoke` / `.invoke`), injects visible `SKILL.md` specifications as system messages, and normalizes output state via [`langgraph_state_to_atif()`](../../src/eval_harness/adapters.py).
 - [`MultiAgentRolloutAdapter`](../../src/eval_harness/runner.py): Wraps hierarchical/sequential coordinator + specialist sub-agent topologies, recording sub-agent delegation edges in `ATIFStep.metadata["sub_agent"]` for unified skill and sub-agent routing evaluation.
 - [`HttpRolloutAdapter`](../../src/eval_harness/runner.py): Invokes remote HTTP/REST/A2A agent endpoints with strict `http://` / `https://` scheme validation and a bounded response reader (`max_response_bytes`, default `10 MiB`).
 - **Tokenomics & Multi-Turn Growth Engine:** [`compute_trajectory_tokenomics()`](../../src/eval_harness/runner.py) and [`compute_cost_savings_multiplier()`](../../src/eval_harness/runner.py) compute [`TrajectoryTokenomics`](../../src/eval_harness/runner.py) (`total_prompt_tokens`, `total_completion_tokens`, `estimated_cost_usd` via [`MODEL_PRICING_CATALOG`](../../src/eval_harness/runner.py), `multi_turn_growth_rate`, and `is_quadratic_bloat`). Super-linear multi-turn prompt token bloat (`growth_rate > 2.5`) is automatically penalized in [`SkillTrajectoryScorecard.skill_efficiency`](../../src/eval_harness/harness.py). Note that `ATIFTrajectory` step records and `metadata["prompt_tokens"]` are treated as trusted harness-recorded telemetry rather than untrusted agent-authored claims.
@@ -144,3 +148,43 @@ Similarly, `FoundationModelEvalHarness.harvest_refusal_receipts()` replays produ
 - **Chosen-Target Argument Sanitization:** Strips prompt-injection, policy-override, claim-spoofing, and destructive command strings (as well as any keys outside optional `allowed_param_keys`) from `chosen["arguments"]` while retaining the raw `attempted_params` in `rejected["arguments"]`.
 - **Standing Context Isolation:** Supports `trusted_standing_override` and `trust_receipt_standing=False` so untrusted caller-supplied `standing_snapshot` fields cannot steer the synthetic DPO prompt context.
 
+---
+
+## 6. GEPA (Genetic-Pareto) Reflective Prompt, Skill & PII Rule Optimization (`gepa_optimizer.py`)
+
+Standard prompt optimizers collapse multi-dimensional governance requirements into a single scalar reward—causing LLM mutators to trade away negative-control restraint or safety clauses for marginal task accuracy—and discard rich diagnostic failure traces during mutation. [`src/eval_harness/gepa_optimizer.py`](../../src/eval_harness/gepa_optimizer.py) implements the **GEPA (Genetic-Pareto)** reflective text evolution loop (Agrawal et al., `arXiv:2507.19457`, [`gepa-ai/gepa`](https://github.com/gepa-ai/gepa)) directly inside the standalone Offline Evaluation Plane (`src/eval_harness/`).
+
+### 6.1 Four-Dimensional Pareto Objective Vector & Instance-Wise Frontier (`ParetoObjectives`)
+
+Instead of scalarizing competing objectives prematurely, [`ParetoObjectives`](../../src/eval_harness/gepa_optimizer.py) preserves a 4D objective vector alongside per-case scores (`per_case_scores: dict[str, float]`):
+
+$$\mathbf{J}(c) = \bigl(J_{\text{quality}}(c), \; J_{\text{admissibility}}(c), \; J_{\text{security}}(c), \; J_{\text{efficiency}}(c)\bigr) \in [0, 1]^4$$
+
+- [`dominates(a, b)`](../../src/eval_harness/gepa_optimizer.py): Returns `True` iff candidate $a$ is $\ge b$ on all four dimensions (`quality_score`, `admissibility_score`, `security_score`, `token_efficiency_score`) and strictly $>$ on at least one.
+- [`compute_pareto_frontier(candidates)`](../../src/eval_harness/gepa_optimizer.py): Computes the non-dominated Pareto front $\mathcal{F} \subseteq \mathcal{P}$ and retains specialists that achieve the unique best score on individual evaluation cases (`per_case_scores`), enabling **system-aware crossover** (`GEPAEvolutionEngine._merge_pareto_specialists`) between complementary prompt/skill candidates.
+
+### 6.2 `ActionableSideInfo` (ASI) Diagnostic Feedback & Anti-Reward-Hacking Gate
+
+When [`CageGEPAAdapter.evaluate_candidate()`](../../src/eval_harness/gepa_optimizer.py) evaluates a [`GEPATextCandidate`](../../src/eval_harness/gepa_optimizer.py) across a batch of [`SkillEvalCase`](../../src/eval_harness/harness.py) items, it collects structured [`ActionableSideInfo`](../../src/eval_harness/gepa_optimizer.py) (ASI) from CAGE's deterministic verifiers:
+- **Dry-Run Governor Violations (`governor_violations`):** Exact STPA UCA IDs, OPA rule denials, FTRA reachability blocks, and CBF margin shortfalls from `SymbolicGovernor.validate_action()` (`Profile.DRY_RUN`).
+- **Counterfactual `NARROW` Clamping Notes (`narrow_clamping_notes`):** Exact parameter projections $\Pi_{\mathcal{C}}(u_t)$ showing the reflection LLM how a tool call exceeded the safe boundary and what value cleared.
+- **Drawback & Tokenomics Diagnostics (`drawback_reasons`, `tokenomics_notes`):** False-positive tool calls on `SkillPromptBucket.NEGATIVE_CONTROL`, missing `required_output_tokens`, and super-linear multi-turn token growth (`growth_rate > 2.5`) from [`compute_trajectory_tokenomics()`](../../src/eval_harness/runner.py).
+- **Mandatory PII Sanitization (`to_reflection_prompt_block`):** Every ASI diagnostic string is scrubbed through [`PIISanitizer.sanitize_dict()`](../../src/gateway/governance/pii_sanitizer.py) before entering the reflection prompt.
+- **Stage 0 Anti-Reward-Hacking Gate ([`screen_candidate_security()`](../../src/eval_harness/gepa_optimizer.py)):** Every initial seed and LLM-proposed mutation is screened prior to rollout via [`detect_prompt_injection()`](../../src/gateway/governance/prompt_injection_detector.py), [`detect_confidence_claim()`](../../src/gateway/governance/confidence_claim_detector.py), [`detect_authorization_claim()`](../../src/gateway/governance/authorization_claim_detector.py), [`DESTRUCTIVE_COMMAND_PATTERN`](../../src/eval_harness/static_linter.py), and [`lint_skill_markdown()`](../../src/eval_harness/static_linter.py). Any candidate attempting to game the evaluator (e.g., injecting `"confidence: 0.99"` or `"role: senior"`) is immediately disqualified (`disqualified=True`, all 4 objectives zeroed).
+
+### 6.3 Reflective Evolution Loop (`GEPAEvolutionEngine`), Presidio/spaCy Tuning & `optimize_anything` Bridge
+
+1. **[`GEPAEvolutionEngine`](../../src/eval_harness/gepa_optimizer.py):** Executes the 5-step GEPA evolutionary loop over `generations` and `minibatch_size`:
+   - Evaluates the seed candidate (and optional `initial_population`),
+   - Selects a parent from the non-dominated Pareto frontier,
+   - Diagnoses worst-performing cases via `ActionableSideInfo` (ASI),
+   - Invokes the pluggable `ReflectiveProposerFn` (or deterministic ASI remediator when `proposer=None`) to synthesize a targeted child candidate,
+   - Screens the child through `screen_candidate_security()`, evaluates its 4D `ParetoObjectives`, updates the Pareto frontier (`GEPAReflectiveRunReport`), and performs system-aware crossover when $\ge 2$ frontier specialists excel on disjoint `per_case_scores`.
+2. **Optimizing Presidio + `spaCy` PII Configuration ([`PresidioPIIOptimizationEvaluator`](../../src/eval_harness/gepa_optimizer.py) & [`PIIRedactionEvalSample`](../../src/eval_harness/gepa_optimizer.py)):**
+   - CAGE uses `spaCy` (`en_core_web_lg` / `en_core_web_sm`) solely as the NER backbone inside [`PresidioPIIRedactor`](../../src/integrations/presidio/redactor.py) (`_IDENTITY_ENTITIES = ("PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD", "IBAN_CODE", "CRYPTO", "MEDICAL_LICENSE", "URL", "IP_ADDRESS")`).
+   - Rather than fine-tuning `spaCy` statistical weights, `PresidioPIIOptimizationEvaluator` uses GEPA to optimize serialized JSON configurations (`score_threshold`, `active_entities`, `allow_list`) against labeled [`PIIRedactionEvalSample`](../../src/eval_harness/gepa_optimizer.py) corpora, balancing **PII Recall** (`security_score` on `expected_redacted_substrings`) against **Financial/Clinical Text Preservation** (`quality_score` + `admissibility_score` on `must_preserve_substrings`, preventing false-positive `[REDACTED]` corruption of tickers, quantities, and dates).
+3. **Optional [`gepa.optimize_anything`](https://github.com/gepa-ai/gepa) Bridge ([`run_gepa_optimize_anything()`](../../src/eval_harness/gepa_optimizer.py)):**
+   - Wraps `CageGEPAAdapter` as a `gepa.optimize_anything` evaluator returning `(scalar_score, asi_dict)` when the optional `gepa` package is installed, and automatically falls back to CAGE's built-in `GEPAEvolutionEngine` in hermetic/air-gapped environments.
+4. **Relationship to Layer 3 GCP GEAP [`GovernedGEPAOptimizer`](../../src/integrations/gcp_eval/gepa_governor.py):**
+   - [`src/eval_harness/gepa_optimizer.py`](../../src/eval_harness/gepa_optimizer.py) is the **cloud-agnostic reflective evolution engine** in the standalone Offline Evaluation Plane (`src/eval_harness/`).
+   - [`src/integrations/gcp_eval/gepa_governor.py`](../../src/integrations/gcp_eval/gepa_governor.py) is the **Layer 3 GCP integration adapter** that governs populations produced by Google Cloud GEAP's managed `AgentOptimizer` and signs the winning survivor into a `.cer` receipt via [`GcpSkillCertifier`](../../src/integrations/gcp_eval/cer_publisher.py) (see [`GEAP_INTEGRATION_ARCHITECTURE.md`](GEAP_INTEGRATION_ARCHITECTURE.md) §4.2).
