@@ -290,19 +290,39 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
         "sc-39": {
             "uuid": _PLATFORM_SC39_IMPL_UUID,
             "control-id": "sc-39",
-            "title": "Process Isolation — gVisor RuntimeClass",
+            "title": "Process Isolation — Universal Kubernetes Pod Security & Optional GCP (GEAP MicroVM / GKE) Deployment Mode",
             "status": "implemented",
             "narrative": (
-                "All governance-stack pods execute with `runtimeClassName: gvisor`, enforcing "
-                "application kernel sandboxing via gVisor's reduced syscall attack surface. "
-                "gVisor intercepts syscalls in userspace and emulates a Linux kernel interface, "
-                "preventing direct host kernel access from containerized workloads. This isolation "
-                "boundary mitigates container escape vulnerabilities (e.g., runc CVE-2019-5736) "
-                "and kernel privilege escalation exploits. Pod Security Standard enforcement "
-                "(restricted profile) prevents RuntimeClass override. Evidence: kubectl get pod "
-                "-n governance-stack -o jsonpath='{.items[*].spec.runtimeClassName}'."
+                "CAGE is a cloud-agnostic governance engine whose baseline process isolation is "
+                "enforced across all deployment modes (`infra/targets/agnostic/` and cloud targets) via "
+                "universal Kubernetes Pod Security Standards (`restricted` profile in "
+                "`deployment/k8s/pod-security-admission.yaml`), non-root execution (`runAsNonRoot: true`, "
+                "`runAsUser: 1000`), `allowPrivilegeEscalation: false`, `capabilities: drop: [\"ALL\"]`, "
+                "and `seccompProfile: RuntimeDefault` (`deployment/k8s/security-context-patch.yaml`, "
+                "`infra/modules/gateway/main.tf`). When deployed in the optional `gcp-gke` deployment "
+                "mode (`infra/targets/gcp-gke/`), CAGE adds target-specific split-plane isolation: "
+                "(1) Agent Application Plane (Optional GEAP Agent Runtime mode, `advisor_runtime = \"geap\"` "
+                "via `infra/modules/gcp_geap_advisor/main.tf`): Untrusted agent orchestration and "
+                "tool-calling workloads execute on Vertex AI Agent Engine (Agent Substrate) with "
+                "hardware-enforced MicroVM isolation (dedicated guest Linux kernel per agent sandbox), "
+                "eliminating the need for nested-virtualization `runtimeClassName: microvm` pods on GKE "
+                "(while `agnostic` and `advisor_runtime = \"gke\"` modes run the advisor as a standard "
+                "`restricted` Kubernetes Deployment via `infra/modules/governed_advisor/main.tf`). "
+                "(2) Governance Control Plane (`gcp-gke` mode): Stateless governance-stack pods "
+                "(`gateway`, `compliance-bridge`, `opa`, `reconciliation-worker`) support optional "
+                "`runtimeClassName: gvisor` user-space kernel sandboxing on E2 CPU node pools "
+                "(`enable_gvisor_sandbox` in `infra/modules/gcp_gke_cluster/main.tf`). (3) GPU Inference "
+                "& Stateful Storage Plane (`gcp-gke` mode): Hardware-bound workloads (`vllm` on `gpu-l4` "
+                "`g2-standard-8` NVIDIA L4 nodes and `clickhouse` on local-NVMe nodes) are isolated on "
+                "dedicated tainted node pools (`nvidia.com/gpu=present:NoSchedule` and "
+                "`workload=clickhouse:NoSchedule`) on native container runtime to preserve direct PCIe "
+                "GPU passthrough and NVMe block I/O."
             ),
-            "evidence": "deployment/k8s/*-deployment.yaml (runtimeClassName: gvisor)",
+            "evidence": (
+                "deployment/k8s/pod-security-admission.yaml, deployment/k8s/security-context-patch.yaml, "
+                "infra/modules/governed_advisor/main.tf, infra/modules/gcp_geap_advisor/main.tf, "
+                "infra/modules/gcp_gke_cluster/main.tf"
+            ),
             "poam_refs": "POAM-009 (SC-39)",
         },
         "si-3": {

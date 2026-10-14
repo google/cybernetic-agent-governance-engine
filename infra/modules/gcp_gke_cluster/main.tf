@@ -293,7 +293,20 @@ resource "google_container_cluster" "primary" {
 }
 
 # ─── Pool 1: General On-Demand Node Pool (§3: general) ────────────────────────
-# Hosts gateway, advisor, OPA, NeMo, Langfuse, and reconciler workloads.
+# Hosts stateless governance control-plane workloads (gateway, OPA, NeMo,
+# Langfuse, compliance-bridge, and reconciler).
+#
+# SC-39 Architecture Note (Cloud-Agnostic Baseline vs. Optional GCP/GEAP Mode):
+#   - CAGE is cloud-agnostic (`infra/targets/agnostic/` runs all workloads on any
+#     standard Kubernetes cluster). In the optional `gcp-gke` deployment mode with
+#     `advisor_runtime = "geap"` (`infra/modules/gcp_geap_advisor/`), agent
+#     applications execute in GEAP Agent Runtime (Vertex AI Agent Engine / Agent
+#     Substrate), which provides native hardware-enforced MicroVM isolation.
+#   - Consequently, GKE MicroVM (`sandbox_type = "microvm"` / nested virtualization)
+#     is intentionally omitted on GKE so Pool 1 can remain on cost-efficient E2
+#     instances (`e2-standard-4` / `e2-standard-8`, with optional `gvisor`
+#     user-space kernel sandboxing via `var.enable_gvisor_sandbox`) and Pool 3
+#     (`gpu-l4`, `g2-standard-8`) retains direct NVIDIA L4 PCIe passthrough.
 
 resource "google_container_node_pool" "primary_nodes" {
   name     = "primary-node-pool"
@@ -314,6 +327,16 @@ resource "google_container_node_pool" "primary_nodes" {
     disk_size_gb = var.primary_node_pool_disk_size
     disk_type    = var.primary_node_pool_disk_type
     spot         = false
+
+    # Optional SC-39 gVisor user-space kernel sandbox on E2 CPU nodes (requires image_type = "COS_CONTAINERD")
+    image_type = var.enable_gvisor_sandbox ? "COS_CONTAINERD" : null
+
+    dynamic "sandbox_config" {
+      for_each = var.enable_gvisor_sandbox ? [1] : []
+      content {
+        sandbox_type = "gvisor"
+      }
+    }
 
     # OAuth scopes for GCP service access
     oauth_scopes = [
