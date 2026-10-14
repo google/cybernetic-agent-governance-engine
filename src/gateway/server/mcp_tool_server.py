@@ -439,6 +439,11 @@ async def _evaluate_policy_internal(
             return "DENIED: policy evaluation error"
 
 
+_SAFETY_INTERVENTION_TTL_SECONDS: int = int(
+    os.getenv("CAGE_SAFETY_INTERVENTION_TTL_SECONDS", "3600")
+)
+
+
 @mcp.tool()
 async def trigger_safety_intervention(reason: str = "Unknown") -> str:
     """Trigger an immediate safety intervention to lock the system."""
@@ -452,8 +457,16 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
         raise RuntimeError(
             "FAIL-CLOSED: Redis unavailable; cannot persist safety intervention lock"
         )
-    await gw_redis.set("safety_violation", reason)
-    logger.warning("🛑 SAFETY INTERVENTION TRIGGERED: %s", reason)
+    setex_fn = getattr(gw_redis, "setex", None)
+    if setex_fn is not None and inspect.iscoroutinefunction(setex_fn):
+        await setex_fn("safety_violation", _SAFETY_INTERVENTION_TTL_SECONDS, reason)
+    else:
+        await gw_redis.set("safety_violation", reason)
+    logger.warning(
+        "🛑 SAFETY INTERVENTION TRIGGERED (ttl=%ds): %s",
+        _SAFETY_INTERVENTION_TTL_SECONDS,
+        reason,
+    )
     return "INTERVENTION_ACK: System Locked."
 
 
@@ -506,8 +519,36 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     """Execute a named tool via HTTP.
 
     The caller is authenticated by mesh workload identity before this handler
-    runs (WorkloadIdentityMiddleware on the gateway root app, POAM-2026-080).
+    runs (WorkloadIdentityMiddleware on the gateway root app, POAM-2026-080,
+    and enforced directly here as defense-in-depth for GHSA-4x3x-w2m3-8mfh).
     """
+    from src.gateway.server.workload_identity import (
+        extract_client_identity,
+        load_identity_policy,
+    )
+
+    try:
+        caller_identity = extract_client_identity(request.scope)
+        policy = load_identity_policy()
+    except (ValueError, RuntimeError) as exc:
+        logger.warning(
+            "Gateway /tools/execute refused request without verified workload identity: %s",
+            exc,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="trusted workload identity required",
+        ) from exc
+    if caller_identity not in policy.trusted:
+        logger.warning(
+            "Gateway /tools/execute refused untrusted workload identity: %s",
+            caller_identity,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="trusted workload identity required",
+        )
+
     # M-20: Per-client rate limiting (sliding window)
     client_ip: str = request.client.host if request.client else "unknown"
     if not await _check_rate_limit(client_ip):
@@ -564,8 +605,13 @@ if __name__ == "__main__":
     import uvicorn
 
     from src.gateway.infrastructure.telemetry_client import configure_telemetry
+    from src.gateway.server.workload_identity import (
+        WorkloadIdentityMiddleware,
+        load_identity_policy,
+    )
 
     configure_telemetry()
+    app.add_middleware(WorkloadIdentityMiddleware, policy=load_identity_policy())
     http_port = int(os.getenv("PORT", "8080"))
     logging.basicConfig(level=logging.INFO)
     uvicorn.run(app, host="0.0.0.0", port=http_port)

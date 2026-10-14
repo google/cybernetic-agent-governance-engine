@@ -38,15 +38,9 @@ Environment
 ``CAGE_E2E_INTERNAL_TOKEN``
     The bridge's internal service token (from a Secret, never a literal).
 ``CAGE_E2E_OPERATOR_PRINCIPALS``
-    Two distinct operator SPIFFE IDs, comma-separated (HITL quorum is 2).
-
-Known gap
----------
-The bridge's ``require_operator_identity`` currently reads the operator SVID
-from the self-asserted ``x-cage-source-principal`` header rather than binding it
-to the mTLS peer identity (``l5d-client-id``). This suite sends that header per
-operator, so a passing run proves the quorum mechanics, NOT that two distinct
-humans approved: any holder of the internal token can assert both principals.
+    Two distinct operator Linkerd workload identities (``l5d-client-id`` format:
+    ``<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>``), comma-separated
+    (HITL quorum is 2).
 """
 
 from __future__ import annotations
@@ -111,7 +105,7 @@ class Live:
                 json={},
                 headers={
                     "X-Cage-Internal-Token": self.internal_token,
-                    "x-cage-source-principal": principal,
+                    "l5d-client-id": principal,
                 },
             )
             assert resp.status_code == 200, resp.text
