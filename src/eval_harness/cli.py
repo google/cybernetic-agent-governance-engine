@@ -150,6 +150,7 @@ async def run_certification_gate(
     governor: SymbolicGovernor | None = None,
     state_reducer: ShadowStateReducer | None = None,
     eval_backend: EvalBackendProtocol | str | None = None,
+    allow_stage0_only: bool = False,
 ) -> tuple[
     bool,
     SkillStaticLintReport,
@@ -165,6 +166,9 @@ async def run_certification_gate(
     wishing to enforce ``SymbolicGovernor`` step-level admissibility during
     Stage 2 can pass ``governor=<SymbolicGovernor>`` (and an optional
     ``state_reducer``).
+
+    Certification fails closed when Stage 2 paired evaluation is not executed
+    unless ``allow_stage0_only=True`` (CLI ``--stage0-only``) is explicitly set.
     """
     failures: list[str] = []
 
@@ -202,10 +206,32 @@ async def run_certification_gate(
             )
 
     # Stage 2: Paired Differential Skill Lift (via pre-recorded traces OR live rollout adapter)
-    if evals_json_path is not None and (
+    has_any_stage2_input = any(
+        x is not None
+        for x in (
+            evals_json_path,
+            baseline_traces_path,
+            with_skill_traces_path,
+            rollout_adapter,
+        )
+    )
+    has_complete_stage2_input = evals_json_path is not None and (
         (baseline_traces_path is not None and with_skill_traces_path is not None)
         or rollout_adapter is not None
-    ):
+    )
+
+    if has_any_stage2_input and not has_complete_stage2_input:
+        failures.append(
+            "stage2_incomplete_inputs(require evals_json_path plus either both "
+            "baseline_traces_path and with_skill_traces_path or rollout_adapter)"
+        )
+    elif not has_complete_stage2_input and not allow_stage0_only:
+        failures.append(
+            "stage2_not_executed(provide evals_json_path with paired traces or "
+            "rollout_adapter, or set allow_stage0_only=True / --stage0-only)"
+        )
+
+    if has_complete_stage2_input and evals_json_path is not None:
         raw_cases = json.loads(evals_json_path.read_text(encoding="utf-8"))
         cases = [_parse_eval_case(c) for c in raw_cases if isinstance(c, Mapping)]
 
@@ -281,8 +307,16 @@ async def run_certification_gate(
                     failures.append(
                         f"stage2_negative_control_overtrigger(case={cl.case_id})"
                     )
+                if cl.with_skill.drawback_reasons and cl.with_skill.security >= 1.0:
+                    failures.append(
+                        f"stage2_drawback_violation(case={cl.case_id},reasons={list(cl.with_skill.drawback_reasons)})"
+                    )
 
-            if lift_report.mean_composite_lift < min_composite_lift:
+            if min_composite_lift == 0.0 and lift_report.mean_composite_lift <= 0.0:
+                failures.append(
+                    f"stage2_insufficient_skill_lift({lift_report.mean_composite_lift} <= 0.0)"
+                )
+            elif lift_report.mean_composite_lift < min_composite_lift:
                 failures.append(
                     f"stage2_insufficient_skill_lift({lift_report.mean_composite_lift} < {min_composite_lift})"
                 )
@@ -383,6 +417,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Minimum mean composite Skill Lift required (default: 0.0).",
     )
     parser.add_argument(
+        "--stage0-only",
+        action="store_true",
+        help="Explicitly allow Stage 0 static lint certification without Stage 2 paired lift.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON certification report.",
@@ -407,8 +446,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_static_score=args.min_static_score,
             min_composite_lift=args.min_lift,
             eval_backend=args.eval_backend,
+            allow_stage0_only=args.stage0_only,
         )
     )
+
+    stages_run: list[int] = [0]
+    if anchor_rep is not None:
+        stages_run.append(1)
+    if lift_rep is not None:
+        stages_run.append(2)
 
     cer_receipt: SkillCertificationReceipt | None = None
     if certified and args.emit_cer is not None:
@@ -433,6 +479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         payload: dict[str, Any] = {
             "certified": certified,
+            "stages_run": stages_run,
             "failures": list(failures),
             "stage0_static_lint": asdict(static_rep),
             "stage1_anchor_calibration": (
@@ -448,6 +495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"Skill Name          : {static_rep.skill_name} ({static_rep.word_count} words)"
         )
+        print(f"Stages Executed     : {stages_run}")
         print(
             f"Stage 0 Static Score: {static_rep.length_adjusted_score:.4f} "
             f"(raw={static_rep.raw_mean_score:.4f}, density={static_rep.information_density_multiplier:.4f})"

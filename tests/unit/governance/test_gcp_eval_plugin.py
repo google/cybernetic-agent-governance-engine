@@ -643,6 +643,7 @@ def test_cli_emit_cer_with_vertex_backend(
             str(skill_md),
             "--eval-backend",
             "vertex",
+            "--stage0-only",
             "--emit-cer",
             str(cer_out),
             "--kms-key-id",

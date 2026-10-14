@@ -122,11 +122,16 @@ def default_shadow_state_reducer(
 
     cost = float(raw_cost)
     for k in _HEADROOM_SHADOW_KEYS:
-        if k in updated and isinstance(updated[k], (int, float)):
+        if (
+            k in updated
+            and isinstance(updated[k], (int, float))
+            and not isinstance(updated[k], bool)
+        ):
             updated[k] = float(updated[k]) - cost
     for k in _CUMULATIVE_SPEND_SHADOW_KEYS:
-        if k in updated and isinstance(updated[k], (int, float)):
-            updated[k] = float(updated[k]) + cost
+        prev = updated.get(k, 0.0)
+        if isinstance(prev, (int, float)) and not isinstance(prev, bool):
+            updated[k] = float(prev) + cost
     return updated
 
 
@@ -1311,13 +1316,17 @@ class FoundationModelEvalHarness:
     ) -> tuple[TrajectoryBenchmarkReport, list[DPOPreferenceTriplet]]:
         """Evaluate a multi-turn trajectory in DRY_RUN mode and emit DPO pairs.
 
-        When ``initial_shadow_state`` is provided, the harness maintains an
-        isolated, side-effect-free shadow state across turns (using
+        Maintains an isolated, side-effect-free shadow state across turns using
         ``state_reducer`` when supplied, or :func:`default_shadow_state_reducer`
-        by default). Admitted steps (``ALLOW`` with original arguments or
-        ``NARROW`` with clamped arguments) transition the shadow state so
-        cumulative multi-turn horizon/budget violations are caught
-        deterministically without mutating live Redis state.
+        by default (even when ``initial_shadow_state`` is ``None``, so cumulative
+        spend keys such as ``_shadow_daily_spend_usd`` accumulate automatically).
+        Admitted steps (``ALLOW`` with original arguments or ``NARROW`` with
+        clamped arguments) transition the shadow state so cumulative multi-turn
+        horizon/budget violations are caught deterministically without mutating
+        live Redis state. Note that ``Profile.DRY_RUN`` is side-effect-free on
+        writes (``preview()`` does not commit reservations or nonces), while
+        tiers backed by a live Redis instance still read existing committed keys
+        unless evaluated against an isolated/mocked state backend.
 
         When ``strict_narrow=True``, steps requiring ``NARROW`` clamping are
         counted as violations (``passed=False``) rather than passes. Even when
@@ -1330,9 +1339,12 @@ class FoundationModelEvalHarness:
         dpo_triplets: list[DPOPreferenceTriplet] = []
         first_failure: int | None = None
         shadow_state: dict[str, Any] = dict(initial_shadow_state or {})
-        effective_reducer: ShadowStateReducer | None = state_reducer or (
-            default_shadow_state_reducer if initial_shadow_state else None
+        effective_reducer: ShadowStateReducer | None = (
+            state_reducer or default_shadow_state_reducer
         )
+        if effective_reducer is default_shadow_state_reducer:
+            for k in _CUMULATIVE_SPEND_SHADOW_KEYS:
+                shadow_state.setdefault(k, 0.0)
 
         for step in steps:
             effective_context = {**shadow_state, **step.context}
@@ -1681,7 +1693,7 @@ class FoundationModelEvalHarness:
         verify_receipt_hash: bool = True,
         allowed_param_keys: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
         trusted_standing_override: Mapping[str, Any] | None = None,
-        trust_receipt_standing: bool = True,
+        trust_receipt_standing: bool = False,
     ) -> list[DPOPreferenceTriplet]:
         """Convert live runtime RefusalReceipts into post-training DPO triplets.
 
@@ -1704,9 +1716,11 @@ class FoundationModelEvalHarness:
           matching prompt-injection, destructive-command, secret/canary, or
           confidence/authorization spoofing patterns are automatically stripped from
           ``chosen["arguments"]``.
-        * ``trusted_standing_override`` / ``trust_receipt_standing``: overrides or
-          disables trusting ``receipt.standing_at_refusal`` / ``receipt.standing_snapshot``
-          when re-evaluating narrowing bounds.
+        * ``trusted_standing_override`` / ``trust_receipt_standing``: by default
+          (``trust_receipt_standing=False``), untrusted ``receipt.standing_at_refusal``
+          and ``receipt.standing_snapshot`` are not injected into the governor's
+          narrowing context unless the caller explicitly sets
+          ``trust_receipt_standing=True`` or supplies ``trusted_standing_override``.
         """
         harvested: list[DPOPreferenceTriplet] = []
         lookup = prompt_by_thread or {}

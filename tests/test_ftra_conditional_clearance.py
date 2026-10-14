@@ -508,3 +508,88 @@ def test_analyzer_without_extractor_is_unchanged(registry: Path) -> None:
 def test_confidence_allow_floor_is_the_clearance_floor() -> None:
     """The predicate's floor in production is the band's ALLOW floor."""
     assert _HIGH >= get_agent_confidence_threshold()
+
+
+def test_issue_473_ftra_nan_confidence_and_registry_expiry_enforcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #473 items 3 & 4 (reported by Daniel Fairbanks, @danofairanks):
+
+    3. `conditional_clear_reason()` and `PlanGraphAnalyzer.analyze()` reject
+       `NaN` or non-finite `confidence` / `confidence_floor` values fail-closed
+       instead of auto-clearing irreversible terminals.
+    4. `IrreversibilityClassifier` and `check_registry_staleness()` enforce
+       `expires_at` on the FTRA terminal registry (failing closed to
+       `RegistryState.UNAVAILABLE` and `report.is_clean is False`), and support
+       out-of-band digest pinning via `FTRA_EXPECTED_MANIFEST_SHA256`.
+    """
+    from src.gateway.governance.ftra.classifier import check_registry_staleness
+
+    # (3a) conditional_clear_reason with NaN confidence or NaN floor must return None
+    for bad_conf, bad_floor in (
+        (float("nan"), 0.8),
+        (0.95, float("nan")),
+        (float("inf"), 0.8),
+        (True, 0.8),
+    ):
+        assert (
+            conditional_clear_reason(
+                classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+                registry_state=RegistryState.REGISTERED,
+                envelope=AutonomousEnvelope(max_magnitude=10_000.0),
+                magnitude=100.0,
+                confidence=bad_conf,  # type: ignore[arg-type]
+                confidence_floor=bad_floor,
+            )
+            is None
+        )
+
+    # (3b) PlanGraphAnalyzer.analyze with NaN confidence must NOT clear an irreversible terminal
+    valid_path = _write_registry(
+        tmp_path / "valid_registry.json",
+        envelope={"move_funds": {"max_magnitude": 10_000.0}},
+    )
+    analyzer = PlanGraphAnalyzer(
+        classifier=IrreversibilityClassifier(registry_path=valid_path),
+        magnitude_extractor=lambda p: float(p.get("amount", 0.0)),
+    )
+    nan_res = analyzer.analyze(
+        _plan(("move_funds", {"amount": 100.0})),
+        confidence=float("nan"),
+    )
+    assert nan_res.verdict is FTRAVerdict.BLOCKED
+    assert nan_res.auto_cleared_terminals == []
+
+    # (4a) Expired registry must fail closed to RegistryState.UNAVAILABLE (envelope=None)
+    # and report expired=True (is_clean=False) in check_registry_staleness
+    expired_path = tmp_path / "expired_registry.json"
+    expired_path.write_text(
+        json.dumps(
+            {
+                "expires_at": "1999-01-01T00:00:00+00:00",
+                "terminals": {"execute_trade": "IRREVERSIBLE_TERMINAL"},
+                "autonomous_envelope": {"execute_trade": {"max_magnitude": 10_000.0}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    rehash_registry(expired_path)
+
+    expired_cls = IrreversibilityClassifier(registry_path=expired_path)
+    prov = expired_cls.classify_with_provenance("execute_trade")
+    assert prov.classification is TerminalClassification.IRREVERSIBLE_TERMINAL
+    assert prov.registry_state is RegistryState.UNAVAILABLE
+    assert prov.envelope is None
+
+    staleness = check_registry_staleness(
+        frozenset({"execute_trade"}), registry_path=expired_path
+    )
+    assert staleness.expired is True
+    assert staleness.is_clean is False
+
+    # (4b) Out-of-band digest pin (FTRA_EXPECTED_MANIFEST_SHA256) detects rehashed file modification
+    monkeypatch.setenv("FTRA_EXPECTED_MANIFEST_SHA256", "0" * 64)
+    pinned_cls = IrreversibilityClassifier(registry_path=valid_path)
+    pinned_prov = pinned_cls.classify_with_provenance("execute_trade")
+    assert pinned_prov.registry_state is RegistryState.UNAVAILABLE
+    assert pinned_prov.envelope is None

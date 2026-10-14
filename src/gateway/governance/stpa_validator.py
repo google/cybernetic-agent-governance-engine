@@ -43,6 +43,53 @@ def _normalize_uca_code(uca_id: str) -> str:
     return f"STPA_UCA_{sanitized}"
 
 
+def _normalize_action_name(action_name: object) -> str:
+    """Canonicalize an action name for case-, whitespace-, and delimiter-safe matching."""
+    if not isinstance(action_name, str):
+        return ""
+    normalized = action_name.strip().lower().replace("-", "_")
+    return normalized
+
+
+_STRUCTURED_TOKEN_PREFIXES: tuple[str, ...] = (
+    "tok-",
+    "tok_",
+    "signed-",
+    "signed_",
+    "apr-",
+    "apr_",
+    "app-",
+    "app_",
+    "seal-",
+    "seal_",
+)
+_MIN_OPAQUE_TOKEN_LEN: int = 16
+
+
+def _is_valid_signed_approval_token(token: Any) -> bool:
+    """Return True iff ``token`` is a structurally valid signed approval token string.
+
+    Rejects ``None``, non-strings (``0``, ``False``, ``{}``, ``[]``), empty or
+    whitespace-only strings, and arbitrary short unstructured strings (e.g.
+    ``"garbage"``), while accepting structured token prefixes (``tok-*``,
+    ``signed-*``, ``apr-*``, ``seal-*``), dot-segmented JWS/HMAC tokens, or
+    high-entropy opaque token strings (>= 16 non-whitespace characters).
+    """
+    if not isinstance(token, str):
+        return False
+    stripped = token.strip()
+    if not stripped or any(ch.isspace() for ch in stripped):
+        return False
+    lower = stripped.lower()
+    if lower.startswith(_STRUCTURED_TOKEN_PREFIXES):
+        prefix = next(p for p in _STRUCTURED_TOKEN_PREFIXES if lower.startswith(p))
+        return len(stripped) > len(prefix)
+    if "." in stripped:
+        parts = stripped.split(".")
+        return all(bool(part) for part in parts) and len(stripped) >= 8
+    return len(stripped) >= _MIN_OPAQUE_TOKEN_LEN
+
+
 @dataclass(frozen=True)
 class UcaRule:
     """Compiled STPA Unsafe Control Action rule.
@@ -73,7 +120,9 @@ class UcaRule:
 
     def evaluate(self, action_name: str, params: Mapping[str, Any]) -> list[Violation]:
         """Evaluate this UCA rule against ``(action_name, params)``, failing closed."""
-        if self.action not in ("*", "all", action_name):
+        normalized_rule_action = _normalize_action_name(self.action)
+        normalized_target_action = _normalize_action_name(action_name)
+        if normalized_rule_action not in ("*", "all", normalized_target_action):
             return []
 
         code = _normalize_uca_code(self.uca_id)
@@ -95,7 +144,7 @@ class UcaRule:
             if not has_varargs and len(positional) == 1:
                 result = self.predicate(params)
             else:
-                result = self.predicate(action_name, params)
+                result = self.predicate(normalized_target_action, params)
         except Exception as exc:
             logger.error(
                 "STPAValidator: %s evaluation error — failing closed: %s",
@@ -142,15 +191,21 @@ class UcaRule:
 
 def _check_core_uca_1(action_name: str, params: Mapping[str, Any]) -> Violation | None:
     """UCA-1 [unsafe_action] on 'write_db': requires a signed approval_token."""
-    if action_name != "write_db":
+    if _normalize_action_name(action_name) != "write_db":
         return None
-    if params.get("approval_token") is None:
+    token = params.get("approval_token") if isinstance(params, Mapping) else None
+    if not _is_valid_signed_approval_token(token):
+        reason = (
+            "param 'approval_token' is None"
+            if token is None
+            else "param 'approval_token' is missing or not a valid signed token"
+        )
         return Violation(
             tier="stpa",
             code="STPA_UCA_1",
             message=(
-                "UCA-1 (write_db): Agent executes write operation without a signed "
-                "approval token. [param 'approval_token' is None] (hazards: H-1)"
+                f"UCA-1 (write_db): Agent executes write operation without a signed "
+                f"approval token. [{reason}] (hazards: H-1)"
             ),
             kind=ViolationKind.HARD,
         )
@@ -178,11 +233,17 @@ class STPAValidator:
     ) -> None:
         contributed = tuple(rules)
         if include_core:
-            contributed_ids = {r.uca_id for r in contributed}
-            core_prefix = tuple(
-                r for r in CORE_UCA_RULES if r.uca_id not in contributed_ids
-            )
-            self._rules: tuple[UcaRule, ...] = core_prefix + contributed
+            core_ids = {r.uca_id for r in CORE_UCA_RULES}
+            for r in contributed:
+                if r.uca_id in core_ids and r not in CORE_UCA_RULES:
+                    logger.warning(
+                        "STPAValidator: contributed rule %r on action %r shares core "
+                        "UCA identifier; retaining core rule alongside contributed rule.",
+                        r.uca_id,
+                        r.action,
+                    )
+            dedup_contributed = tuple(r for r in contributed if r not in CORE_UCA_RULES)
+            self._rules: tuple[UcaRule, ...] = CORE_UCA_RULES + dedup_contributed
         else:
             self._rules = contributed
 
