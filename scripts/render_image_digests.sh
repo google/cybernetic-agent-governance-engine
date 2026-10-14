@@ -65,6 +65,9 @@ for name in "${FIRST_PARTY_IMAGES[@]}"; do
   if [[ -z "${digest}" && "${name}" == "vllm-streamer" && "${SKIP_VLLM:-false}" == "true" ]]; then
     digest="$(gcloud container images list-tags "${REGISTRY}/${name}" --limit=1 --format='get(digest)' 2>/dev/null || true)"
   fi
+  if [[ -z "${digest}" && "${name}" == "governed-financial-advisor" && "${ADVISOR_RUNTIME:-geap}" == "geap" ]]; then
+    digest="$(gcloud container images list-tags "${REGISTRY}/${name}" --limit=1 --format='get(digest)' 2>/dev/null || true)"
+  fi
   if [[ -z "${digest}" || ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "❌ Error: could not resolve @sha256 digest for ${tag_ref}." >&2
     exit 1

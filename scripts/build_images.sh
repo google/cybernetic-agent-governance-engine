@@ -44,13 +44,21 @@ CLOUDBUILD_SA="projects/${PROJECT_ID}/serviceAccounts/cage-cloudbuild-${ENVIRONM
 echo "📌 Short SHA: ${SHORT_SHA} | Environment: ${ENVIRONMENT} | KMS Location: ${KMS_LOCATION}"
 echo "🔐 Cloud Build SA: ${CLOUDBUILD_SA}"
 
+ADVISOR_RUNTIME="${ADVISOR_RUNTIME:-geap}"
+
 FIRST_PARTY_IMAGES=(
-  "governed-financial-advisor|Dockerfile"
   "gateway|src/gateway/Dockerfile"
   "agentsight-ui|src/agentsight-ui/Dockerfile"
   "compliance-bridge|src/compliance_bridge/Dockerfile"
   "nemo-guardrails|deployment/docker/Dockerfile.nemo"
 )
+
+# Governed Financial Advisor: on GEAP (default for GCP), the build is part of the
+# GEAP Agent Runner deployment (source archive + Vertex AI Reasoning Engine).
+# A separate Docker image is only built if explicitly targeting the in-cluster GKE runtime.
+if [[ "${ADVISOR_RUNTIME}" == "gke" ]]; then
+  FIRST_PARTY_IMAGES=("governed-financial-advisor|Dockerfile" "${FIRST_PARTY_IMAGES[@]}")
+fi
 
 wait_for_pids=()
 build_names=()
