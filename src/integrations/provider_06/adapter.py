@@ -805,6 +805,10 @@ class Provider06AgentIntegrityAdapter:
             )
 
         raw_verification = data.get("verification")
+        if not isinstance(raw_verification, dict):
+            return self._parse_failure_outcome(
+                expected_request_id, "Missing or invalid verification block"
+            )
         try:
             verification = IntegrityResult.from_dict(raw_verification)
         except (KeyError, ValueError, TypeError) as exc:

@@ -56,7 +56,7 @@ from src.eval_harness.runner import (
 from src.eval_harness.static_linter import SkillStaticLintReport, lint_skill_file
 
 if TYPE_CHECKING:
-    from src.gateway.governance.governor import SymbolicGovernor
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 def _parse_eval_case(raw: Mapping[str, Any]) -> SkillEvalCase:

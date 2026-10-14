@@ -34,6 +34,7 @@ Pure LangGraph — no static compile-time interrupts, no BullMQ.
 
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -50,7 +51,7 @@ def create_approval_node(
     *,
     approved_target: str = "post_hitl_rehydrate",
     rejected_target: str = "rejection",
-):
+) -> Callable[..., Any]:
     """Create a human-in-the-loop approval node with configurable resume targets.
 
     Defaults to the ``governed_trader`` subgraph targets

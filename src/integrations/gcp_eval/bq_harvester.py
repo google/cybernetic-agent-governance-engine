@@ -115,7 +115,7 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
         if self._bq_client is not None:
             return self._bq_client
         try:
-            from google.cloud import bigquery  # type: ignore[import]
+            from google.cloud import bigquery  # type: ignore[import,attr-defined]
         except ImportError as exc:
             raise RuntimeError(
                 "google-cloud-bigquery is required for BigQueryTrajectoryHarvester"
@@ -133,7 +133,7 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
         client = self._get_client()
 
         try:
-            from google.cloud import bigquery  # type: ignore[import]
+            from google.cloud import bigquery  # type: ignore[import,attr-defined]
 
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
@@ -401,8 +401,8 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 if isinstance(ex, ATIFTrajectory):
                     sanitized_dict = self._sanitizer.sanitize_dict(ex.to_dict())
                     traj = ATIFTrajectory.from_dict(sanitized_dict)
-                    forbidden = ()
-                    req_tokens = ()
+                    forbidden: tuple[str, ...] = ()
+                    req_tokens: tuple[str, ...] = ()
                     bucket_str = "explicit"
                 elif isinstance(ex, Mapping):
                     raw_traj = ex.get("trajectory") or ex.get("atif_payload") or ex

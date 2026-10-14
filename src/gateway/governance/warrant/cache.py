@@ -53,6 +53,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 from src.gateway.governance.seams.warrant import WarrantSource
 from src.gateway.governance.warrant.model import Warrant

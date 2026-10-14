@@ -83,6 +83,7 @@ class FiscalTierPlugin(MutatingTier):
             and math.isfinite(float(raw_headroom))
         )
         if has_valid_headroom:
+            assert isinstance(raw_headroom, (int, float))
             rem = float(raw_headroom)
             if rem <= 0.0 or amount > rem:
                 clamped_rem = max(0.0, rem)

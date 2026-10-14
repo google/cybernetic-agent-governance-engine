@@ -368,9 +368,9 @@ def langgraph_state_to_atif(
 
             # Match tool observations by tool_call_id first
             for tc in tcalls:
-                tc_id = tc.get("id")
-                if tc_id and tc_id in tool_obs_by_id:
-                    obs_parts.extend(tool_obs_by_id.pop(tc_id))
+                call_id = str(tc.get("id") or "")
+                if call_id and call_id in tool_obs_by_id:
+                    obs_parts.extend(tool_obs_by_id.pop(call_id))
 
             # Also absorb immediately following un-keyed ToolMessages if tcalls exist
             while (
