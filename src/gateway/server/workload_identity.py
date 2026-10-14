@@ -215,7 +215,7 @@ class WorkloadIdentityMiddleware:
             if k.lower() == b"authorization"
         ]
         if not auth_headers:
-            return True
+            return False
         if len(auth_headers) != 1 or not auth_headers[0].startswith("Bearer "):
             return False
         token = auth_headers[0][len("Bearer ") :].strip()

@@ -177,7 +177,14 @@ def test_evaluator_edge_routes_on_verdict_alone(state: dict, expected: str) -> N
 async def test_evaluator_node_returns_no_signature() -> None:
     from src.governed_financial_advisor.graph.nodes import evaluator_node as mod
 
-    plan = {"steps": [{"action": "execute_trade", "parameters": {"symbol": "AAPL"}}]}
+    plan = {
+        "steps": [
+            {
+                "action": "execute_trade",
+                "parameters": {"symbol": "AAPL", "amount": 1000.0},
+            }
+        ]
+    }
     with patch.object(
         mod, "simulate_governance_check", AsyncMock(return_value={"verdict": "ALLOW"})
     ):
