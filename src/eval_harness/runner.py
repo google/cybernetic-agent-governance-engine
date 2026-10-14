@@ -228,10 +228,13 @@ class RolloutWorkspaceContext:
 
 _FORBIDDEN_ROLLOUT_MODULES: frozenset[str] = frozenset(
     {
+        "asyncio",
         "builtins",
         "code",
         "commands",
         "ctypes",
+        "ftplib",
+        "http",
         "importlib",
         "marshal",
         "multiprocessing",
@@ -243,11 +246,16 @@ _FORBIDDEN_ROLLOUT_MODULES: frozenset[str] = frozenset(
         "pty",
         "runpy",
         "shutil",
+        "smtplib",
         "socket",
+        "ssl",
         "subprocess",
         "sys",
+        "telnetlib",
         "tempfile",
+        "urllib",
         "webbrowser",
+        "xmlrpc",
     }
 )
 

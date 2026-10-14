@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from src.gateway.governance.governor.governor import SymbolicGovernor
+    from src.gateway.governance.stpa_validator import UcaRule
 
 
 @dataclass(frozen=True)
@@ -1100,5 +1101,13 @@ class ResourceGuard(Protocol):
         ...
 
 
-from src.gateway.governance.stpa_validator import UcaRule
 from src.gateway.governance.types import ReservationToken
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve ``UcaRule`` to avoid circular import with ``stpa_validator``."""
+    if name == "UcaRule":
+        from src.gateway.governance.stpa_validator import UcaRule
+
+        return UcaRule
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -130,3 +130,40 @@ async def test_stpa_stage_keeps_hard_findings_identical():
     violations = await stage.run(ctx)
 
     assert len(violations) == 1 and violations[0] is finding
+
+
+def test_issue_473_stpa_validator_normalization_token_and_core_rule_preservation():
+    """Issue #473 item 1 (reported by Daniel Fairbanks, @danofairanks):
+
+    - Importing `stpa_validator` first does not cause a circular import with `contracts`.
+    - `UcaRule.evaluate()` and `_check_core_uca_1()` normalize action names across
+      whitespace, casing, and hyphen/underscore variants (`"write_db "`, `"WRITE_DB"`,
+      `"write-db"`).
+    - `approval_token` validation rejects `None`, empty strings, non-strings (`0`,
+      `False`, `{}`), and unstructured short strings (`"garbage"`), while accepting
+      structured signed token prefixes (`"signed-tok"`, `"tok-123"`).
+    - Contributing a `UcaRule` with `uca_id="UCA-1"` on another action does not
+      silently shadow or drop the core `write_db` `UCA-1` rule.
+    """
+    from src.gateway.governance.stpa_validator import STPAValidator, UcaRule
+
+    validator = STPAValidator()
+    for variant in ("write_db", "write_db ", "WRITE_DB", "write-db"):
+        assert len(validator.validate(variant, {})) == 1
+        assert validator.validate(variant, {"approval_token": "signed-tok"}) == []
+
+    for bad_token in (None, "", "   ", 0, False, {}, [], "garbage"):
+        violations = validator.validate("write_db", {"approval_token": bad_token})
+        assert len(violations) == 1
+        assert violations[0].code == "STPA_UCA_1"
+
+    shadowing_validator = STPAValidator(
+        rules=[
+            UcaRule(
+                uca_id="UCA-1",
+                action="other_action",
+                predicate=lambda _a, _p: None,
+            )
+        ]
+    )
+    assert len(shadowing_validator.validate("write_db", {})) == 1

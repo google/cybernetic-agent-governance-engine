@@ -455,12 +455,14 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
         since_iso: str,
         output_path: Path,
         limit: int = 500,
+        trust_receipt_standing: bool = True,
     ) -> list[DPOPreferenceTriplet]:
         """Fetch verified `RefusalReceipt` rows from BigQuery and export PII-sanitized DPO JSONL."""
         receipts = await self.fetch_refusal_receipts(since_iso=since_iso, limit=limit)
         triplets = await harness.harvest_refusal_receipts(
             receipts,
             verify_receipt_hash=True,
+            trust_receipt_standing=trust_receipt_standing,
         )
         FoundationModelEvalHarness.export_hf_trl_jsonl(
             triplets,

@@ -67,6 +67,7 @@ import sys
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -82,6 +83,7 @@ logger = logging.getLogger("Gateway.Governance.FTRA.Classifier")
 
 _ENVELOPE_KEY = "autonomous_envelope"
 _ENVELOPE_FIELDS = frozenset({"max_magnitude"})
+_ENV_EXPECTED_MANIFEST_SHA256 = "FTRA_EXPECTED_MANIFEST_SHA256"
 
 # ---------------------------------------------------------------------------
 # Registry path: supplied by the active domain's DomainConfig (CAGE_DOMAIN).
@@ -111,6 +113,9 @@ class TerminalRegistry:
     )
     """Registered terminal → the ceiling under which it clears FTRA autonomously."""
 
+    expires_at: datetime | None = None
+    """Optional UTC expiry timestamp for the registry."""
+
 
 @dataclass(frozen=True)
 class ClassificationProvenance:
@@ -127,8 +132,12 @@ def registry_digest(raw: Mapping[str, Any]) -> str:
     The authority block is the ``terminals`` dict alone when the document has
     no ``autonomous_envelope`` (unchanged from Issue #107, so existing digests
     stay valid), and ``{"autonomous_envelope": ..., "terminals": ...}`` when it
-    does — so a tampered ceiling fails the same check a tampered terminal does.
+    does — so a modified ceiling fails the same check a modified terminal does.
     ``manifest_sha256`` itself is never part of its own hash.
+
+    Note: The in-file ``manifest_sha256`` detects accidental un-rehashed edits
+    and compiler drift. Out-of-band tamper resistance is provided by pinning
+    ``FTRA_EXPECTED_MANIFEST_SHA256`` or the CI ``stpa-freshness-check`` gate.
     """
     terminals = raw.get("terminals")
     if _ENVELOPE_KEY in raw:
@@ -139,6 +148,34 @@ def registry_digest(raw: Mapping[str, Any]) -> str:
     else:
         block = terminals  # type: ignore[assignment]
     return hashlib.sha256(jcs_canonicalize_plan(block)).hexdigest()
+
+
+def _parse_registry_expiry(raw: Mapping[str, Any], path: Path) -> datetime | None:
+    """Parse ``expires_at`` if present; raise ValueError on malformed timestamps."""
+    expires_raw = raw.get("expires_at")
+    if expires_raw is None:
+        return None
+    if not isinstance(expires_raw, str) or not expires_raw.strip():
+        raise ValueError(
+            f"FTRA registry at {path}: 'expires_at' must be a non-empty ISO-8601 string."
+        )
+    try:
+        parsed = datetime.fromisoformat(expires_raw.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"FTRA registry at {path}: invalid 'expires_at' timestamp {expires_raw!r}."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _is_registry_expired(raw: Mapping[str, Any], path: Path) -> bool:
+    """Return True iff the registry declares an ``expires_at`` at or before now (UTC)."""
+    expires_at = _parse_registry_expiry(raw, path)
+    if expires_at is None:
+        return False
+    return expires_at <= datetime.now(timezone.utc)
 
 
 def _parse_envelope(
@@ -178,13 +215,16 @@ def _parse_envelope(
     return envelopes
 
 
-def _load_registry_document(path: Path) -> TerminalRegistry:
+def _load_registry_document(
+    path: Path, *, check_expiry: bool = True
+) -> TerminalRegistry:
     """Load, digest-verify and parse a terminal registry document.
 
     Raises:
         FileNotFoundError: If the registry file does not exist.
         ValueError: If the JSON is malformed, missing ``terminals``, fails its
-            manifest digest, or declares an envelope that is unsigned or invalid.
+            manifest digest, is expired (when ``check_expiry=True``), or
+            declares an envelope that is unsigned or invalid.
     """
     if not path.exists():
         raise FileNotFoundError(
@@ -200,19 +240,27 @@ def _load_registry_document(path: Path) -> TerminalRegistry:
             "or it is not a dict."
         )
 
-    # Manifest integrity check (Issue #107 — Mayur Agnihotri). Detects
-    # staleness or tampering of the authority block (see registry_digest).
+    # Manifest consistency check (Issue #107 — Mayur Agnihotri; Issue #473 —
+    # Daniel Fairbanks). Verifies the in-file digest (and optional out-of-band
+    # FTRA_EXPECTED_MANIFEST_SHA256 pin) against the authority block.
     expected_digest = raw.get("manifest_sha256")
-    if expected_digest:
+    pinned_digest = os.environ.get(_ENV_EXPECTED_MANIFEST_SHA256, "").strip()
+    if expected_digest or pinned_digest:
         actual_digest = registry_digest(raw)
-        if actual_digest != expected_digest:
+        if expected_digest and actual_digest != expected_digest:
             raise ValueError(
                 f"FTRA terminal registry integrity check FAILED at {path}. "
                 f"Expected SHA-256: {expected_digest!r} "
                 f"Actual SHA-256:   {actual_digest!r} "
-                "The registry authority block may be stale or tampered. "
+                "The registry authority block has un-rehashed edits or drift. "
                 "Regenerate manifest_sha256 with: "
                 "python -m src.gateway.governance.ftra.classifier --rehash <path>"
+            )
+        if pinned_digest and actual_digest != pinned_digest:
+            raise ValueError(
+                f"FTRA terminal registry out-of-band digest pin FAILED at {path}. "
+                f"Pinned SHA-256 ({_ENV_EXPECTED_MANIFEST_SHA256}): {pinned_digest!r} "
+                f"Actual SHA-256: {actual_digest!r}"
             )
         logger.info(
             "✅ FTRA registry manifest digest verified: %s...",
@@ -231,6 +279,18 @@ def _load_registry_document(path: Path) -> TerminalRegistry:
             path,
         )
 
+    parsed_expiry = _parse_registry_expiry(raw, path)
+    if (
+        check_expiry
+        and parsed_expiry is not None
+        and parsed_expiry <= datetime.now(timezone.utc)
+    ):
+        raise ValueError(
+            f"FTRA terminal registry at {path} has expired "
+            f"(expires_at={raw.get('expires_at')!r}). "
+            "Regenerate via stpa_compiler or update expires_at and rehash."
+        )
+
     envelopes = (
         _parse_envelope(raw[_ENVELOPE_KEY], terminals, path)
         if _ENVELOPE_KEY in raw
@@ -247,6 +307,7 @@ def _load_registry_document(path: Path) -> TerminalRegistry:
     return TerminalRegistry(
         terminals=MappingProxyType(dict(terminals)),
         autonomous_envelope=MappingProxyType(envelopes),
+        expires_at=parsed_expiry,
     )
 
 
@@ -267,27 +328,39 @@ def _load_registry(path: Path) -> dict[str, str]:
 _registry_lock = threading.RLock()
 _registry_cache: TerminalRegistry | None = None
 _registry_path_used: Path | None = None
+_registry_pin_used: str = ""
 
 
 def _get_registry_document(path: Path | None = None) -> TerminalRegistry:
     """Return the cached registry document, loading it on first call.
 
     Thread-safe via ``_registry_lock``.  Respects ``FTRA_REGISTRY_RELOAD=true``
-    env flag to force a cache bust on each call (useful for hot-reload in dev).
+    env flag to force a cache bust on each call (useful for hot-reload in dev),
+    and re-validates when ``FTRA_EXPECTED_MANIFEST_SHA256`` changes or the
+    cached document reaches ``expires_at``.
     """
-    global _registry_cache, _registry_path_used
+    global _registry_cache, _registry_path_used, _registry_pin_used
 
     effective_path = path or _active_registry_path()
     force_reload = os.getenv("FTRA_REGISTRY_RELOAD", "false").lower() == "true"
+    current_pin = os.environ.get(_ENV_EXPECTED_MANIFEST_SHA256, "").strip()
 
     with _registry_lock:
+        cache_expired = (
+            _registry_cache is not None
+            and _registry_cache.expires_at is not None
+            and _registry_cache.expires_at <= datetime.now(timezone.utc)
+        )
         if (
             _registry_cache is None
             or force_reload
+            or cache_expired
             or _registry_path_used != effective_path
+            or _registry_pin_used != current_pin
         ):
             _registry_cache = _load_registry_document(effective_path)
             _registry_path_used = effective_path
+            _registry_pin_used = current_pin
         return _registry_cache
 
 
@@ -332,15 +405,19 @@ class StalenessReport:
             ``live_actions``.  The registry describes actions that no longer
             exist in the domain plugin — these entries are dead and create
             false confidence in coverage.
-        is_clean: True only when both sets are empty.
+        expired: True when the registry declares an ``expires_at`` timestamp
+            that is at or before the current UTC wall-clock time.
+        is_clean: True only when ``unclassified`` and ``phantom`` are empty
+            and ``expired`` is False.
     """
 
     unclassified: frozenset[str] = field(default_factory=frozenset)
     phantom: frozenset[str] = field(default_factory=frozenset)
+    expired: bool = False
 
     @property
     def is_clean(self) -> bool:
-        return not self.unclassified and not self.phantom
+        return not self.unclassified and not self.phantom and not self.expired
 
 
 def check_registry_staleness(
@@ -349,9 +426,11 @@ def check_registry_staleness(
 ) -> StalenessReport:
     """Compare a domain plugin's live action surface against the terminal registry.
 
-    This is the *staleness* half of Issue #107.  The manifest digest (also in
-    this module) proves nobody edited the registry file; this function proves
-    the registry still describes the system.
+    This is the *staleness* half of Issue #107.  The in-file manifest digest
+    verifies internal consistency against accidental un-rehashed edits (while
+    ``FTRA_EXPECTED_MANIFEST_SHA256`` or CI ``stpa-freshness-check`` guards
+    against external modification); this function verifies that the registry
+    has not expired and still covers the domain's live action surface.
 
     Completely domain-agnostic: the caller supplies ``live_actions`` (the
     frozenset of action names the domain plugin actually presents to the FTRA
@@ -364,18 +443,30 @@ def check_registry_staleness(
             Defaults to the active domain's ``DomainConfig.ftra_registry_path``.
 
     Returns:
-        :class:`StalenessReport` with two symmetric difference sets.
+        :class:`StalenessReport` with two symmetric difference sets and an
+        ``expired`` flag.
 
     Raises:
         FileNotFoundError: If the registry file does not exist.
-        ValueError: If the registry JSON is malformed.
+        ValueError: If the registry JSON is malformed or fails digest check.
     """
-    registry = _get_registry(registry_path)
-    registry_actions = frozenset(registry.keys())
+    effective_path = registry_path or _active_registry_path()
+    doc = _load_registry_document(effective_path, check_expiry=False)
+    with open(effective_path) as fh:
+        raw: dict[str, Any] = json.load(fh)
+    expired = _is_registry_expired(raw, effective_path)
+
+    registry_actions = frozenset(doc.terminals.keys())
 
     unclassified = live_actions - registry_actions
     phantom = registry_actions - live_actions
 
+    if expired:
+        logger.warning(
+            "FTRA staleness check: registry at %s has EXPIRED (expires_at=%r).",
+            effective_path,
+            raw.get("expires_at"),
+        )
     if unclassified:
         logger.warning(
             "FTRA staleness check: %d action(s) in live domain surface but ABSENT "
@@ -390,12 +481,16 @@ def check_registry_staleness(
             len(phantom),
             sorted(phantom),
         )
-    if not unclassified and not phantom:
+    if not unclassified and not phantom and not expired:
         logger.info(
             "✅ FTRA staleness check passed: registry covers live action surface."
         )
 
-    return StalenessReport(unclassified=unclassified, phantom=phantom)
+    return StalenessReport(
+        unclassified=unclassified,
+        phantom=phantom,
+        expired=expired,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +613,7 @@ def rehash_registry(path: Path) -> str:
     raw: dict[str, Any] = json.loads(path.read_text())
     raw["manifest_sha256"] = registry_digest(raw)
     path.write_text(json.dumps(raw, indent=2) + "\n")
-    _load_registry_document(path)
+    _load_registry_document(path, check_expiry=False)
     return raw["manifest_sha256"]
 
 

@@ -227,6 +227,43 @@ class TestActuator02Adapter:
         assert receipt.verification is ReceiptVerification.INVALID
         assert receipt.outcome is ActuationOutcome.UNKNOWN
 
+    @pytest.mark.asyncio
+    async def test_issue_473_unsigned_receipt_rejected_by_default_when_key_resolver_configured(
+        self,
+    ) -> None:
+        """Issue #473 item 2 (reported by Daniel Fairbanks, @danofairanks):
+
+        When `receipt_key_resolver` is configured on `Actuator02Adapter`,
+        `require_signed_receipts` defaults to `True` and an unsigned 200 OK
+        response emits a `RECEIPT_SIGNATURE_MISSING` finding with
+        `accepted=False` and `outcome=ActuationOutcome.UNKNOWN`.
+        """
+        priv = Ed25519PrivateKey.generate()
+        resolver = _StubKeyResolver({"kid-1": priv.public_key()})
+
+        def _unsigned_handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "receipt_id": "rcpt-unsigned-473",
+                    "session_uuid": "sess-unsigned-473",
+                    "status": "ACCEPTED",
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(_unsigned_handler))
+        adapter = Actuator02Adapter(
+            endpoint="https://127.0.0.1:8443",
+            signer=_StubSigner(),
+            http_client=client,
+            receipt_key_resolver=resolver,
+        )
+        receipt = await adapter.actuate(_make_clearance())
+        assert receipt.accepted is False
+        assert receipt.verification is ReceiptVerification.UNVERIFIED
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
+        assert any(f["code"] == "RECEIPT_SIGNATURE_MISSING" for f in receipt.findings)
+
 
 class TestOcsfEvidenceIngestor:
     """Tests for OcsfEvidenceIngestor schema validation and secret redaction."""

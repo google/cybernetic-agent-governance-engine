@@ -88,9 +88,18 @@ def conditional_clear_reason(
         return None
     if classification not in ENVELOPE_CLASSIFICATIONS or envelope is None:
         return None
-    if magnitude is None or not math.isfinite(magnitude):
+    if magnitude is None or isinstance(magnitude, bool) or not math.isfinite(magnitude):
         return None
     if not 0.0 < magnitude <= envelope.max_magnitude:
+        return None
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or isinstance(confidence_floor, bool)
+        or not isinstance(confidence_floor, (int, float))
+    ):
+        return None
+    if not math.isfinite(confidence) or not math.isfinite(confidence_floor):
         return None
     if confidence < confidence_floor:
         return None

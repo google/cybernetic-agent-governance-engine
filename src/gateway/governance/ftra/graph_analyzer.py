@@ -48,6 +48,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from src.gateway.governance.ftra.autonomy import (
@@ -78,6 +79,14 @@ logger = logging.getLogger("Gateway.Governance.FTRA.GraphAnalyzer")
 # ---------------------------------------------------------------------------
 # PlanGraphAnalyzer
 # ---------------------------------------------------------------------------
+
+
+def _normalize_confidence(confidence: Any) -> float:
+    """Return a finite float confidence score, defaulting to 0.0 (fail-closed) on NaN/Inf/invalid."""
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return 0.0
+    val = float(confidence)
+    return val if math.isfinite(val) else 0.0
 
 
 class PlanGraphAnalyzer:
@@ -122,8 +131,9 @@ class PlanGraphAnalyzer:
         Returns:
             :class:`ReachabilityResult` — never raises.
         """
+        safe_confidence = _normalize_confidence(confidence)
         try:
-            return self._analyze_internal(plan, confidence)
+            return self._analyze_internal(plan, safe_confidence)
         except Exception as exc:
             logger.error(
                 "FTRA graph analysis failed for plan '%s' (%s) — "
@@ -134,7 +144,7 @@ class PlanGraphAnalyzer:
             defer_floor = get_confidence_defer_floor()
             verdict = (
                 FTRAVerdict.HITL_REQUIRED
-                if confidence >= defer_floor
+                if safe_confidence >= defer_floor
                 else FTRAVerdict.BLOCKED
             )
             return ReachabilityResult(
@@ -143,7 +153,7 @@ class PlanGraphAnalyzer:
                 reachable_terminals=[],
                 critical_path=[],
                 verdict=verdict,
-                confidence_at_analysis=confidence,
+                confidence_at_analysis=safe_confidence,
                 total_steps=len(getattr(plan, "steps", [])),
                 reachable_step_count=0,
             )
