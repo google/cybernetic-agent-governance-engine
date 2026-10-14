@@ -4,7 +4,7 @@
 **Inference Model**: Junction Tree / Belief Propagation  
 **Regulatory Scope**: SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27  
 **Architecture Layer**: Layer 3 (Integrations & Rails)  
-**Phase**: Step 3 Complete — Cryptographic Hardening, Evidence Chain & Baseline Versioning Verified  
+**Phase**: Step 4 Complete — Production Cutover & Over-the-Wire Conformance Verified  
 
 ---
 
@@ -55,18 +55,18 @@ The adapter maps InferTheta's tri-state decision model (`ALLOW`, `REFUSE`, `ESCA
 
 ## Environment Variables
 
-Configure the adapter via environment variables (injected via Kubernetes ConfigMap or local `.env`):
+Configure the adapter via environment variables (injected via Kubernetes Secret `provider-07-credentials` or local `.env`):
 
 | Variable | Default | Description | Sensitivity |
 |---|---|---|---|
-| `PROVIDER_07_ENDPOINT` | `http://localhost:8087` | Base URL for InferTheta API (Staging: `https://infertheta-cage-staging.onrender.com`) | Public |
+| `PROVIDER_07_ENDPOINT` | `http://localhost:8087` | Base URL for InferTheta API (Production: `https://infertheta-cage-prod.onrender.com`, Staging: `https://infertheta-cage-staging.onrender.com`) | Public |
 | `PROVIDER_07_API_KEY` | *(required)* | Bearer token for authentication | **Secret** |
-| `PROVIDER_07_JWKS_URL` | *(required)* | Out-of-band JWKS manifest URL | Public |
+| `PROVIDER_07_JWKS_URL` | `{endpoint}/.well-known/jwks.json` | Out-of-band JWKS manifest URL (Production: `https://infertheta-cage-prod.onrender.com/.well-known/jwks.json`) | Public |
 | `PROVIDER_07_TIMEOUT_SECONDS` | `5.0` | Request timeout (seconds) | Public |
 | `PROVIDER_07_ALLOW_STEP1_UNSIGNED` | `false` | Dev/testing only. Allows Step 1 unsigned responses (blocked in production) | Internal |
 
 **Secret Management**:
-- `PROVIDER_07_API_KEY` must be stored in a Kubernetes Secret and mounted via `secretKeyRef`
+- `PROVIDER_07_API_KEY` must be stored in a Kubernetes Secret (`provider-07-credentials`) and mounted via `secretKeyRef`
 - **Never** hardcode API keys or embed them in configuration files
 - Mask credentials in logs: `api_key[:4] + "****"`
 
@@ -79,8 +79,9 @@ metadata:
   namespace: governance-stack
 type: Opaque
 stringData:
+  endpoint: "https://infertheta-cage-prod.onrender.com"
+  jwks-url: "https://infertheta-cage-prod.onrender.com/.well-known/jwks.json"
   api-key: "<INFERTHETA_BEARER_TOKEN>"
-  jwks-url: "https://keys.infertheta.example/v1/jwks.json"
 ```
 
 **Example Deployment Manifest**:
@@ -97,17 +98,23 @@ spec:
       - name: gateway
         env:
         - name: PROVIDER_07_ENDPOINT
-          value: "https://api.infertheta.example"
+          valueFrom:
+            secretKeyRef:
+              name: provider-07-credentials
+              key: endpoint
+              optional: true
         - name: PROVIDER_07_API_KEY
           valueFrom:
             secretKeyRef:
               name: provider-07-credentials
               key: api-key
+              optional: true
         - name: PROVIDER_07_JWKS_URL
           valueFrom:
             secretKeyRef:
               name: provider-07-credentials
               key: jwks-url
+              optional: true
         - name: PROVIDER_07_TIMEOUT_SECONDS
           value: "5.0"
 ```
@@ -272,8 +279,8 @@ Expected utility scores guide **counterfactual recommendations**:
 - Timeout and retry behavior
 
 ### Live External Tests (`pytest.mark.live_external + pytest.mark.partner_integration`)
-- Real InferTheta staging environment (`https://infertheta-cage-staging.onrender.com`)
-- Out-of-band JWKS key resolution (`GET /.well-known/jwks.json`, active `kid = "infertheta-provider07-2026-01"`, multi-key rotation with 24h overlap)
+- Real InferTheta production (`https://infertheta-cage-prod.onrender.com`) and staging (`https://infertheta-cage-staging.onrender.com`) environments
+- Out-of-band JWKS key resolution (`GET /.well-known/jwks.json`, production `kid = "infertheta-provider07-prod-2026-01"`, staging `kid = "infertheta-provider07-2026-01"`, multi-key rotation with 24h overlap)
 - Live baseline fetch (`GET /baseline/US_FED` with content-addressed `baseline_hash` + HTTP `ETag`, plus fail-closed verification for reserved `EU_ECB` / `APAC_MAS` regions)
 - Signed canonical test vector validation (`POST /infer` with RFC 8785 JCS + Ed25519 unpadded `base64url` signatures and minted `infertheta-ar-*` authority records)
 - Full enforcing adapter validation (`Provider07NormativeProvider.validate_fria`)
@@ -314,6 +321,7 @@ src/integrations/provider_07/
 - ✅ Step 1 Dedicated Suitability Graph: Calibrated & deployed on Render
 - ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`) verified live against staging
 - ✅ Step 3 Production-Readiness Increment: `POST /evidence-chain/{thread_id}` (persisted & idempotent), content-addressed `US_FED` `baseline_hash` + HTTP `ETag`, fail-closed reserved regions (`EU_ECB`, `APAC_MAS`), and 24h overlap multi-key JWKS rotation verified live against staging
+- ✅ Step 4 Production Cutover: Isolated production instance (`https://infertheta-cage-prod.onrender.com`), dedicated PostgreSQL persistence, production JWKS (`kid = "infertheta-provider07-prod-2026-01"`), and GKE `provider-07-credentials` wiring verified over the wire
 
 
 

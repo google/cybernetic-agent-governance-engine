@@ -310,7 +310,7 @@ uv run pytest tests/integrations/provider_01/test_provider_01_live.py -m partner
 uv run pytest tests/integrations/provider_02/test_provider_02_live.py -m partner_integration --run-partner-integration -v
 uv run pytest tests/integrations/provider_03/test_provider_03_live.py -m partner_integration --run-partner-integration -v
 uv run pytest tests/integrations/provider_05/test_provider_05_live.py -m partner_integration --run-partner-integration -v
-uv run pytest tests/integrations/provider_07/test_provider_07_live.py -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_07/test_provider_07_live.py -m partner_integration --run-partner-integration --run-live-external -v
 uv run pytest tests/integrations/provider_08/test_provider_08_live.py -m partner_integration --run-partner-integration -v
 uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partner-integration -v
 ```
@@ -325,7 +325,7 @@ uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partne
 | **Provider 02** (CER Attestation) | [`test_provider_02_live.py`](../../tests/integrations/provider_02/test_provider_02_live.py) | CER creation, Ed25519 signature verification, out-of-band JWK resolution, two-stage verification (hash binding + signature) |
 | **Provider 03** (Normative Baseline) | [`test_provider_03_live.py`](../../tests/integrations/provider_03/test_provider_03_live.py) | Baseline retrieval, cache staleness (ETag), FRIA validation, evidence sealing |
 | **Provider 05** (AO Warrant / Blueprint) | [`test_provider_05_live.py`](../../tests/integrations/provider_05/test_provider_05_live.py) | Risk acceptance warrant retrieval, threshold drift detection, JCS canonical binding |
-| **Provider 07** (InferTheta Bayesian Oracle) | [`test_provider_07_live.py`](../../tests/integrations/provider_07/test_provider_07_live.py) | Bayesian causal suitability baseline retrieval, inference validation over the wire |
+| **Provider 07** (InferTheta Bayesian Oracle) | [`test_provider_07_live.py`](../../tests/integrations/provider_07/test_provider_07_live.py) | Production/staging health, out-of-band JWKS (`infertheta-provider07-prod-2026-01`), `US_FED` baseline & `ETag`, signed `ALLOW`/`REFUSE`/`ESCALATE` vectors, and idempotent evidence chain |
 | **Provider 08** (Verdict Systems) | [`test_provider_08_live.py`](../../tests/integrations/provider_08/test_provider_08_live.py) | Deterministic normative baseline fetch and live sandbox validation |
 | **Actuator 01** (Execution Gateway) | [`test_actuator_01_live.py`](../../tests/test_actuator_01_live.py) | mTLS wire dispatch, quorum signatures, JCS envelope canonicalization, capability advertisement |
 

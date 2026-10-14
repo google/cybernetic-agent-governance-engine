@@ -1,8 +1,8 @@
 # InferTheta Canonical Wire Contract & Normative Seam Specification
 
 **Audience**: Integration engineers, compliance auditors, security architects  
-**Status**: Step 3 Validated (Staging Live) — Cryptographic Hardening, Evidence Chain & Baseline Versioning Complete  
-**Last Updated**: 2026-10-11  
+**Status**: Step 4 Validated (Production Live) — Production Cutover, Cryptographic Hardening, Evidence Chain & Baseline Versioning Complete  
+**Last Updated**: 2026-10-14  
 **Adapter Package**: [`src/integrations/provider_07/`](../../src/integrations/provider_07/)
 
 ---
@@ -387,6 +387,6 @@ Expected utility scores guide **counterfactual recommendations**:
 
 ---
 
-**Document Status**: ✅ Step 3 Complete — Wire Contract, Dedicated Graph, Out-of-Band JWKS (`kid = "infertheta-provider07-2026-01"`, 24h Rotation Overlap), RFC 8785 JCS + Ed25519 Signatures, Minted `authority_record_id`, Content-Addressed `US_FED` Baseline & Idempotent `POST /evidence-chain/{thread_id}` Verified Live Against Staging  
-**Next Phase**: Production Cutover — Provisioning dedicated production endpoint (`PROVIDER_07_ENDPOINT`), production JWKS (`PROVIDER_07_JWKS_URL`), production Ed25519 signing key, and Bearer credential handoff for GKE manifests
+**Document Status**: ✅ Step 4 Production Cutover Complete — Isolated Production Endpoint (`https://infertheta-cage-prod.onrender.com`), Out-of-Band JWKS (`kid = "infertheta-provider07-prod-2026-01"`, 24h Rotation Overlap), RFC 8785 JCS + Ed25519 Signatures, Minted `authority_record_id`, Content-Addressed `US_FED` Baseline & Idempotent `POST /evidence-chain/{thread_id}` Verified Live Over the Wire  
+**Reference Deployment Wiring**: `provider-07-credentials` Kubernetes `Secret` (`secretKeyRef`) documented in [`src/integrations/provider_07/README.md`](../../../src/integrations/provider_07/README.md)
   

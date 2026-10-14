@@ -54,6 +54,7 @@ pytestmark = [
     pytest.mark.partner,
 ]
 
+ACTIVE_PROD_KID = "infertheta-provider07-prod-2026-01"
 ACTIVE_STAGING_KID = "infertheta-provider07-2026-01"
 
 
@@ -62,6 +63,22 @@ def _get_live_credentials() -> tuple[str, str]:
     endpoint = os.environ.get("PROVIDER_07_ENDPOINT", "").split("#")[0].strip()
     api_key = os.environ.get("PROVIDER_07_API_KEY", "").split("#")[0].strip()
     return endpoint, api_key
+
+
+def _get_live_jwks_url(endpoint: str) -> str:
+    """Resolve JWKS URL from PROVIDER_07_JWKS_URL or default well-known path."""
+    explicit = os.environ.get("PROVIDER_07_JWKS_URL", "").split("#")[0].strip()
+    return explicit or f"{endpoint.rstrip('/')}/.well-known/jwks.json"
+
+
+def _get_expected_kid(endpoint: str) -> str:
+    """Resolve expected signing key ID for production vs. staging endpoints."""
+    explicit = os.environ.get("PROVIDER_07_EXPECTED_KID", "").split("#")[0].strip()
+    if explicit:
+        return explicit
+    if "staging" in endpoint.lower():
+        return ACTIVE_STAGING_KID
+    return ACTIVE_PROD_KID
 
 
 @pytest.fixture
@@ -80,6 +97,7 @@ def live_adapter(live_credentials: tuple[str, str]) -> Provider07NormativeProvid
     return Provider07NormativeProvider(
         endpoint=endpoint,
         api_key=api_key,
+        jwks_url=_get_live_jwks_url(endpoint),
         timeout_seconds=10.0,
     )
 
@@ -188,6 +206,17 @@ def canonical_vectors() -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
+async def test_live_health_check(
+    live_credentials: tuple[str, str],
+) -> None:
+    """Verify live /health endpoint returns HTTP 200."""
+    endpoint, _ = live_credentials
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(f"{endpoint.rstrip('/')}/health")
+        assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_live_fetch_baseline(
     live_credentials: tuple[str, str],
     live_adapter: Provider07NormativeProvider,
@@ -242,13 +271,14 @@ async def test_live_fetch_baseline_reserved_regions_fail_closed(
 async def test_live_jwks_resolution(
     live_credentials: tuple[str, str],
 ) -> None:
-    """Verify live out-of-band JWKS key resolution for Step 2 active key."""
+    """Verify live out-of-band JWKS key resolution for active key."""
     endpoint, _ = live_credentials
-    jwks_url = f"{endpoint.rstrip('/')}/.well-known/jwks.json"
+    jwks_url = _get_live_jwks_url(endpoint)
+    expected_kid = _get_expected_kid(endpoint)
     jwks_client = Provider07JwksClient(jwks_url=jwks_url, timeout_seconds=10.0)
 
-    public_key = await jwks_client.get_key(ACTIVE_STAGING_KID)
-    assert public_key is not None, f"Active key {ACTIVE_STAGING_KID} not found in JWKS"
+    public_key = await jwks_client.get_key(expected_kid)
+    assert public_key is not None, f"Active key {expected_kid} not found in JWKS"
     assert isinstance(public_key, Ed25519PublicKey)
     assert len(public_key.public_bytes_raw()) == 32
 
@@ -262,16 +292,17 @@ async def test_live_infer_contract_vectors(
     live_credentials: tuple[str, str],
     canonical_vectors: list[dict[str, Any]],
 ) -> None:
-    """Verify live HTTP POST /infer against staging parses cleanly with Step 2 signatures and decision semantics."""
+    """Verify live HTTP POST /infer parses cleanly with Ed25519 JCS signatures and decision semantics."""
     endpoint, api_key = live_credentials
     base_url = endpoint.rstrip("/")
     url = f"{base_url}/infer"
+    expected_kid = _get_expected_kid(endpoint)
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}" if api_key else "",
     }
     jwks_client = Provider07JwksClient(
-        jwks_url=f"{base_url}/.well-known/jwks.json", timeout_seconds=10.0
+        jwks_url=_get_live_jwks_url(endpoint), timeout_seconds=10.0
     )
 
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -289,8 +320,8 @@ async def test_live_infer_contract_vectors(
             # Assert tri-state decision matches partner expectation
             assert resp_model.decision == vector["expected_decision"]
 
-            # Step 2 cryptographic invariants: active kid and 86-char unpadded base64url Ed25519 signature
-            assert resp_model.kid == ACTIVE_STAGING_KID
+            # Cryptographic invariants: active kid and 86-char unpadded base64url Ed25519 signature
+            assert resp_model.kid == expected_kid
             assert len(resp_model.signature) == 86
             assert "=" not in resp_model.signature
             public_key = await jwks_client.get_key(resp_model.kid)
