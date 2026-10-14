@@ -119,9 +119,7 @@ async def verify_partner_receipt(
             ),
         )
 
-    require_envelope_digest = False
     if isinstance(signature, dict):
-        require_envelope_digest = True
         if signature.get("alg") != "EdDSA":
             return _invalid(
                 "RECEIPT_SIGNATURE_MALFORMED",
@@ -201,12 +199,10 @@ async def verify_partner_receipt(
             "RECEIPT_SIGNATURE_INVALID", f"signature does not verify (kid={kid})"
         )
 
-    if (
-        require_envelope_digest or "envelope_digest" in verified_body
-    ) and verified_body.get("envelope_digest") != envelope_digest:
+    if verified_body.get("envelope_digest") != envelope_digest:
         return _invalid(
             "RECEIPT_ENVELOPE_MISMATCH",
-            "signed receipt is bound to a different envelope_digest",
+            "signed receipt is not bound to the submitted envelope_digest",
         )
 
     logger.info("[actuator_01/receipt] receipt signature VERIFIED (kid=%s)", kid)

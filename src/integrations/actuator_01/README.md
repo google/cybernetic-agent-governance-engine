@@ -184,7 +184,7 @@ manifest, never from the receipt, and never raises:
 |---|---|---|
 | Valid signature, signed `envelope_digest` matches ours | `VERIFIED` | Unchanged |
 | No signature, or manifest unconfigured/unreachable | `UNVERIFIED` | Unchanged (strict mode: `UNKNOWN`, finding `RECEIPT_UNVERIFIED`) |
-| Malformed signature, unknown `kid`, bad signature, digest mismatch | `INVALID` | Forced to `UNKNOWN` |
+| Malformed signature, unknown `kid`, bad signature, digest missing or mismatched | `INVALID` | Forced to `UNKNOWN` |
 
 An unauthenticated accept or reject cannot settle the action, so it is treated
 as indeterminate. When a manifest is configured the adapter advertises

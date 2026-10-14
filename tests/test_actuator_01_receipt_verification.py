@@ -143,6 +143,27 @@ class TestVerifier:
         assert check.verification is ReceiptVerification.INVALID
         assert check.finding["code"] == "RECEIPT_ENVELOPE_MISMATCH"
 
+    async def test_flat_signed_receipt_without_envelope_digest_is_invalid(self) -> None:
+        """A flat-signed body with no envelope_digest proves nothing about this
+        clearance: a captured receipt from any other order replays verbatim."""
+        resolver = _StaticResolver({"k1": _PARTNER_KEY.public_key()})
+        captured = {
+            "receipt_id": "r-old",
+            "session_uuid": "s-old",
+            "status": "ACCEPTED",
+            "kid": "k1",
+        }
+        sig_hex = _PARTNER_KEY.sign(
+            RECEIPT_SIGNATURE_DOMAIN_TAG + jcs_canonicalize_plan(captured)
+        ).hex()
+        check = await verify_partner_receipt(
+            {**captured, "signature": sig_hex},
+            envelope_digest=_DIGEST,
+            key_resolver=resolver,
+        )
+        assert check.verification is ReceiptVerification.INVALID
+        assert check.finding["code"] == "RECEIPT_ENVELOPE_MISMATCH"
+
     @pytest.mark.parametrize(
         "signature",
         [
@@ -299,6 +320,25 @@ class TestAdapterReceiptVerification:
         receipt = await _adapter(
             lambda d: (200, _sign(_body(digest="e" * 64))),
             receipt_key_resolver=_RESOLVER,
+        ).actuate(_clearance())
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
+        assert receipt.verification is ReceiptVerification.INVALID
+
+    async def test_replayed_flat_receipt_without_digest_is_indeterminate(self) -> None:
+        """A captured flat-signed receipt with no envelope_digest must not count
+        as proof that the partner executed this order."""
+        resolver = _StaticResolver({"default": _PARTNER_KEY.public_key()})
+        captured = {
+            "receipt_id": "r-old",
+            "session_uuid": "s-old",
+            "status": "ACCEPTED",
+        }
+        sig_hex = _PARTNER_KEY.sign(
+            RECEIPT_SIGNATURE_DOMAIN_TAG + jcs_canonicalize_plan(captured)
+        ).hex()
+        receipt = await _adapter(
+            lambda d: (200, {**captured, "signature": sig_hex}),
+            receipt_key_resolver=resolver,
         ).actuate(_clearance())
         assert receipt.outcome is ActuationOutcome.UNKNOWN
         assert receipt.verification is ReceiptVerification.INVALID
