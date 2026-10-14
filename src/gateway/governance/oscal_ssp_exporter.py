@@ -297,16 +297,16 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "enforced across all deployment modes (`infra/targets/agnostic/` and cloud targets) via "
                 "universal Kubernetes Pod Security Standards (`restricted` profile in "
                 "`deployment/k8s/pod-security-admission.yaml`), non-root execution (`runAsNonRoot: true`, "
-                "`runAsUser: 1000`), `allowPrivilegeEscalation: false`, `capabilities: drop: [\"ALL\"]`, "
+                '`runAsUser: 1000`), `allowPrivilegeEscalation: false`, `capabilities: drop: ["ALL"]`, '
                 "and `seccompProfile: RuntimeDefault` (`deployment/k8s/security-context-patch.yaml`, "
                 "`infra/modules/gateway/main.tf`). When deployed in the optional `gcp-gke` deployment "
                 "mode (`infra/targets/gcp-gke/`), CAGE adds target-specific split-plane isolation: "
-                "(1) Agent Application Plane (Optional GEAP Agent Runtime mode, `advisor_runtime = \"geap\"` "
+                '(1) Agent Application Plane (Optional GEAP Agent Runtime mode, `advisor_runtime = "geap"` '
                 "via `infra/modules/gcp_geap_advisor/main.tf`): Untrusted agent orchestration and "
                 "tool-calling workloads execute on Vertex AI Agent Engine (Agent Substrate) with "
                 "hardware-enforced MicroVM isolation (dedicated guest Linux kernel per agent sandbox), "
                 "eliminating the need for nested-virtualization `runtimeClassName: microvm` pods on GKE "
-                "(while `agnostic` and `advisor_runtime = \"gke\"` modes run the advisor as a standard "
+                '(while `agnostic` and `advisor_runtime = "gke"` modes run the advisor as a standard '
                 "`restricted` Kubernetes Deployment via `infra/modules/governed_advisor/main.tf`). "
                 "(2) Governance Control Plane (`gcp-gke` mode): Stateless governance-stack pods "
                 "(`gateway`, `compliance-bridge`, `opa`, `reconciliation-worker`) support optional "

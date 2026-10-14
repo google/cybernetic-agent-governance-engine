@@ -34,6 +34,7 @@ Or via Docker/Kubernetes:
     uvicorn src.gateway.server.hybrid_server:root_app --host 0.0.0.0 --port 8080
 """
 
+import json
 import logging
 import os
 import sys
@@ -418,6 +419,63 @@ class NeMoApproveRequest(_BaseModel):
 
 
 _refinement_proposals: dict[str, dict[str, Any]] = {}
+_REFINEMENT_PROPOSALS_REDIS_KEY = "cage:nemo:refinement_proposals"
+
+
+def _get_refinement_redis() -> Any:
+    """Return an async Redis client from root_app.state if configured."""
+    state = getattr(root_app, "state", None)
+    if state is None:
+        return None
+    for attr in ("redis_client", "redis"):
+        client = getattr(state, attr, None)
+        if client is not None:
+            return client
+    governor = getattr(state, "governor", None)
+    components = getattr(governor, "components", None)
+    return getattr(components, "redis", None)
+
+
+async def _save_refinement_proposal(proposal: dict[str, Any]) -> None:
+    """Persist a NeMo refinement proposal to local memory and Redis (when available)."""
+    proposal_id = str(proposal["proposal_id"])
+    _refinement_proposals[proposal_id] = proposal
+    redis_client = _get_refinement_redis()
+    if redis_client is not None and hasattr(redis_client, "hset"):
+        try:
+            await redis_client.hset(
+                _REFINEMENT_PROPOSALS_REDIS_KEY,
+                proposal_id,
+                json.dumps(proposal),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[NeMo/Refinement] Failed to persist proposal %s to Redis: %s",
+                proposal_id,
+                exc,
+            )
+
+
+async def _load_refinement_proposal(proposal_id: str) -> dict[str, Any] | None:
+    """Load a NeMo refinement proposal from Redis (when available) or local memory."""
+    redis_client = _get_refinement_redis()
+    if redis_client is not None and hasattr(redis_client, "hget"):
+        try:
+            raw = await redis_client.hget(_REFINEMENT_PROPOSALS_REDIS_KEY, proposal_id)
+            if raw:
+                loaded = json.loads(
+                    raw if isinstance(raw, str) else raw.decode("utf-8")
+                )
+                if isinstance(loaded, dict):
+                    _refinement_proposals[proposal_id] = loaded
+                    return loaded
+        except Exception as exc:
+            logger.warning(
+                "[NeMo/Refinement] Failed to load proposal %s from Redis: %s",
+                proposal_id,
+                exc,
+            )
+    return _refinement_proposals.get(proposal_id)
 
 
 @root_app.post("/v1/nemo/propose-refinement")
@@ -445,7 +503,7 @@ async def propose_nemo_refinement(
         "approver_identity": None,
         "rationale": None,
     }
-    _refinement_proposals[proposal_id] = proposal
+    await _save_refinement_proposal(proposal)
 
     logger.info(
         "[NeMo/Refinement] Proposal STAGED: id=%s control_id=%s source=%s proposer=%s",
@@ -514,7 +572,7 @@ async def approve_nemo_refinement(
             "for this governance configuration change.",
         )
 
-    proposal = _refinement_proposals.get(proposal_id)
+    proposal = await _load_refinement_proposal(proposal_id)
     if proposal is None or proposal["status"] != "staged":
         raise HTTPException(
             status_code=404,
@@ -538,6 +596,7 @@ async def approve_nemo_refinement(
 
     if not req.approved:
         proposal["status"] = "rejected"
+        await _save_refinement_proposal(proposal)
         logger.info(
             "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s approver_identity=%s",
             proposal_id,
@@ -563,6 +622,7 @@ async def approve_nemo_refinement(
         inference_app.state.nemo_rails = new_rails
         mcp_app.state.nemo_rails = new_rails
         proposal["status"] = "applied"
+        await _save_refinement_proposal(proposal)
         logger.info(
             "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s approver_identity=%s control_id=%s",
             proposal_id,
@@ -572,6 +632,7 @@ async def approve_nemo_refinement(
         )
     except Exception as exc:
         proposal["status"] = "apply_failed"
+        await _save_refinement_proposal(proposal)
         logger.error("[NeMo/Refinement] Rails reload failed after approval: %s", exc)
         raise HTTPException(
             status_code=500,
@@ -590,6 +651,23 @@ async def approve_nemo_refinement(
 @root_app.get("/v1/nemo/proposals/pending")
 async def list_pending_nemo_proposals() -> dict[str, Any]:
     """List all staged NeMo refinement proposals awaiting human review."""
+    redis_client = _get_refinement_redis()
+    if redis_client is not None and hasattr(redis_client, "hgetall"):
+        try:
+            raw_map = await redis_client.hgetall(_REFINEMENT_PROPOSALS_REDIS_KEY)
+            if isinstance(raw_map, dict):
+                for pid, raw_val in raw_map.items():
+                    key = pid if isinstance(pid, str) else pid.decode("utf-8")
+                    val_str = (
+                        raw_val if isinstance(raw_val, str) else raw_val.decode("utf-8")
+                    )
+                    loaded = json.loads(val_str)
+                    if isinstance(loaded, dict):
+                        _refinement_proposals[key] = loaded
+        except Exception as exc:
+            logger.warning(
+                "[NeMo/Refinement] Failed to list proposals from Redis: %s", exc
+            )
     pending = [p for p in _refinement_proposals.values() if p["status"] == "staged"]
     return {"pending": pending, "count": len(pending)}
 
@@ -626,7 +704,7 @@ async def apply_nemo_refinement(
         "approver_identity": None,
         "rationale": None,
     }
-    _refinement_proposals[proposal_id] = proposal
+    await _save_refinement_proposal(proposal)
 
     current_span = _otel_trace.get_current_span()
     if current_span and current_span.is_recording():

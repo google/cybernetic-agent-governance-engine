@@ -276,6 +276,16 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
                     if valid and isinstance(claims, dict):
                         jwt_sub = claims.get("sub")
                 if isinstance(jwt_sub, str) and jwt_sub.strip():
+                    trusted = _trusted_operator_identities()
+                    if trusted and jwt_sub not in trusted:
+                        logger.warning(
+                            "Operator OIDC sub %s not in CAGE_TRUSTED_OPERATOR_IDENTITIES",
+                            jwt_sub,
+                        )
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Operator OIDC identity is not authorized",
+                        )
                     principal_hash = hashlib.sha256(jwt_sub.encode()).hexdigest()
                     logger.info(
                         f"✅ Operator identity verified via OIDC: {jwt_sub[:30]}..."
@@ -285,6 +295,8 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
                         channel_provenance="OIDC",
                         auth_principal_hash=principal_hash,
                     )
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"⚠️  OIDC JWT extraction failed: {e}")
 

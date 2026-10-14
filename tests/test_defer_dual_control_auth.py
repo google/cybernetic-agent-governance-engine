@@ -650,3 +650,50 @@ class TestApprovalRecordIntegrity:
         ):
             await queue.approve("test-defer-webauthn", invalid_webauthn_record)
         mock_redis.hmget.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_defer_queue_approve_rejects_self_approval_by_initiator(self):
+        """Initiator of a deferred token cannot approve their own token (separation of duties)."""
+        from src.gateway.governance.defer_queue import DeferQueue
+
+        token = DeferToken(
+            thread_id="test-thread-sod",
+            defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+            initiator_urn="spiffe://cluster.local/ns/governance-stack/sa/operator-alice",
+        )
+        mock_redis = AsyncMock()
+        mock_redis.hmget = AsyncMock(
+            return_value=(token.model_dump_json(), "PARKED", "0")
+        )
+        queue = DeferQueue(mock_redis)
+        self_approval = ApprovalRecord(
+            approver_urn="spiffe://cluster.local/ns/governance-stack/sa/operator-alice",
+            approved_at_utc="2026-10-14T12:00:00Z",
+            auth_method="SVID",
+            auth_principal_hash="b" * 64,
+        )
+
+        with pytest.raises(ValueError, match="Separation-of-duties violation"):
+            await queue.approve("test-defer-sod", self_approval)
+
+    @pytest.mark.asyncio
+    async def test_oidc_channel_enforces_trusted_operator_identities_allowlist(
+        self, monkeypatch
+    ):
+        """When CAGE_TRUSTED_OPERATOR_IDENTITIES is set, OIDC sub claims must also be allowlisted."""
+        monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "true")
+        monkeypatch.setenv(
+            "CAGE_TRUSTED_OPERATOR_IDENTITIES", "authorized-officer@example.com"
+        )
+
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer mock-jwt-token"}
+        mock_request.attributes = None
+        mock_request.state = MagicMock()
+        mock_request.state.jwt_claims = {"sub": "unauthorized-user@example.com"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(mock_request)
+
+        assert exc_info.value.status_code == 403
+        assert "not authorized" in exc_info.value.detail

@@ -78,20 +78,28 @@ class DPoPValidator(ProofOfPossessionValidator):
     - Missing or malformed claims → reject
     """
 
-    def __init__(self, max_age_seconds: int = 60):
+    _JTI_REDIS_PREFIX = "cage:dpop:jti:"
+
+    def __init__(
+        self,
+        max_age_seconds: int = 60,
+        redis_client: Any = None,
+    ):
         """
         Initialize DPoP validator.
 
         Args:
             max_age_seconds: Maximum allowed timestamp skew (default: 60s)
+            redis_client: Optional async Redis client for cluster-wide JTI
+                replay protection across gateway replicas.
         """
         self._max_age_seconds = max_age_seconds
+        self._redis_client = redis_client
+        self._jti_ttl_seconds = max(1, max_age_seconds * 2)
         try:
             from cachetools import TTLCache
 
-            self._seen_jti: Any = TTLCache(
-                maxsize=10000, ttl=max(1, max_age_seconds * 2)
-            )
+            self._seen_jti: Any = TTLCache(maxsize=10000, ttl=self._jti_ttl_seconds)
         except ImportError:
             self._seen_jti = {}
 
@@ -163,6 +171,16 @@ class DPoPValidator(ProofOfPossessionValidator):
             )
         if jti in self._seen_jti:
             raise TokenBindingError(f"JTI replay detected: {jti}")
+        if self._redis_client is not None:
+            try:
+                if await self._redis_client.exists(f"{self._JTI_REDIS_PREFIX}{jti}"):
+                    raise TokenBindingError(f"JTI replay detected: {jti}")
+            except TokenBindingError:
+                raise
+            except Exception as exc:
+                raise TokenBindingError(
+                    f"DPoP replay store unavailable (fail-closed): {exc}"
+                ) from exc
 
         # Extract public key from mTLS certificate
         cert_public_key = self._extract_cert_public_key(client_cert_pem)
@@ -201,6 +219,20 @@ class DPoPValidator(ProofOfPossessionValidator):
 
         # Record JTI only after cryptographic verification succeeds so forged
         # proofs cannot pollute the replay cache.
+        if self._redis_client is not None:
+            try:
+                claimed = await self._redis_client.set(
+                    f"{self._JTI_REDIS_PREFIX}{jti}",
+                    "1",
+                    nx=True,
+                    ex=self._jti_ttl_seconds,
+                )
+            except Exception as exc:
+                raise TokenBindingError(
+                    f"DPoP replay store write failed (fail-closed): {exc}"
+                ) from exc
+            if not claimed:
+                raise TokenBindingError(f"JTI replay detected: {jti}")
         self._seen_jti[jti] = True
 
         return True

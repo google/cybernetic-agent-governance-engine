@@ -454,3 +454,51 @@ class TestDPoPValidator:
                 expected_uri="https://api.example.com/resource",
                 http_method="POST",
             )
+
+    @pytest.mark.asyncio
+    async def test_redis_backed_cross_replica_jti_replay_protection(
+        self, test_keypair, test_cert_pem
+    ):
+        """Two distinct DPoPValidator instances sharing Redis reject JTI replay across replicas."""
+        private_key, public_key = test_keypair
+        store: dict[str, str] = {}
+
+        class _FakeRedis:
+            async def exists(self, key: str) -> int:
+                return 1 if key in store else 0
+
+            async def set(
+                self, key: str, value: str, *, nx: bool = False, ex: int = 0
+            ) -> bool:
+                if nx and key in store:
+                    return False
+                store[key] = value
+                return True
+
+        shared_redis = _FakeRedis()
+        replica_a = DPoPValidator(max_age_seconds=60, redis_client=shared_redis)
+        replica_b = DPoPValidator(max_age_seconds=60, redis_client=shared_redis)
+
+        dpop_proof = self._create_dpop_jwt(
+            private_key=private_key,
+            public_key=public_key,
+            htm="POST",
+            htu="https://api.example.com/resource",
+            iat=int(time.time()),
+            jti="cross-replica-jti-001",
+        )
+
+        assert await replica_a.validate_token_binding(
+            dpop_proof=dpop_proof,
+            client_cert_pem=test_cert_pem,
+            expected_uri="https://api.example.com/resource",
+            http_method="POST",
+        )
+
+        with pytest.raises(TokenBindingError, match="JTI replay detected"):
+            await replica_b.validate_token_binding(
+                dpop_proof=dpop_proof,
+                client_cert_pem=test_cert_pem,
+                expected_uri="https://api.example.com/resource",
+                http_method="POST",
+            )

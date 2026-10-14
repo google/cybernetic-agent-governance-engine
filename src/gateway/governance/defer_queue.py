@@ -347,6 +347,7 @@ class DeferToken(BaseModel):
 
     # --- v3 additions (PRAXIS Phase 2) ------------------------------------
     upstream_permit_id: str | None = None
+    initiator_urn: str | None = None
 
     def is_authority_bound(self) -> bool:
         """Return True if bound to external upstream authority.
@@ -1170,6 +1171,25 @@ class DeferQueue:
                     current_status,
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
+
+            # Separation-of-duties: the initiator who triggered the deferred action
+            # cannot approve their own token.
+            initiator = token.initiator_urn or token.opa_input_snapshot.get(
+                "initiator_urn"
+            )
+            if (
+                isinstance(initiator, str)
+                and initiator.strip()
+                and record.approver_urn == initiator.strip()
+            ):
+                logger.warning(
+                    "[defer_queue] Separation-of-duties violation: initiator %s attempted to approve defer_id=%s",
+                    record.approver_urn,
+                    defer_id,
+                )
+                raise ValueError(
+                    f"Separation-of-duties violation: initiator {record.approver_urn!r} cannot approve their own deferred token"
+                )
 
             # Check for duplicate approver
             existing_urns = {a.approver_urn for a in token.approvals}

@@ -319,10 +319,24 @@ class TestAdapterReceiptVerification:
 
     async def test_unsigned_acceptance_permissive_mode(self) -> None:
         receipt = await _adapter(
-            lambda d: (200, _body(digest=d)), receipt_key_resolver=_RESOLVER
+            lambda d: (200, _body(digest=d)),
+            receipt_key_resolver=_RESOLVER,
+            require_signed_receipts=False,
         ).actuate(_clearance())
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         assert receipt.verification is ReceiptVerification.UNVERIFIED
+
+    async def test_unsigned_acceptance_rejected_by_default_when_resolver_configured(
+        self,
+    ) -> None:
+        """When receipt_key_resolver is configured, require_signed_receipts defaults to True."""
+        receipt = await _adapter(
+            lambda d: (200, _body(digest=d)),
+            receipt_key_resolver=_RESOLVER,
+        ).actuate(_clearance())
+        assert receipt.outcome is ActuationOutcome.UNKNOWN
+        assert receipt.verification is ReceiptVerification.UNVERIFIED
+        assert "RECEIPT_UNVERIFIED" in [f["code"] for f in receipt.findings]
 
     async def test_unsigned_acceptance_strict_mode_is_indeterminate(self) -> None:
         receipt = await _adapter(

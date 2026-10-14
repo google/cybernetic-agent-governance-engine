@@ -223,6 +223,7 @@ examples/evidence/*.ndjson
 .agents/
 
 # Test result artifacts — local pytest output, never commit
+artifacts/
 test_results/
 test_results_*.txt
 test_results_final_*.txt

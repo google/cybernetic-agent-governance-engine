@@ -1912,7 +1912,20 @@ async def defer_escalate(
         queue = defer_queue_cls(client)
 
         # Use approve() instead of resolve() for dual-control
-        status, token = await queue.approve(defer_id, approval_record)
+        try:
+            status, token = await queue.approve(defer_id, approval_record)
+        except ValueError as val_exc:
+            await client.aclose()
+            msg = str(val_exc)
+            status_code = 403 if "Separation-of-duties" in msg else 400
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "error": "APPROVAL_VALIDATION_FAILED",
+                    "message": msg,
+                    "defer_id": defer_id,
+                },
+            ) from val_exc
         await client.aclose()
 
         if status == ApprovalStatus.NOT_FOUND:

@@ -183,9 +183,14 @@ class Actuator01Adapter:
         policy_signer: RawMessageSigner | None = None,
         credential_broker: CredentialBrokerAdapter | None = None,
         receipt_key_resolver: Ed25519KeyResolver | None = None,
-        require_signed_receipts: bool = False,
+        require_signed_receipts: bool | None = None,
     ) -> None:
-        if require_signed_receipts and receipt_key_resolver is None:
+        effective_require_signed = (
+            receipt_key_resolver is not None
+            if require_signed_receipts is None
+            else bool(require_signed_receipts)
+        )
+        if effective_require_signed and receipt_key_resolver is None:
             raise ValueError(
                 "[actuator_01/adapter] require_signed_receipts needs a "
                 "receipt_key_resolver (kid-resolved trust anchor)"
@@ -196,7 +201,7 @@ class Actuator01Adapter:
         self._policy_signer = policy_signer  # Optional dual-authority policy signer
         self._credential_broker = credential_broker  # Optional credential broker
         self._receipt_key_resolver = receipt_key_resolver
-        self._require_signed_receipts = require_signed_receipts
+        self._require_signed_receipts = effective_require_signed
 
     @classmethod
     def from_env(
@@ -268,9 +273,15 @@ class Actuator01Adapter:
         )
 
         manifest_url = os.environ.get(_ENV_RECEIPT_KEY_MANIFEST_URL, "").strip()
-        require_signed = os.environ.get(
-            _ENV_REQUIRE_SIGNED_RECEIPTS, ""
-        ).strip().lower() in ("1", "true", "yes")
+        raw_require_signed = (
+            os.environ.get(_ENV_REQUIRE_SIGNED_RECEIPTS, "").strip().lower()
+        )
+        if raw_require_signed in ("1", "true", "yes"):
+            require_signed: bool | None = True
+        elif raw_require_signed in ("0", "false", "no"):
+            require_signed = False
+        else:
+            require_signed = None
 
         return cls(
             client=client,

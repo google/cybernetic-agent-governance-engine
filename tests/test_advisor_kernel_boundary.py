@@ -395,6 +395,9 @@ def test_gateway_tools_execute_reaches_plugin_registered_tool() -> None:
         resp = TestClient(mod.app).post(
             "/tools/execute",
             json={"tool_name": "plugin_probe_poam079", "params": {"x": 3}},
+            headers={
+                "l5d-client-id": "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+            },
         )
 
     assert resp.json() == {"status": "SUCCESS", "output": "probe:3"}

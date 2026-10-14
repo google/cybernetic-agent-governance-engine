@@ -1095,7 +1095,7 @@ class Provider06AgentIntegrityAdapter:
                 FINDING_CODE_UNKNOWN_KEY,
             )
 
-        if not verify_receipt_digest(receipt):
+        if not verify_receipt_digest(receipt, strict_v2=True):
             return ("Receipt digest verification failed", FINDING_CODE_INVALID_DIGEST)
 
         signature_block = receipt.get("signature", {})
@@ -1117,7 +1117,7 @@ class Provider06AgentIntegrityAdapter:
         if public_key is None:
             return (f"Unknown or revoked key ID: {key_id}", FINDING_CODE_UNKNOWN_KEY)
 
-        if not verify_receipt_signature(receipt, public_key):
+        if not verify_receipt_signature(receipt, public_key, strict_v2=True):
             return (
                 "Receipt signature verification failed",
                 FINDING_CODE_INVALID_SIGNATURE,
