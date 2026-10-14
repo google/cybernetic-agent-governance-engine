@@ -48,8 +48,13 @@ class GatewayMCPClient:
         self._exit_stack = AsyncExitStack()  # type: ignore[assignment]
 
         # Connect via SSE
+        headers: dict[str, Any] = {}
+        id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
+        if id2_token:
+            headers["Authorization"] = f"Bearer {id2_token}"
+
         read_stream, write_stream = await self._exit_stack.enter_async_context(  # type: ignore[attr-defined]
-            sse_client(self.sse_url)
+            sse_client(self.sse_url, headers=headers or None)
         )
 
         self.session = await self._exit_stack.enter_async_context(  # type: ignore[attr-defined]

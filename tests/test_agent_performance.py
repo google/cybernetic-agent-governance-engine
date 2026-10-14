@@ -12,9 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import os
+import statistics
+import time
+import uuid
 
 import pytest
+import requests
 from dotenv import load_dotenv
 
 pytestmark = pytest.mark.integration
@@ -53,10 +58,13 @@ class AgentBenchmark:
             "thread_id": session_id,  # New field from snippet
         }
 
+        cage_api_key = os.environ.get("CAGE_API_KEY", "")
+        headers = {"Authorization": f"Bearer {cage_api_key}"} if cage_api_key else {}
+
         try:
             start_time = time.time()
             response = requests.post(
-                self.endpoint, json=payload, timeout=120
+                self.endpoint, json=payload, headers=headers, timeout=120
             )  # Use self.endpoint and original timeout
             response.raise_for_status()  # Keep original error handling
             data = response.json()
