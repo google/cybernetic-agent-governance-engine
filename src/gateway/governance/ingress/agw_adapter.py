@@ -246,7 +246,9 @@ class AgwAdapter:
             claims["_verified_kid"] = kid
             return True, claims
         except Exception as exc:
-            logger.warning("AGW OIDC token verification failed: %s", exc)
+            logger.warning(
+                "AGW OIDC signature validation failed: %s", type(exc).__name__
+            )
             return False, {}
 
     def extract_tri_identity(

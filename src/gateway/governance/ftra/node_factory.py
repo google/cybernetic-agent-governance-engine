@@ -360,10 +360,9 @@ def _run_ftra(
                     }
                 )
             except RuntimeError as exc:
-                if (
-                    "outside of a runnable context" not in str(exc)
-                    and "langgraph is required" not in str(exc)
-                ):
+                if "outside of a runnable context" not in str(
+                    exc
+                ) and "langgraph is required" not in str(exc):
                     raise
             return {
                 "ftra_status": "HITL_REQUIRED",

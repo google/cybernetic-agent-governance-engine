@@ -566,4 +566,3 @@ async def test_validate_action_unknown_kid_fails_closed(
             agent_id="test-agent",
         )
     await client.aclose()
-

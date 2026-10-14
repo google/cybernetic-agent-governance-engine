@@ -53,7 +53,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
 from urllib.parse import urlparse
 
 from src.gateway.governance.ingress.agent_registry_adapter import RegistryCatalog
@@ -214,7 +213,9 @@ def verify_and_transition_gateway_mode(
                 continue
             if binding.get("role") != "roles/iap.egressor":
                 continue
-            b_target = str(binding.get("target") or binding.get("resource") or "").strip()
+            b_target = str(
+                binding.get("target") or binding.get("resource") or ""
+            ).strip()
             if not b_target:
                 continue
             if b_target != "*" and b_target != target:

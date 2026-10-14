@@ -435,9 +435,7 @@ class TestDPoPValidator:
             )
 
     @pytest.mark.asyncio
-    async def test_boolean_iat_rejected(
-        self, validator, test_keypair, test_cert_pem
-    ):
+    async def test_boolean_iat_rejected(self, validator, test_keypair, test_cert_pem):
         """Test fail-closed: boolean iat claim is rejected as non-numeric."""
         private_key, public_key = test_keypair
         dpop_proof = self._create_dpop_jwt(
@@ -456,4 +454,3 @@ class TestDPoPValidator:
                 expected_uri="https://api.example.com/resource",
                 http_method="POST",
             )
-

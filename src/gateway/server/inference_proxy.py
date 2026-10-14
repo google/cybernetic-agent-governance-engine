@@ -448,7 +448,13 @@ async def chat_completions(
                                 entry["name"] += str(fn["name"])
                             if fn.get("arguments"):
                                 entry["arguments"] += str(fn["arguments"])
-                except (json.JSONDecodeError, IndexError, KeyError, TypeError, ValueError):
+                except (
+                    json.JSONDecodeError,
+                    IndexError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ):
                     pass
 
             if stream_backend_error:

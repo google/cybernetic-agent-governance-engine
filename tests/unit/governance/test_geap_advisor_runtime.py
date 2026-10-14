@@ -420,8 +420,7 @@ class TestGovernedFinancialAdvisorGeapApp:
         assert cmd.resume["approved"] is True
         assert cmd.resume["reviewer"] == "risk-lead@example.com"
         assert (
-            cmd.resume["rationale"]
-            == "Verified portfolio drawdown within IPS mandate."
+            cmd.resume["rationale"] == "Verified portfolio drawdown within IPS mandate."
         )
         assert cmd.resume["ticket_id"] == "defer-123"
 
@@ -455,9 +454,7 @@ class TestGovernedFinancialAdvisorGeapApp:
                 "rationale": "Rejected due to concentration limit.",
             },
         )
-        cmd_reject = parent_node(
-            {"execution_plan_output": {}, "evaluation_result": {}}
-        )
+        cmd_reject = parent_node({"execution_plan_output": {}, "evaluation_result": {}})
         assert cmd_reject.goto == "explainer"
         assert "messages" in cmd_reject.update
 
@@ -475,9 +472,7 @@ class TestGovernedFinancialAdvisorGeapApp:
                 entry = self.store.get(key)
                 return entry[0] if entry else None
 
-            async def set(
-                self, key: str, value: str, ttl: int | None = None
-            ) -> None:
+            async def set(self, key: str, value: str, ttl: int | None = None) -> None:
                 self.store[key] = (value, ttl)
 
         wrapper = _FakeAsyncRedisClient()
@@ -485,10 +480,7 @@ class TestGovernedFinancialAdvisorGeapApp:
         query = "What is portfolio diversification?"
         await cache.set(query, "Diversification spreads risk across assets.")
         assert len(wrapper.store) == 1
-        assert (
-            await cache.get(query)
-            == "Diversification spreads risk across assets."
-        )
+        assert await cache.get(query) == "Diversification spreads risk across assets."
 
     def test_unknown_tool_returns_http_404(self) -> None:
         from fastapi import FastAPI

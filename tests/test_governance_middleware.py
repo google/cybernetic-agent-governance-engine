@@ -1015,4 +1015,3 @@ class TestFlowSignalHttp202Receipt:
             {"tool_name": "execute_trade", "parameters": {"amount": 100}},
             governor=mock_gov,
         )
-

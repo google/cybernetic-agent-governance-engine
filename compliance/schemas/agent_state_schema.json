@@ -230,6 +230,12 @@
         "null"
       ]
     },
+    "deferred_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "agent_id": {
       "type": "string"
     },

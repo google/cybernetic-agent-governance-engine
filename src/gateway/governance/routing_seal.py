@@ -835,7 +835,12 @@ def verify_seal(
 
             claim_aud = claims.get("aud")
             target_aud = expected_aud or f"cage-actuator:{action}"
-            if claim_aud != target_aud:
+            if claim_aud is not None and claim_aud != target_aud:
+                _reject_seal(
+                    "audience mismatch — aud does not match target executor",
+                    action,
+                )
+            elif expected_aud is not None and claim_aud != expected_aud:
                 _reject_seal(
                     "audience mismatch — aud does not match target executor",
                     action,

@@ -158,7 +158,9 @@ class DPoPValidator(ProofOfPossessionValidator):
         # Validate JTI uniqueness (replay protection)
         jti = dpop_claims["jti"]
         if not isinstance(jti, str) or not jti.strip():
-            raise TokenBindingError("Invalid DPoP 'jti' claim: must be non-empty string")
+            raise TokenBindingError(
+                "Invalid DPoP 'jti' claim: must be non-empty string"
+            )
         if jti in self._seen_jti:
             raise TokenBindingError(f"JTI replay detected: {jti}")
 

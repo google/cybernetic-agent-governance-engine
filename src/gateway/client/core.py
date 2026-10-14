@@ -343,9 +343,7 @@ class CageClient:
                 padding as rsa_padding,
             )
 
-            pem_bytes = (
-                pem_raw.encode("utf-8") if isinstance(pem_raw, str) else pem_raw
-            )
+            pem_bytes = pem_raw.encode("utf-8") if isinstance(pem_raw, str) else pem_raw
             public_key = serialization.load_pem_public_key(pem_bytes)
 
             unsigned_dict = {

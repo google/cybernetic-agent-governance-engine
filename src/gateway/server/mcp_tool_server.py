@@ -138,7 +138,9 @@ async def _check_rate_limit(client_ip: str) -> bool:
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
         # Clean up other empty buckets if plain dict fallback is used
-        empty_keys = [k for k, v in _rate_limit_buckets.items() if not v and k != client_ip]
+        empty_keys = [
+            k for k, v in _rate_limit_buckets.items() if not v and k != client_ip
+        ]
         for k in empty_keys:
             _rate_limit_buckets.pop(k, None)
         if _METRICS_AVAILABLE and _rate_limit_active_buckets is not None:

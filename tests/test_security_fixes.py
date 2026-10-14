@@ -176,7 +176,9 @@ class TestC01TradeSide:
         ):
             mock_redis.get.return_value = None
 
-            with pytest.raises((ValueError, AssertionError), match="Invalid trade side"):
+            with pytest.raises(
+                (ValueError, AssertionError), match="Invalid trade side"
+            ):
                 await execute_trade(order, routing_seal="test-seal-c01-invalid")
 
         # Broker must never be called for an invalid side.
