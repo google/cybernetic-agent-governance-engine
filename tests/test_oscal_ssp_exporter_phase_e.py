@@ -173,10 +173,14 @@ class TestNarrativeContent:
         narratives = generate_platform_control_narratives("gcp-gke")
         sc7 = next(n for n in narratives if n["control-id"] == "sc-7")
         sc8 = next(n for n in narratives if n["control-id"] == "sc-8")
+        sc39 = next(n for n in narratives if n["control-id"] == "sc-39")
         si3 = next(n for n in narratives if n["control-id"] == "si-3")
 
         assert "Cilium" in sc7["description"]
         assert "Linkerd" in sc8["description"]
+        assert "GEAP Agent Runtime" in sc39["description"]
+        assert "MicroVM" in sc39["description"]
+        assert "gvisor" in sc39["description"]
         assert "readOnlyRootFilesystem: true" in si3["description"]
 
 

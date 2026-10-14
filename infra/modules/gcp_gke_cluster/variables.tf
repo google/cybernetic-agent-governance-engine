@@ -258,6 +258,24 @@ variable "primary_node_pool_labels" {
   default     = {}
 }
 
+variable "enable_gvisor_sandbox" {
+  description = <<-EOT
+    Enable GKE Sandbox (sandbox_type = "gvisor") on the general (primary) CPU node pool (SC-39)
+    when running CAGE in the optional `gcp-gke` deployment mode.
+    Note: CAGE is cloud-agnostic (`infra/targets/agnostic/`). In the `gcp-gke` deployment mode,
+    GKE MicroVM (sandbox_type = "microvm") is intentionally NOT enabled on GKE because:
+      1. When `advisor_runtime = "geap"`, untrusted agent applications execute in GEAP Agent
+         Runtime (Vertex AI Agent Engine / Agent Substrate, infra/modules/gcp_geap_advisor),
+         which natively provides hardware-enforced MicroVM isolation per agent instance.
+      2. GKE primarily hosts GPU inference (vllm on g2-standard-8 NVIDIA L4 nodes, which require
+         direct PCIe GPU passthrough incompatible with nested virtualization) and stateless
+         governance control-plane pods on cost-efficient E2 nodes (which support gVisor but not
+         nested virtualization).
+  EOT
+  type        = bool
+  default     = false
+}
+
 # ─── General-Spot Node Pool Configuration (§3: general-spot) ─────────────────
 
 variable "enable_general_spot_node_pool" {

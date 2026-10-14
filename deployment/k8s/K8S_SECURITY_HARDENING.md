@@ -439,12 +439,22 @@ kubectl exec -n governance-stack deployment/gateway -c gateway \
 
 ### SC-39 — Process Isolation
 
-**Implementation:** `pod-security-admission.yaml` + `security-context-patch.yaml`
+**Implementation (Cloud-Agnostic Baseline — All Deployment Modes):** `pod-security-admission.yaml` + `security-context-patch.yaml`
+
+CAGE is a cloud-agnostic governance engine (`infra/targets/agnostic/` and cloud-specific overlays). Baseline process isolation applies universally across any standard Kubernetes cluster:
 
 - `governance-stack` namespace: PSS `restricted` enforced
 - `langfuse` and `vllm` namespaces: PSS `baseline` enforced, `restricted` audited/warned
 - Pod-level: `runAsNonRoot: true`, `runAsUser: 1000`, `seccompProfile: RuntimeDefault`
 - Container-level: `allowPrivilegeEscalation: false`, `capabilities drop ALL`
+
+**Optional Deployment Mode (`gcp-gke` / GEAP Target Overlay):** [`infra/modules/gcp_gke_cluster/main.tf`](../../infra/modules/gcp_gke_cluster/main.tf) + [`infra/modules/gcp_geap_advisor/main.tf`](../../infra/modules/gcp_geap_advisor/main.tf)
+
+When deployed in the optional `gcp-gke` mode (`infra/targets/gcp-gke/`), process isolation is augmented with platform-specific runtime boundaries:
+
+- **Agent Application Plane (`advisor_runtime = "geap"`, optional GCP mode)**: Untrusted agent orchestration runs on GEAP Agent Runtime (Vertex AI Agent Engine / Agent Substrate) with hardware-enforced **MicroVM isolation** per agent instance, avoiding nested-virtualization (`runtimeClassName: microvm`) overhead on GKE (whereas `agnostic` and `advisor_runtime = "gke"` modes run the advisor on standard Kubernetes via [`infra/modules/governed_advisor/main.tf`](../../infra/modules/governed_advisor/main.tf)).
+- **Governance Control Plane (`gcp-gke` mode)**: Supports optional `gvisor` user-space kernel sandboxing (`enable_gvisor_sandbox`) on `E2` CPU nodes in addition to PSS `restricted`.
+- **GPU & Storage Plane (`gcp-gke` mode)**: `vllm` (`gpu-l4`, `g2-standard-8` NVIDIA L4) and `clickhouse` (Local NVMe SSD) execute on dedicated tainted node pools (`nvidia.com/gpu=present:NoSchedule`, `workload=clickhouse:NoSchedule`) on native runtime (`runc`) for direct PCIe GPU passthrough and NVMe block I/O.
 
 **Evidence artifacts:**
 
