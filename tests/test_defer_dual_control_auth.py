@@ -54,19 +54,49 @@ class TestOperatorIdentityProvenance:
     """Test identity extraction from SPIFFE SVID / OIDC / dev-synthetic channels."""
 
     @pytest.mark.asyncio
-    async def test_svid_primary_channel_extracts_spiffe_identity(self):
-        """Verify SPIFFE SVID extraction from x-cage-source-principal header."""
+    async def test_svid_primary_channel_extracts_linkerd_identity(self):
+        """Verify SPIFFE SVID extraction from Linkerd proxy-verified l5d-client-id header."""
+        from starlette.datastructures import Headers
+
         mock_request = MagicMock()
-        mock_request.headers = {
-            "x-cage-source-principal": "spiffe://cage.example/operator/alice"
-        }
+        mock_request.headers = Headers(
+            raw=[
+                (
+                    b"l5d-client-id",
+                    b"risk-officer-alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                )
+            ]
+        )
         mock_request.attributes = None  # No gRPC attributes in HTTP mode
 
         principal = await require_operator_identity(mock_request)
 
-        assert principal.operator_urn == "spiffe://cage.example/operator/alice"
+        assert (
+            principal.operator_urn
+            == "spiffe://cluster.local/ns/governance-stack/sa/risk-officer-alice"
+        )
         assert principal.channel_provenance == "SVID"
         assert len(principal.auth_principal_hash) == 64  # SHA-256 hex digest
+
+    @pytest.mark.asyncio
+    async def test_forged_x_cage_source_principal_header_rejected(self, monkeypatch):
+        """GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39: self-asserted x-cage-source-principal is never trusted."""
+        from starlette.datastructures import Headers
+
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
+
+        mock_request = MagicMock()
+        mock_request.headers = Headers(
+            raw=[(b"x-cage-source-principal", b"spiffe://cage.example/operator/alice")]
+        )
+        mock_request.attributes = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(mock_request)
+
+        assert exc_info.value.status_code == 401
+        assert "No verified operator identity" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_oidc_fallback_channel_with_gated_env(self, monkeypatch):
@@ -75,6 +105,7 @@ class TestOperatorIdentityProvenance:
 
         mock_request = MagicMock()
         mock_request.headers = {"authorization": "Bearer mock-jwt-token"}
+        mock_request.attributes = None
         mock_request.state = MagicMock()
         mock_request.state.jwt_claims = {"sub": "oidc-user@example.com"}
 
@@ -90,6 +121,7 @@ class TestOperatorIdentityProvenance:
 
         mock_request = MagicMock()
         mock_request.headers = {"authorization": "Bearer mock-jwt-token"}
+        mock_request.attributes = None
         mock_request.state = MagicMock()
         mock_request.state.jwt_claims = {"sub": "oidc-user@example.com"}
 
@@ -114,6 +146,7 @@ class TestOperatorIdentityProvenance:
                 "x-cage-dev-operator-urn": "urn:cage:dev:test-operator-1"
             }.get(k, d)
         )
+        mock_request.headers.raw = []
         mock_request.attributes = None  # No gRPC attributes
 
         principal = await require_operator_identity(mock_request)
@@ -136,6 +169,7 @@ class TestOperatorIdentityProvenance:
                 "x-cage-dev-operator-urn": "urn:cage:prod:malicious"
             }.get(k, d)
         )
+        mock_request.headers.raw = []
         mock_request.attributes = None  # No gRPC attributes
 
         with pytest.raises(HTTPException) as exc_info:
@@ -152,6 +186,7 @@ class TestOperatorIdentityProvenance:
 
         mock_request = MagicMock()
         mock_request.headers = {"x-cage-dev-operator-urn": "urn:cage:dev:test"}
+        mock_request.attributes = None
 
         with pytest.raises(HTTPException) as exc_info:
             await require_operator_identity(mock_request)
@@ -160,7 +195,7 @@ class TestOperatorIdentityProvenance:
 
 
 class TestOperatorIdentitySvidHardening:
-    """The SVID channel must only trust a single, well-formed principal header."""
+    """The SVID channel must only trust a single, well-formed Linkerd l5d-client-id header or transport principal."""
 
     def _request(self, raw_headers: list[tuple[bytes, bytes]]) -> MagicMock:
         from starlette.datastructures import Headers
@@ -173,26 +208,55 @@ class TestOperatorIdentitySvidHardening:
     @pytest.mark.asyncio
     async def test_single_well_formed_svid_accepted(self):
         request = self._request(
-            [(b"x-cage-source-principal", b"spiffe://cage.example/operator/alice")]
+            [
+                (
+                    b"l5d-client-id",
+                    b"operator-alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                )
+            ]
         )
 
         principal = await require_operator_identity(request)
 
-        assert principal.operator_urn == "spiffe://cage.example/operator/alice"
+        assert (
+            principal.operator_urn
+            == "spiffe://cluster.local/ns/governance-stack/sa/operator-alice"
+        )
         assert principal.channel_provenance == "SVID"
+
+    @pytest.mark.asyncio
+    async def test_trusted_operator_identities_allowlist_enforced(self, monkeypatch):
+        monkeypatch.setenv(
+            "CAGE_TRUSTED_OPERATOR_IDENTITIES",
+            "operator-alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        )
+        untrusted_req = self._request(
+            [
+                (
+                    b"l5d-client-id",
+                    b"governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                )
+            ]
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(untrusted_req)
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_duplicate_principal_headers_rejected(self, monkeypatch):
         monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
         monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
-        # A caller smuggles a forged principal alongside the mesh-injected one.
+        # A caller smuggles a second l5d-client-id header.
         request = self._request(
             [
                 (
-                    b"x-cage-source-principal",
-                    b"spiffe://cage.example/operator/attacker",
+                    b"l5d-client-id",
+                    b"attacker.governance-stack.serviceaccount.identity.linkerd.cluster.local",
                 ),
-                (b"x-cage-source-principal", b"spiffe://cage.example/operator/alice"),
+                (
+                    b"l5d-client-id",
+                    b"alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                ),
             ]
         )
 
@@ -205,18 +269,18 @@ class TestOperatorIdentitySvidHardening:
     @pytest.mark.parametrize(
         "value",
         [
-            b"spiffe://",  # empty trust domain
-            b"spiffe://cage.example/operator/al ice",  # embedded space
-            b"https://cage.example/operator/alice",  # wrong scheme
-            b"spiffe://CAGE.EXAMPLE/operator/alice",  # non-lowercase trust domain
-            b"spiffe://cage.example/operator/../bob",  # dot-segment traversal
-            b"spiffe://cage.example/operator/alice\n",  # trailing newline
+            b"spiffe://cage.example/operator/alice",  # raw spiffe URI in l5d-client-id
+            b"alice.governance-stack.serviceaccount.identity.linkerd.",  # empty trust domain
+            b"al ice.governance-stack.serviceaccount.identity.linkerd.cluster.local",  # space
+            b"ALICE.governance-stack.serviceaccount.identity.linkerd.cluster.local",  # uppercase
+            b"alice..serviceaccount.identity.linkerd.cluster.local",  # empty namespace
+            b"alice.governance-stack.serviceaccount.identity.linkerd.cluster.local\n",  # trailing newline
         ],
     )
     async def test_malformed_svid_rejected(self, monkeypatch, value):
         monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
         monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
-        request = self._request([(b"x-cage-source-principal", value)])
+        request = self._request([(b"l5d-client-id", value)])
 
         with pytest.raises(HTTPException) as exc_info:
             await require_operator_identity(request)
@@ -555,3 +619,34 @@ class TestApprovalRecordIntegrity:
 
         assert approval.approver_urn.startswith("urn:cage:dev:")
         assert approval.auth_method == "DEV_SYNTHETIC"
+
+    @pytest.mark.asyncio
+    async def test_defer_queue_approve_enforces_webauthn_challenge(self):
+        """GHSA-529c-23c8-3m42: DeferQueue.approve() must invoke verify_webauthn_challenge() when auth_method == WEBAUTHN."""
+        from src.gateway.governance.defer_queue import DeferQueue
+
+        token = DeferToken(
+            thread_id="test-thread-webauthn",
+            defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        )
+        mock_redis = AsyncMock()
+        mock_redis.hmget = AsyncMock(
+            return_value=(token.model_dump_json(), "PARKED", "0")
+        )
+        mock_redis.watch = AsyncMock()
+        mock_redis.unwatch = AsyncMock()
+
+        queue = DeferQueue(mock_redis)
+        invalid_webauthn_record = ApprovalRecord(
+            approver_urn="urn:cage:webauthn:alice",
+            approved_at_utc="2026-09-07T12:00:00Z",
+            auth_method="WEBAUTHN",
+            auth_principal_hash="a" * 64,
+            client_data_json=None,
+        )
+
+        with pytest.raises(
+            ValueError, match="WebAuthn challenge binding verification failed"
+        ):
+            await queue.approve("test-defer-webauthn", invalid_webauthn_record)
+        mock_redis.hmget.assert_not_awaited()

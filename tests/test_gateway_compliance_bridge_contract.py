@@ -143,7 +143,11 @@ def client() -> TestClient:
     ``require_internal_token`` passes without a real bearer token, and so that
     startup/lifespan events are not required for the health/controls endpoints.
     """
-    with patch.dict(os.environ, {"CAGE_ENV": "dev"}, clear=False):
+    with patch.dict(
+        os.environ,
+        {"CAGE_ENV": "dev", "CAGE_ALLOW_DEV_UNAUTHENTICATED": "true"},
+        clear=False,
+    ):
         # Plain constructor (no ``with``) skips startup/shutdown lifespan events.
         yield TestClient(app, raise_server_exceptions=True)
 

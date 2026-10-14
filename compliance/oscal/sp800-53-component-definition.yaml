@@ -977,10 +977,11 @@ component-definition:
                    operator identity.
 
                 5. **Compliance Bridge Operator Path**:
-                   The require_operator_identity() function (src/compliance_bridge/auth.py:88)
-                   extracts SVID from request.attributes.source.principal (Linkerd) or
-                   x-cage-source-principal header (Envoy), extending workload identity to
-                   the defer escalation approval path.
+                   The require_operator_identity() function (src/compliance_bridge/auth.py)
+                   extracts SVID from request.attributes.source.principal (gRPC transport) or
+                   Linkerd's proxy-verified l5d-client-id header (converted to a canonical
+                   spiffe:// URI), extending mTLS workload identity to the defer escalation
+                   approval path. Self-asserted x-cage-source-principal headers are rejected.
 
                 BREAKING CHANGE (2026-09-22): Removed X-Agent-ID and X-SPIFFE-ID header
                 parsing. All requests must present a verified Linkerd mTLS workload identity.
@@ -1482,20 +1483,21 @@ component-definition:
                    All requests must present a verified Linkerd mTLS workload identity.
                    Unauthenticated requests fail closed (403/401).
 
-                3. **Application-Level Operator Identification (2026-09-07)**:
+                3. **Application-Level Operator Identification**:
                    Human operator identity for defer escalation approval path is extracted via
-                   require_operator_identity() (src/compliance_bridge/auth.py:88). Identity
+                   require_operator_identity() (src/compliance_bridge/auth.py). Identity
                    precedence is fail-closed and evaluated (not negotiated):
 
                    a. SPIFFE SVID (primary): Extracted from mTLS client certificate SAN via
                       Linkerd service mesh. SVID format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
-                      The SVID is populated by Linkerd into request.attributes.source.principal
-                      or x-cage-source-principal header. Principal hash derived via SHA-256
-                      of complete SVID URI (line 118).
+                      The identity is populated by the Linkerd inbound proxy into the
+                      l5d-client-id header (or request.attributes.source.principal on gRPC)
+                      and optionally checked against CAGE_TRUSTED_OPERATOR_IDENTITIES.
+                      Principal hash derived via SHA-256 of complete SVID URI.
 
                    b. OIDC JWT (gated fallback): Only accepted when CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true.
-                      Identity extracted from JWT 'sub' claim pre-validated by upstream middleware.
-                      Principal hash derived via SHA-256 of sub claim value (line 140).
+                      Identity extracted from JWT 'sub' claim validated via JWKS or upstream middleware.
+                      Principal hash derived via SHA-256 of sub claim value.
 
                    c. Dev-mode synthetic: Requires dual-condition opt-in (CAGE_ENV=dev AND
                       CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true). All synthetic principals

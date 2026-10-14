@@ -210,13 +210,13 @@ spec:
                   name: clickhouse-evidence-sink
                   key: CLICKHOUSE_PASSWORD
 
-            # CAGE_ENV identifies the deployment tier. "development" enables the
-            # auth bypass when COMPLIANCE_BRIDGE_INTERNAL_TOKEN is absent
-            # (dev cluster only). Must be "production" in prod.
+            # CAGE_ENV identifies the deployment tier. Defaults to "production"
+            # so internal token authentication fails closed unless explicitly
+            # opted into development mode with CAGE_ALLOW_DEV_UNAUTHENTICATED=true.
             - name: CAGE_DOMAIN  # exactly one domain per process
               value: "finance"
             - name: CAGE_ENV
-              value: "development"
+              value: "production"
             # CAGE_DEPLOYMENT_REGION controls which compliance framework controls
             # are active (US_FED → NIST SP 800-53 / FedRAMP; EU_ECB → EU AI Act;
             # APAC_MAS → MAS FEAT). Without this, only universal ISO 42001 controls load.

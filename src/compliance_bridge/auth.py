@@ -28,44 +28,68 @@ from fastapi import Header, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
-_CAGE_ENV = os.environ.get("CAGE_ENV", "dev")
+_CAGE_ENV = os.environ.get("CAGE_ENV", "production")
 
-# Strict SPIFFE ID grammar for the operator SVID carried in
-# ``x-cage-source-principal``: a lowercase trust domain followed by zero or
-# more non-dot path segments, anchored end to end. A bare ``spiffe://`` prefix
-# check accepted empty trust domains and values carrying whitespace or CR/LF,
-# so the operator_urn that seeds dual-control quorum distinctness and the audit
-# hash was never required to be a well-formed identity.
+# Strict SPIFFE ID grammar for transport-supplied operator SVIDs
+# (request.attributes.source.principal): a lowercase trust domain followed by
+# zero or more non-dot path segments, anchored end to end.
 _SPIFFE_ID = re.compile(
     r"^spiffe://[a-z0-9][a-z0-9._-]{0,254}(?:/(?!\.\.?(?:/|\Z))[A-Za-z0-9._-]+)*\Z"
 )
 
+# Linkerd inbound proxy workload identity grammar (l5d-client-id):
+# <service-account>.<namespace>.serviceaccount.identity.linkerd.<trust-domain>
+_LINKERD_IDENTITY = re.compile(
+    r"^([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)"  # group 1: service account
+    r"\.([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)"  # group 2: namespace
+    r"\.serviceaccount\.identity\.linkerd\."
+    r"([a-z0-9](?:[-a-z0-9.]*[a-z0-9])?)\Z"  # group 3: trust domain
+)
 
-def _source_principal_header(request: Request) -> tuple[str | None, bool]:
-    """Return ``(svid, duplicate_detected)`` for ``x-cage-source-principal``.
 
-    The mesh writes exactly one principal header; additional copies mean a
-    caller tried to smuggle a forged identity alongside it, so any count
-    greater than one flags ``duplicate_detected=True`` to fail closed. This
-    mirrors the gateway's ``extract_client_identity`` invariant for
-    ``l5d-client-id``.
+def _linkerd_client_id_header(request: Request) -> tuple[str | None, bool]:
+    """Return ``(l5d_client_id, duplicate_detected)`` for ``l5d-client-id``.
+
+    The Linkerd inbound proxy terminates mTLS and either sets ``l5d-client-id``
+    from the verified peer certificate SAN or strips it when no verified peer
+    certificate is present. Multiple ``l5d-client-id`` headers indicate header
+    smuggling and fail closed.
+
+    Note (GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39): ``x-cage-source-principal``
+    is a client-controllable HTTP header not managed by Linkerd and is never
+    accepted as an operator identity source.
     """
     headers = request.headers
     getlist = getattr(headers, "getlist", None)
     if callable(getlist):
-        values = [v for v in getlist("x-cage-source-principal") if v]
+        values = [v for v in getlist("l5d-client-id") if v]
     else:  # pragma: no cover - real requests always expose getlist
-        single = headers.get("x-cage-source-principal")
+        single = headers.get("l5d-client-id") if hasattr(headers, "get") else None
         values = [single] if single else []
     if len(values) > 1:
         logger.warning(
-            "Multiple x-cage-source-principal headers presented (%d) — rejecting",
+            "Multiple l5d-client-id headers presented (%d) — rejecting",
             len(values),
         )
         return None, True
     if len(values) == 1:
         return values[0], False
     return None, False
+
+
+def _linkerd_id_to_spiffe(l5d_id: str) -> str | None:
+    """Convert a verified Linkerd ``l5d-client-id`` to its canonical ``spiffe://`` URN."""
+    match = _LINKERD_IDENTITY.fullmatch(l5d_id)
+    if not match:
+        return None
+    sa, namespace, trust_domain = match.group(1), match.group(2), match.group(3)
+    return f"spiffe://{trust_domain}/ns/{namespace}/sa/{sa}"
+
+
+def _trusted_operator_identities() -> frozenset[str]:
+    """Return configured trusted operator identities (Linkerd DNS or spiffe:// URIs)."""
+    raw = os.environ.get("CAGE_TRUSTED_OPERATOR_IDENTITIES", "")
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
 @dataclass(frozen=True)
@@ -89,8 +113,10 @@ async def require_internal_token(
 ) -> str:
     """Verify the X-Cage-Internal-Token or Authorization header for internal-only endpoints.
 
-    In dev mode (CAGE_ENV=dev), this degrades open to allow unauthenticated
-    access for local testing. In staging/prod/test, it requires a valid token.
+    Fails closed by default (``CAGE_ENV`` defaults to ``production``).
+    Unauthenticated dev access requires a dual-condition opt-in:
+    ``CAGE_ENV`` in ``("dev", "development")`` AND
+    ``CAGE_ALLOW_DEV_UNAUTHENTICATED=true`` (GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39).
     Accepts token from X-Cage-Internal-Token or Authorization: Bearer.
     Matches against CAGE_INTERNAL_TOKEN or COMPLIANCE_BRIDGE_INTERNAL_TOKEN.
 
@@ -99,10 +125,10 @@ async def require_internal_token(
         x_cage_internal_token: The internal auth token from request headers
 
     Returns:
-        The validated token value, or "dev-unauthenticated" in dev mode without token
+        The validated token value, or "dev-unauthenticated" under dual-condition dev opt-in
 
     Raises:
-        HTTPException: 401 if token is missing or invalid in non-dev environments
+        HTTPException: 401 if token is missing or invalid
     """
     expected_token = os.environ.get("CAGE_INTERNAL_TOKEN") or os.environ.get(
         "COMPLIANCE_BRIDGE_INTERNAL_TOKEN"
@@ -117,14 +143,17 @@ async def require_internal_token(
             token_val = auth_header[7:].strip()
 
     cage_env = os.environ.get("CAGE_ENV", _CAGE_ENV)
-    # Dev-mode degradation: allow requests without token
-    if cage_env in ("dev", "development") and not token_val:
+    allow_dev_unauth = (
+        os.environ.get("CAGE_ALLOW_DEV_UNAUTHENTICATED", "false").lower() == "true"
+    )
+    # Dev-mode degradation requires dual-condition opt-in
+    if cage_env in ("dev", "development") and allow_dev_unauth and not token_val:
         logger.warning(
-            "⚠️  Internal token missing in dev mode; allowing unauthenticated access"
+            "⚠️  Internal token missing in dev mode (CAGE_ALLOW_DEV_UNAUTHENTICATED=true); allowing unauthenticated access"
         )
         return "dev-unauthenticated"
 
-    # Prod/staging/test: token is mandatory
+    # Token is mandatory unless dual-condition dev opt-in is active
     if not token_val:
         raise HTTPException(
             status_code=401,
@@ -145,41 +174,69 @@ async def require_internal_token(
 
 
 async def require_operator_identity(request: Request) -> OperatorPrincipal:
-    """Extract verified operator identity from SPIFFE SVID or OIDC claims.
+    """Extract verified operator identity from Linkerd mTLS SVID or OIDC claims.
 
     Identity precedence (fail-closed, evaluated not negotiated):
-    1. **SPIFFE SVID** (primary): Extracted from mTLS client cert SAN via Linkerd mesh
-    2. **OIDC JWT** (fallback): Only if CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true
-    3. **Dev synthetic** (dev-only): If CAGE_ENV=dev AND CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true
+    1. **SPIFFE SVID / Linkerd mTLS** (primary): Extracted from Linkerd inbound
+       proxy ``l5d-client-id`` header or transport-level
+       ``request.attributes.source.principal`` (never from client-controlled
+       ``x-cage-source-principal`` headers; GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39).
+    2. **OIDC JWT** (fallback): Only if ``CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true``.
+    3. **Dev synthetic** (dev-only): If ``CAGE_ENV=dev`` AND
+       ``CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true``.
 
     Args:
-        request: FastAPI request with potential .attributes.source.principal (SVID)
-                 or .headers.authorization (OIDC)
+        request: FastAPI request carrying Linkerd ``l5d-client-id``, transport
+                 ``.attributes.source.principal``, or OIDC ``Authorization``.
 
     Returns:
         OperatorPrincipal with verified identity and provenance channel
 
     Raises:
-        HTTPException: 401 if no valid identity source exists, or 400 if dev-prefix
-                       used outside dev mode
+        HTTPException: 401 if no valid identity source exists, 403 if untrusted,
+                       or 400 if dev-prefix used outside dev mode
     """
-    # Channel 1: SPIFFE SVID from mTLS client certificate (primary)
-    # Linkerd populates request.attributes.source.principal with spiffe://... from peer cert
-    header_svid, duplicate_headers = _source_principal_header(request)
+    if hasattr(request.headers, "get") and request.headers.get(
+        "x-cage-source-principal"
+    ):
+        logger.warning(
+            "Rejected unverified client-supplied x-cage-source-principal header "
+            "(GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39)"
+        )
+
+    # Channel 1: Linkerd mTLS workload identity (l5d-client-id) or transport SVID
+    l5d_id, duplicate_headers = _linkerd_client_id_header(request)
     if duplicate_headers:
         raise HTTPException(
             status_code=401,
-            detail="Multiple x-cage-source-principal headers presented",
+            detail="Multiple l5d-client-id headers presented",
         )
     try:
-        # In FastAPI with Envoy ext_authz, we receive grpc metadata as headers
-        # The SPIFFE ID should be in x-forwarded-client-cert or a similar header
-        # For now, we'll check if the source principal is available via a custom header
-        svid = header_svid or getattr(
-            getattr(request, "attributes", None), "source", {}
-        ).get("principal")
+        svid: str | None = None
+        if isinstance(l5d_id, str):
+            svid = _linkerd_id_to_spiffe(l5d_id)
+            if svid is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Malformed l5d-client-id workload identity header",
+                )
+        else:
+            attr_principal = getattr(
+                getattr(request, "attributes", None), "source", {}
+            ).get("principal")
+            if isinstance(attr_principal, str) and _SPIFFE_ID.fullmatch(attr_principal):
+                svid = attr_principal
 
         if isinstance(svid, str) and _SPIFFE_ID.fullmatch(svid):
+            trusted = _trusted_operator_identities()
+            if trusted and svid not in trusted and (l5d_id not in trusted):
+                logger.warning(
+                    "Operator SVID %s not in CAGE_TRUSTED_OPERATOR_IDENTITIES", svid
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Operator workload identity is not authorized",
+                )
             principal_hash = hashlib.sha256(svid.encode()).hexdigest()
             logger.info(f"✅ Operator identity verified via SVID: {svid[:30]}...")
             return OperatorPrincipal(
@@ -187,6 +244,8 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
                 channel_provenance="SVID",
                 auth_principal_hash=principal_hash,
             )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning(f"⚠️  SVID extraction failed: {e}")
 
@@ -195,19 +254,28 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
         os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "false").lower() == "true"
     )
     if allow_oidc:
-        auth_header = request.headers.get("authorization")
+        auth_header = (
+            request.headers.get("authorization")
+            if hasattr(request.headers, "get")
+            else None
+        )
         if auth_header and auth_header.startswith("Bearer "):
-            # In production, this would verify JWT signature and extract sub claim
-            # For now, we'll extract the sub from a hypothetical pre-validated claim
-            # The actual JWT validation should happen in a separate middleware
+            token = auth_header[len("Bearer ") :].strip()
             try:
-                # Placeholder: In real implementation, decode and verify JWT
-                jwt_sub = (
-                    request.state.jwt_claims.get("sub")
-                    if hasattr(request.state, "jwt_claims")
-                    else None
-                )
-                if jwt_sub:
+                jwt_sub: str | None = None
+                state = getattr(request, "state", None)
+                jwt_claims = getattr(state, "jwt_claims", None)
+                if isinstance(jwt_claims, dict):
+                    jwt_sub = jwt_claims.get("sub")
+                elif token:
+                    from src.gateway.governance.ingress.agw_adapter import (
+                        get_agw_adapter,
+                    )
+
+                    valid, claims = await get_agw_adapter().validate_oidc_token(token)
+                    if valid and isinstance(claims, dict):
+                        jwt_sub = claims.get("sub")
+                if isinstance(jwt_sub, str) and jwt_sub.strip():
                     principal_hash = hashlib.sha256(jwt_sub.encode()).hexdigest()
                     logger.info(
                         f"✅ Operator identity verified via OIDC: {jwt_sub[:30]}..."
@@ -225,7 +293,13 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
         os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false").lower()
         == "true"
     )
-    if _CAGE_ENV == "dev" and allow_dev_synthetic:
+    env_override = os.environ.get("CAGE_ENV", "").lower()
+    is_dev_posture = _CAGE_ENV in ("dev", "development") and env_override not in (
+        "prod",
+        "production",
+        "staging",
+    )
+    if is_dev_posture and allow_dev_synthetic:
         # Extract from custom dev header
         dev_principal = request.headers.get("x-cage-dev-operator-urn")
         if dev_principal:

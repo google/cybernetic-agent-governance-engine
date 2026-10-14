@@ -79,7 +79,7 @@ def _mcp_import_stubs():
             SymbolicGovernorViolation=Exception,
         ),
         "src.gateway.infrastructure.redis_client": MagicMock(
-            redis_client=MagicMock(set=AsyncMock())
+            redis_client=MagicMock(set=AsyncMock(), setex=AsyncMock())
         ),
         "src.cage_finance.consensus.consensus": MagicMock(
             _background_audit_worker=AsyncMock()
@@ -493,3 +493,55 @@ class TestActivateDomainOpaHandshake:
         tool_provider.register_tools.assert_called_once_with(mod.mcp, governor)
         assert outcome is governor
         assert mod.app.state.governor is governor
+
+
+@pytest.mark.local
+class TestExecuteToolEndpointWorkloadIdentity:
+    """GHSA-4x3x-w2m3-8mfh: /tools/execute must enforce Linkerd workload identity even on standalone mcp_tool_server.app."""
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_rejects_missing_workload_identity(self, monkeypatch):
+        import sys
+
+        from fastapi import HTTPException
+
+        monkeypatch.setenv(
+            "CAGE_TRUSTED_CLIENT_IDENTITIES",
+            "governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        )
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            req = MagicMock()
+            req.scope = {"headers": []}
+            req.client = MagicMock(host="127.0.0.1")
+            body = mod.ToolExecutionRequest(
+                tool_name="trigger_safety_intervention",
+                params={"reason": "spoofed_lock"},
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                await mod.execute_tool_endpoint(body, req)
+            assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_accepts_trusted_workload_identity(self, monkeypatch):
+        import sys
+
+        trusted_id = "governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+        monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", trusted_id)
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            mod._rate_limit_buckets = {}
+            req = MagicMock()
+            req.scope = {"headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))]}
+            req.client = MagicMock(host="127.0.0.1")
+            body = mod.ToolExecutionRequest(
+                tool_name="trigger_safety_intervention",
+                params={"reason": "verified_lock"},
+            )
+            res = await mod.execute_tool_endpoint(body, req)
+            assert res["status"] == "SUCCESS"
+            assert "INTERVENTION_ACK" in res["output"]

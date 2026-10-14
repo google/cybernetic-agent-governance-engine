@@ -1685,8 +1685,10 @@ class TestDeferQueueEndpoints:
     def test_defer_escalate_unknown_id_returns_404(self, session):
         r = session.post(
             f"{BASE_URL}/v1/defer/definitely-not-real-{_uid()}/escalate",
-            headers={"x-cage-source-principal": "spiffe://cage.local/operator/tester"},
-            json={"operator_urn": "urn:cage:operator:tester"},
+            headers={
+                "l5d-client-id": "operator-tester.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+            },
+            json={},
             timeout=15,
         )
         if r.status_code == 503:

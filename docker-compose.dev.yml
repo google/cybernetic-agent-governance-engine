@@ -21,11 +21,12 @@ services:
       - ./src:/app/src
       - ./.env:/app/.env
       - opa_socket_vol:/tmp
-    # Override command to use the decomposed entrypoint
-    command: ["python", "src/gateway/server/mcp_tool_server.py"]
+    # Use the Hybrid Gateway composition root with WorkloadIdentityMiddleware (GHSA-4x3x-w2m3-8mfh)
+    command: ["python", "src/gateway/server/hybrid_server.py"]
     environment:
       - PORT=8080
       - OPA_URL=http://opa:8181/v1/data/trade/governance
+      - CAGE_TRUSTED_CLIENT_IDENTITIES=${CAGE_TRUSTED_CLIENT_IDENTITIES:-governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local}
       # v0.1.0: override in .env to test EU_ECB or APAC_MAS compliance posture locally
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
 
