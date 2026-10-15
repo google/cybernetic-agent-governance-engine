@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -267,39 +268,54 @@ async def test_file_jwks_client_rejects_revoked_key(tmp_path: Path) -> None:
     assert pub is None
 
 
-def test_sidecar_hmac_auth_headers_encoding() -> None:
+@pytest.mark.parametrize("client_id", ["cage-gateway", "cagé-gateway"])
+def test_sidecar_hmac_auth_headers_encoding(client_id: str) -> None:
     body = b'{"envelope":{},"serviceProtocolVersion":"1"}'
     body_digest = hashlib.sha256(body).hexdigest()
+    secret = b"super-secret-32-byte-hmac-key-01"
+    fields = [
+        "POST",
+        "/v1/verify-release",
+        "1",
+        client_id,
+        "hmac-k1",
+        "1776600000000",
+        "nonce-12345678",
+        body_digest,
+    ]
+    # Independent oracle: fixed field order, UTF-8 byte lengths, unsigned u32BE.
+    expected_frame = b"agent-integrity-sidecar-auth-v1" + b"".join(
+        len(value.encode("utf-8")).to_bytes(4, "big") + value.encode("utf-8")
+        for value in fields
+    )
+    expected_mac = (
+        base64.urlsafe_b64encode(
+            hmac.new(secret, expected_frame, hashlib.sha256).digest()
+        )
+        .decode("ascii")
+        .rstrip("=")
+    )
+    assert encode_sidecar_auth_input(fields) == expected_frame
     headers = compute_sidecar_auth_headers(
         method="POST",
         path=VERIFY_RELEASE_PATH,
         service_protocol_version=SIDECAR_PROTOCOL_VERSION,
-        client_id="cage-gateway",
+        client_id=client_id,
         key_id="hmac-k1",
         timestamp_ms=1776600000000,
         nonce="nonce-12345678",
         body_digest=body_digest,
-        secret=b"super-secret-32-byte-hmac-key-01",
+        secret=secret,
     )
-    assert headers["X-Agent-Integrity-Client-Id"] == "cage-gateway"
-    assert headers["X-Agent-Integrity-Key-Id"] == "hmac-k1"
-    assert headers["X-Agent-Integrity-Timestamp-Ms"] == "1776600000000"
-    assert headers["X-Agent-Integrity-Nonce"] == "nonce-12345678"
-    assert len(headers["X-Agent-Integrity-Mac"]) == 43
-
-    encoded = encode_sidecar_auth_input(
-        [
-            "POST",
-            VERIFY_RELEASE_PATH,
-            SIDECAR_PROTOCOL_VERSION,
-            "cage-gateway",
-            "hmac-k1",
-            "1776600000000",
-            "nonce-12345678",
-            body_digest,
-        ]
-    )
-    assert encoded.startswith(b"agent-integrity-sidecar-auth-v1")
+    assert headers == {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-Agent-Integrity-Client": client_id,
+        "X-Agent-Integrity-Key-Id": "hmac-k1",
+        "X-Agent-Integrity-Timestamp": "1776600000000",
+        "X-Agent-Integrity-Nonce": "nonce-12345678",
+        "X-Agent-Integrity-Signature": expected_mac,
+    }
 
 
 @pytest.mark.asyncio
@@ -376,7 +392,7 @@ async def test_verify_release_pass_verifies_signed_receipt_and_exact_bytes(
     assert outcome.released_response.decoded_bytes == candidate_bytes
     assert outcome.released_response.text == candidate_text
     assert outcome.released_response.sha256 == candidate_sha
-    assert "x-agent-integrity-mac" in seen_headers
+    assert "x-agent-integrity-signature" in seen_headers
 
     # Also verify validate_fria dispatches to verify_release
     vr = await adapter.validate_fria(envelope)
@@ -595,3 +611,131 @@ async def test_check_readiness_detail_parses_503_reasons_and_retry_after() -> No
     assert detail.status_code == 503
     assert detail.reasons == ("RECOVERY_REQUIRED", "KEYS")
     assert detail.retry_after == 5
+
+
+@pytest.mark.asyncio
+async def test_verify_release_wrong_receipt_key_denies_after_wire_repair(
+    tmp_path: Path,
+) -> None:
+    authority_sk = Ed25519PrivateKey.generate()
+    receipt_sk = Ed25519PrivateKey.generate()
+    authority_pub_b64u = _b64url_encode(
+        authority_sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    )
+    manifest_path = tmp_path / "jwks.json"
+    manifest = _build_signed_trust_manifest(
+        authority_sk=authority_sk,
+        receipt_sk=receipt_sk,
+    )
+    manifest_path.write_bytes(jcs_canonicalize_plan(manifest))
+
+    candidate_text = '{"answer":"verified exact bytes"}'
+    candidate_bytes = candidate_text.encode("utf-8")
+    candidate_sha = hashlib.sha256(candidate_bytes).hexdigest()
+    envelope = {
+        "envelopeId": "env-test-0001",
+        "response": {"content": candidate_text},
+    }
+    verification = {
+        "protocolVersion": PROTOCOL_VERSION,
+        "status": "PASS",
+        "findings": [],
+    }
+    signed_receipt = _build_v2_signed_receipt(
+        receipt_sk=Ed25519PrivateKey.generate(),
+        envelope=envelope,
+        verification=verification,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == VERIFY_RELEASE_PATH
+        req_body = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "serviceProtocolVersion": SIDECAR_PROTOCOL_VERSION,
+                "requestId": req_body["requestId"],
+                "status": "PASS",
+                "verification": verification,
+                "receipt": signed_receipt,
+                "releasedResponse": {
+                    "encoding": "base64",
+                    "bytes": base64.b64encode(candidate_bytes).decode("ascii"),
+                    "sha256": candidate_sha,
+                },
+            },
+        )
+
+    adapter = Provider06AgentIntegrityAdapter(
+        endpoint="http://sidecar.local",
+        key_manifest_url=str(manifest_path),
+        authority_keys={"cage-manifest-authority-2026-04": authority_pub_b64u},
+        transport=httpx.MockTransport(handler),
+        client_id="cage-gateway",
+        hmac_key_id="hmac-k1",
+        hmac_secret=b"super-secret-32-byte-hmac-key-01",
+        use_verify_release=True,
+    )
+
+    outcome = await adapter.verify_release(envelope=envelope)
+    assert outcome.admitted is False
+    assert outcome.receipt_verified is False
+    assert outcome.released_response is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [[], {"serviceProtocolVersion": "1"}, b"{invalid-json"]
+)
+async def test_verify_release_malformed_response_denies_after_wire_repair(
+    payload: Any,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Content-Type"] == "application/json"
+        assert "x-agent-integrity-signature" in request.headers
+        if isinstance(payload, bytes):
+            return httpx.Response(200, content=payload)
+        return httpx.Response(200, json=payload)
+
+    adapter = Provider06AgentIntegrityAdapter(
+        endpoint="http://sidecar.local",
+        transport=httpx.MockTransport(handler),
+        hmac_secret=b"test-only-hmac-secret-length-32!!",
+        use_verify_release=True,
+    )
+    outcome = await adapter.verify_release({"response": {"content": "test"}})
+    assert outcome.admitted is False
+    assert outcome.receipt_verified is False
+    assert outcome.released_response is None
+
+
+@pytest.mark.asyncio
+async def test_verify_release_unsigned_adapter_branch_denies() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Content-Type"] == "application/json"
+        assert request.headers["Accept"] == "application/json"
+        assert not any(
+            name.startswith("x-agent-integrity-") for name in request.headers
+        )
+        return httpx.Response(
+            401,
+            json={
+                "serviceProtocolVersion": "1",
+                "error": {
+                    "code": "AUTHENTICATION_FAILED",
+                    "retryable": False,
+                },
+            },
+        )
+
+    adapter = Provider06AgentIntegrityAdapter(
+        endpoint="http://sidecar.local",
+        transport=httpx.MockTransport(handler),
+        use_verify_release=True,
+    )
+    outcome = await adapter.verify_release({"response": {"content": "test"}})
+    assert outcome.http_status == 401
+    assert outcome.error_code == "AUTHENTICATION_FAILED"
+    assert outcome.admitted is False
+    assert outcome.receipt_verified is False
+    assert outcome.released_response is None

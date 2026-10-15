@@ -7,7 +7,7 @@
   },
   "experiment": "provider-06-agent-integrity-verification-conformance",
   "protectedFiles": {
-    "src/integrations/provider_06/adapter.py": "d45681d32dedce17dc26951d2b2cf1a81c8a4df9e9107b16c874aad5e88b218f",
+    "src/integrations/provider_06/adapter.py": "a7377dbdde9afe1f25e21f878ebbd96e6916a3a077b35d50233d6b213d6fca7d",
     "src/integrations/provider_06/mock_endpoint.py": "236e8646b603a79b4a6016a5d963b39cb23b696942a200de33c985384f55283d",
     "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
     "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"
@@ -19,7 +19,7 @@
     "cageBase": "364e91b8164584062b434d72ee31719fa75d1a7b",
     "cageEvidenceBinding": "pinned-manifest-plus-protected-file-sha256",
     "generatorVersion": 2,
-    "protectedBaselineSha256": "83257a336581a7b033a3a517707950990d87c98462fba56c9f16f3a839fff442"
+    "protectedBaselineSha256": "cb616502c2d6962a51e7fc5eaacc62acfab49deac09a4a121153dd88cce75d58"
   },
   "requiredScenariosPassed": 7,
   "requiredScenariosTotal": 7,
