@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import configparser
 import hashlib
 import json
 import multiprocessing
@@ -207,6 +208,140 @@ def test_pinned_baseline_divergence_from_upstream_is_declared() -> None:
             )
 
 
+def _assert_no_provider_domain_registration(config_path: Path) -> None:
+    """Inspect domain entry points, not unrelated references such as mypy modules."""
+    text = config_path.read_text(encoding="utf-8")
+    registrations: list[object] = []
+    if config_path.name == "pyproject.toml":
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        document = tomllib.loads(text)
+        project = document.get("project", {})
+        assert "entry-points" not in project.get("dynamic", []), (
+            "Cannot inspect dynamically supplied domain entry points"
+        )
+        registrations.append(project.get("entry-points", {}).get("cage.plugins", {}))
+        poetry = document.get("tool", {}).get("poetry", {})
+        registrations.append(poetry.get("plugins", {}).get("cage.plugins", {}))
+    elif config_path.name == "setup.cfg":
+        configuration = configparser.ConfigParser(interpolation=None)
+        configuration.optionxform = str
+        configuration.read_string(text)
+        if configuration.has_section("options.entry_points"):
+            registrations.append(
+                configuration.get("options.entry_points", "cage.plugins", fallback="")
+            )
+    else:
+        # setup.py is executable: retain its existing conservative text guard.
+        # Do not execute packaging code merely to discover a registration.
+        registrations.append(text)
+
+    for registration in registrations:
+        declaration = json.dumps(registration, ensure_ascii=False)
+        for forbidden in ("provider_06", "agent_integrity"):
+            assert forbidden not in declaration, (
+                f"{config_path.name} contains a prohibited domain registration"
+            )
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        (
+            "pyproject.toml",
+            '[project.entry-points."cage.plugins"]\n'
+            'finance = "cage_finance.plugin:FinanceCagePlugin"\n'
+            "[[tool.mypy.overrides]]\n"
+            'module = "src.integrations.provider_06.adapter"\n'
+            'disable_error_code = ["arg-type"]\n',
+        ),
+        (
+            "setup.cfg",
+            "[metadata]\ndescription = provider_06 and agent_integrity adapters\n"
+            "[options.entry_points]\ncage.plugins =\n"
+            "    finance = cage_finance.plugin:FinanceCagePlugin\n",
+        ),
+        (
+            "setup.py",
+            'setup(entry_points={"cage.plugins": '
+            '["finance = cage_finance.plugin:FinanceCagePlugin"]})\n',
+        ),
+    ],
+)
+def test_domain_registration_guard_allows_nonregistration_references(
+    tmp_path: Path, name: str, content: str
+) -> None:
+    config = tmp_path / name
+    config.write_text(content, encoding="utf-8")
+    _assert_no_provider_domain_registration(config)
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        (
+            "pyproject.toml",
+            '[project.entry-points."cage.plugins"]\n'
+            'innocent = "src.integrations.provider_06.adapter:Plugin"\n',
+        ),
+        (
+            "pyproject.toml",
+            '[project.entry-points."cage.plugins"]\n'
+            'provider_06 = "cage_finance.plugin:FinanceCagePlugin"\n',
+        ),
+        (
+            "pyproject.toml",
+            '[project.entry-points."cage.plugins"]\n'
+            'innocent = "agent_integrity.plugin:Plugin"\n',
+        ),
+        (
+            "pyproject.toml",
+            '[tool.poetry.plugins."cage.plugins"]\n'
+            'innocent = "src.integrations.provider_06.adapter:Plugin"\n',
+        ),
+        (
+            "setup.cfg",
+            "[options.entry_points]\ncage.plugins =\n"
+            "    innocent = src.integrations.provider_06.adapter:Plugin\n",
+        ),
+        (
+            "setup.cfg",
+            "[options.entry_points]\ncage.plugins =\n"
+            "    agent_integrity = cage_finance.plugin:FinanceCagePlugin\n",
+        ),
+        (
+            "setup.py",
+            'setup(entry_points={"cage.plugins": '
+            '["innocent = src.integrations.provider_06.adapter:Plugin"]})\n',
+        ),
+        (
+            "setup.py",
+            'setup(entry_points={"cage.plugins": '
+            '["agent_integrity = cage_finance.plugin:FinanceCagePlugin"]})\n',
+        ),
+    ],
+)
+def test_domain_registration_guard_rejects_prohibited_registrations(
+    tmp_path: Path, name: str, content: str
+) -> None:
+    config = tmp_path / name
+    config.write_text(content, encoding="utf-8")
+    with pytest.raises(AssertionError, match="prohibited domain registration"):
+        _assert_no_provider_domain_registration(config)
+
+
+def test_domain_registration_guard_rejects_uninspectable_dynamic_entry_points(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "pyproject.toml"
+    config.write_text('[project]\ndynamic = ["entry-points"]\n', encoding="utf-8")
+    with pytest.raises(AssertionError, match="dynamically supplied"):
+        _assert_no_provider_domain_registration(config)
+
+
 def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
     _ensure_upstream_base_commit()
     repo_root = REPO_ROOT
@@ -253,9 +388,7 @@ def test_branch_diff_introduces_no_domain_plugin_registration() -> None:
         repo_root / "setup.py",
     ):
         if config_path.exists():
-            text = config_path.read_text(encoding="utf-8")
-            assert "provider_06" not in text
-            assert "agent_integrity" not in text
+            _assert_no_provider_domain_registration(config_path)
 
 
 @requires_node
