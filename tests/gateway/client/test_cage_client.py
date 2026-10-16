@@ -566,3 +566,59 @@ async def test_validate_action_unknown_kid_fails_closed(
             agent_id="test-agent",
         )
     await client.aclose()
+
+
+@respx.mock
+async def test_validate_action_http_200_narrow_raises_policy_violation(
+    cage_client: CageClient,
+    mock_gateway_url: str,
+):
+    """Test HTTP 200 envelope with verdict NARROW does not authorise the original params."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["payload"]["verdict"] = "NARROW"
+    envelope_data["payload"]["narrowed_params"] = {"symbol": "AAPL", "amount": 10000}
+    envelope_data["payload"]["violations"] = ["CBF_POSITION_LIMIT"]
+
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(status_code=200, json=envelope_data)
+    )
+
+    with pytest.raises(PolicyViolationException) as exc_info:
+        await cage_client.validate_action(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 50000},
+            agent_id="test-agent",
+        )
+    assert exc_info.value.reason_code == "NARROWED"
+    assert exc_info.value.recoverable is True
+    assert exc_info.value.violation_details["narrowed_params"] == {
+        "symbol": "AAPL",
+        "amount": 10000,
+    }
+
+
+@respx.mock
+@pytest.mark.parametrize("verdict", [None, "ESCALATE"])
+async def test_validate_action_http_200_unrecognised_verdict_fails_closed(
+    cage_client: CageClient,
+    mock_gateway_url: str,
+    verdict: str | None,
+):
+    """Test HTTP 200 envelope without an ALLOW verdict is never treated as ALLOW."""
+    envelope_data = create_mock_allow_envelope()
+    del envelope_data["payload"]["decision"]
+    if verdict is not None:
+        envelope_data["payload"]["verdict"] = verdict
+
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(status_code=200, json=envelope_data)
+    )
+
+    with pytest.raises(CageGatewayError) as exc_info:
+        await cage_client.validate_action(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 50000},
+            agent_id="test-agent",
+        )
+    assert not isinstance(exc_info.value, PolicyViolationException)
+    assert "verdict" in str(exc_info.value)
