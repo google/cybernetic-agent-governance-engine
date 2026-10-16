@@ -401,9 +401,12 @@ class CageClient:
 
         Raises:
             RoutingSealVerificationError: Signature or expiration check failed
-            PolicyViolationException: Envelope carries a DENY/DENIED verdict
+            PolicyViolationException: Envelope carries a DENY/DENIED verdict, or
+                a NARROW verdict (``reason_code="NARROWED"``; the clamped params
+                are in ``violation_details["narrowed_params"]``)
             DeferralPending: Envelope carries a DEFER/REQUIRE_APPROVAL verdict
-            CageGatewayError: Invalid response structure or missing envelope
+            CageGatewayError: Invalid response structure, missing envelope, or
+                a missing or unrecognised verdict
         """
         try:
             response_data = response.json()
@@ -437,12 +440,37 @@ class CageClient:
         self._verify_envelope_integrity(envelope_data, envelope)
 
         # Inspect verdict inside payload (server may return HTTP 200 envelopes
-        # for REQUIRE_APPROVAL, DEFER, or DENIED verdicts)
+        # for NARROW, REQUIRE_APPROVAL, DEFER, or DENIED verdicts)
         verdict = str(
-            envelope.payload.get("verdict")
-            or envelope.payload.get("decision")
-            or "ALLOW"
+            envelope.payload.get("verdict") or envelope.payload.get("decision") or ""
         ).upper()
+
+        if verdict == "NARROW":
+            # A NARROW verdict authorises only the gateway's clamped params,
+            # never the params that were submitted.
+            narrowed_params = envelope.payload.get("narrowed_params")
+            if not isinstance(narrowed_params, dict):
+                raise CageGatewayError(
+                    "NARROW envelope missing required 'narrowed_params' object"
+                )
+            audit_id = (
+                envelope.payload.get("audit_id")
+                or envelope.subject.get("record_hash")
+                or envelope.envelope_id
+            )
+            if not audit_id:
+                raise CageGatewayError(
+                    "NARROW envelope missing required 'record_hash' or 'envelope_id'"
+                )
+            raise PolicyViolationException(
+                reason_code="NARROWED",
+                violation_details={
+                    "narrowed_params": narrowed_params,
+                    "violations": envelope.payload.get("violations") or [],
+                },
+                audit_id=str(audit_id),
+                recoverable=True,
+            )
 
         if verdict in ("DENY", "DENIED"):
             audit_id = (
@@ -488,6 +516,12 @@ class CageClient:
                 defer_reason=defer_reason,
                 expires_at=envelope.expires_at,
                 ttl_seconds=ttl_seconds,
+            )
+
+        if verdict != "ALLOW":
+            # Fail closed: an absent or unrecognised verdict is never ALLOW.
+            raise CageGatewayError(
+                f"Gateway envelope carries unrecognised verdict {verdict or None!r}"
             )
 
         logger.info(
