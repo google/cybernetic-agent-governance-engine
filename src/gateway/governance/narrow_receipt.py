@@ -17,15 +17,16 @@
 When the committing run (``SymbolicGovernor.govern``) narrows a request, the
 seal it returns covers the *clamped* params, not the ones the caller sent.
 The caller learns those params from a single-use receipt stored next to the
-seal (CAGE-SEC-004): keyed by the seal's prefix, holding the clamped params
-and the full seal, expiring after :data:`NARROW_RECEIPT_TTL_SECONDS`. The
-tool fetches and deletes it, then verifies the seal against the clamped
-params. A missing receipt fails closed on its own: the seal will not verify
-against the original params.
+seal (CAGE-SEC-004): keyed by the SHA-256 digest of the seal, holding the
+clamped params and the full seal, expiring after
+:data:`NARROW_RECEIPT_TTL_SECONDS`. The tool fetches and deletes it, then
+verifies the seal against the clamped params. A missing receipt fails closed
+on its own: the seal will not verify against the original params.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from typing import Any
@@ -33,12 +34,18 @@ from typing import Any
 from src.gateway.governance.governor.errors import GovernanceError
 
 NARROW_RECEIPT_TTL_SECONDS = 300
-_SEAL_PREFIX_CHARS = 32  # 128 bits of the seal
 
 
 def narrow_receipt_key(seal: str) -> str:
-    """Redis key of the receipt that accompanies ``seal``."""
-    return f"narrow:receipt:{seal[:_SEAL_PREFIX_CHARS]}"
+    """Redis key of the receipt that accompanies ``seal``.
+
+    The key is the SHA-256 digest of the whole seal. A prefix is not unique:
+    every JWT seal minted under one key begins with the same base64url
+    header, so prefix keys let concurrent narrowed trades overwrite (and the
+    first consumer delete) each other's receipts. The digest also keeps seal
+    material out of Redis key names.
+    """
+    return f"narrow:receipt:{hashlib.sha256(seal.encode('utf-8')).hexdigest()}"
 
 
 async def issue_narrow_receipt(

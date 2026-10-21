@@ -50,6 +50,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.narrow_receipt import narrow_receipt_key
 from tests.fixtures.trade_inputs import trade_governor
 
 
@@ -99,9 +100,8 @@ async def test_mcp_server_fetches_and_burns_receipt():
                     dry_run=True,
                 )
 
-    # Verify receipt was fetched using seal prefix
-    seal_prefix = seal[:32]
-    receipt_key = f"narrow:receipt:{seal_prefix}"
+    # Verify the receipt was fetched under the seal's receipt key
+    receipt_key = narrow_receipt_key(seal)
     mock_redis.get.assert_called_once_with(receipt_key)
 
     # Verify receipt was deleted (fetch-and-burn)
@@ -406,8 +406,7 @@ async def test_receipt_replay_blocked():
                 )
 
     # Verify delete was called after first fetch
-    seal_prefix = seal[:32]
-    receipt_key = f"narrow:receipt:{seal_prefix}"
+    receipt_key = narrow_receipt_key(seal)
     assert mock_redis.delete.call_count >= 1
     mock_redis.delete.assert_any_call(receipt_key)
 
