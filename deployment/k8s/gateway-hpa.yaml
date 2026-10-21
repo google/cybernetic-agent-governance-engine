@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# DO NOT APPLY YET. The gateway still keeps pod-local state (MCP SSE sessions,
+# quarantine records, NeMo refinement proposals), and a blocked event loop
+# shows low CPU, so this CPU-based HPA both breaks MCP tool calls on scale-out
+# and fails to scale when the gateway is saturated. scripts/run_gke_load_test.sh
+# pins the replica count instead. Re-enable autoscaling only after the gateway
+# is stateless, driven by in-flight requests or event-loop lag rather than CPU.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

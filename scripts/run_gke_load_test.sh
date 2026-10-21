@@ -44,9 +44,22 @@ if ! command -v locust &>/dev/null; then
   uv pip install locust || pip install locust
 fi
 
-# 2. Apply the HPA manifest
-echo -e "${CYAN}🎛️  Applying HorizontalPodAutoscaler to GKE...${NC}"
-kubectl apply -f deployment/k8s/gateway-hpa.yaml -n "${NAMESPACE}"
+# 2. Pin the gateway replica count (the CPU-based HPA is NOT applied)
+# The gateway still holds pod-local state (MCP SSE sessions, quarantine, NeMo
+# refinement proposals), so CPU-driven scale-out mid-run breaks MCP tool calls
+# and skews results. The replica count is an explicit, bounded test parameter
+# until the stateless-gateway work lands; metric-based autoscaling replaces the
+# CPU HPA afterwards.
+MAX_GATEWAY_REPLICAS=5
+GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-1}"
+if ! [[ "${GATEWAY_REPLICAS}" =~ ^[1-9][0-9]*$ ]] || (( GATEWAY_REPLICAS > MAX_GATEWAY_REPLICAS )); then
+  echo -e "${RED}❌ GATEWAY_REPLICAS must be an integer between 1 and ${MAX_GATEWAY_REPLICAS} (got '${GATEWAY_REPLICAS}').${NC}"
+  exit 1
+fi
+echo -e "${CYAN}🎛️  Removing any gateway HPA left by earlier runs and pinning ${GATEWAY_REPLICAS} replica(s)...${NC}"
+kubectl delete hpa gateway-hpa -n "${NAMESPACE}" --ignore-not-found
+kubectl scale deployment/gateway --replicas="${GATEWAY_REPLICAS}" -n "${NAMESPACE}"
+kubectl rollout status deployment/gateway -n "${NAMESPACE}" --timeout=300s
 
 # 3. Launch Locust in background
 echo -e "${CYAN}⚡ Starting headless Locust load test against ${GATEWAY_URL}/health (users=${MAX_USERS}, spawn-rate=${SPAWN_RATE}, run-time=${RUN_TIME})...${NC}"
@@ -62,14 +75,11 @@ locust -f tests/load/locustfile.py \
   >/dev/null 2>&1 &
 LOCUST_PID=$!
 
-# 4. Poll HPA and scaling reactivity
-echo -e "${CYAN}⏳ Monitoring HorizontalPodAutoscaler (HPA) and pods for 60 seconds...${NC}"
+# 4. Poll gateway pods during the run (replica count is pinned in step 2)
+echo -e "${CYAN}⏳ Monitoring gateway pods for 60 seconds...${NC}"
 for i in {1..12}; do
   sleep 5
   echo -e "\n${GREEN}--- Monitoring Poll #$i (after $((i*5))s) ---${NC}"
-  
-  echo -e "${YELLOW}HPA Status:${NC}"
-  kubectl get hpa gateway-hpa -n "${NAMESPACE}" || echo "HPA not ready yet"
   
   echo -e "${YELLOW}Gateway Pods Status:${NC}"
   kubectl get pods -l app=gateway -n "${NAMESPACE}" -o wide || echo "No gateway pods found"

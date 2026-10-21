@@ -158,7 +158,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.verify.yaml \
 |------|------|-------|
 | `gateway.yaml` | Deployment + NodePort Service | Gateway HTTP :8080, gRPC :50051; NodePort 30080 for GCE Ingress |
 | `gateway.yaml.tpl` | Template | Rendered by `deploy_all.sh` — substitutes `${CAGE_ENV}`, `${CAGE_DEPLOYMENT_REGION}` |
-| `gateway-hpa.yaml` | HPA | Scale 1–5 replicas at 50% CPU |
+| `gateway-hpa.yaml` | HPA | Scale 1–5 replicas at 50% CPU; not applied until the gateway is stateless (see the file header) |
 | `gateway-deployment.yaml.tpl` | Template | Alternative Deployment template |
 | `financial-advisor.yaml` | Deployment + ClusterIP Service | Port 80 → 8080; runs as the `cage-advisor-sa` ServiceAccount |
 | `backend-deployment.yaml` | Deployment | Static (non-templated) version |

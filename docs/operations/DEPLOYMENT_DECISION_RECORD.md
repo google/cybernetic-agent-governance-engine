@@ -104,8 +104,11 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
 - **GPU node selection:** Uses the portable NVIDIA device plugin label
   `nvidia.com/gpu.product: NVIDIA-L4` (ADR-002), not the GKE-proprietary
   `cloud.google.com/gke-accelerator`.
-- **Gateway:** Stateless FastAPI/gRPC service (port 8080 HTTP, 50051 gRPC),
-  horizontally scalable via `deployment/k8s/gateway-hpa.yaml`.
+- **Gateway:** FastAPI/gRPC service (port 8080 HTTP, 50051 gRPC). Not yet
+  horizontally scalable: MCP SSE sessions, quarantine records and NeMo
+  refinement proposals are pod-local, so it runs a fixed replica count and
+  `deployment/k8s/gateway-hpa.yaml` is not applied until the gateway is
+  stateless.
 
 ### Port-forward Map (Dev)
 

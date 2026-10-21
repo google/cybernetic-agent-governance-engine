@@ -559,7 +559,7 @@ BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=te
 # CAGE_ENVIRONMENT=<dev|staging|prod> REGISTRY_URL=gcr.io/<project> GOOGLE_CLOUD_PROJECT=<project> \
 #   BENCHMARK_REDIS_IMAGE=gcr.io/<project>/redis@sha256:<digest> bash scripts/run_gke_benchmark_job.sh
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=0
-# bash scripts/run_gke_load_test.sh
+# GATEWAY_REPLICAS=1 bash scripts/run_gke_load_test.sh  # replica count is pinned (1-5); the CPU HPA is not applied
 
 # Step 13: Teardown port-forward daemon after testing
 bash scripts/port_forward_staging.sh --stop
