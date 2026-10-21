@@ -106,9 +106,13 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
   `cloud.google.com/gke-accelerator`.
 - **Gateway:** FastAPI/gRPC service (port 8080 HTTP, 50051 gRPC). Not yet
   horizontally scalable: MCP SSE sessions, quarantine records and NeMo
-  refinement proposals are pod-local, so it runs a fixed replica count and
-  `deployment/k8s/gateway-hpa.yaml` is not applied until the gateway is
-  stateless.
+  refinement proposals are pod-local. It runs a fixed replica count,
+  `replicas = var.enable_high_availability ? 2 : 1` in
+  [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf),
+  and has no autoscaler. With two replicas (the HA posture) an MCP
+  session's SSE stream and its POSTs can land on different pods, so HA
+  shares this limitation until the gateway is stateless. Autoscaling will
+  then key on in-flight requests or event-loop lag, not CPU.
 
 ### Port-forward Map (Dev)
 

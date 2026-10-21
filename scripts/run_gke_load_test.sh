@@ -36,32 +36,67 @@ SPAWN_RATE="${LOAD_TEST_SPAWN_RATE:-5}"
 RUN_TIME="${LOAD_TEST_RUN_TIME:-5m}"
 GATEWAY_URL="${LOAD_TEST_GATEWAY_URL:-http://localhost:8080}"
 
+# The gateway keeps pod-local state (MCP SSE sessions, quarantine records,
+# NeMo refinement proposals). With more than one replica, an MCP session's
+# SSE stream and its POSTs land on different pods, so the load test runs
+# exactly one replica with no autoscaler. Multi-replica load tests wait for
+# the stateless gateway.
+readonly GATEWAY_REPLICAS=1
+
 echo -e "${CYAN}🚀 [Locust Load Test] Initializing GKE load validation...${NC}"
 
-# 1. Ensure locust is installed
+# 1. Refuse production contexts: this script rescales the gateway.
+CURRENT_CONTEXT="$(kubectl config current-context 2>/dev/null || echo none)"
+if [[ "${CURRENT_CONTEXT}" == "none" ]]; then
+  echo -e "${RED}❌ Unable to determine the current kubectl context. Is kubectl configured?${NC}" >&2
+  exit 1
+fi
+if [[ "${CURRENT_CONTEXT}" =~ prod && "${LOAD_TEST_FORCE:-false}" != "true" ]]; then
+  echo -e "${RED}❌ kubectl context '${CURRENT_CONTEXT}' looks like production; the load test rescales the gateway.${NC}" >&2
+  echo -e "${RED}   Switch context, or set LOAD_TEST_FORCE=true if this is deliberate.${NC}" >&2
+  exit 1
+fi
+
+# 2. Ensure locust is installed
 if ! command -v locust &>/dev/null; then
   echo -e "${YELLOW}⚠️  Locust not found in PATH. Attempting installation via uv...${NC}"
   uv pip install locust || pip install locust
 fi
 
-# 2. Pin the gateway replica count (the CPU-based HPA is NOT applied)
-# The gateway still holds pod-local state (MCP SSE sessions, quarantine, NeMo
-# refinement proposals), so CPU-driven scale-out mid-run breaks MCP tool calls
-# and skews results. The replica count is an explicit, bounded test parameter
-# until the stateless-gateway work lands; metric-based autoscaling replaces the
-# CPU HPA afterwards.
-MAX_GATEWAY_REPLICAS=5
-GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-1}"
-if ! [[ "${GATEWAY_REPLICAS}" =~ ^[1-9][0-9]*$ ]] || (( GATEWAY_REPLICAS > MAX_GATEWAY_REPLICAS )); then
-  echo -e "${RED}❌ GATEWAY_REPLICAS must be an integer between 1 and ${MAX_GATEWAY_REPLICAS} (got '${GATEWAY_REPLICAS}').${NC}"
+# 3. Pin one gateway replica for the run; restore the original count on exit.
+echo -e "${CYAN}🎛️  Removing any gateway HPA left by earlier runs...${NC}"
+kubectl delete hpa gateway-hpa -n "${NAMESPACE}" --ignore-not-found
+HPA_TARGETS="$(kubectl get hpa -n "${NAMESPACE}" --no-headers \
+  -o custom-columns=KIND:.spec.scaleTargetRef.kind,NAME:.spec.scaleTargetRef.name)"
+if grep -Eq '^Deployment[[:space:]]+gateway$' <<<"${HPA_TARGETS}"; then
+  echo -e "${RED}❌ An autoscaler still targets deployment/gateway in ${NAMESPACE}; remove it before load testing.${NC}" >&2
   exit 1
 fi
-echo -e "${CYAN}🎛️  Removing any gateway HPA left by earlier runs and pinning ${GATEWAY_REPLICAS} replica(s)...${NC}"
-kubectl delete hpa gateway-hpa -n "${NAMESPACE}" --ignore-not-found
+
+ORIGINAL_REPLICAS="$(kubectl get deployment/gateway -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}')"
+if ! [[ "${ORIGINAL_REPLICAS}" =~ ^[0-9]+$ ]]; then
+  echo -e "${RED}❌ Could not read the gateway replica count (got '${ORIGINAL_REPLICAS}').${NC}" >&2
+  exit 1
+fi
+
+LOCUST_PID=""
+cleanup() {
+  if [[ -n "${LOCUST_PID}" ]]; then
+    kill "${LOCUST_PID}" 2>/dev/null || true
+  fi
+  echo -e "${CYAN}↩️  Restoring deployment/gateway to ${ORIGINAL_REPLICAS} replica(s)...${NC}"
+  kubectl scale deployment/gateway --replicas="${ORIGINAL_REPLICAS}" -n "${NAMESPACE}" ||
+    echo -e "${RED}❌ Could not restore deployment/gateway to ${ORIGINAL_REPLICAS} replica(s); restore it manually.${NC}" >&2
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+echo -e "${CYAN}🎛️  Pinning deployment/gateway to ${GATEWAY_REPLICAS} replica (was ${ORIGINAL_REPLICAS})...${NC}"
 kubectl scale deployment/gateway --replicas="${GATEWAY_REPLICAS}" -n "${NAMESPACE}"
 kubectl rollout status deployment/gateway -n "${NAMESPACE}" --timeout=300s
 
-# 3. Launch Locust in background
+# 4. Launch Locust in background
 echo -e "${CYAN}⚡ Starting headless Locust load test against ${GATEWAY_URL}/health (users=${MAX_USERS}, spawn-rate=${SPAWN_RATE}, run-time=${RUN_TIME})...${NC}"
 locust -f tests/load/locustfile.py \
   --host "${GATEWAY_URL}" \
@@ -75,7 +110,7 @@ locust -f tests/load/locustfile.py \
   >/dev/null 2>&1 &
 LOCUST_PID=$!
 
-# 4. Poll gateway pods during the run (replica count is pinned in step 2)
+# 5. Poll gateway pods during the run
 echo -e "${CYAN}⏳ Monitoring gateway pods for 60 seconds...${NC}"
 for i in {1..12}; do
   sleep 5
@@ -87,9 +122,17 @@ done
 
 # Wait for Locust to finish if still running
 wait "${LOCUST_PID}" 2>/dev/null || true
+LOCUST_PID=""
+
+# The pin must have held for the whole run, or the results are invalid.
+FINAL_REPLICAS="$(kubectl get deployment/gateway -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}')"
+if [[ "${FINAL_REPLICAS}" != "${GATEWAY_REPLICAS}" ]]; then
+  echo -e "${RED}❌ deployment/gateway was rescaled to ${FINAL_REPLICAS} during the run; results are invalid.${NC}" >&2
+  exit 1
+fi
 echo -e "\n${GREEN}✅ Locust load test run completed successfully.${NC}"
 
-# 5. Display reports and assert latency
+# 6. Display reports and assert latency
 echo -e "${CYAN}📊 Performance Report Summary:${NC}"
 STATS_FILE="${CSV_PREFIX}_stats.csv"
 
