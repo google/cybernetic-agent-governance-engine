@@ -132,8 +132,10 @@ class GCPKMSProvider(BaseKMSProvider):
         self._kms_client = kms_client
         self._key_algorithm: _KeyAlgorithm | None = None
         self._algorithm_lock = threading.Lock()
-        # time.monotonic() before which a failed lookup is not retried.
+        # time.monotonic() before which a failed lookup is not retried, and
+        # that lookup's error.
         self._lookup_retry_at = 0.0
+        self._lookup_error = ""
         if not kms_client and key_version_name:
             try:
                 from google.cloud import kms  # type: ignore[import]
@@ -215,17 +217,32 @@ class GCPKMSProvider(BaseKMSProvider):
                 "[KMSSigner] GCP KMS provider has no client or key version name."
             )
         if time.monotonic() < self._lookup_retry_at:
-            raise RuntimeError(_LOOKUP_BACKOFF_MESSAGE)
+            raise self._backoff_error()
         with self._algorithm_lock:
             if self._key_algorithm is not None:
                 return self._key_algorithm
             if time.monotonic() < self._lookup_retry_at:
-                raise RuntimeError(_LOOKUP_BACKOFF_MESSAGE)
+                raise self._backoff_error()
             try:
                 return self._fetch_key_algorithm()
-            except Exception:
+            except Exception as exc:
+                # Set the error before the deadline: lock-free readers that
+                # see the deadline must also see its cause.
+                self._lookup_error = f"{type(exc).__name__}: {exc}"
                 self._lookup_retry_at = time.monotonic() + _ALGORITHM_LOOKUP_BACKOFF_S
+                logger.warning(
+                    "[GCPKMSProvider] Key algorithm lookup failed; next attempt "
+                    "in %gs: %s",
+                    _ALGORITHM_LOOKUP_BACKOFF_S,
+                    self._lookup_error,
+                )
                 raise
+
+    def _backoff_error(self) -> RuntimeError:
+        """The fail-fast error for reads inside the backoff window."""
+        return RuntimeError(
+            f"{_LOOKUP_BACKOFF_MESSAGE} Last error: {self._lookup_error}"
+        )
 
     def _supported(self, key_algorithm: _KeyAlgorithm) -> _KeyAlgorithm:
         """Return ``key_algorithm``; an enforcing posture refuses an unsupported one."""

@@ -252,6 +252,21 @@ def test_unresolved_algorithm_defaults_to_sha256_when_permissive() -> None:
     assert provider.expects_raw_message is False
 
 
+def test_backoff_errors_carry_the_last_lookup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MagicMock()
+    client.get_crypto_key_version.side_effect = RuntimeError("PERMISSION_DENIED x1")
+    provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
+
+    monkeypatch.setenv("CAGE_ENV", "production")
+    with pytest.raises(RuntimeError, match="PERMISSION_DENIED x1"):
+        _ = provider.digest_algorithm  # the retry on first use fails
+    with pytest.raises(RuntimeError, match="backoff.*PERMISSION_DENIED x1"):
+        _ = provider.digest_algorithm  # fails fast, naming the cause
+    assert client.get_crypto_key_version.call_count == 2
+
+
 def test_enforcing_posture_never_signs_with_a_guessed_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
