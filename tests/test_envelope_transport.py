@@ -84,17 +84,12 @@ def mock_kms_signer():
     signer.get_public_key_pem = MagicMock(
         return_value=b"-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
     )
+    # Envelope signing reads kid/alg from the signer's cached public JWK.
+    signer.public_jwk = {"kid": "test-key-001", "alg": "ES256"}
 
-    # Mock pem_to_jwk to return a simple JWK
-    with (
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=signer,
-        ),
-        patch(
-            "src.gateway.governance.jwks.pem_to_jwk",
-            return_value={"kid": "test-key-001", "alg": "ES256"},
-        ),
+    with patch(
+        "src.gateway.governance.kms_signer.get_governance_signer",
+        return_value=signer,
     ):
         yield signer
 

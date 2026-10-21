@@ -468,7 +468,6 @@ class GovernanceEnvelopeBuilder:
                 is_enforcing,
                 resolve_posture,
             )
-            from src.gateway.governance.jwks import pem_to_jwk
             from src.gateway.governance.kms_signer import get_governance_signer
 
             signer = get_governance_signer()
@@ -489,9 +488,8 @@ class GovernanceEnvelopeBuilder:
             sig_hex = signer.sign_precomputed_digest(digest)
             signature_bytes = bytes.fromhex(sig_hex)
 
-            # Get kid from the public key
-            pem = signer.get_public_key_pem()
-            jwk = pem_to_jwk(pem)
+            # kid and alg come from the signer's cached public JWK
+            jwk = signer.public_jwk
             kid = jwk["kid"]
             alg = jwk.get("alg", "ES256")
 

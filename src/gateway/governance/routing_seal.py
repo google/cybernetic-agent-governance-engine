@@ -415,7 +415,7 @@ def generate_seal(
         header = {
             "alg": jose_alg,
             "typ": "JWT",
-            "kid": pem_to_jwk(signer.get_public_key_pem())["kid"],
+            "kid": signer.public_jwk["kid"],
         }
         payload = {
             "action_hash": action_hash,

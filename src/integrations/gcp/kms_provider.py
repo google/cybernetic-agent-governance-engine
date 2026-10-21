@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+from dataclasses import dataclass
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.kms_signer import BaseKMSProvider
 
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
@@ -44,16 +47,71 @@ _GCP_KMS_ED25519_ALGORITHMS = frozenset(
     }
 )
 
+# RFC 7518 JOSE identifier for each CryptoKeyVersionAlgorithm. Names not
+# listed here fall back to ES256 with a warning.
+_GCP_KMS_JOSE_ALGORITHMS: dict[str, str] = {
+    "EC_SIGN_P256_SHA256": "ES256",
+    "EC_SIGN_P384_SHA384": "ES384",
+    "EC_SIGN_ED25519": "EdDSA",
+    "RSA_SIGN_PSS_2048_SHA256": "PS256",
+    "RSA_SIGN_PSS_3072_SHA256": "PS256",
+    "RSA_SIGN_PSS_4096_SHA256": "PS256",
+    "RSA_SIGN_PSS_3072_SHA384": "PS384",
+    "RSA_SIGN_PSS_4096_SHA512": "PS512",
+    "RSA_SIGN_PKCS1_2048_SHA256": "RS256",
+    "RSA_SIGN_PKCS1_3072_SHA256": "RS256",
+    "RSA_SIGN_PKCS1_4096_SHA256": "RS256",
+    "RSA_SIGN_PKCS1_3072_SHA384": "RS384",
+    "RSA_SIGN_PKCS1_4096_SHA512": "RS512",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _KeyAlgorithm:
+    """Signing metadata derived from a key version's algorithm name.
+
+    Cloud KMS fixes a key version's algorithm when the version is created,
+    so one lookup stays valid for the provider's lifetime.
+    """
+
+    name: str
+    digest: str
+    jose_alg: str
+    rsa_pss: bool
+
+    @classmethod
+    def from_name(cls, name: str) -> _KeyAlgorithm:
+        if name in _GCP_KMS_SHA512_ALGORITHMS:
+            digest = "sha512"
+        elif name in _GCP_KMS_SHA384_ALGORITHMS:
+            digest = "sha384"
+        elif name in _GCP_KMS_ED25519_ALGORITHMS:
+            digest = "raw"
+        else:
+            digest = "sha256"
+        jose_alg = _GCP_KMS_JOSE_ALGORITHMS.get(name)
+        if jose_alg is None:
+            logger.warning(
+                "[KMSSigner] Unknown GCP algorithm %s, defaulting to ES256", name
+            )
+            jose_alg = "ES256"
+        return cls(name=name, digest=digest, jose_alg=jose_alg, rsa_pss="PSS" in name)
+
 
 class GCPKMSProvider(BaseKMSProvider):
-    """Google Cloud KMS HSM provider."""
+    """Google Cloud KMS HSM provider.
+
+    The key version's algorithm is read once and cached, so signing makes no
+    ``GetCryptoKeyVersion`` call.
+    """
 
     def __init__(
         self, key_version_name: str = "", kms_client: object | None = None
     ) -> None:
         self._key_version_name = key_version_name
         self._kms_client = kms_client
-        self._hash_width = "sha256"
+        self._key_algorithm: _KeyAlgorithm | None = None
+        self._algorithm_lock = threading.Lock()
         if not kms_client and key_version_name:
             try:
                 from google.cloud import kms  # type: ignore[import]
@@ -74,34 +132,59 @@ class GCPKMSProvider(BaseKMSProvider):
                 ) from exc
         self._detect_hash_width()
 
+    def _fetch_key_algorithm(self) -> _KeyAlgorithm:
+        """Read the key version's algorithm from Cloud KMS and cache it.
+
+        Callers must hold ``_algorithm_lock``.
+        """
+        version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
+            name=self._key_version_name
+        )
+        key_algorithm = _KeyAlgorithm.from_name(str(version.algorithm.name))
+        self._key_algorithm = key_algorithm
+        logger.info(
+            "[GCPKMSProvider] Key algorithm=%s → digest width=%s",
+            key_algorithm.name,
+            key_algorithm.digest,
+        )
+        return key_algorithm
+
     def _detect_hash_width(self) -> None:
-        """Determine the digest width required by this key's signing algorithm."""
+        """Read and cache the key algorithm, which fixes the digest width.
+
+        A failure is logged and the lookup is retried on first use (see
+        :meth:`_resolve_key_algorithm`).
+        """
         if not self._kms_client or not self._key_version_name:
             return
         try:
-            version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
-                name=self._key_version_name
-            )
-            algorithm_name = version.algorithm.name
-            if algorithm_name in _GCP_KMS_SHA512_ALGORITHMS:
-                self._hash_width = "sha512"
-            elif algorithm_name in _GCP_KMS_SHA384_ALGORITHMS:
-                self._hash_width = "sha384"
-            elif algorithm_name in _GCP_KMS_ED25519_ALGORITHMS:
-                self._hash_width = "raw"
-            else:
-                self._hash_width = "sha256"
-            logger.info(
-                "[GCPKMSProvider] Key algorithm=%s → digest width=%s",
-                algorithm_name,
-                self._hash_width,
-            )
+            with self._algorithm_lock:
+                self._fetch_key_algorithm()
         except Exception as exc:
             logger.warning(
-                "[GCPKMSProvider] Could not determine key algorithm (defaulting "
-                "to sha256 digest width): %s",
+                "[GCPKMSProvider] Could not determine key algorithm; retrying "
+                "on first use: %s",
                 exc,
             )
+
+    def _resolve_key_algorithm(self) -> _KeyAlgorithm:
+        """Return the cached key algorithm, fetching it if still unknown.
+
+        Raises:
+            RuntimeError: If the provider has no client or key version name.
+            Exception: Any error from the Cloud KMS lookup.
+        """
+        key_algorithm = self._key_algorithm
+        if key_algorithm is not None:
+            return key_algorithm
+        if not self._kms_client or not self._key_version_name:
+            raise RuntimeError(
+                "[KMSSigner] GCP KMS provider has no client or key version name."
+            )
+        with self._algorithm_lock:
+            if self._key_algorithm is not None:
+                return self._key_algorithm
+            return self._fetch_key_algorithm()
 
     def warm_channel(self) -> None:
         """Pre-warm the KMS gRPC channel by querying key version metadata."""
@@ -113,11 +196,24 @@ class GCPKMSProvider(BaseKMSProvider):
 
     @property
     def digest_algorithm(self) -> str:
-        return self._hash_width
+        """Digest width for the key's algorithm.
+
+        If the algorithm cannot be determined, an enforcing posture raises
+        rather than guess; other postures fall back to SHA-256.
+        """
+        try:
+            return self._resolve_key_algorithm().digest
+        except Exception as exc:
+            if is_enforcing(resolve_posture()):
+                raise RuntimeError(
+                    "[KMSSigner] Cannot determine the digest width for "
+                    f"{self._key_version_name!r}: {exc}"
+                ) from exc
+            return "sha256"
 
     @property
     def expects_raw_message(self) -> bool:
-        return self._hash_width == "raw"
+        return self.digest_algorithm == "raw"
 
     @property
     def jose_alg(self) -> str:
@@ -127,47 +223,7 @@ class GCPKMSProvider(BaseKMSProvider):
                 "[KMSSigner] GCP KMS provider has no client or key version name."
             )
         try:
-            version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
-                name=self._key_version_name
-            )
-            algorithm_name = version.algorithm.name
-
-            if algorithm_name == "EC_SIGN_P256_SHA256":
-                return "ES256"
-            elif algorithm_name == "EC_SIGN_P384_SHA384":
-                return "ES384"
-            elif algorithm_name == "EC_SIGN_ED25519":
-                return "EdDSA"
-            elif algorithm_name in (
-                "RSA_SIGN_PSS_2048_SHA256",
-                "RSA_SIGN_PSS_3072_SHA256",
-            ):
-                return "PS256"
-            elif algorithm_name in (
-                "RSA_SIGN_PKCS1_2048_SHA256",
-                "RSA_SIGN_PKCS1_3072_SHA256",
-            ):
-                return "RS256"
-            elif algorithm_name == "RSA_SIGN_PSS_3072_SHA384":
-                return "PS384"
-            elif algorithm_name == "RSA_SIGN_PKCS1_3072_SHA384":
-                return "RS384"
-            elif algorithm_name in (
-                "RSA_SIGN_PSS_4096_SHA512",
-                "RSA_SIGN_PSS_4096_SHA256",
-            ):
-                return "PS512" if "SHA512" in algorithm_name else "PS256"
-            elif algorithm_name in (
-                "RSA_SIGN_PKCS1_4096_SHA512",
-                "RSA_SIGN_PKCS1_4096_SHA256",
-            ):
-                return "RS512" if "SHA512" in algorithm_name else "RS256"
-            else:
-                logger.warning(
-                    "[KMSSigner] Unknown GCP algorithm %s, defaulting to ES256",
-                    algorithm_name,
-                )
-                return "ES256"
+            return self._resolve_key_algorithm().jose_alg
         except Exception as exc:
             raise RuntimeError(
                 f"[KMSSigner] Failed to determine JOSE algorithm: {exc}"
@@ -176,13 +232,8 @@ class GCPKMSProvider(BaseKMSProvider):
     @property
     def uses_rsa_pss(self) -> bool:
         """True if the active GCP KMS key version uses RSA-PSS padding."""
-        if not self._kms_client or not self._key_version_name:
-            return False
         try:
-            version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
-                name=self._key_version_name
-            )
-            return "PSS" in str(version.algorithm.name)
+            return self._resolve_key_algorithm().rsa_pss
         except Exception:
             return False
 
@@ -206,7 +257,7 @@ class GCPKMSProvider(BaseKMSProvider):
             service as kms_service,  # type: ignore[import]
         )
 
-        digest_kwargs = {self._hash_width: digest}
+        digest_kwargs = {self.digest_algorithm: digest}
         response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
             request=kms_service.AsymmetricSignRequest(
                 name=self._key_version_name,

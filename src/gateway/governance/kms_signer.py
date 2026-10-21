@@ -31,8 +31,9 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from opentelemetry import trace as otel_trace
@@ -440,6 +441,8 @@ class KMSGovernanceSigner:
         self._key_version_name = key_version_name
         self._public_key_pem = public_key_pem
         self._provider = provider
+        # (PEM, read-only JWK) of the active public key; see ``public_jwk``.
+        self._public_jwk_cache: tuple[bytes, Mapping[str, Any]] | None = None
 
         if not self._provider and (kms_client is not None or key_version_name):
             from src.gateway.governance.signer_factory import get_kms_provider_class
@@ -567,6 +570,26 @@ class KMSGovernanceSigner:
             "[KMSSigner] get_public_key_pem() called but no public key is available. "
             "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
         )
+
+    @property
+    def public_jwk(self) -> Mapping[str, Any]:
+        """Read-only JWK of the active public key, derived once per PEM.
+
+        Seal and envelope minting read ``kid`` and ``alg`` from it on every
+        signature, so the PEM is parsed on first use rather than per call.
+
+        Raises:
+            RuntimeError: If no public key is available.
+        """
+        pem = self.get_public_key_pem()
+        cached = self._public_jwk_cache
+        if cached is not None and cached[0] == pem:
+            return cached[1]
+        from src.gateway.governance.jwks import pem_to_jwk
+
+        jwk: Mapping[str, Any] = MappingProxyType(pem_to_jwk(pem))
+        self._public_jwk_cache = (pem, jwk)
+        return jwk
 
     @classmethod
     def from_env(cls) -> KMSGovernanceSigner:
