@@ -35,6 +35,7 @@ MAX_USERS="${LOAD_TEST_MAX_USERS:-50}"
 SPAWN_RATE="${LOAD_TEST_SPAWN_RATE:-5}"
 RUN_TIME="${LOAD_TEST_RUN_TIME:-5m}"
 GATEWAY_URL="${LOAD_TEST_GATEWAY_URL:-http://localhost:8080}"
+MAX_ALLOWED_AVG=200
 
 # The gateway keeps pod-local state (MCP SSE sessions, quarantine records,
 # NeMo refinement proposals). With more than one replica, an MCP session's
@@ -47,7 +48,7 @@ echo -e "${CYAN}🚀 [Locust Load Test] Initializing GKE load validation...${NC}
 
 # 1. Refuse production contexts: this script rescales the gateway.
 CURRENT_CONTEXT="$(kubectl config current-context 2>/dev/null || echo none)"
-if [[ "${CURRENT_CONTEXT}" == "none" ]]; then
+if [[ -z "${CURRENT_CONTEXT}" || "${CURRENT_CONTEXT}" == "none" ]]; then
   echo -e "${RED}❌ Unable to determine the current kubectl context. Is kubectl configured?${NC}" >&2
   exit 1
 fi
@@ -56,6 +57,9 @@ if [[ "${CURRENT_CONTEXT}" =~ prod && "${LOAD_TEST_FORCE:-false}" != "true" ]]; 
   echo -e "${RED}   Switch context, or set LOAD_TEST_FORCE=true if this is deliberate.${NC}" >&2
   exit 1
 fi
+# Every later call is pinned to this context, so a context switch in another
+# shell during the run cannot redirect the rescale or the restore.
+KUBECTL=(kubectl --context "${CURRENT_CONTEXT}" -n "${NAMESPACE}")
 
 # 2. Ensure locust is installed
 if ! command -v locust &>/dev/null; then
@@ -65,15 +69,15 @@ fi
 
 # 3. Pin one gateway replica for the run; restore the original count on exit.
 echo -e "${CYAN}🎛️  Removing any gateway HPA left by earlier runs...${NC}"
-kubectl delete hpa gateway-hpa -n "${NAMESPACE}" --ignore-not-found
-HPA_TARGETS="$(kubectl get hpa -n "${NAMESPACE}" --no-headers \
+"${KUBECTL[@]}" delete hpa gateway-hpa --ignore-not-found
+HPA_TARGETS="$("${KUBECTL[@]}" get hpa --no-headers \
   -o custom-columns=KIND:.spec.scaleTargetRef.kind,NAME:.spec.scaleTargetRef.name)"
 if grep -Eq '^Deployment[[:space:]]+gateway$' <<<"${HPA_TARGETS}"; then
   echo -e "${RED}❌ An autoscaler still targets deployment/gateway in ${NAMESPACE}; remove it before load testing.${NC}" >&2
   exit 1
 fi
 
-ORIGINAL_REPLICAS="$(kubectl get deployment/gateway -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}')"
+ORIGINAL_REPLICAS="$("${KUBECTL[@]}" get deployment/gateway -o jsonpath='{.spec.replicas}')"
 if ! [[ "${ORIGINAL_REPLICAS}" =~ ^[0-9]+$ ]]; then
   echo -e "${RED}❌ Could not read the gateway replica count (got '${ORIGINAL_REPLICAS}').${NC}" >&2
   exit 1
@@ -81,20 +85,30 @@ fi
 
 LOCUST_PID=""
 cleanup() {
+  local rc=$?
   if [[ -n "${LOCUST_PID}" ]]; then
     kill "${LOCUST_PID}" 2>/dev/null || true
   fi
   echo -e "${CYAN}↩️  Restoring deployment/gateway to ${ORIGINAL_REPLICAS} replica(s)...${NC}"
-  kubectl scale deployment/gateway --replicas="${ORIGINAL_REPLICAS}" -n "${NAMESPACE}" ||
+  if ! "${KUBECTL[@]}" scale deployment/gateway --replicas="${ORIGINAL_REPLICAS}"; then
     echo -e "${RED}❌ Could not restore deployment/gateway to ${ORIGINAL_REPLICAS} replica(s); restore it manually.${NC}" >&2
+    if [[ "${rc}" -eq 0 ]]; then
+      rc=1
+    fi
+  fi
+  exit "${rc}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo -e "${CYAN}🎛️  Pinning deployment/gateway to ${GATEWAY_REPLICAS} replica (was ${ORIGINAL_REPLICAS})...${NC}"
-kubectl scale deployment/gateway --replicas="${GATEWAY_REPLICAS}" -n "${NAMESPACE}"
-kubectl rollout status deployment/gateway -n "${NAMESPACE}" --timeout=300s
+"${KUBECTL[@]}" scale deployment/gateway --replicas="${GATEWAY_REPLICAS}"
+"${KUBECTL[@]}" rollout status deployment/gateway --timeout=300s
+# Replica count and spec generation once pinned; any change to the
+# deployment's spec during the run (even one reverted before the end) moves
+# the generation.
+PINNED_STATE="$("${KUBECTL[@]}" get deployment/gateway -o jsonpath='{.spec.replicas}/{.metadata.generation}')"
 
 # 4. Launch Locust in background
 echo -e "${CYAN}⚡ Starting headless Locust load test against ${GATEWAY_URL}/health (users=${MAX_USERS}, spawn-rate=${SPAWN_RATE}, run-time=${RUN_TIME})...${NC}"
@@ -117,17 +131,17 @@ for i in {1..12}; do
   echo -e "\n${GREEN}--- Monitoring Poll #$i (after $((i*5))s) ---${NC}"
   
   echo -e "${YELLOW}Gateway Pods Status:${NC}"
-  kubectl get pods -l app=gateway -n "${NAMESPACE}" -o wide || echo "No gateway pods found"
+  "${KUBECTL[@]}" get pods -l app=gateway -o wide || echo "No gateway pods found"
 done
 
 # Wait for Locust to finish if still running
 wait "${LOCUST_PID}" 2>/dev/null || true
 LOCUST_PID=""
 
-# The pin must have held for the whole run, or the results are invalid.
-FINAL_REPLICAS="$(kubectl get deployment/gateway -n "${NAMESPACE}" -o jsonpath='{.spec.replicas}')"
-if [[ "${FINAL_REPLICAS}" != "${GATEWAY_REPLICAS}" ]]; then
-  echo -e "${RED}❌ deployment/gateway was rescaled to ${FINAL_REPLICAS} during the run; results are invalid.${NC}" >&2
+# The deployment must not have been rescaled or edited during the run.
+FINAL_STATE="$("${KUBECTL[@]}" get deployment/gateway -o jsonpath='{.spec.replicas}/{.metadata.generation}')"
+if [[ "${FINAL_STATE}" != "${PINNED_STATE}" ]]; then
+  echo -e "${RED}❌ deployment/gateway changed during the run (replicas/generation ${PINNED_STATE} → ${FINAL_STATE}); results are invalid.${NC}" >&2
   exit 1
 fi
 echo -e "\n${GREEN}✅ Locust load test run completed successfully.${NC}"
@@ -136,37 +150,40 @@ echo -e "\n${GREEN}✅ Locust load test run completed successfully.${NC}"
 echo -e "${CYAN}📊 Performance Report Summary:${NC}"
 STATS_FILE="${CSV_PREFIX}_stats.csv"
 
-if [ -f "${STATS_FILE}" ]; then
-  cat "${STATS_FILE}" | column -s, -t || cat "${STATS_FILE}"
-  
-  # Parse average and 95th percentile latency from HTTP /health requests
-  # Skip header line, get row matching "GET /health" or "/health"
-  HEALTH_ROW=$(grep "/health" "${STATS_FILE}" | head -n 1 || true)
-  if [ -n "${HEALTH_ROW}" ]; then
-    # In locust stats CSV, fields are:
-    # 0: Type, 1: Name, 2: Request Count, 3: Failure Count, 4: Median response time,
-    # 5: Average response time, 6: Min response time, 7: Max response time, 8: Average Content Size,
-    # 9: Requests/s, 10: Failures/s, 11: 50%, 12: 66%, 13: 75%, 14: 80%, 15: 90%, 16: 95%, 17: 98%, 18: 99%, 19: 99.9%, 20: 99.99%, 21: 100%
-    AVG_LATENCY=$(echo "${HEALTH_ROW}" | cut -d',' -f6 | xargs || echo "0")
-    P95_LATENCY=$(echo "${HEALTH_ROW}" | cut -d',' -f17 | xargs || echo "0")
-    
-    echo -e "\n${CYAN}⏱️  Key Metrics Summary:${NC}"
-    echo -e "   - Average Latency: ${AVG_LATENCY} ms"
-    echo -e "   - 95th Percentile Latency: ${P95_LATENCY} ms"
-    
-    # Assert latency boundaries (e.g., average latency should be < 200ms)
-    MAX_ALLOWED_AVG=200
-    if (( $(echo "$AVG_LATENCY < $MAX_ALLOWED_AVG" | bc -l) )); then
-      echo -e "${GREEN}🎉 PASS: Average latency is within limits (< ${MAX_ALLOWED_AVG}ms).${NC}"
-    else
-      echo -e "${RED}❌ FAIL: Average latency exceeded threshold of ${MAX_ALLOWED_AVG}ms (got ${AVG_LATENCY}ms).${NC}"
-      exit 1
-    fi
-  else
-    echo -e "${YELLOW}⚠️  Could not parse /health row from stats CSV.${NC}"
-  fi
+if [ ! -f "${STATS_FILE}" ]; then
+  echo -e "${RED}❌ Locust stats CSV not found at ${STATS_FILE}; nothing was measured.${NC}" >&2
+  exit 1
+fi
+cat "${STATS_FILE}" | column -s, -t || cat "${STATS_FILE}"
+
+# Parse average and 95th percentile latency from HTTP /health requests
+# Skip header line, get row matching "GET /health" or "/health"
+HEALTH_ROW=$(grep "/health" "${STATS_FILE}" | head -n 1 || true)
+if [ -z "${HEALTH_ROW}" ]; then
+  echo -e "${RED}❌ Could not find a /health row in ${STATS_FILE}; nothing was measured.${NC}" >&2
+  exit 1
+fi
+# In locust stats CSV, fields are:
+# 0: Type, 1: Name, 2: Request Count, 3: Failure Count, 4: Median response time,
+# 5: Average response time, 6: Min response time, 7: Max response time, 8: Average Content Size,
+# 9: Requests/s, 10: Failures/s, 11: 50%, 12: 66%, 13: 75%, 14: 80%, 15: 90%, 16: 95%, 17: 98%, 18: 99%, 19: 99.9%, 20: 99.99%, 21: 100%
+AVG_LATENCY=$(echo "${HEALTH_ROW}" | cut -d',' -f6 | xargs)
+P95_LATENCY=$(echo "${HEALTH_ROW}" | cut -d',' -f17 | xargs)
+if ! [[ "${AVG_LATENCY}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo -e "${RED}❌ Could not parse the average /health latency (got '${AVG_LATENCY}').${NC}" >&2
+  exit 1
+fi
+
+echo -e "\n${CYAN}⏱️  Key Metrics Summary:${NC}"
+echo -e "   - Average Latency: ${AVG_LATENCY} ms"
+echo -e "   - 95th Percentile Latency: ${P95_LATENCY} ms"
+
+# Assert latency boundaries (average latency must be < MAX_ALLOWED_AVG ms)
+if awk -v avg="${AVG_LATENCY}" -v max="${MAX_ALLOWED_AVG}" 'BEGIN { exit !(avg < max) }'; then
+  echo -e "${GREEN}🎉 PASS: Average latency is within limits (< ${MAX_ALLOWED_AVG}ms).${NC}"
 else
-  echo -e "${RED}❌ Locust stats CSV not found at ${STATS_FILE}${NC}"
+  echo -e "${RED}❌ FAIL: Average latency exceeded threshold of ${MAX_ALLOWED_AVG}ms (got ${AVG_LATENCY}ms).${NC}" >&2
+  exit 1
 fi
 
 echo -e "\n${GREEN}🌟 GKE Load and stress validation successfully completed!${NC}"
