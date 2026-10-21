@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -5,13 +19,36 @@ metadata:
   namespace: governance-stack
   labels:
     release: prometheus
-    app: stera-gateway
+    app: gateway
 spec:
   selector:
     matchLabels:
-      app: stera-gateway
+      app: gateway
   endpoints:
   - port: metrics
     path: /metrics
     interval: 15s
     scrapeTimeout: 10s
+---
+# GKE Managed Service for Prometheus (GMP) native scrape resource.
+# GMP is enabled on the cluster via monitoring_config.managed_prometheus in
+# infra/modules/gcp_gke_cluster/main.tf. Targets the dedicated out-of-band
+# Prometheus WSGI HTTP server on port 9090 (named 'metrics'), which bypasses
+# the Linkerd inbound proxy (config.linkerd.io/skip-inbound-ports: "9090") and
+# runs on its own thread so scrapes succeed even when the asyncio loop blocks.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: gateway-metrics
+  namespace: governance-stack
+  labels:
+    app: gateway
+spec:
+  selector:
+    matchLabels:
+      app: gateway
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    timeout: 10s

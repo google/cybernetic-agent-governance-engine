@@ -85,178 +85,213 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     setup_tracing()
     logger.info("✅ Gateway tracing initialised via lifespan hook")
 
-    # ── Evidence Stream Precondition Check (R-06) ──────────────────────────────
-    # Fail fast if EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
-    # This invalid configuration would cause all seal issuances to fail at runtime.
-    from src.gateway.governance.evidence.stream import (
-        ConfigurationError,
-        start_evidence_sink,
-        validate_evidence_stream_preconditions,
+    # ── Prometheus Metrics Server & Event-Loop Lag Monitor (A1) ───────────────
+    # Starts the threaded Prometheus WSGI server on CAGE_METRICS_PORT (default
+    # 9090) so /metrics remains scrapeable even when the asyncio event loop is
+    # blocked, alongside a 250 ms loop-lag sampling task.
+    from src.gateway.observability.loop_monitor import (
+        run_loop_lag_monitor,
+        start_metrics_http_server,
     )
 
+    metrics_server = start_metrics_http_server()
+    app.state.metrics_server = metrics_server
+    loop_lag_task: asyncio.Task[None] | None = None
+
     try:
-        validate_evidence_stream_preconditions()
-    except ConfigurationError as cfg_err:
-        logger.critical(
-            "🚨 STARTUP FAILURE: Evidence stream precondition check failed: %s",
-            cfg_err,
+        # ── Evidence Stream Precondition Check (R-06) ──────────────────────────
+        # Fail fast if EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
+        # This invalid configuration would cause all seal issuances to fail at runtime.
+        from src.gateway.governance.evidence.stream import (
+            ConfigurationError,
+            start_evidence_sink,
+            validate_evidence_stream_preconditions,
         )
+
+        try:
+            validate_evidence_stream_preconditions()
+        except ConfigurationError as cfg_err:
+            logger.critical(
+                "🚨 STARTUP FAILURE: Evidence stream precondition check failed: %s",
+                cfg_err,
+            )
+            raise
+
+        # ── Evidence Stream Sink ───────────────────────────────────────────────
+        # Refusal receipts, pause receipts and blocking seals all write through
+        # the get_evidence_sink() singleton, so it must be connected before the
+        # first request. Fails startup under an enforcing posture if Redis is
+        # unreachable.
+        evidence_sink = await start_evidence_sink()
+
+        # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
+        from src.gateway.governance.semantic_rail_factory import (
+            initialize_semantic_rails as initialize_rails,
+        )
+
+        logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
+        nemo_rails = initialize_rails()
+
+        # Store on root and sub-app states
+        app.state.nemo_rails = nemo_rails
+        inference_app.state.nemo_rails = nemo_rails
+        mcp_app.state.nemo_rails = nemo_rails
+        logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
+
+        # ── Pre-warm Token Quota Proxy and UCA Logger (CTRL_TQP_007) ───────────
+        try:
+            from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
+            from src.gateway.governance.uca_logger import UCALogger
+
+            app.state.token_quota_proxy = TokenQuotaProxy.from_env()
+            app.state.uca_logger = UCALogger.from_env()
+            logger.info("✅ Token Quota Proxy and UCA Logger pre-warmed")
+        except Exception as e:
+            # 'Token Quota Proxy' is a component name; logs the startup error only.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            logger.warning("⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e)
+
+        # ── Production guards not owned by the governor posture check ──────────
+        # KMS signing mode (K3), KMS/Redis readiness, the POAM-023 stub
+        # reconciliation guard and the default GOVERNANCE_SALT guard (C-04) run in
+        # assert_production_posture() when the governor is assembled
+        # (_activate_domain below). NeMo guardrails always fail closed (no log-only
+        # mode exists).
+
+        # External Normative Provider integration (§2.5)
+        provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
+        normative_polling_task = None
+
+        if provider_name != "static":
+            from src.gateway.governance.normative_provider import (
+                NormativeProviderDaemon,
+            )
+
+            daemon = NormativeProviderDaemon.from_env()
+            await daemon.boot_fetch()
+            normative_polling_task = asyncio.create_task(daemon.start_polling())
+            app.state.normative_polling_task = normative_polling_task
+            logger.info(
+                "✅ Normative provider '%s' initialized with background polling",
+                provider_name,
+            )
+        else:
+            app.state.normative_polling_task = None
+
+        # ── Attestation Aggregator Boot & Polling ──────────────────────────────
+        from src.gateway.governance.attestation_aggregator import AttestationAggregator
+
+        attestation_aggregator = AttestationAggregator.from_env()
+        attestation_polling_task = None
+        if attestation_aggregator.provider_count > 0:
+            await attestation_aggregator.boot_fetch()
+            attestation_polling_task = asyncio.create_task(
+                attestation_aggregator.start_poll_loop()
+            )
+            app.state.attestation_aggregator = attestation_aggregator
+            app.state.attestation_polling_task = attestation_polling_task
+            logger.info(
+                "Attestation aggregator initialized with %d provider(s)",
+                attestation_aggregator.provider_count,
+            )
+        else:
+            app.state.attestation_aggregator = attestation_aggregator
+            app.state.attestation_polling_task = None
+
+        # ── Actuator Registry Initialization ────────────────────────────────────
+        from src.gateway.governance.execution_actuator import load_actuators_from_env
+
+        actuator_registry = load_actuators_from_env()
+        app.state.actuator_registry = actuator_registry
+        logger.info(
+            "Actuator registry initialized with %d actuator(s): %s",
+            len(actuator_registry.list_actuators()),
+            ", ".join(actuator_registry.list_actuators()),
+        )
+
+        # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
+        registry_daemon: Any = None
+        try:
+            from src.gateway.governance.ingress.agent_registry_adapter import (
+                AgentRegistryDaemon,
+            )
+
+            registry_daemon = AgentRegistryDaemon()
+            await registry_daemon.start()
+        except ImportError:
+            logger.warning(
+                "⚠️ agent_registry_adapter not available — using static agent catalog."
+            )
+        except Exception as reg_err:
+            logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
+
+        # ── Activate the single CAGE_DOMAIN plugin (fail-closed readiness, ─────
+        #    including the OPA package/rule handshake)
+        from src.gateway.server.mcp_tool_server import _activate_domain
+
+        governor = await _activate_domain()  # also sets mcp_app.state.governor
+        app.state.governor = governor
+        governance_app.state.governor = governor
+
+        # ── State-commitment service (POST /governance/state-commitments) ──────
+        # Retains sanitized state preimages through the evidence sink above; the
+        # gateway itself holds no cold store. Refused here under an enforcing
+        # posture when the sink is absent or disconnected.
+        from src.gateway.governance.evidence.state_commitment import (
+            build_state_commitment_service,
+        )
+
+        state_commitments = build_state_commitment_service(evidence_sink)
+        app.state.state_commitments = state_commitments
+        governance_app.state.state_commitments = state_commitments
+
+        # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
+        logger.info("🔥 Pre-warming OPA policy evaluation...")
+        synthetic_params = {
+            "action": "system_warmup_test",
+            "resource": "test_resource",
+            "amount": 100.0,
+            "user_id": "system_warmup",
+            "dry_run": True,
+        }
+        try:
+            await governor.components.opa.evaluate_policy(synthetic_params)
+            logger.info("✅ OPA policy engine pre-warmed successfully")
+        except Exception as e:
+            logger.warning("⚠️ OPA pre-warm failed (non-blocking): %s", e)
+
+        # The active domain's OPA package/rules are verified fail-closed in
+        # _activate_domain() (mcp_tool_server); no domain-specific probe here.
+
+        # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
+        from src.gateway.governance.background_tasks import (
+            start_all as start_background_tasks,
+        )
+
+        bg_tasks = start_background_tasks()
+        app.state.background_tasks = bg_tasks
+        logger.info("✅ Plugin background tasks started")
+
+        loop_lag_task = asyncio.create_task(run_loop_lag_monitor())
+        app.state.loop_lag_task = loop_lag_task
+    except BaseException:
+        if metrics_server is not None:
+            metrics_server.stop()
         raise
 
-    # ── Evidence Stream Sink ───────────────────────────────────────────────
-    # Refusal receipts, pause receipts and blocking seals all write through
-    # the get_evidence_sink() singleton, so it must be connected before the
-    # first request. Fails startup under an enforcing posture if Redis is
-    # unreachable.
-    evidence_sink = await start_evidence_sink()
-
-    # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
-    from src.gateway.governance.semantic_rail_factory import (
-        initialize_semantic_rails as initialize_rails,
-    )
-
-    logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
-    nemo_rails = initialize_rails()
-
-    # Store on root and sub-app states
-    app.state.nemo_rails = nemo_rails
-    inference_app.state.nemo_rails = nemo_rails
-    mcp_app.state.nemo_rails = nemo_rails
-    logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
-
-    # ── Pre-warm Token Quota Proxy and UCA Logger (CTRL_TQP_007) ───────────────
-    try:
-        from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
-        from src.gateway.governance.uca_logger import UCALogger
-
-        app.state.token_quota_proxy = TokenQuotaProxy.from_env()
-        app.state.uca_logger = UCALogger.from_env()
-        logger.info("✅ Token Quota Proxy and UCA Logger pre-warmed")
-    except Exception as e:
-        # 'Token Quota Proxy' is a component name; logs the startup error only.
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
-        logger.warning("⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e)
-
-    # ── Production guards not owned by the governor posture check ──────────
-    # KMS signing mode (K3), KMS/Redis readiness, the POAM-023 stub
-    # reconciliation guard and the default GOVERNANCE_SALT guard (C-04) run in
-    # assert_production_posture() when the governor is assembled
-    # (_activate_domain below). NeMo guardrails always fail closed (no log-only
-    # mode exists).
-
-    # External Normative Provider integration (§2.5)
-    provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
-    normative_polling_task = None
-
-    if provider_name != "static":
-        from src.gateway.governance.normative_provider import NormativeProviderDaemon
-
-        daemon = NormativeProviderDaemon.from_env()
-        await daemon.boot_fetch()
-        normative_polling_task = asyncio.create_task(daemon.start_polling())
-        app.state.normative_polling_task = normative_polling_task
-        logger.info(
-            "✅ Normative provider '%s' initialized with background polling",
-            provider_name,
-        )
-    else:
-        app.state.normative_polling_task = None
-
-    # ── Attestation Aggregator Boot & Polling ──────────────────────────────
-    from src.gateway.governance.attestation_aggregator import AttestationAggregator
-
-    attestation_aggregator = AttestationAggregator.from_env()
-    attestation_polling_task = None
-    if attestation_aggregator.provider_count > 0:
-        await attestation_aggregator.boot_fetch()
-        attestation_polling_task = asyncio.create_task(
-            attestation_aggregator.start_poll_loop()
-        )
-        app.state.attestation_aggregator = attestation_aggregator
-        app.state.attestation_polling_task = attestation_polling_task
-        logger.info(
-            "Attestation aggregator initialized with %d provider(s)",
-            attestation_aggregator.provider_count,
-        )
-    else:
-        app.state.attestation_aggregator = attestation_aggregator
-        app.state.attestation_polling_task = None
-
-    # ── Actuator Registry Initialization ────────────────────────────────────
-    from src.gateway.governance.execution_actuator import load_actuators_from_env
-
-    actuator_registry = load_actuators_from_env()
-    app.state.actuator_registry = actuator_registry
-    logger.info(
-        "Actuator registry initialized with %d actuator(s): %s",
-        len(actuator_registry.list_actuators()),
-        ", ".join(actuator_registry.list_actuators()),
-    )
-
-    # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
-    registry_daemon: Any = None
-    try:
-        from src.gateway.governance.ingress.agent_registry_adapter import (
-            AgentRegistryDaemon,
-        )
-
-        registry_daemon = AgentRegistryDaemon()
-        await registry_daemon.start()
-    except ImportError:
-        logger.warning(
-            "⚠️ agent_registry_adapter not available — using static agent catalog."
-        )
-    except Exception as reg_err:
-        logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
-
-    # ── Activate the single CAGE_DOMAIN plugin (fail-closed readiness, ─────
-    #    including the OPA package/rule handshake)
-    from src.gateway.server.mcp_tool_server import _activate_domain
-
-    governor = await _activate_domain()  # also sets mcp_app.state.governor
-    app.state.governor = governor
-    governance_app.state.governor = governor
-
-    # ── State-commitment service (POST /governance/state-commitments) ──────
-    # Retains sanitized state preimages through the evidence sink above; the
-    # gateway itself holds no cold store. Refused here under an enforcing
-    # posture when the sink is absent or disconnected.
-    from src.gateway.governance.evidence.state_commitment import (
-        build_state_commitment_service,
-    )
-
-    state_commitments = build_state_commitment_service(evidence_sink)
-    app.state.state_commitments = state_commitments
-    governance_app.state.state_commitments = state_commitments
-
-    # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
-    logger.info("🔥 Pre-warming OPA policy evaluation...")
-    synthetic_params = {
-        "action": "system_warmup_test",
-        "resource": "test_resource",
-        "amount": 100.0,
-        "user_id": "system_warmup",
-        "dry_run": True,
-    }
-    try:
-        await governor.components.opa.evaluate_policy(synthetic_params)
-        logger.info("✅ OPA policy engine pre-warmed successfully")
-    except Exception as e:
-        logger.warning("⚠️ OPA pre-warm failed (non-blocking): %s", e)
-
-    # The active domain's OPA package/rules are verified fail-closed in
-    # _activate_domain() (mcp_tool_server); no domain-specific probe here.
-
-    # ── Start plugin-registered background tasks (PR B, T-B6) ──────────────
-    from src.gateway.governance.background_tasks import (
-        start_all as start_background_tasks,
-    )
-
-    bg_tasks = start_background_tasks()
-    app.state.background_tasks = bg_tasks
-    logger.info("✅ Plugin background tasks started")
-
     yield
+
+    # Shutdown: cancel event-loop lag monitor task if running
+    if loop_lag_task is not None:
+        loop_lag_task.cancel()
+        try:
+            await loop_lag_task
+        except asyncio.CancelledError:
+            pass
+
+    # Shutdown: stop out-of-band Prometheus metrics HTTP server if running
+    if metrics_server is not None:
+        metrics_server.stop()
 
     # Shutdown: stop Agent Registry daemon if running
     if registry_daemon is not None:
@@ -340,6 +375,22 @@ root_app.add_middleware(_DebugEndpointGuard)
 # load_identity_policy() raises at import without CAGE_TRUSTED_CLIENT_IDENTITIES,
 # so the gateway cannot start unprotected in any environment.
 root_app.add_middleware(WorkloadIdentityMiddleware, policy=load_identity_policy())
+
+
+@root_app.get("/metrics")
+async def prometheus_metrics():  # type: ignore[no-untyped-def]
+    """Expose Prometheus metrics in-band on port 8080 as well as on the dedicated metrics port."""
+    from fastapi.responses import Response as _Response
+
+    try:
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        return _Response(
+            content=generate_latest(),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+    except ImportError:
+        return _Response(content=b"", media_type="text/plain; version=0.0.4")
 
 
 @root_app.get("/healthz")

@@ -17,10 +17,33 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from src.gateway.governance.kms_signer import BaseKMSProvider
 
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
+
+# Prometheus metrics (optional — degrades to a no-op if prometheus_client unavailable)
+try:
+    from prometheus_client import REGISTRY, Counter
+
+    try:
+        KMS_RPC_TOTAL: Any = Counter(
+            "cage_kms_rpc_total",
+            "Total Cloud KMS RPC calls issued by the GCP KMS provider",
+            ["op"],
+        )
+    except ValueError:  # pragma: no cover - duplicate registration guard
+        KMS_RPC_TOTAL = REGISTRY._names_to_collectors.get("cage_kms_rpc_total")
+except ImportError:  # pragma: no cover - exercised when prometheus_client is absent
+    KMS_RPC_TOTAL = None
+
+
+def _inc_kms_rpc(op: str) -> None:
+    """Increment ``cage_kms_rpc_total{op}`` if ``prometheus_client`` is installed."""
+    if KMS_RPC_TOTAL is not None:
+        KMS_RPC_TOTAL.labels(op=op).inc()
+
 
 # CryptoKeyVersionAlgorithm names (as returned by CryptoKeyVersion.algorithm)
 # that use each hash width. Anything not listed here defaults to SHA-256,
@@ -79,6 +102,7 @@ class GCPKMSProvider(BaseKMSProvider):
         if not self._kms_client or not self._key_version_name:
             return
         try:
+            _inc_kms_rpc("get_crypto_key_version")
             version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
                 name=self._key_version_name
             )
@@ -127,6 +151,7 @@ class GCPKMSProvider(BaseKMSProvider):
                 "[KMSSigner] GCP KMS provider has no client or key version name."
             )
         try:
+            _inc_kms_rpc("get_crypto_key_version")
             version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
                 name=self._key_version_name
             )
@@ -179,6 +204,7 @@ class GCPKMSProvider(BaseKMSProvider):
         if not self._kms_client or not self._key_version_name:
             return False
         try:
+            _inc_kms_rpc("get_crypto_key_version")
             version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
                 name=self._key_version_name
             )
@@ -190,6 +216,7 @@ class GCPKMSProvider(BaseKMSProvider):
         """Verify the GCP KMS key version exists and is in ENABLED state."""
         target_key = key_version_name or self._key_version_name
         if self._kms_client is not None:
+            _inc_kms_rpc("get_crypto_key_version")
             version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
                 name=target_key
             )
@@ -207,6 +234,7 @@ class GCPKMSProvider(BaseKMSProvider):
         )
 
         digest_kwargs = {self._hash_width: digest}
+        _inc_kms_rpc("sign")
         response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
             request=kms_service.AsymmetricSignRequest(
                 name=self._key_version_name,
@@ -220,6 +248,7 @@ class GCPKMSProvider(BaseKMSProvider):
             service as kms_service,  # type: ignore[import]
         )
 
+        _inc_kms_rpc("sign")
         response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
             request=kms_service.AsymmetricSignRequest(
                 name=self._key_version_name,
@@ -229,6 +258,7 @@ class GCPKMSProvider(BaseKMSProvider):
         return response.signature
 
     def get_public_key_pem(self) -> bytes:
+        _inc_kms_rpc("get_public_key")
         response = self._kms_client.get_public_key(name=self._key_version_name)  # type: ignore[union-attr]
         return response.pem.encode("utf-8")
 
@@ -241,9 +271,11 @@ class GCPKMSProvider(BaseKMSProvider):
         crypto_key_name = parts[0]
         keys = {}
         try:
+            _inc_kms_rpc("list_crypto_key_versions")
             versions = self._kms_client.list_crypto_key_versions(parent=crypto_key_name)  # type: ignore[union-attr]
             for v in versions:
                 if v.state.name == "ENABLED":
+                    _inc_kms_rpc("get_public_key")
                     pub = self._kms_client.get_public_key(name=v.name)  # type: ignore[union-attr]
                     keys[v.name] = pub.pem.encode("utf-8")
         except Exception as exc:

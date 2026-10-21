@@ -1031,6 +1031,25 @@ system-security-plan:
 
           2026-08-27 are not verifiable by the current code.
 
+
+          Operational and safety-gate Prometheus metrics are served on a dedicated
+          out-of-band
+
+          WSGI listener (CAGE_METRICS_PORT=9090) started in _gateway_lifespan
+
+          (src/gateway/observability/loop_monitor.py, src/gateway/server/hybrid_server.py),
+
+          alongside a 250 ms asyncio event-loop lag monitor (cage_event_loop_lag_seconds)
+          and
+
+          Cloud KMS RPC counter (cage_kms_rpc_total{op} in src/integrations/gcp/kms_provider.py).
+
+          Scraped by Prometheus ServiceMonitor (stera-gateway-monitor) and GKE Managed
+
+          Prometheus PodMonitoring (gateway-metrics) in deployment/k8s/gateway-servicemonitor.yaml,
+
+          and verified by compliance/lula/lula-validation-metrics.yaml.
+
           '
         implementation-status:
           state: implemented
@@ -1041,6 +1060,12 @@ system-security-plan:
         - href: ../../src/gateway/governance/routing_seal.py
           rel: reference
           text: Routing seal tied to evidence chain
+        - href: ../../src/gateway/observability/loop_monitor.py
+          rel: reference
+          text: Out-of-band Prometheus metrics listener and asyncio event-loop lag monitor
+        - href: ../../compliance/lula/lula-validation-metrics.yaml
+          rel: reference
+          text: Lula automated validation for AU-12 Prometheus ServiceMonitor and GMP PodMonitoring
     - uuid: g7000005-0000-4000-8000-000000000005
       control-id: cm-6
       description: 'Governance configuration settings are loaded once per process

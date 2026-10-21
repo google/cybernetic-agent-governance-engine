@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         app: gateway
+      annotations:
+        config.linkerd.io/skip-inbound-ports: "9090"
     spec:
       securityContext:
         runAsNonRoot: true
@@ -47,6 +49,8 @@ spec:
               name: http
             - containerPort: 50051
               name: grpc
+            - containerPort: 9090
+              name: metrics
           envFrom:
             - secretRef:
                 name: advisor-secrets
@@ -62,6 +66,8 @@ spec:
               value: "8080"
             - name: GATEWAY_GRPC_PORT
               value: "50051"
+            - name: CAGE_METRICS_PORT
+              value: "9090"
             - name: GOOGLE_CLOUD_PROJECT
               value: "${GOOGLE_CLOUD_PROJECT}"
             - name: GOOGLE_CLOUD_LOCATION
@@ -183,6 +189,8 @@ kind: Service
 metadata:
   name: gateway
   namespace: ${NAMESPACE}
+  labels:
+    app: gateway
 spec:
   selector:
     app: gateway
@@ -195,4 +203,8 @@ spec:
       protocol: TCP
       port: 50051
       targetPort: 50051
+    - name: metrics
+      protocol: TCP
+      port: 9090
+      targetPort: 9090
   type: ClusterIP
