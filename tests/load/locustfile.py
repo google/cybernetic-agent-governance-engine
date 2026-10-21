@@ -12,15 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 import json
+import os
 import random
+from typing import Any
 
-from locust import HttpUser, between, events, task
+try:
+    from locust import HttpUser, between, events, task
+except ImportError:  # pragma: no cover - fallback when locust is not installed
+
+    class _FallbackEventHook:
+        def fire(self, **kwargs: Any) -> None:
+            pass
+
+    class _FallbackEvents:
+        request = _FallbackEventHook()
+
+    class HttpUser:  # type: ignore[no-redef]
+        client: Any = None
+
+    def between(min_wait: float, max_wait: float) -> Any:
+        return (min_wait, max_wait)
+
+    def task(weight: int = 1) -> Any:
+        def _decorator(fn: Any) -> Any:
+            return fn
+
+        return _decorator
+
+    events = _FallbackEvents()  # type: ignore[assignment]
 
 # --- 1. Custom Metrics Hooks ---
 # We use this to track "business logic" errors (e.g., Guardrail blocks)
 # distinct from server crashes (HTTP 500).
 REQUEST_TYPE = "Governance_Workflow"
+
+# Named failure categories for horizontal-scaling benchmarks (A2).
+FAILURE_CATEGORY_RATE_LIMIT_429 = "rate_limit_429"
+FAILURE_CATEGORY_CBF_EPOCH_CONTENDED = "cbf_epoch_contended"
+FAILURE_CATEGORY_SEAL_EVIDENCE_CHAIN = "seal_failure_evidence_chain"
+FAILURE_CATEGORY_MCP_404 = "mcp_session_404"
+
+_PRINCIPAL_SEQ = itertools.count(1)
+
+
+def classify_load_failure(
+    status_code: int,
+    body_text: str,
+    endpoint: str = "",
+) -> str | None:
+    """Classify a load-test HTTP response into a canonical scaling failure category.
+
+    Returns one of:
+      - ``rate_limit_429``: HTTP 429 from per-client or per-principal rate limiting.
+      - ``cbf_epoch_contended``: DENY or BLOCKED carrying ``Fence epoch`` or
+        ``CBF_EPOCH_CONTENDED`` from cross-replica CBF epoch CAS contention.
+      - ``seal_failure_evidence_chain``: seal minting / evidence append failure
+        carrying ``EvidenceChainUnavailable``, ``EVIDENCE_CHAIN_UNAVAILABLE``,
+        or the ``EvidenceStreamSink.ingest_sync()`` messages (``seal issuance
+        blocked``, ``evidence commit failed``, ``evidence commit timeout``,
+        ``evidence binding``).
+      - ``mcp_session_404``: HTTP 404 on ``/mcp`` caused by pod-local SSE session
+        affinity loss across multiple replicas.
+      - ``None`` when the response does not match any tracked scaling failure mode.
+    """
+    if status_code == 429:
+        return FAILURE_CATEGORY_RATE_LIMIT_429
+
+    if status_code == 404 and "/mcp" in endpoint:
+        return FAILURE_CATEGORY_MCP_404
+
+    text = body_text or ""
+    if "CBF_EPOCH_CONTENDED" in text or "Fence epoch" in text:
+        return FAILURE_CATEGORY_CBF_EPOCH_CONTENDED
+
+    lowered = text.lower()
+    if (
+        "EvidenceChainUnavailable" in text
+        or "EVIDENCE_CHAIN_UNAVAILABLE" in text
+        or "evidence chain unavailable" in lowered
+        or "seal issuance blocked" in lowered
+        or "evidence commit failed" in lowered
+        or "evidence commit timeout" in lowered
+        or "evidence binding" in lowered
+    ):
+        return FAILURE_CATEGORY_SEAL_EVIDENCE_CHAIN
+
+    return None
+
 
 # --- 2. Data Generators ---
 # Action types exercised by /governance/validate-action
@@ -61,6 +141,20 @@ def _make_trade_params() -> dict:
         "risk_level": random.choice(RISK_LEVELS),
         "horizon": random.choice(TIME_HORIZONS),
         "agent_id": f"load_test_agent_{random.randint(1, 50)}",
+    }
+
+
+def _make_committing_trade_params(principal_id: str) -> dict:
+    """Generate trade parameters for the committing POST /tools/execute path."""
+    return {
+        "symbol": random.choice(TICKERS),
+        "amount": float(random.randint(10, 250)),
+        "currency": "USD",
+        "confidence": round(random.uniform(0.96, 0.99), 2),
+        "trader_id": principal_id,
+        "trader_role": "senior",
+        "dry_run": True,
+        "side": "buy",
     }
 
 
@@ -112,7 +206,7 @@ class GovernanceUser(HttpUser):
     # Body: {"action": str, "params": dict}                               #
     # ------------------------------------------------------------------ #
     @task(5)
-    def validate_action(self):
+    def validate_action(self) -> None:
         """Non-committing governance decision — what the GFA asks before tool execution."""
         action = random.choice(ACTION_TYPES)
         params = _random_params(action)
@@ -182,6 +276,170 @@ class GovernanceUser(HttpUser):
     # Task: GET /health                                                    #
     # ------------------------------------------------------------------ #
     @task(1)
-    def health_check(self):
+    def health_check(self) -> None:
         """Basic liveness probe — ensures connectivity is not the bottleneck."""
         self.client.get("/health", name="GET /health")
+
+
+class GovernedTradeUser(HttpUser):
+    """Exercises the full committing governance path across fixed replica counts.
+
+    Each iteration executes:
+      1. ``POST /governance/validate-action`` (``execute_trade`` preview);
+      2. ``POST /tools/execute`` (``execute_trade_action``), which runs
+         ``SymbolicGovernor.govern()``, mints a KMS routing seal, commits the
+         CBF/fiscal reservations in Redis, and appends the signed evidence
+         record;
+      3. Optional ``POST /mcp/`` tool call when ``LOAD_TEST_ENABLE_MCP=true``.
+
+    Every virtual user sets a distinct ``x-cage-principal`` header so per-principal
+    rate limiting does not collapse all virtual users onto a single pod/proxy IP.
+    """
+
+    wait_time = between(0.5, 1.5)
+
+    def on_start(self) -> None:
+        seq = next(_PRINCIPAL_SEQ)
+        self.principal_id = f"load_principal_{seq}"
+        self.client.headers["l5d-client-id"] = _DEFAULT_CLIENT_ID
+        self.client.headers["x-cage-principal"] = self.principal_id
+        self._enable_mcp = os.environ.get("LOAD_TEST_ENABLE_MCP", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    def _record_category_failure(
+        self,
+        response: Any,
+        category: str,
+        detail: str,
+    ) -> None:
+        # Record a single categorized failure on the HTTP response so Locust's
+        # *_stats.csv and *_failures.csv count each failed HTTP request once.
+        response.failure(f"[{category}] {detail[:200]}")
+
+    @task(1)
+    def governed_trade_flow(self) -> None:
+        """Run validate-action followed by committing execute_trade_action."""
+        trade_params = _make_committing_trade_params(self.principal_id)
+
+        # Step 1: Non-committing preview via POST /governance/validate-action
+        validate_payload = {
+            "action": "execute_trade",
+            "params": {
+                "symbol": trade_params["symbol"],
+                "amount": trade_params["amount"],
+                "currency": trade_params["currency"],
+                "confidence": trade_params["confidence"],
+                "trader_id": trade_params["trader_id"],
+                "trader_role": trade_params["trader_role"],
+                "side": trade_params["side"],
+            },
+        }
+        with self.client.post(
+            "/governance/validate-action",
+            json=validate_payload,
+            name="POST /governance/validate-action",
+            catch_response=True,
+            timeout=30,
+        ) as response:
+            category = classify_load_failure(
+                response.status_code,
+                response.text,
+                endpoint="/governance/validate-action",
+            )
+            if category is not None:
+                self._record_category_failure(response, category, response.text)
+            elif response.status_code in (200, 202):
+                response.success()
+            elif response.status_code == 403:
+                try:
+                    data = response.json()
+                    if data.get("verdict") == "DENIED":
+                        response.success()
+                    else:
+                        response.failure(
+                            f"HTTP 403 (non-governance): {response.text[:200]}"
+                        )
+                except json.JSONDecodeError:
+                    response.failure(f"HTTP 403 (non-JSON): {response.text[:200]}")
+            else:
+                response.failure(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        # Step 2: Committing execution via POST /tools/execute
+        execute_payload = {
+            "tool_name": "execute_trade_action",
+            "params": trade_params,
+        }
+        with self.client.post(
+            "/tools/execute",
+            json=execute_payload,
+            name="POST /tools/execute",
+            catch_response=True,
+            timeout=30,
+        ) as response:
+            category = classify_load_failure(
+                response.status_code,
+                response.text,
+                endpoint="/tools/execute",
+            )
+            if category is not None:
+                self._record_category_failure(response, category, response.text)
+            elif response.status_code == 200:
+                try:
+                    data = response.json()
+                except json.JSONDecodeError:
+                    response.failure("POST /tools/execute returned invalid JSON")
+                    return
+                status = data.get("status")
+                output_text = str(data.get("output") or data.get("error") or "")
+                inner_category = classify_load_failure(
+                    200, output_text, endpoint="/tools/execute"
+                )
+                if inner_category is not None:
+                    self._record_category_failure(response, inner_category, output_text)
+                elif status == "SUCCESS" and not output_text.startswith(
+                    ("BLOCKED:", "ERROR:", "DEFERRED:")
+                ):
+                    response.success()
+                else:
+                    response.failure(f"Tool execution error: {output_text[:200]}")
+            else:
+                response.failure(f"HTTP {response.status_code}: {response.text[:200]}")
+
+        # Step 3: Optional stateless MCP tool call (enabled post-A3 via LOAD_TEST_ENABLE_MCP=true)
+        if self._enable_mcp:
+            mcp_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "check_market_status",
+                    "arguments": {"symbol": trade_params["symbol"]},
+                },
+            }
+            with self.client.post(
+                "/mcp/",
+                json=mcp_payload,
+                headers={
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                },
+                name="POST /mcp/",
+                catch_response=True,
+                timeout=30,
+            ) as response:
+                category = classify_load_failure(
+                    response.status_code,
+                    response.text,
+                    endpoint="/mcp/",
+                )
+                if category is not None:
+                    self._record_category_failure(response, category, response.text)
+                elif response.status_code == 200:
+                    response.success()
+                else:
+                    response.failure(
+                        f"HTTP {response.status_code}: {response.text[:200]}"
+                    )
