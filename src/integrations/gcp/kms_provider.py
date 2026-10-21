@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 
 from src.gateway.governance.env_posture import is_enforcing, resolve_posture
@@ -47,8 +48,7 @@ _GCP_KMS_ED25519_ALGORITHMS = frozenset(
     }
 )
 
-# RFC 7518 JOSE identifier for each CryptoKeyVersionAlgorithm. Names not
-# listed here fall back to ES256 with a warning.
+# RFC 7518 JOSE identifier for each supported CryptoKeyVersionAlgorithm.
 _GCP_KMS_JOSE_ALGORITHMS: dict[str, str] = {
     "EC_SIGN_P256_SHA256": "ES256",
     "EC_SIGN_P384_SHA384": "ES384",
@@ -65,19 +65,30 @@ _GCP_KMS_JOSE_ALGORITHMS: dict[str, str] = {
     "RSA_SIGN_PKCS1_4096_SHA512": "RS512",
 }
 
+# After a failed lookup on first use, reads fail fast for this long instead
+# of queueing another GetCryptoKeyVersion call behind the lock.
+_ALGORITHM_LOOKUP_BACKOFF_S = 10.0
+_LOOKUP_BACKOFF_MESSAGE = (
+    "[KMSSigner] Key algorithm lookup failed recently; next attempt after a "
+    f"{_ALGORITHM_LOOKUP_BACKOFF_S:g}s backoff."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _KeyAlgorithm:
     """Signing metadata derived from a key version's algorithm name.
 
     Cloud KMS fixes a key version's algorithm when the version is created,
-    so one lookup stays valid for the provider's lifetime.
+    so one lookup stays valid for the provider's lifetime. A name outside
+    ``_GCP_KMS_JOSE_ALGORITHMS`` is not ``recognized``: it gets the SHA-256 /
+    ES256 fallback, which only permissive postures accept.
     """
 
     name: str
     digest: str
     jose_alg: str
     rsa_pss: bool
+    recognized: bool
 
     @classmethod
     def from_name(cls, name: str) -> _KeyAlgorithm:
@@ -92,17 +103,26 @@ class _KeyAlgorithm:
         jose_alg = _GCP_KMS_JOSE_ALGORITHMS.get(name)
         if jose_alg is None:
             logger.warning(
-                "[KMSSigner] Unknown GCP algorithm %s, defaulting to ES256", name
+                "[KMSSigner] Unknown GCP algorithm %s: permissive postures fall "
+                "back to SHA-256/ES256, enforcing postures refuse to sign",
+                name,
             )
-            jose_alg = "ES256"
-        return cls(name=name, digest=digest, jose_alg=jose_alg, rsa_pss="PSS" in name)
+        return cls(
+            name=name,
+            digest=digest,
+            jose_alg=jose_alg or "ES256",
+            rsa_pss="PSS" in name,
+            recognized=jose_alg is not None,
+        )
 
 
 class GCPKMSProvider(BaseKMSProvider):
     """Google Cloud KMS HSM provider.
 
     The key version's algorithm is read once and cached, so signing makes no
-    ``GetCryptoKeyVersion`` call.
+    ``GetCryptoKeyVersion`` call. Under an enforcing posture the provider
+    never signs with a guessed algorithm: one that cannot be read, or is not
+    supported, makes ``digest_algorithm`` and ``jose_alg`` raise.
     """
 
     def __init__(
@@ -112,6 +132,8 @@ class GCPKMSProvider(BaseKMSProvider):
         self._kms_client = kms_client
         self._key_algorithm: _KeyAlgorithm | None = None
         self._algorithm_lock = threading.Lock()
+        # time.monotonic() before which a failed lookup is not retried.
+        self._lookup_retry_at = 0.0
         if not kms_client and key_version_name:
             try:
                 from google.cloud import kms  # type: ignore[import]
@@ -132,15 +154,12 @@ class GCPKMSProvider(BaseKMSProvider):
                 ) from exc
         self._detect_hash_width()
 
-    def _fetch_key_algorithm(self) -> _KeyAlgorithm:
-        """Read the key version's algorithm from Cloud KMS and cache it.
+    def _cache_key_algorithm(self, algorithm_name: str) -> _KeyAlgorithm:
+        """Cache the algorithm read from the key version.
 
         Callers must hold ``_algorithm_lock``.
         """
-        version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
-            name=self._key_version_name
-        )
-        key_algorithm = _KeyAlgorithm.from_name(str(version.algorithm.name))
+        key_algorithm = _KeyAlgorithm.from_name(algorithm_name)
         self._key_algorithm = key_algorithm
         logger.info(
             "[GCPKMSProvider] Key algorithm=%s → digest width=%s",
@@ -149,10 +168,20 @@ class GCPKMSProvider(BaseKMSProvider):
         )
         return key_algorithm
 
+    def _fetch_key_algorithm(self) -> _KeyAlgorithm:
+        """Read the key version's algorithm from Cloud KMS and cache it.
+
+        Callers must hold ``_algorithm_lock``.
+        """
+        version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
+            name=self._key_version_name
+        )
+        return self._cache_key_algorithm(str(version.algorithm.name))
+
     def _detect_hash_width(self) -> None:
         """Read and cache the key algorithm, which fixes the digest width.
 
-        A failure is logged and the lookup is retried on first use (see
+        A failure is logged and the first use retries the lookup (see
         :meth:`_resolve_key_algorithm`).
         """
         if not self._kms_client or not self._key_version_name:
@@ -170,8 +199,12 @@ class GCPKMSProvider(BaseKMSProvider):
     def _resolve_key_algorithm(self) -> _KeyAlgorithm:
         """Return the cached key algorithm, fetching it if still unknown.
 
+        Concurrent callers share one lookup. After a failed lookup, reads
+        fail fast for ``_ALGORITHM_LOOKUP_BACKOFF_S`` before the next attempt.
+
         Raises:
-            RuntimeError: If the provider has no client or key version name.
+            RuntimeError: If the provider has no client or key version name,
+                or a lookup failed within the backoff window.
             Exception: Any error from the Cloud KMS lookup.
         """
         key_algorithm = self._key_algorithm
@@ -181,10 +214,28 @@ class GCPKMSProvider(BaseKMSProvider):
             raise RuntimeError(
                 "[KMSSigner] GCP KMS provider has no client or key version name."
             )
+        if time.monotonic() < self._lookup_retry_at:
+            raise RuntimeError(_LOOKUP_BACKOFF_MESSAGE)
         with self._algorithm_lock:
             if self._key_algorithm is not None:
                 return self._key_algorithm
-            return self._fetch_key_algorithm()
+            if time.monotonic() < self._lookup_retry_at:
+                raise RuntimeError(_LOOKUP_BACKOFF_MESSAGE)
+            try:
+                return self._fetch_key_algorithm()
+            except Exception:
+                self._lookup_retry_at = time.monotonic() + _ALGORITHM_LOOKUP_BACKOFF_S
+                raise
+
+    def _supported(self, key_algorithm: _KeyAlgorithm) -> _KeyAlgorithm:
+        """Return ``key_algorithm``; an enforcing posture refuses an unsupported one."""
+        if not key_algorithm.recognized and is_enforcing(resolve_posture()):
+            raise RuntimeError(
+                f"[KMSSigner] Unsupported GCP KMS algorithm {key_algorithm.name!r} "
+                f"for {self._key_version_name!r}; an enforcing posture does not "
+                "sign with a fallback algorithm."
+            )
+        return key_algorithm
 
     def warm_channel(self) -> None:
         """Pre-warm the KMS gRPC channel by querying key version metadata."""
@@ -198,11 +249,12 @@ class GCPKMSProvider(BaseKMSProvider):
     def digest_algorithm(self) -> str:
         """Digest width for the key's algorithm.
 
-        If the algorithm cannot be determined, an enforcing posture raises
-        rather than guess; other postures fall back to SHA-256.
+        Under an enforcing posture an algorithm that cannot be read, or is
+        not supported, raises rather than guess; other postures fall back to
+        SHA-256.
         """
         try:
-            return self._resolve_key_algorithm().digest
+            key_algorithm = self._resolve_key_algorithm()
         except Exception as exc:
             if is_enforcing(resolve_posture()):
                 raise RuntimeError(
@@ -210,6 +262,7 @@ class GCPKMSProvider(BaseKMSProvider):
                     f"{self._key_version_name!r}: {exc}"
                 ) from exc
             return "sha256"
+        return self._supported(key_algorithm).digest
 
     @property
     def expects_raw_message(self) -> bool:
@@ -223,11 +276,12 @@ class GCPKMSProvider(BaseKMSProvider):
                 "[KMSSigner] GCP KMS provider has no client or key version name."
             )
         try:
-            return self._resolve_key_algorithm().jose_alg
+            key_algorithm = self._resolve_key_algorithm()
         except Exception as exc:
             raise RuntimeError(
                 f"[KMSSigner] Failed to determine JOSE algorithm: {exc}"
             ) from exc
+        return self._supported(key_algorithm).jose_alg
 
     @property
     def uses_rsa_pss(self) -> bool:
@@ -238,7 +292,12 @@ class GCPKMSProvider(BaseKMSProvider):
             return False
 
     def validate_ready(self, key_version_name: str = "") -> None:
-        """Verify the GCP KMS key version exists and is in ENABLED state."""
+        """Verify the GCP KMS key version exists and is in ENABLED state.
+
+        For the provider's own key this also caches the version's algorithm
+        (no extra call) and, under an enforcing posture, raises if that
+        algorithm is not supported.
+        """
         target_key = key_version_name or self._key_version_name
         if self._kms_client is not None:
             version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
@@ -249,6 +308,12 @@ class GCPKMSProvider(BaseKMSProvider):
                     f"KMS key version {target_key!r} is in state "
                     f"{version.state.name!r} — expected ENABLED"
                 )
+            if target_key == self._key_version_name:
+                with self._algorithm_lock:
+                    key_algorithm = self._key_algorithm or self._cache_key_algorithm(
+                        str(version.algorithm.name)
+                    )
+                self._supported(key_algorithm)
         else:
             self.get_public_key_pem()
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -34,6 +35,7 @@ from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
 from src.gateway.governance import jwks as jwks_mod
 from src.gateway.governance import kms_signer as ks
 from src.gateway.governance import routing_seal as rs
+from src.integrations.gcp import kms_provider
 from src.integrations.gcp.kms_provider import GCPKMSProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -83,6 +85,30 @@ def _count_pem_parses(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
     return parsed
 
 
+def _read_concurrently(read: Callable[[], object], workers: int = 8) -> list[object]:
+    """Run ``read`` in ``workers`` threads released together; return the results."""
+    barrier = threading.Barrier(workers, timeout=5)
+    results: list[object] = []
+
+    def run() -> None:
+        barrier.wait()
+        results.append(read())
+
+    threads = [threading.Thread(target=run, daemon=True) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert not any(thread.is_alive() for thread in threads), "reader threads hung"
+    return results
+
+
+@pytest.fixture(autouse=True)
+def _permissive_posture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default to a permissive posture; enforcing tests switch explicitly."""
+    monkeypatch.setenv("CAGE_ENV", "test")
+
+
 # ---------------------------------------------------------------------------
 # GCPKMSProvider: algorithm metadata cache
 # ---------------------------------------------------------------------------
@@ -104,7 +130,7 @@ def _count_pem_parses(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
         ("RSA_SIGN_PKCS1_4096_SHA256", "RS256", "sha256", False),
         ("RSA_SIGN_PKCS1_3072_SHA384", "RS384", "sha384", False),
         ("RSA_SIGN_PKCS1_4096_SHA512", "RS512", "sha512", False),
-        # Unmapped algorithms keep the ES256 fallback.
+        # Unsupported names fall back to SHA-256/ES256 in a permissive posture.
         ("EC_SIGN_SECP256K1_SHA256", "ES256", "sha256", False),
     ],
 )
@@ -162,22 +188,42 @@ def test_concurrent_first_use_fetches_once() -> None:
     client.get_crypto_key_version.side_effect = lookup
     provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
 
-    workers = 8
-    barrier = threading.Barrier(workers)
-    results: list[str] = []
-
-    def read_alg() -> None:
-        barrier.wait()
-        results.append(provider.jose_alg)
-
-    threads = [threading.Thread(target=read_alg) for _ in range(workers)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=5)
-
-    assert results == ["ES256"] * workers
+    assert _read_concurrently(lambda: provider.jose_alg) == ["ES256"] * 8
     assert client.get_crypto_key_version.call_count == 2
+
+
+def test_concurrent_reads_share_one_failing_lookup() -> None:
+    client = MagicMock()
+
+    def lookup(*, name: str) -> object:
+        time.sleep(0.05)  # hold the lock while the other threads queue on it
+        raise RuntimeError("UNAVAILABLE")
+
+    client.get_crypto_key_version.side_effect = lookup
+    provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
+
+    assert _read_concurrently(lambda: provider.digest_algorithm) == ["sha256"] * 8
+    # Startup, then one retry; the other readers fail fast inside the backoff.
+    assert client.get_crypto_key_version.call_count == 2
+
+
+def test_failed_lookup_is_retried_only_after_the_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [1_000.0]
+    monkeypatch.setattr(kms_provider, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    client = MagicMock()
+    client.get_crypto_key_version.side_effect = RuntimeError("PERMISSION_DENIED")
+    provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
+
+    for _ in range(50):
+        assert provider.digest_algorithm == "sha256"
+        assert provider.uses_rsa_pss is False
+    assert client.get_crypto_key_version.call_count == 2
+
+    now[0] += kms_provider._ALGORITHM_LOOKUP_BACKOFF_S
+    assert provider.digest_algorithm == "sha256"
+    assert client.get_crypto_key_version.call_count == 3
 
 
 def test_unresolved_algorithm_fails_closed_when_enforcing(
@@ -197,16 +243,81 @@ def test_unresolved_algorithm_fails_closed_when_enforcing(
     assert provider.uses_rsa_pss is False
 
 
-def test_unresolved_algorithm_defaults_to_sha256_when_permissive(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CAGE_ENV", "test")
+def test_unresolved_algorithm_defaults_to_sha256_when_permissive() -> None:
     client = MagicMock()
     client.get_crypto_key_version.side_effect = RuntimeError("unavailable")
     provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
 
     assert provider.digest_algorithm == "sha256"
     assert provider.expects_raw_message is False
+
+
+def test_enforcing_posture_never_signs_with_a_guessed_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MagicMock()
+    client.get_crypto_key_version.side_effect = RuntimeError("PERMISSION_DENIED")
+    provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
+    signer = ks.KMSGovernanceSigner(provider=provider, key_version_name=_KEY)
+
+    monkeypatch.setenv("CAGE_ENV", "production")
+    with pytest.raises(RuntimeError, match="KMS asymmetricSign failed"):
+        signer.sign({"action": _ACTION})
+    with pytest.raises(RuntimeError, match="Cannot determine the digest width"):
+        provider.sign_digest(bytes(32))
+    client.asymmetric_sign.assert_not_called()
+
+
+def test_unsupported_algorithm_is_refused_when_enforcing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client("EC_SIGN_SECP256K1_SHA256")
+    provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
+    signer = ks.KMSGovernanceSigner(provider=provider, key_version_name=_KEY)
+
+    monkeypatch.setenv("CAGE_ENV", "production")
+    with pytest.raises(RuntimeError, match="Unsupported GCP KMS algorithm"):
+        _ = provider.jose_alg
+    with pytest.raises(RuntimeError, match="Unsupported GCP KMS algorithm"):
+        _ = provider.digest_algorithm
+    with pytest.raises(RuntimeError, match="KMS asymmetricSign failed"):
+        signer.sign({"action": _ACTION})
+    client.asymmetric_sign.assert_not_called()
+
+
+def test_validate_ready_caches_the_algorithm_it_reads() -> None:
+    client = _client("EC_SIGN_P384_SHA384")
+    version = client.get_crypto_key_version.return_value
+    version.state.name = "ENABLED"
+    client.get_crypto_key_version.side_effect = [RuntimeError("cold start"), version]
+    provider = GCPKMSProvider(key_version_name=_KEY, kms_client=client)
+
+    provider.validate_ready()
+
+    assert provider.digest_algorithm == "sha384"
+    assert provider.jose_alg == "ES384"
+    # The readiness probe's lookup filled the cache: no lookup on first use.
+    assert client.get_crypto_key_version.call_count == 2
+
+
+def test_validate_ready_refuses_an_unsupported_algorithm_when_enforcing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client("EC_SIGN_SECP256K1_SHA256")
+    client.get_crypto_key_version.return_value.state.name = "ENABLED"
+    signer = ks.KMSGovernanceSigner(
+        provider=GCPKMSProvider(key_version_name=_KEY, kms_client=client),
+        key_version_name=_KEY,
+        public_key_pem=_ec_key()[1],
+    )
+
+    signer.validate_ready()  # a permissive posture accepts the fallback
+
+    monkeypatch.setenv("CAGE_ENV", "production")
+    # A RuntimeError is not downgraded to verification-only mode, so the
+    # kms_ready startup check refuses to start.
+    with pytest.raises(RuntimeError, match="Unsupported GCP KMS algorithm"):
+        signer.validate_ready()
 
 
 # ---------------------------------------------------------------------------
