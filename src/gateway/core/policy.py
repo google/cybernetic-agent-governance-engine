@@ -23,7 +23,6 @@ import os
 import threading
 import time
 import urllib.parse
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -219,12 +218,12 @@ class BreakerState(str, Enum):
 class CallOutcome(Enum):
     """What one OPA call showed about OPA's health."""
 
-    #: OPA answered: any HTTP status below 500.
+    #: OPA answered: HTTP 2xx-4xx other than 408 and 429.
     HEALTHY = "healthy"
-    #: OPA failed: connect, read or protocol error, or HTTP 5xx.
+    #: OPA failed: connect, read or protocol error, HTTP 5xx, 408 or 429.
     UPSTREAM_FAILURE = "upstream_failure"
-    #: The call never reached OPA: local pool saturation, misconfiguration,
-    #: cancellation.
+    #: The call never reached OPA (local pool saturation, misconfiguration,
+    #: an unexpected local error) or was cancelled.
     INCONCLUSIVE = "inconclusive"
 
 
@@ -242,18 +241,25 @@ _PROBE = BreakerTicket(probe=True)
 class CircuitBreaker:
     """Fail-fast breaker for the OPA hot path.
 
-    - **CLOSED**: calls flow. ``failure_threshold`` upstream failures within
-      a sliding ``failure_window_s`` open the circuit.
+    - **CLOSED**: calls flow. ``failure_threshold`` consecutive upstream
+      failures open the circuit; a healthy answer resets the count.
     - **OPEN**: calls fail fast until ``recovery_timeout`` seconds have
       passed; the next call then becomes the HALF_OPEN probe.
     - **HALF_OPEN**: only the probe reaches OPA. A healthy answer closes the
       circuit, an upstream failure reopens it, and an inconclusive outcome
       frees the slot for the next caller.
 
-    Only upstream failures count: local pool saturation and requests OPA
-    rejects (4xx) say nothing about OPA's health. Transitions run under a
-    threading lock and never await, so one breaker is safe across threads
-    and event loops. The latency-budget helpers (``is_bankrupt``,
+    Only upstream failures count: local pool saturation, misconfiguration
+    and requests OPA rejects (4xx) say nothing about OPA's health. Counting
+    consecutive failures rather than failures per time window keeps the trip
+    rule independent of traffic volume: a dead OPA trips it at any request
+    rate, and rare errors between healthy answers never do. Once the circuit
+    has opened, outcomes of calls admitted before it are ignored; only the
+    probe moves it on.
+
+    Transitions run under a threading lock that is never held across an
+    await or while logging, so one breaker is safe across threads and event
+    loops. The latency-budget helpers (``is_bankrupt``,
     ``check_soft_ceiling``) are stateless.
     """
 
@@ -262,17 +268,15 @@ class CircuitBreaker:
         failure_threshold: int = 5,
         recovery_timeout: float = 30.0,
         max_latency_budget: int = 3000,
-        failure_window_s: float = 10.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.max_latency_budget = max_latency_budget
-        self.failure_window_s = failure_window_s
         self._clock = clock
         self._lock = threading.Lock()
         self._state = BreakerState.CLOSED
-        self._failure_times: deque[float] = deque()
+        self._failures = 0
         self._opened_at = 0.0
         self._probe_in_flight = False
 
@@ -283,10 +287,8 @@ class CircuitBreaker:
 
     @property
     def failures(self) -> int:
-        """Upstream failures inside the sliding window."""
-        with self._lock:
-            self._prune(self._clock())
-            return len(self._failure_times)
+        """Consecutive upstream failures counted while CLOSED."""
+        return self._failures
 
     def admit(self) -> BreakerTicket | None:
         """Admit one call to OPA, or return ``None`` to fail fast."""
@@ -297,54 +299,54 @@ class CircuitBreaker:
                 if self._clock() - self._opened_at < self.recovery_timeout:
                     return None
                 self._state = BreakerState.HALF_OPEN
-                logger.info("🔌 Circuit Breaker HALF_OPEN: probing OPA once.")
             if self._probe_in_flight:
                 return None
             self._probe_in_flight = True
-            return _PROBE
+        logger.info("🔌 Circuit Breaker HALF_OPEN: probing OPA once.")
+        return _PROBE
 
     def record(self, ticket: BreakerTicket, outcome: CallOutcome) -> None:
         """Record what an admitted call showed about OPA's health."""
         with self._lock:
-            now = self._clock()
-            if ticket.probe:
-                self._probe_in_flight = False
-                if outcome is CallOutcome.HEALTHY:
-                    self._state = BreakerState.CLOSED
-                    self._failure_times.clear()
-                    logger.info("✅ Circuit Breaker recovered: HALF_OPEN → CLOSED.")
-                elif outcome is CallOutcome.UPSTREAM_FAILURE:
-                    self._open(now, "the HALF_OPEN probe failed")
-                return
-            if outcome is not CallOutcome.UPSTREAM_FAILURE:
-                return
-            self._failure_times.append(now)
-            self._prune(now)
-            if (
-                self._state is BreakerState.CLOSED
-                and len(self._failure_times) >= self.failure_threshold
-            ):
-                self._open(
-                    now,
-                    f"{len(self._failure_times)} upstream failures within "
-                    f"{self.failure_window_s:g}s",
-                )
-
-    def _open(self, now: float, reason: str) -> None:
-        """Open the circuit. Callers hold ``_lock``."""
-        self._state = BreakerState.OPEN
-        self._opened_at = now
+            before = self._state
+            self._apply(ticket, outcome)
+            after, failures = self._state, self._failures
+        if after is before:
+            return
+        if after is BreakerState.CLOSED:
+            logger.info("✅ Circuit Breaker recovered: HALF_OPEN → CLOSED.")
+            return
         logger.warning(
             "🔥 Circuit Breaker OPENED (%s); failing fast for %gs.",
-            reason,
+            "the HALF_OPEN probe failed"
+            if ticket.probe
+            else f"{failures} consecutive upstream failures",
             self.recovery_timeout,
         )
 
-    def _prune(self, now: float) -> None:
-        """Drop failures older than the window. Callers hold ``_lock``."""
-        horizon = now - self.failure_window_s
-        while self._failure_times and self._failure_times[0] <= horizon:
-            self._failure_times.popleft()
+    def _apply(self, ticket: BreakerTicket, outcome: CallOutcome) -> None:
+        """Apply one outcome to the state machine. Callers hold ``_lock``."""
+        if ticket.probe:
+            self._probe_in_flight = False
+            if outcome is CallOutcome.HEALTHY:
+                self._state = BreakerState.CLOSED
+                self._failures = 0
+            elif outcome is CallOutcome.UPSTREAM_FAILURE:
+                self._open()
+            return
+        if self._state is not BreakerState.CLOSED:
+            return  # admitted before the circuit opened; only the probe counts
+        if outcome is CallOutcome.HEALTHY:
+            self._failures = 0
+        elif outcome is CallOutcome.UPSTREAM_FAILURE:
+            self._failures += 1
+            if self._failures >= self.failure_threshold:
+                self._open()
+
+    def _open(self) -> None:
+        """Open the circuit. Callers hold ``_lock``."""
+        self._state = BreakerState.OPEN
+        self._opened_at = self._clock()
 
     def is_bankrupt(self, cumulative_spend_ms: float) -> bool:
         if cumulative_spend_ms > self.max_latency_budget:
@@ -372,8 +374,8 @@ def _opa_endpoint() -> tuple[str, str | None]:
     would let a deployment point the kernel at another domain's policy.
 
     Raises:
-        RuntimeError: ``OPA_URL`` unset, carrying a path/query, or using an
-            unsupported scheme.
+        RuntimeError: ``OPA_URL`` unset, carrying a path/query, naming no
+            host or socket, or using an unsupported scheme.
     """
     raw = Config.OPA_URL
     if not raw:
@@ -385,11 +387,16 @@ def _opa_endpoint() -> tuple[str, str | None]:
             "the decision path comes from the active domain's DomainConfig.opa_package"
         )
     if parsed.scheme == "http+unix":
-        return "http://localhost", urllib.parse.unquote(parsed.netloc)
+        socket_path = urllib.parse.unquote(parsed.netloc)
+        if not socket_path:
+            raise RuntimeError("FAIL-CLOSED: OPA_URL names no socket path")
+        return "http://localhost", socket_path
     if parsed.scheme not in ("http", "https"):
         raise RuntimeError(
             f"FAIL-CLOSED: OPA_URL scheme must be http, https or http+unix, got {parsed.scheme!r}"
         )
+    if not parsed.hostname:
+        raise RuntimeError("FAIL-CLOSED: OPA_URL names no host")
     return f"{parsed.scheme}://{parsed.netloc}", None
 
 
@@ -434,16 +441,24 @@ def _decision_string(raw_result: Any) -> str:
     """Normalize an OPA ``result`` to a canonical uppercase decision string.
 
     OPA policies return a dict (``{"allow": true}`` or ``{"decision": "ALLOW"}``),
-    a bool, or a string; anything else denies.
+    a bool, or a string; anything else denies. A dict with neither key, or
+    whose ``allow`` and ``decision`` disagree, is ambiguous and denies.
     """
     if isinstance(raw_result, dict):
-        decision = raw_result.get("allow", raw_result.get("decision", "DENY"))
-        if isinstance(decision, bool):
-            return "ALLOW" if decision else "DENY"
-        return str(decision).upper()
-    if isinstance(raw_result, bool):
-        return "ALLOW" if raw_result else "DENY"
-    return str(raw_result).upper() if raw_result is not None else "DENY"
+        answers = {
+            _scalar_decision(raw_result[key])
+            for key in ("decision", "allow")
+            if key in raw_result
+        }
+        return answers.pop() if len(answers) == 1 else "DENY"
+    return _scalar_decision(raw_result)
+
+
+def _scalar_decision(value: Any) -> str:
+    """``True``/``False`` → ``ALLOW``/``DENY``; ``None`` denies; else uppercased."""
+    if isinstance(value, bool):
+        return "ALLOW" if value else "DENY"
+    return str(value).upper() if value is not None else "DENY"
 
 
 def _deny(span: Span, error: BaseException | str, reason: str) -> str:
@@ -589,9 +604,8 @@ class OPAClient:
     ) -> str:
         """Ask OPA for a decision on ``input_data``; any failure denies.
 
-        Every call goes to OPA: decisions are never cached, because the input
-        carries per-request fields and a policy or data change must take
-        effect on the next request.
+        Every call goes to OPA: decisions are never cached, so a policy or
+        data change takes effect on the next request.
         """
         if self.cb.is_bankrupt(current_latency_ms):
             logger.critical(
@@ -616,6 +630,12 @@ class OPAClient:
         try:
             decision, outcome = await self._query_opa(input_data)
             return decision
+        except Exception:
+            # _query_opa denies every failure it anticipates; anything else is
+            # a local bug, and PolicyClient promises an erroring policy engine
+            # yields DENY.
+            logger.exception("🔥 OPA FAILURE (UNEXPECTED_ERROR); denying.")
+            return "DENY"
         finally:
             self.cb.record(ticket, outcome)
 
@@ -658,17 +678,25 @@ class OPAClient:
             # start_explain_worker() for the background explain architecture.
             try:
                 # HIGH-7 fix: use the pooled client — no new client per request.
+                # The client's own timeouts apply (connect 2 s, read and write
+                # 5 s, pool 2 s), so a saturated pool fails fast.
                 response = await self._get_client().post(
                     self.target_url,
                     json={"input": normalized_input},
                     headers=headers,
-                    timeout=5.0,
                 )
             except httpx.PoolTimeout as exc:
-                # Every pooled connection is busy: this gateway is saturated,
-                # which says nothing about OPA, so the breaker is not charged.
+                # Every pooled connection is busy. This request is denied, but
+                # that is no evidence OPA is down: if OPA is slow enough to
+                # matter, the in-flight calls time out and trip the breaker.
                 return _deny(
                     span, exc, "LOCAL_POOL_SATURATED"
+                ), CallOutcome.INCONCLUSIVE
+            except (httpx.UnsupportedProtocol, httpx.LocalProtocolError) as exc:
+                # Raised before any byte reaches OPA: an unusable OPA_URL, or
+                # an illegal header value such as a token with a newline.
+                return _deny(
+                    span, exc, "LOCAL_MISCONFIGURATION"
                 ), CallOutcome.INCONCLUSIVE
             except httpx.TransportError as exc:
                 return _deny(span, exc, "SYSTEM_FAILURE"), CallOutcome.UPSTREAM_FAILURE
@@ -680,7 +708,8 @@ class OPAClient:
                 TRACE_METADATA_LATENCY_CURRENCY_TAX, (time.time() - start_time) * 1000
             )
             status = response.status_code
-            if status >= 500:
+            # 5xx, or 408/429 from a proxy in front of OPA: no answer came back.
+            if status >= 500 or status in (408, 429):
                 return (
                     _deny(span, f"OPA returned HTTP {status}", "SYSTEM_FAILURE"),
                     CallOutcome.UPSTREAM_FAILURE,

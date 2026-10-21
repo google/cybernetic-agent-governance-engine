@@ -76,17 +76,17 @@ The following mechanisms are implemented in code and actively reduce governance 
 
 ### 1. No OPA Decision Cache
 
-[`OPAClient.evaluate_policy()`](../../src/gateway/core/policy.py) sends every decision to OPA. The Redis decision cache it used to consult never hit in practice: every governed input carries per-request fields (a fresh `transaction_id`, latency measurements), so no two inputs matched, and each request paid a Redis read and write for nothing. A cached decision would also have kept serving after a policy or data change.
+[`OPAClient.evaluate_policy()`](../../src/gateway/core/policy.py) sends every decision to OPA, so a policy or data change takes effect on the next request. The Redis decision cache it used to consult (10 s TTL) almost never hit on the trade path, where each `execute_trade` carries a fresh `transaction_id`, so those checks paid a Redis read and write for nothing. Where inputs did repeat (read-only actions, and the repeated-input benchmark recorded in [`PROVENANCE.md`](../paper/measurements/2026-10-03-c0e3b14e/PROVENANCE.md)), it hid OPA latency and could serve a decision for up to 10 s after a policy or data change.
 
 ### 2. Circuit Breaker (Fail-Fast, Latency Budget Enforcement)
 
 `CircuitBreaker` in `policy.py` protects the governance path from cascading failures:
 
-- **Failure threshold:** 5 upstream failures (connect, read or protocol errors, or HTTP 5xx) within a sliding 10 s window → circuit OPEN, and every check fails fast with `DENY`
-- **Not counted:** HTTP 4xx answers (OPA is up but rejected the query) and local connection-pool saturation (`httpx.PoolTimeout`); both deny that request without tripping the breaker
+- **Failure threshold:** 5 consecutive upstream failures (connect, read or protocol errors, HTTP 5xx, or 408/429 from a proxy) → circuit OPEN, and every check fails fast with `DENY`. A healthy answer resets the count, so the rule does not depend on traffic volume: a dead OPA trips it at any request rate, and rare errors between healthy answers never do.
+- **Not counted:** HTTP 4xx answers (OPA is up but rejected the query), local connection-pool saturation (`httpx.PoolTimeout`), and local misconfiguration (an unusable `OPA_URL`, an illegal header value); each denies that request without tripping the breaker
 - **Recovery:** after 30 seconds the next call is the single HALF_OPEN probe; a healthy answer closes the circuit, an upstream failure reopens it, and other callers keep failing fast until the probe finishes
-- **Hard latency budget:** 3000ms (`max_latency_budget`) — requests exceeding this are fast-failed with `DENY` ("Bankruptcy Protocol")
-- **Soft ceiling:** 2000ms — emits a `Latency Inflation Warning` log but does not block
+- **Hard latency budget:** 3000ms (`max_latency_budget`) — a caller that passes its elapsed governance time as `current_latency_ms` gets `DENY` once it exceeds this ("Bankruptcy Protocol"). No in-repo caller passes it yet (`OpaStage`, the MCP tool server and the warm-up use the default of 0), so the budget is not enforced in production today.
+- **Soft ceiling:** 2000ms — emits a `Latency Inflation Warning` log but does not block (same `current_latency_ms` caveat)
 
 ### 3. Gateway Boot-Time Pre-Warming
 

@@ -21,6 +21,7 @@ connections required.
 from __future__ import annotations
 
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -32,6 +33,7 @@ import pytest
 import src.gateway.core.policy as policy_mod
 from src.gateway.core.policy import (
     BreakerState,
+    BreakerTicket,
     CallOutcome,
     CircuitBreaker,
     OPAClient,
@@ -86,7 +88,7 @@ class TestCircuitBreaker:
         ticket = cb.admit()
         assert ticket is not None and not ticket.probe
 
-    def test_opens_at_the_threshold_within_the_window(self) -> None:
+    def test_opens_after_threshold_consecutive_upstream_failures(self) -> None:
         cb = _breaker(_Clock())
         _fail(cb, 2)
         assert cb.state is BreakerState.CLOSED
@@ -94,14 +96,36 @@ class TestCircuitBreaker:
         assert cb.state is BreakerState.OPEN
         assert cb.admit() is None
 
-    def test_failures_outside_the_window_expire(self) -> None:
+    def test_slow_failures_still_open_the_circuit(self) -> None:
+        """A dead OPA trips the breaker however far apart its failures are."""
         clock = _Clock()
-        cb = _breaker(clock, failure_window_s=10.0)
-        _fail(cb, 2)
-        clock.advance(10.0)
-        assert cb.failures == 0
-        _fail(cb, 2)
+        cb = _breaker(clock)
+        for _ in range(cb.failure_threshold):
+            clock.advance(60.0)
+            _fail(cb)
+        assert cb.state is BreakerState.OPEN
+
+    def test_a_healthy_answer_resets_the_count(self) -> None:
+        """Rare errors between healthy answers never trip the breaker."""
+        cb = _breaker(_Clock())
+        for _ in range(5):
+            _fail(cb, cb.failure_threshold - 1)
+            ticket = cb.admit()
+            assert ticket is not None
+            cb.record(ticket, CallOutcome.HEALTHY)
+            assert cb.failures == 0
         assert cb.state is BreakerState.CLOSED
+
+    def test_inconclusive_outcomes_neither_count_nor_reset(self) -> None:
+        cb = _breaker(_Clock())
+        _fail(cb, 2)
+        for _ in range(5):
+            ticket = cb.admit()
+            assert ticket is not None
+            cb.record(ticket, CallOutcome.INCONCLUSIVE)
+        assert cb.failures == 2
+        _fail(cb)
+        assert cb.state is BreakerState.OPEN
 
     def test_healthy_and_inconclusive_outcomes_never_count(self) -> None:
         cb = _breaker(_Clock())
@@ -191,6 +215,52 @@ class TestCircuitBreaker:
         cb.record(probe, CallOutcome.HEALTHY)
         assert cb.state is BreakerState.CLOSED
 
+    def test_late_outcomes_while_open_do_not_move_the_probe(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock)
+        stragglers = [cb.admit(), cb.admit()]
+        _open(cb)
+
+        clock.advance(20.0)
+        for ticket, outcome in zip(
+            stragglers,
+            [CallOutcome.UPSTREAM_FAILURE, CallOutcome.HEALTHY],
+            strict=True,
+        ):
+            assert ticket is not None
+            cb.record(ticket, outcome)
+        assert cb.state is BreakerState.OPEN
+
+        clock.advance(9.9)
+        assert cb.admit() is None
+        clock.advance(0.1)
+        probe = cb.admit()
+        assert probe is not None and probe.probe
+
+    def test_exactly_one_probe_across_threads(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock)
+        _open(cb)
+        clock.advance(30.0)
+        contenders = 32
+        barrier = threading.Barrier(contenders)
+        tickets: list[BreakerTicket | None] = []
+
+        def contend() -> None:
+            barrier.wait()
+            tickets.append(cb.admit())
+
+        threads = [threading.Thread(target=contend) for _ in range(contenders)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        probes = [t for t in tickets if t is not None]
+        assert len(tickets) == contenders
+        assert len(probes) == 1 and probes[0].probe
+        assert cb.state is BreakerState.HALF_OPEN
+
     def test_is_bankrupt_when_over_budget(self) -> None:
         cb = CircuitBreaker(max_latency_budget=3000)
         assert cb.is_bankrupt(3001.0) is True
@@ -259,6 +329,9 @@ class TestOPAClientInit:
             "http+unix://%2Frun%2Fopa.sock/v1/data/trade/governance",
             "http://localhost:8181?x=1",
             "ftp://localhost:8181",
+            "http://",
+            "http://:8181",
+            "http+unix://",
             "",
             None,
         ],
@@ -575,6 +648,9 @@ def _response(
         ({"allow": True}, "ALLOW"),
         ({"allow": False}, "DENY"),
         ({"decision": "manual_review"}, "MANUAL_REVIEW"),
+        ({"allow": True, "decision": "allow"}, "ALLOW"),
+        ({"allow": True, "decision": "DENY"}, "DENY"),
+        ({"allow": False, "decision": "ALLOW"}, "DENY"),
         ({}, "DENY"),
         (True, "ALLOW"),
         (False, "DENY"),
@@ -596,10 +672,10 @@ class TestOPAClientEvaluatePolicy:
             mock_cfg.OPA_AUTH_TOKEN = ""
             return OPAClient()
 
-    def _half_open_client(self) -> OPAClient:
+    def _half_open_client(self, opa_url: str = "http://localhost:8181") -> OPAClient:
         """A client whose breaker has just reached its recovery timeout."""
         clock = _Clock()
-        client = self._make_opa_client()
+        client = self._make_opa_client(opa_url)
         client.cb = CircuitBreaker(clock=clock)
         _open(client.cb)
         clock.advance(client.cb.recovery_timeout)
@@ -706,6 +782,90 @@ class TestOPAClientEvaluatePolicy:
         client = self._half_open_client()
         assert await self._evaluate(client, self._http(response=_response())) == "ALLOW"
         assert client.cb.state is BreakerState.CLOSED
+
+    @pytest.mark.parametrize(
+        ("probe_kwargs", "state_after"),
+        [
+            pytest.param({"response": _response(503)}, BreakerState.OPEN, id="5xx"),
+            pytest.param({"response": _response(408)}, BreakerState.OPEN, id="408"),
+            pytest.param({"response": _response(429)}, BreakerState.OPEN, id="429"),
+            pytest.param(
+                {"exc": httpx.ConnectError("refused")}, BreakerState.OPEN, id="connect"
+            ),
+            pytest.param(
+                {"exc": httpx.ReadTimeout("slow")}, BreakerState.OPEN, id="read-timeout"
+            ),
+            pytest.param({"response": _response(404)}, BreakerState.CLOSED, id="4xx"),
+            pytest.param(
+                {"response": _response(json_error=True)},
+                BreakerState.CLOSED,
+                id="malformed-json",
+            ),
+            pytest.param(
+                {"response": _response(payload=["a"])},
+                BreakerState.CLOSED,
+                id="non-object-json",
+            ),
+            pytest.param(
+                {"exc": httpx.PoolTimeout("pool full")},
+                BreakerState.HALF_OPEN,
+                id="pool-timeout",
+            ),
+            pytest.param(
+                {"exc": httpx.LocalProtocolError("illegal header value")},
+                BreakerState.HALF_OPEN,
+                id="local-protocol-error",
+            ),
+            pytest.param(
+                {"exc": httpx.UnsupportedProtocol("missing scheme")},
+                BreakerState.HALF_OPEN,
+                id="unsupported-protocol",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_probe_outcome_decides_the_next_state(
+        self, probe_kwargs: dict, state_after: BreakerState
+    ) -> None:
+        """Upstream failures reopen, OPA answers close, local errors free the slot."""
+        client = self._half_open_client()
+
+        assert await self._evaluate(client, self._http(**probe_kwargs)) == "DENY"
+
+        assert client.cb.state is state_after
+        follow_up = self._http(response=_response())
+        if state_after is BreakerState.OPEN:
+            assert await self._evaluate(client, follow_up) == "DENY"
+            follow_up.post.assert_not_awaited()
+        else:
+            # CLOSED admits everyone; a freed HALF_OPEN slot admits a new probe.
+            assert await self._evaluate(client, follow_up) == "ALLOW"
+            assert client.cb.state is BreakerState.CLOSED
+
+    @pytest.mark.asyncio
+    async def test_misconfigured_url_probe_frees_the_slot(self) -> None:
+        client = self._half_open_client(
+            "http://localhost:8181/v1/data/trade/governance"
+        )
+
+        assert await client.evaluate_policy({"action": "trade"}) == "DENY"
+
+        assert client.cb.state is BreakerState.HALF_OPEN
+        ticket = client.cb.admit()
+        assert ticket is not None and ticket.probe
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_denies_and_frees_the_probe(self) -> None:
+        """Errors _query_opa does not anticipate still yield DENY (PolicyClient)."""
+        client = self._half_open_client()
+        response = _response()
+        response.json = MagicMock(side_effect=RecursionError("deeply nested body"))
+
+        assert await self._evaluate(client, self._http(response=response)) == "DENY"
+
+        assert client.cb.state is BreakerState.HALF_OPEN
+        ticket = client.cb.admit()
+        assert ticket is not None and ticket.probe
 
     @pytest.mark.asyncio
     async def test_only_the_probe_reaches_opa_while_half_open(self) -> None:
