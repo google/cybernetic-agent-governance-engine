@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestGatewayLive")
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8080")
-MCP_SSE_URL = f"{GATEWAY_URL}/mcp/sse"
+MCP_SSE_URL = f"{GATEWAY_URL}/mcp/"
 
 
 @pytest.mark.asyncio

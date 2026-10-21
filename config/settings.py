@@ -60,9 +60,11 @@ class Config:
     # Gateway Configuration
     GATEWAY_URL = os.getenv("GATEWAY_URL")
     GATEWAY_API_BASE = f"{GATEWAY_URL}/v1" if GATEWAY_URL else None
-    MCP_SERVER_SSE_URL = os.getenv(
-        "MCP_SERVER_SSE_URL", f"{GATEWAY_URL}/mcp/sse" if GATEWAY_URL else None
+    GATEWAY_MCP_URL = os.getenv(
+        "GATEWAY_MCP_URL",
+        os.getenv("MCP_SERVER_SSE_URL", f"{GATEWAY_URL}/mcp/" if GATEWAY_URL else None),
     )
+    MCP_SERVER_SSE_URL = GATEWAY_MCP_URL
     VLLM_FAST_API_BASE = os.getenv("VLLM_FAST_API_BASE")
 
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", 8192))
