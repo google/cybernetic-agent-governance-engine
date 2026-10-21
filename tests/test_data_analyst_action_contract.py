@@ -71,14 +71,14 @@ def test_generated_ftra_registry_classifies_it_read_only() -> None:
 
 # ---------------------------------------------------------------------------
 # OPA: evaluate the shipped policy against the input shape the OPA stage
-# builds (``{**params, "action": action, "tool_input": params}``) for a
-# data-analyst tool call. The tool call carries no trader_role or risk_profile.
+# builds (``{**params, "action": action}``) for a data-analyst tool call.
+# The tool call carries no trader_role or risk_profile.
 # ---------------------------------------------------------------------------
 
 
 def _opa_decision(action: str) -> Any:
     params = {"symbol": "AAPL", "tool_name": "check_market_status", "action": action}
-    payload = {**params, "action": action, "tool_input": params}
+    payload = {**params, "action": action}
     out = subprocess.run(  # noqa: S603 — fixed argv, local opa binary
         [
             str(shutil.which("opa")),

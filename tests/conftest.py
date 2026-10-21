@@ -254,10 +254,6 @@ def pytest_configure(config: pytest.Config) -> None:
         "OPA_URL",
         os.environ.get("OPA_URL_TEST_OVERRIDE", "http://localhost:8181"),
     )
-    # Disable OPA Redis decision cache in all test runs to prevent cross-test
-    # cache pollution (a warm cache from test_opa_allow would cause test_opa_deny
-    # to return a stale ALLOW).  The cache is enabled in production by default.
-    _setdefault("OPA_CACHE_ENABLED", "false")
     # GOVERNANCE_SALT must be consistent so routing seals issued during tests
     # can be verified by both the gateway module and the GFA mirror module.
     _setdefault("GOVERNANCE_SALT", "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!")

@@ -109,7 +109,7 @@ The following components are essential infrastructure but are **not** numbered g
 
 - **Canonical policy:** `src/cage_finance/opa/trade_governance.rego` (package `trade.governance`).
 - **System authorization:** `deployment/system_authz.rego` — enforces SR 26-2 §IV.B `confidence_sufficient ≥ 0.95` for agentic trade execution (OPA is sole enforcer; Python check is a fast-fail pre-check only).
-- **Infrastructure:** OPA runs as a standalone service in the `default` namespace; the gateway calls it via the `OPAClient` with a `CircuitBreaker` (5 failures → 30s open-circuit; DENY-on-open).
+- **Infrastructure:** OPA runs as a standalone service in the `default` namespace; the gateway calls it via the `OPAClient` with a `CircuitBreaker` (5 upstream failures within 10s → 30s open-circuit, then one half-open probe; DENY-on-open). Decisions are never cached.
 
 ---
 

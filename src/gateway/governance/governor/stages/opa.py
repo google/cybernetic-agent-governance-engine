@@ -88,7 +88,7 @@ class OpaStage(Stage):
         self.opa_client = opa_client
 
     async def run(self, ctx: StageContext) -> StageOutput:
-        opa_payload = {**ctx.params, "action": ctx.action, "tool_input": ctx.params}
+        opa_payload = {**ctx.params, "action": ctx.action}
 
         try:
             raw_result = await self.opa_client.evaluate_policy(opa_payload)

@@ -21,9 +21,6 @@ connections required.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -34,232 +31,43 @@ import pytest
 # ---------------------------------------------------------------------------
 import src.gateway.core.policy as policy_mod
 from src.gateway.core.policy import (
+    BreakerState,
+    CallOutcome,
     CircuitBreaker,
     OPAClient,
     OPAPolicyMismatchError,
-    _opa_cache_key,
 )
 
-# ===========================================================================
-# TestOpaCacheEnabled
-# ===========================================================================
+
+class _Clock:
+    """Manually advanced monotonic clock."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
-@pytest.mark.local
-class TestOpaCacheEnabled:
-    """Tests for the _opa_cache_enabled() helper."""
-
-    def test_defaults_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("OPA_CACHE_ENABLED", raising=False)
-        assert policy_mod._opa_cache_enabled() is True
-
-    def test_true_when_set_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        assert policy_mod._opa_cache_enabled() is True
-
-    def test_false_when_set_to_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
-        assert policy_mod._opa_cache_enabled() is False
-
-    def test_case_insensitive_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "FALSE")
-        assert policy_mod._opa_cache_enabled() is False
-
-    def test_case_insensitive_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "TRUE")
-        assert policy_mod._opa_cache_enabled() is True
+def _breaker(clock: _Clock, **kwargs: float) -> CircuitBreaker:
+    params: dict = {"failure_threshold": 3, "recovery_timeout": 30.0}
+    params.update(kwargs)
+    return CircuitBreaker(clock=clock, **params)
 
 
-# ===========================================================================
-# TestOpaCacheKey
-# ===========================================================================
+def _fail(cb: CircuitBreaker, times: int = 1) -> None:
+    for _ in range(times):
+        ticket = cb.admit()
+        assert ticket is not None
+        cb.record(ticket, CallOutcome.UPSTREAM_FAILURE)
 
 
-@pytest.mark.local
-class TestOpaCacheKey:
-    """Tests for the _opa_cache_key() helper."""
-
-    def test_returns_string_with_prefix(self) -> None:
-        key = _opa_cache_key({"action": "trade"})
-        assert key.startswith("cage:opa:decision:")
-
-    def test_digest_is_24_hex_chars(self) -> None:
-        key = _opa_cache_key({"action": "trade"})
-        digest = key.removeprefix("cage:opa:decision:")
-        assert len(digest) == 24
-        assert all(c in "0123456789abcdef" for c in digest)
-
-    def test_same_input_produces_same_key(self) -> None:
-        data = {"action": "trade", "amount": 100}
-        assert _opa_cache_key(data) == _opa_cache_key(data)
-
-    def test_different_inputs_produce_different_keys(self) -> None:
-        key1 = _opa_cache_key({"action": "trade", "amount": 100})
-        key2 = _opa_cache_key({"action": "trade", "amount": 200})
-        assert key1 != key2
-
-    def test_key_is_order_independent(self) -> None:
-        """Dict insertion order must NOT affect the cache key."""
-        key1 = _opa_cache_key({"action": "trade", "amount": 100})
-        key2 = _opa_cache_key({"amount": 100, "action": "trade"})
-        assert key1 == key2
-
-    def test_key_matches_manual_sha256(self) -> None:
-        """Cache key uses RFC 8785 JCS canonicalization (migrated v3.1.0)."""
-        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-
-        data = {"action": "execute_trade"}
-        canonical_bytes = jcs_canonicalize_plan(data)
-        expected_digest = hashlib.sha256(canonical_bytes).hexdigest()[:24]
-        expected_key = f"cage:opa:decision:{expected_digest}"
-        assert _opa_cache_key(data) == expected_key
-
-    def test_package_scopes_cache_key_and_normalizes_datetime(self) -> None:
-        """Different OPA packages produce distinct cache keys and datetime values normalize."""
-        from datetime import datetime, timezone
-        from decimal import Decimal
-
-        data = {
-            "action": "execute_trade",
-            "ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
-            "amount": Decimal("10.5"),
-        }
-        key_trade = _opa_cache_key(data, package="trade.governance")
-        key_dosing = _opa_cache_key(data, package="dosing.governance")
-        assert key_trade != key_dosing
-        assert key_trade.startswith("cage:opa:decision:trade.governance:")
-        assert key_dosing.startswith("cage:opa:decision:dosing.governance:")
-
-
-# ===========================================================================
-# TestReadOpaCache
-# ===========================================================================
-
-
-@pytest.mark.local
-class TestReadOpaCache:
-    """Tests for _read_opa_cache()."""
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_cache_disabled(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
-        result = await policy_mod._read_opa_cache("some-key")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_redis_client_is_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        with patch("src.gateway.infrastructure.redis_client.redis_client", None):
-            result = await policy_mod._read_opa_cache("some-key")
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_decoded_bytes_from_redis(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=b"ALLOW")
-        with patch("src.gateway.core.policy.redis_client", mock_redis, create=True):
-            # Patch the import inside the function
-            with patch.dict(
-                "sys.modules",
-                {
-                    "src.gateway.infrastructure.redis_client": MagicMock(
-                        redis_client=mock_redis
-                    )
-                },
-            ):
-                result = await policy_mod._read_opa_cache("k")
-                # The function decodes bytes
-                assert result == "ALLOW"
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_exception(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        with patch.dict(
-            "sys.modules",
-            {
-                "src.gateway.infrastructure.redis_client": MagicMock(
-                    redis_client=MagicMock(
-                        get=AsyncMock(side_effect=RuntimeError("boom"))
-                    )
-                )
-            },
-        ):
-            result = await policy_mod._read_opa_cache("k")
-            assert result is None
-
-
-# ===========================================================================
-# TestWriteOpaCache
-# ===========================================================================
-
-
-@pytest.mark.local
-class TestWriteOpaCache:
-    """Tests for _write_opa_cache()."""
-
-    @pytest.mark.asyncio
-    async def test_noop_when_cache_disabled(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
-        mock_redis = AsyncMock()
-        with patch.dict(
-            "sys.modules",
-            {
-                "src.gateway.infrastructure.redis_client": MagicMock(
-                    redis_client=mock_redis
-                )
-            },
-        ):
-            await policy_mod._write_opa_cache("k", "ALLOW")
-            mock_redis.setex.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_calls_setex_when_redis_available(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        mock_redis = AsyncMock()
-        mock_redis.setex = AsyncMock()
-        with patch.dict(
-            "sys.modules",
-            {
-                "src.gateway.infrastructure.redis_client": MagicMock(
-                    redis_client=mock_redis
-                )
-            },
-        ):
-            await policy_mod._write_opa_cache("k", "ALLOW")
-            mock_redis.setex.assert_awaited_once_with(
-                "k", policy_mod._OPA_CACHE_TTL_SECONDS, "ALLOW"
-            )
-
-    @pytest.mark.asyncio
-    async def test_silently_ignores_exception(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        mock_redis = AsyncMock()
-        mock_redis.setex = AsyncMock(side_effect=ConnectionError("redis down"))
-        with patch.dict(
-            "sys.modules",
-            {
-                "src.gateway.infrastructure.redis_client": MagicMock(
-                    redis_client=mock_redis
-                )
-            },
-        ):
-            # Must not raise
-            await policy_mod._write_opa_cache("k", "ALLOW")
+def _open(cb: CircuitBreaker) -> None:
+    _fail(cb, cb.failure_threshold)
+    assert cb.state is BreakerState.OPEN
 
 
 # ===========================================================================
@@ -269,62 +77,119 @@ class TestWriteOpaCache:
 
 @pytest.mark.local
 class TestCircuitBreaker:
-    """Tests for CircuitBreaker state machine."""
+    """CircuitBreaker state machine: CLOSED → OPEN → HALF_OPEN → CLOSED/OPEN."""
 
-    def test_initial_state_is_closed(self) -> None:
-        cb = CircuitBreaker()
-        assert cb.state == "CLOSED"
+    def test_starts_closed_and_admits(self) -> None:
+        cb = _breaker(_Clock())
+        assert cb.state is BreakerState.CLOSED
+        assert cb.failures == 0
+        ticket = cb.admit()
+        assert ticket is not None and not ticket.probe
 
-    def test_initial_failures_zero(self) -> None:
-        cb = CircuitBreaker()
+    def test_opens_at_the_threshold_within_the_window(self) -> None:
+        cb = _breaker(_Clock())
+        _fail(cb, 2)
+        assert cb.state is BreakerState.CLOSED
+        _fail(cb)
+        assert cb.state is BreakerState.OPEN
+        assert cb.admit() is None
+
+    def test_failures_outside_the_window_expire(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock, failure_window_s=10.0)
+        _fail(cb, 2)
+        clock.advance(10.0)
+        assert cb.failures == 0
+        _fail(cb, 2)
+        assert cb.state is BreakerState.CLOSED
+
+    def test_healthy_and_inconclusive_outcomes_never_count(self) -> None:
+        cb = _breaker(_Clock())
+        for outcome in [CallOutcome.HEALTHY, CallOutcome.INCONCLUSIVE] * 5:
+            ticket = cb.admit()
+            assert ticket is not None
+            cb.record(ticket, outcome)
+        assert cb.state is BreakerState.CLOSED
         assert cb.failures == 0
 
-    def test_can_execute_when_closed(self) -> None:
-        cb = CircuitBreaker()
-        assert cb.can_execute() is True
+    def test_stays_open_until_the_recovery_timeout(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock, recovery_timeout=30.0)
+        _open(cb)
+        clock.advance(29.9)
+        assert cb.admit() is None
+        assert cb.state is BreakerState.OPEN
 
-    @pytest.mark.asyncio
-    async def test_record_failure_increments_count(self) -> None:
-        cb = CircuitBreaker(failure_threshold=10)
-        await cb.record_failure()
-        assert cb.failures == 1
+    def test_admits_exactly_one_probe_after_the_timeout(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock)
+        _open(cb)
+        clock.advance(30.0)
 
-    @pytest.mark.asyncio
-    async def test_opens_after_threshold_failures(self) -> None:
-        cb = CircuitBreaker(failure_threshold=3)
-        for _ in range(3):
-            await cb.record_failure()
-        assert cb.state == "OPEN"
+        probe = cb.admit()
+        assert probe is not None and probe.probe
+        assert cb.state is BreakerState.HALF_OPEN
+        assert cb.admit() is None  # a second caller fails fast
 
-    @pytest.mark.asyncio
-    async def test_does_not_open_before_threshold(self) -> None:
-        cb = CircuitBreaker(failure_threshold=3)
-        await cb.record_failure()
-        await cb.record_failure()
-        assert cb.state == "CLOSED"
+    def test_healthy_probe_closes_and_clears_failures(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock)
+        _open(cb)
+        clock.advance(30.0)
+        probe = cb.admit()
+        assert probe is not None
 
-    @pytest.mark.asyncio
-    async def test_cannot_execute_when_open_and_within_recovery(self) -> None:
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout=9999)
-        await cb.record_failure()
-        assert cb.state == "OPEN"
-        assert cb.can_execute() is False
+        cb.record(probe, CallOutcome.HEALTHY)
 
-    @pytest.mark.asyncio
-    async def test_can_execute_when_open_and_past_recovery_timeout(self) -> None:
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0)
-        await cb.record_failure()
-        # last_failure_time is in the past; recovery_timeout=0 means immediate
-        assert cb.can_execute() is True
-
-    @pytest.mark.asyncio
-    async def test_record_success_resets_to_closed(self) -> None:
-        cb = CircuitBreaker(failure_threshold=1)
-        await cb.record_failure()
-        assert cb.state == "OPEN"
-        await cb.record_success()
-        assert cb.state == "CLOSED"
+        assert cb.state is BreakerState.CLOSED
         assert cb.failures == 0
+        assert cb.admit() is not None
+
+    def test_failed_probe_reopens_for_a_full_timeout(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock)
+        _open(cb)
+        clock.advance(30.0)
+        probe = cb.admit()
+        assert probe is not None
+
+        cb.record(probe, CallOutcome.UPSTREAM_FAILURE)
+
+        assert cb.state is BreakerState.OPEN
+        clock.advance(29.9)
+        assert cb.admit() is None
+        clock.advance(0.1)
+        assert cb.admit() is not None
+
+    def test_inconclusive_probe_frees_the_slot(self) -> None:
+        clock = _Clock()
+        cb = _breaker(clock)
+        _open(cb)
+        clock.advance(30.0)
+        probe = cb.admit()
+        assert probe is not None
+
+        cb.record(probe, CallOutcome.INCONCLUSIVE)
+
+        assert cb.state is BreakerState.HALF_OPEN
+        next_probe = cb.admit()
+        assert next_probe is not None and next_probe.probe
+
+    def test_late_failures_from_before_opening_do_not_reopen(self) -> None:
+        """A call admitted while CLOSED that fails during HALF_OPEN is not the probe."""
+        clock = _Clock()
+        cb = _breaker(clock)
+        straggler = cb.admit()
+        assert straggler is not None
+        _open(cb)
+        clock.advance(30.0)
+        probe = cb.admit()
+        assert probe is not None
+
+        cb.record(straggler, CallOutcome.UPSTREAM_FAILURE)
+        assert cb.state is BreakerState.HALF_OPEN
+        cb.record(probe, CallOutcome.HEALTHY)
+        assert cb.state is BreakerState.CLOSED
 
     def test_is_bankrupt_when_over_budget(self) -> None:
         cb = CircuitBreaker(max_latency_budget=3000)
@@ -345,14 +210,6 @@ class TestCircuitBreaker:
     def test_check_soft_ceiling_default(self) -> None:
         cb = CircuitBreaker()
         assert cb.check_soft_ceiling(2001.0) is True
-
-    @pytest.mark.asyncio
-    async def test_recovery_timeout_measured_from_last_failure(self) -> None:
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout=60)
-        await cb.record_failure()
-        # Manipulate last_failure_time to simulate 61s ago
-        cb.last_failure_time = time.time() - 61
-        assert cb.can_execute() is True
 
 
 # ===========================================================================
@@ -697,6 +554,38 @@ class TestOPAClientVerifyDomainPolicy:
 # ===========================================================================
 
 
+def _response(
+    status: int = 200, payload: object = None, *, json_error: bool = False
+) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status
+    if json_error:
+        response.json = MagicMock(side_effect=ValueError("not json"))
+    else:
+        response.json = MagicMock(
+            return_value={"result": "ALLOW"} if payload is None else payload
+        )
+    return response
+
+
+@pytest.mark.local
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ({"allow": True}, "ALLOW"),
+        ({"allow": False}, "DENY"),
+        ({"decision": "manual_review"}, "MANUAL_REVIEW"),
+        ({}, "DENY"),
+        (True, "ALLOW"),
+        (False, "DENY"),
+        ("allow", "ALLOW"),
+        (None, "DENY"),
+    ],
+)
+def test_decision_string_normalizes_result_shapes(raw: object, expected: str) -> None:
+    assert policy_mod._decision_string(raw) == expected
+
+
 @pytest.mark.local
 class TestOPAClientEvaluatePolicy:
     """Tests for OPAClient.evaluate_policy()."""
@@ -707,167 +596,182 @@ class TestOPAClientEvaluatePolicy:
             mock_cfg.OPA_AUTH_TOKEN = ""
             return OPAClient()
 
-    @pytest.mark.asyncio
-    async def test_returns_deny_when_circuit_breaker_open(self) -> None:
+    def _half_open_client(self) -> OPAClient:
+        """A client whose breaker has just reached its recovery timeout."""
+        clock = _Clock()
         client = self._make_opa_client()
-        client.cb.state = "OPEN"
-        client.cb.last_failure_time = time.time()  # very recent → still open
+        client.cb = CircuitBreaker(clock=clock)
+        _open(client.cb)
+        clock.advance(client.cb.recovery_timeout)
+        return client
 
-        result = await client.evaluate_policy({"action": "trade"})
-        assert result == "DENY"
-
-    @pytest.mark.asyncio
-    async def test_returns_deny_when_bankrupt(self) -> None:
-        client = self._make_opa_client()
-        # Pass a latency way over the budget
-        result = await client.evaluate_policy(
-            {"action": "trade"}, current_latency_ms=999_999.0
+    @staticmethod
+    def _http(*, response: MagicMock | None = None, exc: Exception | None = None):
+        mock_http = AsyncMock()
+        mock_http.post = (
+            AsyncMock(side_effect=exc) if exc else AsyncMock(return_value=response)
         )
-        assert result == "DENY"
+        return mock_http
+
+    @staticmethod
+    async def _evaluate(client: OPAClient, http: AsyncMock, **kwargs: float) -> str:
+        with patch.object(client, "_get_client", return_value=http):
+            return await client.evaluate_policy({"action": "trade"}, **kwargs)
 
     @pytest.mark.asyncio
-    async def test_returns_cached_decision_on_cache_hit(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
+    async def test_successful_opa_response_returns_result(self) -> None:
         client = self._make_opa_client()
-
-        with patch.object(
-            policy_mod, "_read_opa_cache", return_value="ALLOW"
-        ) as mock_cache:
-            result = await client.evaluate_policy({"action": "trade"})
-            assert result == "ALLOW"
-            mock_cache.assert_awaited_once()
+        http = self._http(response=_response(payload={"result": "ALLOW"}))
+        assert await self._evaluate(client, http) == "ALLOW"
 
     @pytest.mark.asyncio
-    async def test_successful_opa_response_returns_result(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
+    async def test_every_call_queries_opa(self) -> None:
+        """Decisions are never cached: identical inputs each reach OPA."""
         client = self._make_opa_client()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "ALLOW", "explanation": []}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_http = AsyncMock()
-        mock_http.post = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(
-                policy_mod, "_write_opa_cache", return_value=None
-            ) as mock_write,
-            patch.object(policy_mod, "_read_opa_cache", return_value=None),
-        ):
-            result = await client.evaluate_policy({"action": "trade"})
-            assert result == "ALLOW"
-            mock_write.assert_awaited_once()
+        http = self._http(response=_response())
+        for _ in range(3):
+            assert await self._evaluate(client, http) == "ALLOW"
+        assert http.post.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_opa_failure_returns_deny(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
+    async def test_missing_result_key_defaults_to_deny(self) -> None:
         client = self._make_opa_client()
-
-        mock_http = AsyncMock()
-        mock_http.post = AsyncMock(side_effect=ConnectionError("OPA down"))
-
-        with (
-            patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(policy_mod, "_read_opa_cache", return_value=None),
-        ):
-            result = await client.evaluate_policy({"action": "trade"})
-            assert result == "DENY"
+        http = self._http(response=_response(payload={}))
+        assert await self._evaluate(client, http) == "DENY"
 
     @pytest.mark.asyncio
-    async def test_opa_failure_records_circuit_breaker_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
+    async def test_malformed_body_denies_without_charging_the_breaker(self) -> None:
         client = self._make_opa_client()
+        for response in (_response(json_error=True), _response(payload=["a", "b"])):
+            assert await self._evaluate(client, self._http(response=response)) == "DENY"
+        assert client.cb.failures == 0
 
-        mock_http = AsyncMock()
-        mock_http.post = AsyncMock(side_effect=ConnectionError("OPA down"))
-
-        initial_failures = client.cb.failures
-        with (
-            patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(policy_mod, "_read_opa_cache", return_value=None),
-        ):
-            await client.evaluate_policy({"action": "trade"})
-        assert client.cb.failures == initial_failures + 1
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            httpx.ConnectError("refused"),
+            httpx.ReadTimeout("slow"),
+            httpx.RemoteProtocolError("reset"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_transport_failures_deny_and_count(self, exc: Exception) -> None:
+        client = self._make_opa_client()
+        assert await self._evaluate(client, self._http(exc=exc)) == "DENY"
+        assert client.cb.failures == 1
 
     @pytest.mark.asyncio
-    async def test_successful_response_records_circuit_breaker_success(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
+    async def test_5xx_denies_and_counts(self) -> None:
         client = self._make_opa_client()
-        # Start with some failures already recorded
-        client.cb.failures = 2
+        http = self._http(response=_response(503))
+        assert await self._evaluate(client, http) == "DENY"
+        assert client.cb.failures == 1
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"result": "ALLOW"}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_http = AsyncMock()
-        mock_http.post = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(policy_mod, "_read_opa_cache", return_value=None),
-            patch.object(policy_mod, "_write_opa_cache", return_value=None),
-        ):
-            await client.evaluate_policy({"action": "trade"})
+    @pytest.mark.asyncio
+    async def test_4xx_denies_without_counting(self) -> None:
+        client = self._make_opa_client()
+        http = self._http(response=_response(404))
+        assert await self._evaluate(client, http) == "DENY"
         assert client.cb.failures == 0
 
     @pytest.mark.asyncio
-    async def test_missing_result_key_defaults_to_deny(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
+    async def test_pool_timeout_denies_without_tripping_the_breaker(self) -> None:
         client = self._make_opa_client()
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {}  # no "result" key
-        mock_response.raise_for_status = MagicMock()
-
-        mock_http = AsyncMock()
-        mock_http.post = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(policy_mod, "_read_opa_cache", return_value=None),
-            patch.object(policy_mod, "_write_opa_cache", return_value=None),
-        ):
-            result = await client.evaluate_policy({"action": "trade"})
-        assert result == "DENY"
+        saturated = self._http(exc=httpx.PoolTimeout("pool full"))
+        for _ in range(client.cb.failure_threshold + 1):
+            assert await self._evaluate(client, saturated) == "DENY"
+        assert client.cb.failures == 0
+        assert client.cb.state is BreakerState.CLOSED
 
     @pytest.mark.asyncio
-    async def test_explain_logging_enqueues_when_enabled(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPA_CACHE_ENABLED", "false")
+    async def test_misconfigured_url_denies_without_counting(self) -> None:
+        client = self._make_opa_client("http://localhost:8181/v1/data/trade/governance")
+        assert await client.evaluate_policy({"action": "trade"}) == "DENY"
+        assert client.cb.failures == 0
+
+    @pytest.mark.asyncio
+    async def test_upstream_failures_open_the_circuit_and_fail_fast(self) -> None:
         client = self._make_opa_client()
+        failing = self._http(exc=httpx.ConnectError("refused"))
+        for _ in range(client.cb.failure_threshold):
+            await self._evaluate(client, failing)
+        assert client.cb.state is BreakerState.OPEN
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"result": "ALLOW"}
-        mock_response.raise_for_status = MagicMock()
+        healthy = self._http(response=_response())
+        assert await self._evaluate(client, healthy) == "DENY"
+        healthy.post.assert_not_awaited()
 
-        mock_http = AsyncMock()
-        mock_http.post = AsyncMock(return_value=mock_response)
+    @pytest.mark.asyncio
+    async def test_healthy_probe_closes_the_circuit(self) -> None:
+        client = self._half_open_client()
+        assert await self._evaluate(client, self._http(response=_response())) == "ALLOW"
+        assert client.cb.state is BreakerState.CLOSED
 
-        with (
-            patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(policy_mod, "_read_opa_cache", return_value=None),
-            patch.object(policy_mod, "_write_opa_cache", return_value=None),
-            patch.object(policy_mod, "CAGE_OPA_EXPLAIN_LOGGING", True),
-        ):
+    @pytest.mark.asyncio
+    async def test_only_the_probe_reaches_opa_while_half_open(self) -> None:
+        client = self._half_open_client()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow_post(*args: object, **kwargs: object) -> MagicMock:
+            started.set()
+            await release.wait()
+            return _response()
+
+        http = AsyncMock()
+        http.post = AsyncMock(side_effect=slow_post)
+        with patch.object(client, "_get_client", return_value=http):
+            probe = asyncio.create_task(client.evaluate_policy({"action": "trade"}))
+            await started.wait()
+            others = await asyncio.gather(
+                *(client.evaluate_policy({"action": "trade"}) for _ in range(3))
+            )
+            release.set()
+            assert await probe == "ALLOW"
+
+        assert others == ["DENY"] * 3
+        assert http.post.await_count == 1
+        assert client.cb.state is BreakerState.CLOSED
+
+    @pytest.mark.asyncio
+    async def test_cancelled_probe_frees_the_slot(self) -> None:
+        client = self._half_open_client()
+        started = asyncio.Event()
+
+        async def hang(*args: object, **kwargs: object) -> MagicMock:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        http = AsyncMock()
+        http.post = AsyncMock(side_effect=hang)
+        with patch.object(client, "_get_client", return_value=http):
+            probe = asyncio.create_task(client.evaluate_policy({"action": "trade"}))
+            await started.wait()
+            probe.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await probe
+
+        ticket = client.cb.admit()
+        assert ticket is not None and ticket.probe
+
+    @pytest.mark.asyncio
+    async def test_bankrupt_request_denies_without_claiming_the_probe(self) -> None:
+        client = self._half_open_client()
+        http = self._http(response=_response())
+
+        assert (
+            await self._evaluate(client, http, current_latency_ms=999_999.0) == "DENY"
+        )
+        http.post.assert_not_awaited()
+        assert await self._evaluate(client, http) == "ALLOW"
+
+    @pytest.mark.asyncio
+    async def test_explain_logging_enqueues_when_enabled(self) -> None:
+        client = self._make_opa_client()
+        http = self._http(response=_response())
+        with patch.object(policy_mod, "CAGE_OPA_EXPLAIN_LOGGING", True):
             q_size_before = policy_mod._explain_queue.qsize()
-            await client.evaluate_policy({"action": "trade"})
+            await self._evaluate(client, http)
             assert policy_mod._explain_queue.qsize() == q_size_before + 1
             # Clean up
             policy_mod._explain_queue.get_nowait()
