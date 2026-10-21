@@ -40,10 +40,11 @@ def narrow_receipt_key(seal: str) -> str:
     """Redis key of the receipt that accompanies ``seal``.
 
     The key is the SHA-256 digest of the whole seal. A prefix is not unique:
-    every JWT seal minted under one key begins with the same base64url
-    header, so prefix keys let concurrent narrowed trades overwrite (and the
-    first consumer delete) each other's receipts. The digest also keeps seal
-    material out of Redis key names.
+    the first 32 characters of a JWT seal encode only the start of its
+    header (``alg`` and ``typ``), so prefix keys let concurrent narrowed
+    trades overwrite (and the first consumer delete) each other's receipts,
+    and let an ALLOW trade consume a narrowed trade's receipt. The digest
+    also keeps seal material out of Redis key names.
     """
     return f"narrow:receipt:{hashlib.sha256(seal.encode('utf-8')).hexdigest()}"
 

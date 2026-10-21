@@ -24,7 +24,9 @@ and build response body in _build_narrow_response(), but narrowed parameters
 cannot reach mcp_tool_server.py through Envoy ext_authz protocol.
 
 **Fix**: Receipt-based transport using Redis fetch-and-burn pattern:
-  1. Gateway adapter stores narrowed params in Redis keyed by seal prefix
+  1. SymbolicGovernor._sealed_narrow() stores the narrowed params via
+     issue_narrow_receipt() under narrow_receipt_key(seal), i.e.
+     narrow:receipt:<sha256(seal)>
   2. The tool provider uses the governor seal to look up and delete the receipt
   3. 5-minute TTL prevents receipt leakage
   4. Signature verification prevents receipt forgery
