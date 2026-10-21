@@ -92,6 +92,11 @@ class GatewayMCPClient:
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
         if self._connect_lock is None or self._bound_loop is not loop:
+            self.session = None
+            self._exit_stack = None
+            self._http_client = None
+            self._cached_lc_tools = None
+            self._cached_lc_tools_at = 0.0
             self._connect_lock = asyncio.Lock()
             self._bound_loop = loop
         return self._connect_lock

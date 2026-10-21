@@ -247,3 +247,58 @@ async def test_session_manager_can_restart_across_multiple_lifespans() -> None:
             )
             assert f"ACTION=restarted:SEQ={run_idx}" in out
             await client.close()
+
+
+def test_ensure_connected_reconnects_across_distinct_event_loops() -> None:
+    """When GatewayMCPClient is reused across two distinct event loops, ensure_connected() discards the stale session and opens a fresh one."""
+    app_a, mcp_a, _ = _build_stateless_replica_app("replica-a")
+    transport = httpx.ASGITransport(app=app_a)
+    client = GatewayMCPClient("http://gateway:8080/mcp/", http_transport=transport)
+
+    async def _run_on_loop_1() -> tuple[Any, str]:
+        if (
+            getattr(mcp_a.session_manager, "_has_started", False)
+            and getattr(mcp_a.session_manager, "_task_group", None) is None
+        ):
+            mcp_a.session_manager._has_started = False
+        async with mcp_a.session_manager.run():
+            session = await client.ensure_connected()
+            out = await client.call_tool(
+                "echo_governed", {"action": "cross_loop", "seq": 1}
+            )
+            await client.close()
+            # Simulate an unclosed singleton from loop1 still holding a stale session reference
+            client.session = session
+            return session, out
+
+    async def _run_on_loop_2() -> tuple[Any, str]:
+        if (
+            getattr(mcp_a.session_manager, "_has_started", False)
+            and getattr(mcp_a.session_manager, "_task_group", None) is None
+        ):
+            mcp_a.session_manager._has_started = False
+        async with mcp_a.session_manager.run():
+            session = await client.ensure_connected()
+            out = await client.call_tool(
+                "echo_governed", {"action": "cross_loop", "seq": 2}
+            )
+            await client.close()
+            return session, out
+
+    loop1 = asyncio.new_event_loop()
+    try:
+        sess_1, out_1 = loop1.run_until_complete(_run_on_loop_1())
+    finally:
+        loop1.close()
+
+    assert client.session is sess_1
+
+    loop2 = asyncio.new_event_loop()
+    try:
+        sess_2, out_2 = loop2.run_until_complete(_run_on_loop_2())
+    finally:
+        loop2.close()
+
+    assert "ACTION=cross_loop:SEQ=1" in out_1
+    assert "ACTION=cross_loop:SEQ=2" in out_2
+    assert sess_1 is not sess_2
