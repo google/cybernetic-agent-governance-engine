@@ -84,16 +84,21 @@ fi
 LOCUST_PID=""
 cleanup() {
   local rc=$?
-  # A second Ctrl-C or TERM must not abort the restore. Child processes
-  # inherit the ignored signals, so the restoring kubectl is shielded too.
-  trap '' INT TERM
+  # Disable errexit and ignore signals during cleanup so a broken stdout pipe
+  # (e.g. `run_gke_load_test.sh | tee` interrupted with Ctrl-C), hangup, or
+  # second Ctrl-C cannot abort the trap before the restore runs. Go binaries
+  # (`kubectl`) preserve inherited SIG_IGN for SIGINT and SIGHUP; a process-group
+  # SIGTERM still terminates `kubectl`, which lands in the manual-restore branch.
+  set +e
+  trap '' INT TERM HUP PIPE
   if [[ -n "${LOCUST_PID}" ]]; then
     kill "${LOCUST_PID}" 2>/dev/null || true
   fi
   echo -e "${CYAN}↩️  Restoring deployment/gateway to ${ORIGINAL_REPLICAS} replica(s)...${NC}"
   # Bounded, so an unreachable API server ends in the manual-restore message
-  # instead of a hang.
-  if ! "${KUBECTL[@]}" scale deployment/gateway --request-timeout=30s --replicas="${ORIGINAL_REPLICAS}"; then
+  # instead of a hang. Redirect stdout to /dev/null so a broken pipe cannot
+  # raise SIGPIPE inside kubectl after the API call succeeds.
+  if ! "${KUBECTL[@]}" scale deployment/gateway --request-timeout=30s --replicas="${ORIGINAL_REPLICAS}" >/dev/null; then
     echo -e "${RED}❌ Could not restore deployment/gateway to ${ORIGINAL_REPLICAS} replica(s); restore it manually.${NC}" >&2
     if [[ "${rc}" -eq 0 ]]; then
       rc=1
@@ -154,10 +159,11 @@ for i in {1..12}; do
   "${KUBECTL[@]}" get pods -l app=gateway -o wide || echo "No gateway pods found"
 done
 
-# Wait for Locust. Exit status 1 means some requests failed (Locust's
-# --exit-code-on-error default); the GET /health checks below decide whether
-# the measurement still holds. Any other non-zero status is a usage or
-# startup error, so nothing was measured.
+# Wait for Locust. Status 0 and 1 proceed to the GET /health CSV validation
+# below (Locust's default --exit-code-on-error is 1 when any request or task
+# failed; a startup error that exited 1 still fails the CSV /health checks).
+# Any other status (e.g. 2 for argparse usage errors or unhandled greenlets,
+# or >128 on signals) fails immediately.
 LOCUST_RC=0
 wait "${LOCUST_PID}" || LOCUST_RC=$?
 LOCUST_PID=""
@@ -182,7 +188,7 @@ if [ ! -f "${STATS_FILE}" ]; then
 fi
 cat "${STATS_FILE}" | column -s, -t || cat "${STATS_FILE}"
 if [[ "${LOCUST_RC}" -eq 1 ]]; then
-  echo -e "${YELLOW}⚠️  Locust reported failed requests (exit status 1); see ${CSV_PREFIX}_failures.csv. Only GET /health failures fail this run.${NC}"
+  echo -e "${YELLOW}⚠️  Locust reported failed requests (exit status 1); see ${CSV_PREFIX}_failures.csv and ${CSV_PREFIX}_exceptions.csv. Only GET /health failures fail this run.${NC}"
 fi
 
 # Parse the GET /health row; the latency gate reads only this row.

@@ -447,3 +447,28 @@ def test_a_second_interrupt_cannot_abort_the_restore(tmp_path: Path) -> None:
     restored = tmp_path / "kubectl.log.slow-scale"
     assert restored.read_text(encoding="utf-8").strip() == "done"
     assert _scales(_calls(log)) == [_PIN, _RESTORE]
+
+
+def test_closed_stdout_pipe_still_restores_the_original_count(
+    tmp_path: Path,
+) -> None:
+    env, log = _environment(tmp_path, STUB_REAL_SLEEP="0.2")
+    process = subprocess.Popen(
+        ["bash", str(SCRIPT)],
+        cwd=REPO_ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for(log, "rollout status", process)
+        assert process.stdout is not None
+        process.stdout.close()
+        process.send_signal(signal.SIGTERM)
+        returncode = process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+    assert returncode == 143
+    assert _scales(_calls(log)) == [_PIN, _RESTORE]
