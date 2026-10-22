@@ -104,7 +104,7 @@ This document defines the **proof ceiling** — the maximum scope of what each t
 #### ✅ Redis Lua Atomic Barriers Under Concurrency
 - **Invariant:** Quorum approval script executes atomically; no lost updates on concurrent approve calls
 - **Proof Method:** Fire 10 concurrent approval requests; verify exactly N=quorum approvals recorded
-- **Example:** Live load test with `scripts/run_gke_load_test.sh`
+- **Example:** [`tests/test_defer_queue_single_use.py`](../../tests/test_defer_queue_single_use.py) (`DeferQueue.approve()` CAS concurrency suite)
 - **Guarantees:** Redis Lua script correctness under concurrency (requires live Redis instance)
 
 #### ✅ KMS Signature Round-Trip

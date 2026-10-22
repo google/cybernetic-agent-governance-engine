@@ -30,7 +30,7 @@
 GKE ([`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)) is the sole cloud deployment target across three postures ([`us-dev.tfvars`](../../infra/targets/gcp-gke/us-dev.tfvars), [`staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars), [`prod.tfvars`](../../infra/targets/gcp-gke/prod.tfvars)):
 - **Control Plane & Datapath**: Zonal (`us-central1-a`) in `dev` and `staging`; regional (`us-central1`) in `prod`. GKE Dataplane V2 (`datapath_provider = "ADVANCED_DATAPATH"`) and `enable_fqdn_network_policy = true` are active in all postures.
 - **Four Node Pools**:
-  1. `general`: `e2-standard-4` (`dev`/`staging`, 1–5 nodes, `pd-standard`) or `e2-standard-8` (`prod`, 3–10 nodes, `pd-ssd`). Runs stateless governance workloads (`gateway`, `governed-financial-advisor`, `compliance-bridge`, `reconciler`, `opa`, `langfuse`).
+  1. `general`: `e2-standard-4` (`dev`/`staging`, 1–5 nodes, `pd-standard`) or `e2-standard-8` (`prod`, 3–10 nodes, `pd-ssd`). Runs the governance workloads (`gateway`, `governed-financial-advisor`, `compliance-bridge`, `reconciler`, `opa`, `langfuse`). The gateway still keeps pod-local state, so it runs a fixed replica count with no autoscaler (see [`DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) §5).
   2. `general-spot`: `c3-highcpu-4` (`staging` only, 0–5 Spot nodes, tainted `cloud.google.com/gke-spot=true:NoSchedule`). Governance, stateful, and vLLM workloads enforce anti-Spot `nodeAffinity` (`cloud.google.com/gke-spot NotIn ["true"]`) so only fault-tolerant batch jobs (`cage-paper-benchmark`, Lula validation) schedule on Spot capacity.
   3. `gpu-l4`: `g2-standard-8` (1× `nvidia-l4`, Spot disabled in all postures, GCFS image streaming enabled, 0–2 scale-to-zero in `dev`/`staging`, 2–5 in `prod`).
   4. `clickhouse`: `n2-standard-4` with local NVMe SSD, tainted `workload=clickhouse:NoSchedule` (`1` node in `dev`/`staging`, `3` nodes in `prod`).
@@ -543,7 +543,7 @@ bash scripts/run_langfuse_eval_test.sh
 BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=test \
   uv run pytest tests/test_agent_accuracy.py --run-integration -n0 -v -s
 
-# Step 12 (Optional): In-cluster VPC-native benchmark or Locust HPA load test
+# Step 12 (Optional): In-cluster VPC-native benchmark or Locust load test (one gateway replica, no HPA)
 # The benchmark creates and deletes its own throwaway Redis (benchmark-redis.yaml);
 # it never writes to the shared redis-master. Output: docs/paper/measurements/<date>-<sha>/
 # The paper metrics run --unmocked (Table 2b), so build the gateway image at HEAD
@@ -559,7 +559,7 @@ BACKEND_URL=http://localhost:8081 CAGE_API_KEY=cage-staging-test-key CAGE_ENV=te
 # CAGE_ENVIRONMENT=<dev|staging|prod> REGISTRY_URL=gcr.io/<project> GOOGLE_CLOUD_PROJECT=<project> \
 #   BENCHMARK_REDIS_IMAGE=gcr.io/<project>/redis@sha256:<digest> bash scripts/run_gke_benchmark_job.sh
 # kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=0
-# bash scripts/run_gke_load_test.sh
+# bash scripts/run_gke_load_test.sh  # pins one gateway replica, restores the original count on exit; refuses prod contexts
 
 # Step 13: Teardown port-forward daemon after testing
 bash scripts/port_forward_staging.sh --stop

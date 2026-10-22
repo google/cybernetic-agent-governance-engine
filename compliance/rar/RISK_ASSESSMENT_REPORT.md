@@ -367,7 +367,9 @@ Per NIST SP 800-30 Rev. 1, four risk response options are available: Accept, Avo
 
 **Response:** Mitigate + Accept (partial)
 
-**Current Controls:** GKE horizontal pod autoscaling; NetworkPolicy limiting attack surface; Cloud Load Balancer
+**Current Controls:** NetworkPolicy limiting attack surface; Cloud Load Balancer
+
+**Known Limitation:** The gateway runs a fixed replica count (1, or 2 with `enable_high_availability`) with no autoscaler, because it keeps pod-local state (see [DEPLOYMENT_DECISION_RECORD.md §5](../../docs/operations/DEPLOYMENT_DECISION_RECORD.md)). The GKE HPA previously listed as a current control was never part of any deploy path (only earlier load-test runs applied it) and has been removed. RISK-007's likelihood and residual-risk ratings predate this correction and are pending ISSO re-evaluation.
 
 **Recommended Actions:**
 
@@ -375,6 +377,7 @@ Per NIST SP 800-30 Rev. 1, four risk response options are available: Accept, Avo
 2. Configure governance policy endpoint with circuit breaker pattern
 3. Define RTO/RPO targets in Continuity of Operations Plan (COOP)
 4. Test recovery procedures quarterly
+5. Once the gateway no longer keeps pod-local state, autoscale it on in-flight requests or event-loop lag
 
 **Target Residual Risk:** Low (with Cloud Armor)
 
@@ -410,7 +413,7 @@ This Risk Register consolidates all identified risks for ongoing management. It 
 | RISK-004 | Container escape from GKE workload to cluster                              | Moderate   | High     | **High**      | Security contexts; NetworkPolicy       | CIS benchmark; gVisor; Binary Authorization                       | —                                      | Low           | Platform Eng      |
 | RISK-005 | PII/financial data exfiltration via LLM outputs or network                 | High       | High     | **Very High** | NeMo PII detection; OPA; NetworkPolicy | mTLS; Cloud DLP; Langfuse redaction                               | POAM-007                               | Moderate      | ISSO              |
 | RISK-006 | Regulatory non-compliance with SEC/FINRA/SR 11-7                           | High       | Moderate | **High**      | ISO 42001 stamps; Lula; OTel           | Complete SSP; ATO; signed FIPS 199                                | POAM-003, POAM-005, POAM-009, POAM-015 | Low           | ISSO              |
-| RISK-007 | Denial of Service against CAGE gateway or governance policy engine         | Moderate   | Moderate | **Moderate**  | GKE HPA; NetworkPolicy; Cloud LB       | Cloud Armor WAF; circuit breaker; COOP                            | —                                      | Low           | Platform Eng      |
+| RISK-007 | Denial of Service against CAGE gateway or governance policy engine         | Moderate   | Moderate | **Moderate**  | NetworkPolicy; Cloud LB                | Cloud Armor WAF; circuit breaker; COOP; load-driven autoscaling   | —                                      | Low           | Platform Eng      |
 | RISK-008 | Malicious insider modifies OPA/NeMo governance policies                    | Moderate   | High     | **High**      | GitHub PR review; OTel audit           | Least-privilege IAM; dual-person approval; policy change alerting | POAM-001, POAM-002                     | Low           | ISSO              |
 
 ---
