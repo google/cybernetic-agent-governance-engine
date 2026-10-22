@@ -177,7 +177,9 @@ async def reload_nemo_rails(config_path: str = "config/rails") -> None:
             "nemo_singleton_reload_start",
             extra={"config_path": config_path},
         )
-        new_rails = create_nemo_manager(config_path=config_path)  # type: ignore[misc]  # create_nemo_manager is set at import; None only before _NEMO_AVAILABLE guard
+        new_rails = await asyncio.to_thread(
+            create_nemo_manager, config_path=config_path
+        )
         _nemo_rails = new_rails
         logger.info(
             "nemo_singleton_reload_complete",

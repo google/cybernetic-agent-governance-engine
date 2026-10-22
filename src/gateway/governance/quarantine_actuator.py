@@ -35,6 +35,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
@@ -49,16 +50,28 @@ from src.gateway.governance.seams.quarantine import (
 
 logger = logging.getLogger("Gateway.Governance.QuarantineActuator")
 
-_QUARANTINE_THREAD_PREFIX = "QUARANTINE:THREAD:"
-_QUARANTINE_SVID_PREFIX = "QUARANTINE:SVID:"
+_QUARANTINE_THREAD_PREFIX = "quarantine:thread:"
+_QUARANTINE_SVID_PREFIX = "quarantine:svid:"
 
-# In-process quarantine registry backing hermetic tests and local fail-closed checks
+# Hermetic fallback registry used ONLY when redis_client is None in non-enforcing postures.
 _LOCAL_QUARANTINED_THREADS: dict[str, float] = {}
 _LOCAL_QUARANTINED_SVIDS: dict[str, float] = {}
+_default_quarantine_redis: Any | None = None
+
+
+def bind_quarantine_redis(redis_client: Any | None) -> None:
+    """Bind the process-wide shared async Redis client for quarantine checks and dispatch."""
+    global _default_quarantine_redis
+    _default_quarantine_redis = redis_client
+
+
+def get_quarantine_redis() -> Any | None:
+    """Return the bound shared async Redis client for quarantine operations, if any."""
+    return _default_quarantine_redis
 
 
 def clear_local_quarantine_state() -> None:
-    """Clear in-process quarantine state (for hermetic test isolation)."""
+    """Clear in-process quarantine fallback state (for hermetic test isolation)."""
     _LOCAL_QUARANTINED_THREADS.clear()
     _LOCAL_QUARANTINED_SVIDS.clear()
 
@@ -68,7 +81,40 @@ async def is_workload_quarantined(
     agent_svid: str | None = None,
     redis_client: Any | None = None,
 ) -> bool:
-    """Return True if the thread_id or agent_svid has been quarantined by CAGE."""
+    """Return True if the thread_id or agent_svid has been quarantined by CAGE.
+
+    Uses a single ``EXISTS k1 k2`` command against shared Redis when available.
+    In an enforcing posture, a missing or failing Redis backend fails closed
+    (returns ``True``).
+    """
+    active_redis = (
+        redis_client if redis_client is not None else _default_quarantine_redis
+    )
+    keys: list[str] = []
+    if thread_id:
+        keys.append(f"{_QUARANTINE_THREAD_PREFIX}{thread_id}")
+    if agent_svid:
+        keys.append(f"{_QUARANTINE_SVID_PREFIX}{agent_svid}")
+    if not keys:
+        return False
+
+    if active_redis is not None:
+        try:
+            exists_count = await active_redis.exists(*keys)
+            return bool(int(exists_count) > 0)
+        except Exception as exc:
+            logger.error(
+                "[QuarantineActuator] Redis EXISTS check failed (fail-closed quarantine): %s",
+                exc,
+            )
+            return True
+
+    if is_enforcing(resolve_posture()):
+        logger.error(
+            "[QuarantineActuator] Shared Redis client unavailable in enforcing posture — failing closed"
+        )
+        return True
+
     now = time.time()
     if thread_id:
         exp = _LOCAL_QUARANTINED_THREADS.get(thread_id)
@@ -77,23 +123,6 @@ async def is_workload_quarantined(
     if agent_svid:
         exp = _LOCAL_QUARANTINED_SVIDS.get(agent_svid)
         if exp is not None and exp > now:
-            return True
-
-    if redis_client is not None:
-        try:
-            if thread_id and await redis_client.exists(
-                f"{_QUARANTINE_THREAD_PREFIX}{thread_id}"
-            ):
-                return True
-            if agent_svid and await redis_client.exists(
-                f"{_QUARANTINE_SVID_PREFIX}{agent_svid}"
-            ):
-                return True
-        except Exception as exc:
-            logger.error(
-                "[QuarantineActuator] Redis check failed (fail-closed quarantine): %s",
-                exc,
-            )
             return True
     return False
 
@@ -230,26 +259,24 @@ class InferenceProxySvidQuarantineActuator:
         now_utc = datetime.now(tz=timezone.utc).isoformat()
         canonical_bytes = jcs_canonicalize_plan(directive.to_dict())
         digest = hashlib.sha256(canonical_bytes).hexdigest()
-        expiry = time.time() + max(1, directive.ttl_seconds)
+        ttl_s = max(1, directive.ttl_seconds)
 
-        if directive.thread_id:
-            _LOCAL_QUARANTINED_THREADS[directive.thread_id] = expiry
-        if directive.agent_svid:
-            _LOCAL_QUARANTINED_SVIDS[directive.agent_svid] = expiry
-
-        if self._redis is not None:
+        active_redis = (
+            self._redis if self._redis is not None else _default_quarantine_redis
+        )
+        if active_redis is not None:
             try:
                 if directive.thread_id:
-                    await self._redis.set(
+                    await active_redis.set(
                         f"{_QUARANTINE_THREAD_PREFIX}{directive.thread_id}",
                         digest,
-                        ex=max(1, directive.ttl_seconds),
+                        ex=ttl_s,
                     )
                 if directive.agent_svid:
-                    await self._redis.set(
+                    await active_redis.set(
                         f"{_QUARANTINE_SVID_PREFIX}{directive.agent_svid}",
                         digest,
-                        ex=max(1, directive.ttl_seconds),
+                        ex=ttl_s,
                     )
             except Exception as exc:
                 return QuarantineReceipt(
@@ -269,6 +296,30 @@ class InferenceProxySvidQuarantineActuator:
                     envelope_digest=digest,
                     timestamp_utc=now_utc,
                 )
+        elif is_enforcing(resolve_posture()):
+            return QuarantineReceipt(
+                quarantined=False,
+                enforcement_plane="CAGE_INFERENCE_PROXY_SVID",
+                rule_id=None,
+                latency_us=(time.perf_counter() - t0) * 1_000_000.0,
+                outcome=ActuationOutcome.UNKNOWN,
+                verification=ReceiptVerification.UNVERIFIED,
+                findings=[
+                    {
+                        "code": "REDIS_QUARANTINE_UNAVAILABLE",
+                        "severity": "TERMINAL",
+                        "detail": "Shared Redis client unavailable in enforcing posture",
+                    }
+                ],
+                envelope_digest=digest,
+                timestamp_utc=now_utc,
+            )
+        else:
+            expiry = time.time() + ttl_s
+            if directive.thread_id:
+                _LOCAL_QUARANTINED_THREADS[directive.thread_id] = expiry
+            if directive.agent_svid:
+                _LOCAL_QUARANTINED_SVIDS[directive.agent_svid] = expiry
 
         latency_us = (time.perf_counter() - t0) * 1_000_000.0
         rule_id = f"cage-svid-qrule-{digest[:12]}"
@@ -285,10 +336,13 @@ class InferenceProxySvidQuarantineActuator:
         )
 
     async def health_check(self) -> bool:
-        if self._redis is None:
-            return True
+        active_redis = (
+            self._redis if self._redis is not None else _default_quarantine_redis
+        )
+        if active_redis is None:
+            return not is_enforcing(resolve_posture())
         try:
-            await self._redis.ping()
+            await active_redis.ping()
             return True
         except Exception:
             return False
@@ -298,6 +352,9 @@ def load_quarantine_actuator_from_env(
     redis_client: Any | None = None,
 ) -> QuarantineActuator:
     """Resolve the active QuarantineActuator from CAGE_QUARANTINE_ACTUATOR."""
+    active_redis = (
+        redis_client if redis_client is not None else _default_quarantine_redis
+    )
     configured = os.environ.get("CAGE_QUARANTINE_ACTUATOR", "").strip().lower()
     if configured in ("actuator_03", "a03", "sentry", "doca_quarantine"):
         from src.integrations.actuator_03.adapter import Actuator03Adapter
@@ -306,16 +363,20 @@ def load_quarantine_actuator_from_env(
     if configured in ("simulated", "sim"):
         return SimulatedQuarantineActuator()
     if configured in ("cage_svid", "inference_proxy", "svid", ""):
-        return InferenceProxySvidQuarantineActuator(redis_client=redis_client)
+        return InferenceProxySvidQuarantineActuator(redis_client=active_redis)
     return UnavailableQuarantineActuator()
 
 
 async def dispatch_quarantine(
     directive: QuarantineDirective,
     actuator: QuarantineActuator | None = None,
+    *,
+    redis_client: Any | None = None,
 ) -> QuarantineReceipt:
     """Execute workload quarantine and record WORKLOAD_QUARANTINE_RECEIPT in EvidenceStreamSink."""
-    active_actuator = actuator or load_quarantine_actuator_from_env()
+    active_actuator = actuator or load_quarantine_actuator_from_env(
+        redis_client=redis_client
+    )
     try:
         receipt = await active_actuator.quarantine_workload(directive)
     except Exception as exc:
@@ -386,8 +447,10 @@ __all__ = [
     "QuarantineTriggerReason",
     "SimulatedQuarantineActuator",
     "UnavailableQuarantineActuator",
+    "bind_quarantine_redis",
     "clear_local_quarantine_state",
     "dispatch_quarantine",
+    "get_quarantine_redis",
     "is_workload_quarantined",
     "load_quarantine_actuator_from_env",
 ]
