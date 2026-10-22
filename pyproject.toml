@@ -15,7 +15,7 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "networkx>=3.3",
     "redis>=5.0.0",
-    "litellm>=1.0.0",
+    "litellm>=1.104.0",
     # Core OTEL — shared across gateway, advisor, compliance
     "opentelemetry-api>=1.38.0",
     "opentelemetry-sdk>=1.38.0",
@@ -30,11 +30,10 @@ dependencies = [
     "openai>=1.0.0",
     # cryptography>=50.0.0: fixes PYSEC-2026-3552 / CVE-2026-69247 / GHSA-g6cj-pr64-35w5
     "cryptography>=50.0.0",
-    # aiohttp>=3.14.3: fixes PYSEC-2026-3545/3546/3547 (CVE-2026-69244,
-    # CVE-2026-69243, CVE-2026-59881). Pinned as a direct dependency to force
-    # the resolver to select a patched version even though aiohttp is only
-    # pulled in transitively (e.g. via google-adk / langfuse).
-    "aiohttp>=3.14.3",
+    # aiohttp>=3.14.4: fixes PYSEC-2026-3545/3546/3547 and GHSA-2g87-pp6c-29x5.
+    # Pinned as a direct dependency to force the resolver to select a patched
+    # version even though aiohttp is pulled in transitively.
+    "aiohttp>=3.14.4",
     "prometheus-client>=0.20.0",
     "pytest-cov>=7.1.0",
 ]
@@ -88,7 +87,9 @@ deployment = [
 gateway = [
     "grpcio>=1.78.0",
     "protobuf>=5.26.1,<7.0.0",
-    "mcp>=0.1.0",
+    # mcp>=1.30.0,<2.0.0: fixes CVE-2026-59951 / GHSA-84m7-p3x7-pcfv
+    # (Streamable HTTP stateful session retention) while keeping 1.x FastMCP API.
+    "mcp>=1.30.0,<2.0.0",
     "uvloop>=0.21.0; sys_platform != 'win32'",
     "httptools>=0.6.1",
     # PyJWT[crypto]: OIDC middleware (src/gateway/server/governance_middleware.py)
@@ -286,6 +287,17 @@ where = ["src"]
 [[tool.uv.index]]
 url = "https://pypi.org/simple"
 default = true
+
+[tool.uv]
+environments = ["python_version >= '3.11'"]
+override-dependencies = [
+    # Force patched opentelemetry (>=1.45.1 / >=0.66b0) past google-adk's <=1.42.1 pin (CVE-2026-114603)
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
+    "opentelemetry-semantic-conventions>=0.66b0",
+    # Force patched pillow (>=13.0.0) past fastembed's <13.0 pin (GHSA-78g4-xqwv-q3g8)
+    "pillow>=13.0.0",
+]
 
 [tool.uv.sources]
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

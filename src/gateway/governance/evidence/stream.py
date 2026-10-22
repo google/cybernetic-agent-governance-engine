@@ -943,6 +943,7 @@ end
 return out
 """
 
+# nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
 _APPEND_BATCH_SCRIPT_SHA = hashlib.sha1(
     _APPEND_BATCH_SCRIPT.encode("utf-8"), usedforsecurity=False
 ).hexdigest()

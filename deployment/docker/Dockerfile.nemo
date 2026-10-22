@@ -20,7 +20,7 @@
 # receives only the locked venv, the generated protobuf stubs and the source.
 # To bump the base, update WOLFI_BASE here together with the other three
 # Python Dockerfiles.
-ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:9c2092b053779e14c82fb50f77b37bcc38b7d2c83972352d5813280f9d035b03
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder
@@ -92,7 +92,7 @@ WORKDIR /app
 # Non-root user matching runAsUser: 1000 in deployment/k8s/nemo.yaml.
 # Application files stay root-owned, so the process cannot modify its own code.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache python-3.12 libstdc++ libgcc tzdata \
+    && apk add --no-cache ca-certificates-bundle python-3.12 libstdc++ libgcc tzdata \
     && adduser -D -H -u 1000 -s /bin/false appuser
 
 COPY --from=builder /app /app

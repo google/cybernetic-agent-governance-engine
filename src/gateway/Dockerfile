@@ -26,7 +26,7 @@
 # To bump the base: resolve the new digest of cgr.dev/chainguard/wolfi-base:latest
 # and update WOLFI_BASE in all four Python Dockerfiles together (including
 # deployment/docker/Dockerfile.nemo).
-ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:9c2092b053779e14c82fb50f77b37bcc38b7d2c83972352d5813280f9d035b03
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder
@@ -97,7 +97,7 @@ WORKDIR /app
 # `apk upgrade` picks up fixes published since the base digest was cut.
 # M-24: Run as non-root user (UID 1000) to satisfy PSA restricted policy.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache python-3.12 libstdc++ libgcc tzdata \
+    && apk add --no-cache ca-certificates-bundle python-3.12 libstdc++ libgcc tzdata \
     && adduser -D -H -u 1000 -s /bin/false appuser
 
 COPY --from=builder --chown=appuser:appuser /app /app

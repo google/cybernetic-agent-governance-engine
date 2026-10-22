@@ -38,8 +38,8 @@
     {
       "type": "library",
       "name": "certifi",
-      "version": "2026.2.25",
-      "purl": "pkg:pypi/certifi@2026.2.25",
+      "version": "2026.10.19",
+      "purl": "pkg:pypi/certifi@2026.10.19",
       "licenses": []
     },
     {
