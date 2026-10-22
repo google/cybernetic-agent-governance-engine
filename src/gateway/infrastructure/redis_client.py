@@ -498,6 +498,13 @@ try:
             """Set *key* to *value* with an expiry of *ttl_seconds* seconds."""
             self._get().setex(key, ttl_seconds, value)
 
+        def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> Any:
+            """Execute a Lua script synchronously (used by R-04 replay sequence validation)."""
+            return self._get().eval(script, numkeys, *keys_and_args)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._get(), name)
+
         def ping_ready(self) -> None:
             """Verify Redis is reachable by issuing a synchronous PING command.
 

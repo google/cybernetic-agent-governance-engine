@@ -987,7 +987,16 @@ class GroundTruthReconciler:
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         account_id = os.environ.get("RECONCILIATION_ACCOUNT_ID", "default")
-        client = redis.from_url(redis_url, decode_responses=True)
+        use_tls = redis_url.startswith("rediss://") or os.environ.get(
+            "REDIS_TLS", ""
+        ).lower() in ("true", "1", "yes")
+        use_iam = os.environ.get("REDIS_AUTH_MODE", "").lower() == "iam"
+        if use_tls or use_iam:
+            from src.gateway.infrastructure.redis_client import get_redis_client
+
+            client = get_redis_client()._get()
+        else:
+            client = redis.from_url(redis_url, decode_responses=True)
         provider = _DefaultSimulatedProvider(
             journal=simulated_journal_from_env(
                 client, _DefaultSimulatedProvider.invariant_id
