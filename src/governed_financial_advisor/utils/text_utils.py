@@ -12,24 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
+_OPEN_TAG = "<think>"
+_CLOSE_TAG = "</think>"
 
 
 def strip_thinking_tags(text: str) -> str:
-    """
-    Removes <think>...</think> blocks from the text.
-    Handles multiline content and ensures whitespace is trimmed.
+    """Remove ``<think>...</think>`` blocks from ``text`` in linear O(N) time.
+
+    Handles:
+      - One or more complete ``<think>...</think>`` blocks (including multiline).
+      - Unclosed trailing ``<think>...`` blocks (e.g., generation truncated mid-thought).
+      - Orphan ``...</think>`` prefixes when the opening ``<think>`` tag was split or omitted.
     """
     if not text:
         return ""
-    # Remove <think>...</think> (non-greedy)
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
 
-    # Handle unclosed <think> tags (e.g. if generation stopped mid-stream)
-    # This will remove everything after <think> if the closing tag is missing.
-    cleaned = re.sub(r"<think>.*", "", cleaned, flags=re.DOTALL)
+    # 1. Remove all complete <think>...</think> blocks and any unclosed <think>... tail
+    if _OPEN_TAG in text:
+        parts: list[str] = []
+        remaining = text
+        while True:
+            before, sep, after = remaining.partition(_OPEN_TAG)
+            parts.append(before)
+            if not sep:
+                break
+            _thought, close_sep, tail = after.partition(_CLOSE_TAG)
+            if not close_sep:
+                # Unclosed <think>: discard everything after <think>
+                break
+            remaining = tail
+        cleaned = "".join(parts)
+    else:
+        cleaned = text
 
-    # Also handle standalone </think> if the opening tag was missed or split
-    cleaned = re.sub(r".*?</think>", "", cleaned, flags=re.DOTALL)
+    # 2. Handle standalone </think> if the opening tag was missed or split
+    if _CLOSE_TAG in cleaned:
+        _, _, cleaned = cleaned.rpartition(_CLOSE_TAG)
 
     return cleaned.strip()

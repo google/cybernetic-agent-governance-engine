@@ -192,7 +192,8 @@ def get_execution_analyst_instruction() -> str:
 import json as _json
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
+
+from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 
 def create_execution_analyst_agent(model_name: str = Config.MODEL_REASONING):  # type: ignore[assignment, no-untyped-def]
@@ -209,11 +210,12 @@ def create_execution_analyst_agent(model_name: str = Config.MODEL_REASONING):  #
     """
     schema = ExecutionPlan.model_json_schema()
 
-    llm = ChatOpenAI(
+    llm = chat_model(
+        "reasoning",
         model=model_name,
         base_url=Config.VLLM_REASONING_API_BASE,
         temperature=0.0,
-        max_tokens=4096,  # type: ignore[call-arg]
+        max_tokens=4096,
         model_kwargs={
             # Activate vLLM outlines FSM decoder — guarantees valid JSON schema output.
             # This is a vLLM-specific extra_body parameter passed directly to the API.

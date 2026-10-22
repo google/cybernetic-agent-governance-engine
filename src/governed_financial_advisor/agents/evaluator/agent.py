@@ -211,8 +211,9 @@ async def safety_intervention(reason: str) -> str:
 # --- AGENT DEFINITION ---
 
 from langchain_core.messages import SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
+
+from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 _SYSTEM_PROMPT = """You are a policy evaluator agent for the Cybernetic Governance Engine.
 Your role is to evaluate whether AI agent actions comply with governance policies,
@@ -238,11 +239,13 @@ def build_evaluator_agent() -> Any:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY must be set for the evaluator agent")
 
-    llm = ChatOpenAI(
+    llm = chat_model(
+        "fast",
+        model=model,
         base_url=api_base,
-        api_key=api_key,  # type: ignore[arg-type]  # ChatOpenAI expects SecretStr but str is accepted at runtime
-        model=model,  # type: ignore[arg-type]
-        temperature=0,
+        api_key=api_key,
+        temperature=0.0,
+        require_api_key=True,
     )
 
     # verify_semantic_nemo removed — NeMo is now enforced as a mandatory graph node (ADR 2026-03-09)

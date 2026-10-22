@@ -22,9 +22,11 @@ All Telemetry interactions are now routed exclusively via:
 The compliance-bridge is the SOLE authorised Telemetry SDK consumer.
 """
 
+import asyncio
 import json
 import logging
 import os
+import threading
 from typing import Any, Literal
 
 import httpx
@@ -47,8 +49,174 @@ def _get_iso_control_map() -> dict[str, str]:
 IsoOutcome = Literal["PASSED", "BLOCKED", "ESCALATED", "SKIPPED"]
 
 # ---------------------------------------------------------------------------
-# Prompt management — via compliance-bridge HTTP proxy
+# Prompt management — via compliance-bridge HTTP proxy & in-memory PromptRegistry
 # ---------------------------------------------------------------------------
+
+DEFAULT_PROMPT_NAMES: tuple[str, ...] = (
+    "agent/explainer",
+    "agent/execution_analyst",
+    "agent/financial_coordinator",
+    "agent/governed_trader",
+)
+
+
+class PromptRegistry:
+    """In-memory prompt cache refreshed asynchronously over a pooled httpx client.
+
+    Eliminates per-request synchronous ``httpx.get`` calls on the advisor hot
+    path. Prompts are warmed on lifespan startup and refreshed periodically in
+    the background (default every 300s). ``get()`` reads strictly from memory
+    and falls back to the caller's static fallback prompt if a prompt has not
+    been populated yet.
+    """
+
+    def __init__(self, refresh_interval_seconds: float = 300.0) -> None:
+        self._refresh_interval_seconds = refresh_interval_seconds
+        self._cache: dict[tuple[str, str], str] = {}
+        self._lock = threading.Lock()
+        self._client: httpx.AsyncClient | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._stop_event: asyncio.Event | None = None
+
+    def get(
+        self,
+        name: str,
+        fallback: str = "",
+        label: str = "production",
+    ) -> str:
+        """Return the cached prompt text from memory, or ``fallback`` on miss."""
+        with self._lock:
+            return self._cache.get((name, label), fallback)
+
+    def set(
+        self,
+        name: str,
+        text: str,
+        label: str = "production",
+    ) -> None:
+        """Store a prompt in the in-memory cache."""
+        with self._lock:
+            self._cache[(name, label)] = text
+
+    def clear(self) -> None:
+        """Clear all cached prompts (used in tests)."""
+        with self._lock:
+            self._cache.clear()
+
+    def _ensure_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=2.0, read=5.0, write=5.0, pool=2.0),
+                limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
+            )
+        return self._client
+
+    async def refresh_prompt(
+        self,
+        name: str,
+        label: str = "production",
+    ) -> str | None:
+        """Fetch a single prompt from the compliance-bridge and update memory."""
+        bridge_url = os.environ.get(
+            "COMPLIANCE_BRIDGE_URL", "http://compliance-bridge:3001"
+        )
+        url = f"{bridge_url}/v1/prompts/{name}"
+        client = self._ensure_client()
+        try:
+            response = await client.get(url, params={"label": label})
+            if response.status_code == 200:
+                text = response.json()["text"]
+                self.set(name, text, label=label)
+                logger.info(
+                    "[prompts] refreshed %s@%s into PromptRegistry", name, label
+                )
+                return text
+            logger.debug(
+                "[prompts] bridge returned HTTP %s for '%s@%s'; keeping cached/fallback.",
+                response.status_code,
+                name,
+                label,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[prompts] failed to refresh '%s@%s' from bridge (%s): %s; keeping cached/fallback.",
+                name,
+                label,
+                bridge_url,
+                exc,
+            )
+        return None
+
+    async def refresh_all(
+        self,
+        names: tuple[str, ...] = DEFAULT_PROMPT_NAMES,
+        label: str = "production",
+    ) -> None:
+        """Concurrently refresh all managed prompts from the compliance-bridge."""
+        await asyncio.gather(
+            *(self.refresh_prompt(name, label=label) for name in names),
+            return_exceptions=True,
+        )
+
+    async def _refresh_loop(
+        self,
+        names: tuple[str, ...],
+        label: str,
+    ) -> None:
+        if self._stop_event is None:
+            return
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._refresh_interval_seconds,
+                )
+                break
+            except TimeoutError:
+                await self.refresh_all(names=names, label=label)
+            except asyncio.CancelledError:
+                break
+
+    async def start(
+        self,
+        names: tuple[str, ...] = DEFAULT_PROMPT_NAMES,
+        label: str = "production",
+    ) -> None:
+        """Warm the prompt cache and start the periodic background refresh loop."""
+        await self.refresh_all(names=names, label=label)
+        if self._task is None or self._task.done():
+            self._stop_event = asyncio.Event()
+            self._task = asyncio.create_task(
+                self._refresh_loop(names=names, label=label),
+                name="cage-prompt-registry-refresh",
+            )
+
+    async def stop(self) -> None:
+        """Stop the background refresh task and close the pooled HTTP client."""
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+
+
+_prompt_registry = PromptRegistry(
+    refresh_interval_seconds=float(
+        os.environ.get("PROMPT_REGISTRY_REFRESH_SECONDS", "300.0")
+    )
+)
+
+
+def get_prompt_registry() -> PromptRegistry:
+    """Return the process-wide PromptRegistry singleton."""
+    return _prompt_registry
 
 
 def get_managed_prompt(
@@ -56,39 +224,18 @@ def get_managed_prompt(
     fallback: str = "",
     label: str = "production",
 ) -> str:
-    """
-    Fetches a prompt from the compliance-bridge prompt proxy.
+    """Return a managed prompt from the in-memory ``PromptRegistry``.
 
-    GET {COMPLIANCE_BRIDGE_URL}/v1/prompts/{name}?label={label}
-
-    On HTTP 200 returns response.json()["text"].
-    On 404 or any network/timeout error, logs a warning and returns ``fallback``.
+    Never performs synchronous HTTP I/O on the calling thread or event loop.
+    Returns the cached prompt populated by ``PromptRegistry`` (or ``fallback``
+    if the prompt has not been warmed or the compliance-bridge was unreachable).
 
     Args:
         name:     Prompt name registered in Telemetry (e.g. 'agent/explainer')
-        fallback: Static text to return when the bridge is unreachable
+        fallback: Static text to return when the prompt is not in memory
         label:    Telemetry prompt label (default: 'production')
     """
-    bridge_url = os.environ.get(
-        "COMPLIANCE_BRIDGE_URL", "http://compliance-bridge:3001"
-    )
-    url = f"{bridge_url}/v1/prompts/{name}"
-    try:
-        response = httpx.get(url, params={"label": label}, timeout=5.0)
-        if response.status_code == 200:
-            text = response.json()["text"]
-            logger.info(f"[prompts] fetched {name}@{label}")
-            return text
-        logger.warning(
-            f"[prompts] bridge returned HTTP {response.status_code} for "
-            f"'{name}@{label}'; using fallback."
-        )
-    except Exception as exc:
-        logger.warning(
-            f"[prompts] failed to fetch '{name}@{label}' from bridge "
-            f"({bridge_url}): {exc}; using fallback."
-        )
-    return fallback
+    return _prompt_registry.get(name, fallback=fallback, label=label)
 
 
 # ---------------------------------------------------------------------------

@@ -26,11 +26,11 @@ logger = logging.getLogger(__name__)
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from src.gateway.infrastructure.telemetry_client import genai_span
 from src.governed_financial_advisor.graph.state import AgentState
+from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 
 class MockChatModel(BaseChatModel):
@@ -102,11 +102,12 @@ def _build_reasoner_llm():  # type: ignore[no-untyped-def]
     if not api_base or "mock" in api_base.lower():
         logger.info("Using MockChatModel for reasoning LLM.")
         return MockChatModel()
-    return ChatOpenAI(
-        model=os.getenv("MODEL_REASONING"),  # type: ignore[arg-type]
+    return chat_model(
+        "reasoning",
+        model=os.getenv("MODEL_REASONING"),
         base_url=api_base,
         temperature=0.6,
-        max_tokens=1024,  # type: ignore[call-arg]  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
+        max_tokens=1024,  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
     )
 
 
@@ -119,16 +120,17 @@ def _build_fast_llm():  # type: ignore[no-untyped-def]
     if not api_base or "mock" in api_base.lower():
         logger.info("Using MockChatModel for fast LLM.")
         return MockChatModel()
-    return ChatOpenAI(
-        model=os.getenv("MODEL_FAST"),  # type: ignore[arg-type]
+    return chat_model(
+        "fast",
+        model=os.getenv("MODEL_FAST"),
         base_url=api_base,
         temperature=0.0,
     )
 
 
 # Module-level lazy LLM clients — initialised on first use, not at import time.
-_reasoner_llm: "ChatOpenAI | None" = None
-_fast_llm: "ChatOpenAI | None" = None
+_reasoner_llm: BaseChatModel | None = None
+_fast_llm: BaseChatModel | None = None
 
 
 def _get_reasoner_llm():  # type: ignore[no-untyped-def]
@@ -226,7 +228,7 @@ def _sanitize_user_message(text: str) -> str:
     return sanitized[:4096]
 
 
-def thinker_node(state):  # type: ignore[no-untyped-def]
+async def thinker_node(state):  # type: ignore[no-untyped-def]
     """DeepSeek analyzes the state and creates a plan."""
     logger.debug("--- [Graph] Supervisor (Thinker) ---")
 
@@ -301,7 +303,7 @@ def thinker_node(state):  # type: ignore[no-untyped-def]
 
     with genai_span(name="reasoning", model=os.getenv("MODEL_REASONING")):  # type: ignore[arg-type]
         # 1. Run Thinker Agent (The "Brain")
-        response = _get_reasoner_llm().invoke(messages_to_pass)
+        response = await _get_reasoner_llm().ainvoke(messages_to_pass)
 
         # Store DeepSeek's thought process into the state
         updated_state["reasoning_output"] = response.content
@@ -312,7 +314,7 @@ def thinker_node(state):  # type: ignore[no-untyped-def]
         return final_output
 
 
-def doer_node(state):  # type: ignore[no-untyped-def]
+async def doer_node(state):  # type: ignore[no-untyped-def]
     """Parse the thinker's routing decision and forward to the correct sub-agent.
 
     The thinker (reasoner_llm) emits a structured response where Line 1 is
@@ -378,7 +380,7 @@ def doer_node(state):  # type: ignore[no-untyped-def]
             name="final_response_generation",
             model=os.getenv("MODEL_FAST"),  # type: ignore[arg-type]
         ):
-            final_response = _get_fast_llm().invoke(
+            final_response = await _get_fast_llm().ainvoke(
                 [final_gen_system_prompt, final_gen_human_prompt]
             )
             updated_state["messages"] = state["messages"] + [

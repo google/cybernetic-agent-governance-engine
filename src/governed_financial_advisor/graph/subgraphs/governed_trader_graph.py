@@ -39,6 +39,7 @@ graph is resumed via the LangGraph SDK with:
                     "rationale": str, "max_slippage_pct": float})
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -50,7 +51,6 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 from src.gateway.infrastructure.mcp_client import get_mcp_client
@@ -73,6 +73,7 @@ from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
 )
+from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -228,16 +229,11 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
         span.set_attribute(TRACE_METADATA_CURRENT_NODE, "governed_trader_executor")
         span.set_attribute("gen_ai.operation.name", "chat")
 
-        _fast_api_base = os.getenv("VLLM_FAST_API_BASE")
-        if not _fast_api_base:
-            raise RuntimeError(
-                "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
-            )
-        llm = ChatOpenAI(
-            model=model_name,  # type: ignore[arg-type]
-            base_url=_fast_api_base,
+        llm = chat_model(
+            "fast",
+            model=model_name,
             temperature=0.0,
-            max_tokens=4096,  # type: ignore[call-arg]
+            max_tokens=4096,
         )
 
         # Load MCP tools manually
@@ -403,27 +399,36 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
         except (json.JSONDecodeError, TypeError, ValueError, ZeroDivisionError):
             pass
 
-        # 3. Fetch live quote via yfinance (lightweight fast_info path).
+        # 3. Fetch live quote via yfinance off the event loop with bounded timeout.
         try:
             import yfinance as yf
 
-            ticker_obj = yf.Ticker(ticker)
-            fresh_price: float | None = None
+            def _fetch_yfinance_price(sym: str) -> float | None:
+                ticker_obj = yf.Ticker(sym)
+                price: float | None = None
+                # Try fast_info first (single HTTP call, ~200ms).
+                try:
+                    fi = ticker_obj.fast_info
+                    raw = fi.get("last_price") or fi.get("lastPrice")
+                    if raw and float(raw) > 0:
+                        price = float(raw)
+                except Exception as exc:
+                    logger.debug(
+                        "yfinance fast_info lookup failed for %s: %s", sym, exc
+                    )
 
-            # Try fast_info first (single HTTP call, ~200ms).
-            try:
-                fi = ticker_obj.fast_info
-                raw = fi.get("last_price") or fi.get("lastPrice")
-                if raw and float(raw) > 0:
-                    fresh_price = float(raw)
-            except Exception:
-                pass
+                # Fallback: last close from 1-day history.
+                if not price or price <= 0:
+                    hist = ticker_obj.history(period="1d")
+                    if not hist.empty:
+                        price = float(hist.iloc[-1]["Close"])
+                return price
 
-            # Fallback: last close from 1-day history.
-            if not fresh_price or fresh_price <= 0:
-                hist = ticker_obj.history(period="1d")
-                if not hist.empty:
-                    fresh_price = float(hist.iloc[-1]["Close"])
+            yf_timeout = float(os.environ.get("YFINANCE_TIMEOUT_SECONDS", "5.0"))
+            fresh_price = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_yfinance_price, ticker),
+                timeout=yf_timeout,
+            )
 
             drift_pct: float | None = None
             if stale_price and stale_price > 0 and fresh_price and fresh_price > 0:
