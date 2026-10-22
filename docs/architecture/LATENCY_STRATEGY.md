@@ -18,7 +18,7 @@ This document outlines the performance strategy for the Cybernetic Governance En
 Every safe generation incurs a latency penalty:
 
 1.  **Semantic Guardrails (NeMo):** ~150-300ms (Input/Output checks).
-2.  **Policy Evaluation (OPA):** ~10-50ms warm (sidecar network hop + Rego eval); up to ~20s on first evaluation after a pod rollout (cold-start). Mitigated by the OPA Decision Cache (see below).
+2.  **Policy Evaluation (OPA):** ~10-50ms warm (sidecar network hop + Rego eval); up to ~20s on first evaluation after a pod rollout (cold-start). Mitigated by gateway boot-time pre-warming (see below).
 3.  **Syntactic Enforcement (vLLM Native JSON-mode API):** ~50ms. The `outlines` library was removed from CAGE's client-side dependencies due to CVE-2025-69872 (diskcache pickle RCE); vLLM's native JSON-mode API is used instead.
 
 To maintain a responsive user experience (Total Response Time < 2s for simple queries), the underlying inference engine must be exceptionally fast. The `CircuitBreaker` in `OPAClient` enforces a hard latency budget of **3000ms** and emits a soft-ceiling warning at **2000ms**.
@@ -64,7 +64,7 @@ The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the def
 1.  **Agent Reasoning (DeepSeek-R1-Distill-Llama-8B):** 3.0s (Thinking time)
 2.  **Tool Call (Governance Client):**
     - Network RTT: 10ms
-    - **vLLM TTFT (Warm):** 40ms (cold-start up to 20s; mitigated by OPA Decision Cache and gateway pre-warming)
+    - **vLLM TTFT (Warm):** 40ms (cold-start up to 20s; mitigated by gateway pre-warming)
     - Generation (100 tokens): 150ms
 3.  **Total Governance Overhead:** ~200ms
 
@@ -74,23 +74,19 @@ The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the def
 
 The following mechanisms are implemented in code and actively reduce governance overhead:
 
-### 1. OPA Decision Cache (Redis, 10s TTL)
+### 1. No OPA Decision Cache
 
-[`src/gateway/core/policy.py`](../../src/gateway/core/policy.py) implements a short-TTL Redis cache for OPA decisions. Identical OPA inputs (same action + symbol + amount) within a **10-second window** return the cached decision without an HTTP round-trip.
-
-- **Key prefix:** `cage:opa:decision:` (SHA-256 of canonical JSON input, first 24 hex chars)
-- **TTL:** `_OPA_CACHE_TTL_SECONDS = 10` — intentionally short to avoid stale decisions under fast market moves
-- **Toggle:** `OPA_CACHE_ENABLED` env var (default: `"true"`); set to `"false"` to disable in unit test environments
-- **Failure mode:** Cache write/read failures are silent — the OPA HTTP path remains authoritative
+[`OPAClient.evaluate_policy()`](../../src/gateway/core/policy.py) sends every decision to OPA, so a policy or data change takes effect on the next request. The Redis decision cache it used to consult (10 s TTL) almost never hit on the trade path, where each `execute_trade` carries a fresh `transaction_id`, so those checks paid a Redis read and write for nothing. Where inputs did repeat (read-only actions, and the repeated-input benchmark recorded in [`PROVENANCE.md`](../paper/measurements/2026-10-03-c0e3b14e/PROVENANCE.md)), it hid OPA latency and could serve a decision for up to 10 s after a policy or data change.
 
 ### 2. Circuit Breaker (Fail-Fast, Latency Budget Enforcement)
 
 `CircuitBreaker` in `policy.py` protects the governance path from cascading failures:
 
-- **Failure threshold:** 5 consecutive failures → circuit OPEN
-- **Recovery timeout:** 30 seconds before attempting half-open probe
-- **Hard latency budget:** 3000ms (`max_latency_budget`) — requests exceeding this are fast-failed with `DENY` ("Bankruptcy Protocol")
-- **Soft ceiling:** 2000ms — emits a `Latency Inflation Warning` log but does not block
+- **Failure threshold:** 5 consecutive upstream failures (connect, read or protocol errors, HTTP 5xx, or 408/429 from a proxy) → circuit OPEN, and every check fails fast with `DENY`. A healthy answer resets the count, so the rule does not depend on traffic volume: a dead OPA trips it at any request rate, and rare errors between healthy answers never do.
+- **Not counted:** HTTP 4xx answers (OPA is up but rejected the query), local connection-pool saturation (`httpx.PoolTimeout`), and local misconfiguration (an unusable `OPA_URL`, an illegal header value); each denies that request without tripping the breaker
+- **Recovery:** after 30 seconds the next call is the single HALF_OPEN probe; a healthy answer closes the circuit, an upstream failure reopens it, and other callers keep failing fast until the probe finishes
+- **Hard latency budget:** 3000ms (`max_latency_budget`) — a caller that passes its elapsed governance time as `current_latency_ms` gets `DENY` once it exceeds this ("Bankruptcy Protocol"). No in-repo caller passes it yet (`OpaStage`, the MCP tool server and the warm-up use the default of 0), so the budget is not enforced in production today.
+- **Soft ceiling:** 2000ms — emits a `Latency Inflation Warning` log but does not block (same `current_latency_ms` caveat)
 
 ### 3. Gateway Boot-Time Pre-Warming
 
@@ -128,7 +124,7 @@ Both Redis clients enforce strict connection timeouts to prevent governance hang
 
 **Gateway Redis** (`src/gateway/infrastructure/redis_client.py`):
 - `socket_connect_timeout=3.0s`, `socket_timeout=3.0s`
-- Used by: OPA Decision Cache, `ControlBarrierFunction`
+- Used by: `ControlBarrierFunction`
 
 **GFA Redis** (`src/governed_financial_advisor/infrastructure/redis_client.py`):
 - `socket_connect_timeout=2.0s`, `socket_timeout=5.0s`, `max_connections=100`

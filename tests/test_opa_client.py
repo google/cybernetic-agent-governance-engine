@@ -60,12 +60,11 @@ async def test_opa_deny(opa_client):
 
 @pytest.mark.asyncio
 async def test_circuit_breaker(opa_client):
-    # Reset CB
-    opa_client.cb.state = "CLOSED"
-    opa_client.cb.failures = 0
+    # The fixture builds a fresh client, so the breaker starts CLOSED.
+    assert opa_client.cb.state == "CLOSED"
 
     async with respx.mock(base_url=None) as mock:
-        # Simulate 5 failures
+        # Simulate 5 upstream (HTTP 5xx) failures
         query_url = opa_client.target_url
         mock.post(query_url).mock(return_value=httpx.Response(500))
 

@@ -418,10 +418,11 @@ def _build_unmocked_governor() -> Any:
 def _fresh_trade(params: dict[str, Any]) -> dict[str, Any]:
     """Copy ``params`` with a new ``trader_id``.
 
-    The OPA client caches decisions for 10 s keyed on the canonical input
-    (``src/gateway/core/policy.py``). Identical inputs on every iteration make
-    every call after the first a cache hit, so the OPA tier would contribute a
-    single span. A fresh id per call times the over-the-wire decision each time.
+    Earlier revisions of ``src/gateway/core/policy.py`` cached OPA decisions for
+    10 s keyed on the canonical input, so identical inputs on every iteration
+    turned every call after the first into a cache hit. The decision cache has
+    since been removed, and a fresh id per call continues to mirror distinct
+    per-request trade inputs.
     """
     return {**params, "trader_id": f"benchmark-{uuid.uuid4().hex[:12]}"}
 

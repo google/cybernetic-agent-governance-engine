@@ -85,7 +85,6 @@ jobs:
         env:
           CAGE_ENV: "ci"
           CAGE_DOMAIN: "finance"
-          OPA_CACHE_ENABLED: "false"
           OPA_URL: "http://localhost:8181"
           REDIS_URL: "redis://localhost:6379/0"
           EVIDENCE_STREAM_ENABLED: "true"

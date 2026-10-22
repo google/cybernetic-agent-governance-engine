@@ -157,7 +157,7 @@ and 4 are docstring/comment references rather than executable calls. That leaves
 
 | # | File / line | Purpose | Lifetime | Class |
 |---|---|---|---|---|
-| 12 | [`policy.py:82`](src/gateway/core/policy.py:82) `_opa_cache_key()` | Redis cache key digest | 10 s TTL (`_OPA_CACHE_TTL_SECONDS`) | A |
+| 12 | [`policy.py`](src/gateway/core/policy.py) `_opa_cache_key()` *(removed)* | Redis cache key digest (removed with the OPA decision cache) | 10 s TTL (`_OPA_CACHE_TTL_SECONDS`, removed) | A (resolved by removal) |
 | 13 | [`query_cache.py:120`](src/governed_financial_advisor/infrastructure/query_cache.py:120) | Query cache key digest | 3600 s TTL, default `QUERY_CACHE_TTL` | A |
 | 14 | [`uca_logger.py:287`](src/gateway/governance/uca_logger.py:287) `raw_summary` | Truncated `[:512]` log string | Log line only, never hashed | A |
 | 15 | [`policy_translator.py:362`](src/gateway/governance/ingress/policy_translator.py:362) | `policy_version_id` fallback input | Recomputed on every translation | A |
@@ -189,9 +189,9 @@ persisted hash chains."*
 
 **Evidence.** The 14 sites in §4.3 above are not compared against persisted data at all:
 
-- [`src/gateway/core/policy.py:79-84`](src/gateway/core/policy.py:79) builds a Redis cache key
-  with a documented 10-second TTL (`_OPA_CACHE_TTL_SECONDS: int = 10`, line 70). A
-  canonicalization change simply causes a one-time cache miss.
+- [`src/gateway/core/policy.py`](src/gateway/core/policy.py) previously built a Redis cache key
+  (`_opa_cache_key()`) with a 10-second TTL (`_OPA_CACHE_TTL_SECONDS: int = 10`); that decision
+  cache has since been removed.
 - [`src/governed_financial_advisor/infrastructure/query_cache.py:119-121`](src/governed_financial_advisor/infrastructure/query_cache.py:119)
   is a query cache keyed on a governance-context hash; the same argument applies.
 - [`src/gateway/governance/uca_logger.py:287`](src/gateway/governance/uca_logger.py:287)

@@ -17,22 +17,24 @@ Gateway Core: Policy & Governance (OPA + CircuitBreaker)
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 import httpx
 from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import Span, Status, StatusCode
 
 from config.settings import Config
-from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
@@ -74,23 +76,6 @@ CAGE_OPA_EXPLAIN_LOGGING: bool = (
 # maxsize=1000 caps memory usage; overflow is dropped (never blocks hot path).
 _explain_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
-# ---------------------------------------------------------------------------
-# OPA Decision Cache — short-TTL Redis cache for identical policy inputs
-# ---------------------------------------------------------------------------
-# Identical OPA inputs (same action+symbol+amount) within a
-# 10-second window return the cached decision without an HTTP round-trip.
-# TTL is intentionally short to avoid stale decisions under fast market moves.
-#
-# Controlled by OPA_CACHE_ENABLED env var (default: "true").
-# Set OPA_CACHE_ENABLED=false to disable (e.g. in unit test environments).
-_OPA_CACHE_TTL_SECONDS: int = 10
-_OPA_CACHE_PREFIX: str = "cage:opa:decision:"
-
-
-def _opa_cache_enabled() -> bool:
-    """Return True if the OPA decision cache is active."""
-    return os.environ.get("OPA_CACHE_ENABLED", "true").lower() == "true"
-
 
 def _normalize_opa_input(obj: Any) -> Any:
     """Normalize datetime/Decimal values into JSON-safe primitives."""
@@ -106,50 +91,6 @@ def _normalize_opa_input(obj: Any) -> Any:
         return obj
     else:
         return str(obj)
-
-
-def _opa_cache_key(input_data: dict, package: str | None = None) -> str:
-    """Return a deterministic Redis key for an OPA input payload.
-
-    v3.1.0: Migrated to RFC 8785 JCS canonicalization with pre-normalization.
-    Includes ``package`` when provided so OPAClient instances targeting
-    different Rego packages do not share cache entries.
-    """
-    normalized = _normalize_opa_input(input_data)
-    canonical_bytes = jcs_canonicalize_plan(normalized)
-    digest = hashlib.sha256(canonical_bytes).hexdigest()[:24]
-    if package:
-        return f"{_OPA_CACHE_PREFIX}{package}:{digest}"
-    return f"{_OPA_CACHE_PREFIX}{digest}"
-
-
-async def _read_opa_cache(key: str) -> str | None:
-    """Return cached OPA decision string, or None if absent/unavailable/disabled."""
-    if not _opa_cache_enabled():
-        return None
-    try:
-        from src.gateway.infrastructure.redis_client import redis_client
-
-        if redis_client is None:
-            return None
-        val = await redis_client.get(key)
-        return val.decode() if isinstance(val, bytes) else val
-    except Exception:
-        return None
-
-
-async def _write_opa_cache(key: str, decision: str) -> None:
-    """Write an OPA decision to Redis with the configured TTL."""
-    if not _opa_cache_enabled():
-        return
-    try:
-        from src.gateway.infrastructure.redis_client import redis_client
-
-        if redis_client is None:
-            return
-        await redis_client.setex(key, _OPA_CACHE_TTL_SECONDS, decision)
-    except Exception:
-        pass  # Cache write failure is silent — OPA HTTP path remains authoritative
 
 
 # ---------------------------------------------------------------------------
@@ -261,64 +202,151 @@ def start_explain_worker(loop: asyncio.AbstractEventLoop) -> asyncio.Task:
     return task
 
 
-class CircuitBreaker:
-    """
-    Implements a Fail-Fast Circuit Breaker pattern.
+# ---------------------------------------------------------------------------
+# Circuit Breaker
+# ---------------------------------------------------------------------------
 
-    Thread-safety: Uses asyncio.Lock to protect shared mutable state
-    (failures, state, last_failure_time) from race conditions when
-    multiple concurrent coroutines call record_failure/record_success.
+
+class BreakerState(str, Enum):
+    """Circuit breaker states."""
+
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
+
+
+class CallOutcome(Enum):
+    """What one OPA call showed about OPA's health."""
+
+    #: OPA answered: HTTP 2xx-4xx other than 408 and 429.
+    HEALTHY = "healthy"
+    #: OPA failed: connect, read or protocol error, HTTP 5xx, 408 or 429.
+    UPSTREAM_FAILURE = "upstream_failure"
+    #: The call never reached OPA (local pool saturation, misconfiguration,
+    #: an unexpected local error) or was cancelled.
+    INCONCLUSIVE = "inconclusive"
+
+
+@dataclass(frozen=True, slots=True)
+class BreakerTicket:
+    """Admission to call OPA; ``probe`` marks the single HALF_OPEN probe."""
+
+    probe: bool
+
+
+_CALL = BreakerTicket(probe=False)
+_PROBE = BreakerTicket(probe=True)
+
+
+class CircuitBreaker:
+    """Fail-fast breaker for the OPA hot path.
+
+    - **CLOSED**: calls flow. ``failure_threshold`` consecutive upstream
+      failures open the circuit; a healthy answer resets the count.
+    - **OPEN**: calls fail fast until ``recovery_timeout`` seconds have
+      passed; the next call then becomes the HALF_OPEN probe.
+    - **HALF_OPEN**: only the probe reaches OPA. A healthy answer closes the
+      circuit, an upstream failure reopens it, and an inconclusive outcome
+      frees the slot for the next caller.
+
+    Only upstream failures count: local pool saturation, misconfiguration
+    and requests OPA rejects (4xx) say nothing about OPA's health. Counting
+    consecutive failures rather than failures per time window keeps the trip
+    rule independent of traffic volume: a dead OPA trips it at any request
+    rate, and rare errors between healthy answers never do. Once the circuit
+    has opened, outcomes of calls admitted before it are ignored; only the
+    probe moves it on.
+
+    Transitions run under a threading lock that is never held across an
+    await or while logging, so one breaker is safe across threads and event
+    loops. The latency-budget helpers (``is_bankrupt``,
+    ``check_soft_ceiling``) are stateless.
     """
 
     def __init__(
         self,
         failure_threshold: int = 5,
-        recovery_timeout: int = 30,
+        recovery_timeout: float = 30.0,
         max_latency_budget: int = 3000,
-    ):
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.max_latency_budget = max_latency_budget
-        self.failures = 0
-        self.last_failure_time = 0.0
-        self.state = "CLOSED"
-        self._lock = asyncio.Lock()
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._state = BreakerState.CLOSED
+        self._failures = 0
+        self._opened_at = 0.0
+        self._probe_in_flight = False
 
-    async def record_failure(self) -> None:
-        """Record a failure and potentially open the circuit breaker.
+    @property
+    def state(self) -> BreakerState:
+        """Current state; HALF_OPEN appears once a probe has been admitted."""
+        return self._state
 
-        Thread-safe: Uses asyncio.Lock to prevent race conditions
-        on the read-modify-write of failures counter and state transitions.
-        """
-        async with self._lock:
-            self.failures += 1
-            self.last_failure_time = time.time()
-            if self.state == "CLOSED" and self.failures >= self.failure_threshold:
-                self.state = "OPEN"
-                logger.warning(
-                    f"🔥 Circuit Breaker OPENED after {self.failures} failures."
-                )
+    @property
+    def failures(self) -> int:
+        """Consecutive upstream failures counted while CLOSED."""
+        return self._failures
 
-    async def record_success(self) -> None:
-        """Record a success and potentially close the circuit breaker.
+    def admit(self) -> BreakerTicket | None:
+        """Admit one call to OPA, or return ``None`` to fail fast."""
+        with self._lock:
+            if self._state is BreakerState.CLOSED:
+                return _CALL
+            if self._state is BreakerState.OPEN:
+                if self._clock() - self._opened_at < self.recovery_timeout:
+                    return None
+                self._state = BreakerState.HALF_OPEN
+            if self._probe_in_flight:
+                return None
+            self._probe_in_flight = True
+        logger.info("🔌 Circuit Breaker HALF_OPEN: probing OPA once.")
+        return _PROBE
 
-        Thread-safe: Uses asyncio.Lock to prevent race conditions
-        on state transitions from HALF_OPEN to CLOSED.
-        """
-        async with self._lock:
-            if self.state == "OPEN":
-                logger.info("✅ Circuit Breaker RECOVERED (CLOSED).")
-            elif self.state == "HALF_OPEN":
-                logger.info("✅ Circuit Breaker recovered from HALF_OPEN → CLOSED.")
-            self.failures = 0
-            self.state = "CLOSED"
+    def record(self, ticket: BreakerTicket, outcome: CallOutcome) -> None:
+        """Record what an admitted call showed about OPA's health."""
+        with self._lock:
+            before = self._state
+            self._apply(ticket, outcome)
+            after, failures = self._state, self._failures
+        if after is before:
+            return
+        if after is BreakerState.CLOSED:
+            logger.info("✅ Circuit Breaker recovered: HALF_OPEN → CLOSED.")
+            return
+        logger.warning(
+            "🔥 Circuit Breaker OPENED (%s); failing fast for %gs.",
+            "the HALF_OPEN probe failed"
+            if ticket.probe
+            else f"{failures} consecutive upstream failures",
+            self.recovery_timeout,
+        )
 
-    def can_execute(self) -> bool:
-        if self.state == "CLOSED":
-            return True
-        if time.time() - self.last_failure_time > self.recovery_timeout:
-            return True
-        return False
+    def _apply(self, ticket: BreakerTicket, outcome: CallOutcome) -> None:
+        """Apply one outcome to the state machine. Callers hold ``_lock``."""
+        if ticket.probe:
+            self._probe_in_flight = False
+            if outcome is CallOutcome.HEALTHY:
+                self._state = BreakerState.CLOSED
+                self._failures = 0
+            elif outcome is CallOutcome.UPSTREAM_FAILURE:
+                self._open()
+            return
+        if self._state is not BreakerState.CLOSED:
+            return  # admitted before the circuit opened; only the probe counts
+        if outcome is CallOutcome.HEALTHY:
+            self._failures = 0
+        elif outcome is CallOutcome.UPSTREAM_FAILURE:
+            self._failures += 1
+            if self._failures >= self.failure_threshold:
+                self._open()
+
+    def _open(self) -> None:
+        """Open the circuit. Callers hold ``_lock``."""
+        self._state = BreakerState.OPEN
+        self._opened_at = self._clock()
 
     def is_bankrupt(self, cumulative_spend_ms: float) -> bool:
         if cumulative_spend_ms > self.max_latency_budget:
@@ -346,8 +374,8 @@ def _opa_endpoint() -> tuple[str, str | None]:
     would let a deployment point the kernel at another domain's policy.
 
     Raises:
-        RuntimeError: ``OPA_URL`` unset, carrying a path/query, or using an
-            unsupported scheme.
+        RuntimeError: ``OPA_URL`` unset, carrying a path/query, naming no
+            host or socket, or using an unsupported scheme.
     """
     raw = Config.OPA_URL
     if not raw:
@@ -359,11 +387,16 @@ def _opa_endpoint() -> tuple[str, str | None]:
             "the decision path comes from the active domain's DomainConfig.opa_package"
         )
     if parsed.scheme == "http+unix":
-        return "http://localhost", urllib.parse.unquote(parsed.netloc)
+        socket_path = urllib.parse.unquote(parsed.netloc)
+        if not socket_path:
+            raise RuntimeError("FAIL-CLOSED: OPA_URL names no socket path")
+        return "http://localhost", socket_path
     if parsed.scheme not in ("http", "https"):
         raise RuntimeError(
             f"FAIL-CLOSED: OPA_URL scheme must be http, https or http+unix, got {parsed.scheme!r}"
         )
+    if not parsed.hostname:
+        raise RuntimeError("FAIL-CLOSED: OPA_URL names no host")
     return f"{parsed.scheme}://{parsed.netloc}", None
 
 
@@ -402,6 +435,40 @@ def _rules_in_package(modules: list[dict[str, Any]], package: str) -> set[str] |
             if isinstance(name, str):
                 rules.add(name)
     return rules if found else None
+
+
+def _decision_string(raw_result: Any) -> str:
+    """Normalize an OPA ``result`` to a canonical uppercase decision string.
+
+    OPA policies return a dict (``{"allow": true}`` or ``{"decision": "ALLOW"}``),
+    a bool, or a string; anything else denies. A dict with neither key, or
+    whose ``allow`` and ``decision`` disagree, is ambiguous and denies.
+    """
+    if isinstance(raw_result, dict):
+        answers = {
+            _scalar_decision(raw_result[key])
+            for key in ("decision", "allow")
+            if key in raw_result
+        }
+        return answers.pop() if len(answers) == 1 else "DENY"
+    return _scalar_decision(raw_result)
+
+
+def _scalar_decision(value: Any) -> str:
+    """``True``/``False`` → ``ALLOW``/``DENY``; ``None`` denies; else uppercased."""
+    if isinstance(value, bool):
+        return "ALLOW" if value else "DENY"
+    return str(value).upper() if value is not None else "DENY"
+
+
+def _deny(span: Span, error: BaseException | str, reason: str) -> str:
+    """Log and trace a failed OPA check; the decision is always DENY."""
+    logger.critical("🔥 OPA FAILURE (%s): %s", reason, error)
+    if isinstance(error, BaseException):
+        span.record_exception(error)
+    span.set_status(Status(StatusCode.ERROR))
+    span.set_attribute(TRACE_METADATA_GOVERNANCE_DENIAL_REASON, reason)
+    return "DENY"
 
 
 class OPAClient:
@@ -535,10 +602,11 @@ class OPAClient:
     async def evaluate_policy(
         self, input_data: dict[str, Any], current_latency_ms: float = 0.0
     ) -> str:
-        if not self.cb.can_execute():
-            logger.warning("⚠️ Circuit Breaker OPEN. Fast failing OPA check -> DENY.")
-            return "DENY"
+        """Ask OPA for a decision on ``input_data``; any failure denies.
 
+        Every call goes to OPA: decisions are never cached, so a policy or
+        data change takes effect on the next request.
+        """
         if self.cb.is_bankrupt(current_latency_ms):
             logger.critical(
                 f"💀 Bankruptcy Protocol: {current_latency_ms}ms > {self.cb.max_latency_budget}ms."
@@ -550,21 +618,30 @@ class OPAClient:
                 f"📉 Latency Inflation Warning: {current_latency_ms}ms > 2000ms."
             )
 
-        # ── OPA Decision Cache ──────────────────────────────────────────────
-        # Check Redis for a cached decision before making the HTTP call.
-        # Short-circuits the entire OPA round-trip for repeated identical inputs
-        # within the 10-second TTL window.
-        normalized_input = _normalize_opa_input(input_data)
-        try:
-            active_pkg: str | None = self.package
-        except Exception:
-            active_pkg = self._package
-        cache_key = _opa_cache_key(normalized_input, package=active_pkg)
-        cached = await _read_opa_cache(cache_key)
-        if cached is not None:
-            logger.debug("⚡ OPA cache hit (key=%s…) → %s", cache_key[-8:], cached)
-            return cached
+        ticket = self.cb.admit()
+        if ticket is None:
+            logger.warning(
+                "⚠️ Circuit Breaker %s. Fast failing OPA check -> DENY.",
+                self.cb.state.value,
+            )
+            return "DENY"
 
+        outcome = CallOutcome.INCONCLUSIVE
+        try:
+            decision, outcome = await self._query_opa(input_data)
+            return decision
+        except Exception:
+            # _query_opa denies every failure it anticipates; anything else is
+            # a local bug, and PolicyClient promises an erroring policy engine
+            # yields DENY.
+            logger.exception("🔥 OPA FAILURE (UNEXPECTED_ERROR); denying.")
+            return "DENY"
+        finally:
+            self.cb.record(ticket, outcome)
+
+    async def _query_opa(self, input_data: dict[str, Any]) -> tuple[str, CallOutcome]:
+        """One OPA round trip: the decision and what it showed about OPA."""
+        normalized_input = _normalize_opa_input(input_data)
         serialized_input = json.dumps(normalized_input)
         with tracer.start_as_current_span("governance.opa_check") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
@@ -585,110 +662,103 @@ class OPAClient:
                 TRACE_METADATA_GOVERNANCE_POLICY_INPUT_SIZE,
                 len(serialized_input),
             )
-            span.set_attribute("governance.opa.cache_hit", False)
 
             headers = {}
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
 
+            # IMPORTANT: Do NOT use ?explain=full in the hot governance path.
+            # explain=full forces OPA to serialize its full policy evaluation
+            # trace (~100KB-1MB JSON), adding 13-17s of latency vs ~30ms without it.
+            # The audit trail is captured via OTel span attributes above.
+            # Use ?explain=notes for lightweight rule annotations if needed.
+            #
+            # Explain-mode logging is async and non-blocking — the hot path is
+            # never delayed by explain requests.  See _explain_worker() and
+            # start_explain_worker() for the background explain architecture.
             try:
-                # IMPORTANT: Do NOT use ?explain=full in the hot governance path.
-                # explain=full forces OPA to serialize its full policy evaluation
-                # trace (~100KB-1MB JSON), adding 13-17s of latency vs ~30ms without it.
-                # The audit trail is captured via OTel span attributes above.
-                # Use ?explain=notes for lightweight rule annotations if needed.
-                #
-                # Explain-mode logging is async and non-blocking — the hot path is
-                # never delayed by explain requests.  See _explain_worker() and
-                # start_explain_worker() for the background explain architecture.
-                query_url = self.target_url
-
                 # HIGH-7 fix: use the pooled client — no new client per request.
-                client = self._get_client()
-                response = await client.post(
-                    query_url,
+                # The client's own timeouts apply (connect 2 s, read and write
+                # 5 s, pool 2 s), so a saturated pool fails fast.
+                response = await self._get_client().post(
+                    self.target_url,
                     json={"input": normalized_input},
                     headers=headers,
-                    timeout=5.0,
                 )
+            except httpx.PoolTimeout as exc:
+                # Every pooled connection is busy. This request is denied, but
+                # that is no evidence OPA is down: if OPA is slow enough to
+                # matter, the in-flight calls time out and trip the breaker.
+                return _deny(
+                    span, exc, "LOCAL_POOL_SATURATED"
+                ), CallOutcome.INCONCLUSIVE
+            except (httpx.UnsupportedProtocol, httpx.LocalProtocolError) as exc:
+                # Raised before any byte reaches OPA: an unusable OPA_URL, or
+                # an illegal header value such as a token with a newline.
+                return _deny(
+                    span, exc, "LOCAL_MISCONFIGURATION"
+                ), CallOutcome.INCONCLUSIVE
+            except httpx.TransportError as exc:
+                return _deny(span, exc, "SYSTEM_FAILURE"), CallOutcome.UPSTREAM_FAILURE
+            except Exception as exc:
+                # Misconfiguration (e.g. a malformed OPA_URL) or a local bug.
+                return _deny(span, exc, "SYSTEM_FAILURE"), CallOutcome.INCONCLUSIVE
 
-                governance_tax_ms = (time.time() - start_time) * 1000
-                span.set_attribute(
-                    TRACE_METADATA_LATENCY_CURRENCY_TAX, governance_tax_ms
+            span.set_attribute(
+                TRACE_METADATA_LATENCY_CURRENCY_TAX, (time.time() - start_time) * 1000
+            )
+            status = response.status_code
+            # 5xx, or 408/429 from a proxy in front of OPA: no answer came back.
+            if status >= 500 or status in (408, 429):
+                return (
+                    _deny(span, f"OPA returned HTTP {status}", "SYSTEM_FAILURE"),
+                    CallOutcome.UPSTREAM_FAILURE,
                 )
-
-                response.raise_for_status()
-                await self.cb.record_success()
-
+            if not 200 <= status < 300:
+                return (
+                    _deny(
+                        span, f"OPA rejected the query: HTTP {status}", "OPA_REJECTED"
+                    ),
+                    CallOutcome.HEALTHY,
+                )
+            try:
                 resp_json = response.json()
-                raw_result = resp_json.get("result", "DENY")
-                explanation = resp_json.get("explanation", [])
-
-                # ── Normalize OPA result to canonical decision string ────────
-                # OPA policies can return various types:
-                #   - dict: {"allow": true, "reasons": [...]} or {"decision": "ALLOW"}
-                #   - bool: true/false
-                #   - str: "ALLOW"/"DENY"/"MANUAL_REVIEW"
-                # We normalize all variants to a canonical uppercase string.
-                if isinstance(raw_result, dict):
-                    # Extract decision from dict response (common OPA patterns)
-                    decision = raw_result.get(
-                        "allow", raw_result.get("decision", "DENY")
-                    )
-                    if isinstance(decision, bool):
-                        decision_str = "ALLOW" if decision else "DENY"
-                    else:
-                        decision_str = str(decision).upper()
-                elif isinstance(raw_result, bool):
-                    decision_str = "ALLOW" if raw_result else "DENY"
-                else:
-                    decision_str = (
-                        str(raw_result).upper() if raw_result is not None else "DENY"
-                    )
-
-                span.set_attribute(TRACE_METADATA_GOVERNANCE_DECISION, decision_str)
-
-                # Return the decision string (documented API).
-                # The explanation is logged for the Auditor via the OTel span above.
-                logger.debug(
-                    "OPA explanation entries: %d",
-                    len(explanation) if isinstance(explanation, list) else 0,
+            except ValueError as exc:
+                return _deny(span, exc, "MALFORMED_RESPONSE"), CallOutcome.HEALTHY
+            if not isinstance(resp_json, dict):
+                return (
+                    _deny(
+                        span, "OPA response is not a JSON object", "MALFORMED_RESPONSE"
+                    ),
+                    CallOutcome.HEALTHY,
                 )
 
-                # ── Write cache (non-blocking, fire-and-forget) ──────────────
-                # Only cache deterministic decisions (ALLOW/DENY/MANUAL_REVIEW).
-                await _write_opa_cache(cache_key, decision_str)
+            decision_str = _decision_string(resp_json.get("result", "DENY"))
+            span.set_attribute(TRACE_METADATA_GOVERNANCE_DECISION, decision_str)
 
-                # ── Async explain-mode logging (non-blocking) ────────────────
-                # If CAGE_OPA_EXPLAIN_LOGGING is enabled, enqueue the policy
-                # path, input, and decision for background explain=full fetching.
-                # put_nowait() is used so the hot path is never blocked.
-                # If the queue is full, the explain request is silently dropped.
-                # Explain-mode logging is async and non-blocking — the hot path
-                # is never delayed by explain requests.
-                if CAGE_OPA_EXPLAIN_LOGGING:
-                    policy_path = input_data.get("action", "unknown")
-                    try:
-                        _explain_queue.put_nowait(
-                            (policy_path, input_data, decision_str)
-                        )
-                    except asyncio.QueueFull:
-                        logger.warning(
-                            "OPA explain queue full (maxsize=%d) — dropping explain "
-                            "request for policy=%s decision=%s.",
-                            _explain_queue.maxsize,
-                            policy_path,
-                            decision_str,
-                        )
+            # The explanation is logged for the Auditor via the OTel span above.
+            explanation = resp_json.get("explanation", [])
+            logger.debug(
+                "OPA explanation entries: %d",
+                len(explanation) if isinstance(explanation, list) else 0,
+            )
 
-                return decision_str
+            # ── Async explain-mode logging (non-blocking) ────────────────
+            # If CAGE_OPA_EXPLAIN_LOGGING is enabled, enqueue the policy
+            # path, input, and decision for background explain=full fetching.
+            # put_nowait() is used so the hot path is never blocked; if the
+            # queue is full, the explain request is dropped.
+            if CAGE_OPA_EXPLAIN_LOGGING:
+                policy_path = input_data.get("action", "unknown")
+                try:
+                    _explain_queue.put_nowait((policy_path, input_data, decision_str))
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "OPA explain queue full (maxsize=%d) — dropping explain "
+                        "request for policy=%s decision=%s.",
+                        _explain_queue.maxsize,
+                        policy_path,
+                        decision_str,
+                    )
 
-            except Exception as e:
-                await self.cb.record_failure()
-                logger.critical(f"🔥 OPA FAILURE: {e}")
-                span.record_exception(e)
-                span.set_status(Status(StatusCode.ERROR))
-                span.set_attribute(
-                    TRACE_METADATA_GOVERNANCE_DENIAL_REASON, "SYSTEM_FAILURE"
-                )
-                return "DENY"
+            return decision_str, CallOutcome.HEALTHY

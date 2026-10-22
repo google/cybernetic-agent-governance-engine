@@ -145,3 +145,32 @@ async def test_opa_stage_returns_hard_violation_on_exception():
     assert violations[0].kind == ViolationKind.HARD
     assert "Connection lost" in violations[0].message
     assert out.opa_verdict is None
+
+
+class RecordingPolicyClient:
+    def __init__(self) -> None:
+        self.inputs: list[dict] = []
+
+    async def evaluate_policy(self, input_data: dict, **kwargs) -> object:
+        self.inputs.append(input_data)
+        return "ALLOW"
+
+
+@pytest.mark.asyncio
+async def test_opa_stage_sends_the_params_once_with_the_action():
+    """The OPA input is the params plus the action; nothing is duplicated."""
+    client = RecordingPolicyClient()
+    stage = OpaStage(client)
+
+    from src.gateway.governance.governor.pipeline import StageContext
+
+    ctx = StageContext(
+        action="execute_trade",
+        params={"amount": 100, "symbol": "AAPL"},
+        profile=Profile.FULL,
+    )
+    await stage.run(ctx)
+
+    assert client.inputs == [
+        {"amount": 100, "symbol": "AAPL", "action": "execute_trade"}
+    ]

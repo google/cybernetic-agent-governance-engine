@@ -36,7 +36,7 @@
 | **FastAPI**                 | MIT        | HTTP API server                        | High-performance ASGI server with OpenAPI schema generation; agent server `:8081/:80`, compliance bridge `:3001/:3002`       |
 | **FastMCP**                 | MIT        | MCP tool server over SSE               | Model Context Protocol implementation with W3C `traceparent` distributed trace propagation                                    |
 | **NeMo Guardrails**         | Apache-2.0 | AI safety rails                        | Programmable conversational safety rails; 10 Presidio PII entity types; configurable via `GUARDRAILS_MODEL_NAME`             |
-| **Open Policy Agent (OPA)** | Apache-2.0 | Rego policy enforcement                | Deterministic, sub-millisecond RBAC and deontic constraints; fail-closed `CircuitBreaker` (5 failures, 30s recovery)         |
+| **Open Policy Agent (OPA)** | Apache-2.0 | Rego policy enforcement                | Deterministic, sub-millisecond RBAC and deontic constraints; fail-closed `CircuitBreaker` (5 consecutive upstream failures, 30s recovery, half-open probe) |
 | **LangChain**               | MIT        | Agent tool-calling framework           | Standardized tool binding and schema translation for heterogeneous models                                                    |
 
 ---
