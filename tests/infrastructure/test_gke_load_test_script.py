@@ -206,7 +206,9 @@ def test_script_never_applies_manifests_and_the_hpa_manifest_is_gone() -> None:
         "delete hpa gateway-hpa" in line and "--ignore-not-found" in line
         for line in code_lines
     )
-    assert not (REPO_ROOT / "deployment" / "k8s" / "gateway-hpa.yaml").exists()
+    # D2 restores deployment/k8s/gateway-hpa.yaml with custom External+Pods metrics,
+    # while scripts/run_gke_load_test.sh still never applies it and deletes any active HPA.
+
 
 
 def test_stub_locust_rejects_options_locust_does_not_define(tmp_path: Path) -> None:
