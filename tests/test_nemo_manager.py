@@ -153,7 +153,6 @@ class TestCreateNemoManagerUnavailable:
         nonexistent = str(tmp_path / "no_such_config")
         with (
             patch("src.integrations.nemo.manager._NEMOGUARDRAILS_AVAILABLE", True),
-            patch("src.integrations.nemo.manager.nest_asyncio"),
             patch("src.integrations.nemo.manager._apply_sdd_monkeypatch"),
             patch("src.integrations.nemo.manager.register_llm_provider"),
             # Force ALL os.path.exists checks inside the module to False so the
@@ -167,6 +166,12 @@ class TestCreateNemoManagerUnavailable:
 
             with pytest.raises(FileNotFoundError):
                 create_nemo_manager(config_path=nonexistent)
+
+    def test_manager_does_not_import_or_apply_nest_asyncio(self):
+        """NeMo manager must never call nest_asyncio.apply() so uvloop remains unpatched."""
+        import src.integrations.nemo.manager as manager_mod
+
+        assert not hasattr(manager_mod, "nest_asyncio")
 
 
 # ---------------------------------------------------------------------------

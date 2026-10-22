@@ -31,7 +31,7 @@ To start the gateway:
     python src/gateway/server/hybrid_server.py
 
 Or via Docker/Kubernetes:
-    uvicorn src.gateway.server.hybrid_server:root_app --host 0.0.0.0 --port 8080
+    uvicorn src.gateway.server.hybrid_server:root_app --host 0.0.0.0 --port 8080 --loop uvloop --http httptools
 """
 
 import json
@@ -53,6 +53,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from src.gateway.infrastructure.telemetry_client import configure_telemetry
 from src.gateway.server.governance_middleware import governance_app
 from src.gateway.server.inference_proxy import inference_app
 from src.gateway.server.mcp_tool_server import app as mcp_app
@@ -60,7 +61,6 @@ from src.gateway.server.workload_identity import (
     WorkloadIdentityMiddleware,
     load_identity_policy,
 )
-from src.gateway.tracing_setup import setup_tracing
 
 logger = logging.getLogger("Gateway.HybridServer")
 
@@ -73,7 +73,7 @@ logger = logging.getLogger("Gateway.HybridServer")
 
 @asynccontextmanager
 async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-    """Ensure tracing is initialised for every launch path (uvicorn or __main__).
+    """Ensure canonical telemetry is initialised for every launch path (uvicorn or __main__).
 
     Also performs proactive pre-warming to completely eliminate cold-start latencies:
       1. Pre-warms and shares NeMo Rails across all sub-apps (avoiding isolated JITs).
@@ -82,8 +82,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     """
     import asyncio
 
-    setup_tracing()
-    logger.info("✅ Gateway tracing initialised via lifespan hook")
+    os.environ.setdefault(
+        "SERVICE_NAME", os.getenv("OTEL_SERVICE_NAME", "hybrid-gateway")
+    )
+    configure_telemetry()
+    logger.info("✅ Gateway telemetry initialised via lifespan hook")
 
     # ── Prometheus Metrics Server & Event-Loop Lag Monitor (A1) ───────────────
     # Starts the threaded Prometheus WSGI server on CAGE_METRICS_PORT (default
@@ -1004,12 +1007,25 @@ logger.info(
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+
+def run_gateway_server(host: str = "0.0.0.0", port: int | None = None) -> None:
+    """Start the CAGE Hybrid Gateway on uvloop and httptools."""
     import uvicorn
 
-    from src.gateway.infrastructure.telemetry_client import configure_telemetry
-
+    os.environ.setdefault(
+        "SERVICE_NAME", os.getenv("OTEL_SERVICE_NAME", "hybrid-gateway")
+    )
     configure_telemetry()
-    http_port = int(os.getenv("PORT", "8080"))
+    http_port = port if port is not None else int(os.getenv("PORT", "8080"))
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(root_app, host="0.0.0.0", port=http_port)
+    uvicorn.run(
+        root_app,
+        host=host,
+        port=http_port,
+        loop="uvloop",
+        http="httptools",
+    )
+
+
+if __name__ == "__main__":
+    run_gateway_server()

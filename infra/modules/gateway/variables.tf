@@ -283,3 +283,21 @@ variable "trusted_geap_principals" {
   type        = list(string)
   default     = []
 }
+
+variable "enable_autoscaling" {
+  description = "Enable HorizontalPodAutoscaler (autoscaling/v2) keyed on GMP pod metric prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge when replicas >= 2."
+  type        = bool
+  default     = false
+}
+
+variable "max_replicas" {
+  description = "Maximum gateway replicas when enable_autoscaling is true."
+  type        = number
+  default     = 5
+}
+
+variable "autoscaling_target_loop_lag" {
+  description = "Target average value for prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge (e.g. '50m' = 50ms)."
+  type        = string
+  default     = "50m"
+}

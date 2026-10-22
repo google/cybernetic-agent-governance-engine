@@ -24,6 +24,8 @@ dependencies = [
     # HTTP serving — used by gateway AND compliance_bridge
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
+    "uvloop>=0.21.0; sys_platform != 'win32'",
+    "httptools>=0.6.1",
     "sse-starlette>=1.0.0",
     "openai>=1.0.0",
     # cryptography>=50.0.0: fixes PYSEC-2026-3552 / CVE-2026-69247 / GHSA-g6cj-pr64-35w5
@@ -87,6 +89,8 @@ gateway = [
     "grpcio>=1.78.0",
     "protobuf>=5.26.1,<7.0.0",
     "mcp>=0.1.0",
+    "uvloop>=0.21.0; sys_platform != 'win32'",
+    "httptools>=0.6.1",
     # PyJWT[crypto]: OIDC middleware (src/gateway/server/governance_middleware.py)
     # imports `jwt` directly for JWKS-based token validation. Previously only
     # pulled in transitively via mcp's own pyjwt[crypto] dependency — declared

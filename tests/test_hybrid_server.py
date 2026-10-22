@@ -517,3 +517,99 @@ async def test_lifespan_installs_state_commitment_service(monkeypatch):
 
         async with _gateway_lifespan(app_mock):
             assert isinstance(app_mock.state.state_commitments, StateCommitmentService)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_calls_configure_telemetry_with_gateway_service_name(
+    monkeypatch,
+):
+    """_gateway_lifespan initializes telemetry via configure_telemetry() and defaults SERVICE_NAME."""
+    monkeypatch.setenv("CAGE_ENV", "ci")
+    monkeypatch.setenv("RECONCILIATION_PROVIDER", "stub")
+    monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
+    monkeypatch.delenv("SERVICE_NAME", raising=False)
+    monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+
+    stubs = _make_hybrid_stubs()
+    mock_configure = stubs[
+        "src.gateway.infrastructure.telemetry_client"
+    ].configure_telemetry
+    sys.modules.pop("src.gateway.server.hybrid_server", None)
+
+    with patch.dict("sys.modules", stubs):
+        from src.gateway.server.hybrid_server import _gateway_lifespan
+
+        app_mock = MagicMock()
+        app_mock.state = MagicMock()
+
+        async with _gateway_lifespan(app_mock):
+            mock_configure.assert_called_once_with()
+            assert os.environ.get("SERVICE_NAME") == "hybrid-gateway"
+
+
+def test_run_gateway_server_uses_uvloop_and_httptools(monkeypatch):
+    """run_gateway_server launches uvicorn with loop='uvloop' and http='httptools'."""
+    import httptools  # noqa: F401
+    import uvloop
+
+    loop = uvloop.new_event_loop()
+    try:
+        assert isinstance(loop, uvloop.Loop)
+    finally:
+        loop.close()
+
+    monkeypatch.setenv("PORT", "18080")
+    stubs = _make_hybrid_stubs()
+    mock_uvicorn = MagicMock()
+    stubs["uvicorn"] = mock_uvicorn
+    sys.modules.pop("src.gateway.server.hybrid_server", None)
+
+    with patch.dict("sys.modules", stubs):
+        from src.gateway.server.hybrid_server import root_app, run_gateway_server
+
+        run_gateway_server()
+
+    mock_uvicorn.run.assert_called_once_with(
+        root_app,
+        host="0.0.0.0",
+        port=18080,
+        loop="uvloop",
+        http="httptools",
+    )
+
+
+def test_uvicorn_runtime_smoke_activates_uvloop_and_httptools():
+    """Smoke test: a uvicorn Config(loop='uvloop', http='httptools') installs uvloop.EventLoopPolicy and httptools parser."""
+    import asyncio
+
+    import uvicorn
+    from fastapi import FastAPI
+
+    smoke_app = FastAPI()
+
+    @smoke_app.get("/smoke-loop")
+    async def _smoke_loop():
+        loop = asyncio.get_running_loop()
+        return {
+            "loop_type": type(loop).__name__,
+            "loop_module": type(loop).__module__,
+        }
+
+    cfg = uvicorn.Config(
+        smoke_app,
+        host="127.0.0.1",
+        port=0,
+        loop="uvloop",
+        http="httptools",
+        log_level="error",
+    )
+    cfg.load()
+    assert cfg.http_protocol_class.__module__.startswith(
+        "uvicorn.protocols.http.httptools"
+    )
+
+    loop_factory = cfg.get_loop_factory()
+    assert loop_factory is not None
+    with asyncio.Runner(loop_factory=loop_factory) as runner:
+        res = runner.run(_smoke_loop())
+        assert res["loop_module"].startswith("uvloop")
