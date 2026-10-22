@@ -47,6 +47,7 @@ def register_background_task(
         >>> # Later, during server lifespan:
         >>> tasks = start_all()
     """
+    _STARTUP_TASKS[:] = [(n, f) for n, f in _STARTUP_TASKS if n != name]
     _STARTUP_TASKS.append((name, coro_factory))
     logger.info(f"✅ Registered background task: {name}")
 

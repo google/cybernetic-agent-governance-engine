@@ -495,9 +495,37 @@ class TestRemoteTelemetryProviderGetLatestData:
             langfuse_client=mock_client, fallback=MockTelemetryProvider()
         )
         provider.get_latest_data(n_samples=200)
-        mock_client.api.trace.list.assert_called_once_with(
-            page=1, limit=100, order_by="timestamp.desc"
+        assert mock_client.api.trace.list.call_count == 1
+        call_kwargs = mock_client.api.trace.list.call_args.kwargs
+        assert call_kwargs["page"] == 1
+        assert call_kwargs["limit"] == 100
+        assert call_kwargs["order_by"] == "timestamp.desc"
+        assert isinstance(call_kwargs["from_timestamp"], datetime.datetime)
+
+    def test_trace_list_passes_optional_name_and_tags_and_fetches_pages(self):
+        page_traces = [_make_trace() for _ in range(100)]
+        mock_client = MagicMock(spec=["api"])
+        mock_response = MagicMock()
+        mock_response.data = page_traces
+        mock_client.api.trace.list.return_value = mock_response
+        provider = RemoteTelemetryProvider(
+            langfuse_client=mock_client,
+            fallback=MockTelemetryProvider(),
+            trace_name="governance_eval",
+            trace_tags=["iso42001"],
         )
+        df = provider.get_latest_data(n_samples=250)
+        assert len(df) == 250
+        assert mock_client.api.trace.list.call_count == 3
+        pages_requested = sorted(
+            c.kwargs["page"] for c in mock_client.api.trace.list.call_args_list
+        )
+        assert pages_requested == [1, 2, 3]
+        for c in mock_client.api.trace.list.call_args_list:
+            assert c.kwargs["limit"] == 100
+            assert c.kwargs["name"] == "governance_eval"
+            assert c.kwargs["tags"] == ["iso42001"]
+            assert isinstance(c.kwargs["from_timestamp"], datetime.datetime)
 
 
 # ---------------------------------------------------------------------------
