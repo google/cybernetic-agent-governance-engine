@@ -25,6 +25,7 @@ Kernel (``src/gateway/``) and from NVIDIA NeMo (``src/integrations/nemo/``).
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ _PII_ENTITIES: list[str] = [
 _presidio_analyzer: Any = None
 _presidio_anonymizer: Any = None
 _presidio_init_done: bool = False
+_presidio_init_lock = threading.Lock()
 
 
 def ensure_presidio_engines() -> None:
@@ -59,61 +61,67 @@ def ensure_presidio_engines() -> None:
     All callers (``redact_pii``, ``get_presidio_engines``, ``get_analyzer_patch``,
     ``build_presidio_sdd_action``, and ``MaskPIIAction``) share this single
     ``AnalyzerEngine`` + ``AnonymizerEngine`` pair so spaCy is loaded at most
-    once per process.
+    once per process. Guarded by ``_presidio_init_lock`` so concurrent threads
+    never observe ``_presidio_init_done=True`` while ``_presidio_analyzer`` is
+    still ``None``.
     """
     global _presidio_analyzer, _presidio_anonymizer, _presidio_init_done
     if _presidio_init_done:
         return
-    _presidio_init_done = True
-    try:
-        import spacy as _spacy
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
-        from presidio_anonymizer import AnonymizerEngine
+    with _presidio_init_lock:
+        if _presidio_init_done:
+            return
+        try:
+            import spacy as _spacy
+            from presidio_analyzer import AnalyzerEngine
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
+            from presidio_anonymizer import AnonymizerEngine
 
-        class _SafeAnalyzer(AnalyzerEngine):
-            """AnalyzerEngine that guards None input and defaults entity list when omitted."""
+            class _SafeAnalyzer(AnalyzerEngine):
+                """AnalyzerEngine that guards None input and defaults entity list when omitted."""
 
-            _ENTITIES = list(_PII_ENTITIES)
+                _ENTITIES = list(_PII_ENTITIES)
 
-            def analyze(self, text, entities=None, **kwargs):  # type: ignore[override, no-untyped-def]
-                if text is None:
-                    return []
-                if not entities:
-                    entities = self._ENTITIES
-                return super().analyze(text=text, entities=entities, **kwargs)
+                def analyze(self, text, entities=None, **kwargs):  # type: ignore[override, no-untyped-def]
+                    if text is None:
+                        return []
+                    if not entities:
+                        entities = self._ENTITIES
+                    return super().analyze(text=text, entities=entities, **kwargs)
 
-        _spacy_model = (
-            "en_core_web_lg"
-            if _spacy.util.is_package("en_core_web_lg")
-            else "en_core_web_sm"
-        )
-        _nlp_provider = NlpEngineProvider(
-            nlp_configuration={
-                "nlp_engine_name": "spacy",
-                "models": [{"lang_code": "en", "model_name": _spacy_model}],
-            }
-        )
-        _presidio_analyzer = _SafeAnalyzer(
-            nlp_engine=_nlp_provider.create_engine(),
-            default_score_threshold=0.3,
-        )
-        _presidio_anonymizer = AnonymizerEngine()
-        logger.info(
-            "✅ Presidio PII engines initialised (model=%s, entities=%d)",
-            _spacy_model,
-            len(_PII_ENTITIES),
-        )
-    except ImportError:
-        logger.warning(
-            "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
-            "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
-        )
-    except Exception as _presidio_init_exc:
-        logger.warning(
-            "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
-            _presidio_init_exc,
-        )
+            _spacy_model = (
+                "en_core_web_lg"
+                if _spacy.util.is_package("en_core_web_lg")
+                else "en_core_web_sm"
+            )
+            _nlp_provider = NlpEngineProvider(
+                nlp_configuration={
+                    "nlp_engine_name": "spacy",
+                    "models": [{"lang_code": "en", "model_name": _spacy_model}],
+                }
+            )
+            _presidio_analyzer = _SafeAnalyzer(
+                nlp_engine=_nlp_provider.create_engine(),
+                default_score_threshold=0.3,
+            )
+            _presidio_anonymizer = AnonymizerEngine()
+            logger.info(
+                "✅ Presidio PII engines initialised (model=%s, entities=%d)",
+                _spacy_model,
+                len(_PII_ENTITIES),
+            )
+        except ImportError:
+            logger.warning(
+                "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
+                "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
+            )
+        except Exception as _presidio_init_exc:
+            logger.warning(
+                "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
+                _presidio_init_exc,
+            )
+        finally:
+            _presidio_init_done = True
 
 
 def get_presidio_engines() -> tuple[Any, Any]:

@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import SystemMessage, ToolMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -33,6 +32,7 @@ from src.gateway.observability.attributes import (
     TRACE_METADATA_CURRENT_NODE,
     TRACE_METADATA_MCP_SERVER,
 )
+from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 
 
@@ -123,7 +123,7 @@ async def tool_executor_node(state: DataAnalystState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 4. Thinker Node (DeepSeek)
 # ---------------------------------------------------------------------------
-def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-def]
+async def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-def]
     tracer = get_tracer()
 
     with tracer.start_as_current_span("DataAnalyst: Thinker") as span:
@@ -132,16 +132,11 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
         span.set_attribute(TRACE_METADATA_CURRENT_NODE, "data_analyst_thinker")
         span.set_attribute("gen_ai.operation.name", "chat")
 
-        _reasoning_base = os.getenv("VLLM_REASONING_API_BASE")
-        if not _reasoning_base:
-            raise RuntimeError(
-                "VLLM_REASONING_API_BASE must be set — no localhost fallback in production"
-            )
-        llm = ChatOpenAI(
-            model=model_name,  # type: ignore[arg-type]
-            base_url=_reasoning_base,
+        llm = chat_model(
+            "reasoning",
+            model=model_name,
             temperature=0.6,
-            max_tokens=1024,  # type: ignore[call-arg]  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
+            max_tokens=1024,  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
         )
 
         sys_msg = SystemMessage(
@@ -167,7 +162,7 @@ def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-untyped-de
         )
         span.set_attribute(OBSERVATION_INPUT, input_str)
 
-        response = llm.invoke(messages, config={"run_name": "Analyst Thinker"})
+        response = await llm.ainvoke(messages, config={"run_name": "Analyst Thinker"})
         raw_output = response.content
         clean_plan = strip_thinking_tags(raw_output)  # type: ignore[arg-type]
 
@@ -201,16 +196,11 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
         span.set_attribute(TRACE_METADATA_MCP_SERVER, "gateway_mcp")
         span.set_attribute("gen_ai.operation.name", "chat")
 
-        _fast_base = os.getenv("VLLM_FAST_API_BASE")
-        if not _fast_base:
-            raise RuntimeError(
-                "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
-            )
-        fast_llm = ChatOpenAI(
+        fast_llm = chat_model(
+            "fast",
             model=model_name,
-            base_url=_fast_base,
             temperature=0.0,
-            max_tokens=512,  # type: ignore[arg-type, call-arg]
+            max_tokens=512,
         )
 
         from langchain_core.messages import HumanMessage
@@ -297,7 +287,7 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 6. Reporter Node (Llama 3.1)
 # ---------------------------------------------------------------------------
-def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-def]
+async def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-def]
     tracer = get_tracer()
 
     with tracer.start_as_current_span("DataAnalyst: Reporter") as span:
@@ -306,16 +296,11 @@ def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-d
         span.set_attribute(TRACE_METADATA_CURRENT_NODE, "data_analyst_reporter")
         span.set_attribute("gen_ai.operation.name", "chat")
 
-        _reporter_fast_base = os.getenv("VLLM_FAST_API_BASE")
-        if not _reporter_fast_base:
-            raise RuntimeError(
-                "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
-            )
-        llm = ChatOpenAI(
-            model=model_name,  # type: ignore[arg-type]
-            base_url=_reporter_fast_base,
+        llm = chat_model(
+            "fast",
+            model=model_name,
             temperature=0.3,  # Slight creativity for summarization
-            max_tokens=400,  # type: ignore[call-arg]  # Qwen fast model has max_model_len=2048; keep output ≤400 to leave room for input+system prompt
+            max_tokens=400,  # Qwen fast model has max_model_len=2048; keep output ≤400 to leave room for input+system prompt
         )
 
         sys_prompt = SystemMessage(
@@ -358,7 +343,7 @@ def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-untyped-d
         )
         span.set_attribute(OBSERVATION_INPUT, input_str)
 
-        response = llm.invoke(messages, config={"run_name": "Analyst Reporter"})
+        response = await llm.ainvoke(messages, config={"run_name": "Analyst Reporter"})
 
         if response.content:
             response.content = "Data Analysis: " + response.content  # type: ignore[operator]  # guarded by truthiness check; LangChain content is str in this path

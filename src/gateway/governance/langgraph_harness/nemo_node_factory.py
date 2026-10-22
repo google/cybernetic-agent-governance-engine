@@ -325,7 +325,9 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 # values. A Presidio failure never blocks the input rail
                 # (graceful degradation); the output rail masks again.
                 try:
-                    user_input, entity_types = _redact_pii(user_input)
+                    user_input, entity_types = await asyncio.to_thread(
+                        _redact_pii, user_input
+                    )
                     span.set_attribute("input.pii_redacted", bool(entity_types))
                     if entity_types:
                         logger.warning(
@@ -483,7 +485,9 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             mask_failed = False
             try:
                 rails = get_nemo_rails()
-                presidio_text, output_entities = _redact_pii(output_text)
+                presidio_text, output_entities = await asyncio.to_thread(
+                    _redact_pii, output_text
+                )
                 span.set_attribute("output.pii_entity_types", str(output_entities))
                 masked_text = await verify_and_mask_output(rails, presidio_text)
                 span.set_attribute(

@@ -57,7 +57,7 @@ def get_explainer_instruction() -> str:
 import os
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 
 def create_explainer_agent(model_name: str = Config.MODEL_FAST) -> Any:  # type: ignore[assignment]
@@ -69,8 +69,8 @@ def create_explainer_agent(model_name: str = Config.MODEL_FAST) -> Any:  # type:
         )
 
     # Relaxed handling of model names - trust the environment config
-
-    if model_name == getattr(Config, "MODEL_REASONING", None):
+    is_reasoning = model_name == getattr(Config, "MODEL_REASONING", None)
+    if is_reasoning:
         _api_base = os.getenv("VLLM_REASONING_API_BASE") or os.getenv(
             "VLLM_FAST_API_BASE"
         )
@@ -80,11 +80,13 @@ def create_explainer_agent(model_name: str = Config.MODEL_FAST) -> Any:  # type:
         raise RuntimeError(
             "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
         )
-    llm = ChatOpenAI(
+    return chat_model(
+        "reasoning" if is_reasoning else "fast",
         model=model_name,
         base_url=_api_base,
-        api_key=api_key,  # type: ignore[arg-type]  # ChatOpenAI expects SecretStr but str is accepted at runtime
-        temperature=0.0,  # type: ignore[call-arg]
+        api_key=api_key,
+        temperature=0.0,
         max_tokens=1024,  # Fast model has 4096 total context; cap output to leave room for input
+        require_api_key=True,
+        api_key_error_cls=OSError,
     )
-    return llm

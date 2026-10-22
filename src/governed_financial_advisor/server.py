@@ -78,11 +78,27 @@ if ENABLE_TRACING:
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Startup: refuse to run with any signing identity (POAM-2026-079). The
     # advisor is an untrusted client of the gateway; it hosts no governor.
+    import asyncio
+
+    from src.gateway.governance.pii_redactor_factory import ensure_pii_engines
+    from src.gateway.observability.langfuse_utils import get_prompt_registry
     from src.governed_financial_advisor.infrastructure.identity_guard import (
         assert_no_signing_identity,
     )
 
     assert_no_signing_identity()
+
+    # Warm Presidio PII engines off the event loop and pre-populate PromptRegistry
+    await asyncio.to_thread(ensure_pii_engines)
+    prompt_registry = get_prompt_registry()
+    try:
+        await prompt_registry.start()
+        logger.info("✅ PromptRegistry warmed and background refresh started")
+    except Exception as _prompt_exc:
+        logger.warning(
+            "⚠️ PromptRegistry startup refresh failed (using static fallbacks): %s",
+            _prompt_exc,
+        )
 
     logger.info("Initializing Agent Graph...")
     app.state.graph = create_graph(redis_url=Config.REDIS_URL)
@@ -124,11 +140,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     yield
     # Shutdown
     logger.info("Shutting down...")
+    try:
+        await prompt_registry.stop()
+    except Exception as exc:
+        logger.debug("PromptRegistry stop error: %s", exc)
     await get_mcp_client().close()
     try:
         await _redis_client.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Redis client close error: %s", exc)
 
 
 app = FastAPI(

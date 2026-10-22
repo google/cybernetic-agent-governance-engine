@@ -448,6 +448,7 @@ class TestDataAnalystGraph:
 
     def test_analyst_thinker_node_raises_without_vllm_base(self) -> None:
         """analyst_thinker_node must raise RuntimeError when VLLM_REASONING_API_BASE unset."""
+        import asyncio
         import os
 
         from src.governed_financial_advisor.graph.subgraphs.data_analyst_graph import (
@@ -460,7 +461,9 @@ class TestDataAnalystGraph:
                 # Build a minimal state
                 msg = MagicMock()
                 msg.content = "Test query"
-                analyst_thinker_node({"messages": [msg], "reasoning_output": None})
+                asyncio.run(
+                    analyst_thinker_node({"messages": [msg], "reasoning_output": None})
+                )
         finally:
             if env_backup is not None:
                 os.environ["VLLM_REASONING_API_BASE"] = env_backup
