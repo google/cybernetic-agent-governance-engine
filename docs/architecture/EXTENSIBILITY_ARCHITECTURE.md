@@ -3,8 +3,8 @@
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
-| **Date**           | 2026-09-29                |
-| **Version**        | v3.0.1                    |
+| **Date**           | 2026-10-22                |
+| **Version**        | v3.2.0                    |
 | **Status**         | Current State + Roadmap   |
 
 ---

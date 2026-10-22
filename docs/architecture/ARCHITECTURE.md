@@ -1,9 +1,9 @@
 # CAGE Architecture — Cybernetic Governance Engine
 
 > **Document Type:** System Macro-Architecture & Trust Boundaries
-> **Status:** Current at HEAD (v3.0.1+)
+> **Status:** Current at HEAD (v3.2.0)
 > **Target Scope:** Universal Governance Substrate, Seam Contracts, Cryptographic Trust Boundaries, and Layer Topology
-> **Last Updated:** 2026-10-13
+> **Last Updated:** 2026-10-22
 
 ---
 
@@ -37,7 +37,7 @@ The Cybernetic Governance Engine (CAGE) is a domain-agnostic, fail-closed runtim
 ```
 
 ### Trust Boundaries & Layered Separation
-- **Layer 1: Governance Kernel (`src/gateway/`)**: Always present and domain-blind. Owns all safety enforcement mechanisms: finite-time reachability analysis (FTRA), two-phase tier execution, atomic barrier hops, consensus arbitration, causal counterfactual checks, JWS token consumption, cryptographic evidence hashing, and LIFO rollbacks. It operates strictly on abstract action primitives (`claimed_action`, `actor_id`, `resource_delta`). **Caller identity is never accepted from application-layer metadata**: the kernel derives `agent_id` / `caller_principal` exclusively from the Linkerd-verified mTLS workload identity (`l5d-client-id`) (see [Transport-Layer Agent Identity](#transport-layer-agent-identity-linkerd-mtls) below).
+- **Layer 1: Governance Kernel (`src/gateway/`)**: Always present and domain-blind. Owns all safety enforcement mechanisms: finite-time reachability analysis (FTRA), two-phase tier execution, warrant reliance verification (`WarrantStage` / `WarrantCache`), atomic barrier hops, consensus arbitration, causal counterfactual checks (`CausalGatekeeper` + background `WorldModelRefresher`), JWS token consumption, group-commit cryptographic evidence hashing (`EvidenceStreamSink` + `StateCommitmentService`), shared Redis GCRA rate limiting (`SharedRateLimiter`), and LIFO rollbacks. It operates strictly on abstract action primitives (`claimed_action`, `actor_id`, `resource_delta`). **Caller identity is never accepted from application-layer metadata**: the kernel derives `agent_id` / `caller_principal` exclusively from the Linkerd-verified mTLS workload identity (`l5d-client-id`) (see [Transport-Layer Agent Identity](#transport-layer-agent-identity-linkerd-mtls) below).
 - **Layer 2: Domain Plugins (`src/cage_<domain>/`)**: Optional, interchangeable packages (e.g., `cage_finance`, `cage_healthcare`). Owns nomenclature, watched invariant scalars, threshold definitions, semantic critics, and domain Rego policies. Plugins hand the kernel data, not mutations: `CagePlugin.contribute()` returns a frozen `PluginContribution` (tiers subclassing `ReadOnlyTier` / `MutatingTier` under ADR-009, invariants, UCA rules, narrowers, ground-truth providers, safety filter, consensus contribution, threshold sections) built on structural subtyping protocols (`InvariantModel`). The composition root [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py) validates every contribution together and builds an immutable `SymbolicGovernor`. Engine slots no plugin fills get the deny-by-default `NullSafetyFilter` / `NullConsensusProvider` ([`null_components.py`](../../src/gateway/governance/null_components.py)), so a governor assembled with no plugins denies by construction, and [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py) refuses to serve traffic with an unfilled slot. A server process runs exactly one domain, named by `CAGE_DOMAIN`.
 - **Layer 3: Integrations & Rails (`src/integrations/`, `src/compliance_bridge/`)**: External adapters (external banking/clinical ledgers, storage backends, OPA servers, notification bridges, GCP evaluation & GEAP runtime guards in [`src/integrations/gcp_eval/`](../../src/integrations/gcp_eval/__init__.py) and [`src/integrations/gcp_geap/`](../../src/integrations/gcp_geap/__init__.py), Presidio PII redaction in [`src/integrations/presidio/redactor.py`](../../src/integrations/presidio/redactor.py), and the cloud KMS providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`, loaded lazily by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py)). These are physically decoupled from the kernel by strict zero-kernel-import Seam Contracts.
 - **Standalone Offline Evaluation & Skill Certification Plane (`src/eval_harness/`)**: Peer offline system (`FoundationModelEvalHarness` in [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py), adapter-driven live rollout runner & tokenomics engine in [`runner.py`](../../src/eval_harness/runner.py), Stage 0 `SKILL.md` static linter in [`static_linter.py`](../../src/eval_harness/static_linter.py), ADK/LangGraph/Gemini CLI trace adapters in [`adapters.py`](../../src/eval_harness/adapters.py), GEPA Genetic-Pareto reflective prompt & Presidio PII rule optimizer in [`gepa_optimizer.py`](../../src/eval_harness/gepa_optimizer.py), and `cage-skill-eval` CLI in [`cli.py`](../../src/eval_harness/cli.py)). Operates in batch/CI with zero runtime coupling to the online gateway: [`src/gateway/Dockerfile`](../../src/gateway/Dockerfile) excludes `src/eval_harness/`, and Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)) forbids `src/gateway/` from importing `src/eval_harness/`. See [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md).
@@ -50,12 +50,18 @@ The kernel modules below are the load-bearing Layer 1 components for caller iden
 | Module | Role |
 |---|---|
 | [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) | Canonical gateway ingress authentication and caller identity extraction under Linkerd mTLS (`l5d-client-id`). Exposes `WorkloadIdentityMiddleware`, `extract_client_identity(scope)`, and `load_identity_policy()`. |
+| [`src/gateway/server/rate_limit.py`](../../src/gateway/server/rate_limit.py) | Shared Redis dual-bucket GCRA rate limiter (`SharedRateLimiter`) enforcing per-workload-identity (`l5d-client-id`) and per-principal (`x-cage-principal`) budgets across gateway replicas. |
 | [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) | Vendor-neutral `ProofOfPossessionValidator` protocol plus the RFC 9449 `DPoPValidator` implementation and `TokenBindingError`. |
+| [`src/gateway/governance/causal/world_model_refresher.py`](../../src/gateway/governance/causal/world_model_refresher.py) | Background causal world-model refresher (`WorldModelRefresher`) computing DoWhy linear-regression + placebo-refutation estimates off the hot path and populating Redis (`causal:v1:*`). |
+| [`src/gateway/governance/warrant/`](../../src/gateway/governance/warrant/cache.py) | Warrant Contract v0.1 standing verifier (`standing.py`), 60s freshness cache (`cache.py`), and evidence reliance record builder (`reliance.py`) backing [`WarrantStage`](../../src/gateway/governance/governor/stages/warrant.py). |
+| [`src/gateway/governance/evidence/state_commitment.py`](../../src/gateway/governance/evidence/state_commitment.py) | Generic state-commitment service (`StateCommitmentService`) retaining PII-sanitized RFC 8785 JCS preimages (`STATE_COMMITMENT`) on the evidence stream before returning `stateHash`. |
 | [`src/gateway/governance/seams/actuation.py`](../../src/gateway/governance/seams/actuation.py) | `ExecutionActuator` protocol, `ExecutionClearance`, `ActuationReceipt`, and `ActuatorCapability`. |
 | [`src/gateway/governance/seams/attestation.py`](../../src/gateway/governance/seams/attestation.py) | `AttestationProvider` base class, `ExternalAttestation`, and `AttestationStatus`. |
-| [`src/gateway/governance/seams/credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) | `CredentialBrokerAdapter` protocol and its error taxonomy. |
+| [`src/gateway/governance/seams/credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) | `CredentialBrokerAdapter` protocol, `TriIdentityCredentialBinding`, and its error taxonomy. |
 | [`src/gateway/governance/seams/graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | Domain-agnostic `GraphTopology` structure consumed by attestation adapters. |
 | [`src/gateway/governance/seams/normative.py`](../../src/gateway/governance/seams/normative.py) | `NormativeProvider` protocol, `NormativeBaseline`, `ValidationResult`, and `EvidenceSeal`. |
+| [`src/gateway/governance/seams/state_commitment.py`](../../src/gateway/governance/seams/state_commitment.py) | Canonical `STATE_HASH_ALG`, `STATE_HASH_CANON`, and `STATE_HASH_SCOPE` constants for state-commitment preimages. |
+| [`src/gateway/governance/seams/warrant.py`](../../src/gateway/governance/seams/warrant.py) | `WarrantSource` protocol, `ExecutionWarrant`, and `WarrantStatus` contracts. |
 
 Seam modules under [`src/gateway/governance/seams/`](../../src/gateway/governance/seams/) define contracts only and must never import the rest of the kernel — this is the property that keeps Layer 3 adapters free of circular dependencies.
 
@@ -72,7 +78,7 @@ Agent identity is established at the transport/mesh layer and is **never** read 
 
 ## 2. Data & Execution Flow
 
-Execution requests enter the gateway via FastMCP (Model Context Protocol) over SSE or internal gRPC/HTTP transports. Tool invocations and model actions must traverse the fail-closed pipeline before any downstream side effect is permitted.
+Execution requests enter the gateway via stateless FastMCP Streamable HTTP (`/mcp/`) or internal gRPC/HTTP transports. Tool invocations and model actions must traverse the fail-closed pipeline before any downstream side effect is permitted.
 
 ### Subsystem Flow Topology
 
@@ -80,7 +86,7 @@ Execution requests enter the gateway via FastMCP (Model Context Protocol) over S
 graph TB
     subgraph INGRESS["Client / Ingress Boundary"]
         REQ[Client Action Request]
-        MCP[FastMCP SSE / Tool Server]
+        MCP["FastMCP Streamable HTTP (/mcp/) / Tool Server"]
     end
 
     subgraph KERNEL["Layer 1: Governance Kernel"]
@@ -90,13 +96,13 @@ graph TB
 
         subgraph TIERS["Assembled Tier Pipeline (immutable)"]
             direction LR
-            P1["Phase 1: Read-Only<br/>STPA · OPA · Confidence · Consensus · Causal"]
+            P1["Phase 1: Read-Only<br/>STPA · OPA · Confidence · WarrantStage · Consensus · Causal"]
             P2["Phase 2: Atomic Mutate<br/>CBF Lua · Fiscal Pre-Reservation"]
             P1 -->|All Pass| P2
         end
 
         CQG["Routing Seal verify-then-consume<br/>Actuation Clearance"]
-        EVID["Evidence Stream<br/>Redis Streams db=1, SHA-256 hash chain"]
+        EVID["Evidence Stream (Group Commit)<br/>Redis Streams db=1, SHA-256 hash chain"]
     end
 
     subgraph STORAGE["Persistence & Sinks"]
@@ -247,7 +253,7 @@ For deep-dive architectural specifications, refer to the corresponding canonical
 |---|---|---|---|
 | 1 | **Macro-Architecture** | System Macro-Architecture, Trust Boundaries & Layer Topology | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | 2 | **Gateway Architecture** | Layer 1 Gateway Kernel, STERA Dispatch Loop & Request Lifecycle | [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md) |
-| 3 | **Multi-Agent System** | 9-Agent Inventory, 25/33-Field AgentState Schema & HITL Workflow | [`AGENT_SYSTEM_ARCHITECTURE.md`](AGENT_SYSTEM_ARCHITECTURE.md) |
+| 3 | **Multi-Agent System** | 9-Agent Inventory, 40-Field AgentState Schema & HITL Workflow | [`AGENT_SYSTEM_ARCHITECTURE.md`](AGENT_SYSTEM_ARCHITECTURE.md) |
 | 4 | **Technology Stack** | Exhaustive 11-Domain Bill of Materials, Sovereign Stack & Dependencies | [`TECH_STACK.md`](TECH_STACK.md) |
 | 5 | **Formal Verification** | 11-Step Mathematical State-Space Proofs, CBF & NoDirectBind Invariants | [`FORMAL_VERIFICATION.md`](FORMAL_VERIFICATION.md) |
 | 6 | **Consequence Gateway** | 6-Step Token Evaluation, JWS Verification & Authority Store | [`CONSEQUENCE_GATEWAY.md`](CONSEQUENCE_GATEWAY.md) |

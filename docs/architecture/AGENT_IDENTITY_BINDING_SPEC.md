@@ -2,8 +2,8 @@
 
 **Version:** 1.1.0  
 **Status:** CANONICAL — IMPLEMENTED  
-**Last Updated:** 2026-09-29  
-**Applies To:** CAGE Gateway v3.1.0+
+**Last Updated:** 2026-10-22  
+**Applies To:** CAGE Gateway v3.1.0+ (current: v3.2.0)
 
 ---
 

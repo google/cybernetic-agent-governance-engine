@@ -2,15 +2,15 @@
 
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
-| **Document Version** | 3.0.1                                                                             |
-| **Date**             | 2026-09-29                                                                        |
+| **Document Version** | 3.2.0                                                                             |
+| **Date**             | 2026-10-22                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Architecture Specification                                                   |
-| **Status**           | ACTIVE — v3.0.1 stable (GKE deployment verified)                                  |
+| **Status**           | ACTIVE — v3.2.0 stable (GKE deployment verified)                                  |
 | **Canonical Path**   | `docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`                                  |
 | **References**       | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/`, [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md) |
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 ---
 
@@ -108,6 +108,7 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `proposed_action`       | `dict \| None` — Parameters staged for validation   | Extended          | Upstream tool-planning nodes  |
 | `governance_envelope`   | `dict \| None` — Gateway APPROVED verdict          | Extended          | `gateway_tool_guard`          |
 | `governance_status`     | `str \| None` — `"ALLOWED"` / `"DENIED"` / `"DEFERRED"` | Extended      | `gateway_tool_guard`          |
+| `routing_verdict_cache` | `dict \| None` — Fingerprint-bound single-use `validate-action` preview verdict (`30s` TTL) | Extended | `safety_node` / `gateway_tool_guard` |
 
 ### ExecutionPlan Pydantic Schema (TOCTOU Defense)
 
@@ -187,7 +188,7 @@ Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph
 1. **HITL Gate (`approval`)**: `approval_node` suspends the subgraph via `interrupt()`; on resume it issues `Command(goto="post_hitl_rehydrate")` when approved or `Command(goto="rejection")` when refused.
 2. **State Rehydration (`post_hitl_rehydrate`)**: Restores the parked execution context after resume.
 3. **Reviewer Slippage Gate (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift and asserts drift $\le$ `max_slippage_pct` (advisor-side, no governance call). On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`; on `PASSED` it returns to `executor`, which re-proposes the trade with the `deferred_id`.
-4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an `ALLOW`/`NARROW` verdict from the gateway's `POST /governance/validate-action` (a non-committing preview) or, on the approved path, a `deferred_id` that the gateway consumes inside `execute_trade_action`. The single committing governance run (POST_HITL profile for approved trades) happens in the gateway at execution time. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
+4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an `ALLOW`/`NARROW` verdict from the gateway's `POST /governance/validate-action` (a non-committing preview, or a single-use fingerprint-verified `routing_verdict_cache` entry populated by `safety_node` within `30s`) or, on the approved path, a `deferred_id` that the gateway consumes inside `execute_trade_action`. The single committing governance run (FULL profile for direct trades, POST_HITL profile for approved trades) happens in the gateway at execution time. Trade primitives live in `src/governed_financial_advisor/tools/trades.py`.
 5. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
 
 ---

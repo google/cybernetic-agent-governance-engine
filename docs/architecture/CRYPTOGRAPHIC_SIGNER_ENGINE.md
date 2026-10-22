@@ -1,6 +1,6 @@
 # Cryptographic Signer Engine
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 ## 1. Architectural Role & Domain Boundary
 
@@ -53,7 +53,7 @@ flowchart TD
     Signer -- hex signature / SignedRecord --> Client
 ```
 
-`sign()` returns a hex-encoded signature. `sign_decision()` returns a `SignedRecord` carrying `payload`, `signature`, `algorithm`, `kid`, and `signed_at`, so verifiers can resolve the key by `kid`.
+`sign()` / `await sign_async()` returns a hex-encoded signature. `sign_decision()` / `await sign_decision_async()` returns a `SignedRecord` carrying `payload`, `signature`, `algorithm`, `kid`, and `signed_at`, so verifiers can resolve the key by `kid`. Inside running asyncio event loops, callers must use the async signing methods (`sign_async`, `sign_decision_async`, `sign_raw_async`, `sign_jws_async`, `sign_precomputed_digest_async`, and `BatchGovernanceSigner.sign_batch_async()`), which offload blocking HSM RPCs to the dedicated `cage-kms` `ThreadPoolExecutor` bounded by an `asyncio.Semaphore` (`CAGE_KMS_MAX_CONCURRENCY`, default `16`) and `asyncio.timeout` (`CAGE_KMS_SIGN_TIMEOUT_SECONDS`, default `5.0` s). Calling synchronous `.sign*()` from a running event loop raises `RuntimeError` via `_guard_no_running_loop()`.
 
 ## 3. State Machine & Lifecycle
 
@@ -87,6 +87,9 @@ The signer lifecycle handles initialization, payload transformation, and verific
 - `KMS_PROVIDER` / `CAGE_KMS_PROVIDER`: Selects the provider (`gcp` default, `aws`, `azure`; `ed25519` / `hmac` only in DEV/TEST/CI). Provider selection is explicit — it is not inferred from the key name.
 - `KMS_GOVERNANCE_KEY`: Gateway signing key; for GCP, the full key version resource name (`projects/*/locations/*/keyRings/*/cryptoKeys/*/cryptoKeyVersions/*`).
 - `RECONCILER_KMS_KEY` / `EVIDENCE_KMS_KEY`: Reconciler and compliance-bridge signing keys (see the isolation table above).
+- `CAGE_KMS_MAX_CONCURRENCY`: Maximum concurrent in-flight async HSM signing operations per process on the `cage-kms` thread pool (default: `16`).
+- `CAGE_KMS_SIGN_TIMEOUT_SECONDS`: Per-operation async signing timeout in seconds (default: `5.0`).
+- `CAGE_KMS_RPC_TIMEOUT_SECONDS`: Underlying cloud KMS provider RPC deadline in seconds (default: `5.0`).
 - `EVIDENCE_TRUST_ANCHORS_FILE`: Optional operator-mounted JSON manifest (`{kid: pem}`) of retired `EVIDENCE_KMS_KEY` public-key versions loaded out-of-band by `load_evidence_trust_anchors()` so [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) can verify historical batches across key rotations.
 - `AWS_KMS_KEY_ID`, `AZURE_KEYVAULT_URL`, `AZURE_KMS_KEY_NAME`: Provider-specific key selectors read by `build_kms_provider()`.
 - `KMS_GOVERNANCE_PUBLIC_PEM`: Optional local path to the public key PEM. When set, `from_env()` loads it and compares it with the provider's key, logging an error on mismatch.

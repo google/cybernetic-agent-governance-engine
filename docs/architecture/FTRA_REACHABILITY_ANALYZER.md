@@ -1,6 +1,6 @@
 # FTRA Reachability Analyzer
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 ## 1. Architectural Role & Domain Boundary
 

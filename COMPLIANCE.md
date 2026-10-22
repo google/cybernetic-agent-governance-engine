@@ -1,6 +1,6 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** v3.0.1
-**Last Evaluated:** 2026-09-29
+**CAGE Version:** v3.2.0
+**Last Evaluated:** 2026-10-22
 
 ---
 
@@ -14,6 +14,8 @@
 
 ---
 
+> **v3.2.0 Update (2026-10-22):** Adds VEIP Phase 2 Warrant Reliance (`WarrantStage`, 60s `WarrantCache`, `RelianceRecord`, quorum-3 non-injectable `WARRANT_INELIGIBLE` deferral), out-of-band WORM read-back verification (`CustodyVerifier.assert_citable()` gating OSCAL Assessment Results), `StateCommitmentService` (`STATE_COMMITMENT` preimage retention), background DoWhy `WorldModelRefresher` with fail-closed `CAUSAL_WORLD_MODEL_STALE` enforcement, group-commit `EvidenceStreamSink`, async offloaded KMS signing (`sign_async` / `sign_decision_async`), and cluster-wide Redis dual-bucket GCRA rate limiting (`SharedRateLimiter`).
+>
 > **v3.0.1 Update (2026-09-09):** Compliance reporting now includes Attestation Failure Attributability (POAM-2026-072), Ed25519 CER signature verification for fail-closed security, **STERA Deterministically Bound Refusal** serialization (Full `RefusalReceipt` v3), and mandatory KMS staging/production signing requirements.
 
 ## 1. Regulatory Perimeter & Framework Mapping

@@ -1,16 +1,16 @@
-# Formal Verification and Completeness Proof (CAGE v3.0.1)
+# Formal Verification and Completeness Proof (CAGE v3.2.0)
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-09-29                |
-| **Version**        | 3.0.1                     |
-| **Status**         | Current — v3.0.1 stable; NoDirectBind invariant machine-verified over 38 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF stale-replica failover model: shipped posture (reconciled + `WAIT 1`) safe for $N \in \{1, 2, 3\}$, TLC-checked at $N = 2$ (`proof/DistributedCBF.tla`); FTRA boundary and LangGraph harness TLC-checked (`proof/FtraBoundary.tla`, `proof/LangGraphHarness.tla`, Step 15) |
+| **Date**           | 2026-10-22                |
+| **Version**        | 3.2.0                     |
+| **Status**         | Current — v3.2.0 stable; NoDirectBind invariant machine-verified over 38 reachable gated states (`proof/model.py`, pinned by `tests/test_no_direct_bind_proof.py`); Distributed CBF stale-replica failover model: shipped posture (reconciled + `WAIT 1`) safe for $N \in \{1, 2, 3\}$, TLC-checked at $N = 2$ (`proof/DistributedCBF.tla`); FTRA boundary and LangGraph harness TLC-checked (`proof/FtraBoundary.tla`, `proof/LangGraphHarness.tla`, Step 15) |
 | **Canonical Path** | `docs/architecture/FORMAL_VERIFICATION.md` |
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
-As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.1 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
+As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.2.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
 Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 and v3.0.0 architectural enhancements.
 

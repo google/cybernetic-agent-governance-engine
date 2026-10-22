@@ -15,11 +15,31 @@ CAGE is an application-agnostic governance and alignment substrate that contains
 
 Domain specificity and jurisdictional compliance are **configuration, not core requirements**. The finance and healthcare packages shipped in this repository are illustrative example domains that exercise the extension contract — neither is privileged by the kernel.
 
-![v3.0.1](https://img.shields.io/badge/version-3.0.1-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
+![v3.2.0](https://img.shields.io/badge/version-3.2.0-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 56](https://img.shields.io/badge/POAM%20Closed-56-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
 **Jurisdictional Extensions:** ![SR 26-2](https://img.shields.io/badge/US__FED-SR%2026--2-orange) ![NIST AI RMF](https://img.shields.io/badge/US__FED-NIST%20AI%20RMF-orange) ![FedRAMP HIGH](https://img.shields.io/badge/US__FED-FedRAMP%20HIGH-orange) ![EU AI Act](https://img.shields.io/badge/EU__ECB-EU%20AI%20Act-purple) ![DORA](https://img.shields.io/badge/EU__ECB-DORA-purple) ![MAS FEAT](https://img.shields.io/badge/APAC__MAS-MAS%20FEAT-green)
+
+---
+
+## What's New in v3.2.0
+
+> **Release date:** 2026-10-22 — Wave A–D Performance, Horizontal Scalability & Resilience Hardening, VEIP Phase 2 Warrant Reliance (`WarrantStage` / `WarrantCache` / `RelianceRecord`), Out-of-Band Evidence Read-Back Verification (`CustodyVerifier`), and State Commitment Preimage Retention (`StateCommitmentService`).
+> See [CHANGELOG.md](CHANGELOG.md#320---2026-10-22) for full details.
+
+| Capability | Location | Description |
+|---|---|---|
+| **Background Causal World-Model Refresher** | `src/gateway/governance/causal/world_model_refresher.py`, `src/gateway/governance/causal/gatekeeper.py` | Moves CPU-bound DoWhy `CausalModel` construction, backdoor linear-regression estimation, and 100-simulation placebo refutation into a background daemon loop (`CAUSAL_REFRESH_INTERVAL_SECONDS=30`, `CAUSAL_WORLD_MODEL_TTL_SECONDS=90`). Request-path `CausalGatekeeper.verify_action_causality()` reads pre-computed verdicts from Redis in $<1\text{ ms}$ and fails closed (`CAUSAL_WORLD_MODEL_STALE`) on a cache miss. |
+| **Async KMS Signing & Cached Key Metadata** | `src/gateway/governance/kms_signer.py`, `src/integrations/gcp/kms_provider.py` | Offloads synchronous Cloud KMS HSM calls onto a dedicated bounded thread pool (`cage-kms`, `CAGE_KMS_MAX_CONCURRENCY=16`, `CAGE_KMS_SIGN_TIMEOUT_SECONDS=5.0`) via `sign_async()` / `sign_decision_async()`, caches `GetCryptoKeyVersion` algorithm metadata at init/readiness, and caches parsed `public_jwk`. |
+| **Evidence Stream Group-Commit Micro-Batching** | `src/gateway/governance/evidence/stream.py` | Coalesces up to `EVIDENCE_GROUP_COMMIT_MAX_BATCH=64` JCS-normalized records within `EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS=2.0` ms and commits the entire SHA-256-chained batch atomically via `_APPEND_BATCH_SCRIPT` (`EVALSHA`), automatically re-chaining on multi-replica head contention while preserving per-record routing-seal binding (`B2`). |
+| **Single-Evaluation Trade Preview Reuse (`routing_verdict_cache`)** | `src/governed_financial_advisor/graph/governance/tool_guard.py`, `src/governed_financial_advisor/graph/state.py` | Caches approved `/governance/validate-action` trade previews in the 40-field `AgentState` bound to the SHA-256 `(action, params)` fingerprint (`30s` TTL), eliminating duplicate 8-tier preview evaluations between `safety_check` and `governed_trader` while keeping committing `/tools/execute` dispatch intact. |
+| **Stateless FastMCP Streamable HTTP & 300s Tool Cache** | `src/gateway/server/mcp_tool_server.py`, `src/gateway/infrastructure/mcp_client.py` | Serves FastMCP in stateless Streamable HTTP mode (`stateless_http=True`), reuses a pooled `httpx.AsyncClient` in `GatewayMCPClient` with a 300s tool-schema cache, and runs Uvicorn on `uvloop` + `httptools`. |
+| **Shared Redis Dual-Bucket GCRA Rate Limiter** | `src/gateway/server/rate_limit.py` | Enforces cluster-wide per-workload-identity (`l5d-client-id`) and per-caller-principal (`x-cage-principal`) request budgets in a single atomic Redis Lua GCRA script across gateway replicas, failing closed (`503`) in enforcing postures when Redis is unreachable. |
+| **Multi-Replica HPA, PDB & Memorystore HA** | `infra/modules/gateway/`, `infra/modules/advisor/`, `infra/modules/compliance_bridge/`, `infra/targets/gcp-gke/` | Adds `autoscaling/v2` `HorizontalPodAutoscaler`, `policy/v1` `PodDisruptionBudget`, `startupProbe`, topology spread constraints, Memorystore `READ_REPLICAS_ENABLED` in staging/prod, and proactive background GCP IAM Redis token refresh (`GcpRedisIamCredentialProvider`). |
+| **VEIP Phase 2 Warrant Reliance Gate** | `src/gateway/governance/warrant/`, `src/gateway/governance/governor/stages/warrant.py` | Verifies execution warrants (`ExecutionWarrant`, `WarrantSource`) through a 60s single-flight `WarrantCache`, emits structured `RelianceRecord` (`RELIED_UPON` / `INELIGIBLE_*`), and routes ineligible warrants on `requires_warrant` norms to a quorum-3, non-injectable `DEFER` (`DeferReason.WARRANT_INELIGIBLE`). |
+| **Read-Back `CustodyVerifier` & `StateCommitmentService`** | `src/compliance_bridge/evidence_verifier.py`, `src/gateway/governance/evidence/state_commitment.py` | Periodically re-verifies WORM evidence batches against out-of-band `kid`-resolved trust anchors to gate OSCAL citations (`assert_citable()`), and retains PII-sanitized JCS preimages (`STATE_COMMITMENT`) on the evidence stream before returning `stateHash` commitments (`POST /v1/governance/state-commitments`). |
+| **Per-Tier Prometheus Histograms & Locust Load Harness** | `src/gateway/governance/governor/metrics.py`, `src/gateway/observability/loop_monitor.py`, `tests/load/locustfile.py` | Instruments every pipeline stage, event-loop lag sampler, and Redis/KMS boundary with low-cardinality Prometheus histograms/counters and ships a reproducible Locust load-testing harness (`scripts/run_scaling_benchmark.sh`). |
 
 ---
 
@@ -113,6 +133,7 @@ CAGE enforces a strict **Split-Plane Architecture** between **Online Runtime Enf
 
 | Suite / Jurisdiction | Posture | Result | Date |
 |---|---|---|---|
+| **Universal / Unit Suite (v3.2.0)** | `test` (offline, `make test-fast` + Wave A–D suite) | ✅ **4,500+ passed** / 0 failed | 2026-10-22 |
 | **Universal / Unit Suite (v3.1.0)** | `test` (offline, `make test-fast`) | ✅ **4,347 passed** / 0 failed / 122 skipped / 6 subtests passed | 2026-09-22 |
 | **Universal / Unit Suite** | `test` (offline) | ✅ **3,921 passed** / 0 failed / 82 skipped (4,148 total collected) | 2026-09-09 |
 | **US_FED** (NIST SP 800-53 / FedRAMP) | `dev` / `test` | ✅ **3,747 passed** / 0 failed / 67 skipped (75.40% cov) | 2026-09-03 |
@@ -708,7 +729,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 ## Security & Compliance Status
 
 > [!IMPORTANT]
-> **CAGE v3.0.1 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
+> **CAGE v3.2.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
 
 ### Compliance Framework Scope
 
@@ -999,7 +1020,7 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 > **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
 >
-> See [What's New in v3.0.1](#whats-new-in-v301) above for the latest additions.
+> See [What's New in v3.2.0](#whats-new-in-v320) above for the latest additions.
 
 ### Bug Fixes
 
@@ -1081,4 +1102,4 @@ This is not an officially supported Google product. This project is not eligible
 
 By participating in this project, you agree to abide by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-_CAGE v3.0.1 — 2026-09-07 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_
+_CAGE v3.2.0 — 2026-10-22 — Stable Release: Wave A–D performance & horizontal scaling hardening, VEIP Phase 2 warrant reliance, read-back evidence verification, and state commitment preimage retention_

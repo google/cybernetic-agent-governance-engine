@@ -1,10 +1,10 @@
-# CAGE v3.0.1 — Substrate Moat Strategy
+# CAGE v3.2.0 — Substrate Moat Strategy
 ## Competitive Positioning Against Microsoft MXC/ACS, Red Hat/AAIF, and Google Agent Gateway
 
 **Document type:** Architectural Strategy & Gap Analysis
 **Status:** DRAFT — For internal review
 **Date:** 2026-07-14
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 **Authority:** This document supplements `docs/architecture/` and is governed by `docs/operations/GIT_WORKFLOW_STANDARDS.md`
 
 > **Framing note:** CAGE's reference implementation uses a governed financial advisory workflow as its first production vertical. This document deliberately generalises the competitive analysis to the broader category of **high-reliability agentic AI** — systems where an autonomous agent can trigger consequential, difficult-to-reverse writes to authoritative state stores (ledgers, databases, control-plane APIs, actuator endpoints). The financial framing is retained only where it is the precise technical context (e.g. code identifiers, regulatory citations). All strategic claims apply equally to any high-stakes agentic deployment.

@@ -3,7 +3,7 @@
 **Document type:** Architectural Analysis & Strategic Positioning
 **Status:** INTERNAL — For engineering and executive review
 **Date:** 2026-07-18
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 **Authority:** Supplements `docs/architecture/SUBSTRATE_MOAT_STRATEGY.md` and
 `docs/project/CAGE_ONE_PAGER.md`
 

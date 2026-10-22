@@ -1,13 +1,13 @@
 # Deferral Queue State Machine
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 ## 1. Architectural Role & Domain Boundary
 
 The Deferral Queue ([`DeferQueue`](../../src/gateway/governance/defer_queue.py)) implements the "Deferral Service" mandate from the CSA AARM specification. It provides a formal parking state for executions suffering from situational ambiguity or data starvation, preventing the brittle constraint of forcing a binary ALLOW/DENY decision under uncertainty.
 
 **Trust Boundaries**:
-- **Upstream (Gateway `SymbolicGovernor`)**: `ConfidenceStage` emits a `DEFERRABLE` violation when the self-reported confidence is below `FRIA_ZONE_DEFER` (default 0.70). `ClassificationEngine` then returns `DEFER`, and `handle_defer()` ([`governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py)) parks a `DeferToken` via `DeferQueue.park()` on Redis `db=1` (from `REDIS_URL`). The gateway is the only component that parks tokens.
+- **Upstream (Gateway `SymbolicGovernor`)**: `ConfidenceStage` emits a `DEFERRABLE` violation when the self-reported confidence is below `FRIA_ZONE_DEFER` (default 0.70), and `WarrantStage` emits `RELIANCE_INELIGIBLE` when a governing warrant is missing, stale, or revoked. `ClassificationEngine` then returns `DEFER`, and `handle_defer()` ([`governor/verdicts.py`](../../src/gateway/governance/governor/verdicts.py)) parks a `DeferToken` via `DeferQueue.park()` on Redis `db=1` (from `REDIS_URL`), reusing the process-scoped shared queue (`get_shared_defer_queue()` / `open_defer_queue()`, pre-warmed at gateway boot with pre-loaded CAS Lua script SHAs via `ensure_scripts_loaded()`). The gateway is the only component that parks tokens.
 - **Downstream (Operators/Systems)**: External systems or human operators resolve the deferral via data injection or dual-control escalation. The resolution API is served by the compliance bridge ([`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py)), which opens its own `DeferQueue` on the same Redis database.
 - **Governed advisor (client)**: The advisor owns no `DeferQueue`. Its [`defer_node`](../../src/governed_financial_advisor/graph/nodes/defer_node.py) only checkpoints the gateway-issued `deferral_ticket_id`, and fails closed (raises) when that ticket is missing.
 

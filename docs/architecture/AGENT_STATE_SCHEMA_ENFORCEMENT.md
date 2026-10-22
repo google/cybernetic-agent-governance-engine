@@ -6,7 +6,7 @@
 
 **Status:** Partially Implemented — see the component matrix below
 **Date:** 2026-07-05
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 **Author:** Architecture Review
 **Implements:** GAP-3 (Schema Enforcement at API and Node Boundaries)
 

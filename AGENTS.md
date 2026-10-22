@@ -196,12 +196,14 @@ CAGE is an illustrative reference architecture. The optimization target is clean
 
 **Decision test for ambiguous code:** *"If two domains had different copies of this, would a security fix have to be applied twice?"* If yes → Layer 1 (Kernel).
 
-### Canonical Module Namespaces (v3.0.1 Architecture)
+### Canonical Module Namespaces (v3.2.0 Architecture)
 All imports and test mocks must use these canonical locations:
-- Causal Gatekeeper: `src.gateway.governance.causal.gatekeeper`
+- Causal Gatekeeper & World-Model Refresher: `src.gateway.governance.causal.gatekeeper`, `src.gateway.governance.causal.world_model_refresher`
 - Reconciliation Daemon: `src.gateway.governance.reconciliation.daemon`
 - FTRA Action Reachability: `src.gateway.governance.ftra`
-- Evidence Stream & Cold Store: `src.gateway.governance.evidence.stream`, `src.gateway.governance.evidence.cold_store`
+- Warrant Reliance & Freshness Cache: `src.gateway.governance.warrant`, `src.gateway.governance.governor.stages.warrant`
+- Evidence Stream, State Commitment & Cold Store: `src.gateway.governance.evidence.stream`, `src.gateway.governance.evidence.state_commitment`, `src.gateway.governance.evidence.cold_store`
+- Shared Redis GCRA Rate Limiter: `src.gateway.server.rate_limit`
 
 ### Observability: Langfuse Sovereign Telemetry, Prometheus, and LangSmith
 - **Langfuse**: Standard runtime model observability and compliance trace telemetry tool. Self-hosted per region (`europe-west1`, `asia-southeast1`, `us-central1`) for sovereign data residency.

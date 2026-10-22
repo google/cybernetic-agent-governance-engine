@@ -3,7 +3,7 @@
 **CAGE Layer 2 Domain Plugin: Autonomous Robotics & Embodied Systems**  
 *Reference Architecture Specification*
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 > **Activation status:** The plugin is packaged under [`src/cage_physical_ai/`](../../src/cage_physical_ai/) and registered as the `physical_ai` entry point in the `cage.plugins` group ([`pyproject.toml`](../../pyproject.toml)). It declares no `DomainConfig` (no FTRA terminal registry or OPA package), so `CAGE_DOMAIN=physical_ai` refuses to start (fail closed) until POAM-2026-077 in [`docs/POAM.md`](../POAM.md) is closed. The sections below describe what the plugin contributes when `assemble_governor()` builds a governor from it (as the test suite does).
 

@@ -3,6 +3,7 @@
 **Document type:** Architectural Specification & Modular Implementation Blueprint  
 **Status:** ACTIVE — Phases 1–3 (Modules M1–M6) Implemented at HEAD; Modules M7–M8 Specified  
 **Date:** 2026-10-12  
+**Last Updated:** 2026-10-22  
 **Authority:** Supplements [`SUBSTRATE_MOAT_STRATEGY.md`](SUBSTRATE_MOAT_STRATEGY.md), [`GOVERNANCE_SUBSTRATE_DUALITY.md`](GOVERNANCE_SUBSTRATE_DUALITY.md), and [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md)
 
 ---
@@ -17,7 +18,7 @@ The **Google Cloud Gemini Enterprise Agent Platform (GEAP)** provides managed ca
 
 **CAGE** is a **cloud-agnostic, vendor-neutral governance engine** that can be deployed on any standard Kubernetes or container environment (`infra/targets/agnostic/`). **GEAP** (`infra/targets/gcp-gke/` with `advisor_runtime = "geap"`) is **one optional cloud deployment mode** where CAGE and GEAP operate at complementary, non-overlapping layers:
 * **GEAP (Optional GCP Deployment Mode)** governs the **Network, Identity, and Probabilistic Platform Layer** (*who* the agent is, *which endpoints* it may reach, and *soft rubric / prompt screening*).
-* **CAGE (Cloud-Agnostic Core)** governs the **Deterministic Consequence & Mathematical Invariant Substrate** (*what state mutations can physically commit* at the database/actuator boundary via [`ControlBarrierFunction.atomic_verify_and_commit`](../../src/gateway/governance/safety/cbf_engine.py), build-time STPA compilation in [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py), DoWhy causal refutation in [`gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py), 4-state `DEFER` parking in [`defer_queue.py`](../../src/gateway/governance/defer_queue.py), KMS-signed routing seals in [`routing_seal.py`](../../src/gateway/governance/routing_seal.py), and Double-Ratchet calibrated evaluation in [`src/eval_harness/`](../../src/eval_harness/__init__.py)).
+* **CAGE (Cloud-Agnostic Core)** governs the **Deterministic Consequence & Mathematical Invariant Substrate** (*what state mutations can physically commit* at the database/actuator boundary via [`ControlBarrierFunction.atomic_verify_and_commit`](../../src/gateway/governance/safety/cbf_engine.py), build-time STPA compilation in [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py), DoWhy causal refutation in [`gatekeeper.py`](../../src/gateway/governance/causal/gatekeeper.py) / [`world_model_refresher.py`](../../src/gateway/governance/causal/world_model_refresher.py), 4-state `DEFER` parking in [`defer_queue.py`](../../src/gateway/governance/defer_queue.py), KMS-signed routing seals in [`routing_seal.py`](../../src/gateway/governance/routing_seal.py), and Double-Ratchet calibrated evaluation in [`src/eval_harness/`](../../src/eval_harness/__init__.py)).
 
 ---
 

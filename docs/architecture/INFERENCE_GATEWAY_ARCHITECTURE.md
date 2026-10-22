@@ -1,4 +1,4 @@
-# Inference Gateway Architecture — v3.0.1
+# Inference Gateway Architecture — v3.2.0
 
 ## Executive Summary
 
@@ -11,8 +11,8 @@ This document analyzes the feasibility and impact of migrating the current "Sove
 The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer when `VLLM_GATEWAY_URL` is set, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance. When it is unset — the default in the `gcp-gke` Terraform target (`vllm_gateway_url = ""`) — the client connects directly to the two vLLM Services.
 
 **Status:** **OPTIONAL** — client-side Gateway Mode implemented; the `deployment/k8s/inference-gateway/` manifests are applied manually and are not provisioned by the `gcp-gke` Terraform target, which runs **DIRECT** mode by default
-**Version:** v3.0.1
-**Last Updated:** 2026-09-29
+**Version:** v3.2.0
+**Last Updated:** 2026-10-22
 
 > **Update 2026-03-03:** The GatewayClass has been migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (see `deployment/k8s/inference-gateway/gateway.yaml`). Gateway API CRDs are now installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving all routing, priority, and autoscaling capabilities.
 

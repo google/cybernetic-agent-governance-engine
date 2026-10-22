@@ -1,6 +1,6 @@
 # Latency as Currency: Funding Governance with Inference Speed
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 > **Universal Baseline:** Audit logging latency requirements are governed by **ISO 42001 §A.9.2** (evidence integrity) universally across all `CAGE_DEPLOYMENT_REGION` values. Jurisdiction-specific SLA authorities are listed in the table below.
 >
@@ -118,13 +118,14 @@ Two separate pooled `httpx.AsyncClient` instances eliminate TCP handshake overhe
 - **Expected hit rate:** 20–30% (educational queries)
 - **Cache key:** `query_cache:<sha256[:16]>` of normalized (lowercased, whitespace-collapsed) query
 
-### 6. Redis Client Timeouts
+### 6. Pooled Async Redis Clients & Process-Scoped `DeferQueue`
 
-Both Redis clients enforce strict connection timeouts to prevent governance hangs:
+Both Redis clients enforce strict connection timeouts and connection pooling to prevent governance hangs and per-request TCP/TLS handshake churn:
 
-**Gateway Redis** (`src/gateway/infrastructure/redis_client.py`):
-- `socket_connect_timeout=3.0s`, `socket_timeout=3.0s`
-- Used by: `ControlBarrierFunction`
+**Gateway Redis** ([`src/gateway/infrastructure/redis_client.py`](../../src/gateway/infrastructure/redis_client.py)):
+- `BlockingConnectionPool` (`REDIS_MAX_CONNECTIONS=50`, `REDIS_POOL_TIMEOUT=3.0s`), `socket_connect_timeout=3.0s`, `socket_timeout=3.0s`, `health_check_interval=30s`, and bounded exponential-backoff `Retry` on transient connection errors
+- Process-scoped [`DeferQueue`](../../src/gateway/governance/defer_queue.py) singleton (`get_shared_defer_queue()`, pre-warmed at gateway boot with pre-loaded Lua script SHAs via `ensure_scripts_loaded()`)
+- Proactive background GCP IAM token refresh (`GcpRedisIamCredentialProvider` in [`redis_credential_provider.py`](../../src/integrations/gcp/redis_credential_provider.py)) inside the 600s pre-expiry window
 
 **GFA Redis** (`src/governed_financial_advisor/infrastructure/redis_client.py`):
 - `socket_connect_timeout=2.0s`, `socket_timeout=5.0s`, `max_connections=100`
@@ -139,6 +140,26 @@ Both Redis clients enforce strict connection timeouts to prevent governance hang
 - **Park TTL:** `_DEFAULT_TTL = 14400s` (4 hours) before auto-escalation to MANUAL_REVIEW
 - **Redis isolation:** `db=1` with `noeviction` maxmemory policy (separate from LangGraph checkpointer at `db=0`)
 - **Data structures:** Redis Hash `DEFER:{defer_id}` + ZSet `DEFER:expiry_index` (scored by expiry timestamp)
+
+### 8. Background DoWhy Causal World-Model Refresher (Zero Hot-Path Refutation)
+
+[`WorldModelRefresher`](../../src/gateway/governance/causal/world_model_refresher.py) moves CPU-intensive DoWhy `CausalModel` construction, backdoor linear-regression estimation, and 100-simulation placebo refutation completely off the request thread into a background daemon loop (`CAUSAL_REFRESH_INTERVAL_SECONDS=30`, `CAUSAL_WORLD_MODEL_TTL_SECONDS=90`). Request-path [`CausalGatekeeper.verify_action_causality()`](../../src/gateway/governance/causal/gatekeeper.py) performs a single Redis read (`causal:v1:{domain}:{action_type}:{regime}`) in $<1\text{ ms}$ and fails closed (`CAUSAL_WORLD_MODEL_STALE`) on a cache miss without blocking the asyncio event loop.
+
+### 9. Async KMS Signing & Cached Key Metadata
+
+[`KMSGovernanceSigner`](../../src/gateway/governance/kms_signer.py) (`sign_async`, `sign_decision_async`) offloads Cloud KMS HSM signing to a dedicated `ThreadPoolExecutor` (`cage-kms`) bounded by `asyncio.Semaphore` (`CAGE_KMS_MAX_CONCURRENCY=16`) and `CAGE_KMS_SIGN_TIMEOUT_SECONDS=5.0`. [`GCPKMSProvider`](../../src/integrations/gcp/kms_provider.py) caches key algorithm metadata (`digest_algorithm`, `jose_alg`, `uses_rsa_pss`) at initialization/readiness and `KMSGovernanceSigner.public_jwk` caches the parsed public JWK, eliminating per-seal `GetCryptoKeyVersion` RPCs and PEM parsing.
+
+### 10. Evidence Stream Group-Commit Micro-Batching
+
+[`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) runs a single background group-commit appender per gateway process fed by a bounded `asyncio.Queue` (`EVIDENCE_GROUP_COMMIT_QUEUE_SIZE=1024`). The appender coalesces up to `EVIDENCE_GROUP_COMMIT_MAX_BATCH=64` JCS-normalized records within `EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS=2.0` ms, chains the batch locally, and commits all `k` records atomically via `_APPEND_BATCH_SCRIPT` (`EVALSHA`), re-chaining automatically on multi-replica head contention while preserving per-record `(msg_id, record_hash, sequence)` routing-seal binding (`B2`).
+
+### 11. Single-Evaluation Trade Preview Reuse (`routing_verdict_cache`)
+
+In the Governed Financial Advisor graph, [`safety_node`](../../src/governed_financial_advisor/graph/nodes/evaluator_node.py) records an approved `POST /governance/validate-action` preview verdict in `AgentState["routing_verdict_cache"]` bound to the SHA-256 `(action, params)` fingerprint (`30s` TTL). When `governed_trader` immediately invokes [`gateway_tool_guard("execute_trade")`](../../src/governed_financial_advisor/graph/governance/tool_guard.py) with identical parameters, [`verify_and_consume_routing_verdict()`](../../src/governed_financial_advisor/graph/governance/tool_guard.py) consumes the cached preview once, avoiding a duplicate 8-tier preview round-trip before the committing `POST /tools/execute` (`execute_trade_action`) dispatch.
+
+### 12. Stateless MCP Streamable HTTP, 300s Tool Cache & `uvloop`/`httptools`
+
+The gateway runs Uvicorn with `loop="uvloop"` and `http="httptools"` ([`hybrid_server.py`](../../src/gateway/server/hybrid_server.py)) and serves FastMCP over stateless Streamable HTTP (`/mcp/`, [`mcp_tool_server.py`](../../src/gateway/server/mcp_tool_server.py)). [`GatewayMCPClient`](../../src/gateway/infrastructure/mcp_client.py) reuses a persistent pooled `httpx.AsyncClient` and caches `list_tools()` / `get_tools()` for `300s` (`CAGE_MCP_TOOLS_CACHE_TTL_S`).
 
 ## Model Weight Loading — Cold-Start Latency
 

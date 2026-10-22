@@ -4,8 +4,8 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
-| **Last Updated**   | 2026-09-29                |
-| **Version**        | 0.1.0-rc.1                |
+| **Last Updated**   | 2026-10-22                |
+| **Version**        | 3.2.0                     |
 | **Status**         | Implemented & Verified (GKE deployment confirmed 2026-06-03) |
 
 ---

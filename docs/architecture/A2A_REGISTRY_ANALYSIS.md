@@ -2,9 +2,9 @@
 
 The GitHub proposal discussion (**#741 Agent Registry - Proposal**) captures the maturation of the **Discovery & Orchestration Plane** in the emerging Agent-to-Agent (A2A) ecosystem. Over the course of the thread, the conversation pivots from a naive, centralized CRUD catalog toward a structured **Three-Layer Model (Agent Card / Publication Record / Authorization Overlay)** and a **Core vs. Extensions** separation.
 
-When analyzed against **CAGE (Cybernetic Agent Governance Engine v3.0.1)**, this registry discussion provides external market validation for CAGE's core architectural thesis: **Discoverability is not authority, and catalog lookup is not runtime containment.**
+When analyzed against **CAGE (Cybernetic Agent Governance Engine v3.2.0)**, this registry discussion provides external market validation for CAGE's core architectural thesis: **Discoverability is not authority, and catalog lookup is not runtime containment.**
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 > [!NOTE]
 > CAGE authenticates callers by mesh workload identity: the Linkerd inbound proxy verifies the peer mTLS certificate (Google CAS trust anchor) and sets `l5d-client-id`, which the gateway checks against `CAGE_TRUSTED_CLIENT_IDENTITIES` in [`workload_identity.py`](../../src/gateway/server/workload_identity.py). This replaced both the earlier `X-Agent-ID` header and the HMAC routing-seal ingress check. The normative identity model — current Linkerd identity plus the target SPIFFE-prefix naming for catalog and delegation policy — lives in [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md). That spec is authoritative; this document only positions CAGE against the A2A registry proposal and does not restate it.
@@ -13,7 +13,7 @@ When analyzed against **CAGE (Cybernetic Agent Governance Engine v3.0.1)**, this
 
 ### 🏛️ Direct Comparative Architecture Matrix
 
-| Architectural Vector | A2A Registry Proposal (Consensus Spec) | CAGE v3.0.1 Posture |
+| Architectural Vector | A2A Registry Proposal (Consensus Spec) | CAGE v3.2.0 Posture |
 | --- | --- | --- |
 | **Primary Domain** | **Discovery & Negotiation Plane:** Locating agent endpoints, matching capabilities/skills, and establishing interface protocols. | **Execution & Substrate Plane:** Real-time interception, cryptographic consequence gating, and out-of-process invariant enforcement. |
 | **Identity & Trust Anchor** | Declarative Agent Cards, SPIFFE/mTLS federation hints, W3C DID/VC references, or OAuth client credentials. | **Mesh Workload Identity:** Linkerd mTLS (Google CAS trust anchor) authenticates every caller; the agent catalog (`config/agent_catalog.json`, optionally refreshed by `AgentRegistryDaemon`) is loaded into Open Policy Agent (OPA/Rego) as a data document. |

@@ -2,15 +2,15 @@
 
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
-| **Document Version** | 3.0.1                                                                    |
-| **Date**             | 2026-09-29                                                               |
+| **Document Version** | 3.2.0                                                                    |
+| **Date**             | 2026-10-22                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Architecture Specification                                          |
-| **Status**           | ACTIVE — v3.0.1 stable; `infra/targets/gcp-gke` is the sole cloud reference deployment |
+| **Status**           | ACTIVE — v3.2.0 stable; `infra/targets/gcp-gke` is the sole cloud reference deployment |
 | **Canonical Path**   | `docs/architecture/TECH_STACK.md`                                        |
 | **References**       | [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md), [`AGENT_SYSTEM_ARCHITECTURE.md`](AGENT_SYSTEM_ARCHITECTURE.md) |
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 ---
 
@@ -33,8 +33,8 @@
 | Framework                   | License    | Role                                   | Governance Justification & Key Details                                                                                       |
 | --------------------------- | ---------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **LangGraph**               | MIT        | Multi-agent `StateGraph` orchestration | Deterministic cyclic state machine ($\ge 1.1.0$); dynamic `interrupt()` primitive for HITL and `AsyncRedisSaver` checkpoint persistence |
-| **FastAPI**                 | MIT        | HTTP API server                        | High-performance ASGI server with OpenAPI schema generation; agent server `:8081/:80`, compliance bridge `:3001/:3002`       |
-| **FastMCP**                 | MIT        | MCP tool server over SSE               | Model Context Protocol implementation with W3C `traceparent` distributed trace propagation                                    |
+| **FastAPI**                 | MIT        | HTTP API server                        | High-performance ASGI server (`uvicorn` with `uvloop` and `httptools`); gateway `:8080` (`:9090` metrics), agent server `:8081/:80`, compliance bridge `:3001/:3002` |
+| **FastMCP**                 | MIT        | Stateless MCP Streamable HTTP server   | Model Context Protocol implementation (`stateless_http=True`, mounted at `/mcp/`) with W3C `traceparent` distributed trace propagation |
 | **NeMo Guardrails**         | Apache-2.0 | AI safety rails                        | Programmable conversational safety rails; 10 Presidio PII entity types; configurable via `GUARDRAILS_MODEL_NAME`             |
 | **Open Policy Agent (OPA)** | Apache-2.0 | Rego policy enforcement                | Deterministic, sub-millisecond RBAC and deontic constraints; fail-closed `CircuitBreaker` (5 consecutive upstream failures, 30s recovery, half-open probe) |
 | **LangChain**               | MIT        | Agent tool-calling framework           | Standardized tool binding and schema translation for heterogeneous models                                                    |

@@ -1,5 +1,7 @@
 # Evidence Stream & Cold Storage Chain
 
+**Last Updated:** 2026-10-22
+
 ## 1. Architectural Role & Domain Boundary
 
 The Evidence Chain is a core component of the Layer 1 Kernel responsible for maintaining a cryptographically verifiable, durable ledger of all governance and compliance events. It elevates standard application logging into a tamper-evident, hash-chained evidence sequence required by ISO 42001 and AARM compliance mandates.

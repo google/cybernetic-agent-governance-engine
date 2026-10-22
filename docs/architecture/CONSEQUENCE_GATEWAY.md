@@ -1,5 +1,7 @@
 # Consequence Gateway & Token Authority
 
+**Last Updated:** 2026-10-22
+
 ## 1. Architectural Role & Domain Boundary
 
 The `ConsequenceGateway` acts as the vendor-agnostic post-FRIA (Fundamental Rights Impact Assessment) execution boundary. It bridges the gap between the `SymbolicGovernor`'s abstract policy decisions and the downstream `ExecutionActuator`'s concrete side-effects.
@@ -7,7 +9,7 @@ The `ConsequenceGateway` acts as the vendor-agnostic post-FRIA (Fundamental Righ
 Its primary role is to ensure that no action is executed unless it possesses a valid, unexpired, mathematically bound, and cryptographically signed `ConsequenceToken` (JWS). It enforces exactly-once execution semantics by atomizing authority consumption against a central `ConsequenceAuthorityStore`.
 
 **Trust Boundaries**:
-- **Upstream (Governance Layer)**: Tokens are minted only by the kernel service [`mint_consequence_token_finding()`](../../src/gateway/governance/consequence_token_service.py), which the external normative-provider adapters call when the provider admits an action (e.g. [`provider_01`](../../src/integrations/provider_01/provider.py), [`provider_08`](../../src/integrations/provider_08/adapter.py)). A mint failure returns a blocking `CONSEQUENCE_TOKEN_MINT_FAILED` finding.
+- **Upstream (Governance Layer)**: Tokens are minted only by the async kernel service [`mint_consequence_token_finding()`](../../src/gateway/governance/consequence_token_service.py) (via `ConsequenceToken.mint()` and `KMSGovernanceSigner.sign_jws_async()`), which the external normative-provider adapters await when the provider admits an action (e.g. [`provider_01`](../../src/integrations/provider_01/provider.py), [`provider_08`](../../src/integrations/provider_08/adapter.py)). A mint failure returns a blocking `CONSEQUENCE_TOKEN_MINT_FAILED` finding.
 - **Downstream (Actuators)**: Cannot execute side-effects autonomously; they rely entirely on the Gateway's final `EXECUTE` emission.
 
 **Current wiring**: `ConsequenceGateway(store, signer)` is a library primitive. The gateway server does not construct one on the `SymbolicGovernor` ALLOW path. There, the governor issues a KMS-signed routing seal inside the request's `ReservationScope` ([`governor/sealing.py`](../../src/gateway/governance/governor/sealing.py)), and governed tools dispatch through `ActuatorRegistry`. The routing seal is not ingress authentication: callers are authenticated by Linkerd mTLS workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)). Behaviour of the gateway primitive is pinned by [`tests/test_consequence_gateway.py`](../../tests/test_consequence_gateway.py).

@@ -4,7 +4,7 @@
 **Schema Version:** `cage-audit/3.0`
 **DDL Artifact:** [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
 **Source of Truth:** [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py:919)
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 > **Reference Architecture Note.** CAGE is an illustrative reference
 > architecture, not a deployed production service. The ClickHouse topology,

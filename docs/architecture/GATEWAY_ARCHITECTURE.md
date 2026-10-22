@@ -1,4 +1,4 @@
-# Gateway Architecture — Kernel v3.0.1
+# Gateway Architecture — Kernel v3.2.0
 
 > **Layer 1 Substrate Boundary**: The Gateway Kernel (`src/gateway/`) is strictly domain-agnostic Layer 1 substrate. It implements the core STERA (Socio-Technical Enforcement & Reachability Assessment) admissibility engine, consensus coordination, Consequence Gateway atomic verification, evidence chaining, and inference routing. Under the project's strict architecture enforced by Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)), the Gateway Kernel must **NEVER** import from or depend on:
 > - **Layer 2 (Domain Plugins)**: `src/cage_*` (e.g., `src/cage_finance/`, `src/cage_healthcare/`)
@@ -8,10 +8,10 @@
 >
 > For Layer 4 reference application architecture, see `docs/examples/governed-financial-advisor/ARCHITECTURE.md`. For the standalone offline evaluation system, see [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md).
 
-**Version:** v3.0.1  
+**Version:** v3.2.0  
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*  
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*  
-**Last Updated:** 2026-09-29  
+**Last Updated:** 2026-10-22  
 
 > **Jurisdiction separation principle:** ISO/IEC 42001:2023 is the **sole universal governance baseline** — every control, pipeline step, and audit artifact applies to all deployment regions. All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable. No US_FED, EU_ECB, or APAC_MAS obligation is imposed on deployments in other regions.
 
@@ -19,7 +19,7 @@
 
 ## 1. Architectural Role & Domain Boundary
 
-The Hybrid Gateway Service operates as the central orchestrator and compliance enforcement point for the Cybernetic Governance Engine (CAGE). It exposes unified HTTP/FastMCP interfaces, decoupling client-facing agent abstractions from the underlying "Split-Brain" inference topology:
+The Hybrid Gateway Service operates as the central orchestrator and compliance enforcement point for the Cybernetic Governance Engine (CAGE). It exposes unified HTTP and stateless FastMCP Streamable HTTP (`/mcp/`) interfaces on a `uvloop`/`httptools` ASGI runtime, decoupling client-facing agent abstractions from the underlying "Split-Brain" inference topology:
 
 - **Reasoning Model Pool**: Handles deep planning, multi-step analysis, complex reasoning, and chain-of-thought generation.
 - **Governance Model Pool**: Handles rapid policy checks, safety filtering, content moderation, and multi-model consensus evaluation.
@@ -28,7 +28,7 @@ Both model pools are deployed on a dedicated GPU node pool (NVIDIA L4, `gpu-l4` 
 
 ### Trust Boundaries
 
-- **Upstream (Untrusted Ingress)**: The Gateway is the primary ingress point and treats all incoming client and agent traffic as untrusted. Trace context (`traceparent`) is extracted to stitch distributed Langfuse spans, scanner noise is dropped, and payloads must undergo cryptographic and policy verification. **Caller identity is taken from the mTLS transport only** — the Linkerd-verified `l5d-client-id` workload identity — never from caller-asserted request headers or the request body (see [§5.4](#54-transport-layer-agent-identity-linkerd-mtls-workload-identity)). The governed financial advisor is a client behind this boundary: it hosts no `SymbolicGovernor`, `DeferQueue` or signing key and reaches governance only through gateway endpoints.
+- **Upstream (Untrusted Ingress)**: The Gateway is the primary ingress point and treats all incoming client and agent traffic as untrusted. Trace context (`traceparent`) is extracted to stitch distributed Langfuse spans, scanner noise is dropped, and payloads must undergo cryptographic and policy verification. **Caller identity is taken from the mTLS transport only** — the Linkerd-verified `l5d-client-id` workload identity — never from caller-asserted request headers or the request body (see [§5.4](#54-transport-layer-agent-identity-linkerd-mtls-workload-identity)). [`SharedRateLimiter`](../../src/gateway/server/rate_limit.py) enforces Redis dual-bucket GCRA rate limits across `(l5d-client-id, x-cage-principal)`. The governed financial advisor is a client behind this boundary: it hosts no `SymbolicGovernor`, `DeferQueue` or signing key and reaches governance only through gateway endpoints.
 - **Downstream (Kernel & Actuators)**: Bridges external requests to the Layer 1 Kernel (`SymbolicGovernor`) and execution actuators via `ActuatorRegistry`. No action or side-effect occurs without traversing the complete governance pipeline and presenting a cryptographically signed routing seal, which [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) verifies and then consumes exactly once. `ConsequenceGateway` is the single-use boundary for normative-provider `ConsequenceToken`s and is not on the governor ALLOW path (§2.3).
 
 ### Three-Layer Architecture Boundary
@@ -85,7 +85,7 @@ stateDiagram-v2
 
 ### 2.2 8-Tier STERA Admissibility Pipeline
 
-The symbolic governance pipeline is executed for every governed action by [`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py). Stages run sequentially: read-only stages first (FTRA, STPA, OPA, confidence, then the domain's read-only tiers by `(phase, order)`), stopping at the first `HARD` violation; the mutating (phase-2) tiers commit only if the read-only stages produced no violations. Actions no domain tier claims run only FTRA, STPA and OPA. Whether an action is claimed is decided by [`resolve_claims()`](../../src/gateway/governance/governor/pipeline.py) over the full stage set, before profile filtering, so governedness never depends on the profile: an action claimed only by read-only tiers still re-runs OPA and the warrant gate under `POST_HITL`, and `revalidate_post_hitl` asks the same function. Domain tier labels below follow the finance plugin; canonical tier numbering lives in [`proof/model.py`](../../proof/model.py) `TIER_LABELS`. Every domain tier hook runs inside one OTel span `cage.tier.<tier_name>` ([`governor/stages/domain_tiers.py`](../../src/gateway/governance/governor/stages/domain_tiers.py)).
+The symbolic governance pipeline is executed for every governed action by [`run_pipeline()`](../../src/gateway/governance/governor/pipeline.py). Stages run sequentially: read-only stages first (FTRA, STPA, OPA, confidence, warrant gate when a governing norm requires a warrant, then the domain's read-only tiers by `(phase, order)`), stopping at the first `HARD` violation; the mutating (phase-2) tiers commit only if the read-only stages produced no violations. Actions no domain tier claims run only FTRA, STPA and OPA. Whether an action is claimed is decided by [`resolve_claims()`](../../src/gateway/governance/governor/pipeline.py) over the full stage set, before profile filtering, so governedness never depends on the profile: an action claimed only by read-only tiers still re-runs OPA and the warrant gate under `POST_HITL`, and `revalidate_post_hitl` asks the same function. Domain tier labels below follow the finance plugin; canonical tier numbering lives in [`proof/model.py`](../../proof/model.py) `TIER_LABELS`. Every domain tier hook runs inside one OTel span `cage.tier.<tier_name>` ([`governor/stages/domain_tiers.py`](../../src/gateway/governance/governor/stages/domain_tiers.py)).
 
 | Tier | Subsystem | Invariant / Verification Mechanism |
 |---|---|---|
@@ -97,7 +97,7 @@ The symbolic governance pipeline is executed for every governed action by [`run_
 | **Tier 3b** | **OPA Rego Policy Evaluation** | `OpaStage` queries `/v1/data/<DomainConfig.opa_package>`; startup aborts unless OPA serves that package and its required rules. Circuit breaker: 5 consecutive upstream failures (transport errors, HTTP 5xx, 408 or 429) $\to$ OPEN for 30s, then a single HALF_OPEN probe; HTTP 4xx answers, local pool saturation and misconfiguration deny without tripping it. Decisions are never cached. |
 | *(inference path)* | **Token Quota Proxy (TQP)** | Not a governor stage: enforced on the inference proxy path ([`inference_proxy.py`](../../src/gateway/server/inference_proxy.py)). Per-session step-count ($\le 12$) and token ($\le 100\text{k}$) quota enforcement via atomic Redis Lua scripts (`token_quota_proxy.py`). Two-phase commit (reserve $\to$ reconcile) with fail-closed HTTP 429 semantics. |
 | **Tier 5** | **Multi-Model Consensus Engine** | `ConsensusGate.from_contribution()` over domain-contributed `CriticSpec`s, with `ConsensusModelRegistry` (`src/gateway/governance/consensus/engine.py`) resolving critic models; each critic call is bounded by `CONSENSUS_CRITIC_TIMEOUT_S` (10 s). Heterogeneous critic models from the Reasoning and Governance Model Pools evaluate high-impact actions. Unanimous `APPROVE` passes; unanimous `REJECT` blocks; split vote escalates to human review. |
-| **Tier 6** | **DoWhy Causal Gatekeeper** | Domain-injected `CausalSpec` over the domain's causal graph (`DomainConfig.causal_graph_path`); causal backdoor linear regression plus placebo refutation against live telemetry. Redis-cached by `(action_type, regime)` with 60s TTL. Fails closed if telemetry is stale or causal packages are absent. |
+| **Tier 6** | **DoWhy Causal Gatekeeper** | Domain-injected `CausalSpec` over the domain's causal graph (`DomainConfig.causal_graph_path`); [`WorldModelRefresher`](../../src/gateway/governance/causal/world_model_refresher.py) runs causal backdoor linear regression plus 100-simulation placebo refutation against live telemetry in a background daemon loop (`CAUSAL_REFRESH_INTERVAL_SECONDS=30`) and populates Redis (`causal:v1:{domain}:{action_type}:{regime}`, 90s TTL). Request-path [`CausalGatekeeper.verify_action_causality()`](../../src/gateway/governance/causal/gatekeeper.py) reads the pre-computed verdict in $<1\text{ ms}$ and fails closed (`CAUSAL_WORLD_MODEL_STALE`) on a cache miss or missing causal packages. |
 | **`fria`** (`EU_ECB` only) | **EU AI Act Art. 27 FRIA** (`CTRL_FRIA_006`) | Phase-1 jurisdiction tier ([`FriaTier`](../../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)) added by `assemble_governor()` from the `JURISDICTIONS` registry only under `CAGE_DEPLOYMENT_REGION=EU_ECB`; runs right after `causal`. HARD-denies a missing/stale FRIA artefact or an unavailable `NormativeProvider`; a `needs_human_review` refusal is HITL. |
 
 #### Violation Classification & Precedence
@@ -164,10 +164,10 @@ The Evidence Chain ([`src/gateway/governance/evidence/stream.py`](../../src/gate
 flowchart TD
     EventBus["GovernanceEventBus / ConsequenceGateway /\ningest_actuation_receipt()"] --> Ingest[EvidenceStreamSink.ingest()]
     
-    subgraph Hot Path (Sub-millisecond)
-        Ingest --> JCS[JCS Normalization]
-        JCS --> Hash[SHA-256 Hash Chaining]
-        Hash --> CAS[Lua Compare-and-Append]
+    subgraph Hot Path (Group-Commit Micro-Batching)
+        Ingest --> JCS[PII Sanitization + JCS Normalization]
+        JCS --> Hash["Group-Commit Queue + Batch SHA-256 Chaining"]
+        Hash --> CAS["Batch Compare-and-Append (_APPEND_BATCH_SCRIPT)"]
         CAS --> Redis[(Redis Streams\ndb=1, noeviction)]
     end
     
@@ -182,7 +182,7 @@ flowchart TD
     Integrations --> Verifier
 ```
 
-- **Hot Path (Sub-millisecond)**: Ingests normalized JCS events (governance decisions, `ConsequenceGateway` evaluations, and actuator receipts/refusals via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), computes SHA-256 hash chains linking each record to its predecessor (`prev_hash`), and appends to Redis Streams (`cage:evidence:stream`, `db=1`, `noeviction`) through a Lua compare-and-append script that rejects a stale chain head. The gateway holds no evidence-signing key; it is started by the server lifespan via `start_evidence_sink()` and fails closed if the stream is unavailable under an enforcing posture.
+- **Hot Path (Group-Commit Micro-Batching)**: Ingests PII-sanitized, JCS-normalized events (governance decisions, `ConsequenceGateway` evaluations, state commitments, and actuator receipts/refusals via [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py)), coalesces up to `EVIDENCE_GROUP_COMMIT_MAX_BATCH=64` records within `EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS=2.0` ms, computes SHA-256 hash chains linking each record to its predecessor (`prev_hash`), and appends the batch atomically to Redis Streams (`cage:evidence:stream`, `db=1`, `noeviction`) through `_APPEND_BATCH_SCRIPT` (`EVALSHA`), re-chaining automatically on multi-replica head contention. The gateway holds no evidence-signing key; it is started by the server lifespan via `start_evidence_sink()` and fails closed if the stream is unavailable under an enforcing posture.
 - **Custody (Compliance Bridge)**: The `EvidenceCustodian` reads new entries from a durable cursor, re-verifies the hash chain, signs a `cage-evidence-batch/1` attestation over the batch with `EVIDENCE_KMS_KEY`, and writes batch and attestation via `EvidenceColdStore.put_if_absent` to WORM object storage. It never trims the stream. Without a KMS key (dev/test/ci only) attestations are written as `.attestation.unsigned.json`, marked non-evidentiary, and rejected by `assert_citable()`.
 - **Read-Back Verification & Citation Gating (Compliance Bridge)**: `CustodyVerifier` runs on `EVIDENCE_VERIFY_INTERVAL_S` (default 300s) and via `GET /v1/evidence/verify`, verifying every signed batch against `kid`-resolved trust anchors (`EVIDENCE_KMS_KEY` + optional `EVIDENCE_TRUST_ANCHORS_FILE`), re-checking object SHA-256 digests, record hashes, and cross-batch sequence continuity, and gating `GET /v1/oscal/assessment-results` when `verify_custody=true` or `OSCAL_REQUIRE_VERIFIED_CUSTODY=true`.
 
@@ -191,7 +191,7 @@ flowchart TD
 The Gateway implements an end-to-end telemetry architecture:
 
 - **Direct Langfuse OTLP Export**: Emits GenAI spans directly to Langfuse via OTLP (`http://langfuse-web:3000/api/public/otel/v1/traces`) using OpenTelemetry GenAI Semantic Conventions (v1.36.0+). The legacy OTel Collector sidecar was deprecated 2026-05-31.
-- **Distributed W3C MCP Tracing**: Bridges the Server-Sent Events (SSE) transport gap by propagating W3C `traceparent` context in MCP tool call metadata (`_otel_carrier`), producing unified distributed trace trees.
+- **Distributed W3C MCP Tracing**: Bridges the stateless FastMCP Streamable HTTP (`/mcp/`) transport boundary by propagating W3C `traceparent` context in MCP tool call metadata (`_otel_carrier`), producing unified distributed trace trees.
 - **Scanner-Noise Filtering**: The `server_request_hook` drops non-GET/POST probe methods and vulnerability scanner paths before trace allocation.
 - **AgentSight Kernel Observability**: Backed by an eBPF DaemonSet intercepting OpenSSL network boundaries and kernel syscalls (`execve`, `openat`, `connect`), linked to application traces via the `X-Trace-Id` header.
 
@@ -531,9 +531,9 @@ The Gateway Kernel lives strictly under `src/gateway/`:
 ```text
 src/gateway/
 ├── governance/             # STERA Admissibility Engine & symbolic governance tiers
-│   ├── causal/             # Causal gatekeeper (DoWhy linear regression refutation)
+│   ├── causal/             # Causal gatekeeper & background WorldModelRefresher (DoWhy)
 │   ├── consensus/          # Multi-model consensus engine & critic registry
-│   ├── evidence/           # Tamper-evident evidence stream producer & cold-store protocol
+│   ├── evidence/           # Group-commit evidence stream producer, state commitment & cold-store protocol
 │   ├── ftra/               # Forward-Looking Trajectory Reachability Analyzer
 │   ├── ingress/            # Normalization adapters (AAIF, ACS, OSCAL, Lula, AGP, AGW, Agent Registry)
 │   ├── langgraph_harness/  # Reusable OPA and NeMo graph node factories
@@ -545,25 +545,30 @@ src/gateway/
 │   │   ├── attestation.py      # AttestationProvider base class & attestation records
 │   │   ├── credential_broker.py # CredentialBrokerAdapter protocol, TriIdentityCredentialBinding & error taxonomy
 │   │   ├── graph_topology.py   # Domain-agnostic GraphTopology structure
-│   │   └── normative.py        # NormativeProvider protocol, baselines & evidence seals
+│   │   ├── normative.py        # NormativeProvider protocol, baselines & evidence seals
+│   │   ├── state_commitment.py # Canonical stateHash method constants
+│   │   └── warrant.py          # WarrantSource protocol & ExecutionWarrant contracts
+│   ├── warrant/            # Warrant Contract v0.1 standing verifier, 60s WarrantCache & RelianceRecord
 │   ├── consequence_gateway.py # Atomic execution authorization & token consumption
 │   ├── contracts.py        # Protocol interfaces (structural subtyping)
 │   ├── decisions.py        # Canonical five-state decision vocabulary
-│   ├── defer_queue.py      # Redis db=1 confidence-starvation deferral queue
+│   ├── defer_queue.py      # Redis db=1 confidence-starvation & warrant-ineligibility deferral queue
 │   ├── execution_actuator.py # ExecutionActuator protocol & ActuatorRegistry
-│   ├── kms_signer.py       # Governance signer (cloud providers live in src/integrations/)
+│   ├── kms_signer.py       # Async governance signer (cloud providers live in src/integrations/)
 │   ├── null_components.py  # Deny-by-default NullSafetyFilter / NullConsensusProvider
 │   ├── routing_seal.py     # Cryptographic routing seal generator & validator
 │   └── governor/           # Composition root (assembly.py, bootstrap.py, posture.py), governor.py, pipeline.py, reservation.py, sealing.py, stages/
-├── infrastructure/         # Telemetry setup & OTel client configuration
-├── observability/          # Distributed W3C MCP tracing context propagation
+├── infrastructure/         # Telemetry setup, pooled Redis client & stateless MCP client
+├── observability/          # Distributed W3C MCP tracing & event-loop lag monitor
 └── server/                 # FastAPI apps & protocol servicers
     ├── dpop_validator.py   # RFC 9449 proof-of-possession validator & protocol
     ├── app_state.py        # governor_of(): fail-closed app.state.governor lookup
     ├── governance_middleware.py # Core governance endpoints
-    ├── hybrid_server.py    # FastAPI composition root & lifespan manager
+    ├── hybrid_server.py    # FastAPI composition root & lifespan manager (uvloop/httptools)
     ├── inference_proxy.py  # vLLM proxy for Reasoning/Governance Model Pools
-    ├── mcp_tool_server.py  # FastMCP server & actuator invocation
+    ├── mcp_tool_server.py  # Stateless FastMCP Streamable HTTP server & actuator invocation
+    ├── rate_limit.py       # Shared Redis dual-bucket GCRA rate limiter (identity + principal)
+    ├── state_commitment_api.py # POST /governance/state-commitments preimage retention endpoint
     └── workload_identity.py # Linkerd mTLS workload identity enforcement & extraction
 ```
 
@@ -571,21 +576,22 @@ src/gateway/
 
 | File | Subsystem | Responsibility |
 |---|---|---|
-| `src/gateway/server/hybrid_server.py` | App Assembly | FastAPI root app mounting the MCP tool server, inference proxy, and governance sub-applications. |
+| `src/gateway/server/hybrid_server.py` | App Assembly | FastAPI root app (`uvloop`/`httptools`) mounting the stateless MCP tool server, inference proxy, and governance sub-applications. |
 | `src/gateway/governance/governor/assembly.py` | Composition Root | `assemble_governor()` validates plugin contributions and builds the immutable `SymbolicGovernor`. |
 | `src/gateway/governance/governor/bootstrap.py` | Startup Sequence | `bootstrap_governor()`: load `CAGE_DOMAIN` → assemble → refuse unfilled slots → register overlays → posture check. |
 | `src/gateway/server/governance_middleware.py` | Governance API | Serves `/governance/validate-action`, `/governance/revalidate-post-hitl` and supporting governance endpoints. |
+| `src/gateway/server/rate_limit.py` | Rate Limiting | `SharedRateLimiter` enforcing atomic Redis dual-bucket GCRA limits per `(l5d-client-id, x-cage-principal)` across replicas. |
 | `src/gateway/server/inference_proxy.py` | Inference Proxy | Reverse proxy routing chat completions to backend Reasoning and Governance Model Pools. |
-| `src/gateway/server/mcp_tool_server.py` | Tool Server | FastMCP server exposing tool endpoints; `_activate_domain()` calls `bootstrap_governor()` and registers the domain's tools with the governor. |
+| `src/gateway/server/mcp_tool_server.py` | Tool Server | Stateless FastMCP Streamable HTTP server (`/mcp/`) exposing tool endpoints; `_activate_domain()` calls `bootstrap_governor()` and registers the domain's tools with the governor. |
 | `src/gateway/governance/governor/governor.py` | Governor Loop | Immutable `SymbolicGovernor` exposing `validate_action`, `govern`, `revalidate_post_hitl` and `verify` over one staged pipeline. |
 | `src/gateway/governance/consequence_gateway.py` | Execution Gate | Atomic single-use `ConsequenceToken` verification and TOCTOU defense before execution. |
 | `src/gateway/governance/execution_actuator.py` | Actuator Registry | Registration and invocation boundary for concrete domain execution actuators. |
-| `src/gateway/governance/evidence/stream.py` | Evidence Stream | Hot-path Redis Stream append with SHA-256 hash chaining via Lua compare-and-append; posture-based startup preconditions. No signing. |
+| `src/gateway/governance/evidence/stream.py` | Evidence Stream | Group-commit Redis Stream append (`_APPEND_BATCH_SCRIPT`) with SHA-256 hash chaining and conflict re-chaining; posture-based startup preconditions. No signing. |
 | `src/gateway/governance/evidence/cold_store.py` | Cold Storage | Vendor-neutral `EvidenceColdStore` protocol (`put_if_absent`, plus `get` / `list_keys` for read-back verification). The custody loop lives in `src/compliance_bridge/evidence_custodian.py`. |
-| `src/gateway/governance/kms_signer.py` | Cryptographic Signer | Governance JWS signing and kid-resolved verification; cloud KMS providers are loaded from `src/integrations/` by `signer_factory.py`, with software fallbacks only in dev/test/CI. |
-| `src/gateway/governance/routing_seal.py` | Routing Seal | KMS-signed JWT routing seal generation and verification (HMAC form for dev/test/CI only). |
+| `src/gateway/governance/kms_signer.py` | Cryptographic Signer | Async governance JWS signing (`sign_async` on `cage-kms` pool), cached key metadata/JWK, and `kid`-resolved verification; cloud KMS providers are loaded from `src/integrations/` by `signer_factory.py`, with software fallbacks only in dev/test/CI. |
+| `src/gateway/governance/routing_seal.py` | Routing Seal | KMS-signed JWT routing seal generation and single-use consumption (`verify_and_consume_seal()`). |
 | `src/gateway/governance/contracts.py` | Subsystem Protocols | Structural subtyping contracts (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, etc.). |
-| `src/gateway/observability/mcp_tracing.py` | Distributed Tracing | W3C `traceparent` context extraction and child span creation across SSE transports. |
+| `src/gateway/observability/mcp_tracing.py` | Distributed Tracing | W3C `traceparent` context extraction and child span creation across MCP Streamable HTTP transports. |
 | `src/gateway/server/workload_identity.py` | Agent Identity | Linkerd mTLS workload identity ingress gate (`WorkloadIdentityMiddleware`) and caller identity extraction (`extract_client_identity(scope)`), enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment. |
 | `src/gateway/server/dpop_validator.py` | Token Binding | `ProofOfPossessionValidator` protocol and RFC 9449 `DPoPValidator` binding DPoP proofs to the client certificate (not yet wired into middleware). |
-| `src/gateway/governance/seams/` | Seam Contracts | Vendor-neutral protocol and dataclass contracts (`actuation.py`, `attestation.py`, `credential_broker.py` including `TriIdentityCredentialBinding`, `graph_topology.py`, `normative.py`) with zero kernel imports. |
+| `src/gateway/governance/seams/` | Seam Contracts | Vendor-neutral protocol and dataclass contracts (`actuation.py`, `attestation.py`, `credential_broker.py` including `TriIdentityCredentialBinding`, `graph_topology.py`, `normative.py`, `state_commitment.py`, `warrant.py`) with zero kernel imports. |

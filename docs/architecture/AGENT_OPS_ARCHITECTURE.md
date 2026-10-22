@@ -1,12 +1,12 @@
-# Agent Ops Architecture: Defense-in-Depth for AI Governance — v3.0.1
+# Agent Ops Architecture: Defense-in-Depth for AI Governance — v3.2.0
 
 > **Core Principle:** Separate the control plane (policy) from the data plane (execution capability) to create enforceable AI governance.
 
-**Version:** v3.0.1
+**Version:** v3.2.0
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
-**Last Updated:** 2026-09-29
+**Last Updated:** 2026-10-22
 
 ## Architecture Pattern
 

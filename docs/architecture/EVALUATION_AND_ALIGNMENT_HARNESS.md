@@ -1,5 +1,6 @@
 # Foundation Model & Agent Skill Evaluation Harness (`src/eval_harness/`)
 
+**Last Updated:** 2026-10-22  
 **Package Root:** [`src/eval_harness/__init__.py`](../../src/eval_harness/__init__.py)  
 **Core Modules:** [`src/eval_harness/harness.py`](../../src/eval_harness/harness.py) · [`src/eval_harness/runner.py`](../../src/eval_harness/runner.py) · [`src/eval_harness/static_linter.py`](../../src/eval_harness/static_linter.py) · [`src/eval_harness/adapters.py`](../../src/eval_harness/adapters.py) · [`src/eval_harness/gepa_optimizer.py`](../../src/eval_harness/gepa_optimizer.py) · [`src/eval_harness/cli.py`](../../src/eval_harness/cli.py)  
 **Layer 3 GCP Eval & GEAP Plugin:** [`src/integrations/gcp_eval/`](../../src/integrations/gcp_eval/__init__.py) ([`vertex_evaluator.py`](../../src/integrations/gcp_eval/vertex_evaluator.py), [`bq_harvester.py`](../../src/integrations/gcp_eval/bq_harvester.py), [`cer_publisher.py`](../../src/integrations/gcp_eval/cer_publisher.py), [`gepa_governor.py`](../../src/integrations/gcp_eval/gepa_governor.py), [`synthetic_generator.py`](../../src/integrations/gcp_eval/synthetic_generator.py), [`pipelines.py`](../../src/integrations/gcp_eval/pipelines.py))  
