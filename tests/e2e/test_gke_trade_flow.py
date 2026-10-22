@@ -148,8 +148,7 @@ def _trade(amount: float, role: str = "junior", **extra: Any) -> dict[str, Any]:
         "confidence": 0.98,
         "trader_id": f"e2e-{uuid.uuid4().hex[:12]}",
         "trader_role": role,
-        "latency_ms": 10.0,  # STPA UCA-2 input
-        "drawdown": 0.0,  # STPA UCA-5 input
+        "side": "buy",
         **extra,
     }
 
@@ -218,7 +217,7 @@ async def test_allow_envelope_verifies_by_kid_against_fetched_jwks(live: Live) -
         trusted.add_key(_jwk_to_pem(jwk), kid=jwk["kid"])
 
     resp = await live.validate(
-        "check_balance", {"account_id": "e2e", "confidence": 0.99}
+        "market_analysis", {"symbol": "AAPL", "confidence": 0.99}
     )
     assert resp.status_code == 200, resp.text
     envelope = resp.json()
