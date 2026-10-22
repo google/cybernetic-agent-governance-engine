@@ -699,3 +699,236 @@ class TestLifespanWiring:
         assert "EvidenceCustodian.from_env()" in source
         assert "run_forever()" in source
         assert "validate_evidence_stream_preconditions" not in source
+
+
+# ---------------------------------------------------------------------------
+# 9. Group-commit batching, conflict re-chaining, trace shedding, and drain
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceGroupCommit:
+    """Tests for Wave C2 group-commit batching in EvidenceStreamSink."""
+
+    @pytest.mark.asyncio
+    async def test_batch_ordering_coalesces_concurrent_ingests(self):
+        """Concurrent ingests coalesce into a single _APPEND_BATCH_SCRIPT call and preserve order."""
+        import asyncio
+
+        from src.gateway.governance.evidence.stream import verify_record
+
+        sink = _make_sink(max_batch_size=16, max_wait_ms=10.0)
+        redis = _fake_redis()
+        sink._redis = redis
+
+        eval_calls = 0
+        orig_eval = redis.eval
+
+        async def counting_eval(*args, **kwargs):
+            nonlocal eval_calls
+            eval_calls += 1
+            return await orig_eval(*args, **kwargs)
+
+        with patch.object(redis, "eval", side_effect=counting_eval):
+            msg_ids = await asyncio.gather(
+                *(
+                    sink.ingest({"type": "GOVERNANCE_DECISION", "seq_hint": i})
+                    for i in range(10)
+                )
+            )
+
+        assert all(m is not None for m in msg_ids)
+        assert len(set(msg_ids)) == 10
+        # All 10 concurrent items coalesced into far fewer than 10 script calls (typically 1)
+        assert eval_calls <= 2
+
+        entries = await _entries(redis)
+        assert len(entries) == 10
+        prev = ""
+        for i, (entry_id, fields) in enumerate(entries):
+            assert entry_id == msg_ids[i]
+            assert int(fields["sequence"]) == i
+            assert fields["prev_hash"] == prev
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
+
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_conflict_rechaining_reseals_entire_batch_against_new_head(self):
+        """When another writer advances the head before a batch lands, the whole batch re-chains cleanly."""
+        import asyncio
+
+        from src.gateway.governance.evidence.stream import verify_record
+
+        server = fakeredis.FakeServer()
+        sink = _make_sink(max_batch_size=8, max_wait_ms=10.0)
+        other = _make_sink(max_batch_size=1, max_wait_ms=0.0)
+        sink._redis = _fake_redis(server)
+        other._redis = _fake_redis(server)
+
+        # Seed genesis so both sinks share the same chain_id
+        await sink.ingest({"type": "GENESIS"})
+
+        orig_eval_batch = sink._eval_batch_script
+        injected_conflict = False
+
+        async def conflict_once(args):
+            nonlocal injected_conflict
+            if not injected_conflict:
+                injected_conflict = True
+                # External writer appends seq=1 while sink's batch was sealed at seq=1..3
+                await other.ingest({"type": "INTERLEAVED_WRITER"})
+            return await orig_eval_batch(args)
+
+        with patch.object(sink, "_eval_batch_script", side_effect=conflict_once):
+            ids = await asyncio.gather(
+                sink.ingest({"type": "BATCH_A", "i": 1}),
+                sink.ingest({"type": "BATCH_A", "i": 2}),
+                sink.ingest({"type": "BATCH_A", "i": 3}),
+            )
+
+        assert injected_conflict is True
+        assert all(m is not None for m in ids)
+
+        entries = await _entries(sink._redis)
+        assert len(entries) == 5  # genesis (0), interleaved (1), batch of 3 (2, 3, 4)
+        prev = ""
+        for i, (_id, fields) in enumerate(entries):
+            assert int(fields["sequence"]) == i
+            assert fields["prev_hash"] == prev
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
+
+        await sink.stop()
+        await other.stop()
+
+    @pytest.mark.asyncio
+    async def test_two_sinks_concurrent_batches_produce_no_fork(self):
+        """Two sinks concurrently writing batches to one Redis never fork and verify end-to-end."""
+        import asyncio
+
+        from src.gateway.governance.evidence.stream import verify_record
+
+        server = fakeredis.FakeServer()
+        sink_a = _make_sink(max_batch_size=8, max_wait_ms=2.0)
+        sink_b = _make_sink(max_batch_size=8, max_wait_ms=2.0)
+        sink_a._redis = _fake_redis(server)
+        sink_b._redis = _fake_redis(server)
+
+        # Establish genesis so both replicas share chain_id
+        await sink_a.ingest({"type": "GENESIS"})
+
+        tasks = []
+        for i in range(12):
+            tasks.append(sink_a.ingest({"type": "REPLICA_A", "i": i}))
+            tasks.append(sink_b.ingest({"type": "REPLICA_B", "i": i}))
+
+        results = await asyncio.gather(*tasks)
+        assert all(r is not None for r in results)
+
+        entries = await _entries(sink_a._redis)
+        assert len(entries) == 25
+        assert len({f["chain_id"] for _, f in entries}) == 1
+
+        prev = ""
+        for i, (_id, fields) in enumerate(entries):
+            assert int(fields["sequence"]) == i
+            assert fields["prev_hash"] == prev
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
+
+        await sink_a.stop()
+        await sink_b.stop()
+
+    @pytest.mark.asyncio
+    async def test_refusal_receipts_never_dropped_when_queue_full(self):
+        """Refusal receipts use awaited enqueue (ingest) and wait for capacity rather than dropping."""
+        import asyncio
+
+        from src.gateway.governance.evidence.stream import verify_record
+
+        sink = _make_sink(queue_size=2, max_batch_size=4, max_wait_ms=5.0)
+        sink._redis = _fake_redis()
+
+        # Submit 6 refusal receipts concurrently across a queue of size 2
+        results = await asyncio.gather(
+            *(
+                sink.ingest(
+                    {
+                        "type": "GOVERNANCE_REFUSAL",
+                        "controlId": "A.5.3",
+                        "idx": i,
+                    }
+                )
+                for i in range(6)
+            )
+        )
+        assert all(r is not None for r in results)
+        entries = await _entries(sink._redis)
+        assert len(entries) == 6
+        prev = ""
+        for i, (_id, fields) in enumerate(entries):
+            assert int(fields["sequence"]) == i
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
+
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_trace_shedding_when_queue_full_increments_metric(self):
+        """Only GOVERNANCE_TRACE events use submit() and are shed with a metric when the queue is full."""
+        import asyncio
+
+        from src.gateway.governance.evidence.stream import EVIDENCE_TRACE_SHED_TOTAL
+
+        sink = _make_sink(queue_size=2, max_batch_size=4, max_wait_ms=50.0)
+        sink._redis = _fake_redis()
+
+        # Block the appender loop from draining the queue while we fill it
+        gate = asyncio.Event()
+        orig_commit = sink._commit_batch
+
+        async def gated_commit(batch):
+            await gate.wait()
+            await orig_commit(batch)
+
+        with patch.object(sink, "_commit_batch", side_effect=gated_commit):
+            before = (
+                EVIDENCE_TRACE_SHED_TOTAL._value.get()
+                if EVIDENCE_TRACE_SHED_TOTAL is not None
+                else 0.0
+            )
+            # First event starts the appender and may be pulled immediately;
+            # fill until queue is full and subsequent submit() sheds.
+            accepted = [
+                sink.submit({"type": "GOVERNANCE_TRACE", "i": i}) for i in range(6)
+            ]
+            assert any(not ok for ok in accepted)
+            if EVIDENCE_TRACE_SHED_TOTAL is not None:
+                after = EVIDENCE_TRACE_SHED_TOTAL._value.get()
+                assert after > before
+
+            # Refusal receipts are forbidden on submit()
+            with pytest.raises(ValueError, match="GOVERNANCE_TRACE"):
+                sink.submit({"type": "GOVERNANCE_REFUSAL"})
+
+            gate.set()
+
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_drains_queued_records_before_closing_redis(self):
+        """stop() drains pending items already in the queue before closing Redis."""
+        redis = _fake_redis()
+        sink = _make_sink(queue_size=16, max_batch_size=8, max_wait_ms=200.0)
+        sink._redis = redis
+
+        # Enqueue 4 trace events via non-blocking submit() and immediately call stop()
+        for i in range(4):
+            assert sink.submit({"type": "GOVERNANCE_TRACE", "i": i}) is True
+
+        await sink.stop()
+
+        entries = await _entries(redis)
+        assert len(entries) == 4
+        assert [int(f["sequence"]) for _, f in entries] == [0, 1, 2, 3]

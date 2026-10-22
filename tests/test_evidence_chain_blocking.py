@@ -396,5 +396,68 @@ class TestGenerateSealWithEvidence:
                 # Blocking ingest_sync should be called
                 mock_sink.ingest_sync.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_ingest_sync_group_commit_binds_distinct_record_hashes_to_seals(self):
+        """Concurrent generate_seal_with_evidence calls coalesce into a batch and bind each record's own hash."""
+        import fakeredis
+
+        from src.gateway.governance.evidence.stream import (
+            EvidenceStreamSink,
+            verify_record,
+        )
+        from src.gateway.governance.routing_seal import (
+            generate_seal_with_evidence,
+            seal_nonce,
+        )
+
+        server = fakeredis.FakeServer()
+        redis_stream = fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
+        redis_seal = fakeredis.FakeAsyncRedis(server=server, decode_responses=False)
+
+        sink = EvidenceStreamSink(
+            stream_key="cage:evidence:batch-blocking",
+            max_batch_size=8,
+            max_wait_ms=10.0,
+        )
+        sink._redis = redis_stream
+
+        with patch(
+            "src.gateway.governance.evidence.stream.get_evidence_sink",
+            return_value=sink,
+        ):
+            seals = await asyncio.gather(
+                *(
+                    generate_seal_with_evidence(
+                        action="execute_trade",
+                        params={"symbol": "AAPL", "amount": 100 + i},
+                        redis_client=redis_seal,
+                    )
+                    for i in range(4)
+                )
+            )
+
+        assert len(seals) == 4
+        entries = await redis_stream.xrange("cage:evidence:batch-blocking")
+        assert len(entries) == 4
+
+        record_hashes = [fields["record_hash"] for _id, fields in entries]
+        assert len(set(record_hashes)) == 4
+
+        indexed_hashes = []
+        for seal in seals:
+            raw = await redis_seal.get(f"cage:seal:evidence:{seal_nonce(seal)}")
+            assert raw is not None
+            indexed_hashes.append(raw.decode() if isinstance(raw, bytes) else str(raw))
+
+        assert set(indexed_hashes) == set(record_hashes)
+
+        prev = ""
+        for i, (_id, fields) in enumerate(entries):
+            assert int(fields["sequence"]) == i
+            assert verify_record(fields, prev_hash=prev).valid
+            prev = fields["record_hash"]
+
+        await sink.stop()
+
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -1097,9 +1097,13 @@ component-definition:
                 Protection of audit information separates the producer of governance
                 evidence from its custodian (POAM-2026-084). The gateway
                 (src/gateway/governance/evidence/stream.py, EvidenceStreamSink) only
-                hash-chains records into a Redis Stream through an atomic Lua
-                compare-and-append, so HA replicas share one linear chain; it holds no
-                evidence signing key, no cold store and no WORM bucket IAM.
+                hash-chains records into a Redis Stream through a per-process group-commit
+                appender and atomic Lua batch compare-and-append (_APPEND_BATCH_SCRIPT),
+                so HA replicas share one linear chain without forks; refusal and deferral
+                receipts use awaited enqueue (never dropped), while best-effort
+                GOVERNANCE_TRACE telemetry sheds with a metric if the bounded queue fills.
+                The gateway holds no evidence signing key, no cold store and no WORM
+                bucket IAM.
 
                 The compliance bridge's EvidenceCustodian
                 (src/compliance_bridge/evidence_custodian.py) independently re-verifies

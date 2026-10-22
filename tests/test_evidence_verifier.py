@@ -138,14 +138,14 @@ def _reasons(report: CustodyVerificationReport) -> str:
     return " | ".join(f.reason for f in report.failures)
 
 
-def _resign(store, signer, att_key: str, att: dict) -> None:
+async def _resign(store, signer, att_key: str, att: dict) -> None:
     body = {k: v for k, v in att.items() if k != "signature"}
     att = {
         **body,
         "signature": {
             "algorithm": signer.signing_algorithm,
             "key_id": signer.key_id,
-            "value": signer.sign(body),
+            "value": await signer.sign_async(body),
         },
     }
     store._entries[att_key] = json.dumps(
@@ -306,7 +306,7 @@ class TestDataFailsClosed:
 
         att = json.loads(store._entries[outcome.attestation_key])
         att["content_sha256"] = hashlib.sha256(content).hexdigest()
-        _resign(store, signer, outcome.attestation_key, att)
+        await _resign(store, signer, outcome.attestation_key, att)
 
         report = await _verifier(store, provider).verify_all()
         assert not report.ok
