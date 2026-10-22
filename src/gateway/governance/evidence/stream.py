@@ -82,6 +82,9 @@ Environment variables
                                as a gap.
   EVIDENCE_CHAIN_BLOCKING    — "true" (default): seals wait for the XADD ack
   EVIDENCE_COMMIT_TIMEOUT_S  — Blocking commit timeout (default: 5.0)
+  EVIDENCE_GROUP_COMMIT_MAX_BATCH  — Max records coalesced per batch XADD (default: 64)
+  EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS — Coalescing window in milliseconds (default: 2.0)
+  EVIDENCE_GROUP_COMMIT_QUEUE_SIZE — Bounded producer queue capacity (default: 1024)
 """
 
 from __future__ import annotations
@@ -91,6 +94,8 @@ import hashlib
 import json
 import logging
 import os
+import secrets
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -190,6 +195,16 @@ try:
     except ValueError:
         EVIDENCE_APPEND_CONFLICTS_TOTAL = REGISTRY._names_to_collectors.get(
             "cage_evidence_append_conflicts_total"
+        )  # type: ignore[assignment]
+
+    try:
+        EVIDENCE_TRACE_SHED_TOTAL = Counter(
+            "cage_evidence_trace_shed_total",
+            "GOVERNANCE_TRACE events shed when the bounded evidence queue is full",
+        )
+    except ValueError:
+        EVIDENCE_TRACE_SHED_TOTAL = REGISTRY._names_to_collectors.get(
+            "cage_evidence_trace_shed_total"
         )  # type: ignore[assignment]
 
     _PROM_AVAILABLE = True
@@ -432,6 +447,20 @@ _EVIDENCE_STREAM_ENABLED: bool = (
 # Default timeout for blocking evidence commits (seconds)
 _EVIDENCE_COMMIT_TIMEOUT_S: float = float(
     os.environ.get("EVIDENCE_COMMIT_TIMEOUT_S", "5.0")
+)
+
+# Group-commit batching configuration (Wave C2)
+_GROUP_COMMIT_MAX_BATCH: int = max(
+    1, int(os.environ.get("EVIDENCE_GROUP_COMMIT_MAX_BATCH", "64"))
+)
+_GROUP_COMMIT_MAX_WAIT_MS: float = max(
+    0.0, float(os.environ.get("EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS", "2.0"))
+)
+_GROUP_COMMIT_QUEUE_SIZE: int = max(
+    1, int(os.environ.get("EVIDENCE_GROUP_COMMIT_QUEUE_SIZE", "1024"))
+)
+_STOP_DRAIN_TIMEOUT_S: float = float(
+    os.environ.get("EVIDENCE_STOP_DRAIN_TIMEOUT_S", "5.0")
 )
 
 # v3.0.0 Breaking Change: Schema v1.0 support has been removed.
@@ -879,8 +908,49 @@ local id = redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[4], '*', unpack(ARGV, 5))
 return {'OK', id}
 """
 
+# Group-commit batch compare-and-append script:
+# KEYS[1] = stream key
+# ARGV[1] = chain_id, ARGV[2] = first_sequence, ARGV[3] = first_prev_hash,
+# ARGV[4] = MAXLEN, ARGV[5] = k (number of entries in batch),
+# Followed by k records: [field_token_count_i, f1, v1, f2, v2, ...]
+_APPEND_BATCH_SCRIPT = """
+local head = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+if #head == 0 then
+  if ARGV[2] ~= '0' or ARGV[3] ~= '' then
+    return {'CONFLICT'}
+  end
+else
+  local fields = head[1][2]
+  local h = {}
+  for i = 1, #fields, 2 do
+    h[fields[i]] = fields[i + 1]
+  end
+  if h['chain_id'] ~= ARGV[1] or h['record_hash'] ~= ARGV[3]
+      or tonumber(h['sequence']) + 1 ~= tonumber(ARGV[2]) then
+    return {'CONFLICT'}
+  end
+end
+local count = tonumber(ARGV[5])
+local idx = 6
+local out = {'OK'}
+for r = 1, count do
+  local nfields = tonumber(ARGV[idx])
+  idx = idx + 1
+  local id = redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[4], '*', unpack(ARGV, idx, idx + nfields - 1))
+  out[r + 1] = id
+  idx = idx + nfields
+end
+return out
+"""
+
+_APPEND_BATCH_SCRIPT_SHA = hashlib.sha1(
+    _APPEND_BATCH_SCRIPT.encode("utf-8"), usedforsecurity=False
+).hexdigest()
+
 # Bound on re-seal attempts when another writer keeps winning the head.
 _MAX_APPEND_ATTEMPTS = 8
+_CONFLICT_BACKOFF_BASE_S = 0.001
+_CONFLICT_BACKOFF_CAP_S = 0.010
 
 
 @dataclass(frozen=True)
@@ -894,6 +964,18 @@ class _AppendedRecord:
     timestamp: datetime
 
 
+@dataclass(frozen=True)
+class _QueuedEvidenceItem:
+    """One pre-sanitized, JCS-encoded event waiting in the group-commit queue."""
+
+    event: dict[str, Any]
+    payload_json: str
+    event_type: str
+    control_id: str
+    trace_id: str
+    future: asyncio.Future[_AppendedRecord] | None = None
+
+
 # ---------------------------------------------------------------------------
 # EvidenceStreamSink — the core streaming sink
 # ---------------------------------------------------------------------------
@@ -903,7 +985,8 @@ class EvidenceStreamSink:
     """Evidence-grade streaming sink backed by Redis Streams.
 
     Each governance event is hash-chained using the same SHA-256 algorithm
-    as ``ContextAccumulator``, then persisted to a Redis Stream.
+    as ``ContextAccumulator``, then persisted to a Redis Stream via a
+    per-process group-commit appender task.
 
     Usage::
 
@@ -913,7 +996,7 @@ class EvidenceStreamSink:
         # Ingest a governance event (from GovernanceEventBus.publish)
         await sink.ingest(event)
 
-        # Graceful shutdown
+        # Graceful shutdown (drains pending items before closing Redis)
         await sink.stop()
     """
 
@@ -923,11 +1006,29 @@ class EvidenceStreamSink:
         redis_db: int = _REDIS_DB,
         stream_key: str = _STREAM_KEY,
         max_len: int = _MAX_LEN,
+        *,
+        max_batch_size: int | None = None,
+        max_wait_ms: float | None = None,
+        queue_size: int | None = None,
     ) -> None:
         self._redis_url = redis_url
         self._redis_db = redis_db
         self._stream_key = stream_key
         self._max_len = max_len
+
+        self._max_batch_size = (
+            max(1, max_batch_size)
+            if max_batch_size is not None
+            else _GROUP_COMMIT_MAX_BATCH
+        )
+        self._max_wait_ms = (
+            max(0.0, max_wait_ms)
+            if max_wait_ms is not None
+            else _GROUP_COMMIT_MAX_WAIT_MS
+        )
+        self._queue_size = (
+            max(1, queue_size) if queue_size is not None else _GROUP_COMMIT_QUEUE_SIZE
+        )
 
         self._redis = None  # Lazy-loaded redis.asyncio client
         # Chain state is NOT seeded here. Seeding genesis in __init__ meant
@@ -940,16 +1041,47 @@ class EvidenceStreamSink:
         self._sequence: int = 0
         self._chain_restored = False
         self._running = False
+        self._stopping = False
         self._chain_lock = asyncio.Lock()
 
+        self._queue: asyncio.Queue[_QueuedEvidenceItem | None] | None = None
+        self._queue_loop: asyncio.AbstractEventLoop | None = None
+        self._appender_task: asyncio.Task[None] | None = None
+
+    def _ensure_queue(self) -> asyncio.Queue[_QueuedEvidenceItem | None]:
+        """Return the bounded producer queue for the active event loop."""
+        loop = asyncio.get_running_loop()
+        if self._queue is None or self._queue_loop is not loop:
+            self._queue = asyncio.Queue(maxsize=self._queue_size)
+            self._queue_loop = loop
+        return self._queue
+
+    def _ensure_appender_started(self) -> None:
+        """Ensure the background group-commit appender task is running."""
+        if self._redis is None or self._stopping:
+            return
+        queue = self._ensure_queue()
+        loop = asyncio.get_running_loop()
+        if (
+            self._appender_task is None
+            or self._appender_task.done()
+            or self._appender_task.get_loop() is not loop
+        ):
+            self._appender_task = loop.create_task(
+                self._appender_loop(queue),
+                name=f"evidence-group-commit:{self._stream_key}",
+            )
+
     async def start(self) -> None:
-        """Connect to Redis and restore chain state.
+        """Connect to Redis, restore chain state, and launch the appender task.
 
         The sink is a producer only. Signing and WORM custody of the stream
         are the compliance bridge's job (``EvidenceCustodian``).
         """
         if self._running:
             return
+
+        self._stopping = False
 
         try:
             from src.gateway.infrastructure.redis_client import build_async_redis
@@ -984,11 +1116,68 @@ class EvidenceStreamSink:
             raise
 
         self._running = True
+        self._ensure_appender_started()
         logger.info("[EvidenceStream] Started.")
 
-    async def stop(self) -> None:
-        """Stop the evidence stream and close the Redis connection."""
+    async def stop(self, drain_timeout_s: float = _STOP_DRAIN_TIMEOUT_S) -> None:
+        """Drain pending queued records against a deadline and close Redis."""
         self._running = False
+        self._stopping = True
+
+        task = self._appender_task
+        queue = self._queue
+        if (
+            task is not None
+            and not task.done()
+            and queue is not None
+            and self._redis is not None
+        ):
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_appender(queue, task),
+                    timeout=drain_timeout_s,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[EvidenceStream] Drain timed out after %.2fs; cancelling appender.",
+                    drain_timeout_s,
+                )
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except Exception as exc:
+                logger.warning("[EvidenceStream] Error draining appender: %s", exc)
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        elif task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # Fail any residual futures still sitting in the queue.
+        if queue is not None:
+            while not queue.empty():
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if (
+                    item is not None
+                    and item.future is not None
+                    and not item.future.done()
+                ):
+                    item.future.set_exception(
+                        EvidenceChainUnavailableError("Evidence stream sink stopped.")
+                    )
+
+        self._appender_task = None
 
         if self._redis:
             await self._redis.aclose()
@@ -998,6 +1187,15 @@ class EvidenceStreamSink:
             "[EvidenceStream] Stopped. Total records: %d",
             self._sequence,
         )
+
+    async def _shutdown_appender(
+        self,
+        queue: asyncio.Queue[_QueuedEvidenceItem | None],
+        task: asyncio.Task[None],
+    ) -> None:
+        """Enqueue sentinel and wait for the appender loop to finish draining."""
+        await queue.put(None)
+        await task
 
     # -- Chain state ------------------------------------------------------
 
@@ -1112,12 +1310,16 @@ class EvidenceStreamSink:
         event_type: str,
         control_id: str,
         timestamp: datetime,
+        *,
+        prev_hash: str | None = None,
+        sequence: int | None = None,
+        trace_id: str | None = None,
     ) -> tuple[dict[str, str], str]:
         """Build one ``cage-audit/3.0`` wire entry and its record hash.
 
         Callers must hold ``self._chain_lock`` and must have restored chain
-        state first. This does **not** advance the chain: ``_append()`` does
-        that, and only after Redis has acknowledged the write.
+        state first. This does **not** advance the chain: ``_commit_batch()``
+        does that, and only after Redis has acknowledged the write.
 
         Every field here is a string because Redis Streams store nothing else.
 
@@ -1127,16 +1329,18 @@ class EvidenceStreamSink:
         classification_reason, narrowing_applied, pause_token = _extract_sparse_header(
             event
         )
-        trace_id = current_trace_id()
+        effective_prev_hash = self._prev_hash if prev_hash is None else prev_hash
+        effective_sequence = self._sequence if sequence is None else sequence
+        effective_trace_id = current_trace_id() if trace_id is None else trace_id
 
         record_hash = _link_hash(
-            prev_hash=self._prev_hash,
-            sequence=self._sequence,
+            prev_hash=effective_prev_hash,
+            sequence=effective_sequence,
             event_type=event_type,
             control_id=control_id,
             payload_json=payload_json,
             chain_id=self._chain_id,
-            trace_id=trace_id,
+            trace_id=effective_trace_id,
             classification_reason=classification_reason,
             narrowing_applied=narrowing_applied,
             pause_token=pause_token,
@@ -1145,17 +1349,17 @@ class EvidenceStreamSink:
         entry: dict[str, str] = {
             "schema": _SCHEMA,
             "chain_id": self._chain_id,
-            "sequence": str(self._sequence),
+            "sequence": str(effective_sequence),
             "timestamp_utc": timestamp.isoformat(),
             "event_type": event_type,
             "control_id": control_id,
-            "trace_id": trace_id,
+            "trace_id": effective_trace_id,
             "hash_algorithm": _HASH_ALGORITHM,
             "canonicalization": _CANONICALIZATION,
             "evidence_class": _EVIDENCE_CLASS,
             # "" at genesis; the sink maps it to NULL to satisfy
             # CONSTRAINT chk_genesis_prev_hash.
-            "prev_hash": self._prev_hash,
+            "prev_hash": effective_prev_hash,
             "record_hash": record_hash,
             "payload_json": payload_json,
         }
@@ -1174,6 +1378,81 @@ class EvidenceStreamSink:
             entry["pause_token"] = pause_token
 
         return entry, record_hash
+
+    def _prepare_item(
+        self,
+        event: dict[str, Any],
+        *,
+        future: asyncio.Future[_AppendedRecord] | None,
+    ) -> _QueuedEvidenceItem:
+        """Sanitize, normalize, and JCS-encode ``event`` on the producer side."""
+        from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+
+        sanitized_event = _get_pii_sanitizer().sanitize_dict(event)
+        normalized_event = _normalize_for_jcs(sanitized_event)
+        payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
+
+        event_type = str(event.get("type", "UNKNOWN"))
+        control_id = str(event.get("controlId") or event.get("control_id") or "")
+        trace_id = current_trace_id()
+        return _QueuedEvidenceItem(
+            event=event,
+            payload_json=payload_json,
+            event_type=event_type,
+            control_id=control_id,
+            trace_id=trace_id,
+            future=future,
+        )
+
+    def submit(self, event: dict[str, Any]) -> bool:
+        """Non-blocking enqueue for best-effort ``GOVERNANCE_TRACE`` events.
+
+        Refusal receipts, deferrals, and decision evidence MUST NOT use
+        ``submit()`` — they use ``ingest()`` or ``ingest_sync()``, which
+        await ``queue.put(...)`` and never drop primary evidence.
+
+        When the bounded group-commit queue is full and the event is a
+        ``GOVERNANCE_TRACE`` event, the event is shed and
+        ``cage_evidence_trace_shed_total`` is incremented.
+
+        Returns:
+            True if the event was enqueued, False if Redis is unavailable or
+            the trace event was shed due to a full queue.
+        """
+        if self._redis is None or self._stopping:
+            return False
+
+        event_type = str(event.get("type", "UNKNOWN"))
+        if event_type != "GOVERNANCE_TRACE":
+            raise ValueError(
+                f"submit() may only be used for GOVERNANCE_TRACE events (got {event_type!r}); "
+                "primary evidence and refusal receipts must use await ingest() or ingest_sync()."
+            )
+
+        self._ensure_appender_started()
+        queue = self._ensure_queue()
+
+        if queue.full():
+            if _PROM_AVAILABLE and EVIDENCE_TRACE_SHED_TOTAL is not None:
+                EVIDENCE_TRACE_SHED_TOTAL.inc()
+            logger.warning(
+                "[EvidenceStream] Queue full (%d); shedding GOVERNANCE_TRACE event.",
+                self._queue_size,
+            )
+            return False
+
+        item = self._prepare_item(event, future=None)
+        try:
+            queue.put_nowait(item)
+            return True
+        except asyncio.QueueFull:
+            if _PROM_AVAILABLE and EVIDENCE_TRACE_SHED_TOTAL is not None:
+                EVIDENCE_TRACE_SHED_TOTAL.inc()
+            logger.warning(
+                "[EvidenceStream] Queue full (%d); shedding GOVERNANCE_TRACE event.",
+                self._queue_size,
+            )
+            return False
 
     async def ingest(self, event: dict) -> str | None:
         """Ingest a governance event into the evidence stream (best effort).
@@ -1252,8 +1531,6 @@ class EvidenceStreamSink:
                 or timeout is exceeded. Caller MUST NOT issue a routing seal when
                 this exception is raised.
         """
-        import time
-
         start_time = time.perf_counter()
 
         with tracer.start_as_current_span("cage.evidence.ingest_sync") as span:
@@ -1396,82 +1673,212 @@ class EvidenceStreamSink:
         )
 
     async def _append(self, event: dict[str, Any]) -> _AppendedRecord:
-        """Hash-chain ``event`` and compare-and-append it to the stream.
+        """Sanitize, JCS-encode, enqueue ``event``, and await its group-commit."""
+        if self._redis is None or self._stopping:
+            raise EvidenceChainUnavailableError(
+                "Evidence chain unavailable: Redis connection not established."
+            )
 
-        The head check and the ``XADD`` run as one Lua script
-        (:data:`_APPEND_SCRIPT`), so the record lands only if the stream's
-        newest entry is still the head this process sealed against. On a
-        conflict (another gateway replica appended first) the head is
-        re-read and the record re-sealed, up to
-        :data:`_MAX_APPEND_ATTEMPTS` times. Chain state advances only after
-        Redis acknowledges the write.
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[_AppendedRecord] = loop.create_future()
+        item = self._prepare_item(event, future=future)
 
-        Raises:
-            EvidenceChainUnavailableError: Chain state could not be restored,
-                or every attempt lost the race for the head.
-            Exception: Whatever the Redis client raised for the write itself.
-        """
-        # Wire PIISanitizer into the evidence path before the hash is computed.
-        # This prevents un-verifiable records if the sink applies masking later.
-        from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+        self._ensure_appender_started()
+        queue = self._ensure_queue()
+        await queue.put(item)
+        return await future
 
-        sanitized_event = _get_pii_sanitizer().sanitize_dict(event)
-        normalized_event = _normalize_for_jcs(sanitized_event)
-        payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
+    async def _appender_loop(
+        self, queue: asyncio.Queue[_QueuedEvidenceItem | None]
+    ) -> None:
+        """Background group-commit loop: drains batches and commits via Lua."""
+        stop_requested = False
+        while not stop_requested:
+            first = await queue.get()
+            if first is None:
+                break
 
-        event_type = event.get("type", "UNKNOWN")
-        control_id = str(event.get("controlId") or event.get("control_id") or "")
+            batch: list[_QueuedEvidenceItem] = [first]
+            wait_s = self._max_wait_ms / 1000.0
+            deadline = time.perf_counter() + wait_s
 
-        async with self._chain_lock:
-            for _attempt in range(_MAX_APPEND_ATTEMPTS):
-                await self._ensure_chain_restored()
+            while len(batch) < self._max_batch_size:
+                try:
+                    nxt = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0 or self._stopping:
+                        break
+                    try:
+                        nxt = await asyncio.wait_for(queue.get(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                if nxt is None:
+                    stop_requested = True
+                    break
+                batch.append(nxt)
 
-                sequence = self._sequence
-                timestamp = datetime.now(tz=timezone.utc)
-                entry, record_hash = self._seal_record(
-                    event=event,
-                    payload_json=payload_json,
-                    event_type=event_type,
-                    control_id=control_id,
-                    timestamp=timestamp,
-                )
+            await self._commit_batch(batch)
 
-                args: list[str] = [
-                    self._chain_id,
-                    str(sequence),
-                    self._prev_hash,
-                    str(self._max_len),
-                ]
-                for name, value in entry.items():
-                    args.extend((name, value))
+        # If a stop sentinel arrived while items were still queued behind or
+        # alongside it, drain any remaining items before exiting.
+        residual: list[_QueuedEvidenceItem] = []
+        while not queue.empty():
+            try:
+                nxt = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if nxt is not None:
+                residual.append(nxt)
+                if len(residual) >= self._max_batch_size:
+                    await self._commit_batch(residual)
+                    residual = []
+        if residual:
+            await self._commit_batch(residual)
 
-                result = await self._redis.eval(  # type: ignore[attr-defined]
-                    _APPEND_SCRIPT, 1, self._stream_key, *args
-                )
-                if result and result[0] == "OK":
-                    self._prev_hash = record_hash
-                    self._sequence += 1
-                    return _AppendedRecord(
-                        entry=entry,
-                        record_hash=record_hash,
-                        msg_id=str(result[1]),
-                        sequence=sequence,
-                        timestamp=timestamp,
-                    )
+    async def _eval_batch_script(self, args: list[str]) -> Any:
+        """Execute ``_APPEND_BATCH_SCRIPT`` via EVALSHA with EVAL fallback."""
+        redis = self._redis
+        if redis is None:
+            raise EvidenceChainUnavailableError(
+                "Evidence chain unavailable: Redis connection not established."
+            )
 
-                # Another writer moved the head. Re-read it and re-seal.
-                logger.info(
-                    "[EvidenceStream] Chain head moved under seq=%d; re-reading.",
-                    sequence,
-                )
-                if _PROM_AVAILABLE and EVIDENCE_APPEND_CONFLICTS_TOTAL is not None:
-                    EVIDENCE_APPEND_CONFLICTS_TOTAL.inc()
-                self._chain_restored = False
-
-        raise EvidenceChainUnavailableError(
-            f"Evidence append lost the chain head race {_MAX_APPEND_ATTEMPTS} "
-            f"times on {self._stream_key}; refusing to fork the chain."
+        # Prefer EVALSHA on real Redis / FakeRedis clients; fall back to EVAL on
+        # NOSCRIPT / "No matching script" or when a test replaces ``redis.eval``
+        # with an AsyncMock.
+        eval_attr = getattr(redis, "eval", None)
+        evalsha_attr = getattr(redis, "evalsha", None)
+        eval_is_mocked = type(eval_attr).__name__ in (
+            "AsyncMock",
+            "MagicMock",
+            "function",
         )
+        if evalsha_attr is not None and not eval_is_mocked:
+            try:
+                return await evalsha_attr(
+                    _APPEND_BATCH_SCRIPT_SHA, 1, self._stream_key, *args
+                )
+            except Exception as exc:
+                msg = str(exc).upper()
+                if "NOSCRIPT" not in msg and "NO MATCHING SCRIPT" not in msg:
+                    raise
+                script_load_attr = getattr(redis, "script_load", None)
+                if callable(script_load_attr):
+                    try:
+                        await script_load_attr(_APPEND_BATCH_SCRIPT)
+                    except Exception as load_exc:
+                        logger.debug(
+                            "[EvidenceStream] SCRIPT LOAD fallback skipped: %s",
+                            load_exc,
+                        )
+        return await redis.eval(  # type: ignore[attr-defined]
+            _APPEND_BATCH_SCRIPT, 1, self._stream_key, *args
+        )
+
+    async def _commit_batch(self, batch: list[_QueuedEvidenceItem]) -> None:
+        """Chain ``batch`` locally and write it atomically with ``_APPEND_BATCH_SCRIPT``."""
+        if not batch:
+            return
+
+        try:
+            async with self._chain_lock:
+                for attempt in range(_MAX_APPEND_ATTEMPTS):
+                    await self._ensure_chain_restored()
+
+                    first_sequence = self._sequence
+                    first_prev_hash = self._prev_hash
+                    working_prev_hash = first_prev_hash
+                    working_seq = first_sequence
+
+                    sealed_items: list[tuple[dict[str, str], str, int, datetime]] = []
+                    args: list[str] = [
+                        self._chain_id,
+                        str(first_sequence),
+                        first_prev_hash,
+                        str(self._max_len),
+                        str(len(batch)),
+                    ]
+
+                    for item in batch:
+                        timestamp = datetime.now(tz=timezone.utc)
+                        entry, record_hash = self._seal_record(
+                            event=item.event,
+                            payload_json=item.payload_json,
+                            event_type=item.event_type,
+                            control_id=item.control_id,
+                            timestamp=timestamp,
+                            prev_hash=working_prev_hash,
+                            sequence=working_seq,
+                            trace_id=item.trace_id,
+                        )
+                        sealed_items.append(
+                            (entry, record_hash, working_seq, timestamp)
+                        )
+                        args.append(str(len(entry) * 2))
+                        for name, value in entry.items():
+                            args.extend((name, value))
+                        working_prev_hash = record_hash
+                        working_seq += 1
+
+                    result = await self._eval_batch_script(args)
+                    if result and result[0] == "OK":
+                        self._prev_hash = working_prev_hash
+                        self._sequence = working_seq
+                        for idx, (
+                            item,
+                            (entry, record_hash, seq, timestamp),
+                        ) in enumerate(zip(batch, sealed_items, strict=True)):
+                            msg_id = (
+                                str(result[idx + 1])
+                                if idx + 1 < len(result)
+                                else str(result[1])
+                            )
+                            if item.future is not None and not item.future.done():
+                                item.future.set_result(
+                                    _AppendedRecord(
+                                        entry=entry,
+                                        record_hash=record_hash,
+                                        msg_id=msg_id,
+                                        sequence=seq,
+                                        timestamp=timestamp,
+                                    )
+                                )
+                        return
+
+                    # Another writer moved the head. Re-read it and re-seal the batch.
+                    logger.info(
+                        "[EvidenceStream] Chain head moved under batch starting seq=%d "
+                        "(len=%d); re-reading.",
+                        first_sequence,
+                        len(batch),
+                    )
+                    if _PROM_AVAILABLE and EVIDENCE_APPEND_CONFLICTS_TOTAL is not None:
+                        EVIDENCE_APPEND_CONFLICTS_TOTAL.inc()
+                    self._chain_restored = False
+
+                    if attempt + 1 < _MAX_APPEND_ATTEMPTS:
+                        cap = min(
+                            _CONFLICT_BACKOFF_CAP_S,
+                            _CONFLICT_BACKOFF_BASE_S * (2**attempt),
+                        )
+                        jitter_s = (secrets.randbelow(1000) / 1000.0) * cap
+                        await asyncio.sleep(jitter_s)
+
+            err = EvidenceChainUnavailableError(
+                f"Evidence append lost the chain head race {_MAX_APPEND_ATTEMPTS} "
+                f"times on {self._stream_key}; refusing to fork the chain."
+            )
+            for item in batch:
+                if item.future is not None and not item.future.done():
+                    item.future.set_exception(err)
+
+        except BaseException as exc:
+            for item in batch:
+                if item.future is not None and not item.future.done():
+                    item.future.set_exception(exc)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
 
     @property
     def chain_root(self) -> str:

@@ -133,10 +133,15 @@ def executed_trace_event(seal: str, *, action: str) -> dict[str, Any]:
 
 
 async def publish_trace(event: dict[str, Any]) -> None:
-    """Append ``event`` to the evidence stream, best effort."""
+    """Enqueue ``event`` to the evidence stream via non-blocking ``submit()``."""
     from src.gateway.governance.evidence.stream import get_evidence_sink
 
     try:
-        await get_evidence_sink().ingest(event)
+        sink = get_evidence_sink()
+        submit_fn = getattr(sink, "submit", None)
+        if callable(submit_fn):
+            submit_fn(event)
+        else:
+            await sink.ingest(event)
     except Exception as exc:  # noqa: BLE001 - telemetry never changes a decision
         logger.warning("Failed to publish %s event: %s", TRACE_EVENT_TYPE, exc)

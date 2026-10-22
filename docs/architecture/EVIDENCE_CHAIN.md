@@ -15,13 +15,14 @@ The hot path (gateway) only hashes and appends. Signing, archival, and read-back
 
 ```mermaid
 flowchart TD
-    EventBus["GovernanceEventBus / ConsequenceGateway /\ningest_actuation_receipt()"] --> Ingest["EvidenceStreamSink.ingest()"]
+    EventBus["GovernanceEventBus / ConsequenceGateway /\ningest_actuation_receipt() / routing_seal"] --> Ingest["EvidenceStreamSink.ingest() / ingest_sync() / submit()"]
 
     subgraph Producer["Gateway (producer, no key)"]
         Ingest --> PII[PIISanitizer.sanitize_dict]
         PII --> JCS[JCS Normalization]
-        JCS --> Hash[SHA-256 Hash Chaining]
-        Hash --> CAS["Compare-and-append (Lua)"]
+        JCS --> Queue["Bounded Group-Commit Queue"]
+        Queue --> Hash["Batch SHA-256 Hash Chaining (_seal_record)"]
+        Hash --> CAS["Batch Compare-and-Append (_APPEND_BATCH_SCRIPT / EVALSHA)"]
     end
 
     CAS --> Redis[("Redis Stream\ndb=1, noeviction")]
@@ -42,10 +43,10 @@ flowchart TD
 
 The lifecycle of an evidence record spans multiple durability tiers:
 
-- **Ingestion & Normalization**: Incoming events pass through `PIISanitizer.sanitize_dict()` ([`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)) and are then strictly normalized using JCS (JSON Canonicalization Scheme, RFC 8785) to ensure deterministic byte representation.
+- **Ingestion & Normalization**: Incoming events pass through `PIISanitizer.sanitize_dict()` ([`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)) and are then strictly normalized using JCS (JSON Canonicalization Scheme, RFC 8785) on the producer side before enqueuing to ensure deterministic byte representation and preserve caller `trace_id` correlation.
 - **Cryptographic Chaining**: `_link_hash()` computes `SHA-256(prev_hash + JCS(header) + payload_json)`. The `cage-audit/3.0` header carries `schema`, `chain_id`, `sequence`, `trace_id`, `event_type`, `control_id`, `hash_algorithm`, `canonicalization`, and the sparse `classification_reason` / `narrowing_applied` / `pause_token` members, so re-ordering, re-labelling, or splicing a record between chains breaks the link. The genesis record (sequence 0) has `prev_hash = ""`.
 - **Chain Restoration**: On first use, the sink reads the stream head (`XREVRANGE … COUNT 1`) and resumes the same `chain_id` at `sequence + 1`. An empty stream starts a new chain; a head that cannot be parsed raises `EvidenceChainCorruptError` rather than re-genesising over existing evidence.
-- **Compare-and-Append (HA-safe)**: The record is appended by the `_APPEND_SCRIPT` Lua script, which atomically checks that the stream head still matches the sink's expected `chain_id`, `record_hash` and `sequence - 1` (or that the stream is empty for a genesis record) before `XADD … MAXLEN`. If another gateway replica appended first, the script returns `CONFLICT`; the sink re-reads the head, re-seals and retries up to `_MAX_APPEND_ATTEMPTS` (8) times, counting `cage_evidence_append_conflicts_total`, and then raises `EvidenceChainUnavailableError`. Local chain state advances only after a successful append, so replicas share one linear chain instead of forking it.
+- **Group-Commit & Batch Compare-and-Append (HA-safe)**: Each gateway process runs a single background appender task fed by a bounded `asyncio.Queue` (`EVIDENCE_GROUP_COMMIT_QUEUE_SIZE`, default `1024`). The appender takes the first queued item and coalesces up to `EVIDENCE_GROUP_COMMIT_MAX_BATCH` (default `64`) items within `EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS` (default `2.0` ms), chains the batch locally with `_seal_record()`, and writes the entire batch atomically via `_APPEND_BATCH_SCRIPT` (`EVALSHA` with `EVAL` fallback). The Lua script verifies that the stream head still matches the batch's expected `chain_id`, `first_prev_hash`, and `first_sequence - 1` (or that the stream is empty for a genesis batch) before executing `k` `XADD … MAXLEN` calls in sequence. If another gateway replica appended first, the script returns `CONFLICT`; the sink re-reads the head, re-chains the entire batch, and retries with jittered backoff up to `_MAX_APPEND_ATTEMPTS` (8) times, counting `cage_evidence_append_conflicts_total`, and then fails every future in the batch with `EvidenceChainUnavailableError`. Local chain state advances only after Redis acknowledges the batch, and each caller's future resolves with its own `(msg_id, record_hash, sequence)` so routing-seal evidence binding (`B2`) is preserved. Refusal receipts, deferrals, and decision records use awaited enqueue (`ingest()` / `ingest_sync()`) and are never dropped; only best-effort `GOVERNANCE_TRACE` events (`trace.publish_trace` via `submit()`) may be shed when the bounded queue is full, counted in `cage_evidence_trace_shed_total`. On shutdown, `stop()` drains queued items against a deadline before closing Redis.
 - **Hot Storage**: The stream (`cage:evidence:stream`) lives on `db=1`, bounded by `EVIDENCE_STREAM_MAX_LEN`. The Redis instance must run `noeviction`; in the `gcp-gke` target the Memorystore (Valkey) module hard-codes `maxmemory-policy = noeviction`. Both workloads connect through `build_async_redis()` ([`redis_client.py`](../../src/gateway/infrastructure/redis_client.py)), which honours `rediss://` / `REDIS_TLS`, verifies certificates under an enforcing posture or when `REDIS_CA_CERT_PATH` is readable, and uses the IAM credential provider when configured. In the `gcp-gke` target ([`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)), `module.memorystore_governance.managed_server_ca` is passed via `redis_ca_pem` into [`infra/modules/gateway/main.tf`](../../infra/modules/gateway/main.tf) and [`infra/modules/compliance_bridge/main.tf`](../../infra/modules/compliance_bridge/main.tf), which provision `<app>-redis-ca` ConfigMaps (`ca.pem`), mount them read-only at `/etc/cage/tls/redis`, export `REDIS_CA_CERT_PATH=/etc/cage/tls/redis/ca.pem`, and annotate the pod template with `cage.io/redis-ca-sha256` so CA rotation rolls the pods automatically.
 - **Sink Lifecycle**: The gateway lifespan in [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) runs `validate_evidence_stream_preconditions()` and then `start_evidence_sink()`, and stops the sink on shutdown. Under an enforcing posture a sink that fails to start aborts startup.
 - **Custody & Archival**: `EvidenceCustodian.flush_once()` reads entries after its durable cursor (Redis hash `<stream>:custody`) with `XRANGE`, up to `EVIDENCE_CUSTODY_BATCH_SIZE`, splitting at a `chain_id` change. It re-verifies links, sequences and record hashes with `verify_record()`, builds a `cage-evidence-batch/1` attestation (chain id, sequence range, first/last hashes, NDJSON SHA-256, gaps), signs it, and writes `evidence-stream/<YYYY>/<MM>/<DD>/<chain_id>/<first>-<last>.ndjson` plus `.attestation.json` (or `.attestation.unsigned.json`, see §4) via `put_if_absent()`. Only then does the cursor advance. Entries are **not** deleted from Redis; the stream is trimmed only by `maxlen`.
@@ -219,6 +220,10 @@ Gateway (producer):
 - `EVIDENCE_STREAM_MAX_LEN`: `XADD` `maxlen` bound (default: `100000`).
 - `EVIDENCE_CHAIN_BLOCKING`: Commit evidence synchronously before seal issuance (default: `true`). Non-blocking under an enforcing posture requires `CAGE_ALLOW_NONBLOCKING_PROD=true`.
 - `EVIDENCE_COMMIT_TIMEOUT_S`: Blocking commit timeout in seconds (default: `5.0`).
+- `EVIDENCE_GROUP_COMMIT_MAX_BATCH`: Maximum records coalesced per batch compare-and-append (default: `64`).
+- `EVIDENCE_GROUP_COMMIT_MAX_WAIT_MS`: Coalescing wait window in milliseconds after the first queued item arrives (default: `2.0`).
+- `EVIDENCE_GROUP_COMMIT_QUEUE_SIZE`: Bounded per-process producer queue capacity (default: `1024`). Primary evidence and refusal receipts await capacity (`ingest()` / `ingest_sync()`); only `GOVERNANCE_TRACE` events (`submit()`) are shed when full (`cage_evidence_trace_shed_total`).
+- `EVIDENCE_STOP_DRAIN_TIMEOUT_S`: Maximum seconds `stop()` waits to drain queued items before closing Redis (default: `5.0`).
 
 Compliance bridge (custodian & verifier):
 
