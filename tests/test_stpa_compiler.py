@@ -823,10 +823,10 @@ class TestSandboxPolicyGeneration:
             in doc["credential_broker_rules"][0]["credential_placeholders"]
         )
 
-    def test_compile_openshell_alias_target(self) -> None:
+    def test_compile_sandbox_target(self) -> None:
         raw = yaml.safe_load(_MINIMAL_YAML)
         cs = ControlStructureModel(**raw)
-        res = compile_control_structure(cs, ["openshell"])
+        res = compile_control_structure(cs, ["sandbox"])
         assert not res.errors
         assert res.sandbox_content
         assert "credential_broker_rules:" in res.sandbox_content

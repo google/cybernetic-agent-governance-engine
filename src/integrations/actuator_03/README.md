@@ -4,7 +4,7 @@
 
 `src.integrations.actuator_03` implements the CAGE Layer 3 hardware-offloaded quarantine adapter for **NVIDIA Sentry** running on **NVIDIA BlueField-4 DPUs** via **NVIDIA DOCA** flow isolation, alongside CAGE's native [`InferenceProxySvidQuarantineActuator`](../../gateway/governance/quarantine_actuator.py).
 
-Per `AGENTS.md` (*Generic in Code, Specific in Prose*), the package path and runtime `actuator_id` use the anonymized identifier `actuator_03` (with factory aliases `"actuator_03"`, `"a03"`, `"sentry"`, and `"doca_quarantine"`).
+Per `AGENTS.md` (*Generic in Code, Specific in Prose*), the package path and runtime `actuator_id` use the anonymized identifier `actuator_03` (with factory aliases `"actuator_03"`, `"a03"`, and `"dpu_quarantine"`).
 
 ## Capabilities & Responsibilities
 

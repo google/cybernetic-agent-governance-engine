@@ -100,3 +100,27 @@ Copyright (c) 2023 BerriAI
 License: MIT License
 Source: https://github.com/BerriAI/litellm
 
+---
+
+Original CAGE Interoperability Adapters & Trademark Notice
+
+1. Sandbox Supervisor & Out-of-Band Quarantine Wire Contracts:
+   CAGE authors 100% original sandbox policy YAML generators (src/gateway/governance/stpa_compiler.py),
+   downstream execution and quarantine wire adapters (src/integrations/actuator_02/,
+   src/integrations/actuator_03/), and an independent HTTP PolicyProvider plugin
+   (contrib/openshell-provider-cage/). No NVIDIA OpenShell, NVIDIA Sentry, or NVIDIA DOCA
+   source code, header files, protobuf definitions, or binary libraries are copied,
+   linked, or distributed in this repository.
+
+2. Open Cybersecurity Schema Framework (OCSF):
+   CAGE's telemetry ingestor (src/integrations/actuator_02/ocsf_ingestor.py) validates
+   events conforming to the open-source OCSF v1.1.0 schema specification (Apache License 2.0).
+
+3. Trademarks & Non-Affiliation:
+   NVIDIA, OpenShell, NeMo, BlueField, and DOCA are trademarks and/or registered trademarks
+   of NVIDIA Corporation in the U.S. and other countries. CrowdStrike and Falcon are
+   trademarks of CrowdStrike, Inc. Any references to third-party product names in partner
+   documentation are strictly nominative and descriptive of over-the-wire interoperability.
+   CAGE is an independent open-source project and is not affiliated with, sponsored by,
+   or endorsed by NVIDIA Corporation or CrowdStrike, Inc.
+

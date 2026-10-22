@@ -187,17 +187,17 @@ def _load_actuator(name: str) -> ExecutionActuator:
     """
     normalized = name.strip().lower()
 
-    if normalized in ("actuator_01", "a01", "archytan"):
+    if normalized in ("actuator_01", "a01"):
         from src.integrations.actuator_01.adapter import Actuator01Adapter
 
         return Actuator01Adapter.from_env()
 
-    if normalized in ("actuator_02", "a02", "openshell"):
+    if normalized in ("actuator_02", "a02", "sandbox"):
         from src.integrations.actuator_02.adapter import Actuator02Adapter
 
         return Actuator02Adapter.from_env()
 
-    if normalized in ("actuator_03", "a03", "sentry", "doca_quarantine"):
+    if normalized in ("actuator_03", "a03", "dpu_quarantine"):
         from src.integrations.actuator_03.adapter import Actuator03Adapter
 
         return Actuator03Adapter.from_env()

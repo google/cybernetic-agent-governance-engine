@@ -356,7 +356,7 @@ def load_quarantine_actuator_from_env(
         redis_client if redis_client is not None else _default_quarantine_redis
     )
     configured = os.environ.get("CAGE_QUARANTINE_ACTUATOR", "").strip().lower()
-    if configured in ("actuator_03", "a03", "sentry", "doca_quarantine"):
+    if configured in ("actuator_03", "a03", "dpu_quarantine"):
         from src.integrations.actuator_03.adapter import Actuator03Adapter
 
         return Actuator03Adapter.from_env()

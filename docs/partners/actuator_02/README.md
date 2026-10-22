@@ -15,8 +15,8 @@
 The CAGE integration bridges OpenShell with CAGE's **STERA Admissibility Engine** through two symmetrical layers:
 
 1. **Downstream Execution Adapter (`src/integrations/actuator_02/`)**:
-   - `Actuator02Adapter`: Implements `ExecutionActuator`, brokering dynamic pre-credentials via `CredentialBroker` and dispatching signed actuation clearances (`CAGE_ACTUATION_ASSERTION_V1:`) over mTLS.
-   - `OcsfEvidenceIngestor`: Normalizes OpenShell OCSF v1.1.0 audit telemetry (`class_uid in {3001, 4001, 6003}`) and commits records to CAGE's tamper-evident evidence stream (`controlId: "AU-2"`).
+   - `Actuator02Adapter`: Implements `ExecutionActuator`, brokering dynamic pre-credentials via `CredentialBroker` and dispatching signed actuation clearances (`CAGE_SANDBOX_ASSERTION_V1:`) over mTLS.
+   - `OcsfEvidenceIngestor`: Normalizes OCSF v1.1.0 audit telemetry (`class_uid in {1001, 1007, 4001}`) and commits records to CAGE's tamper-evident evidence stream (`controlId: "AU-2"` / `"AC-3"`).
    - `PolicyAdvisorBridge`: Bridges dynamic sandbox permission proposals to `SymbolicGovernor.validate_action(..., profile=Profile.DRY_RUN)` and parks dual-control (`required_quorum >= 2`) `DeferToken`s in `DeferQueue`.
 
 2. **Upstream Contribution Package (`contrib/openshell-provider-cage/`)**:
@@ -47,5 +47,5 @@ For the complete GitHub Pull Request submission drafted for `nvidia/openshell`, 
 
 - Upstream Plugin Package: [`contrib/openshell-provider-cage/`](../../../contrib/openshell-provider-cage/)
 - CAGE Layer 3 Integration Adapter: [`src/integrations/actuator_02/`](../../../src/integrations/actuator_02/)
-- STPA Compiler Target: [`src/gateway/governance/stpa_compiler.py`](../../../src/gateway/governance/stpa_compiler.py) (`--targets sandbox` / `openshell`)
+- STPA Compiler Target: [`src/gateway/governance/stpa_compiler.py`](../../../src/gateway/governance/stpa_compiler.py) (`--targets sandbox`)
 - Generated Sandbox Policy Artifact: [`config/sandbox/generated_sandbox_policy.yaml`](../../../config/sandbox/generated_sandbox_policy.yaml)

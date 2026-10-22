@@ -14,8 +14,8 @@
 CAGE already authorises every actuation before dispatch: the domain tool
 calls [`verify_and_consume_seal()`](../../../src/gateway/governance/routing_seal.py),
 which verifies the seal and burns its single-use nonce, and only then
-dispatches through `ActuatorRegistry`. The OpenShell assertion
-(`X-CAGE-OpenShell-Assertion`) proves that the CAGE gateway sent the request.
+dispatches through `ActuatorRegistry`. The sandbox assertion
+(`X-CAGE-Sandbox-Assertion`) proves that the CAGE gateway sent the request.
 
 The seal adds a second, independent proof: the **governor** authorised this
 exact `(action, params)`, under a key the Supervisor resolves itself. A
@@ -30,7 +30,7 @@ credential or the assertion signer were compromised.
 |---|---|
 | Body | RFC 8785 (JCS) bytes of the `ExecutionClearance` envelope. It includes `action` and `params`; the seal is **not** in the body. |
 | `X-CAGE-Envelope-Digest` | Lowercase hex SHA-256 of the body |
-| `X-CAGE-OpenShell-Assertion` | base64url signature over `CAGE_OPENSHELL_ASSERTION_V1:` + body |
+| `X-CAGE-Sandbox-Assertion` | base64url signature over `CAGE_SANDBOX_ASSERTION_V1:` + body |
 | `X-CAGE-Routing-Seal` | The routing seal: a compact JWS (section 3) |
 | `X-CAGE-Seal-Profile` | `cage-seal/1` |
 | `X-CAGE-Correlation-ID` | The clearance correlation id |

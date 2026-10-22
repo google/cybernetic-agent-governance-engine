@@ -28,8 +28,18 @@ When an autonomous AI agent experiences a catastrophic Control Barrier Function 
 
 ---
 
+## Dual-Pathway Containment & Open-Source Licensing Boundary
+
+- **Default Commodity Open-Source Baseline (`CAGE_INFERENCE_PROXY_SVID` + Cilium/eBPF)**:
+  - On commodity Kubernetes / GKE deployments without DPU hardware, CAGE defaults to [`InferenceProxySvidQuarantineActuator`](../../../src/gateway/governance/quarantine_actuator.py) (revoking offending `thread_id` and `agent_svid` principals at the inference proxy) paired with static L3/L4 + DNS-snooped `FQDNNetworkPolicy` egress lockdown ([`deployment/k8s/cilium/egress-lockdown.yaml`](../../../deployment/k8s/cilium/egress-lockdown.yaml)) and Linkerd SPIFFE mTLS.
+- **Zero Proprietary SDKs or Firmware Blobs (`IN_SILICON_DPU`)**:
+  - `actuator_03` is a 100% CAGE-authored, over-the-wire HTTPS/mTLS client (`httpx`, RFC 8785 JCS, Ed25519). No proprietary DOCA libraries, headers, or binaries are vendored or linked in this repository. Any SmartNIC or DPU appliance implementing the `/v1/dpu/quarantine` wire contract can serve as the hardware enforcement endpoint.
+
+---
+
 ## File Reference
 
 - Layer 3 Adapter Implementation: [`src/integrations/actuator_03/`](../../../src/integrations/actuator_03/)
 - Layer 1 Quarantine Seam Protocol: [`src/gateway/governance/seams/quarantine.py`](../../../src/gateway/governance/seams/quarantine.py)
 - CAGE Workload Quarantine Actuators: [`src/gateway/governance/quarantine_actuator.py`](../../../src/gateway/governance/quarantine_actuator.py)
+- Cilium / GKE Dataplane V2 Egress Policies: [`deployment/k8s/cilium/egress-lockdown.yaml`](../../../deployment/k8s/cilium/egress-lockdown.yaml)

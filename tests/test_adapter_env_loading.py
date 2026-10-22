@@ -134,7 +134,7 @@ def test_load_actuators_from_env_success(monkeypatch):
 
     def mock_loader(name: str) -> ExecutionActuator:
         normalized = name.strip().lower()
-        if normalized in ("actuator_01", "a01", "archytan"):
+        if normalized in ("actuator_01", "a01"):
             return mock_actuator
         else:
             raise ValueError(f"Unknown execution actuator: '{name}'")

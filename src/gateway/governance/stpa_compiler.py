@@ -97,7 +97,7 @@ _AGP_CHAR_BUDGET = 5_000
 
 UcaType = Literal["not_provided", "unsafe_action", "wrong_timing", "stopped_too_soon"]
 EnforcementTarget = Literal[
-    "opa", "nemo", "python", "langgraph", "ftra", "sandbox", "openshell", "all"
+    "opa", "nemo", "python", "langgraph", "ftra", "sandbox", "all"
 ]
 OpaDecision = Literal["DENY", "GOVERNANCE_VIOLATION", "MANUAL_REVIEW", "ALLOW"]
 HttpVerb = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
@@ -483,7 +483,7 @@ class UCAModel(BaseModel):
                 raise ValueError(
                     f"{self.id}: enforcement includes 'langgraph' but langgraph_saga is missing."
                 )
-        if "sandbox" in self.enforcement or "openshell" in self.enforcement:
+        if "sandbox" in self.enforcement:
             if self.sandbox_rule is None:
                 raise ValueError(
                     f"{self.id}: enforcement includes 'sandbox' but sandbox_rule is missing."
@@ -2594,7 +2594,7 @@ def compile_control_structure(
         except Exception as exc:
             result.errors.append(f"IAP CEL policy generation failed: {exc}")
 
-    if "sandbox" in effective_targets or "openshell" in effective_targets:
+    if "sandbox" in effective_targets:
         try:
             result.sandbox_content = generate_sandbox_policy(cs)
         except Exception as exc:
@@ -2783,7 +2783,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "registry",
             "iap-cel",
             "sandbox",
-            "openshell",
             "all",
         ],
         default=["all"],
@@ -2795,7 +2794,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "(GCP Adaptation — config/registry/generated_tool_authorizations.json). "
             "Use 'iap-cel' for GEAP IAM CEL egress conditions "
             "(GCP Adaptation — config/registry/generated_iap_cel_policies.json). "
-            "Use 'sandbox' (or 'openshell') for OpenShell Supervisor sandbox policy "
+            "Use 'sandbox' for Sandbox Supervisor policy "
             "(config/sandbox/generated_sandbox_policy.yaml)."
         ),
     )
@@ -2866,7 +2865,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=_DEFAULT_SANDBOX_OUT,
         metavar="FILE",
-        help=f"Sandbox/OpenShell policy output path (default: {_DEFAULT_SANDBOX_OUT})",
+        help=f"Sandbox policy output path (default: {_DEFAULT_SANDBOX_OUT})",
     )
     compile_p.add_argument(
         "--dry-run",

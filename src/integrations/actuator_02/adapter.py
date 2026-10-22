@@ -348,7 +348,7 @@ class Actuator02Adapter:
         if clearance.executor_id not in (
             ACTUATOR_02_ID,
             "a02",
-            "openshell",
+            "sandbox",
             "actuator_01",
         ):
             return ActuationReceipt(
@@ -467,7 +467,7 @@ class Actuator02Adapter:
         headers: dict[str, str] = {
             "Content-Type": "application/json",
             "X-CAGE-Envelope-Digest": envelope_digest,
-            "X-CAGE-OpenShell-Assertion": assertion_b64,
+            "X-CAGE-Sandbox-Assertion": assertion_b64,
             "X-CAGE-Correlation-ID": clearance.correlation_id,
         }
         # Brokered credentials never carry CAGE protocol headers: drop any
