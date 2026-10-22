@@ -232,18 +232,12 @@ class FiscalLimitGuard:
         daily_cap_usd: float | None = None,
         reservation_ttl: int = 300,
     ) -> FiscalLimitGuard:
-        """Construct from REDIS_URL environment variable."""
-        try:
-            import redis.asyncio as aioredis  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError(
-                "redis-py is required for FiscalLimitGuard. "
-                "Install with: pip install redis"
-            ) from exc
+        """Construct from REDIS_URL environment variable using the pooled TLS/IAM builder."""
+        from src.gateway.infrastructure.redis_client import build_async_redis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         cap = daily_cap_usd or float(os.environ.get("FISCAL_DAILY_CAP_USD", "500000"))
-        client = aioredis.from_url(redis_url, decode_responses=True)
+        client = build_async_redis(redis_url, socket_timeout=3.0)
         return cls(client, daily_cap_usd=cap, reservation_ttl=reservation_ttl)
 
     # ------------------------------------------------------------------

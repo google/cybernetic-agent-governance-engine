@@ -210,7 +210,10 @@ async def test_inject_endpoint_maps_reinjection_to_409(fake_redis):
         == ReplayResult.ADMITTED
     )
 
-    with patch("redis.asyncio.from_url", return_value=fake_redis):
+    with patch(
+        "src.gateway.infrastructure.redis_client.build_async_redis",
+        return_value=fake_redis,
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await defer_inject(
                 token.defer_id,
@@ -229,7 +232,10 @@ async def test_inject_endpoint_maps_approved_hitl_token_to_409(fake_redis):
     queue = DeferQueue(fake_redis)
     defer_id = await _approved_hitl_token(queue)
 
-    with patch("redis.asyncio.from_url", return_value=fake_redis):
+    with patch(
+        "src.gateway.infrastructure.redis_client.build_async_redis",
+        return_value=fake_redis,
+    ):
         with pytest.raises(HTTPException) as exc_info:
             await defer_inject(
                 defer_id, DeferResolveRequest(confidence_score=0.9), _token="internal"

@@ -403,6 +403,10 @@ async def build(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[StackFactory]:
         opa = _Opa(opa_verdict)
         with monkeypatch.context() as m:
             # FiscalLimitGuard.from_env() connects to REDIS_URL at assembly.
+            m.setattr(
+                "src.gateway.infrastructure.redis_client.build_async_redis",
+                lambda *a, **k: fiscal_redis,
+            )
             m.setattr("redis.asyncio.from_url", lambda *a, **k: fiscal_redis)
             governor = bootstrap_governor(
                 opa=opa,
@@ -464,6 +468,10 @@ def test_bootstrap_alone_resolves_provider_05_from_the_environment(
     """No override: bootstrap_governor reads CAGE_WARRANT_SOURCE itself."""
     monkeypatch.setenv(WARRANT_SOURCE_ENV, "provider_05")
     monkeypatch.setattr(constants, "_OVERLAY_DIRS", list(constants._OVERLAY_DIRS))
+    monkeypatch.setattr(
+        "src.gateway.infrastructure.redis_client.build_async_redis",
+        lambda *a, **k: MagicMock(),
+    )
     monkeypatch.setattr("redis.asyncio.from_url", lambda *a, **k: MagicMock())
     governor = bootstrap_governor(opa=_Opa(), jurisdiction=_eu_jurisdiction())
     (stage,) = [s for s in governor.stages if isinstance(s, WarrantStage)]
@@ -486,6 +494,10 @@ def test_bootstrap_refuses_an_eu_governor_that_cannot_gate_its_warranted_norm(
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(constants, "_OVERLAY_DIRS", list(constants._OVERLAY_DIRS))
+    monkeypatch.setattr(
+        "src.gateway.infrastructure.redis_client.build_async_redis",
+        lambda *a, **k: MagicMock(),
+    )
     monkeypatch.setattr("redis.asyncio.from_url", lambda *a, **k: MagicMock())
     with pytest.raises(GovernorAssemblyError, match=match):
         bootstrap_governor(opa=_Opa(), jurisdiction=_eu_jurisdiction())

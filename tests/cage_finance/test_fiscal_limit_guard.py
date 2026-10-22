@@ -365,11 +365,16 @@ def test_fiscal_guard_from_env():
         os.environ,
         {"REDIS_URL": "redis://localhost:6379/0", "FISCAL_DAILY_CAP_USD": "250000"},
     ):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_build_redis:
             mock_client = MagicMock()
-            mock_from_url.return_value = mock_client
+            mock_build_redis.return_value = mock_client
             g = FiscalLimitGuard.from_env()
             assert g._daily_cap_usd == 250000.0
+            mock_build_redis.assert_called_once_with(
+                "redis://localhost:6379/0", socket_timeout=3.0
+            )
 
 
 # ---------------------------------------------------------------------------

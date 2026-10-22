@@ -124,14 +124,17 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     mcp_app.state.nemo_rails = nemo_rails
     logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
 
-    # ── Pre-warm Token Quota Proxy and UCA Logger (CTRL_TQP_007) ───────────────
+    # ── Pre-warm Token Quota Proxy, UCA Logger, and shared DeferQueue ──────
     try:
+        from src.gateway.governance.defer_queue import get_shared_defer_queue
         from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
         from src.gateway.governance.uca_logger import UCALogger
 
         app.state.token_quota_proxy = TokenQuotaProxy.from_env()
         app.state.uca_logger = UCALogger.from_env()
-        logger.info("✅ Token Quota Proxy and UCA Logger pre-warmed")
+        app.state.defer_queue = get_shared_defer_queue()
+        governance_app.state.defer_queue = app.state.defer_queue
+        logger.info("✅ Token Quota Proxy, UCA Logger, and DeferQueue pre-warmed")
     except Exception as e:
         # 'Token Quota Proxy' is a component name; logs the startup error only.
         # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -288,6 +291,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         close_res = opa_client.close()
         if inspect.isawaitable(close_res):
             await close_res
+
+    from src.gateway.governance.defer_queue import close_shared_defer_queue
+
+    await close_shared_defer_queue()
 
     if evidence_sink is not None:
         await evidence_sink.stop()

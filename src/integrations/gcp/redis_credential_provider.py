@@ -34,6 +34,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
@@ -51,6 +52,10 @@ GCP_METADATA_TOKEN_ENDPOINT = "http://metadata.google.internal/computeMetadata/v
 # Safety margin before expiry (5 minutes in seconds)
 TOKEN_EXPIRY_MARGIN_SECONDS = 300
 
+# Proactive refresh window before expiry (10 minutes in seconds) so hot-path
+# async callers trigger an out-of-band refresh before hitting the hard margin.
+PROACTIVE_REFRESH_MARGIN_SECONDS = 600
+
 
 class GcpRedisIamCredentialProvider(CredentialProvider):
     """
@@ -63,6 +68,9 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
     _cached_token: ClassVar[str | None] = None
     _cached_expiry: ClassVar[float] = 0.0
     _lock: ClassVar[threading.Lock] = threading.Lock()
+    _async_lock: ClassVar[asyncio.Lock | None] = None
+    _async_lock_loop: ClassVar[asyncio.AbstractEventLoop | None] = None
+    _refresh_task: ClassVar[asyncio.Task[None] | None] = None
 
     def __init__(
         self,
@@ -71,6 +79,15 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
     ) -> None:
         self.username = username
         self.metadata_timeout = metadata_timeout
+
+    @classmethod
+    def _get_async_lock(cls) -> asyncio.Lock:
+        """Return an asyncio.Lock bound to the currently running event loop."""
+        current_loop = asyncio.get_running_loop()
+        if cls._async_lock is None or cls._async_lock_loop is not current_loop:
+            cls._async_lock = asyncio.Lock()
+            cls._async_lock_loop = current_loop
+        return cls._async_lock
 
     def _fetch_token_from_metadata(self) -> tuple[str, float]:
         """Fetch access token from GCP metadata server."""
@@ -90,6 +107,28 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
             # Logs the fetch error only; the IAM access token is never logged.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.debug("GCP metadata server token fetch failed: %s", exc)
+            raise RuntimeError(
+                f"GCP metadata server token fetch failed: {exc}"
+            ) from exc
+
+    async def _fetch_token_from_metadata_async(self) -> tuple[str, float]:
+        """Asynchronously fetch access token from GCP metadata server without blocking the event loop."""
+        try:
+            async with httpx.AsyncClient(timeout=self.metadata_timeout) as client:
+                resp = await client.get(
+                    GCP_METADATA_TOKEN_ENDPOINT,
+                    headers={"Metadata-Flavor": "Google"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                token = data["access_token"]
+                expires_in = float(data.get("expires_in", 3600))
+                expiry = time.time() + expires_in
+                return token, expiry
+        except Exception as exc:
+            # Logs the fetch error only; the IAM access token is never logged.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            logger.debug("Async GCP metadata server token fetch failed: %s", exc)
             raise RuntimeError(
                 f"GCP metadata server token fetch failed: {exc}"
             ) from exc
@@ -118,8 +157,61 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
             logger.debug("GCP ADC token fetch failed: %s", exc)
             raise RuntimeError(f"GCP ADC token fetch failed: {exc}") from exc
 
+    async def _fetch_token_from_adc_async(self) -> tuple[str, float]:
+        """Offload blocking google-auth ADC refresh to a worker thread."""
+        return await asyncio.to_thread(self._fetch_token_from_adc)
+
+    @classmethod
+    def _store_cached_token(cls, token: str, expiry: float) -> None:
+        with cls._lock:
+            cls._cached_token = token
+            cls._cached_expiry = expiry
+
+    async def _resolve_and_cache_token_async(self) -> str:
+        """Resolve a fresh IAM token asynchronously and update the process-wide cache."""
+        now = time.time()
+        try:
+            token, expiry = await self._fetch_token_from_metadata_async()
+        except RuntimeError:
+            try:
+                token, expiry = await self._fetch_token_from_adc_async()
+            except RuntimeError as adc_exc:
+                cage_env = os.environ.get("CAGE_ENV", "").lower()
+                if cage_env in ("dev", "development", "test", "ci"):
+                    # Logs the environment name only; no token value is logged.
+                    # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+                    logger.warning(
+                        "GCP IAM credentials unavailable in %s environment; using simulated dev token",
+                        cage_env,
+                    )
+                    token = "simulated-gcp-redis-iam-token"
+                    expiry = now + 3600
+                else:
+                    raise RuntimeError(
+                        "Unable to obtain GCP IAM token for Memorystore authentication: "
+                        "neither metadata server nor ADC succeeded."
+                    ) from adc_exc
+
+        type(self)._store_cached_token(token, expiry)
+        return token
+
+    async def _proactive_refresh_bg(self) -> None:
+        """Background task that refreshes a near-expiry token before the hard margin."""
+        try:
+            async with self._get_async_lock():
+                now = time.time()
+                if self._cached_token is not None and now < (
+                    self._cached_expiry - PROACTIVE_REFRESH_MARGIN_SECONDS
+                ):
+                    return
+                await self._resolve_and_cache_token_async()
+        except Exception as exc:
+            # Logs the background refresh failure only; no token value is logged.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            logger.debug("Proactive GCP IAM token refresh failed: %s", exc)
+
     def _get_token(self) -> str:
-        """Retrieve a valid access token, refreshing if necessary."""
+        """Retrieve a valid access token synchronously, refreshing if necessary."""
         # Check explicit test/override environment variable
         override_token = os.environ.get("REDIS_IAM_TOKEN")
         if override_token:
@@ -164,6 +256,35 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
             cls._cached_expiry = expiry
             return token
 
+    async def _get_token_async(self) -> str:
+        """Retrieve a valid access token asynchronously with proactive pre-expiry refresh."""
+        override_token = os.environ.get("REDIS_IAM_TOKEN")
+        if override_token:
+            return override_token
+
+        now = time.time()
+        cls = type(self)
+        cached_token = cls._cached_token
+        cached_expiry = cls._cached_expiry
+
+        if cached_token is not None and now < (
+            cached_expiry - TOKEN_EXPIRY_MARGIN_SECONDS
+        ):
+            if now >= (cached_expiry - PROACTIVE_REFRESH_MARGIN_SECONDS):
+                if cls._refresh_task is None or cls._refresh_task.done():
+                    cls._refresh_task = asyncio.create_task(
+                        self._proactive_refresh_bg()
+                    )
+            return cached_token
+
+        async with self._get_async_lock():
+            now = time.time()
+            if cls._cached_token is not None and now < (
+                cls._cached_expiry - TOKEN_EXPIRY_MARGIN_SECONDS
+            ):
+                return cls._cached_token
+            return await self._resolve_and_cache_token_async()
+
     def get_credentials(self) -> tuple[str, str]:
         """Return (username, access_token) for Redis/Valkey AUTH."""
         token = self._get_token()
@@ -171,4 +292,5 @@ class GcpRedisIamCredentialProvider(CredentialProvider):
 
     async def get_credentials_async(self) -> tuple[str, str]:
         """Asynchronously return (username, access_token) for Redis/Valkey AUTH."""
-        return self.get_credentials()
+        token = await self._get_token_async()
+        return self.username, token

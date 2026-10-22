@@ -234,20 +234,14 @@ class TokenQuotaProxy:
         Raises:
             RuntimeError: If redis-py is not installed.
         """
-        try:
-            import redis.asyncio as aioredis  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError(
-                "redis-py is required for TokenQuotaProxy. "
-                "Install with: pip install redis"
-            ) from exc
+        from src.gateway.infrastructure.redis_client import build_async_redis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         step_max = int(os.environ.get("STEP_QUOTA_MAX", "12"))
         token_max = int(os.environ.get("TOKEN_QUOTA_MAX", "100000"))
         ttl = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
 
-        client = aioredis.from_url(redis_url, decode_responses=True)
+        client = build_async_redis(redis_url, socket_timeout=3.0)
         return cls(
             redis_client=client,
             step_quota_max=step_max,
