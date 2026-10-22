@@ -286,9 +286,16 @@ class TestApplyRefinementProposalFlow:
     @pytest.fixture
     def client(self, monkeypatch):
         monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", self._TRUSTED_ID)
+        import fakeredis.aioredis
+
         import src.gateway.server.hybrid_server as gw_srv
 
-        gw_srv._refinement_proposals.clear()
+        monkeypatch.setattr(
+            gw_srv.root_app.state,
+            "redis",
+            fakeredis.aioredis.FakeRedis(decode_responses=True),
+            raising=False,
+        )
         tc = TestClient(
             gw_srv.root_app,
             raise_server_exceptions=False,
@@ -359,6 +366,8 @@ class TestApplyRefinementProposalFlow:
         self, monkeypatch
     ):
         """Issue #405: proposer workload identity cannot self-approve its own refinement proposal."""
+        import fakeredis.aioredis
+
         from src.gateway.server.workload_identity import (
             WorkloadIdentityMiddleware,
             load_identity_policy,
@@ -375,7 +384,12 @@ class TestApplyRefinementProposalFlow:
                 mw.kwargs["policy"] = load_identity_policy()
         gw_srv.root_app.middleware_stack = gw_srv.root_app.build_middleware_stack()
 
-        gw_srv._refinement_proposals.clear()
+        monkeypatch.setattr(
+            gw_srv.root_app.state,
+            "redis",
+            fakeredis.aioredis.FakeRedis(decode_responses=True),
+            raising=False,
+        )
         tc = TestClient(gw_srv.root_app, raise_server_exceptions=False)
 
         prop = tc.post(

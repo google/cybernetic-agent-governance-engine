@@ -647,6 +647,7 @@ async def handle_deny(
     latency_ms: float = 0.0,
     *,
     reliance: Sequence[RelianceRecord] = (),
+    redis_client: Any | None = None,
 ) -> None:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
@@ -674,7 +675,10 @@ async def handle_deny(
     if auto_quarantine and ordered and ordered[0].kind == ViolationKind.HARD:
         import time as _time
 
-        from src.gateway.governance.quarantine_actuator import dispatch_quarantine
+        from src.gateway.governance.quarantine_actuator import (
+            dispatch_quarantine,
+            get_quarantine_redis,
+        )
         from src.gateway.governance.seams.quarantine import (
             QuarantineDirective,
             QuarantineTriggerReason,
@@ -707,7 +711,10 @@ async def handle_deny(
             governance_decision_digest=receipt.proof_hash,
             nonce=uuid.uuid4().hex,
         )
-        q_receipt = await dispatch_quarantine(directive)
+        active_q_redis = (
+            redis_client if redis_client is not None else get_quarantine_redis()
+        )
+        q_receipt = await dispatch_quarantine(directive, redis_client=active_q_redis)
         span.set_attribute("cage.quarantine.rule_id", q_receipt.rule_id or "")
         span.set_attribute("cage.quarantine.quarantined", q_receipt.quarantined)
         quarantine_meta = {

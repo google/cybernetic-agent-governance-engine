@@ -294,9 +294,12 @@ async def chat_completions(
         request_thread_id = body.get("thread_id") or request.headers.get(
             "x-cage-thread-id"
         )
+        app_state = getattr(getattr(request, "app", None), "state", None)
+        shared_redis = getattr(app_state, "redis", None)
         if await is_workload_quarantined(
             thread_id=str(request_thread_id) if request_thread_id else None,
             agent_svid=agent_id,
+            redis_client=shared_redis,
         ):
             stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
             return JSONResponse(
