@@ -240,7 +240,7 @@ class GatewayMCPClient:
             return await original_call_tool(name, arguments=args, **kwargs)
 
         patched_call_tool._otel_patched = True  # type: ignore[attr-defined]
-        self.session.call_tool = patched_call_tool  # type: ignore[method-assign]
+        self.session.call_tool = patched_call_tool  # type: ignore[method-assign,assignment]
 
     async def list_tools(self, *, force_refresh: bool = False) -> list[Any]:
         """Return MCP tool definitions, cached for ``tools_cache_ttl_s`` (default 300s)."""

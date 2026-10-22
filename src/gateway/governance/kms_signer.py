@@ -109,9 +109,9 @@ def _get_kms_semaphore(
     return sem
 
 
-def _guard_no_running_loop(method_name: str) -> None:
+def _guard_no_running_loop(method_name: str, *, is_software: bool = False) -> None:
     """Forbid calling synchronous KMS signing methods on a thread with a running event loop."""
-    if getattr(_IN_KMS_EXECUTOR, "active", False):
+    if is_software or getattr(_IN_KMS_EXECUTOR, "active", False):
         return
     try:
         asyncio.get_running_loop()
@@ -786,8 +786,15 @@ class KMSGovernanceSigner:
             provider=provider,
         )
 
+    @property
+    def _is_software_provider(self) -> bool:
+        return bool(
+            self._provider is not None
+            and getattr(self._provider, "is_software_fallback", False)
+        )
+
     def sign(self, plan: dict[str, Any]) -> str:
-        _guard_no_running_loop("sign")
+        _guard_no_running_loop("sign", is_software=self._is_software_provider)
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign() called but KMS is not active. "
@@ -813,7 +820,7 @@ class KMSGovernanceSigner:
         kid: str | None = None,
     ) -> SignedRecord:
         """Sign a governance decision dictionary and return a ``SignedRecord``."""
-        _guard_no_running_loop("sign_decision")
+        _guard_no_running_loop("sign_decision", is_software=self._is_software_provider)
         sig_hex = self.sign(plan)
         resolved_kid = (
             kid
@@ -843,7 +850,7 @@ class KMSGovernanceSigner:
 
     def sign_raw(self, message: bytes) -> bytes:
         """Sign raw bytes directly (for JWT signing)."""
-        _guard_no_running_loop("sign_raw")
+        _guard_no_running_loop("sign_raw", is_software=self._is_software_provider)
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign_raw() called but KMS is not active. "
@@ -876,7 +883,7 @@ class KMSGovernanceSigner:
         ``R||S`` encoding JWS requires, so callers never handle provider wire
         formats. Pair with :attr:`jose_alg` for the header ``alg``.
         """
-        _guard_no_running_loop("sign_jws")
+        _guard_no_running_loop("sign_jws", is_software=self._is_software_provider)
         signature = self.sign_raw(signing_input)
         alg = self.jose_alg
         if (
@@ -893,7 +900,9 @@ class KMSGovernanceSigner:
 
     def sign_precomputed_digest(self, digest: bytes) -> str:
         """Sign a pre-computed envelope digest directly."""
-        _guard_no_running_loop("sign_precomputed_digest")
+        _guard_no_running_loop(
+            "sign_precomputed_digest", is_software=self._is_software_provider
+        )
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign_precomputed_digest() called but KMS is not active."

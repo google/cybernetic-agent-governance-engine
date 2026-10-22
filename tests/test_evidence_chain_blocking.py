@@ -399,8 +399,11 @@ class TestGenerateSealWithEvidence:
     @pytest.mark.asyncio
     async def test_ingest_sync_group_commit_binds_distinct_record_hashes_to_seals(self):
         """Concurrent generate_seal_with_evidence calls coalesce into a batch and bind each record's own hash."""
+        import importlib
+
         import fakeredis
 
+        import src.gateway.governance.evidence.stream as es
         from src.gateway.governance.evidence.stream import (
             EvidenceStreamSink,
             verify_record,
@@ -414,27 +417,30 @@ class TestGenerateSealWithEvidence:
         redis_stream = fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
         redis_seal = fakeredis.FakeAsyncRedis(server=server, decode_responses=False)
 
-        sink = EvidenceStreamSink(
-            stream_key="cage:evidence:batch-blocking",
-            max_batch_size=8,
-            max_wait_ms=10.0,
-        )
-        sink._redis = redis_stream
-
-        with patch(
-            "src.gateway.governance.evidence.stream.get_evidence_sink",
-            return_value=sink,
-        ):
-            seals = await asyncio.gather(
-                *(
-                    generate_seal_with_evidence(
-                        action="execute_trade",
-                        params={"symbol": "AAPL", "amount": 100 + i},
-                        redis_client=redis_seal,
-                    )
-                    for i in range(4)
-                )
+        with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
+            importlib.reload(es)
+            sink = EvidenceStreamSink(
+                stream_key="cage:evidence:batch-blocking",
+                max_batch_size=8,
+                max_wait_ms=10.0,
             )
+            sink._redis = redis_stream
+
+            with patch.object(
+                es,
+                "get_evidence_sink",
+                return_value=sink,
+            ):
+                seals = await asyncio.gather(
+                    *(
+                        generate_seal_with_evidence(
+                            action="execute_trade",
+                            params={"symbol": "AAPL", "amount": 100 + i},
+                            redis_client=redis_seal,
+                        )
+                        for i in range(4)
+                    )
+                )
 
         assert len(seals) == 4
         entries = await redis_stream.xrange("cage:evidence:batch-blocking")

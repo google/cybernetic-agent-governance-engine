@@ -333,7 +333,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     async with AsyncExitStack() as mcp_stack:
         if callable(run_fn):
             if (
-                getattr(session_mgr, "_has_started", False)
+                session_mgr is not None
+                and getattr(session_mgr, "_has_started", False)
                 and getattr(session_mgr, "_task_group", None) is None
             ):
                 session_mgr._has_started = False

@@ -132,16 +132,18 @@ local p_tau = tonumber(ARGV[5])
 local id_tat = tonumber(redis.call('GET', id_key) or '0')
 local p_tat = tonumber(redis.call('GET', p_key) or '0')
 
-local new_id_tat = math.max(now_ms, id_tat) + id_T
-local id_allow_at = new_id_tat - id_tau
-if now_ms < id_allow_at then
+local id_base = math.max(now_ms, id_tat)
+local new_id_tat = id_base + id_T
+local id_allow_at = id_base - (id_tau - id_T)
+if now_ms + 1e-6 < id_allow_at then
     local retry_ms = math.ceil(id_allow_at - now_ms)
     return {0, retry_ms, 'identity'}
 end
 
-local new_p_tat = math.max(now_ms, p_tat) + p_T
-local p_allow_at = new_p_tat - p_tau
-if now_ms < p_allow_at then
+local p_base = math.max(now_ms, p_tat)
+local new_p_tat = p_base + p_T
+local p_allow_at = p_base - (p_tau - p_T)
+if now_ms + 1e-6 < p_allow_at then
     local retry_ms = math.ceil(p_allow_at - now_ms)
     return {0, retry_ms, 'principal'}
 end
@@ -350,9 +352,10 @@ class SharedRateLimiter:
             id_tat = float(self._fallback_tat.get(id_key, 0.0))
             p_tat = float(self._fallback_tat.get(p_key, 0.0))
 
-            new_id_tat = max(now_ms, id_tat) + id_T
-            id_allow_at = new_id_tat - id_tau
-            if now_ms < id_allow_at:
+            id_base = max(now_ms, id_tat)
+            new_id_tat = id_base + id_T
+            id_allow_at = id_base - (id_tau - id_T)
+            if now_ms + 1e-6 < id_allow_at:
                 retry_s = max(1, math.ceil((id_allow_at - now_ms) / 1000.0))
                 if _METRICS_AVAILABLE and rate_limit_hits_total is not None:
                     rate_limit_hits_total.labels(route=route, scope="identity").inc()
@@ -364,9 +367,10 @@ class SharedRateLimiter:
                     principal=principal,
                 )
 
-            new_p_tat = max(now_ms, p_tat) + p_T
-            p_allow_at = new_p_tat - p_tau
-            if now_ms < p_allow_at:
+            p_base = max(now_ms, p_tat)
+            new_p_tat = p_base + p_T
+            p_allow_at = p_base - (p_tau - p_T)
+            if now_ms + 1e-6 < p_allow_at:
                 retry_s = max(1, math.ceil((p_allow_at - now_ms) / 1000.0))
                 if _METRICS_AVAILABLE and rate_limit_hits_total is not None:
                     rate_limit_hits_total.labels(route=route, scope="principal").inc()

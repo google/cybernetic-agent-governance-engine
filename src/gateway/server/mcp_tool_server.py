@@ -139,6 +139,7 @@ async def _check_rate_limit(target: Request | str) -> bool:
     limiter = get_shared_rate_limiter()
     # Sync module-level fallback bucket reference in case a test reassigned _rate_limit_buckets = {}
     if limiter._fallback_tat is not _rate_limit_buckets:
+        limiter.bind_redis(None)
         if isinstance(_rate_limit_buckets, dict):
             limiter._fallback_tat.clear()
             for k, v in _rate_limit_buckets.items():
@@ -276,7 +277,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     async with AsyncExitStack() as mcp_stack:
         if callable(run_fn):
             if (
-                getattr(session_mgr, "_has_started", False)
+                session_mgr is not None
+                and getattr(session_mgr, "_has_started", False)
                 and getattr(session_mgr, "_task_group", None) is None
             ):
                 session_mgr._has_started = False

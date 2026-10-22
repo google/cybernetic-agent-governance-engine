@@ -88,8 +88,8 @@ def test_all_agent_state_fields_present():
       - pause_resume_token and pause_reason dropped from AgentState
     """
     schema_props = get_schema_properties()
-    assert len(schema_props) == 39, (
-        f"Expected exactly 39 properties in AgentState schema, found {len(schema_props)}. "
+    assert len(schema_props) == 40, (
+        f"Expected exactly 40 properties in AgentState schema, found {len(schema_props)}. "
         f"Properties: {sorted(schema_props)}"
     )
 

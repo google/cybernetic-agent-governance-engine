@@ -300,8 +300,14 @@ class StateCommitmentService:
             )
         try:
             result = await self._sink.ingest_sync(event)
-        except EvidenceChainUnavailableError as exc:
-            raise StateCommitmentError(f"evidence chain unavailable: {exc}") from exc
+        except Exception as exc:
+            if isinstance(exc, EvidenceChainUnavailableError) or (
+                type(exc).__name__ == "EvidenceChainUnavailableError"
+            ):
+                raise StateCommitmentError(
+                    f"evidence chain unavailable: {exc}"
+                ) from exc
+            raise
 
         receipt = StateCommitmentReceipt(
             state_hash=state_hash,
