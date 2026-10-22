@@ -28,6 +28,11 @@ spec:
     metadata:
       labels:
         app: gateway
+      annotations:
+        # A1: Bypass Linkerd inbound proxy on port 9090 so GKE Managed
+        # Prometheus (GMP) and local port-forward scrapers can reach the
+        # dedicated out-of-band Prometheus WSGI server without mTLS.
+        config.linkerd.io/skip-inbound-ports: "9090"
     spec:
       serviceAccountName: cage-gateway-sa
       # §3: Governance-critical pods carry an explicit anti-Spot nodeAffinity rule
@@ -54,6 +59,8 @@ spec:
               name: http
             - containerPort: 50051
               name: grpc
+            - containerPort: 9090
+              name: metrics
           envFrom:
             - secretRef:
                 name: advisor-secrets
@@ -76,6 +83,8 @@ spec:
               value: "8080"
             - name: GATEWAY_GRPC_PORT
               value: "50051"
+            - name: CAGE_METRICS_PORT
+              value: "9090"
             - name: GOOGLE_CLOUD_PROJECT
               value: ""  # Set to your GCP project ID
             # DEP-04: GOOGLE_CLOUD_LOCATION must be set from CAGE_DEPLOYMENT_REGION.
@@ -289,6 +298,8 @@ kind: Service
 metadata:
   name: gateway
   namespace: governance-stack
+  labels:
+    app: gateway
   annotations:
     cloud.google.com/backend-config: '{"default": "cage-gateway-backendconfig"}'
 spec:
@@ -307,6 +318,10 @@ spec:
       protocol: TCP
       port: 50051
       targetPort: 50051
+    - name: metrics
+      protocol: TCP
+      port: 9090
+      targetPort: 9090
   # POAM-011 / SC-8: Changed from ClusterIP to NodePort so the GCE Ingress
   # (gateway-ingress) can use this service as a backend for TLS-terminated
   # HTTPS traffic.  See deployment/k8s/ingress.yaml.

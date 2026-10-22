@@ -92,6 +92,9 @@ resource "kubernetes_deployment" "gateway" {
           app = "gateway"
         }
         annotations = merge(
+          {
+            "config.linkerd.io/skip-inbound-ports" = "9090"
+          },
           var.network_policy_hash != "" ? {
             "cage.io/network-policy-hash" = var.network_policy_hash
           } : {},
@@ -152,6 +155,10 @@ resource "kubernetes_deployment" "gateway" {
             container_port = 50051
             name           = "grpc"
           }
+          port {
+            container_port = 9090
+            name           = "metrics"
+          }
 
           env_from {
             secret_ref {
@@ -180,6 +187,10 @@ resource "kubernetes_deployment" "gateway" {
           env {
             name  = "GATEWAY_GRPC_PORT"
             value = "50051"
+          }
+          env {
+            name  = "CAGE_METRICS_PORT"
+            value = "9090"
           }
           env {
             name  = "GOOGLE_CLOUD_PROJECT"
@@ -475,6 +486,9 @@ resource "kubernetes_service" "gateway" {
   metadata {
     name      = "gateway"
     namespace = var.namespace
+    labels = {
+      app = "gateway"
+    }
   }
 
   spec {
@@ -492,6 +506,13 @@ resource "kubernetes_service" "gateway" {
       target_port = 50051
       protocol    = "TCP"
       name        = "grpc"
+    }
+
+    port {
+      port        = 9090
+      target_port = 9090
+      protocol    = "TCP"
+      name        = "metrics"
     }
 
     selector = {

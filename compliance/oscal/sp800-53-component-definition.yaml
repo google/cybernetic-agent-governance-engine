@@ -284,6 +284,21 @@ component-definition:
                    ERROR-status attestations embed structured failure metadata directly into the
                    ExternalAttestation record, preserving fetch failures as first-class evidence
                    for non-repudiation analysis (AU-10 correlation).
+
+                4. OPERATIONAL & SAFETY TELEMETRY SCRAPE (Prometheus / GKE Managed Prometheus):
+                   The gateway starts an out-of-band Prometheus WSGI HTTP server on
+                   CAGE_METRICS_PORT (default 9090) during _gateway_lifespan
+                   (src/gateway/observability/loop_monitor.py, src/gateway/server/hybrid_server.py)
+                   alongside a 250 ms asyncio event-loop lag monitor recording scheduling
+                   drift in cage_event_loop_lag_seconds, and Cloud KMS RPC counters
+                   (cage_kms_rpc_total{op} in src/integrations/gcp/kms_provider.py). Because
+                   the metrics listener runs on its own daemon thread and bypasses the
+                   Linkerd inbound proxy on port 9090 (config.linkerd.io/skip-inbound-ports),
+                   GKE Managed Prometheus (PodMonitoring gateway-metrics and ServiceMonitor
+                   stera-gateway-monitor in deployment/k8s/gateway-servicemonitor.yaml,
+                   validated by compliance/lula/lula-validation-metrics.yaml) can scrape
+                   safety-gate, evidence-stream, and loop-lag telemetry even when the
+                   asyncio event loop is contended.
               props:
                 - name: implementation-status
                   value: implemented
@@ -310,6 +325,15 @@ component-definition:
                 - href: "../../src/gateway/governance/attestation_aggregator.py"
                   rel: implementation
                   text: "AttestationAggregator._do_fetch() try-block pre-capture"
+                - href: "../../src/gateway/observability/loop_monitor.py"
+                  rel: implementation
+                  text: "Out-of-band Prometheus metrics HTTP server and asyncio event-loop lag monitor"
+                - href: "../../deployment/k8s/gateway-servicemonitor.yaml"
+                  rel: implementation
+                  text: "Prometheus ServiceMonitor (stera-gateway-monitor) and GMP PodMonitoring (gateway-metrics)"
+                - href: "../../compliance/lula/lula-validation-metrics.yaml"
+                  rel: reference
+                  text: "Lula automated validation for AU-12 Prometheus ServiceMonitor and GMP PodMonitoring"
 
             - uuid: "c3-au10-attestation-2026-0909"
               control-id: au-10

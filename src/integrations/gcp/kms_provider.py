@@ -46,6 +46,28 @@ def _resolve_rpc_timeout_seconds() -> float:
     return _DEFAULT_KMS_RPC_TIMEOUT_S
 
 
+# Prometheus metrics (optional — degrades to a no-op if prometheus_client unavailable)
+try:
+    from prometheus_client import REGISTRY, Counter
+
+    try:
+        KMS_RPC_TOTAL: Any = Counter(
+            "cage_kms_rpc_total",
+            "Total Cloud KMS RPC calls issued by the GCP KMS provider",
+            ["op"],
+        )
+    except ValueError:  # pragma: no cover - duplicate registration guard
+        KMS_RPC_TOTAL = REGISTRY._names_to_collectors.get("cage_kms_rpc_total")
+except ImportError:  # pragma: no cover - exercised when prometheus_client is absent
+    KMS_RPC_TOTAL = None
+
+
+def _inc_kms_rpc(op: str) -> None:
+    """Increment ``cage_kms_rpc_total{op}`` if ``prometheus_client`` is installed."""
+    if KMS_RPC_TOTAL is not None:
+        KMS_RPC_TOTAL.labels(op=op).inc()
+
+
 # CryptoKeyVersionAlgorithm names (as returned by CryptoKeyVersion.algorithm)
 # that use each hash width. Anything not listed here defaults to SHA-256,
 # preserving prior behaviour for EC_SIGN_P256_SHA256 and similar keys.
@@ -210,6 +232,7 @@ class GCPKMSProvider(BaseKMSProvider):
 
         Callers must hold ``_algorithm_lock``.
         """
+        _inc_kms_rpc("get_crypto_key_version")
         version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
             name=self._key_version_name,
             **self._rpc_kwargs(),
@@ -353,6 +376,7 @@ class GCPKMSProvider(BaseKMSProvider):
         """
         target_key = key_version_name or self._key_version_name
         if self._kms_client is not None:
+            _inc_kms_rpc("get_crypto_key_version")
             version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
                 name=target_key,
                 **self._rpc_kwargs(),
@@ -388,6 +412,7 @@ class GCPKMSProvider(BaseKMSProvider):
                     accepts_timeout = True
             if accepts_timeout:
                 call_kwargs["timeout"] = self._rpc_timeout_s
+        _inc_kms_rpc("sign")
         return self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
             request=request,
             **call_kwargs,
@@ -421,6 +446,7 @@ class GCPKMSProvider(BaseKMSProvider):
         return response.signature
 
     def get_public_key_pem(self) -> bytes:
+        _inc_kms_rpc("get_public_key")
         response = self._kms_client.get_public_key(  # type: ignore[union-attr]
             name=self._key_version_name,
             **self._rpc_kwargs(),
@@ -437,12 +463,14 @@ class GCPKMSProvider(BaseKMSProvider):
         keys = {}
         rpc_kwargs = self._rpc_kwargs()
         try:
+            _inc_kms_rpc("list_crypto_key_versions")
             versions = self._kms_client.list_crypto_key_versions(  # type: ignore[union-attr]
                 parent=crypto_key_name,
                 **rpc_kwargs,
             )
             for v in versions:
                 if v.state.name == "ENABLED":
+                    _inc_kms_rpc("get_public_key")
                     pub = self._kms_client.get_public_key(  # type: ignore[union-attr]
                         name=v.name,
                         **rpc_kwargs,
