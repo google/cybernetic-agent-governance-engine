@@ -147,8 +147,10 @@ spec:
               value: "${GATEWAY_GRPC_PORT}"
             - name: GATEWAY_URL
               value: "${GATEWAY_URL}"
+            - name: GATEWAY_MCP_URL
+              value: "http://gateway:8080/mcp/"
             - name: MCP_SERVER_SSE_URL
-              value: "http://gateway:8080/mcp/sse"
+              value: "http://gateway:8080/mcp/"
 
 
 

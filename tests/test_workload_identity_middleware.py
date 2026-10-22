@@ -40,6 +40,7 @@ ADVISOR = (
 )
 OTHER = "cage-vllm-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
 GATED = [
+    "/mcp/",
     "/mcp/sse",
     "/mcp/messages/",
     "/tools/execute",
@@ -267,8 +268,9 @@ def test_real_gateway_refuses_unidentified_calls_to_governed_routes() -> None:
 
     client = TestClient(root_app)
     for path in (
+        "/mcp/",
         "/tools/execute",
         "/governance/validate-action",
     ):
         assert client.post(path, json={}).status_code == 403, path
-    assert client.get("/mcp/sse").status_code == 403
+    assert client.get("/mcp/").status_code == 403

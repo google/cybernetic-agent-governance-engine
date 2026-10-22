@@ -49,6 +49,7 @@ def _mcp_import_stubs():
         ),
         tool=MagicMock(return_value=lambda f: f),
         sse_app=MagicMock(return_value=MagicMock()),
+        streamable_http_app=MagicMock(return_value=MagicMock()),
     )
 
     return {

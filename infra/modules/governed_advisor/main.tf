@@ -283,8 +283,12 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.gateway_url
           }
           env {
+            name  = "GATEWAY_MCP_URL"
+            value = "http://gateway:8080/mcp/"
+          }
+          env {
             name  = "MCP_SERVER_SSE_URL"
-            value = "http://gateway:8080/mcp/sse"
+            value = "http://gateway:8080/mcp/"
           }
 
           # Runtime environment posture. Controls the dev-mode auth bypass in

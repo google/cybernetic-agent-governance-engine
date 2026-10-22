@@ -166,13 +166,9 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     re-validates the fresh params in the gateway (POST_HITL profile) at
     actuation time, not check time.
     """
-    from langchain_mcp_adapters.tools import load_mcp_tools
-
     mcp_client = get_mcp_client()
-    if not mcp_client.session:
-        await mcp_client.connect()
-
-    mcp_tools = await load_mcp_tools(mcp_client.session)
+    await mcp_client.ensure_connected()
+    mcp_tools = await mcp_client.get_tools()
     tools_by_name = {t.name: t for t in mcp_tools}
 
     last_message = state["messages"][-1]
@@ -240,13 +236,10 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
             max_tokens=4096,  # type: ignore[call-arg]
         )
 
-        # Load MCP tools manually
-        from langchain_mcp_adapters.tools import load_mcp_tools
-
+        # Load cached MCP tools over the pooled stateless Streamable HTTP client
         mcp_client = get_mcp_client()
-        if not mcp_client.session:
-            await mcp_client.connect()
-        mcp_tools = await load_mcp_tools(mcp_client.session)
+        await mcp_client.ensure_connected()
+        mcp_tools = await mcp_client.get_tools()
 
         # Filter strictly to execute_trade_action
         tools = [t for t in mcp_tools if t.name == "execute_trade_action"]

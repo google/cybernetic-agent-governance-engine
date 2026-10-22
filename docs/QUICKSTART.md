@@ -47,7 +47,7 @@ docker compose up -d
 ```
 
 This starts:
-- **Gateway** (`localhost:8080`) — Gateway: 8080 (REST Ingress / FastMCP over SSE / In-Process Tier Pipeline)
+- **Gateway** (`localhost:8080`) — Gateway: 8080 (REST Ingress / Stateless FastMCP Streamable HTTP / In-Process Tier Pipeline)
 - **Governed Application (`app`)** (`localhost:3000`) — Governed application service container
 - **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies
 
@@ -56,9 +56,12 @@ This starts:
 ```bash
 curl http://localhost:8080/health
 # Expected: {"status": "ok", "mode": "mcp-tool-server", "nemo": "active"}
-# Verify the FastMCP over SSE transport is ready
-curl -N http://localhost:8080/mcp/sse
-# Expected: data: {"event": "endpoint", "data": "http://localhost:8080/mcp/messages"}
+# Verify the Stateless FastMCP Streamable HTTP transport is ready
+curl -s -X POST http://localhost:8080/mcp/ \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
 ## 4. Run the domain-neutral governance demo

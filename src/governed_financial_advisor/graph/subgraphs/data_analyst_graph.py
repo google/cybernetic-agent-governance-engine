@@ -70,13 +70,9 @@ async def tool_executor_node(state: DataAnalystState) -> dict[str, Any]:
     pending tool call to the gateway's ``POST /governance/validate-action``;
     this node runs only if all of them are explicitly APPROVED.
     """
-    from langchain_mcp_adapters.tools import load_mcp_tools
-
     mcp_client = get_mcp_client()
-    if not mcp_client.session:
-        await mcp_client.connect()
-
-    mcp_tools = await load_mcp_tools(mcp_client.session)
+    await mcp_client.ensure_connected()
+    mcp_tools = await mcp_client.get_tools()
     tools_by_name = {t.name: t for t in mcp_tools}
 
     last_message = state["messages"][-1]
@@ -218,7 +214,6 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
         )
 
         from langchain_core.messages import HumanMessage
-        from langchain_mcp_adapters.tools import load_mcp_tools
 
         from src.gateway.infrastructure.mcp_client import (
             get_mcp_client,
@@ -258,11 +253,8 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
         span.set_attribute(OBSERVATION_INPUT, input_str)
 
         mcp_client = get_mcp_client()
-        if not mcp_client.session:
-            await mcp_client.connect()
-
-        # Dynamically fetch available tools from the Gateway MCP server
-        all_mcp_tools = await load_mcp_tools(mcp_client.session)
+        await mcp_client.ensure_connected()
+        all_mcp_tools = await mcp_client.get_tools()
 
         # Filter tools down to only Analyst-relevant tools to prevent Llama 3.1 confusion
         analyst_tool_names = {

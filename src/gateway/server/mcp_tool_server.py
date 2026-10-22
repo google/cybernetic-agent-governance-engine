@@ -15,8 +15,8 @@
 """
 MCP Tool Server (Phase 3.1)
 ============================
-Dedicated to FastMCP tool registration (``@mcp.tool()``) and SSE transport.
-Contains no HTTP proxy logic or REST endpoints.
+Dedicated to FastMCP tool registration (``@mcp.tool()``) and stateless
+Streamable HTTP transport at ``/mcp/``. Contains no HTTP proxy logic or REST endpoints.
 
 This module is the single entry point for the headless governance engine's
 MCP surface.  All tool calls are intercepted by ``mcp_tracing.patch_mcp_tools``
@@ -243,7 +243,23 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     #    readiness and posture checks, including the OPA package/rule handshake)
     governor = await _activate_domain()
 
-    yield
+    from contextlib import AsyncExitStack, nullcontext
+
+    session_mgr = getattr(mcp, "session_manager", None)
+    run_fn = getattr(session_mgr, "run", None) if session_mgr is not None else None
+    async with AsyncExitStack() as mcp_stack:
+        if callable(run_fn):
+            if (
+                getattr(session_mgr, "_has_started", False)
+                and getattr(session_mgr, "_task_group", None) is None
+            ):
+                session_mgr._has_started = False
+            ctx = run_fn()
+            if hasattr(ctx, "__aenter__"):
+                await mcp_stack.enter_async_context(ctx)
+        else:
+            await mcp_stack.enter_async_context(nullcontext())
+        yield
 
     # Shutdown
     logger.info("🛑 CAGE MCP Tool Server Shutting Down...")
@@ -318,6 +334,9 @@ _ALLOWED_HOSTS = [
 ]
 mcp = FastMCP(
     "CAGE Governed Gateway",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
     transport_security=TransportSecuritySettings(allowed_hosts=_ALLOWED_HOSTS),
 )
 
@@ -485,12 +504,14 @@ async def verify_content_safety(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Mount MCP SSE with distributed tracing (Phase 5.2)
+# Mount Stateless MCP Streamable HTTP with distributed tracing (A3)
 # ---------------------------------------------------------------------------
 
 patch_mcp_tools(mcp)
-logger.info("Mounting MCP SSE App at /mcp (with distributed tracing)...")
-app.mount("/mcp", mcp.sse_app())
+logger.info(
+    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing)..."
+)
+app.mount("/mcp", mcp.streamable_http_app())
 
 
 # ---------------------------------------------------------------------------

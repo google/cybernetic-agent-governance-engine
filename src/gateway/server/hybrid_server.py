@@ -18,14 +18,14 @@ Hybrid Gateway — Composition Root (Phase 3.2)
 This file is now a **thin composition root** that assembles the three
 decomposed sub-applications:
 
-  * ``mcp_tool_server.app``   — FastMCP tool registration + SSE transport
+  * ``mcp_tool_server.app``   — FastMCP tool registration + stateless Streamable HTTP transport
   * ``inference_proxy.inference_app``  — /v1/chat/completions vLLM proxy
   * ``governance_middleware.governance_app`` — internal governance check API
 
 The external REST endpoints ``/agent/query`` and ``/api/chat`` have been
 **removed**. The engine now
 acts strictly as an internal backend for upstream agent orchestrators that
-communicate via MCP over SSE.
+communicate via MCP over Streamable HTTP.
 
 To start the gateway:
     python src/gateway/server/hybrid_server.py
@@ -279,7 +279,28 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             metrics_server.stop()
         raise
 
-    yield
+    # ── Start Stateless MCP Session Manager (A3) ───────────────────────────
+    # Mounted sub-application lifespans do not run automatically in Starlette/FastAPI,
+    # so the root lifespan must run mcp.session_manager.run() explicitly.
+    from contextlib import AsyncExitStack, nullcontext
+
+    from src.gateway.server.mcp_tool_server import mcp as _mcp_server
+
+    session_mgr = getattr(_mcp_server, "session_manager", None)
+    run_fn = getattr(session_mgr, "run", None) if session_mgr is not None else None
+    async with AsyncExitStack() as mcp_stack:
+        if callable(run_fn):
+            if (
+                getattr(session_mgr, "_has_started", False)
+                and getattr(session_mgr, "_task_group", None) is None
+            ):
+                session_mgr._has_started = False
+            ctx = run_fn()
+            if hasattr(ctx, "__aenter__"):
+                await mcp_stack.enter_async_context(ctx)
+        else:
+            await mcp_stack.enter_async_context(nullcontext())
+        yield
 
     # Shutdown: cancel event-loop lag monitor task if running
     if loop_lag_task is not None:
@@ -359,7 +380,7 @@ root_app = FastAPI(
     title="CAGE Governed Gateway (Hybrid)",
     description=(
         "Headless Python governance engine.  "
-        "External REST endpoints removed — use MCP over SSE or the internal "
+        "External REST endpoints removed — use MCP over Streamable HTTP or the internal "
         "/governance/* and /v1/* surfaces."
     ),
     version="0.1.0",

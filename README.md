@@ -324,7 +324,7 @@ The trace below illustrates the **Governed Financial Advisor demo application** 
 
 ```
 User ──POST /agent/query──► FastAPI Agent Server (:8000)
-User ──FastMCP over SSE──► Gateway Transport (:8080)
+User ──FastMCP Streamable HTTP──► Gateway Transport (:8080)
                                       │
                          [nemo_guardrail] (mandatory input rail - Node 1)
                                       │
