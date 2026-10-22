@@ -60,3 +60,7 @@ class RawMessageSigner(Protocol):
             RuntimeError: If KMS is not active or signing fails.
         """
         ...
+
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        """Asynchronously sign raw bytes off the event loop."""
+        ...

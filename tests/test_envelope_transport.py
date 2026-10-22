@@ -81,6 +81,7 @@ def mock_kms_signer():
     signer = MagicMock()
     signer.is_kms_active = True
     signer.sign_precomputed_digest = MagicMock(return_value="deadbeef" * 16)
+    signer.sign_precomputed_digest_async = AsyncMock(return_value="deadbeef" * 16)
     signer.get_public_key_pem = MagicMock(
         return_value=b"-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
     )

@@ -129,7 +129,7 @@ class ConsequenceToken:
     """
 
     @classmethod
-    def mint(
+    async def mint(
         cls,
         *,
         sub: str,
@@ -192,7 +192,7 @@ class ConsequenceToken:
 
         # Sign via KMS
         try:
-            signature_bytes = signer.sign_raw(signing_input)
+            signature_bytes = await signer.sign_raw_async(signing_input)
         except Exception as exc:
             # 'ConsequenceToken' is the class name; logs masked ids or the error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure

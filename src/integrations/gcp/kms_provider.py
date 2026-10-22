@@ -16,15 +16,35 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.kms_signer import BaseKMSProvider
 
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
+
+_DEFAULT_KMS_RPC_TIMEOUT_S = 5.0
+
+
+def _resolve_rpc_timeout_seconds() -> float:
+    raw = os.environ.get("CAGE_KMS_RPC_TIMEOUT_SECONDS", "") or os.environ.get(
+        "CAGE_KMS_SIGN_TIMEOUT_SECONDS", ""
+    )
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0.0:
+                return val
+        except ValueError:
+            pass
+    return _DEFAULT_KMS_RPC_TIMEOUT_S
+
 
 # CryptoKeyVersionAlgorithm names (as returned by CryptoKeyVersion.algorithm)
 # that use each hash width. Anything not listed here defaults to SHA-256,
@@ -130,6 +150,8 @@ class GCPKMSProvider(BaseKMSProvider):
     ) -> None:
         self._key_version_name = key_version_name
         self._kms_client = kms_client
+        self._owns_client = kms_client is None
+        self._rpc_timeout_s = _resolve_rpc_timeout_seconds()
         self._key_algorithm: _KeyAlgorithm | None = None
         self._algorithm_lock = threading.Lock()
         # time.monotonic() before which a failed lookup is not retried, and
@@ -170,13 +192,27 @@ class GCPKMSProvider(BaseKMSProvider):
         )
         return key_algorithm
 
+    def _rpc_kwargs(self) -> dict[str, Any]:
+        """Return per-RPC timeout/retry kwargs when using the owned Cloud KMS client."""
+        if not self._owns_client:
+            return {}
+        kwargs: dict[str, Any] = {"timeout": self._rpc_timeout_s}
+        try:
+            from google.api_core.retry import Retry  # type: ignore[import]
+
+            kwargs["retry"] = Retry(deadline=self._rpc_timeout_s)
+        except ImportError:
+            pass
+        return kwargs
+
     def _fetch_key_algorithm(self) -> _KeyAlgorithm:
         """Read the key version's algorithm from Cloud KMS and cache it.
 
         Callers must hold ``_algorithm_lock``.
         """
         version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
-            name=self._key_version_name
+            name=self._key_version_name,
+            **self._rpc_kwargs(),
         )
         return self._cache_key_algorithm(str(version.algorithm.name))
 
@@ -318,7 +354,8 @@ class GCPKMSProvider(BaseKMSProvider):
         target_key = key_version_name or self._key_version_name
         if self._kms_client is not None:
             version = self._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
-                name=target_key
+                name=target_key,
+                **self._rpc_kwargs(),
             )
             if version.state.name not in ("ENABLED",):
                 raise RuntimeError(
@@ -334,14 +371,36 @@ class GCPKMSProvider(BaseKMSProvider):
         else:
             self.get_public_key_pem()
 
+    def _asymmetric_sign(self, request: object) -> Any:
+        call_kwargs = self._rpc_kwargs()
+        if not self._owns_client:
+            method = getattr(self._kms_client, "asymmetric_sign", None)
+            target = getattr(method, "side_effect", None) or method
+            accepts_timeout = True
+            if callable(target):
+                try:
+                    sig = inspect.signature(target)
+                    accepts_timeout = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "timeout"
+                        for p in sig.parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    accepts_timeout = True
+            if accepts_timeout:
+                call_kwargs["timeout"] = self._rpc_timeout_s
+        return self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
+            request=request,
+            **call_kwargs,
+        )
+
     def sign_digest(self, digest: bytes) -> bytes:
         from google.cloud.kms_v1.types import (
             service as kms_service,  # type: ignore[import]
         )
 
         digest_kwargs = {self.digest_algorithm: digest}
-        response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
-            request=kms_service.AsymmetricSignRequest(
+        response = self._asymmetric_sign(
+            kms_service.AsymmetricSignRequest(
                 name=self._key_version_name,
                 digest=kms_service.Digest(**digest_kwargs),
             )
@@ -353,8 +412,8 @@ class GCPKMSProvider(BaseKMSProvider):
             service as kms_service,  # type: ignore[import]
         )
 
-        response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
-            request=kms_service.AsymmetricSignRequest(
+        response = self._asymmetric_sign(
+            kms_service.AsymmetricSignRequest(
                 name=self._key_version_name,
                 data=message,
             )
@@ -362,7 +421,10 @@ class GCPKMSProvider(BaseKMSProvider):
         return response.signature
 
     def get_public_key_pem(self) -> bytes:
-        response = self._kms_client.get_public_key(name=self._key_version_name)  # type: ignore[union-attr]
+        response = self._kms_client.get_public_key(  # type: ignore[union-attr]
+            name=self._key_version_name,
+            **self._rpc_kwargs(),
+        )
         return response.pem.encode("utf-8")
 
     def get_public_keys_pem(self) -> dict[str, bytes]:
@@ -373,11 +435,18 @@ class GCPKMSProvider(BaseKMSProvider):
 
         crypto_key_name = parts[0]
         keys = {}
+        rpc_kwargs = self._rpc_kwargs()
         try:
-            versions = self._kms_client.list_crypto_key_versions(parent=crypto_key_name)  # type: ignore[union-attr]
+            versions = self._kms_client.list_crypto_key_versions(  # type: ignore[union-attr]
+                parent=crypto_key_name,
+                **rpc_kwargs,
+            )
             for v in versions:
                 if v.state.name == "ENABLED":
-                    pub = self._kms_client.get_public_key(name=v.name)  # type: ignore[union-attr]
+                    pub = self._kms_client.get_public_key(  # type: ignore[union-attr]
+                        name=v.name,
+                        **rpc_kwargs,
+                    )
                     keys[v.name] = pub.pem.encode("utf-8")
         except Exception as exc:
             logging.getLogger(__name__).warning(

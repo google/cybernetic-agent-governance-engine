@@ -104,7 +104,7 @@ def validate_clearance(clearance: ExecutionClearance) -> None:
         )
 
 
-def build_envelope_dict(
+async def build_envelope_dict(
     clearance: ExecutionClearance,
     policy_signer: RawMessageSigner | None = None,
     receipt_id: str | None = None,
@@ -150,7 +150,7 @@ def build_envelope_dict(
         from src.integrations.actuator_01.signatures import sign_policy_decision
 
         try:
-            decision_signature = sign_policy_decision(
+            decision_signature = await sign_policy_decision(
                 signer=policy_signer,
                 action=clearance.action,
                 target_digest=target_digest,
@@ -275,7 +275,7 @@ def generate_nonce() -> str:
     return secrets.token_hex(16)
 
 
-def build_and_canonicalize(
+async def build_and_canonicalize(
     clearance: ExecutionClearance,
     policy_signer: RawMessageSigner | None = None,
     receipt_id: str | None = None,
@@ -307,7 +307,7 @@ def build_and_canonicalize(
         InvalidClearanceError: Pre-flight validation failure
         EnvelopeTooLargeError: Envelope exceeds 4096 bytes
     """
-    envelope = build_envelope_dict(
+    envelope = await build_envelope_dict(
         clearance,
         policy_signer=policy_signer,
         receipt_id=receipt_id,

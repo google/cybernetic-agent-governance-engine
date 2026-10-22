@@ -149,9 +149,9 @@ class TestValidateClearance:
 class TestBuildEnvelopeDict:
     """Tests for envelope dictionary construction."""
 
-    def test_archytan_vector_3_structure(self, valid_clearance):
+    async def test_archytan_vector_3_structure(self, valid_clearance):
         """Envelope emits canonical Archytan ArbiterKernel wire structure."""
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         # Verify envelope_version
         assert envelope["envelope_version"] == "archytan.envelope/v1"
@@ -177,9 +177,9 @@ class TestBuildEnvelopeDict:
         assert "parameters" in envelope
         assert isinstance(envelope["parameters"], dict)
 
-    def test_governance_block_v3_structure(self, valid_clearance):
+    async def test_governance_block_v3_structure(self, valid_clearance):
         """Governance block includes decision, decision_path, policy_version, receipt fields."""
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         assert "governance" in envelope
         gov = envelope["governance"]
@@ -192,7 +192,7 @@ class TestBuildEnvelopeDict:
         assert "receipt_hash" in gov
         assert "evaluated_at" in gov
 
-    def test_approval_block_with_webauthn_fields(self, valid_clearance):
+    async def test_approval_block_with_webauthn_fields(self, valid_clearance):
         """Approval block maps WebAuthn fields from clearance.approvals."""
         # Add WebAuthn fields to first approval
         valid_clearance.approvals[0]["credential_id"] = "test-credential-123"
@@ -205,7 +205,7 @@ class TestBuildEnvelopeDict:
         valid_clearance.approvals[0]["signature"] = "MEUCIQDvHVRm..."
         valid_clearance.approvals[0]["challenge_binding"] = "a" * 64
 
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         assert "approval" in envelope
         approval = envelope["approval"]
@@ -219,69 +219,69 @@ class TestBuildEnvelopeDict:
         assert approval["signature"] == "MEUCIQDvHVRm..."
         assert approval["challenge_binding"] == "a" * 64
 
-    def test_approval_key_omitted_when_no_approvals(self, valid_clearance):
+    async def test_approval_key_omitted_when_no_approvals(self, valid_clearance):
         """DIRECT path omits approval key entirely (not null) when clearance.approvals is empty."""
         # DIRECT path: empty approvals list, quorum=0
         valid_clearance.approvals = []
         valid_clearance.required_quorum = 0
 
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         # Per Vector 1: DIRECT path does NOT include "approval" key at all
         assert "approval" not in envelope
 
-    def test_direct_path_with_quorum_approvals_omits_approval_key(
+    async def test_direct_path_with_quorum_approvals_omits_approval_key(
         self, valid_clearance
     ):
         """DIRECT path with ≥2 quorum approvals (for X-Operator-URNs) still omits approval key."""
         assert valid_clearance.decision_path == "DIRECT"
         assert len(valid_clearance.approvals) == 2
 
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
         assert "approval" not in envelope
 
-    def test_parameters_from_params_field(self, valid_clearance):
+    async def test_parameters_from_params_field(self, valid_clearance):
         """Parameters are populated at root level from clearance.params."""
         valid_clearance.params = {"amount_minor": 12345, "currency": "USD"}
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         assert envelope["parameters"] == {"amount_minor": 12345, "currency": "USD"}
 
-    def test_parameters_empty_dict_when_params_none(self, valid_clearance):
+    async def test_parameters_empty_dict_when_params_none(self, valid_clearance):
         """Parameters default to empty dict when params is not a dict."""
         valid_clearance.params = None
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         assert envelope["parameters"] == {}
 
-    def test_validates_before_building(self, valid_clearance):
+    async def test_validates_before_building(self, valid_clearance):
         """build_envelope_dict validates clearance first."""
         valid_clearance.decision = "DENY"
         with pytest.raises(InvalidClearanceError):
-            build_envelope_dict(valid_clearance)
+            await build_envelope_dict(valid_clearance)
 
 
 class TestCanonicalization:
     """Tests for RFC 8785 (JCS) canonicalization."""
 
-    def test_canonicalize_produces_bytes(self, valid_clearance):
+    async def test_canonicalize_produces_bytes(self, valid_clearance):
         """Canonicalization returns bytes, not str."""
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
         canonical = canonicalize_envelope(envelope)
         assert isinstance(canonical, bytes)
 
-    def test_canonicalize_deterministic(self, valid_clearance):
+    async def test_canonicalize_deterministic(self, valid_clearance):
         """Same envelope produces identical bytes regardless of dict order."""
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
 
         canonical_1 = canonicalize_envelope(envelope)
         canonical_2 = canonicalize_envelope(envelope)
 
         assert canonical_1 == canonical_2
 
-    def test_canonicalize_sorted_keys(self, valid_clearance):
+    async def test_canonicalize_sorted_keys(self, valid_clearance):
         """Keys are sorted in canonical output."""
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
         canonical = canonicalize_envelope(envelope)
 
         # Verify keys are in sorted order by checking correlation_id comes before envelope_version
@@ -291,9 +291,9 @@ class TestCanonicalization:
         envelope_version_pos = decoded.find('"envelope_version"')
         assert correlation_pos < envelope_version_pos
 
-    def test_no_insignificant_whitespace(self, valid_clearance):
+    async def test_no_insignificant_whitespace(self, valid_clearance):
         """Canonical output has no insignificant whitespace."""
-        envelope = build_envelope_dict(valid_clearance)
+        envelope = await build_envelope_dict(valid_clearance)
         canonical = canonicalize_envelope(envelope)
 
         # No spaces after colons or commas
@@ -328,14 +328,14 @@ class TestCeiling:
         assert "4097 bytes" in str(exc_info.value)
         assert "exceeds 4096-byte ceiling" in str(exc_info.value)
 
-    def test_build_and_canonicalize_enforces_ceiling(self, valid_clearance):
+    async def test_build_and_canonicalize_enforces_ceiling(self, valid_clearance):
         """build_and_canonicalize enforces ceiling before returning."""
         # Create a clearance that will produce an oversized envelope
         # (This is a synthetic test - in practice we'd need huge field values)
         valid_clearance.action = "x" * 5000  # Deliberately oversized
 
         with pytest.raises(EnvelopeTooLargeError):
-            build_and_canonicalize(valid_clearance)
+            await build_and_canonicalize(valid_clearance)
 
 
 class TestBodyDigest:
@@ -397,37 +397,37 @@ class TestGenerateNonce:
 class TestBuildAndCanonicalize:
     """Tests for the complete envelope construction pipeline."""
 
-    def test_returns_bytes_and_digest(self, valid_clearance):
+    async def test_returns_bytes_and_digest(self, valid_clearance):
         """Pipeline returns (canonical_bytes, digest) tuple."""
-        canonical_bytes, digest = build_and_canonicalize(valid_clearance)
+        canonical_bytes, digest = await build_and_canonicalize(valid_clearance)
 
         assert isinstance(canonical_bytes, bytes)
         assert isinstance(digest, str)
         assert len(digest) == 64
 
-    def test_digest_matches_canonical_bytes(self, valid_clearance):
+    async def test_digest_matches_canonical_bytes(self, valid_clearance):
         """Returned digest matches SHA-256 of returned canonical bytes."""
-        canonical_bytes, digest = build_and_canonicalize(valid_clearance)
+        canonical_bytes, digest = await build_and_canonicalize(valid_clearance)
 
         expected_digest = hashlib.sha256(canonical_bytes).hexdigest()
         assert digest == expected_digest
 
-    def test_enforces_all_validations(self, valid_clearance):
+    async def test_enforces_all_validations(self, valid_clearance):
         """Pipeline enforces all pre-flight validations."""
         valid_clearance.decision = "DENY"
         with pytest.raises(InvalidClearanceError):
-            build_and_canonicalize(valid_clearance)
+            await build_and_canonicalize(valid_clearance)
 
-    def test_enforces_ceiling(self, valid_clearance):
+    async def test_enforces_ceiling(self, valid_clearance):
         """Pipeline enforces 4KB ceiling."""
         valid_clearance.action = "x" * 5000  # Oversized
         with pytest.raises(EnvelopeTooLargeError):
-            build_and_canonicalize(valid_clearance)
+            await build_and_canonicalize(valid_clearance)
 
-    def test_roundtrip_consistency(self, valid_clearance):
+    async def test_roundtrip_consistency(self, valid_clearance):
         """Multiple calls with same clearance produce identical output."""
-        result_1 = build_and_canonicalize(valid_clearance)
-        result_2 = build_and_canonicalize(valid_clearance)
+        result_1 = await build_and_canonicalize(valid_clearance)
+        result_2 = await build_and_canonicalize(valid_clearance)
 
         assert result_1 == result_2
 
@@ -440,7 +440,7 @@ class TestVectorParity:
     These tests verify byte-exact canonicalization parity.
     """
 
-    def test_vector_1_canonical_bytes_and_digest(self):
+    async def test_vector_1_canonical_bytes_and_digest(self):
         """Verify Vector 1 canonical bytes and SHA-256 parity."""
         # This is adapted from test_jcs_canonicalizer.py::test_jcs_actuator_01_reference_vector_1
         # The clearance-to-envelope mapping produces the same underlying structure
@@ -477,7 +477,7 @@ class TestVectorParity:
             ttl_seconds=30,
         )
 
-        canonical_bytes, digest = build_and_canonicalize(clearance)
+        canonical_bytes, digest = await build_and_canonicalize(clearance)
 
         # Verify it's valid JSON-like structure (not asserting exact bytes yet,
         # as full envelope schema is Phase 3)
@@ -488,7 +488,7 @@ class TestVectorParity:
         assert len(digest) == 64
         assert all(c in "0123456789abcdef" for c in digest)
 
-    def test_vector_2_float_canonicalization(self):
+    async def test_vector_2_float_canonicalization(self):
         """Verify Vector 2 float canonicalization (5.0 → 5, 100.50 → 100.5, 1.0e+21)."""
         # Per Implementation Plan v2 §5.2, Vector 2 is adversarial by design
         # and tests float normalization
@@ -529,7 +529,7 @@ class TestVectorParity:
             ttl_seconds=30,
         )
 
-        canonical_bytes, _ = build_and_canonicalize(clearance)
+        canonical_bytes, _ = await build_and_canonicalize(clearance)
 
         # Verify float normalization per RFC 8785 in target.parameters
         decoded = canonical_bytes.decode("utf-8")
@@ -548,29 +548,31 @@ class TestInvariantEnforcement:
     """
 
     @pytest.mark.parametrize("invalid_decision", ["DENY", "HOLD", "DEFER", "UNKNOWN"])
-    def test_non_allow_never_produces_envelope(self, valid_clearance, invalid_decision):
+    async def test_non_allow_never_produces_envelope(
+        self, valid_clearance, invalid_decision
+    ):
         """Only ALLOW decisions produce envelopes (fail-closed invariant)."""
         valid_clearance.decision = invalid_decision
 
         with pytest.raises(InvalidClearanceError, match="decision must be ALLOW"):
-            build_and_canonicalize(valid_clearance)
+            await build_and_canonicalize(valid_clearance)
 
-    def test_pending_escalation_never_produces_envelope(self, valid_clearance):
+    async def test_pending_escalation_never_produces_envelope(self, valid_clearance):
         """A clearance in pending-escalation state never produces an envelope."""
         # Simulate pending escalation: below quorum threshold
         valid_clearance.approvals = []
         valid_clearance.required_quorum = 2
 
         with pytest.raises(InvalidClearanceError, match="requires 2"):
-            build_and_canonicalize(valid_clearance)
+            await build_and_canonicalize(valid_clearance)
 
 
 class TestPolicyDecisionSignature:
     """Tests for policy decision signature generation (Phase 3)."""
 
-    def test_decision_signature_with_policy_signer(self, valid_clearance):
+    async def test_decision_signature_with_policy_signer(self, valid_clearance):
         """Envelope includes decision_signature when policy_signer is provided."""
-        from unittest.mock import Mock
+        from unittest.mock import AsyncMock, Mock
 
         from src.integrations.actuator_01.signatures import (
             ACTUATOR_01_DOMAIN_TAG_POLICY_DECISION,
@@ -581,32 +583,38 @@ class TestPolicyDecisionSignature:
         mock_signer.is_kms_active = True
         mock_signer.signer_urn = "urn:actuator_01:policy:institutional"
         mock_signer.sign_raw.return_value = b"x" * 64  # 64-byte signature
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
-        envelope = build_envelope_dict(valid_clearance, policy_signer=mock_signer)
+        envelope = await build_envelope_dict(valid_clearance, policy_signer=mock_signer)
 
         # Verify decision_signature is present and not None
         assert envelope["governance"]["decision_signature"] is not None
         assert len(envelope["governance"]["decision_signature"]) == 128  # hex string
 
-    def test_decision_signature_none_without_policy_signer(self, valid_clearance):
+    async def test_decision_signature_none_without_policy_signer(self, valid_clearance):
         """Envelope has decision_signature=None when no policy_signer provided."""
-        envelope = build_envelope_dict(valid_clearance, policy_signer=None)
+        envelope = await build_envelope_dict(valid_clearance, policy_signer=None)
 
         assert envelope["governance"]["decision_signature"] is None
 
-    def test_decision_binding_format(self, valid_clearance):
+    async def test_decision_binding_format(self, valid_clearance):
         """Verify decision binding payload uses 0x1F unit separators."""
         import hashlib
-        from unittest.mock import Mock
+        from unittest.mock import AsyncMock, Mock
 
         # Create mock policy signer
         mock_signer = Mock()
         mock_signer.is_kms_active = True
         mock_signer.signer_urn = "urn:actuator_01:policy:institutional"
         mock_signer.sign_raw.return_value = b"x" * 64
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
         # Build envelope to trigger policy signature generation
-        build_envelope_dict(valid_clearance, policy_signer=mock_signer)
+        await build_envelope_dict(valid_clearance, policy_signer=mock_signer)
 
         # Verify sign_raw was called
         assert mock_signer.sign_raw.called
@@ -627,7 +635,7 @@ class TestPolicyDecisionSignature:
         ]
         assert len(decision_binding_digest) == 32  # SHA-256 output
 
-    def test_policy_signer_isolation_guard(self):
+    async def test_policy_signer_isolation_guard(self):
         """Policy decision signatures reject operator quorum keys."""
         from unittest.mock import Mock
 
@@ -642,7 +650,7 @@ class TestPolicyDecisionSignature:
             ValueError,
             match="operator quorum key.*Policy authority keys must be isolated",
         ):
-            sign_policy_decision(
+            await sign_policy_decision(
                 signer=mock_operator_signer,
                 action="payment.wire.execute",
                 target_digest="a" * 64,
@@ -654,18 +662,21 @@ class TestPolicyDecisionSignature:
                 evaluated_at=1785012000,
             )
 
-    def test_decision_signature_graceful_degradation(self, valid_clearance):
+    async def test_decision_signature_graceful_degradation(self, valid_clearance):
         """Envelope construction continues if policy signature fails."""
-        from unittest.mock import Mock
+        from unittest.mock import AsyncMock, Mock
 
         # Create mock policy signer that raises an error
         mock_signer = Mock()
         mock_signer.is_kms_active = True
         mock_signer.signer_urn = "urn:actuator_01:policy:institutional"
         mock_signer.sign_raw.side_effect = RuntimeError("KMS unavailable")
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
         # Should not raise - envelope construction continues
-        envelope = build_envelope_dict(valid_clearance, policy_signer=mock_signer)
+        envelope = await build_envelope_dict(valid_clearance, policy_signer=mock_signer)
 
         # decision_signature should be None (graceful degradation)
         assert envelope["governance"]["decision_signature"] is None

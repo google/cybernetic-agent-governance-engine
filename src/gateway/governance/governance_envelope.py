@@ -485,7 +485,7 @@ class GovernanceEnvelopeBuilder:
 
             # Use the direct digest signing method for efficiency
             digest = envelope.compute_digest()
-            sig_hex = signer.sign_precomputed_digest(digest)
+            sig_hex = await signer.sign_precomputed_digest_async(digest)
             signature_bytes = bytes.fromhex(sig_hex)
 
             # kid and alg come from the signer's cached public JWK

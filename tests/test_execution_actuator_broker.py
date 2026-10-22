@@ -78,6 +78,9 @@ class MockSigner:
         """Return a deterministic 64-byte signature."""
         return hashlib.sha512(b"test-key" + message).digest()[:64]
 
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        return self.sign_raw(message)
+
 
 def make_valid_clearance(
     operator_urns: list[str] | None = None,

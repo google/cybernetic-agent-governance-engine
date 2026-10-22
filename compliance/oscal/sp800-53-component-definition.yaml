@@ -545,7 +545,12 @@ component-definition:
                 kms_signing_mode == "strict", and it is not evidence for this
                 control. The former HMAC ingress secret (CAGE_ROUTING_SEAL_SECRET) is
                 retired (POAM-2026-080 closed). The advisor has zero KMS signer bindings
-                and zero seal secrets (POAM-2026-079 closed).
+                and zero seal secrets (POAM-2026-079 closed). All KMS provider RPCs
+                (GCPKMSProvider, AWSKMSProvider, AzureKMSProvider) enforce explicit
+                connect/read/RPC deadlines (CAGE_KMS_RPC_TIMEOUT_SECONDS /
+                CAGE_KMS_SIGN_TIMEOUT_SECONDS, default 5.0 s) and execute off the
+                asyncio event loop on a dedicated worker pool (cage-kms) bounded by
+                CAGE_KMS_MAX_CONCURRENCY (default 16).
               props:
                 - name: implementation-status
                   value: implemented
@@ -564,9 +569,20 @@ component-definition:
                 in FlowSignal Phase 2. The RawMessageSigner protocol decouples cryptographic
                 operations from key lifecycle management via dependency injection in
                 actuator_01 (src/integrations/actuator_01/adapter.py:117-142), replacing
-                direct KMSGovernanceSigner coupling. ConsequenceToken.mint() uses the
-                injected signer's sign_raw() to produce a compact JWS with 8 claims
-                (sub, tid, rec, act, ver, iat, exp, jti). The signing algorithm is
+                direct KMSGovernanceSigner coupling. All runtime signing paths are async
+                (KMSGovernanceSigner.sign_async, sign_raw_async, sign_jws_async,
+                sign_precomputed_digest_async, sign_decision_async,
+                BatchGovernanceSigner.sign_batch_async, routing_seal.generate_seal, and
+                ConsequenceToken.mint) and offload blocking HSM RPCs onto a dedicated
+                ThreadPoolExecutor (cage-kms) guarded by an asyncio.Semaphore
+                (CAGE_KMS_MAX_CONCURRENCY) and fail-closed asyncio.timeout
+                (CAGE_KMS_SIGN_TIMEOUT_SECONDS). Calling synchronous .sign*() methods from
+                a thread with an active asyncio event loop is guarded by
+                _guard_no_running_loop() (raising RuntimeError in non-enforcing postures
+                and logging ERROR in enforcing postures) and enforced statically by
+                tests/unit/test_no_sync_signing_in_async.py. ConsequenceToken.mint() awaits
+                the injected signer's sign_raw_async() to produce a compact JWS with 8
+                claims (sub, tid, rec, act, ver, iat, exp, jti). The signing algorithm is
                 determined by the KMS key type (ES256/ES384 for ECDSA, EdDSA for Ed25519,
                 PS256/RS256 for RSA). ConsequenceToken.verify() validates the JWS signature
                 via verify_raw(), rejects alg:none, and enforces algorithm consistency

@@ -89,7 +89,7 @@ async def test_consequence_gateway_blocks_consumed_token(
     # Mint a valid consequence token
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token_jws = ConsequenceToken.mint(
+    token_jws = await ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
         tid="thread-123",
@@ -126,7 +126,7 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(
     # Token bound to original payload
     action_digest = hashlib.sha256(jcs_canonicalize_plan(original_payload)).hexdigest()
 
-    token_jws = ConsequenceToken.mint(
+    token_jws = await ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
         tid="thread-123",
@@ -163,7 +163,7 @@ async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
     # Mint token with 1-second TTL
-    token_jws = ConsequenceToken.mint(
+    token_jws = await ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
         tid="thread-123",
@@ -196,7 +196,7 @@ async def test_consequence_gateway_success_path(consequence_store, mock_signer):
 
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token_jws = ConsequenceToken.mint(
+    token_jws = await ConsequenceToken.mint(
         signer=mock_signer,
         rec="test-receipt",
         tid="thread-123",

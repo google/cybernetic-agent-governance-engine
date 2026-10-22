@@ -37,7 +37,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 class TestQuorumSignatures:
     """Test quorum signature construction."""
 
-    def test_sign_for_quorum_produces_lowercase_hex(self, monkeypatch):
+    async def test_sign_for_quorum_produces_lowercase_hex(self, monkeypatch):
         """Quorum signatures are lowercase hex (wire contract requirement)."""
         # Mock signer with test key
         mock_signature = b"a" * 64  # 64-byte Ed25519 signature
@@ -48,17 +48,20 @@ class TestQuorumSignatures:
             def sign_raw(self, message: bytes) -> bytes:
                 return mock_signature
 
+            async def sign_raw_async(self, message: bytes) -> bytes:
+                return self.sign_raw(message)
+
         signer = MockSigner()
         canonical_bytes = b'{"action":"test"}'
 
-        sig_hex = sign_for_quorum(signer, canonical_bytes)
+        sig_hex = await sign_for_quorum(signer, canonical_bytes)
 
         # Should be lowercase hex
         assert sig_hex == mock_signature.hex().lower()
         assert sig_hex == sig_hex.lower()  # No uppercase letters
         assert len(sig_hex) == 128  # 64 bytes = 128 hex chars
 
-    def test_sign_for_quorum_uses_domain_tag(self, monkeypatch):
+    async def test_sign_for_quorum_uses_domain_tag(self, monkeypatch):
         """Quorum signatures use ACTUATOR_01_DOMAIN_TAG_QUORUM to prevent replay."""
         signed_message = None
 
@@ -70,10 +73,13 @@ class TestQuorumSignatures:
                 signed_message = message
                 return b"x" * 64
 
+            async def sign_raw_async(self, message: bytes) -> bytes:
+                return self.sign_raw(message)
+
         signer = MockSigner()
         canonical_bytes = b'{"action":"test"}'
 
-        sign_for_quorum(signer, canonical_bytes)
+        await sign_for_quorum(signer, canonical_bytes)
 
         # Verify the signed message starts with domain tag
         assert signed_message is not None
@@ -84,7 +90,7 @@ class TestQuorumSignatures:
         expected_message = ACTUATOR_01_DOMAIN_TAG_QUORUM + body_digest
         assert signed_message == expected_message
 
-    def test_sign_for_quorum_fails_when_kms_inactive(self):
+    async def test_sign_for_quorum_fails_when_kms_inactive(self):
         """sign_for_quorum raises RuntimeError if KMS is not active."""
 
         class MockSigner:
@@ -94,7 +100,7 @@ class TestQuorumSignatures:
         canonical_bytes = b'{"action":"test"}'
 
         with pytest.raises(RuntimeError, match="KMS is not active"):
-            sign_for_quorum(signer, canonical_bytes)
+            await sign_for_quorum(signer, canonical_bytes)
 
     def test_domain_tag_isolation(self):
         """ACTUATOR_01_DOMAIN_TAG_QUORUM is distinct and prevents cross-context replay."""

@@ -380,7 +380,7 @@ def compute_action_hash(action: str, params: dict) -> str:
     return hashlib.sha256(canonical_action_bytes(action, params)).hexdigest()
 
 
-def generate_seal(
+async def generate_seal(
     action: str,
     params: dict,
     ttl_s: int = _TTL_S,
@@ -436,8 +436,8 @@ def generate_seal(
         )
 
         signing_input = f"{b64_header}.{b64_payload}".encode()
-        # sign_jws normalises KMS DER ECDSA output to the JWS raw R||S form.
-        signature = signer.sign_jws(signing_input)
+        # sign_jws_async normalises KMS DER ECDSA output to the JWS raw R||S form.
+        signature = await signer.sign_jws_async(signing_input)
         b64_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
 
         seal = f"{b64_header}.{b64_payload}.{b64_signature}"
@@ -621,7 +621,9 @@ async def generate_seal_with_evidence(
                 "evidence binding is required but no evidence record was committed "
                 "(EVIDENCE_CHAIN_BLOCKING=false); seal not issued"
             )
-        seal = generate_seal(action, params, ttl_s, record_hash=record_hash, aud=aud)
+        seal = await generate_seal(
+            action, params, ttl_s, record_hash=record_hash, aud=aud
+        )
         if record_hash is not None:
             await _index_evidence_binding(seal, record_hash, ttl_s, redis_client)
         span.set_attribute("cage.seal.issued", True)

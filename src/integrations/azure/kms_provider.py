@@ -17,10 +17,28 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from src.gateway.governance.kms_signer import BaseKMSProvider
 
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
+
+_DEFAULT_AZURE_KMS_READ_TIMEOUT_S = 5.0
+_DEFAULT_AZURE_KMS_CONNECT_TIMEOUT_S = 2.0
+
+
+def _resolve_azure_kms_timeout_seconds() -> float:
+    raw = os.environ.get("CAGE_KMS_RPC_TIMEOUT_SECONDS", "") or os.environ.get(
+        "CAGE_KMS_SIGN_TIMEOUT_SECONDS", ""
+    )
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0.0:
+                return val
+        except ValueError:
+            pass
+    return _DEFAULT_AZURE_KMS_READ_TIMEOUT_S
 
 
 class AzureKMSProvider(BaseKMSProvider):
@@ -45,11 +63,30 @@ class AzureKMSProvider(BaseKMSProvider):
 
         self._vault_url = vault_url
         self._key_name = key_name
+        self._read_timeout_s = _resolve_azure_kms_timeout_seconds()
         try:
             credential = DefaultAzureCredential()
-            key_client = KeyClient(vault_url=vault_url, credential=credential)
+            try:
+                key_client = KeyClient(
+                    vault_url=vault_url,
+                    credential=credential,
+                    connection_timeout=_DEFAULT_AZURE_KMS_CONNECT_TIMEOUT_S,
+                    read_timeout=self._read_timeout_s,
+                )
+            except TypeError:
+                key_client = KeyClient(vault_url=vault_url, credential=credential)
             self._key = key_client.get_key(key_name)
-            self._crypto_client = CryptographyClient(self._key, credential=credential)
+            try:
+                self._crypto_client = CryptographyClient(
+                    self._key,
+                    credential=credential,
+                    connection_timeout=_DEFAULT_AZURE_KMS_CONNECT_TIMEOUT_S,
+                    read_timeout=self._read_timeout_s,
+                )
+            except TypeError:
+                self._crypto_client = CryptographyClient(
+                    self._key, credential=credential
+                )
             logger.info(
                 "[AzureKMSProvider] Client initialised for key: %s", self._key_name
             )

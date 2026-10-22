@@ -49,6 +49,7 @@ from the kernel (Layer 1) only through the vendor-neutral protocol.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Callable
@@ -451,7 +452,7 @@ class Actuator01Adapter:
 
         # ── Step 1-2: Build, canonicalize, digest ─────────────────────────
         try:
-            canonical_bytes, envelope_digest = build_and_canonicalize(
+            canonical_bytes, envelope_digest = await build_and_canonicalize(
                 clearance, policy_signer=self._policy_signer
             )
         except InvalidClearanceError as exc:
@@ -495,7 +496,7 @@ class Actuator01Adapter:
 
         # ── Step 3: Build assertion ───────────────────────────────────────
         try:
-            assertion_b64 = build_assertion(
+            assertion_b64 = await build_assertion(
                 envelope_digest_hex=envelope_digest,
                 nonce_hex=clearance.nonce,
                 issued_at=clearance.issued_at,
@@ -558,11 +559,16 @@ class Actuator01Adapter:
                     timestamp_utc=timestamp_utc,
                 )
 
-            # Sign with per-operator signers
-            for urn in operator_urns:
-                operator_signer = self._resolve_signer(urn)
-                sig = sign_for_quorum(operator_signer, canonical_bytes)
-                quorum_signatures.append(sig)
+            # Sign concurrently with per-operator signers
+            operator_signers = [self._resolve_signer(urn) for urn in operator_urns]
+            quorum_signatures = list(
+                await asyncio.gather(
+                    *(
+                        sign_for_quorum(operator_signer, canonical_bytes)
+                        for operator_signer in operator_signers
+                    )
+                )
+            )
         except (RuntimeError, KeyError, Exception) as exc:
             logger.error("[actuator_01/adapter] Quorum signing failed: %s", exc)
             return ActuationReceipt(

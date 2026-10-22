@@ -44,7 +44,7 @@ class TestEvidenceLayerPlacement:
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module("src.compliance_bridge.evidence_stream")
 
-    def test_kernel_boots_with_compliance_bridge_poisoned(
+    async def test_kernel_boots_with_compliance_bridge_poisoned(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Kernel modules must import and function with compliance_bridge blocked in sys.modules."""
@@ -81,7 +81,7 @@ class TestEvidenceLayerPlacement:
             assert hasattr(evidence_pkg, "get_cold_store")
 
             # Verify seal generation works without compliance_bridge
-            seal = routing_seal.generate_seal(
+            seal = await routing_seal.generate_seal(
                 "test_action", {"key": "value"}, record_hash="a" * 64
             )
             assert seal is not None

@@ -115,7 +115,7 @@ FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
 FINDING_CODE_TLS_CONFIG_ERROR = "TLS_CONFIG_ERROR"
 
 
-def _map_flowsignal_decision(
+async def _map_flowsignal_decision(
     decision: str, data: dict[str, Any], action_payload: dict[str, Any]
 ) -> tuple[bool, list[dict[str, Any]]]:
     """Map FlowSignal tri-state decision to CAGE (admitted, findings).
@@ -154,7 +154,7 @@ def _map_flowsignal_decision(
             mint_consequence_token_finding,
         )
 
-        consequence_token_finding = mint_consequence_token_finding(
+        consequence_token_finding = await mint_consequence_token_finding(
             actor_id=action_payload.get("actor_id", ""),
             thread_id=action_payload.get("thread_id", ""),
             authority_record_id=data.get("authority_record_id", ""),
@@ -448,7 +448,7 @@ class FlowSignalNormativeProvider:
                 if "decision" in data:
                     decision = data["decision"]
                     try:
-                        admitted, findings = _map_flowsignal_decision(
+                        admitted, findings = await _map_flowsignal_decision(
                             decision, data, payload
                         )
                         # Check if minting failed (fail-closed finding present)

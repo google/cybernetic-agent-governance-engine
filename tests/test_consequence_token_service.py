@@ -22,7 +22,7 @@ Tests for the relocated ConsequenceToken minting service. Validates:
 """
 
 import hashlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -39,13 +39,16 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 class TestConsequenceTokenService:
     """Test suite for the kernel minting service."""
 
-    def test_mint_consequence_token_finding_success(self) -> None:
+    async def test_mint_consequence_token_finding_success(self) -> None:
         """Successful minting returns CONSEQUENCE_TOKEN finding with JWS token."""
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
         mock_signer.key_id = "projects/test/locations/us/keyRings/cage/cryptoKeys/gov/cryptoKeyVersions/1"
         mock_signer.jose_alg = "ES256"
         mock_signer.sign_raw.return_value = b"mock_signature_64_bytes_" + b"\x00" * 40
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
         action_payload = {
             "action": "execute_trade",
@@ -57,7 +60,7 @@ class TestConsequenceTokenService:
             "src.gateway.governance.consequence_token_service.get_governance_signer",
             return_value=mock_signer,
         ):
-            finding = mint_consequence_token_finding(
+            finding = await mint_consequence_token_finding(
                 actor_id="user-123",
                 thread_id="thread-abc",
                 authority_record_id="rec-xyz",
@@ -77,12 +80,12 @@ class TestConsequenceTokenService:
         parts = token.split(".")
         assert len(parts) == 3, "Token should be compact JWS with 3 parts"
 
-    def test_mint_without_authority_record_id_fails_closed(self) -> None:
+    async def test_mint_without_authority_record_id_fails_closed(self) -> None:
         """Missing authority_record_id fails closed with MINT_FAILED finding."""
         action_payload = {"action": "execute_trade", "actor_id": "user-123"}
 
         # No patching needed — the service should fail before reaching KMS
-        finding = mint_consequence_token_finding(
+        finding = await mint_consequence_token_finding(
             actor_id="user-123",
             thread_id="thread-abc",
             authority_record_id="",  # Missing!
@@ -95,11 +98,11 @@ class TestConsequenceTokenService:
             "authority_record_id missing from FlowSignal response" in finding["message"]
         )
 
-    def test_mint_without_actor_id_fails_closed(self) -> None:
+    async def test_mint_without_actor_id_fails_closed(self) -> None:
         """Missing actor_id fails closed with MINT_FAILED finding."""
         action_payload = {"action": "execute_trade"}
 
-        finding = mint_consequence_token_finding(
+        finding = await mint_consequence_token_finding(
             actor_id="",  # Missing!
             thread_id="thread-abc",
             authority_record_id="rec-xyz",
@@ -110,7 +113,7 @@ class TestConsequenceTokenService:
         assert finding["severity"] == "blocked"
         assert "actor_id missing from action_payload" in finding["message"]
 
-    def test_byte_identical_tokens_across_relocation(self) -> None:
+    async def test_byte_identical_tokens_across_relocation(self) -> None:
         """Tokens minted by kernel service match old adapter-side minting.
 
         This is the critical regression guard: if canonicalization or claim
@@ -125,6 +128,9 @@ class TestConsequenceTokenService:
         # Fixed signature for deterministic comparison
         fixed_signature = b"A" * 64
         mock_signer.sign_raw.return_value = fixed_signature
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
         action_payload = {
             "action": "execute_trade",
@@ -141,7 +147,7 @@ class TestConsequenceTokenService:
             ),
             patch("time.time", return_value=1234567890),
         ):
-            finding = mint_consequence_token_finding(
+            finding = await mint_consequence_token_finding(
                 actor_id="user-deterministic",
                 thread_id="thread-deterministic",
                 authority_record_id="rec-deterministic",
@@ -159,7 +165,7 @@ class TestConsequenceTokenService:
             action_digest = hashlib.sha256(
                 jcs_canonicalize_plan(action_payload)
             ).hexdigest()
-            token_old = ConsequenceToken.mint(
+            token_old = await ConsequenceToken.mint(
                 sub="user-deterministic",
                 tid="thread-deterministic",
                 rec="rec-deterministic",
@@ -182,13 +188,16 @@ class TestConsequenceTokenService:
             "Signing inputs must match across relocation"
         )
 
-    def test_kms_signing_failure_fails_closed(self) -> None:
+    async def test_kms_signing_failure_fails_closed(self) -> None:
         """KMS signing failure returns fail-closed MINT_FAILED finding."""
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
         mock_signer.key_id = "projects/test/locations/us/keyRings/cage/cryptoKeys/gov/cryptoKeyVersions/1"
         mock_signer.jose_alg = "ES256"
         mock_signer.sign_raw.side_effect = RuntimeError("KMS unavailable")
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
         action_payload = {"action": "execute_trade"}
 
@@ -196,7 +205,7 @@ class TestConsequenceTokenService:
             "src.gateway.governance.consequence_token_service.get_governance_signer",
             return_value=mock_signer,
         ):
-            finding = mint_consequence_token_finding(
+            finding = await mint_consequence_token_finding(
                 actor_id="user-123",
                 thread_id="thread-abc",
                 authority_record_id="rec-xyz",
@@ -207,13 +216,16 @@ class TestConsequenceTokenService:
         assert finding["severity"] == "blocked"
         assert "KMS unavailable" in finding["message"]
 
-    def test_nullable_authority_state_version(self) -> None:
+    async def test_nullable_authority_state_version(self) -> None:
         """authority_state_version=None is normalized to empty string in claims."""
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
         mock_signer.key_id = "projects/test/key/1"
         mock_signer.jose_alg = "ES256"
         mock_signer.sign_raw.return_value = b"X" * 64
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=lambda msg: mock_signer.sign_raw(msg)
+        )
 
         action_payload = {"action": "test"}
 
@@ -221,7 +233,7 @@ class TestConsequenceTokenService:
             "src.gateway.governance.consequence_token_service.get_governance_signer",
             return_value=mock_signer,
         ):
-            finding = mint_consequence_token_finding(
+            finding = await mint_consequence_token_finding(
                 actor_id="user-123",
                 thread_id="thread-abc",
                 authority_record_id="rec-xyz",
@@ -236,9 +248,11 @@ class TestConsequenceTokenService:
     @pytest.mark.parametrize(
         "unsafe_int", [9007199254740992, 9007199254740993, -(2**53)]
     )
-    def test_unsafe_json_integer_rejected_fail_closed(self, unsafe_int: int) -> None:
+    async def test_unsafe_json_integer_rejected_fail_closed(
+        self, unsafe_int: int
+    ) -> None:
         """Issue #406: Integers outside IEEE-754 safe range [-(2^53-1), 2^53-1] fail closed before JCS."""
-        finding = mint_consequence_token_finding(
+        finding = await mint_consequence_token_finding(
             actor_id="user-123",
             thread_id="thread-abc",
             authority_record_id="rec-xyz",

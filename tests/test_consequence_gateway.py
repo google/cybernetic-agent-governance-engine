@@ -222,7 +222,7 @@ async def test_happy_path_execute(
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
     # Mint token
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-001",
@@ -271,7 +271,7 @@ async def test_expired_token_block(
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
     # Mint with 0 TTL (immediately expired)
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-002",
@@ -300,7 +300,7 @@ async def test_tampered_signature_block(
     """Token with tampered signature returns BLOCK / TOKEN_INVALID."""
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-003",
@@ -382,7 +382,7 @@ async def test_action_binding_mismatch_toctou(
     original_payload = {"action": "deploy_model", "model_id": "gemini-1.5-pro"}
     action_digest = hashlib.sha256(jcs_canonicalize_plan(original_payload)).hexdigest()
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-005",
@@ -415,7 +415,7 @@ async def test_replay_already_consumed(
     """Second evaluation with same token+payload returns BLOCK / ALREADY_CONSUMED."""
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-006",
@@ -451,7 +451,7 @@ async def test_binding_mismatch_substitution_attack(
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
     # Mint first token
-    token1 = ConsequenceToken.mint(
+    token1 = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-007",
@@ -466,7 +466,7 @@ async def test_binding_mismatch_substitution_attack(
     assert result1.decision == ConsequenceDecision.EXECUTE
 
     # Mint second token with SAME rec but DIFFERENT binding (different actor)
-    token2 = ConsequenceToken.mint(
+    token2 = await ConsequenceToken.mint(
         sub="actor-999",  # Different actor → different binding
         tid="thread-456",
         rec="rec-007",  # Same rec
@@ -496,7 +496,7 @@ async def test_redis_error_fail_closed(
     """Redis error during consumption returns BLOCK / REDIS_ERROR (fail-closed)."""
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-008",
@@ -535,7 +535,7 @@ async def test_concurrency_exactly_one_execute(
     """Multiple concurrent evaluate() calls with same token → exactly one EXECUTE."""
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-009",
@@ -591,7 +591,7 @@ async def test_consequence_gateway_emits_decisions_to_evidence_stream(
     monkeypatch.setattr("src.gateway.governance.evidence.stream._evidence_sink", sink)
 
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-010",
@@ -639,7 +639,7 @@ async def test_consequence_gateway_fails_closed_when_evidence_chain_unavailable(
     )
 
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-011",
@@ -665,7 +665,7 @@ async def test_consequence_gateway_blocks_unsafe_ieee754_integers(
     colliding_payload_b = {"action": "transfer", "amount": 9007199254740993}
     # Even if a token were somehow forged with the raw JCS digest of 2^53, evaluate() blocks both.
     raw_digest = hashlib.sha256(jcs_canonicalize_plan(colliding_payload_a)).hexdigest()
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-ieee754",

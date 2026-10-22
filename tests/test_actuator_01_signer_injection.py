@@ -20,7 +20,7 @@ conforming to the narrowest sufficient abstraction, eliminating the
 service-locator anti-pattern (no get_governance_signer() calls).
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -35,33 +35,35 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 class TestActuatorSignerInjection:
     """Test suite for RawMessageSigner dependency injection in actuator_01."""
 
-    def test_signatures_accepts_protocol_conforming_double(self) -> None:
+    async def test_signatures_accepts_protocol_conforming_double(self) -> None:
         """sign_for_quorum accepts a test double implementing RawMessageSigner."""
         # Create a minimal test double (duck-typed protocol conformance)
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
         mock_signer.sign_raw.return_value = b"A" * 64  # Ed25519 signature length
+        mock_signer.sign_raw_async = AsyncMock(return_value=b"A" * 64)
 
         canonical_bytes = b'{"action":"execute_trade","nonce":"abc123"}'
 
         # This should succeed without requiring concrete KMSGovernanceSigner
-        signature_hex = sign_for_quorum(mock_signer, canonical_bytes)
+        signature_hex = await sign_for_quorum(mock_signer, canonical_bytes)
 
         assert isinstance(signature_hex, str)
         assert len(signature_hex) == 128  # 64 bytes = 128 hex chars
-        mock_signer.sign_raw.assert_called_once()
+        mock_signer.sign_raw_async.assert_awaited_once()
 
-    def test_assertion_builder_accepts_protocol_conforming_double(self) -> None:
+    async def test_assertion_builder_accepts_protocol_conforming_double(self) -> None:
         """build_assertion accepts a test double implementing RawMessageSigner."""
         mock_signer = MagicMock()
         mock_signer.is_kms_active = True
         mock_signer.sign_raw.return_value = b"B" * 64
+        mock_signer.sign_raw_async = AsyncMock(return_value=b"B" * 64)
 
         envelope_digest_hex = "a" * 64  # Valid SHA-256 hex
         nonce_hex = "b" * 32  # Valid 16-byte nonce
         issued_at = 1234567890
 
-        assertion_b64 = build_assertion(
+        assertion_b64 = await build_assertion(
             envelope_digest_hex=envelope_digest_hex,
             nonce_hex=nonce_hex,
             issued_at=issued_at,
@@ -71,7 +73,7 @@ class TestActuatorSignerInjection:
         assert isinstance(assertion_b64, str)
         # 120 bytes base64url-encoded (no padding) = 160 chars
         assert len(assertion_b64) == 160
-        mock_signer.sign_raw.assert_called_once()
+        mock_signer.sign_raw_async.assert_awaited_once()
 
     def test_adapter_accepts_injected_signer_without_kernel_global(self) -> None:
         """Actuator01Adapter can be constructed with an injected signer.
@@ -126,7 +128,7 @@ class TestActuatorSignerInjection:
         )
         assert adapter._resolve_signer("urn:operator:charlie") is mock_default_signer
 
-    def test_kms_inactive_signer_fails_closed(self) -> None:
+    async def test_kms_inactive_signer_fails_closed(self) -> None:
         """sign_for_quorum fails closed when signer.is_kms_active=False."""
         mock_signer = MagicMock()
         mock_signer.is_kms_active = False  # Not active
@@ -134,15 +136,15 @@ class TestActuatorSignerInjection:
         canonical_bytes = b'{"action":"test"}'
 
         with pytest.raises(RuntimeError, match="KMS is not active"):
-            sign_for_quorum(mock_signer, canonical_bytes)
+            await sign_for_quorum(mock_signer, canonical_bytes)
 
-    def test_assertion_kms_inactive_fails_closed(self) -> None:
+    async def test_assertion_kms_inactive_fails_closed(self) -> None:
         """build_assertion fails closed when signer.is_kms_active=False."""
         mock_signer = MagicMock()
         mock_signer.is_kms_active = False
 
         with pytest.raises(RuntimeError, match="KMS is not active"):
-            build_assertion(
+            await build_assertion(
                 envelope_digest_hex="a" * 64,
                 nonce_hex="b" * 32,
                 issued_at=1234567890,

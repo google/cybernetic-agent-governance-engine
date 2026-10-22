@@ -282,7 +282,7 @@ async def test_live_jcs_canonicalization(
         ttl_seconds=30,
     )
 
-    canonical_bytes, expected_digest = build_and_canonicalize(
+    canonical_bytes, expected_digest = await build_and_canonicalize(
         clearance, policy_signer=live_adapter._policy_signer
     )
     assert len(canonical_bytes) <= 4096

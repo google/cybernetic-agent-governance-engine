@@ -594,6 +594,9 @@ class TestConsequenceTokenMinting:
         # Mock signer to raise (simulate KMS failure)
         mock_signer = MagicMock()
         mock_signer.sign_raw.side_effect = RuntimeError("KMS unavailable")
+        mock_signer.sign_raw_async = AsyncMock(
+            side_effect=RuntimeError("KMS unavailable")
+        )
 
         with (
             patch("httpx.AsyncClient") as MockClient,
@@ -637,6 +640,7 @@ class TestConsequenceTokenMinting:
 
         mock_response = _mock_response(flowsignal_response)
         mock_signer = MagicMock()
+        mock_signer.sign_raw_async = AsyncMock()
 
         with (
             patch("httpx.AsyncClient") as MockClient,
@@ -657,6 +661,7 @@ class TestConsequenceTokenMinting:
         assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
         assert "token" not in result.findings[0]
         mock_signer.sign_raw.assert_not_called()
+        mock_signer.sign_raw_async.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.local
@@ -678,6 +683,7 @@ class TestConsequenceTokenMinting:
 
         mock_response = _mock_response(flowsignal_response)
         mock_signer = MagicMock()
+        mock_signer.sign_raw_async = AsyncMock()
 
         with (
             patch("httpx.AsyncClient") as MockClient,
@@ -698,6 +704,7 @@ class TestConsequenceTokenMinting:
         assert result.findings[0]["code"] == "EXTERNAL_HOLD"
         assert "token" not in result.findings[0]
         mock_signer.sign_raw.assert_not_called()
+        mock_signer.sign_raw_async.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.local
@@ -725,6 +732,7 @@ class TestConsequenceTokenMinting:
 
         mock_response = _mock_response(response)
         mock_signer = MagicMock()
+        mock_signer.sign_raw_async = AsyncMock()
 
         with (
             patch("httpx.AsyncClient") as MockClient,
@@ -745,6 +753,7 @@ class TestConsequenceTokenMinting:
         assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
         assert "authority_record_id missing" in result.findings[0]["message"]
         mock_signer.sign_raw.assert_not_called()
+        mock_signer.sign_raw_async.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

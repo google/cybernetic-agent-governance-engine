@@ -148,6 +148,7 @@ class TestEmitRefusalReceiptIntegration:
         # Mock the KMS signer
         mock_signer = MagicMock()
         mock_signer.sign = MagicMock(return_value="mock-kms-signature")
+        mock_signer.sign_async = AsyncMock(return_value="mock-kms-signature")
         monkeypatch.setattr(
             "src.gateway.server.governance_middleware.get_governance_signer",
             lambda: mock_signer,
@@ -221,6 +222,7 @@ class TestEmitRefusalReceiptIntegration:
 
         mock_signer = MagicMock()
         mock_signer.sign = MagicMock(return_value="mock-sig")
+        mock_signer.sign_async = AsyncMock(return_value="mock-sig")
         monkeypatch.setattr(
             "src.gateway.server.governance_middleware.get_governance_signer",
             lambda: mock_signer,
@@ -265,6 +267,7 @@ class TestEmitRefusalReceiptIntegration:
 
         mock_signer = MagicMock()
         mock_signer.sign = MagicMock(return_value="sig")
+        mock_signer.sign_async = AsyncMock(return_value="sig")
         monkeypatch.setattr(
             "src.gateway.server.governance_middleware.get_governance_signer",
             lambda: mock_signer,

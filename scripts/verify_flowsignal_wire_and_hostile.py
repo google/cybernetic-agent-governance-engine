@@ -637,7 +637,7 @@ async def main() -> None:
         expired_digest = hashlib.sha256(
             jcs_canonicalize_plan(allow_payload)
         ).hexdigest()
-        expired_token = ConsequenceToken.mint(
+        expired_token = await ConsequenceToken.mint(
             sub=allow_payload["actor_id"],
             tid=allow_payload["thread_id"],
             rec="rec-expired-test-001",
@@ -835,7 +835,7 @@ async def main() -> None:
                 return_value=jwk_set,
             ),
         ):
-            seal = generate_seal(
+            seal = await generate_seal(
                 "payment.release",
                 allow_payload["params"],
                 record_hash="a" * 64,
@@ -954,7 +954,7 @@ async def main() -> None:
         assert "ACTUATION_REFUSAL_RECEIPT" in recorded_types
 
         # 6B. Fail-closed downgrade to BLOCK (EVIDENCE_CHAIN_UNAVAILABLE) when sink fails on EXECUTE
-        fresh_token = ConsequenceToken.mint(
+        fresh_token = await ConsequenceToken.mint(
             sub=allow_payload["actor_id"],
             tid=allow_payload["thread_id"],
             rec="rec-evidence-outage-001",

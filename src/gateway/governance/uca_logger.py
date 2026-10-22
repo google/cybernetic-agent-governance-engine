@@ -347,7 +347,7 @@ class UCALogger:
 
         # Sign inline so _build_uca_record returns a fully-signed record
         # (required by test_hmac_stub_signing_in_test_mode)
-        self._sign_record(record)
+        await self._sign_record(record)
 
         return record
 
@@ -438,12 +438,12 @@ class UCALogger:
         }
         return bucket_map.get(region, fallback)
 
-    def _sign_record(self, record: dict) -> None:
+    async def _sign_record(self, record: dict) -> None:
         """Sign ``record`` in-place, populating ``cryptographic_signature``
         and ``signing_key_id``.
 
         In test mode: HMAC-SHA256 stub with prefix ``0xSTUB_``.
-        In production: delegates to ``KMSGovernanceSigner.sign()``.
+        In production: delegates to ``KMSGovernanceSigner.sign_async()``.
 
         v3.1.0 Breaking Change: Migrated WORM signing payload to RFC 8785 JCS.
         Previously-signed WORM records will not verify under the new algorithm.
@@ -480,8 +480,8 @@ class UCALogger:
             record["signing_key_id"] = "test-mode-hmac-sha256"
         else:
             try:
-                # KMSGovernanceSigner.sign() accepts a dict and returns hex
-                sig_hex = self._signer.sign(payload)
+                # KMSGovernanceSigner.sign_async() accepts a dict and returns hex
+                sig_hex = await self._signer.sign_async(payload)
                 record["cryptographic_signature"] = sig_hex
                 # Expose the key version resource name if available
                 key_id = getattr(self._signer, "_key_version", "") or ""

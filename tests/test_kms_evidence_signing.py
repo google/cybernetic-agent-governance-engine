@@ -29,7 +29,7 @@ Verification invariants:
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -64,6 +64,7 @@ def _mock_signer():
     signer.sign.side_effect = lambda payload: (
         "mock_kms_sig_" + _sha256(json.dumps(payload, sort_keys=True))[:16]
     )
+    signer.sign_async = AsyncMock(side_effect=lambda payload: signer.sign(payload))
     signer.is_kms_active = True
     return signer
 
@@ -168,6 +169,7 @@ async def test_batch_signer_handles_signing_failure():
     signer = AsyncBatchSigner(flush_interval_ms=50, max_batch_size=10)
     mock_kms = MagicMock()
     mock_kms.sign.side_effect = RuntimeError("KMS unavailable")
+    mock_kms.sign_async = AsyncMock(side_effect=RuntimeError("KMS unavailable"))
     signer._signer = mock_kms
 
     signer.enqueue(

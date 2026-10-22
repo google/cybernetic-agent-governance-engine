@@ -569,7 +569,7 @@ async def _emit_refusal_receipt(
         signer = get_governance_signer()
         # Sign a stable subset of the receipt (exclude kms_signature itself)
         signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
-        receipt_payload["kms_signature"] = signer.sign(signable)
+        receipt_payload["kms_signature"] = await signer.sign_async(signable)
     except Exception as sign_exc:
         logger.error(
             "❌ [P6] Failed to KMS-sign refusal receipt for action '%s' "

@@ -128,6 +128,7 @@ def mock_kms_signer():
     """Patch get_governance_signer() to return a mock that signs/verifies locally."""
     signer = MagicMock()
     signer.sign = MagicMock(return_value="deadbeef" * 8)  # 64-char hex
+    signer.sign_async = AsyncMock(return_value="deadbeef" * 8)
     signer.verify = MagicMock(return_value=True)
     signer.signing_algorithm = "HMAC_SHA256_FALLBACK"
     with patch(
@@ -577,7 +578,7 @@ class TestEmitRefusalReceipt:
                 params={"amount": 100},
             )
 
-        mock_kms_signer.sign.assert_called_once()
+        mock_kms_signer.sign_async.assert_awaited_once()
         sink.ingest.assert_awaited_once()
         receipt = sink.ingest.call_args[0][0]
         assert receipt["action_id"] == "execute_trade"
@@ -595,6 +596,9 @@ class TestEmitRefusalReceipt:
 
         failing_signer = MagicMock()
         failing_signer.sign = MagicMock(side_effect=RuntimeError("KMS unavailable"))
+        failing_signer.sign_async = AsyncMock(
+            side_effect=RuntimeError("KMS unavailable")
+        )
 
         sink = MagicMock()
         sink.ingest = AsyncMock(return_value=None)

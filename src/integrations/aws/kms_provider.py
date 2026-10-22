@@ -17,10 +17,28 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from src.gateway.governance.kms_signer import BaseKMSProvider
 
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
+
+_DEFAULT_AWS_KMS_READ_TIMEOUT_S = 5.0
+_DEFAULT_AWS_KMS_CONNECT_TIMEOUT_S = 2.0
+
+
+def _resolve_aws_kms_timeout_seconds() -> float:
+    raw = os.environ.get("CAGE_KMS_RPC_TIMEOUT_SECONDS", "") or os.environ.get(
+        "CAGE_KMS_SIGN_TIMEOUT_SECONDS", ""
+    )
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0.0:
+                return val
+        except ValueError:
+            pass
+    return _DEFAULT_AWS_KMS_READ_TIMEOUT_S
 
 
 class AWSKMSProvider(BaseKMSProvider):
@@ -41,8 +59,19 @@ class AWSKMSProvider(BaseKMSProvider):
             ) from exc
 
         self._key_id = key_id
+        read_timeout = _resolve_aws_kms_timeout_seconds()
         try:
-            self._client = boto3.client("kms")
+            try:
+                from botocore.config import Config  # type: ignore[import]
+
+                cfg = Config(
+                    connect_timeout=_DEFAULT_AWS_KMS_CONNECT_TIMEOUT_S,
+                    read_timeout=read_timeout,
+                    retries={"max_attempts": 2, "mode": "standard"},
+                )
+                self._client = boto3.client("kms", config=cfg)
+            except (ImportError, TypeError):
+                self._client = boto3.client("kms")
             logger.info("[AWSKMSProvider] Client initialised for key: %s", self._key_id)
         except Exception as exc:
             raise RuntimeError(

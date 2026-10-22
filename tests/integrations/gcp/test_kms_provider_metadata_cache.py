@@ -377,7 +377,7 @@ def test_public_jwk_follows_a_changed_public_key() -> None:
     assert signer.public_jwk["kid"] != kid_a
 
 
-def test_seal_minting_makes_no_metadata_calls(
+async def test_seal_minting_makes_no_metadata_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
@@ -393,7 +393,8 @@ def test_seal_minting_makes_no_metadata_calls(
     parsed = _count_pem_parses(monkeypatch)
 
     seals = [
-        rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH) for _ in range(20)
+        await rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
+        for _ in range(20)
     ]
 
     client.get_crypto_key_version.assert_called_once_with(name=_KEY)

@@ -527,7 +527,7 @@ class TestGeapMcpJsonRpcAndTriIdentity:
             assert deny_decision.decision == "DENY"
             assert "X-CAGE-Routing-Seal" not in deny_decision.headers_to_inject
 
-    def test_validate_tri_identity_binding_enforces_pre_credentials_seal(self):
+    async def test_validate_tri_identity_binding_enforces_pre_credentials_seal(self):
         """validate_tri_identity_binding verifies seal + ID-1/ID-2 before ID-3 release."""
         from src.gateway.governance.routing_seal import generate_seal
         from src.gateway.governance.seams.credential_broker import (
@@ -537,7 +537,7 @@ class TestGeapMcpJsonRpcAndTriIdentity:
         )
 
         params = {"account": "acc-1"}
-        seal = generate_seal("update_record", params, record_hash=None)
+        seal = await generate_seal("update_record", params, record_hash=None)
 
         binding = TriIdentityCredentialBinding(
             user_id="user:alice@example.com",

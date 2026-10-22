@@ -441,7 +441,9 @@ class Actuator02Adapter:
 
         # Sign assertion with domain separation tag
         try:
-            sig_bytes = self._signer.sign_raw(ASSERTION_DOMAIN_TAG + canonical_bytes)
+            sig_bytes = await self._signer.sign_raw_async(
+                ASSERTION_DOMAIN_TAG + canonical_bytes
+            )
             assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii")
         except Exception as exc:
             return ActuationReceipt(

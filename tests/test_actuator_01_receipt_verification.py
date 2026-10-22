@@ -229,6 +229,9 @@ class _Signer:
     def sign_raw(self, message: bytes) -> bytes:
         return hashlib.sha512(message).digest()[:64]
 
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        return self.sign_raw(message)
+
 
 def _clearance() -> ExecutionClearance:
     urns = ["urn:actuator_01:op:alice", "urn:actuator_01:op:bob"]

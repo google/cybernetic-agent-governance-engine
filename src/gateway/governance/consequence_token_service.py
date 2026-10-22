@@ -45,7 +45,7 @@ FINDING_CODE_CONSEQUENCE_TOKEN = "CONSEQUENCE_TOKEN"
 FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED = "CONSEQUENCE_TOKEN_MINT_FAILED"
 
 
-def mint_consequence_token_finding(
+async def mint_consequence_token_finding(
     *,
     actor_id: str,
     thread_id: str,
@@ -81,18 +81,6 @@ def mint_consequence_token_finding(
     Fail-closed behavior:
         If minting fails (KMS unavailable, missing required fields), returns a
         blocking finding rather than silently allowing execution without a token.
-
-    Example:
-        >>> finding = mint_consequence_token_finding(
-        ...     actor_id="user-123",
-        ...     thread_id="thread-abc",
-        ...     authority_record_id="rec-xyz",
-        ...     action_payload={"action": "execute_action", ...},
-        ... )
-        >>> finding["code"]
-        'CONSEQUENCE_TOKEN'
-        >>> "token" in finding
-        True
     """
     try:
         # Validate required inputs (fail-fast before KMS call)
@@ -119,7 +107,7 @@ def mint_consequence_token_finding(
         signer = get_governance_signer()
 
         # Mint the token (60s TTL default per FlowSignal plan §5.4)
-        token = ConsequenceToken.mint(
+        token = await ConsequenceToken.mint(
             sub=actor_id,
             tid=thread_id,
             rec=authority_record_id,

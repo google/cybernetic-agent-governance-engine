@@ -86,23 +86,25 @@ class TestCanonicalization:
             ({"x": True}, {"x": "True"}),
         ],
     )
-    def test_structured_and_stringified_params_never_collide(
+    async def test_structured_and_stringified_params_never_collide(
         self, structured, stringly
     ):
         assert rs.compute_action_hash(ACTION, structured) != rs.compute_action_hash(
             ACTION, stringly
         )
-        seal = rs.generate_seal(ACTION, structured, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, structured, record_hash=RH)
         assert rs.verify_seal(seal, ACTION, structured) is True
         with pytest.raises(rs.SymbolicGovernorViolation):
             rs.verify_seal(seal, ACTION, stringly)
 
-    def test_param_named_action_cannot_shadow_the_action(self):
+    async def test_param_named_action_cannot_shadow_the_action(self):
         # Under the old flat merge {"action": a, **params}, the param won.
         assert rs.compute_action_hash(
             "cancel_trade", {"action": "execute_trade"}
         ) != rs.compute_action_hash("execute_trade", {"action": "execute_trade"})
-        seal = rs.generate_seal("cancel_trade", {"action": ACTION}, record_hash=RH)
+        seal = await rs.generate_seal(
+            "cancel_trade", {"action": ACTION}, record_hash=RH
+        )
         with pytest.raises(rs.SymbolicGovernorViolation):
             rs.verify_seal(seal, ACTION, {"action": ACTION})
 
@@ -130,22 +132,22 @@ class TestCanonicalization:
             {"x": object()},
         ],
     )
-    def test_non_json_params_refused_at_issuance(self, bad_params):
+    async def test_non_json_params_refused_at_issuance(self, bad_params):
         with pytest.raises(rs.SealCanonicalizationError):
-            rs.generate_seal(ACTION, bad_params, record_hash=RH)
+            await rs.generate_seal(ACTION, bad_params, record_hash=RH)
 
     @pytest.mark.parametrize(
         "bad_params",
         [{"x": float("nan")}, {"x": datetime.date(2026, 1, 1)}, {"x": 2**60}],
     )
-    def test_non_json_params_refused_at_verification(self, bad_params):
-        seal = rs.generate_seal(ACTION, {"x": 1}, record_hash=RH)
+    async def test_non_json_params_refused_at_verification(self, bad_params):
+        seal = await rs.generate_seal(ACTION, {"x": 1}, record_hash=RH)
         with pytest.raises(rs.SymbolicGovernorViolation):
             rs.verify_seal(seal, ACTION, bad_params)
 
-    def test_max_safe_integer_is_accepted(self):
+    async def test_max_safe_integer_is_accepted(self):
         params = {"x": 2**53 - 1, "y": -(2**53 - 1)}
-        seal = rs.generate_seal(ACTION, params, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, params, record_hash=RH)
         assert rs.verify_seal(seal, ACTION, params) is True
 
     @pytest.mark.parametrize("bad_action", ["", None, 7])
@@ -214,16 +216,16 @@ class TestJwtCanonClaim:
 
 
 class TestEvidenceBindingDefault:
-    def test_binding_required_by_default(self):
+    async def test_binding_required_by_default(self):
         assert rs._require_evidence_binding() is True
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=None)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=None)
         with pytest.raises(rs.SymbolicGovernorViolation, match="Evidence sufficiency"):
             rs.verify_seal(seal, ACTION, PARAMS)
 
-    def test_opt_out_honoured_outside_production(self, monkeypatch):
+    async def test_opt_out_honoured_outside_production(self, monkeypatch):
         monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "false")
         assert rs._require_evidence_binding() is False
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=None)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=None)
         assert rs.verify_seal(seal, ACTION, PARAMS) is True
 
     def test_opt_out_ignored_in_production(self, monkeypatch):
@@ -238,14 +240,14 @@ class TestEvidenceBindingDefault:
 
     @pytest.mark.asyncio
     async def test_consume_refused_without_evidence_index(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         with pytest.raises(rs.SymbolicGovernorViolation, match="not bound"):
             await rs.verify_and_consume_seal(seal, ACTION, PARAMS, redis_client=redis)
         assert await rs.seal_state(seal, redis_client=redis) is rs.SealState.UNUSED
 
     @pytest.mark.asyncio
     async def test_consume_refused_when_index_names_other_record(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         await _index(redis, seal, "d" * 64)
         with pytest.raises(rs.SymbolicGovernorViolation, match="record_hash mismatch"):
             await rs.verify_and_consume_seal(seal, ACTION, PARAMS, redis_client=redis)
@@ -253,7 +255,7 @@ class TestEvidenceBindingDefault:
 
     @pytest.mark.asyncio
     async def test_consume_succeeds_with_matching_index(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         await _index(redis, seal)
         assert await rs.verify_and_consume_seal(
             seal, ACTION, PARAMS, redis_client=redis
@@ -264,7 +266,7 @@ class TestEvidenceBindingDefault:
     async def test_index_read_failure_fails_closed(self):
         broken = AsyncMock()
         broken.get.side_effect = ConnectionError("redis down")
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         with pytest.raises(rs.SymbolicGovernorViolation, match="evidence index"):
             await rs.verify_and_consume_seal(seal, ACTION, PARAMS, redis_client=broken)
 
@@ -345,7 +347,7 @@ class TestGenerateSealWithEvidence:
 class TestRevocation:
     @pytest.mark.asyncio
     async def test_revoked_seal_cannot_be_consumed(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         await _index(redis, seal)
         assert await rs.revoke_seal(seal, "operator kill", redis_client=redis) is True
         assert await rs.seal_state(seal, redis_client=redis) is rs.SealState.REVOKED
@@ -357,7 +359,7 @@ class TestRevocation:
 
     @pytest.mark.asyncio
     async def test_consumed_seal_cannot_be_revoked(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         await _index(redis, seal)
         assert await rs.verify_and_consume_seal(
             seal, ACTION, PARAMS, redis_client=redis
@@ -367,7 +369,7 @@ class TestRevocation:
 
     @pytest.mark.asyncio
     async def test_double_revoke_is_idempotent_false(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         assert await rs.revoke_seal(seal, "first", redis_client=redis) is True
         assert await rs.revoke_seal(seal, "second", redis_client=redis) is False
         raw = json.loads(await redis.get(f"cage:seal:nonce:{rs.seal_nonce(seal)}"))
@@ -375,7 +377,7 @@ class TestRevocation:
 
     @pytest.mark.asyncio
     async def test_revocation_key_outlives_seal(self, redis):
-        seal = rs.generate_seal(ACTION, PARAMS, ttl_s=30, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, ttl_s=30, record_hash=RH)
         await rs.revoke_seal(seal, "ttl", redis_client=redis)
         ttl = await redis.ttl(f"cage:seal:nonce:{rs.seal_nonce(seal)}")
         assert ttl >= 60
@@ -396,7 +398,7 @@ class TestRevocation:
         broken = AsyncMock()
         broken.set.side_effect = ConnectionError("redis down")
         broken.get.side_effect = ConnectionError("redis down")
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         with pytest.raises(rs.SymbolicGovernorViolation, match="revocation failed"):
             await rs.revoke_seal(seal, "x", redis_client=broken)
         with pytest.raises(rs.SymbolicGovernorViolation, match="state unavailable"):
@@ -406,7 +408,7 @@ class TestRevocation:
     async def test_revoke_and_consume_race_has_one_winner(self, redis):
         import asyncio
 
-        seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+        seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
         await _index(redis, seal)
         consume, revoke = await asyncio.gather(
             rs.verify_and_consume_seal(seal, ACTION, PARAMS, redis_client=redis),
@@ -432,7 +434,7 @@ async def test_default_store_uses_raw_client_behind_shared_wrapper(monkeypatch):
             return raw
 
     monkeypatch.setattr(rc, "redis_client", _Wrapper())
-    seal = rs.generate_seal(ACTION, PARAMS, record_hash=RH)
+    seal = await rs.generate_seal(ACTION, PARAMS, record_hash=RH)
     await _index(raw, seal)
     assert await rs.verify_and_consume_seal(seal, ACTION, PARAMS)
     assert await rs.seal_state(seal) is rs.SealState.CONSUMED

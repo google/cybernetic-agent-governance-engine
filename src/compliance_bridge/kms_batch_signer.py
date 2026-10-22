@@ -394,7 +394,7 @@ class AsyncBatchSigner:
         signed = 0
         for record in batch:
             try:
-                signature = self._signer.sign(record.payload)  # type: ignore[attr-defined]
+                signature = await self._signer.sign_async(record.payload)  # type: ignore[attr-defined]
 
                 if record.callback is not None:
                     record.callback(record.record_hash, signature)

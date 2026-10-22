@@ -77,7 +77,7 @@ class TestRoutingSealRejectsInvalidSeal:
         with pytest.raises(SymbolicGovernorViolation):
             verify_seal("not-a-valid-seal", "execute_trade", {"amount": 5000})
 
-    def test_verify_seal_rejects_tampered_hmac(self):
+    async def test_verify_seal_rejects_tampered_hmac(self):
         """verify_seal raises SymbolicGovernorViolation when the HMAC is tampered."""
         # GOVERNANCE_SALT is set by conftest.py to ensure consistent HMAC key
         # across all tests. Do not override here.
@@ -87,7 +87,7 @@ class TestRoutingSealRejectsInvalidSeal:
             verify_seal,
         )
 
-        seal = generate_seal("execute_trade", {"amount": 5000})
+        seal = await generate_seal("execute_trade", {"amount": 5000})
         # Tamper with the HMAC portion
         parts = seal.split(".")
         parts[2] = "a" * 64  # replace HMAC with garbage
@@ -95,13 +95,15 @@ class TestRoutingSealRejectsInvalidSeal:
         with pytest.raises(SymbolicGovernorViolation):
             verify_seal(tampered, "execute_trade", {"amount": 5000})
 
-    def test_verify_seal_accepts_valid_seal(self):
+    async def test_verify_seal_accepts_valid_seal(self):
         """verify_seal returns True for a freshly generated valid seal."""
         # GOVERNANCE_SALT is set by conftest.py to ensure consistent HMAC key
         # across all tests. Do not override here.
         from src.gateway.governance.routing_seal import generate_seal, verify_seal
 
-        seal = generate_seal("execute_trade", {"amount": 5000}, record_hash="a" * 64)
+        seal = await generate_seal(
+            "execute_trade", {"amount": 5000}, record_hash="a" * 64
+        )
         result = verify_seal(seal, "execute_trade", {"amount": 5000})
         assert result is True
 

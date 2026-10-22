@@ -24,6 +24,8 @@ and are loaded lazily through `src.gateway.governance.signer_factory`.
 from __future__ import annotations
 
 import abc
+import asyncio
+import functools
 import hashlib
 import hmac
 import json
@@ -31,10 +33,11 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypeVar
 
 from opentelemetry import trace as otel_trace
 
@@ -43,6 +46,110 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
 _tracer = otel_trace.get_tracer(__name__)
+
+_T = TypeVar("_T")
+
+# ---------------------------------------------------------------------------
+# Async KMS Executor, Concurrency Cap, Timeout & Loop Guard
+# ---------------------------------------------------------------------------
+
+_DEFAULT_KMS_MAX_CONCURRENCY: int = 16
+_DEFAULT_KMS_SIGN_TIMEOUT_SECONDS: float = 5.0
+
+_IN_KMS_EXECUTOR = threading.local()
+_KMS_EXECUTOR_LOCK = threading.Lock()
+_KMS_EXECUTORS: dict[int, ThreadPoolExecutor] = {}
+_KMS_SEMAPHORES: dict[tuple[int, int], asyncio.Semaphore] = {}
+
+
+def _resolve_kms_max_concurrency() -> int:
+    raw = os.environ.get("CAGE_KMS_MAX_CONCURRENCY", "")
+    if raw:
+        try:
+            val = int(raw)
+            if val >= 1:
+                return val
+        except ValueError:
+            pass
+    return _DEFAULT_KMS_MAX_CONCURRENCY
+
+
+def _resolve_kms_sign_timeout_seconds() -> float:
+    raw = os.environ.get("CAGE_KMS_SIGN_TIMEOUT_SECONDS", "")
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0.0:
+                return val
+        except ValueError:
+            pass
+    return _DEFAULT_KMS_SIGN_TIMEOUT_SECONDS
+
+
+def _get_kms_executor(max_workers: int) -> ThreadPoolExecutor:
+    with _KMS_EXECUTOR_LOCK:
+        executor = _KMS_EXECUTORS.get(max_workers)
+        if executor is None:
+            executor = ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix="cage-kms",
+            )
+            _KMS_EXECUTORS[max_workers] = executor
+        return executor
+
+
+def _get_kms_semaphore(
+    loop: asyncio.AbstractEventLoop, max_concurrency: int
+) -> asyncio.Semaphore:
+    key = (id(loop), max_concurrency)
+    sem = _KMS_SEMAPHORES.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(max_concurrency)
+        _KMS_SEMAPHORES[key] = sem
+    return sem
+
+
+def _guard_no_running_loop(method_name: str) -> None:
+    """Forbid calling synchronous KMS signing methods on a thread with a running event loop."""
+    if getattr(_IN_KMS_EXECUTOR, "active", False):
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    msg = (
+        f"[KMSSigner] Synchronous {method_name}() called from an active asyncio "
+        f"event loop. Await {method_name}_async() instead to avoid blocking the loop."
+    )
+    if is_enforcing(resolve_posture()):
+        logger.error(msg)
+        return
+    raise RuntimeError(msg)
+
+
+async def _run_in_kms_executor(
+    func: Callable[..., _T],
+    *args: Any,
+    **kwargs: Any,
+) -> _T:
+    """Run ``func(*args, **kwargs)`` on the dedicated ``cage-kms`` executor with semaphore and timeout."""
+    loop = asyncio.get_running_loop()
+    max_concurrency = _resolve_kms_max_concurrency()
+    timeout_s = _resolve_kms_sign_timeout_seconds()
+    semaphore = _get_kms_semaphore(loop, max_concurrency)
+    executor = _get_kms_executor(max_concurrency)
+
+    def _invoke() -> _T:
+        _IN_KMS_EXECUTOR.active = True
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _IN_KMS_EXECUTOR.active = False
+
+    async with asyncio.timeout(timeout_s):
+        async with semaphore:
+            return await loop.run_in_executor(executor, _invoke)
+
 
 # ---------------------------------------------------------------------------
 # Global Configuration (Module-level for mock support in unit tests)
@@ -680,6 +787,7 @@ class KMSGovernanceSigner:
         )
 
     def sign(self, plan: dict[str, Any]) -> str:
+        _guard_no_running_loop("sign")
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign() called but KMS is not active. "
@@ -694,6 +802,10 @@ class KMSGovernanceSigner:
                 span.set_attribute("cage.signing.signed_at", plan["signed_at"])
             return self._kms_sign(plan_bytes)
 
+    async def sign_async(self, plan: dict[str, Any]) -> str:
+        """Asynchronously sign a governance plan on the bounded KMS executor."""
+        return await _run_in_kms_executor(self.sign, plan)
+
     def sign_decision(
         self,
         plan: dict[str, Any],
@@ -701,6 +813,7 @@ class KMSGovernanceSigner:
         kid: str | None = None,
     ) -> SignedRecord:
         """Sign a governance decision dictionary and return a ``SignedRecord``."""
+        _guard_no_running_loop("sign_decision")
         sig_hex = self.sign(plan)
         resolved_kid = (
             kid
@@ -717,8 +830,20 @@ class KMSGovernanceSigner:
             signed_at=signed_at,
         )
 
+    async def sign_decision_async(
+        self,
+        plan: dict[str, Any],
+        *,
+        kid: str | None = None,
+    ) -> SignedRecord:
+        """Asynchronously sign a governance decision dictionary and return a ``SignedRecord``."""
+        return await _run_in_kms_executor(
+            functools.partial(self.sign_decision, plan, kid=kid)
+        )
+
     def sign_raw(self, message: bytes) -> bytes:
         """Sign raw bytes directly (for JWT signing)."""
+        _guard_no_running_loop("sign_raw")
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign_raw() called but KMS is not active. "
@@ -740,6 +865,10 @@ class KMSGovernanceSigner:
             digest = hash_fn(message).digest()
             return self._provider.sign_digest(digest)
 
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        """Asynchronously sign raw bytes on the bounded KMS executor."""
+        return await _run_in_kms_executor(self.sign_raw, message)
+
     def sign_jws(self, signing_input: bytes) -> bytes:
         """Sign a JWS signing input and return RFC 7518 signature bytes.
 
@@ -747,6 +876,7 @@ class KMSGovernanceSigner:
         ``R||S`` encoding JWS requires, so callers never handle provider wire
         formats. Pair with :attr:`jose_alg` for the header ``alg``.
         """
+        _guard_no_running_loop("sign_jws")
         signature = self.sign_raw(signing_input)
         alg = self.jose_alg
         if (
@@ -757,8 +887,13 @@ class KMSGovernanceSigner:
             signature = der_to_raw_ecdsa_signature(signature, alg)
         return signature
 
+    async def sign_jws_async(self, signing_input: bytes) -> bytes:
+        """Asynchronously sign a JWS signing input on the bounded KMS executor."""
+        return await _run_in_kms_executor(self.sign_jws, signing_input)
+
     def sign_precomputed_digest(self, digest: bytes) -> str:
         """Sign a pre-computed envelope digest directly."""
+        _guard_no_running_loop("sign_precomputed_digest")
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign_precomputed_digest() called but KMS is not active."
@@ -776,6 +911,10 @@ class KMSGovernanceSigner:
 
             sig_bytes = self._provider.sign_digest(digest)
             return sig_bytes.hex()
+
+    async def sign_precomputed_digest_async(self, digest: bytes) -> str:
+        """Asynchronously sign a pre-computed envelope digest on the bounded KMS executor."""
+        return await _run_in_kms_executor(self.sign_precomputed_digest, digest)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
         try:
@@ -1194,7 +1333,21 @@ class BatchGovernanceSigner:
         *,
         kid: str | None = None,
     ) -> list[SignedRecord]:
+        _guard_no_running_loop("sign_batch")
         return [self._signer.sign_decision(d, kid=kid) for d in decisions]
+
+    async def sign_batch_async(
+        self,
+        decisions: Sequence[dict[str, Any]],
+        *,
+        kid: str | None = None,
+    ) -> list[SignedRecord]:
+        """Asynchronously sign a batch of governance decisions."""
+        return list(
+            await asyncio.gather(
+                *(self._signer.sign_decision_async(d, kid=kid) for d in decisions)
+            )
+        )
 
     def verify_batch(
         self,

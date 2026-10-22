@@ -172,11 +172,11 @@ def _make_mock_signer_with_keypair(algorithm="ec_p256"):
 # ---------------------------------------------------------------------------
 
 
-def test_mint_verify_roundtrip_es256():
+async def test_mint_verify_roundtrip_es256():
     """Mint → verify round-trip with ES256 returns exact claims."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
         rec="rec-789",
@@ -198,11 +198,11 @@ def test_mint_verify_roundtrip_es256():
     assert abs(claims.iat - int(time.time())) <= 2  # Within 2s of now
 
 
-def test_mint_verify_roundtrip_eddsa():
+async def test_mint_verify_roundtrip_eddsa():
     """Mint → verify round-trip with EdDSA (Ed25519) works correctly."""
     signer, _ = _make_mock_signer_with_keypair("ed25519")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor-999",
         tid="thread-111",
         rec="rec-222",
@@ -222,12 +222,12 @@ def test_mint_verify_roundtrip_eddsa():
     assert claims.exp == claims.iat + 30
 
 
-def test_mint_sets_correct_ttl():
+async def test_mint_sets_correct_ttl():
     """Minted token has exp exactly iat + ttl_seconds."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     for ttl in [30, 60, 90, 120]:
-        token = ConsequenceToken.mint(
+        token = await ConsequenceToken.mint(
             sub="actor",
             tid="thread",
             rec="rec",
@@ -275,12 +275,12 @@ def test_verify_rejects_alg_none():
         ConsequenceToken.verify(token, signer=signer)
 
 
-def test_verify_rejects_algorithm_confusion():
+async def test_verify_rejects_algorithm_confusion():
     """Verify rejects a token where header alg != signer's jose_alg."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")  # ES256
 
     # Mint a token normally
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
     )
 
@@ -303,11 +303,11 @@ def test_verify_rejects_algorithm_confusion():
 # ---------------------------------------------------------------------------
 
 
-def test_verify_rejects_tampered_payload():
+async def test_verify_rejects_tampered_payload():
     """Verify rejects a token with tampered payload (signature still valid for original)."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
     )
 
@@ -327,11 +327,11 @@ def test_verify_rejects_tampered_payload():
         ConsequenceToken.verify(tampered_token, signer=signer)
 
 
-def test_verify_rejects_tampered_signature():
+async def test_verify_rejects_tampered_signature():
     """Verify rejects a token with a tampered signature."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
     )
 
@@ -354,13 +354,13 @@ def test_verify_rejects_tampered_signature():
 # ---------------------------------------------------------------------------
 
 
-def test_verify_rejects_expired_token():
+async def test_verify_rejects_expired_token():
     """Verify rejects a token with exp in the past."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     # Mint a token with -1s TTL (already expired)
     with patch("src.gateway.governance.consequence_token.time.time", return_value=1000):
-        token = ConsequenceToken.mint(
+        token = await ConsequenceToken.mint(
             sub="actor",
             tid="thread",
             rec="rec",
@@ -375,12 +375,12 @@ def test_verify_rejects_expired_token():
             ConsequenceToken.verify(token, signer=signer)
 
 
-def test_verify_accepts_token_within_ttl():
+async def test_verify_accepts_token_within_ttl():
     """Verify accepts a token that has not yet expired."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     with patch("src.gateway.governance.consequence_token.time.time", return_value=1000):
-        token = ConsequenceToken.mint(
+        token = await ConsequenceToken.mint(
             sub="actor",
             tid="thread",
             rec="rec",
@@ -395,13 +395,13 @@ def test_verify_accepts_token_within_ttl():
         assert claims.sub == "actor"
 
 
-def test_verify_rejects_implausibly_future_iat():
+async def test_verify_rejects_implausibly_future_iat():
     """Verify rejects a token with iat too far in the future (beyond clock skew tolerance)."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     # Mint at t=1000, but verify at t=990 (iat is 10s in the future, > 5s tolerance)
     with patch("src.gateway.governance.consequence_token.time.time", return_value=1000):
-        token = ConsequenceToken.mint(
+        token = await ConsequenceToken.mint(
             sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
         )
 
@@ -410,13 +410,13 @@ def test_verify_rejects_implausibly_future_iat():
             ConsequenceToken.verify(token, signer=signer)
 
 
-def test_verify_accepts_iat_within_clock_skew_tolerance():
+async def test_verify_accepts_iat_within_clock_skew_tolerance():
     """Verify accepts a token with iat slightly in the future (within 5s tolerance)."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     # Mint at t=1000, verify at t=997 (iat is 3s in the future, < 5s tolerance)
     with patch("src.gateway.governance.consequence_token.time.time", return_value=1000):
-        token = ConsequenceToken.mint(
+        token = await ConsequenceToken.mint(
             sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
         )
 
@@ -467,12 +467,12 @@ def test_verify_rejects_non_json_payload():
         ConsequenceToken.verify(token, signer=signer)
 
 
-def test_verify_rejects_missing_required_claim():
+async def test_verify_rejects_missing_required_claim():
     """Verify rejects a token missing a required claim (e.g., sub)."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     # Mint normally, then tamper to remove 'sub'
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
     )
 
@@ -489,7 +489,7 @@ def test_verify_rejects_missing_required_claim():
         .decode()
     )
     signing_input = f"{header_b64}.{tampered_payload_b64}".encode("ascii")
-    tampered_sig = signer.sign_raw(signing_input)
+    tampered_sig = await signer.sign_raw_async(signing_input)
     tampered_sig_b64 = base64.urlsafe_b64encode(tampered_sig).rstrip(b"=").decode()
     tampered_token = f"{header_b64}.{tampered_payload_b64}.{tampered_sig_b64}"
 
@@ -497,11 +497,11 @@ def test_verify_rejects_missing_required_claim():
         ConsequenceToken.verify(tampered_token, signer=signer)
 
 
-def test_verify_rejects_invalid_exp_type():
+async def test_verify_rejects_invalid_exp_type():
     """Verify rejects a token with exp as a string instead of int."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
     )
 
@@ -517,7 +517,7 @@ def test_verify_rejects_invalid_exp_type():
         .decode()
     )
     signing_input = f"{header_b64}.{tampered_payload_b64}".encode("ascii")
-    tampered_sig = signer.sign_raw(signing_input)
+    tampered_sig = await signer.sign_raw_async(signing_input)
     tampered_sig_b64 = base64.urlsafe_b64encode(tampered_sig).rstrip(b"=").decode()
     tampered_token = f"{header_b64}.{tampered_payload_b64}.{tampered_sig_b64}"
 
@@ -530,7 +530,7 @@ def test_verify_rejects_invalid_exp_type():
 # ---------------------------------------------------------------------------
 
 
-def test_action_digest_matches_jcs_canonicalized_payload():
+async def test_action_digest_matches_jcs_canonicalized_payload():
     """act claim matches SHA-256 hex of JCS-canonicalized action payload."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
@@ -544,7 +544,7 @@ def test_action_digest_matches_jcs_canonicalized_payload():
     # Compute action digest the same way the gateway will
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act=action_digest, signer=signer
     )
 
@@ -561,7 +561,7 @@ def test_action_digest_matches_jcs_canonicalized_payload():
 # ---------------------------------------------------------------------------
 
 
-def test_ver_none_normalizes_to_empty_string():
+async def test_ver_none_normalizes_to_empty_string():
     """ver=None is normalized to "" consistently with ConsequenceAuthorityStore.binding_hash."""
     from src.gateway.governance.consequence_authority_store import (
         ConsequenceAuthorityStore,
@@ -570,7 +570,7 @@ def test_ver_none_normalizes_to_empty_string():
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     # Mint with ver=None
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, ver=None, signer=signer
     )
 
@@ -587,11 +587,11 @@ def test_ver_none_normalizes_to_empty_string():
     assert binding1 == binding2
 
 
-def test_ver_string_preserved():
+async def test_ver_string_preserved():
     """ver as a string is preserved as-is."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, ver="v42", signer=signer
     )
 
@@ -604,11 +604,11 @@ def test_ver_string_preserved():
 # ---------------------------------------------------------------------------
 
 
-def test_mint_with_custom_ttl():
+async def test_mint_with_custom_ttl():
     """Mint respects custom ttl_seconds parameter."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor",
         tid="thread",
         rec="rec",
@@ -621,11 +621,11 @@ def test_mint_with_custom_ttl():
     assert claims.exp == claims.iat + 120
 
 
-def test_verify_with_rsa_key():
+async def test_verify_with_rsa_key():
     """Verify works with RSA keys (RS256)."""
     signer, _ = _make_mock_signer_with_keypair("rsa_2048")
 
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec="rec", act="a" * 64, signer=signer
     )
 
@@ -646,12 +646,12 @@ def test_verify_fails_when_kms_inactive():
         ConsequenceToken.verify(token, signer=inactive_signer)
 
 
-def test_jti_equals_rec():
+async def test_jti_equals_rec():
     """jti claim always equals rec (authority record ID)."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
 
     rec_value = "unique-rec-id-12345"
-    token = ConsequenceToken.mint(
+    token = await ConsequenceToken.mint(
         sub="actor", tid="thread", rec=rec_value, act="a" * 64, signer=signer
     )
 

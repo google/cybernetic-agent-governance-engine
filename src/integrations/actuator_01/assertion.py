@@ -107,7 +107,7 @@ def _validate_inputs(
         )
 
 
-def build_assertion(
+async def build_assertion(
     envelope_digest_hex: str,
     nonce_hex: str,
     issued_at: int,
@@ -154,7 +154,7 @@ def build_assertion(
 
     # ── Step 2: Domain-tagged KMS signature ────────────────────────────────
     tagged_message = ACTUATOR_01_DOMAIN_TAG_ASSERTION + signable_payload
-    signature_bytes = signer.sign_raw(tagged_message)
+    signature_bytes = await signer.sign_raw_async(tagged_message)
 
     # Truncate or verify signature is exactly 64 bytes.
     # Ed25519 signatures are always 64 bytes.  ECDSA P-256 raw signatures are

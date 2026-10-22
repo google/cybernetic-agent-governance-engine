@@ -877,7 +877,7 @@ def mock_gateway_client(monkeypatch):
     )
 
     async def _approved_validate_action(self, action: str, params, **kwargs):
-        seal = generate_seal(action, params)
+        seal = await generate_seal(action, params)
         return {
             "verdict": "APPROVED",
             "violations": [],

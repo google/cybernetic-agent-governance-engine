@@ -276,7 +276,7 @@ class Actuator03Adapter:
         envelope_digest = hashlib.sha256(canonical_bytes).hexdigest()
 
         try:
-            sig_bytes = self._signer.sign_raw(
+            sig_bytes = await self._signer.sign_raw_async(
                 QUARANTINE_ASSERTION_DOMAIN_TAG + canonical_bytes
             )
             assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii")

@@ -21,7 +21,7 @@ signatures, base64url encoding, and pre-flight validation.
 
 import hashlib
 import struct
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -47,6 +47,7 @@ def mock_signer():
     signer.is_kms_active = True
     # Return a deterministic 64-byte signature based on the input.
     signer.sign_raw.side_effect = lambda msg: hashlib.sha512(msg).digest()[:64]
+    signer.sign_raw_async = AsyncMock(side_effect=lambda msg: signer.sign_raw(msg))
     return signer
 
 
@@ -71,10 +72,10 @@ def valid_issued_at():
 class TestAssertionLayout:
     """Verify the 120-byte assertion has the correct binary layout."""
 
-    def test_assertion_is_exactly_120_bytes(
+    async def test_assertion_is_exactly_120_bytes(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
@@ -86,48 +87,48 @@ class TestAssertionLayout:
         )
         assert raw_total == ASSERTION_TOTAL_BYTES
 
-    def test_digest_field_is_32_bytes(
+    async def test_digest_field_is_32_bytes(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
         assert len(decoded["digest"]) == 32
         assert decoded["digest"] == bytes.fromhex(valid_digest_hex)
 
-    def test_nonce_field_is_16_bytes(
+    async def test_nonce_field_is_16_bytes(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
         assert len(decoded["nonce"]) == 16
         assert decoded["nonce"] == bytes.fromhex(valid_nonce_hex)
 
-    def test_timestamp_is_big_endian_uint64(
+    async def test_timestamp_is_big_endian_uint64(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
         assert decoded["timestamp"] == valid_issued_at
 
-    def test_signature_is_64_bytes(
+    async def test_signature_is_64_bytes(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
         assert len(decoded["signature"]) == 64
 
-    def test_signable_payload_is_56_bytes(
+    async def test_signable_payload_is_56_bytes(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
@@ -146,17 +147,21 @@ class TestDomainTagIsolation:
     def test_assertion_domain_tag_exact_value(self):
         assert ACTUATOR_01_DOMAIN_TAG_ASSERTION == b"ARCHYTAN_ASSERTION_V1:"
 
-    def test_signer_receives_assertion_domain_tag(
+    async def test_signer_receives_assertion_domain_tag(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer)
+        await build_assertion(
+            valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
+        )
         call_args = mock_signer.sign_raw.call_args[0][0]
         assert call_args.startswith(ACTUATOR_01_DOMAIN_TAG_ASSERTION)
 
-    def test_signer_does_not_receive_quorum_tag(
+    async def test_signer_does_not_receive_quorum_tag(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer)
+        await build_assertion(
+            valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
+        )
         call_args = mock_signer.sign_raw.call_args[0][0]
         assert not call_args.startswith(ACTUATOR_01_DOMAIN_TAG_QUORUM)
 
@@ -167,28 +172,28 @@ class TestDomainTagIsolation:
 class TestBase64UrlEncoding:
     """Verify base64url encoding with no padding."""
 
-    def test_no_padding_characters(
+    async def test_no_padding_characters(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         assert "=" not in b64
 
-    def test_no_standard_base64_characters(
+    async def test_no_standard_base64_characters(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
         """base64url uses - and _ instead of + and /."""
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         assert "+" not in b64
         assert "/" not in b64
 
-    def test_roundtrip_decode(
+    async def test_roundtrip_decode(
         self, mock_signer, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
-        b64 = build_assertion(
+        b64 = await build_assertion(
             valid_digest_hex, valid_nonce_hex, valid_issued_at, mock_signer
         )
         decoded = decode_assertion(b64)
@@ -203,49 +208,62 @@ class TestBase64UrlEncoding:
 class TestAssertionValidation:
     """Pre-flight validation of assertion inputs."""
 
-    def test_rejects_short_digest(self, mock_signer, valid_nonce_hex, valid_issued_at):
+    async def test_rejects_short_digest(
+        self, mock_signer, valid_nonce_hex, valid_issued_at
+    ):
         with pytest.raises(AssertionBuildError, match="64 hex chars"):
-            build_assertion("abcd", valid_nonce_hex, valid_issued_at, mock_signer)
+            await build_assertion("abcd", valid_nonce_hex, valid_issued_at, mock_signer)
 
-    def test_rejects_invalid_hex_digest(
+    async def test_rejects_invalid_hex_digest(
         self, mock_signer, valid_nonce_hex, valid_issued_at
     ):
         bad_hex = "z" * 64
         with pytest.raises(AssertionBuildError, match="not valid hex"):
-            build_assertion(bad_hex, valid_nonce_hex, valid_issued_at, mock_signer)
+            await build_assertion(
+                bad_hex, valid_nonce_hex, valid_issued_at, mock_signer
+            )
 
-    def test_rejects_short_nonce(self, mock_signer, valid_digest_hex, valid_issued_at):
+    async def test_rejects_short_nonce(
+        self, mock_signer, valid_digest_hex, valid_issued_at
+    ):
         with pytest.raises(AssertionBuildError, match="32 hex chars"):
-            build_assertion(valid_digest_hex, "abcd", valid_issued_at, mock_signer)
+            await build_assertion(
+                valid_digest_hex, "abcd", valid_issued_at, mock_signer
+            )
 
-    def test_rejects_negative_timestamp(
+    async def test_rejects_negative_timestamp(
         self, mock_signer, valid_digest_hex, valid_nonce_hex
     ):
         with pytest.raises(AssertionBuildError, match="positive Unix timestamp"):
-            build_assertion(valid_digest_hex, valid_nonce_hex, -1, mock_signer)
+            await build_assertion(valid_digest_hex, valid_nonce_hex, -1, mock_signer)
 
-    def test_rejects_zero_timestamp(
+    async def test_rejects_zero_timestamp(
         self, mock_signer, valid_digest_hex, valid_nonce_hex
     ):
         with pytest.raises(AssertionBuildError, match="positive Unix timestamp"):
-            build_assertion(valid_digest_hex, valid_nonce_hex, 0, mock_signer)
+            await build_assertion(valid_digest_hex, valid_nonce_hex, 0, mock_signer)
 
-    def test_rejects_inactive_kms(
+    async def test_rejects_inactive_kms(
         self, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
         signer = MagicMock()
         signer.is_kms_active = False
         with pytest.raises(RuntimeError, match="KMS is not active"):
-            build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, signer)
+            await build_assertion(
+                valid_digest_hex, valid_nonce_hex, valid_issued_at, signer
+            )
 
-    def test_rejects_wrong_signature_length(
+    async def test_rejects_wrong_signature_length(
         self, valid_digest_hex, valid_nonce_hex, valid_issued_at
     ):
         signer = MagicMock()
         signer.is_kms_active = True
         signer.sign_raw.return_value = b"\x00" * 48  # Wrong length
+        signer.sign_raw_async = AsyncMock(return_value=b"\x00" * 48)
         with pytest.raises(AssertionBuildError, match="48 bytes, expected 64"):
-            build_assertion(valid_digest_hex, valid_nonce_hex, valid_issued_at, signer)
+            await build_assertion(
+                valid_digest_hex, valid_nonce_hex, valid_issued_at, signer
+            )
 
 
 # ── Test: Decode ──────────────────────────────────────────────────────────

@@ -514,7 +514,7 @@ class AgwAdapter:
                     await seal_res if inspect.isawaitable(seal_res) else str(seal_res)
                 )
             else:
-                seal = generate_seal(
+                seal = await generate_seal(
                     req.tool_name,
                     req.parameters,
                     aud=f"cage-actuator:{req.tool_name}",

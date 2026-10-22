@@ -66,7 +66,7 @@ class TestFastMcpSealVerificationMiddleware:
 
         mw = FastMcpSealVerificationMiddleware(require_tri_identity_digest=True)
         args = {"destination": "acct-99", "amount": 100}
-        seal = generate_seal("submit_payment", args, record_hash=None)
+        seal = await generate_seal("submit_payment", args, record_hash=None)
         digest = "a" * 64
 
         res_ok = await mw.verify_mcp_tool_call(

@@ -49,7 +49,7 @@ ACTUATOR_01_DOMAIN_TAG_QUORUM = b"ARCHYTAN_QUORUM_V1:"
 ACTUATOR_01_DOMAIN_TAG_POLICY_DECISION = b"ARCHYTAN_POLICY_DECISION_V1:"
 
 
-def sign_for_quorum(
+async def sign_for_quorum(
     signer: RawMessageSigner,
     raw_body: bytes,
 ) -> str:
@@ -72,15 +72,6 @@ def sign_for_quorum(
 
     Raises:
         RuntimeError: If KMS is not active or signing fails.
-
-    Example:
-        >>> from src.gateway.governance.kms_signer import get_governance_signer
-        >>> from src.integrations.actuator_01.signatures import sign_for_quorum
-        >>> signer = get_governance_signer()  # Returns RawMessageSigner protocol
-        >>> canonical_bytes = b'{"action":"execute_trade",...}'
-        >>> sig_hex = sign_for_quorum(signer, canonical_bytes)
-        >>> len(sig_hex)
-        128  # Ed25519 signature is 64 bytes = 128 hex chars
     """
     if not signer.is_kms_active:
         raise RuntimeError(
@@ -95,8 +86,8 @@ def sign_for_quorum(
     message = ACTUATOR_01_DOMAIN_TAG_QUORUM + body_digest
 
     # Sign the tagged message
-    # KMSSigner.sign_raw() handles Ed25519 vs ECDSA/RSA logic internally
-    signature_bytes = signer.sign_raw(message)
+    # KMSSigner.sign_raw_async() handles Ed25519 vs ECDSA/RSA logic internally
+    signature_bytes = await signer.sign_raw_async(message)
 
     # Return lowercase hex (wire contract requirement)
     signature_hex = signature_bytes.hex().lower()
@@ -110,7 +101,7 @@ def sign_for_quorum(
     return signature_hex
 
 
-def sign_policy_decision(
+async def sign_policy_decision(
     signer: RawMessageSigner,
     action: str,
     target_digest: str,
@@ -155,21 +146,6 @@ def sign_policy_decision(
     Raises:
         RuntimeError: If KMS is not active or signing fails.
         ValueError: If signer URN indicates operator quorum key (prohibited).
-
-    Example:
-        >>> from src.gateway.governance.kms_signer import get_governance_signer
-        >>> signer = get_governance_signer()
-        >>> sig = sign_policy_decision(
-        ...     signer=signer,
-        ...     action="payment.wire.execute",
-        ...     target_digest="a" * 64,
-        ...     correlation_id="550e8400-e29b-41d4-a716-446655440000",
-        ...     decision="ALLOW",
-        ...     decision_path="DIRECT",
-        ...     required_quorum=2,
-        ...     policy_version="v1",
-        ...     evaluated_at=1785012000,
-        ... )
     """
     if not signer.is_kms_active:
         raise RuntimeError(
@@ -209,7 +185,7 @@ def sign_policy_decision(
 
     # Sign domain-tagged decision binding
     message = ACTUATOR_01_DOMAIN_TAG_POLICY_DECISION + decision_binding_sha256
-    signature_bytes = signer.sign_raw(message)
+    signature_bytes = await signer.sign_raw_async(message)
 
     # Return lowercase hex (wire contract requirement)
     signature_hex = signature_bytes.hex().lower()
@@ -263,9 +239,16 @@ class Ed25519KeyPairSigner:
         )
         return pub_raw.hex().lower()
 
+    def _sign_ed25519(self, message: bytes) -> bytes:
+        return self._private_key.sign(message)
+
     def sign_raw(self, message: bytes) -> bytes:
         """Sign raw message bytes using PureEdDSA (Ed25519)."""
-        return self._private_key.sign(message)
+        return self._sign_ed25519(message)
+
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        """Asynchronously sign raw message bytes using PureEdDSA (Ed25519)."""
+        return self._sign_ed25519(message)
 
 
 @dataclass(frozen=True)

@@ -59,6 +59,9 @@ class _StubSigner:
     def sign_raw(self, message: bytes) -> bytes:
         return hashlib.sha256(message).digest() * 2
 
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        return self.sign_raw(message)
+
 
 class _StubKeyResolver:
     def __init__(self, keys: dict[str, Any]) -> None:

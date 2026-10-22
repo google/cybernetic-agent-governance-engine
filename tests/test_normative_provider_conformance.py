@@ -28,7 +28,7 @@ and runs as part of the fast `pytest-logic` CI matrix across all regions.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -274,6 +274,9 @@ class TestFlowSignalDecisionMapping:
             # Mock signer that fails (to test token minting is attempted)
             mock_signer = MagicMock()
             mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
+            mock_signer.sign_raw_async = AsyncMock(
+                side_effect=RuntimeError("KMS not active in test")
+            )
             mock_get_signer.return_value = mock_signer
 
             respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
@@ -464,6 +467,9 @@ class TestFlowSignalDecisionMapping:
             # Mock signer that fails (to test token minting is attempted)
             mock_signer = MagicMock()
             mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
+            mock_signer.sign_raw_async = AsyncMock(
+                side_effect=RuntimeError("KMS not active in test")
+            )
             mock_get_signer.return_value = mock_signer
 
             # Lowercase "allow"

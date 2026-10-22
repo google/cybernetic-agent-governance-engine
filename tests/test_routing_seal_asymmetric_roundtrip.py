@@ -111,7 +111,7 @@ def _segments(seal: str) -> tuple[dict, bytes]:
         ("ec-p256-raw", lambda: _HermeticECP256Provider(encoding="raw"), "ES256", 64),
     ],
 )
-def test_asymmetric_seal_round_trip(
+async def test_asymmetric_seal_round_trip(
     monkeypatch: pytest.MonkeyPatch,
     label: str,
     factory,
@@ -120,7 +120,7 @@ def test_asymmetric_seal_round_trip(
 ) -> None:
     _install(monkeypatch, factory())
 
-    seal = rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
+    seal = await rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
     header, signature = _segments(seal)
 
     assert header["alg"] == expected_alg, label
@@ -129,21 +129,23 @@ def test_asymmetric_seal_round_trip(
     assert rs.verify_seal(seal, _ACTION, _PARAMS, expected_record_hash=_RECORD_HASH)
 
 
-def test_asymmetric_seal_rejects_param_tamper(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_asymmetric_seal_rejects_param_tamper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install(monkeypatch, _HermeticECP256Provider())
-    seal = rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
+    seal = await rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
 
     with pytest.raises(rs.SymbolicGovernorViolation):
         rs.verify_seal(seal, _ACTION, {**_PARAMS, "amount": 10_000.0})
 
 
-def test_kidless_seal_rejected_even_with_single_key(
+async def test_kidless_seal_rejected_even_with_single_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Trust is resolved by kid alone; stripping kid must not fall back."""
     provider = ks.SoftwareEd25519Provider()
     _install(monkeypatch, provider)
-    seal = rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
+    seal = await rs.generate_seal(_ACTION, _PARAMS, record_hash=_RECORD_HASH)
 
     h, p, _ = seal.split(".")
     header = json.loads(base64.urlsafe_b64decode(h + "=" * (-len(h) % 4)))

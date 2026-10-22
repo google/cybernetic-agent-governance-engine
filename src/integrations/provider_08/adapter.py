@@ -218,7 +218,7 @@ class Provider08NormativeProvider:
                 mint_consequence_token_finding,
             )
 
-            token_finding = mint_consequence_token_finding(
+            token_finding = await mint_consequence_token_finding(
                 actor_id=_first_str(
                     payload, "agent_id", "actor_id", "operator_urn", "executor_id"
                 ),

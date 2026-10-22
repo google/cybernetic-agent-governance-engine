@@ -74,6 +74,9 @@ class MockPerOperatorSigner:
         """Return a deterministic but URN-specific 64-byte signature."""
         return hashlib.sha512(self._urn.encode() + message).digest()[:64]
 
+    async def sign_raw_async(self, message: bytes) -> bytes:
+        return self.sign_raw(message)
+
 
 def make_valid_clearance(
     operator_urns: list[str] | None = None,
@@ -273,6 +276,9 @@ class TestPerOperatorSigning:
             def sign_raw(self, message: bytes) -> bytes:
                 # Signature is deterministic based on URN alone
                 return hashlib.sha256(self._urn.encode()).digest() + b"\x00" * 32
+
+            async def sign_raw_async(self, message: bytes) -> bytes:
+                return self.sign_raw(message)
 
         def resolver(urn: str) -> KMSGovernanceSigner:
             return SimpleMockSigner(urn)  # type: ignore[return-value]

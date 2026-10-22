@@ -180,7 +180,7 @@ def test_gateway_assert_custom_salt_raises_uses_environment_fallback():
 # ---------------------------------------------------------------------------
 
 
-def test_gateway_generate_and_gfa_verify_round_trip():
+async def test_gateway_generate_and_gfa_verify_round_trip():
     """generate_seal() + GFA verify_seal() round-trip succeeds with the test salt."""
     from src.gateway.governance.routing_seal import generate_seal
     from src.gateway.governance.routing_seal import (
@@ -188,20 +188,20 @@ def test_gateway_generate_and_gfa_verify_round_trip():
     )
 
     params = {"symbol": "AAPL", "amount": 5000.0, "currency": "USD"}
-    seal = generate_seal("execute_trade", params, record_hash=RH)
+    seal = await generate_seal("execute_trade", params, record_hash=RH)
     assert gfa_verify(seal, "execute_trade", params) is True
 
 
-def test_gateway_generate_and_gateway_verify_round_trip():
+async def test_gateway_generate_and_gateway_verify_round_trip():
     """generate_seal() + gateway verify_seal() round-trip succeeds."""
     from src.gateway.governance.routing_seal import generate_seal, verify_seal
 
     params = {"symbol": "TSLA", "amount": 10000.0, "confidence": 0.97}
-    seal = generate_seal("execute_trade", params, record_hash=RH)
+    seal = await generate_seal("execute_trade", params, record_hash=RH)
     assert verify_seal(seal, "execute_trade", params) is True
 
 
-def test_round_trip_with_nested_params_is_structural():
+async def test_round_trip_with_nested_params_is_structural():
     """Nested params are hashed structurally (JCS), never coerced to str."""
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -210,7 +210,7 @@ def test_round_trip_with_nested_params_is_structural():
     )
 
     params = {"symbol": "GOOG", "amount": 1000.0, "metadata": {"key": "value"}}
-    seal = generate_seal("execute_trade", params, record_hash=RH)
+    seal = await generate_seal("execute_trade", params, record_hash=RH)
     assert verify_seal(seal, "execute_trade", params) is True
     # The str() rendering of the nested value is a different action.
     stringly = {**params, "metadata": str(params["metadata"])}
@@ -223,7 +223,7 @@ def test_round_trip_with_nested_params_is_structural():
 # ---------------------------------------------------------------------------
 
 
-def test_gateway_verify_seal_rejects_expired_seal():
+async def test_gateway_verify_seal_rejects_expired_seal():
     """verify_seal() raises SymbolicGovernorViolation for a seal generated with ttl_s=-10 (already expired)."""
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -233,7 +233,7 @@ def test_gateway_verify_seal_rejects_expired_seal():
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     # ttl_s=-10 generates an already-expired seal (both for JWT exp claim and HMAC timestamp)
-    seal = generate_seal("execute_trade", params, ttl_s=-10)
+    seal = await generate_seal("execute_trade", params, ttl_s=-10)
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal(seal, "execute_trade", params)
 
@@ -243,7 +243,7 @@ def test_gateway_verify_seal_rejects_expired_seal():
 # ---------------------------------------------------------------------------
 
 
-def test_gateway_verify_seal_rejects_wrong_action():
+async def test_gateway_verify_seal_rejects_wrong_action():
     """verify_seal() raises SymbolicGovernorViolation when the action does not match the seal's action slug."""
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -252,12 +252,12 @@ def test_gateway_verify_seal_rejects_wrong_action():
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
-    seal = generate_seal("execute_trade", params)
+    seal = await generate_seal("execute_trade", params)
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal(seal, "cancel_trade", params)
 
 
-def test_gateway_verify_seal_rejects_tampered_hmac():
+async def test_gateway_verify_seal_rejects_tampered_hmac():
     """verify_seal() raises SymbolicGovernorViolation when the HMAC component is tampered."""
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -266,7 +266,7 @@ def test_gateway_verify_seal_rejects_tampered_hmac():
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
-    seal = generate_seal("execute_trade", params)
+    seal = await generate_seal("execute_trade", params)
     parts = seal.split(".")
     # v2 format: HMAC is at index 3 (4th component)
     parts[3] = parts[3][:-1] + ("a" if parts[3][-1] != "a" else "b")
@@ -275,7 +275,7 @@ def test_gateway_verify_seal_rejects_tampered_hmac():
         verify_seal(tampered, "execute_trade", params)
 
 
-def test_gateway_verify_seal_rejects_tampered_record_hash():
+async def test_gateway_verify_seal_rejects_tampered_record_hash():
     """verify_seal() raises SymbolicGovernorViolation when the record_hash is tampered."""
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
@@ -284,7 +284,9 @@ def test_gateway_verify_seal_rejects_tampered_record_hash():
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
-    seal = generate_seal("execute_trade", params, record_hash="original_hash_value")
+    seal = await generate_seal(
+        "execute_trade", params, record_hash="original_hash_value"
+    )
     parts = seal.split(".")
     # v2 format: record_hash is at index 2 (3rd component)
     parts[2] = "tampered_hash_value"
@@ -327,7 +329,7 @@ async def test_gateway_verify_and_consume_seal_prevents_replay():
 
     redis = fakeredis.FakeRedis()
     params = {"symbol": "AAPL", "amount": 100.0}
-    seal = generate_seal("execute_trade", params, record_hash=RH)
+    seal = await generate_seal("execute_trade", params, record_hash=RH)
 
     # First consumption succeeds
     assert (
@@ -366,13 +368,15 @@ class TestEvidenceBindingEnforcement:
     def _test_posture(self, monkeypatch):
         monkeypatch.setenv("CAGE_ENV", "test")
 
-    def test_gateway_rejects_no_evidence_binding_in_strict_mode(self, monkeypatch):
+    async def test_gateway_rejects_no_evidence_binding_in_strict_mode(
+        self, monkeypatch
+    ):
         """P0: Gateway verify_seal() rejects 'no-evidence-binding' when enforcement is enabled."""
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "MSFT", "amount": 500.0}
         # Generate a seal without evidence binding
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash=None)
+        seal = await gw_seal.generate_seal("execute_trade", params, record_hash=None)
 
         monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
         with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
@@ -380,21 +384,23 @@ class TestEvidenceBindingEnforcement:
 
         assert "Evidence sufficiency violation" in str(exc_info.value)
 
-    def test_gateway_accepts_no_evidence_binding_when_enforcement_disabled(
+    async def test_gateway_accepts_no_evidence_binding_when_enforcement_disabled(
         self, monkeypatch
     ):
         """P0: Gateway verify_seal() accepts 'no-evidence-binding' when enforcement is disabled."""
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "MSFT", "amount": 500.0}
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash=None)
+        seal = await gw_seal.generate_seal("execute_trade", params, record_hash=None)
 
         monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "false")
         # Should not raise
         result = gw_seal.verify_seal(seal, "execute_trade", params)
         assert result is True
 
-    def test_gateway_accepts_valid_evidence_binding_in_strict_mode(self, monkeypatch):
+    async def test_gateway_accepts_valid_evidence_binding_in_strict_mode(
+        self, monkeypatch
+    ):
         """P0: Gateway verify_seal() accepts seals with valid evidence hash."""
         import src.gateway.governance.routing_seal as gw_seal
 
@@ -402,7 +408,7 @@ class TestEvidenceBindingEnforcement:
         valid_record_hash = (
             "abc123def456789012345678901234567890abcdef123456789012345678901234"
         )
-        seal = gw_seal.generate_seal(
+        seal = await gw_seal.generate_seal(
             "execute_trade", params, record_hash=valid_record_hash
         )
 
@@ -410,13 +416,13 @@ class TestEvidenceBindingEnforcement:
         result = gw_seal.verify_seal(seal, "execute_trade", params)
         assert result is True
 
-    def test_gateway_rejects_empty_record_hash_in_strict_mode(self, monkeypatch):
+    async def test_gateway_rejects_empty_record_hash_in_strict_mode(self, monkeypatch):
         """P0: Gateway verify_seal() rejects empty record_hash when enforcement is enabled."""
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "TSLA", "amount": 100.0}
         # Manually craft a seal with empty record_hash
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash="")
+        seal = await gw_seal.generate_seal("execute_trade", params, record_hash="")
 
         monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
         with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
@@ -424,12 +430,14 @@ class TestEvidenceBindingEnforcement:
 
         assert "Evidence sufficiency violation" in str(exc_info.value)
 
-    def test_gateway_rejects_none_string_record_hash_in_strict_mode(self, monkeypatch):
+    async def test_gateway_rejects_none_string_record_hash_in_strict_mode(
+        self, monkeypatch
+    ):
         """P0: Gateway verify_seal() rejects 'none' as record_hash."""
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "NVDA", "amount": 200.0}
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash="none")
+        seal = await gw_seal.generate_seal("execute_trade", params, record_hash="none")
 
         monkeypatch.setenv("CAGE_REQUIRE_EVIDENCE_BINDING", "true")
         with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
@@ -453,7 +461,7 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
 
     redis = fakeredis.FakeRedis()
     params = {"symbol": "GOOGL", "amount": 250.0}
-    seal = generate_seal("execute_trade", params, record_hash=RH)
+    seal = await generate_seal("execute_trade", params, record_hash=RH)
 
     # First consumption succeeds
     assert (
@@ -472,12 +480,12 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
     assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)
 
 
-def test_gateway_rejects_hmac_in_production():
+async def test_gateway_rejects_hmac_in_production():
     """verify_seal() rejects v2 HMAC seals when running in production."""
     import src.gateway.governance.routing_seal as gw_seal
 
     params = {"symbol": "AAPL", "amount": 1000.0}
-    seal = gw_seal.generate_seal("execute_trade", params)
+    seal = await gw_seal.generate_seal("execute_trade", params)
 
     # Patch environment to simulate production (runtime check via _is_production_env)
     # Clear both CAGE_ENV and ENVIRONMENT to ensure production detection
