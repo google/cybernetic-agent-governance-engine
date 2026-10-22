@@ -300,6 +300,7 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
             state.get("evaluation_result", "DENIED")
         ),  # M-06: fail-closed default
         "governance_signature": state.get("governance_signature"),
+        "routing_verdict_cache": state.get("routing_verdict_cache"),
         "data_analyst_ticker": state.get("data_analyst_ticker"),  # TOCTOU: re-hydration
         "deferred_id": state.get("deferred_id"),
         "approval_decision": state.get("approval_decision"),
@@ -308,7 +309,10 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
     # Invoke natively
     result = await subgraph.ainvoke(subgraph_state, {"recursion_limit": 10})
 
-    out: dict[str, Any] = {"messages": result["messages"]}
+    out: dict[str, Any] = {
+        "messages": result["messages"],
+        "routing_verdict_cache": None,
+    }
     if "deferred_id" in result:
         out["deferred_id"] = result["deferred_id"]
     if "approval_decision" in result:

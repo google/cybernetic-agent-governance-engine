@@ -57,10 +57,13 @@ from typing import Any
 
 import httpx
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
     PROCEED_VERDICTS,
     TRADE_ACTION,
-    trade_params,
+    build_routing_verdict_cache,
+    extract_trade_step,
+    reusable_allow_verdict,
 )
 from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
@@ -109,11 +112,13 @@ def _blocked(
             "safety_status": "HARD_PAUSE_BUDGET_EXCEEDED",
             "consecutive_denials": new_denials,
             "last_violation": violation,
+            "routing_verdict_cache": None,
         }
     return {
         "safety_status": "BLOCKED",
         "consecutive_denials": new_denials,
         "last_violation": violation,
+        "routing_verdict_cache": None,
     }
 
 
@@ -121,8 +126,9 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
     """
     Governance pre-execution gate via the CAGE Gateway (out-of-process PDP).
 
-    Submits the proposed trade to ``POST /governance/validate-action`` and maps
-    the verdict onto agent state.
+    Submits the proposed trade to ``POST /governance/validate-action`` (or
+    reuses a fresh matching ``ALLOW`` routing verdict from ``evaluator_node``)
+    and maps the verdict onto agent state.
 
     Fail-closed semantics:
       - ALLOW, NARROW or REQUIRE_APPROVAL (with ``deferred_id``) → safety_status
@@ -148,16 +154,50 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
     plan_raw = state.get("execution_plan_output")
     plan: dict[str, Any] = plan_raw if isinstance(plan_raw, dict) else {}
 
-    if not plan or plan.get("action") != "execute_trade":
+    try:
+        params = extract_trade_step(plan)
+    except Exception as exc:
+        logger.error(
+            "❌ Safety Node: Governance validation failed — failing closed (%s: %s)",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
+        return _blocked(
+            state,
+            policy_rule="GATEWAY_ERROR",
+            evidence=f"Failed to validate action due to {type(exc).__name__}: {exc!s}",
+            reason_code="GATEWAY_ERROR",
+            recoverable=False,
+        )
+
+    if params is None:
         logger.info(
             "Safety node: non-trade plan or missing plan — skipping governance check"
         )
         return {
             "safety_status": "SKIPPED",
+            "routing_verdict_cache": None,
+        }
+
+    cached_cache = state.get("routing_verdict_cache")
+    reused = reusable_allow_verdict(cached_cache, params)
+    if reused is not None:
+        logger.info(
+            "✅ Safety Node: reusing fresh ALLOW routing verdict (digest=%s)",
+            cached_cache.get("params_digest")
+            if isinstance(cached_cache, dict)
+            else "unknown",
+        )
+        return {
+            "safety_status": "APPROVED",
+            "consecutive_denials": 0,
+            "last_violation": None,
+            "governance_signature": str(reused.get("signature") or ""),
+            "routing_verdict_cache": cached_cache,
         }
 
     try:
-        params = trade_params(plan)
         result = await GatewayClient().validate_action(
             action=TRADE_ACTION, params=params
         )
@@ -217,11 +257,21 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             verdict,
             result.get("envelope_id", "unknown"),
         )
+        routing_cache = (
+            build_routing_verdict_cache(
+                params,
+                verdict=GovernanceDecision.ALLOW.value,
+                envelope=result,
+            )
+            if verdict == GovernanceDecision.ALLOW
+            else None
+        )
         out: dict[str, Any] = {
             "safety_status": "APPROVED",
             "consecutive_denials": 0,
             "last_violation": None,
             "governance_signature": str(result.get("signature") or ""),
+            "routing_verdict_cache": routing_cache,
         }
         if result.get("deferred_id"):
             out["deferred_id"] = str(result["deferred_id"])
@@ -238,6 +288,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             "deferral_reason": str(
                 result.get("defer_reason") or "Human approval required"
             ),
+            "routing_verdict_cache": None,
             # Do NOT reset consecutive_denials — deferral is not approval.
         }
 

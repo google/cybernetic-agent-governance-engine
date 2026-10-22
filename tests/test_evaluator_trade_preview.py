@@ -245,3 +245,215 @@ def test_planner_read_only_steps_are_registered(action) -> None:
         (_REPO / "src/cage_finance/stpa/terminal_registry.json").read_text()
     )
     assert generated["terminals"][action] == "READ_ONLY"
+
+
+# ---------------------------------------------------------------------------
+# Structured ExecutionPlan extraction & ALLOW routing-verdict reuse
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_safety_gate_extracts_trade_step_from_structured_execution_plan(
+    monkeypatch,
+) -> None:
+    """safety_check_node extracts the trade step from a structured ExecutionPlan dict."""
+    seen: dict[str, Any] = {}
+
+    class _Client:
+        async def validate_action(
+            self, *, action: str, params: dict[str, Any]
+        ) -> dict[str, Any]:
+            seen.update(action=action, params=params)
+            return {
+                "verdict": GovernanceDecision.ALLOW,
+                "envelope_id": "e1",
+                "signature": "sig-1",
+            }
+
+    monkeypatch.setattr(safety_mod, "GatewayClient", _Client)
+    structured_plan = _plan(_TRADE_STEP)
+
+    out = await safety_mod.safety_check_node(
+        {"execution_plan_output": structured_plan, "consecutive_denials": 0}
+    )
+
+    assert out["safety_status"] == "APPROVED"
+    assert seen["action"] == TRADE_ACTION
+    assert seen["params"] == trade_params(_TRADE_STEP["parameters"])
+    assert out["routing_verdict_cache"] is not None
+    assert out["routing_verdict_cache"]["verdict"] == "ALLOW"
+
+
+@pytest.mark.asyncio
+async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_guard(
+    monkeypatch,
+) -> None:
+    """A fresh ALLOW verdict from evaluator_node is reused by safety_check_node and gateway_tool_guard."""
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    from src.governed_financial_advisor.graph.governance.tool_guard import (
+        gateway_tool_guard,
+    )
+
+    _install_dry_run(monkeypatch, "ALLOW")
+    structured_plan = _plan(_TRADE_STEP)
+
+    eval_out = await evaluator_mod.evaluator_node(
+        {"execution_plan_output": structured_plan}
+    )
+    cache = eval_out["routing_verdict_cache"]
+    assert cache is not None
+    assert cache["verdict"] == "ALLOW"
+
+    validate_calls = 0
+
+    class _FailingClient:
+        async def validate_action(
+            self, *, action: str, params: dict[str, Any]
+        ) -> dict[str, Any]:
+            nonlocal validate_calls
+            validate_calls += 1
+            raise AssertionError("validate_action should be skipped on fresh ALLOW hit")
+
+    monkeypatch.setattr(safety_mod, "GatewayClient", _FailingClient)
+
+    safety_out = await safety_mod.safety_check_node(
+        {
+            "execution_plan_output": structured_plan,
+            "consecutive_denials": 1,
+            "routing_verdict_cache": cache,
+        }
+    )
+    assert safety_out["safety_status"] == "APPROVED"
+    assert safety_out["consecutive_denials"] == 0
+    assert validate_calls == 0
+
+    from src.governed_financial_advisor.graph.governance import tool_guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "GatewayClient", _FailingClient)
+
+    executed = 0
+
+    async def _fake_executor(state: dict[str, Any]) -> dict[str, Any]:
+        nonlocal executed
+        executed += 1
+        return {"messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")]}
+
+    tool_call = {
+        "name": "execute_trade_action",
+        "id": "c1",
+        "args": {
+            "symbol": "AAPL",
+            "amount": 500.0,
+            "currency": "USD",
+            "confidence": 0.99,
+            "side": "buy",
+        },
+    }
+    guard_out = await gateway_tool_guard("execute_trade", approvable=True)(
+        _fake_executor
+    )(
+        {
+            "messages": [AIMessage(content="", tool_calls=[tool_call])],
+            "routing_verdict_cache": safety_out["routing_verdict_cache"],
+        }
+    )
+    assert executed == 1
+    assert validate_calls == 0
+    assert guard_out["governance_status"] == "ALLOWED"
+    assert guard_out["governance_envelope"]["verdict"] == "ALLOW"
+    assert guard_out["routing_verdict_cache"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", ["NARROW", "REQUIRE_APPROVAL"])
+async def test_narrow_and_require_approval_never_populate_or_reuse_routing_cache(
+    monkeypatch, verdict: str
+) -> None:
+    """NARROW and REQUIRE_APPROVAL must never reuse a cached verdict."""
+    _install_dry_run(monkeypatch, verdict)
+    structured_plan = _plan(_TRADE_STEP)
+
+    eval_out = await evaluator_mod.evaluator_node(
+        {"execution_plan_output": structured_plan}
+    )
+    assert eval_out["routing_verdict_cache"] is None
+
+    validate_calls = 0
+
+    class _RecordingClient:
+        async def validate_action(
+            self, *, action: str, params: dict[str, Any]
+        ) -> dict[str, Any]:
+            nonlocal validate_calls
+            validate_calls += 1
+            return {
+                "verdict": getattr(GovernanceDecision, verdict),
+                "deferred_id": "d-1" if verdict == "REQUIRE_APPROVAL" else None,
+            }
+
+    monkeypatch.setattr(safety_mod, "GatewayClient", _RecordingClient)
+
+    safety_out = await safety_mod.safety_check_node(
+        {
+            "execution_plan_output": structured_plan,
+            "consecutive_denials": 0,
+            "routing_verdict_cache": {
+                "params_digest": "any",
+                "verdict": verdict,
+                "at": 1e12,
+                "envelope": {"verdict": verdict},
+            },
+        }
+    )
+    assert validate_calls == 1
+    assert safety_out["safety_status"] == "APPROVED"
+    assert safety_out["routing_verdict_cache"] is None
+
+
+@pytest.mark.asyncio
+async def test_expired_or_mismatched_routing_cache_calls_validate_action(
+    monkeypatch,
+) -> None:
+    """Expired TTL, parameter drift, role change, or low confidence forces a fresh validate-action call."""
+    from src.governed_financial_advisor.graph.nodes.trade_contract import (
+        build_routing_verdict_cache,
+        reusable_allow_verdict,
+    )
+
+    params = trade_params(_TRADE_STEP["parameters"])
+    cache = build_routing_verdict_cache(params, verdict="ALLOW", now=100.0)
+    assert cache is not None
+
+    # Within 30s TTL and matching params -> hits cache
+    assert reusable_allow_verdict(cache, params, now=125.0, ttl_s=30.0) is not None
+    # Expired (> 30s) -> misses cache
+    assert reusable_allow_verdict(cache, params, now=131.0, ttl_s=30.0) is None
+    # Amount changed -> misses cache
+    assert (
+        reusable_allow_verdict(
+            cache, {**params, "amount": 501.0}, now=110.0, ttl_s=30.0
+        )
+        is None
+    )
+    # Side changed -> misses cache
+    assert (
+        reusable_allow_verdict(cache, {**params, "side": "sell"}, now=110.0, ttl_s=30.0)
+        is None
+    )
+    # Explicit trader_role changed -> misses cache
+    assert (
+        reusable_allow_verdict(
+            cache, {**params, "trader_role": "intern"}, now=110.0, ttl_s=30.0
+        )
+        is None
+    )
+    # Confidence below 0.95 -> misses cache
+    assert (
+        reusable_allow_verdict(
+            cache, {**params, "confidence": 0.5}, now=110.0, ttl_s=30.0
+        )
+        is None
+    )
+
+

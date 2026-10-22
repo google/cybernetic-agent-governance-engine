@@ -25,7 +25,8 @@ from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
     PROCEED_VERDICTS,
     TRADE_ACTION,
-    trade_params,
+    build_routing_verdict_cache,
+    extract_trade_step,
 )
 from src.governed_financial_advisor.graph.state import AgentState
 
@@ -44,14 +45,22 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
     """
     plan = state.get("execution_plan_output")
     if not plan:
-        return {"risk_status": "REJECTED_REVISE", "risk_feedback": "No plan provided."}
+        return {
+            "risk_status": "REJECTED_REVISE",
+            "risk_feedback": "No plan provided.",
+            "routing_verdict_cache": None,
+        }
 
     # Extract details for checks
     target_tool = "market_analysis"
-    target_params = {}
+    target_params: dict[str, Any] = {}
 
     if isinstance(plan, dict):
-        if not plan.get("steps") and plan.get("reasoning"):
+        if (
+            not plan.get("steps")
+            and plan.get("reasoning")
+            and plan.get("action") != TRADE_ACTION
+        ):
             logger.info(
                 "[INFO] Evaluator: Plan has no steps. Treating as Analysis/Safe."
             )
@@ -63,27 +72,20 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
                     "semantic_check": "SKIPPED",
                 },
                 "risk_status": "APPROVED",
+                "routing_verdict_cache": None,
             }
 
-        if "steps" in plan:
-            for step in plan["steps"]:
-                if any(
-                    k in step.get("action", "").lower()
-                    for k in ["trade", "execute", "buy", "sell"]
-                ):
-                    # Preview the trade exactly as the gateway will see it:
-                    # the registered trade action with the canonical payload
-                    # (trade_contract). The step's own action name and any
-                    # role it asserts are model output and are not forwarded.
-                    try:
-                        target_params = trade_params(step.get("parameters") or {})
-                    except (TypeError, ValueError) as exc:
-                        return {
-                            "risk_status": "REJECTED_REVISE",
-                            "risk_feedback": f"Trade step has an invalid amount: {exc}",
-                        }
-                    target_tool = TRADE_ACTION
-                    break
+        try:
+            extracted = extract_trade_step(plan)
+        except (TypeError, ValueError) as exc:
+            return {
+                "risk_status": "REJECTED_REVISE",
+                "risk_feedback": f"Trade step has an invalid amount: {exc}",
+                "routing_verdict_cache": None,
+            }
+        if extracted is not None:
+            target_params = extracted
+            target_tool = TRADE_ACTION
 
     # No STPA inputs are sent. The gateway binds latency_ms, drawdown and,
     # for a sell, portfolio_total server-side for every preview and for the
@@ -121,6 +123,16 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
             "\n\n**Action Required:** Governance policy violation. Please revise."
         )
 
+    routing_cache = (
+        build_routing_verdict_cache(
+            target_params,
+            verdict=str(verdict_value or ""),
+            envelope=safety_resp if isinstance(safety_resp, dict) else None,
+        )
+        if target_tool == TRADE_ACTION
+        else None
+    )
+
     # NOTE: Output screening/masking is handled by the dedicated nemo_output_rail_node
     # (the final LangGraph node before END on every non-blocked path).
     # The fail-open try/except that previously called verify_and_mask_output() here
@@ -136,4 +148,6 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
         "opa_results": opa_results,  # Pass OPA metadata to Auditor!
         "risk_status": risk_status,
         "risk_feedback": feedback_msg,
+        "routing_verdict_cache": routing_cache,
     }
+
