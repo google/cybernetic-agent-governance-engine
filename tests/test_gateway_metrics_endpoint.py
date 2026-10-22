@@ -266,11 +266,12 @@ def test_gcp_kms_provider_increments_rpc_counter_by_operation() -> None:
     # __init__ -> _detect_hash_width issues 1 get_crypto_key_version RPC
     assert _kms_rpc_count("get_crypto_key_version") == before_get_ver + 1.0
 
+    # jose_alg reads the cached algorithm from __init__ (0 extra RPCs)
     _ = provider.jose_alg
-    assert _kms_rpc_count("get_crypto_key_version") == before_get_ver + 2.0
+    assert _kms_rpc_count("get_crypto_key_version") == before_get_ver + 1.0
 
     provider.validate_ready()
-    assert _kms_rpc_count("get_crypto_key_version") == before_get_ver + 3.0
+    assert _kms_rpc_count("get_crypto_key_version") == before_get_ver + 2.0
 
     with patch.dict(
         "sys.modules",

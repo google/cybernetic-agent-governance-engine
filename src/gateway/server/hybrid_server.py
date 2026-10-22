@@ -620,11 +620,18 @@ async def _subscribe_nemo_reload(
 ) -> None:
     """Subscribe to ``cage:nemo:reload`` and reload NeMo rails off the loop on each message."""
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe(NEMO_RELOAD_CHANNEL)
     try:
+        sub_res = pubsub.subscribe(NEMO_RELOAD_CHANNEL)
+        if _asyncio.iscoroutine(sub_res) or hasattr(sub_res, "__await__"):
+            await sub_res
         while True:
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.25)
-            if msg and msg.get("type") == "message":
+            msg_res = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.25)
+            msg = (
+                await msg_res
+                if (_asyncio.iscoroutine(msg_res) or hasattr(msg_res, "__await__"))
+                else msg_res
+            )
+            if isinstance(msg, dict) and msg.get("type") == "message":
                 try:
                     await _reload_app_nemo_rails(target_app)
                     logger.info(
@@ -637,11 +644,17 @@ async def _subscribe_nemo_reload(
                 await _asyncio.sleep(0.05)
     except _asyncio.CancelledError:
         raise
+    except Exception as exc:
+        logger.debug("[NeMo/Refinement] PubSub subscriber exited: %s", exc)
     finally:
         try:
-            await pubsub.unsubscribe(NEMO_RELOAD_CHANNEL)
+            unsub_res = pubsub.unsubscribe(NEMO_RELOAD_CHANNEL)
+            if _asyncio.iscoroutine(unsub_res) or hasattr(unsub_res, "__await__"):
+                await unsub_res
             if hasattr(pubsub, "aclose"):
-                await pubsub.aclose()
+                aclose_res = pubsub.aclose()
+                if _asyncio.iscoroutine(aclose_res) or hasattr(aclose_res, "__await__"):
+                    await aclose_res
             elif hasattr(pubsub, "close"):
                 res = pubsub.close()
                 if _asyncio.iscoroutine(res):
