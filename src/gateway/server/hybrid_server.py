@@ -272,6 +272,25 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app.state.background_tasks = bg_tasks
         logger.info("✅ Plugin background tasks started")
 
+        # ── Bind shared Redis client for GCRA rate limiting (PR A4) ────────────
+        from src.gateway.server.rate_limit import (
+            build_rate_limit_redis_from_env,
+            get_shared_rate_limiter,
+        )
+
+        rl_redis = None
+        try:
+            rl_redis = build_rate_limit_redis_from_env()
+            app.state.rate_limit_redis = rl_redis
+            governance_app.state.rate_limit_redis = rl_redis
+            mcp_app.state.rate_limit_redis = rl_redis
+            get_shared_rate_limiter().bind_redis(rl_redis)
+        except Exception as rl_exc:
+            logger.warning(
+                "⚠️ Rate-limit Redis client init failed (using local GCRA fallback): %s",
+                rl_exc,
+            )
+
         loop_lag_task = asyncio.create_task(run_loop_lag_monitor())
         app.state.loop_lag_task = loop_lag_task
     except BaseException:
@@ -344,6 +363,12 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         close_res = opa_client.close()
         if inspect.isawaitable(close_res):
             await close_res
+
+    if rl_redis is not None and hasattr(rl_redis, "aclose"):
+        try:
+            await rl_redis.aclose()
+        except Exception as rl_close_exc:
+            logger.debug("Rate-limit Redis close error: %s", rl_close_exc)
 
     if evidence_sink is not None:
         await evidence_sink.stop()

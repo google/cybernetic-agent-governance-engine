@@ -66,9 +66,9 @@ class TestL2_MCPRateLimitMetrics:
             for _ in range(150):  # Exceed default limit of 60
                 await _check_rate_limit(client_ip)
 
-            # Verify metric was incremented
+            # Verify metric was incremented with low-cardinality (route, scope) labels
             assert mock_labels.called
-            mock_labels.assert_called_with(client_ip=client_ip)
+            mock_labels.assert_called_with(route="tools-execute", scope="principal")
 
     @pytest.mark.asyncio
     async def test_active_buckets_gauge_updated(self, monkeypatch):

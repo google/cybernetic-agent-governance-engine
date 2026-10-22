@@ -40,6 +40,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, field_validator
@@ -61,96 +62,110 @@ from src.gateway.governance.schemas.thresholds import load_and_validate_threshol
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
 from src.gateway.server.app_state import governor_of
+from src.gateway.server.rate_limit import (
+    _METRICS_AVAILABLE,
+    RateLimitVerdict,
+    build_rate_limit_redis_from_env,
+    get_shared_rate_limiter,
+    sanitize_principal,
+)
+from src.gateway.server.rate_limit import (
+    rate_limit_active_buckets as _rate_limit_active_buckets,
+)
+from src.gateway.server.rate_limit import (
+    rate_limit_hits_total as _rate_limit_hits_total,
+)
 from src.gateway.tracing_setup import setup_tracing
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
 
 # ---------------------------------------------------------------------------
-# M-20 & L-2: Per-client sliding-window rate limiter with Prometheus metrics
-# Limits each client IP to _RATE_LIMIT_MAX_CALLS tool calls per
-# _RATE_LIMIT_WINDOW_SECONDS. Uses an in-process deque; no Redis dependency.
+# A4 / M-20 & L-2: Shared dual-bucket GCRA rate limiter (identity + principal)
+# Replaces the per-IP sliding-window bucket scan and the high-cardinality
+# client_ip Prometheus label with (route, scope) labels and shared Redis Lua.
 # ---------------------------------------------------------------------------
 
-_RATE_LIMIT_MAX_CALLS: int = int(os.getenv("MCP_RATE_LIMIT_MAX_CALLS", "60"))
-_RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS", "60"))
-_RATE_LIMIT_MAX_BUCKETS: int = 10000
-
-# client_ip → deque of call timestamps (monotonic), bounded by TTLCache
-try:
-    from cachetools import TTLCache
-
-    _rate_limit_buckets: Any = TTLCache(
-        maxsize=_RATE_LIMIT_MAX_BUCKETS,
-        ttl=max(1, _RATE_LIMIT_WINDOW_SECONDS * 2),
+_RATE_LIMIT_MAX_CALLS: int = int(
+    os.getenv(
+        "CAGE_RATE_LIMIT_PRINCIPAL_PER_MIN",
+        os.getenv("MCP_RATE_LIMIT_MAX_CALLS", "60"),
     )
-except ImportError:
-    _rate_limit_buckets = {}
-_rate_limit_lock = asyncio.Lock()
-
-# Prometheus metrics (optional — degrades gracefully if prometheus_client unavailable)
-_METRICS_AVAILABLE = False
-_rate_limit_hits_total: Any = None
-_rate_limit_active_buckets: Any = None
-
-try:
-    from prometheus_client import REGISTRY, Counter, Gauge
-
-    _METRICS_AVAILABLE = True
-    try:
-        _rate_limit_hits_total = Counter(
-            "mcp_rate_limit_hits_total",
-            "Total number of rate limit rejections",
-            ["client_ip"],
-        )
-    except ValueError:
-        _rate_limit_hits_total = REGISTRY._names_to_collectors.get(
-            "mcp_rate_limit_hits_total"
-        )
-
-    try:
-        _rate_limit_active_buckets = Gauge(
-            "mcp_rate_limit_active_buckets",
-            "Current number of active client rate limit tracking buckets",
-        )
-    except ValueError:
-        _rate_limit_active_buckets = REGISTRY._names_to_collectors.get(
-            "mcp_rate_limit_active_buckets"
-        )
-except ImportError:
-    pass
+)
+_RATE_LIMIT_WINDOW_SECONDS: int = int(
+    os.getenv(
+        "CAGE_RATE_LIMIT_WINDOW_SECONDS",
+        os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS", "60"),
+    )
+)
+_INITIAL_RATE_LIMIT_MAX_CALLS: int = _RATE_LIMIT_MAX_CALLS
+_INITIAL_RATE_LIMIT_WINDOW_SECONDS: int = _RATE_LIMIT_WINDOW_SECONDS
+_rate_limit_buckets: Any = get_shared_rate_limiter()._fallback_tat
 
 
-async def _check_rate_limit(client_ip: str) -> bool:
-    """Return True if the request is within the rate limit, False if exceeded.
+def _effective_mcp_rate_limits() -> tuple[int, float]:
+    """Return effective ``(principal_per_min, window_seconds)`` for ``tools-execute``.
 
-    Uses a sliding-window algorithm: timestamps older than the window are
-    evicted before counting, so the limit is enforced over a rolling period.
+    Honors runtime ``CAGE_RATE_LIMIT_PRINCIPAL_PER_MIN`` and
+    ``CAGE_RATE_LIMIT_WINDOW_SECONDS`` overrides when the module-level
+    constants have not been explicitly mutated by a test.
     """
-    now = time.monotonic()
-    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
-    async with _rate_limit_lock:
-        # Evict any expired timestamps across existing bucket for this IP
-        bucket = _rate_limit_buckets.get(client_ip)
-        if bucket is None:
-            bucket = collections.deque()
-            _rate_limit_buckets[client_ip] = bucket
-        while bucket and bucket[0] < cutoff:
-            bucket.popleft()
-        # Clean up other empty buckets if plain dict fallback is used
-        empty_keys = [
-            k for k, v in _rate_limit_buckets.items() if not v and k != client_ip
-        ]
-        for k in empty_keys:
-            _rate_limit_buckets.pop(k, None)
-        if _METRICS_AVAILABLE and _rate_limit_active_buckets is not None:
-            _rate_limit_active_buckets.set(len(_rate_limit_buckets))
-        if len(bucket) >= _RATE_LIMIT_MAX_CALLS:
-            if _METRICS_AVAILABLE and _rate_limit_hits_total is not None:
-                _rate_limit_hits_total.labels(client_ip=client_ip).inc()
-            return False
-        bucket.append(now)
-        return True
+    if _RATE_LIMIT_MAX_CALLS != _INITIAL_RATE_LIMIT_MAX_CALLS:
+        p_limit = _RATE_LIMIT_MAX_CALLS
+    else:
+        p_limit = int(
+            os.getenv(
+                "CAGE_RATE_LIMIT_PRINCIPAL_PER_MIN",
+                os.getenv("MCP_RATE_LIMIT_MAX_CALLS", str(_RATE_LIMIT_MAX_CALLS)),
+            )
+        )
+    if _RATE_LIMIT_WINDOW_SECONDS != _INITIAL_RATE_LIMIT_WINDOW_SECONDS:
+        win = float(_RATE_LIMIT_WINDOW_SECONDS)
+    else:
+        win = float(
+            os.getenv(
+                "CAGE_RATE_LIMIT_WINDOW_SECONDS",
+                os.getenv(
+                    "MCP_RATE_LIMIT_WINDOW_SECONDS", str(_RATE_LIMIT_WINDOW_SECONDS)
+                ),
+            )
+        )
+    return p_limit, win
+
+
+async def _check_rate_limit(target: Request | str) -> bool:
+    """Return True if the request/caller is within the GCRA rate limit, False if exceeded."""
+    global _rate_limit_buckets
+    limiter = get_shared_rate_limiter()
+    # Sync module-level fallback bucket reference in case a test reassigned _rate_limit_buckets = {}
+    if limiter._fallback_tat is not _rate_limit_buckets:
+        if isinstance(_rate_limit_buckets, dict):
+            limiter._fallback_tat.clear()
+            for k, v in _rate_limit_buckets.items():
+                if isinstance(v, (int, float)):
+                    limiter._fallback_tat[str(k)] = float(v)
+        _rate_limit_buckets = limiter._fallback_tat
+    p_limit, win = _effective_mcp_rate_limits()
+    if isinstance(target, str):
+        safe_id = sanitize_principal(target)
+        verdict = await limiter.check(
+            "tools-execute",
+            identity=f"caller:{safe_id}",
+            principal=safe_id,
+            principal_per_min=p_limit,
+            window_seconds=win,
+        )
+        return verdict.allowed
+    verdict = await limiter.check_request(
+        target,
+        "tools-execute",
+        principal_per_min=p_limit,
+        window_seconds=win,
+    )
+    return verdict.allowed
+
+
+_default_check_rate_limit = _check_rate_limit
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +258,17 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     #    readiness and posture checks, including the OPA package/rule handshake)
     governor = await _activate_domain()
 
+    # 7. Bind shared Redis client for GCRA rate limiting (A4)
+    rl_redis = None
+    try:
+        rl_redis = build_rate_limit_redis_from_env()
+        app.state.rate_limit_redis = rl_redis
+        get_shared_rate_limiter().bind_redis(rl_redis)
+    except Exception as rl_exc:
+        logger.warning(
+            "⚠️ Rate-limit Redis client init failed (using local fallback): %s", rl_exc
+        )
+
     from contextlib import AsyncExitStack, nullcontext
 
     session_mgr = getattr(mcp, "session_manager", None)
@@ -268,6 +294,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         await audit_task
     except asyncio.CancelledError:
         pass
+    if rl_redis is not None and hasattr(rl_redis, "aclose"):
+        try:
+            await rl_redis.aclose()
+        except Exception as rl_close_exc:
+            logger.debug("Rate-limit Redis close error: %s", rl_close_exc)
     await governor.components.opa.close()
 
 
@@ -570,16 +601,36 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             detail="trusted workload identity required",
         )
 
-    # M-20: Per-client rate limiting (sliding window)
-    client_ip: str = request.client.host if request.client else "unknown"
-    if not await _check_rate_limit(client_ip):
-        logger.warning("Rate limit exceeded for client %s", client_ip)
-        raise HTTPException(
+    # A4 / M-20: Shared dual-bucket GCRA rate limiting (identity + principal)
+    if _check_rate_limit is not _default_check_rate_limit:
+        allowed = await _check_rate_limit(request)
+        rl_verdict = RateLimitVerdict(
+            allowed=bool(allowed), retry_after_seconds=1 if not allowed else 0
+        )
+    else:
+        p_limit, win = _effective_mcp_rate_limits()
+        rl_verdict = await get_shared_rate_limiter().check_request(
+            request,
+            "tools-execute",
+            principal_per_min=p_limit,
+            window_seconds=win,
+        )
+    if not rl_verdict.allowed:
+        retry_after = max(1, int(rl_verdict.retry_after_seconds or 1))
+        logger.warning(
+            "Rate limit exceeded on /tools/execute (identity=%s principal=%s scope=%s)",
+            rl_verdict.identity or caller_identity,
+            rl_verdict.principal,
+            rl_verdict.scope,
+        )
+        return JSONResponse(
             status_code=429,
-            detail=(
-                f"Rate limit exceeded: max {_RATE_LIMIT_MAX_CALLS} calls "
-                f"per {_RATE_LIMIT_WINDOW_SECONDS}s per client."
-            ),
+            headers={"Retry-After": str(retry_after)},
+            content={
+                "error": "rate_limit_exceeded",
+                "scope": rl_verdict.scope or "principal",
+                "retry_after_seconds": retry_after,
+            },
         )
 
     # Reconstruct the tool map by calling the registered tools from the MCP server

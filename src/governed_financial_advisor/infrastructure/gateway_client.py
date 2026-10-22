@@ -21,9 +21,11 @@ created only on the first call, not at import time.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from collections.abc import Mapping
+import random
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import httpx
@@ -41,6 +43,9 @@ from src.governed_financial_advisor.graph.annotations import side_effect_node
 logger = logging.getLogger("infrastructure.gateway_client")
 
 _GATEWAY_URL_DEFAULT = "http://localhost:8080"
+_MAX_RETRY_ATTEMPTS = 3
+_RETRY_BASE_SECONDS = 0.2
+_RETRY_CAP_SECONDS = 2.0
 
 #: Verdicts the advisor may route on. DENY arrives as HTTP 403; anything else
 #: (including a missing or legacy verdict string) is refused.
@@ -65,6 +70,50 @@ def _violations(response: httpx.Response) -> list[str]:
 
 def _is_policy_drift(response: httpx.Response) -> bool:
     return any("Substrate Policy Drift Detected" in v for v in _violations(response))
+
+
+def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
+    """Compute bounded full-jitter backoff delay, honoring Retry-After when present."""
+    cap = float(
+        os.environ.get("CAGE_GATEWAY_RETRY_CAP_SECONDS", str(_RETRY_CAP_SECONDS))
+    )
+    base = float(
+        os.environ.get("CAGE_GATEWAY_RETRY_BASE_SECONDS", str(_RETRY_BASE_SECONDS))
+    )
+    jitter_delay = random.uniform(0.0, min(cap, base * (2**attempt)))  # nosec B311
+    raw_retry_after = response.headers.get("Retry-After")
+    if raw_retry_after:
+        try:
+            parsed = float(raw_retry_after)
+            if parsed > 0:
+                return min(cap, max(parsed, jitter_delay))
+        except ValueError:
+            pass
+    return jitter_delay
+
+
+async def _post_with_retries(
+    send_fn: Callable[[], Awaitable[httpx.Response]],
+    *,
+    retry_statuses: frozenset[int],
+    max_attempts: int = _MAX_RETRY_ATTEMPTS,
+) -> httpx.Response:
+    """Execute ``send_fn`` up to ``max_attempts`` times on transient HTTP status codes."""
+    response = await send_fn()
+    for attempt in range(max_attempts - 1):
+        if response.status_code not in retry_statuses:
+            return response
+        delay = _retry_delay_seconds(response, attempt)
+        logger.warning(
+            "Gateway returned HTTP %d (attempt %d/%d); retrying in %.3fs",
+            response.status_code,
+            attempt + 1,
+            max_attempts,
+            delay,
+        )
+        await asyncio.sleep(delay)
+        response = await send_fn()
+    return response
 
 
 class GatewayClient:
@@ -92,18 +141,19 @@ class GatewayClient:
         return self._http
 
     def _build_headers(self) -> dict[str, str]:
-        """Construct outbound request headers with W3C trace context and GEAP ID-2/ID-1 headers."""
+        """Construct outbound request headers with W3C trace context, x-cage-principal, and GEAP ID-2/ID-1 headers."""
+        from src.governed_financial_advisor.utils.context import user_context
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         otel_inject(headers)
+        uid = (user_context.get() or "").strip()
+        if uid:
+            headers["x-cage-principal"] = uid[:64]
         id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
         if id2_token:
             headers["Authorization"] = f"Bearer {id2_token}"
-        if os.environ.get("CAGE_ADVISOR_RUNTIME", "").lower() == "geap":
-            from src.governed_financial_advisor.utils.context import user_context
-
-            uid = user_context.get()
-            if uid:
-                headers["x-geap-user-id"] = uid
+        if os.environ.get("CAGE_ADVISOR_RUNTIME", "").lower() == "geap" and uid:
+            headers["x-geap-user-id"] = uid
         return headers
 
     @side_effect_node(kind="api_call", external_system="gateway_api")
@@ -212,7 +262,7 @@ class GatewayClient:
                 timeout=timeout,
             )
 
-        response = await _post()
+        response = await _post_with_retries(_post, retry_statuses=frozenset({429, 503}))
         if response.status_code == 403 and _is_policy_drift(response):
             logger.warning(
                 "Substrate drift caught during session. Fetching updated baseline pin and replaying."
@@ -220,7 +270,9 @@ class GatewayClient:
             payload["policy_version_id"] = await self.get_policy_version(
                 timeout=timeout
             )
-            response = await _post()
+            response = await _post_with_retries(
+                _post, retry_statuses=frozenset({429, 503})
+            )
         if response.status_code == 403:
             raise PermissionError(
                 f"Governance DENIED '{action}': {'; '.join(_violations(response))}"
@@ -274,12 +326,18 @@ class GatewayClient:
         """
         client = await self._ensure_client()
         headers = self._build_headers()
-        response = await client.post(
-            "/tools/execute",
-            json={"tool_name": tool_name, "params": params},
-            headers=headers,
-            timeout=timeout,
-        )
+
+        async def _post() -> httpx.Response:
+            return await client.post(
+                "/tools/execute",
+                json={"tool_name": tool_name, "params": params},
+                headers=headers,
+                timeout=timeout,
+            )
+
+        # HTTP 429 is rejected by the gateway rate limiter before any tool
+        # execution occurs, so retrying on 429 is side-effect free.
+        response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
         response.raise_for_status()
         body: dict[str, Any] = response.json()
         return body
