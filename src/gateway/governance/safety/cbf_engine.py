@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import os
+import secrets
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -94,12 +95,19 @@ _STRICT_REPLICATION: bool = os.environ.get(
     "CAGE_STRICT_REPLICATION", "true" if _IS_PRODUCTION else "false"
 ).lower() in ("true", "1", "yes")
 
+_COMMIT_ATTEMPTS: int = max(1, int(os.environ.get("CAGE_CBF_COMMIT_ATTEMPTS", "3")))
+_COMMIT_RETRY_BASE_DELAY_SECONDS: float = float(
+    os.environ.get("CAGE_CBF_COMMIT_RETRY_BASE_DELAY_SECONDS", "0.005")
+)
+
 _REPLAY_REJECTED_COUNTER: Any = None
 _EPOCH_REGRESSION_COUNTER: Any = None
 _CURRENT_FENCE_EPOCH_GAUGE: Any = None
 _WAIT_LATENCY_HISTOGRAM: Any = None
 _WAIT_TIMEOUT_COUNTER: Any = None
 _STRICT_REPLICATION_ROLLBACK_COUNTER: Any = None
+_COMMIT_ATTEMPTS_HISTOGRAM: Any = None
+_EPOCH_CONTENDED_COUNTER: Any = None
 
 try:
     from prometheus_client import REGISTRY, Counter, Gauge, Histogram
@@ -146,6 +154,17 @@ try:
         Counter,
         "cage_cbf_strict_replication_rollback_total",
         "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
+    )
+    _COMMIT_ATTEMPTS_HISTOGRAM = _get_or_create_metric(
+        Histogram,
+        "cage_cbf_commit_attempts",
+        "Number of Lua CAS attempts per CBF atomic_verify_and_commit invocation",
+        buckets=(1.0, 2.0, 3.0, 4.0, 5.0, 10.0),
+    )
+    _EPOCH_CONTENDED_COUNTER = _get_or_create_metric(
+        Counter,
+        "cage_cbf_epoch_contended_total",
+        "Number of CBF atomic commits that exhausted retry attempts on forward-moved fence epochs",
     )
 except ImportError:
     pass
@@ -266,11 +285,13 @@ class ControlBarrierFunction:
 -- ARGV[10]: debit_entry (JSON string stored under debit_id)
 -- ARGV[11]: expected snapshot payload (exact bytes Python verified; reconciled mode only)
 -- Returns: array {status_code, message, new_state_str, new_epoch}
---   status_code 1 = COMMITTED, 0 = UNSAFE (envelope violation or stale read)
+--   status_code 1 = COMMITTED, 2 = FENCE_ADVANCED (retryable CAS contention), 0 = UNSAFE (envelope violation or epoch regression)
 local expected_fence = tonumber(ARGV[6])
 local current_fence_raw = redis.call('GET', KEYS[3])
 local current_fence = current_fence_raw and tonumber(current_fence_raw) or 0
-if current_fence ~= expected_fence then
+if current_fence > expected_fence then
+    return {2, "FENCE_ADVANCED: expected " .. tostring(expected_fence) .. ", got " .. tostring(current_fence), "0", current_fence}
+elseif current_fence < expected_fence then
     return {0, "Fence epoch regression: expected " .. tostring(expected_fence) .. ", got " .. tostring(current_fence), "0", current_fence}
 end
 
@@ -1591,6 +1612,11 @@ return {1, status, tostring(restored), new_epoch}
         caller as ``CommitReceipt.token`` so ``rollback_state`` can retire
         exactly this entry. Direct callers that pass none still get a
         ledgered debit under a fresh id; nothing admitted goes unrecorded.
+        When the Lua script reports status ``2`` (``FENCE_ADVANCED``, meaning
+        another concurrent commit advanced ``safety:fence_epoch``), retries
+        up to ``_COMMIT_ATTEMPTS`` times by re-running the full ``Read`` path
+        (``_resolve_ground_truth_balance`` + HWM regression check) before
+        each attempt.
         Returns ``(committed, reason, magnitude)``.
         """
         if redis_client is None:
@@ -1604,80 +1630,6 @@ return {1, status, tostring(restored), new_epoch}
             reason = f"UNSAFE: {exc}"
             logger.warning("CBF atomic check rejected action: %s", exc)
             return (False, reason, 0.0)
-
-        try:
-            (
-                ground_truth_balance,
-                balance_metadata,
-            ) = await self._resolve_ground_truth_balance()
-        except Exception as exc:
-            reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
-            logger.error("CBF atomic check rejected: %s", reason)
-            return (False, reason, 0.0)
-
-        client = await _get_raw_redis(redis_client)
-
-        current_fence_epoch = balance_metadata["fence_epoch"]
-        effective_verified_epoch = self._last_verified_fence_epoch
-        if client is not None and hasattr(client, "get"):
-            try:
-                raw_hwm_res = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
-                raw_hwm = (
-                    await raw_hwm_res
-                    if inspect.isawaitable(raw_hwm_res)
-                    else raw_hwm_res
-                )
-                if (
-                    raw_hwm is not None
-                    and isinstance(raw_hwm, (int, str, bytes, float))
-                    and not _is_mock(raw_hwm)
-                ):
-                    effective_verified_epoch = max(
-                        effective_verified_epoch
-                        if effective_verified_epoch is not None
-                        else 0,
-                        int(raw_hwm),
-                    )
-            except Exception:
-                pass
-
-        if effective_verified_epoch is not None and effective_verified_epoch > 0:
-            if current_fence_epoch < effective_verified_epoch:
-                logger.critical(
-                    json.dumps(
-                        {
-                            "event": "FENCE_EPOCH_REGRESSION",
-                            "severity": "CRITICAL",
-                            "current_epoch": current_fence_epoch,
-                            "last_verified_epoch": effective_verified_epoch,
-                        }
-                    )
-                )
-                return (
-                    False,
-                    f"Fence epoch regression: {current_fence_epoch} < {effective_verified_epoch}",
-                    0.0,
-                )
-
-        mode = balance_metadata.get("mode", "self_reported")
-        submitted_at = time.time()
-        if mode == "reconciled":
-            # Raw attested scalar: the script nets the live outstanding total
-            # itself, in the same hop as the fence CAS (ADR-010 §3).
-            script_scalar = float(balance_metadata["state_scalar"])
-            expected_payload = balance_metadata.get("raw_payload") or ""
-        else:
-            script_scalar = float(ground_truth_balance)
-            expected_payload = ""
-        debit_entry = json.dumps(
-            {
-                "amount": cost,
-                "submitted_at": submitted_at,
-                "mode": mode,
-                "snapshot_sequence": balance_metadata.get("sequence"),
-                "snapshot_verified_at": balance_metadata.get("verified_at"),
-            }
-        )
 
         from src.gateway.governance.reconciliation.daemon import reconciled_state_key
 
@@ -1693,96 +1645,218 @@ return {1, status, tostring(restored), new_epoch}
         ]
         resolved_threshold = self._resolve_threshold()
 
-        argv = [
-            repr(float(cost)),
-            str(resolved_threshold),
-            str(self.gamma),
-            governance_signature,
-            repr(script_scalar),
-            str(current_fence_epoch),
-            mode,
-            debit_id,
-            repr(submitted_at),
-            debit_entry,
-            expected_payload,
-        ]
+        max_attempts = max(1, _COMMIT_ATTEMPTS)
+        last_contended_msg = ""
 
-        pinned_client, should_close = await _get_pinned_connection(client)
-        active_client = pinned_client if pinned_client is not None else client
+        for attempt in range(1, max_attempts + 1):
+            try:
+                (
+                    ground_truth_balance,
+                    balance_metadata,
+                ) = await self._resolve_ground_truth_balance()
+            except Exception as exc:
+                reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
+                logger.error("CBF atomic check rejected: %s", reason)
+                return (False, reason, 0.0)
 
-        async def _run_evalsha() -> list:
-            res = active_client.evalsha(self._lua_sha, len(keys), *keys, *argv)
-            return await res if inspect.isawaitable(res) else res
+            client = await _get_raw_redis(redis_client)
 
-        async def _load_and_run() -> list:
-            res = active_client.script_load(self.LUA_ATOMIC_CBF)
-            self._lua_sha = await res if inspect.isawaitable(res) else res
-            return await _run_evalsha()
-
-        span_ctx = (
-            self.tracer.start_as_current_span("safety.cbf_atomic_check_commit")
-            if self.tracer
-            else nullcontext()
-        )
-
-        try:
-            with span_ctx as span:
-                if span:
-                    try:
-                        span.set_attribute("safety.cash.cost", cost)
-                        _mrm_meta = ControlRegistry().get_mapping(
-                            GovernanceControl.TRADITIONAL_MRM_VALIDATION
+            current_fence_epoch = balance_metadata["fence_epoch"]
+            effective_verified_epoch = self._last_verified_fence_epoch
+            if client is not None and hasattr(client, "get"):
+                try:
+                    raw_hwm_res = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+                    raw_hwm = (
+                        await raw_hwm_res
+                        if inspect.isawaitable(raw_hwm_res)
+                        else raw_hwm_res
+                    )
+                    if (
+                        raw_hwm is not None
+                        and isinstance(raw_hwm, (int, str, bytes, float))
+                        and not _is_mock(raw_hwm)
+                    ):
+                        effective_verified_epoch = max(
+                            effective_verified_epoch
+                            if effective_verified_epoch is not None
+                            else 0,
+                            int(raw_hwm),
                         )
-                        span.set_attribute(
-                            "governance.control_id", _mrm_meta["internal_id"]
-                        )
-                        span.set_attribute(
-                            "governance.framework", _mrm_meta["primary_framework"]
-                        )
-                        span.set_attribute(
-                            "governance.legacy_citation", _mrm_meta["legacy_citation"]
-                        )
-                        span.set_attribute("governance.scope", _mrm_meta["scope"])
-                        span.set_attribute("cage.cbf.wait_replicas", _WAIT_REPLICAS)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
-                result_list = await self._evalsha_with_noscript_retry(
-                    active_client, keys, argv, _run_evalsha, _load_and_run
-                )
-                committed, message = self._parse_lua_result(result_list, span)
+            if effective_verified_epoch is not None and effective_verified_epoch > 0:
+                if current_fence_epoch < effective_verified_epoch:
+                    logger.critical(
+                        json.dumps(
+                            {
+                                "event": "FENCE_EPOCH_REGRESSION",
+                                "severity": "CRITICAL",
+                                "current_epoch": current_fence_epoch,
+                                "last_verified_epoch": effective_verified_epoch,
+                            }
+                        )
+                    )
+                    return (
+                        False,
+                        f"Fence epoch regression: {current_fence_epoch} < {effective_verified_epoch}",
+                        0.0,
+                    )
 
-                if committed and _WAIT_REPLICAS > 0:
-                    wait_result = await self._sync_to_replicas(client=active_client)
+            mode = balance_metadata.get("mode", "self_reported")
+            submitted_at = time.time()
+            if mode == "reconciled":
+                # Raw attested scalar: the script nets the live outstanding total
+                # itself, in the same hop as the fence CAS (ADR-010 §3).
+                script_scalar = float(balance_metadata["state_scalar"])
+                expected_payload = balance_metadata.get("raw_payload") or ""
+            else:
+                script_scalar = float(ground_truth_balance)
+                expected_payload = ""
+            debit_entry = json.dumps(
+                {
+                    "amount": cost,
+                    "submitted_at": submitted_at,
+                    "mode": mode,
+                    "snapshot_sequence": balance_metadata.get("sequence"),
+                    "snapshot_verified_at": balance_metadata.get("verified_at"),
+                }
+            )
+
+            argv = [
+                repr(float(cost)),
+                str(resolved_threshold),
+                str(self.gamma),
+                governance_signature,
+                repr(script_scalar),
+                str(current_fence_epoch),
+                mode,
+                debit_id,
+                repr(submitted_at),
+                debit_entry,
+                expected_payload,
+            ]
+
+            pinned_client, should_close = await _get_pinned_connection(client)
+            active_client = pinned_client if pinned_client is not None else client
+
+            async def _run_evalsha(
+                _active: Any = active_client,
+                _argv: list[str] = argv,
+            ) -> list:
+                res = _active.evalsha(self._lua_sha, len(keys), *keys, *_argv)
+                return await res if inspect.isawaitable(res) else res
+
+            async def _load_and_run(
+                _active: Any = active_client,
+                _run: Any = _run_evalsha,
+            ) -> list:
+                res = _active.script_load(self.LUA_ATOMIC_CBF)
+                self._lua_sha = await res if inspect.isawaitable(res) else res
+                return await _run()
+
+            span_ctx = (
+                self.tracer.start_as_current_span("safety.cbf_atomic_check_commit")
+                if self.tracer
+                else nullcontext()
+            )
+
+            retry_needed = False
+            try:
+                with span_ctx as span:
                     if span:
-                        span.set_attribute("cage.cbf.wait_success", wait_result)
-                        span.set_attribute(
-                            "cage.cbf.strict_replication", _STRICT_REPLICATION
-                        )
-                    if not wait_result:
-                        if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
-                            await self.rollback_state(
-                                cost,
-                                governance_signature=governance_signature,
-                                debit_id=debit_id,
-                                client=active_client,
+                        try:
+                            span.set_attribute("safety.cash.cost", cost)
+                            _mrm_meta = ControlRegistry().get_mapping(
+                                GovernanceControl.TRADITIONAL_MRM_VALIDATION
                             )
-                            if span:
-                                span.set_attribute(
-                                    "cage.cbf.strict_replication_rollback", True
-                                )
-                            if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
-                                _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
+                            span.set_attribute(
+                                "governance.control_id", _mrm_meta["internal_id"]
+                            )
+                            span.set_attribute(
+                                "governance.framework", _mrm_meta["primary_framework"]
+                            )
+                            span.set_attribute(
+                                "governance.legacy_citation",
+                                _mrm_meta["legacy_citation"],
+                            )
+                            span.set_attribute("governance.scope", _mrm_meta["scope"])
+                            span.set_attribute("cage.cbf.wait_replicas", _WAIT_REPLICAS)
+                            span.set_attribute("cage.cbf.commit_attempt", attempt)
+                        except Exception:
+                            pass
+
+                    result_list = await self._evalsha_with_noscript_retry(
+                        active_client, keys, argv, _run_evalsha, _load_and_run
+                    )
+                    status_code = int(result_list[0])
+                    committed, message = self._parse_lua_result(result_list, span)
+
+                    if status_code == 2:
+                        last_contended_msg = message
+                        retry_needed = attempt < max_attempts
+                        if not retry_needed:
+                            if _COMMIT_ATTEMPTS_HISTOGRAM is not None:
+                                _COMMIT_ATTEMPTS_HISTOGRAM.observe(attempt)
+                            if _EPOCH_CONTENDED_COUNTER is not None:
+                                _EPOCH_CONTENDED_COUNTER.inc()
                             return (
                                 False,
-                                "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                                f"CBF_EPOCH_CONTENDED: {last_contended_msg} (after {attempt} attempts)",
                                 0.0,
                             )
+                    else:
+                        if _COMMIT_ATTEMPTS_HISTOGRAM is not None:
+                            _COMMIT_ATTEMPTS_HISTOGRAM.observe(attempt)
 
-                return (committed, message, cost if committed else 0.0)
-        finally:
-            if should_close and hasattr(pinned_client, "aclose"):
-                await pinned_client.aclose()
+                        if committed and _WAIT_REPLICAS > 0:
+                            wait_result = await self._sync_to_replicas(
+                                client=active_client
+                            )
+                            if span:
+                                span.set_attribute("cage.cbf.wait_success", wait_result)
+                                span.set_attribute(
+                                    "cage.cbf.strict_replication",
+                                    _STRICT_REPLICATION,
+                                )
+                            if not wait_result:
+                                if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
+                                    await self.rollback_state(
+                                        cost,
+                                        governance_signature=governance_signature,
+                                        debit_id=debit_id,
+                                        client=active_client,
+                                    )
+                                    if span:
+                                        span.set_attribute(
+                                            "cage.cbf.strict_replication_rollback",
+                                            True,
+                                        )
+                                    if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
+                                        _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
+                                    return (
+                                        False,
+                                        "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                                        0.0,
+                                    )
+
+                        return (committed, message, cost if committed else 0.0)
+            finally:
+                if should_close and hasattr(pinned_client, "aclose"):
+                    await pinned_client.aclose()
+
+            if retry_needed and _COMMIT_RETRY_BASE_DELAY_SECONDS > 0:
+                cap = _COMMIT_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+                jitter = (secrets.randbelow(1000) / 1000.0) * cap
+                await asyncio.sleep(jitter)
+
+        if _EPOCH_CONTENDED_COUNTER is not None:
+            _EPOCH_CONTENDED_COUNTER.inc()
+        return (
+            False,
+            f"CBF_EPOCH_CONTENDED: {last_contended_msg}",
+            0.0,
+        )
 
     async def _evalsha_with_noscript_retry(
         self,
@@ -1829,7 +1903,13 @@ return {1, status, tostring(restored), new_epoch}
 
         committed = status_code == 1
         if span:
-            span.set_attribute("safety.result", "COMMITTED" if committed else "UNSAFE")
+            if committed:
+                result_label = "COMMITTED"
+            elif status_code == 2:
+                result_label = "FENCE_ADVANCED"
+            else:
+                result_label = "UNSAFE"
+            span.set_attribute("safety.result", result_label)
             span.set_attribute("safety.cash.next", float(new_balance_str))
             span.set_attribute("cage.cbf.fence_epoch", new_epoch)
 

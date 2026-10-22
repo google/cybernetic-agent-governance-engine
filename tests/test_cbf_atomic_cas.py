@@ -25,6 +25,7 @@ Concurrent requests cannot double-spend due to CAS protection enforced at the
 Redis script level.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -443,3 +444,238 @@ async def test_cas_protects_against_time_of_check_to_time_of_use():
             assert "Fence epoch regression" in msg_b
             # Accept either Python-side regression check or Lua-side CAS check
             assert "1 < 2" in msg_b or "expected 1, got 2" in msg_b
+
+
+@pytest.mark.asyncio
+async def test_forward_moved_fence_epoch_retries_with_full_reread_and_succeeds(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
+    """Proof parity test (C1): after status 2 (FENCE_ADVANCED), the next attempt
+    calls _resolve_ground_truth_balance() again and never reuses the stale epoch."""
+    with (
+        patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client",
+            mock_redis_client,
+        ),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._COMMIT_RETRY_BASE_DELAY_SECONDS",
+            0.0,
+        ),
+    ):
+        cbf_instance._resolve_ground_truth_balance = AsyncMock(
+            side_effect=[
+                (
+                    100000.0,
+                    {"source": "reconciliation", "fence_epoch": 1, "sequence": 1},
+                ),
+                (
+                    99000.0,
+                    {"source": "reconciliation", "fence_epoch": 2, "sequence": 1},
+                ),
+            ]
+        )
+        mock_raw_client.evalsha.side_effect = [
+            [2, "FENCE_ADVANCED: expected 1, got 2", "0", 2],
+            [1, "COMMITTED", "98000.0", 3],
+        ]
+
+        committed, msg, cost = await cbf_instance.atomic_verify_and_commit(
+            "execute_trade", {"symbol": "AAPL", "amount": 1000.0}
+        )
+
+        assert committed is True
+        assert msg == "COMMITTED"
+        assert cost == 1000.0
+        assert cbf_instance._resolve_ground_truth_balance.await_count == 2
+        assert mock_raw_client.evalsha.await_count == 2
+        # Verify attempt 1 passed expected_fence="1" and attempt 2 passed expected_fence="2"
+        first_call_args = mock_raw_client.evalsha.await_args_list[0].args
+        second_call_args = mock_raw_client.evalsha.await_args_list[1].args
+        # ARGV[6] is index 2 + 8 + 5 = 15 in evalsha(sha, numkeys, *keys[8], *argv[11])
+        assert first_call_args[15] == "1"
+        assert second_call_args[15] == "2"
+        assert cbf_instance._last_verified_fence_epoch == 3
+
+
+@pytest.mark.asyncio
+async def test_forward_moved_fence_epoch_exhausts_retries_and_returns_contended(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
+    """When status 2 persists across all _COMMIT_ATTEMPTS, returns CBF_EPOCH_CONTENDED (HARD refusal)."""
+    from src.gateway.governance.contracts import ViolationKind
+    from src.gateway.governance.safety.barrier_tier import commit_barrier
+
+    with (
+        patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client",
+            mock_redis_client,
+        ),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ),
+        patch("src.gateway.governance.safety.cbf_engine._COMMIT_ATTEMPTS", 3),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._COMMIT_RETRY_BASE_DELAY_SECONDS",
+            0.0,
+        ),
+    ):
+        cbf_instance._resolve_ground_truth_balance = AsyncMock(
+            side_effect=[
+                (
+                    100000.0,
+                    {"source": "reconciliation", "fence_epoch": 1, "sequence": 1},
+                ),
+                (
+                    99000.0,
+                    {"source": "reconciliation", "fence_epoch": 2, "sequence": 1},
+                ),
+                (
+                    98000.0,
+                    {"source": "reconciliation", "fence_epoch": 3, "sequence": 1},
+                ),
+            ]
+        )
+        mock_raw_client.evalsha.side_effect = [
+            [2, "FENCE_ADVANCED: expected 1, got 2", "0", 2],
+            [2, "FENCE_ADVANCED: expected 2, got 3", "0", 3],
+            [2, "FENCE_ADVANCED: expected 3, got 4", "0", 4],
+        ]
+
+        violations, receipt = await commit_barrier(
+            cbf_instance,
+            tier="safety",
+            code="CBF_VIOLATION",
+            action="execute_trade",
+            params={"symbol": "AAPL", "amount": 1000.0},
+        )
+
+        assert receipt is None
+        assert len(violations) == 1
+        assert violations[0].kind == ViolationKind.HARD
+        assert "CBF_EPOCH_CONTENDED" in violations[0].message
+        assert cbf_instance._resolve_ground_truth_balance.await_count == 3
+        assert mock_raw_client.evalsha.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_true_epoch_regression_is_hard_and_never_retried(
+    cbf_instance, mock_redis_client, mock_raw_client
+):
+    """A seeded true regression (status 0, current < expected) is NEVER retried."""
+    with (
+        patch(
+            "src.gateway.governance.safety.cbf_engine.redis_client",
+            mock_redis_client,
+        ),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=mock_raw_client),
+        ),
+        patch("src.gateway.governance.safety.cbf_engine._COMMIT_ATTEMPTS", 3),
+    ):
+        cbf_instance._resolve_ground_truth_balance = AsyncMock(
+            return_value=(
+                100000.0,
+                {"source": "reconciliation", "fence_epoch": 5, "sequence": 1},
+            )
+        )
+        mock_raw_client.evalsha.return_value = [
+            0,
+            "Fence epoch regression: expected 5, got 3",
+            "0",
+            3,
+        ]
+
+        committed, msg, _ = await cbf_instance.atomic_verify_and_commit(
+            "execute_trade", {"symbol": "AAPL", "amount": 1000.0}
+        )
+
+        assert committed is False
+        assert "Fence epoch regression" in msg
+        assert cbf_instance._resolve_ground_truth_balance.await_count == 1
+        assert mock_raw_client.evalsha.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_commits_on_fakeredis_succeed_via_epoch_retry():
+    """N concurrent commits on one Redis fail only on a barrier or headroom limit,
+    never on a forward-moved epoch when retry budget is sufficient."""
+    fakeredis = pytest.importorskip("fakeredis.aioredis")
+    fake = fakeredis.FakeRedis(decode_responses=False)
+    await fake.set("safety:current_cash", "100000.0")
+    await fake.set("safety:fence_epoch", "1")
+
+    # Force all 3 instances to enter evalsha on attempt 1 with expected_fence="1"
+    # by synchronizing right before evalsha runs on the first attempt.
+    evalsha_barrier = asyncio.Event()
+    evalsha_entered = 0
+    orig_evalsha = fake.evalsha
+
+    async def synced_evalsha(*args, **kwargs):
+        nonlocal evalsha_entered
+        evalsha_entered += 1
+        if evalsha_entered <= 3:
+            if evalsha_entered == 3:
+                evalsha_barrier.set()
+            await asyncio.wait_for(evalsha_barrier.wait(), timeout=2.0)
+        return await orig_evalsha(*args, **kwargs)
+
+    fake.evalsha = synced_evalsha  # type: ignore[method-assign]
+
+    with (
+        patch("src.gateway.governance.safety.cbf_engine.redis_client", fake),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+            AsyncMock(return_value=fake),
+        ),
+        patch(
+            "src.gateway.governance.reconciliation.daemon.read_verified_snapshot",
+            return_value=None,
+        ),
+        patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 0),
+        patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", False),
+        patch("src.gateway.governance.safety.cbf_engine._COMMIT_ATTEMPTS", 5),
+        patch(
+            "src.gateway.governance.safety.cbf_engine._COMMIT_RETRY_BASE_DELAY_SECONDS",
+            0.0,
+        ),
+    ):
+        cbfs = [
+            ControlBarrierFunction(
+                invariant=CashBarrier(gamma=0.5),
+                cost_resolver=finance_cost_resolver,
+                skip_epoch_seed=True,
+            )
+            for _ in range(3)
+        ]
+        # Pre-load the Lua script SHA so all 3 instances hit evalsha directly on attempt 1
+        sha = await fake.script_load(cbfs[0].LUA_ATOMIC_CBF)
+        for c in cbfs:
+            c._lua_sha = sha
+
+        results = await asyncio.gather(
+            *(
+                c.atomic_verify_and_commit(
+                    "execute_trade", {"symbol": "AAPL", "amount": 1000.0}
+                )
+                for c in cbfs
+            )
+        )
+
+        # All 3 concurrent commits must succeed (1000 each from 100,000 balance)
+        for committed, msg, cost in results:
+            assert committed is True, f"Expected commit after retry, got {msg}"
+            assert msg == "COMMITTED"
+            assert cost == 1000.0
+
+        # 3 concurrent commits with synchronized first-attempt reads require at least 5 evalsha calls
+        assert evalsha_entered >= 5
+        final_cash = float(await fake.get("safety:current_cash"))
+        final_epoch = int(await fake.get("safety:fence_epoch"))
+        assert final_cash == 97000.0
+        assert final_epoch == 4
