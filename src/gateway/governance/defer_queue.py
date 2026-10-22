@@ -549,6 +549,15 @@ class DeferQueue:
 
         return (token, status, revision)
 
+    async def ensure_scripts_loaded(self) -> str:
+        """Load the CAS Lua script once and cache its SHA on this DeferQueue instance."""
+        if self._cas_update_sha is None:
+            self._cas_update_sha = await self._redis.script_load(_CAS_UPDATE_LUA)
+            logger.debug(
+                "[defer_queue] Loaded CAS Lua script, SHA=%s", self._cas_update_sha
+            )
+        return self._cas_update_sha
+
     async def _cas_update(
         self,
         defer_id: str,
@@ -605,17 +614,12 @@ class DeferQueue:
         key = f"{_KEY_PREFIX}{defer_id}"
         token_json = updated_token.model_dump_json()
 
-        # Lazily load the script and cache its SHA on first call
-        if self._cas_update_sha is None:
-            self._cas_update_sha = await self._redis.script_load(_CAS_UPDATE_LUA)
-            logger.debug(
-                "[defer_queue] Loaded CAS Lua script, SHA=%s", self._cas_update_sha
-            )
+        cas_sha = await self.ensure_scripts_loaded()
 
         try:
             # Attempt EVALSHA (fast path: script already loaded)
             result = await self._redis.evalsha(
-                self._cas_update_sha,
+                cas_sha,
                 1,  # number of keys
                 key,
                 str(expected_rev),
@@ -1419,21 +1423,80 @@ class DeferQueue:
 # MANUAL_REVIEW. See UCA-7 in src/gateway/governance/ontology.py.
 
 
+_bound_defer_queue: DeferQueue | None = None
+_shared_defer_queue: DeferQueue | None = None
+_shared_defer_queue_key: tuple[str, Any, Any] | None = None
+
+
+def bind_defer_queue(queue: DeferQueue | None) -> None:
+    """Bind or clear an explicit process-wide DeferQueue instance."""
+    global _bound_defer_queue
+    _bound_defer_queue = queue
+
+
+def reset_shared_defer_queue() -> None:
+    """Reset the lazily constructed shared DeferQueue reference without awaiting network close."""
+    global _bound_defer_queue, _shared_defer_queue, _shared_defer_queue_key
+    _bound_defer_queue = None
+    _shared_defer_queue = None
+    _shared_defer_queue_key = None
+
+
+async def close_shared_defer_queue() -> None:
+    """Close and clear the process-scoped shared DeferQueue Redis pool on shutdown."""
+    global _shared_defer_queue, _shared_defer_queue_key
+    queue = _shared_defer_queue
+    _shared_defer_queue = None
+    _shared_defer_queue_key = None
+    if queue is not None and hasattr(queue._redis, "aclose"):
+        await queue._redis.aclose()
+
+
+def get_shared_defer_queue(redis_url: str | None = None) -> DeferQueue:
+    """Return the process-scoped DeferQueue backed by a pooled Redis db=1 client.
+
+    Reuses a single DeferQueue (and its cached Lua script SHA and
+    BlockingConnectionPool) across calls when the Redis URL, event loop, and
+    builder function remain unchanged.
+    """
+    global _shared_defer_queue, _shared_defer_queue_key
+    if _bound_defer_queue is not None:
+        return _bound_defer_queue
+
+    from src.gateway.infrastructure import redis_client as redis_client_mod
+
+    effective_url = (
+        redis_url
+        if redis_url is not None
+        else os.environ.get("REDIS_URL", "redis://localhost:6379")
+    )
+    try:
+        current_loop: Any = asyncio.get_running_loop()
+        loop_closed = current_loop.is_closed()
+    except RuntimeError:
+        current_loop = None
+        loop_closed = False
+
+    builder = redis_client_mod.build_async_redis
+    key = (effective_url, current_loop, builder)
+
+    if _shared_defer_queue is None or _shared_defer_queue_key != key or loop_closed:
+        client = builder(effective_url, db=1, socket_timeout=3.0)
+        _shared_defer_queue = DeferQueue(client)
+        _shared_defer_queue_key = key
+
+    return _shared_defer_queue
+
+
 @asynccontextmanager
 async def open_defer_queue() -> AsyncIterator[DeferQueue]:
-    """Open the gateway's DeferQueue on Redis ``db=1`` for one unit of work.
+    """Yield the process-scoped DeferQueue on Redis ``db=1`` without closing its pool.
 
-    The single accessor shared by the governor (which parks tokens) and the
-    committing run (which consumes approvals), so both always see one queue.
+    The single accessor shared by the governor (which parks tokens), FTRA
+    commencement checks, and the committing run (which consumes approvals),
+    reusing one pooled client and cached Lua script SHA across calls.
     """
-    import redis.asyncio as aioredis
-
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-    try:
-        yield DeferQueue(client)
-    finally:
-        await client.aclose()
+    yield get_shared_defer_queue()
 
 
 # ---------------------------------------------------------------------------

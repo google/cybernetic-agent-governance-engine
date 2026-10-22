@@ -1458,14 +1458,10 @@ async def list_defer_pending(
         )
 
     try:
-        import redis.asyncio as aioredis
+        from src.gateway.governance.defer_queue import get_shared_defer_queue
 
-        from src.gateway.governance.defer_queue import DeferQueue
-
-        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue = DeferQueue(client)
+        queue = get_shared_defer_queue(redis_url)
         tokens = await queue.list_pending(limit=limit)
-        await client.aclose()
 
         return JSONResponse(
             content={
@@ -1513,24 +1509,19 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
         )
 
     try:
-        import redis.asyncio as aioredis
+        from src.gateway.governance.defer_queue import get_shared_defer_queue
 
-        from src.gateway.governance.defer_queue import DeferQueue
-
-        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue = DeferQueue(client)
+        queue = get_shared_defer_queue(redis_url)
 
         # Use get_token() instead of direct Redis access
         token = await queue.get_token(defer_id)
 
         # Fetch Redis status separately (not part of DeferToken model)
         key = f"DEFER:{defer_id}"
-        status_result = client.hget(key, "status")
+        status_result = queue._redis.hget(key, "status")
         raw_status = (
             await status_result if inspect.isawaitable(status_result) else status_result
         )  # type: ignore[misc]
-
-        await client.aclose()
 
         if token is None:
             raise HTTPException(
@@ -1659,9 +1650,9 @@ async def defer_inject(
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
     try:
-        import redis.asyncio as aioredis
+        from src.gateway.governance.defer_queue import get_shared_defer_queue
 
-        defer_queue_cls = _get_defer_queue_cls()
+        _get_defer_queue_cls()
         replay_evaluate, ReplayResult = _get_replay_evaluate()
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/inject] DeferQueue import failed: %s", exc)
@@ -1675,8 +1666,7 @@ async def defer_inject(
     enriched_context["confidence_score"] = body.confidence_score
 
     try:
-        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue = defer_queue_cls(client)
+        queue = get_shared_defer_queue(redis_url)
 
         # Stream B security gates: prevent bypassing dual-control via injection
         from src.gateway.governance.defer_queue import DeferReason, get_required_quorum
@@ -1684,7 +1674,6 @@ async def defer_inject(
         # Fetch token to check defer_reason and approval status
         token = await queue.get(defer_id)
         if token is None:
-            await client.aclose()
             raise HTTPException(
                 status_code=404,
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
@@ -1698,7 +1687,6 @@ async def defer_inject(
             DeferReason.WARRANT_INELIGIBLE,
         }
         if token.defer_reason in quorum_3_reasons:
-            await client.aclose()
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -1710,7 +1698,6 @@ async def defer_inject(
 
         # Status-gate: Reject injection if token has partial approvals (incomplete quorum)
         if token.approvals and len(token.approvals) < token.required_quorum:
-            await client.aclose()
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -1725,7 +1712,6 @@ async def defer_inject(
         result = await replay_evaluate(queue, defer_id, enriched_context)
 
         if result == ReplayResult.NOT_FOUND:
-            await client.aclose()
             raise HTTPException(
                 status_code=404,
                 detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
@@ -1733,7 +1719,6 @@ async def defer_inject(
         elif result == ReplayResult.ALREADY_RESOLVED:
             # Single-use ticket: a resolved, approved or consumed token is
             # never re-resolved by injection.
-            await client.aclose()
             raise HTTPException(
                 status_code=409,
                 detail={"error": "DEFER_TOKEN_ALREADY_RESOLVED", "defer_id": defer_id},
@@ -1741,7 +1726,6 @@ async def defer_inject(
         elif result == ReplayResult.PARKED:
             # Injected context did not raise confidence above confidence.defer_floor (0.70)
             # Publish DEFER_PARKED event (not DEFER_RESOLVED) for accurate audit trail
-            await client.aclose()
             try:
                 from datetime import datetime
 
@@ -1769,7 +1753,6 @@ async def defer_inject(
         # result == ReplayResult.ADMITTED - proceed with resolution
         # Retrieve the resolved token for audit metadata
         resolved = await queue.get(defer_id)
-        await client.aclose()
 
         if resolved is None:
             # Edge case: token was resolved but immediately expired/removed
@@ -1884,14 +1867,13 @@ async def defer_escalate(
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
     try:
-        import redis.asyncio as aioredis
-
         from src.gateway.governance.defer_queue import (
             ApprovalRecord,
             ApprovalStatus,
+            get_shared_defer_queue,
         )
 
-        defer_queue_cls = _get_defer_queue_cls()
+        _get_defer_queue_cls()
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/escalate] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1908,14 +1890,12 @@ async def defer_escalate(
     )
 
     try:
-        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue = defer_queue_cls(client)
+        queue = get_shared_defer_queue(redis_url)
 
         # Use approve() instead of resolve() for dual-control
         try:
             status, token = await queue.approve(defer_id, approval_record)
         except ValueError as val_exc:
-            await client.aclose()
             msg = str(val_exc)
             status_code = 403 if "Separation-of-duties" in msg else 400
             raise HTTPException(
@@ -1926,7 +1906,6 @@ async def defer_escalate(
                     "defer_id": defer_id,
                 },
             ) from val_exc
-        await client.aclose()
 
         if status == ApprovalStatus.NOT_FOUND:
             raise HTTPException(

@@ -114,7 +114,9 @@ def compliance_bridge_client():
 def test_get_defer_status_returns_404_on_unknown_token(compliance_bridge_client):
     """Verify GET /v1/defer/{unknown_id} returns HTTP 404."""
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_from_url:
             mock_client = AsyncMock()
             mock_client.hget = AsyncMock(return_value=None)
             mock_client.aclose = AsyncMock()
@@ -148,7 +150,9 @@ def test_get_defer_status_returns_200_with_parked_status(compliance_bridge_clien
     )
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_from_url:
             mock_client = AsyncMock()
             mock_client.hget = AsyncMock()
             # First call returns token JSON, second call returns status
@@ -193,7 +197,9 @@ def test_get_defer_status_includes_routing_seal_when_resolved(compliance_bridge_
     )
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_from_url:
             mock_client = AsyncMock()
             mock_client.hget = AsyncMock()
             mock_client.hget.side_effect = [
@@ -221,7 +227,9 @@ def test_get_defer_status_includes_routing_seal_when_resolved(compliance_bridge_
 def test_get_defer_status_handles_redis_unavailable(compliance_bridge_client):
     """Verify GET /v1/defer/{defer_id} returns HTTP 503 when Redis is unavailable."""
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_from_url:
             mock_from_url.side_effect = ConnectionError("Connect call failed")
 
             response = compliance_bridge_client.get("/v1/defer/any-defer-id")
@@ -251,7 +259,9 @@ def test_get_defer_status_with_partially_approved_status(compliance_bridge_clien
     )
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_from_url:
             mock_client = AsyncMock()
             mock_client.hget = AsyncMock()
             mock_client.hget.side_effect = [

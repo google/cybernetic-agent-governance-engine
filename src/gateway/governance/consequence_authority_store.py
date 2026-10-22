@@ -81,17 +81,11 @@ class ConsequenceAuthorityStore:
         Returns:
             ConsequenceAuthorityStore instance with async Redis client.
         """
-        try:
-            import redis.asyncio as aioredis  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError(
-                "redis-py is required for ConsequenceAuthorityStore. "
-                "Install with: pip install redis"
-            ) from exc
+        from src.gateway.infrastructure.redis_client import build_async_redis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         ttl_seconds = int(os.environ.get("FLOWSIGNAL_CONSUMPTION_TTL_SECONDS", "90"))
-        client = aioredis.from_url(redis_url, decode_responses=True)
+        client = build_async_redis(redis_url, socket_timeout=3.0)
         return cls(client, ttl_seconds=ttl_seconds)
 
     @staticmethod

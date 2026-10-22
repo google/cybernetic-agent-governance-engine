@@ -435,16 +435,18 @@ async def test_get_binding_redis_error_returns_none(
 def test_from_env_uses_defaults() -> None:
     """from_env() uses default REDIS_URL and TTL when env vars not set."""
     with patch.dict(os.environ, {}, clear=True):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_build_redis:
             mock_client = MagicMock()
-            mock_from_url.return_value = mock_client
+            mock_build_redis.return_value = mock_client
 
             store = ConsequenceAuthorityStore.from_env()
 
-            # Verify from_url was called with default redis://localhost:6379
-            mock_from_url.assert_called_once_with(
+            # Verify build_async_redis was called with default redis://localhost:6379
+            mock_build_redis.assert_called_once_with(
                 "redis://localhost:6379",
-                decode_responses=True,
+                socket_timeout=3.0,
             )
 
             # Verify default TTL is 90s
@@ -461,16 +463,18 @@ def test_from_env_reads_custom_env_vars() -> None:
             "FLOWSIGNAL_CONSUMPTION_TTL_SECONDS": "120",
         },
     ):
-        with patch("redis.asyncio.from_url") as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis"
+        ) as mock_build_redis:
             mock_client = MagicMock()
-            mock_from_url.return_value = mock_client
+            mock_build_redis.return_value = mock_client
 
             store = ConsequenceAuthorityStore.from_env()
 
-            # Verify from_url was called with custom URL
-            mock_from_url.assert_called_once_with(
+            # Verify build_async_redis was called with custom URL
+            mock_build_redis.assert_called_once_with(
                 "redis://custom-host:6380/1",
-                decode_responses=True,
+                socket_timeout=3.0,
             )
 
             # Verify custom TTL

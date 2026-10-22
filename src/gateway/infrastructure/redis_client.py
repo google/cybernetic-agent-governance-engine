@@ -146,6 +146,73 @@ try:
     ) or _REDIS_URL.startswith("rediss://")
     _REDIS_SSL_CERT_REQS, _REDIS_CA_CERT_PATH = resolve_redis_tls(_REDIS_TLS)
 
+    def _build_pooled_async_redis(
+        *,
+        host: str,
+        port: int,
+        db: int,
+        password: str | None,
+        credential_provider: Any,
+        socket_timeout: float,
+        use_tls: bool,
+        ssl_cert_reqs: ssl.VerifyMode,
+        ssl_ca_certs: str | None,
+    ) -> aioredis.Redis:
+        """Build an async Redis client backed by a bounded BlockingConnectionPool."""
+        from redis.asyncio.retry import Retry
+        from redis.backoff import ExponentialBackoff
+        from redis.exceptions import (
+            BusyLoadingError,
+        )
+        from redis.exceptions import (
+            ConnectionError as RedisConnectionError,
+        )
+        from redis.exceptions import (
+            TimeoutError as RedisTimeoutError,
+        )
+
+        max_connections = int(os.environ.get("REDIS_MAX_CONNECTIONS", "50"))
+        pool_timeout = float(os.environ.get("REDIS_POOL_TIMEOUT", "3.0"))
+        retry_errors = [BusyLoadingError, RedisConnectionError, RedisTimeoutError]
+        retry_policy = Retry(
+            ExponentialBackoff(cap=0.5, base=0.05),
+            2,
+            supported_errors=tuple(retry_errors),
+        )
+
+        connection_class = aioredis.SSLConnection if use_tls else aioredis.Connection
+        pool_kwargs: dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "db": db,
+            "password": password,
+            "credential_provider": credential_provider,
+            "decode_responses": True,
+            "socket_connect_timeout": 3.0,
+            "socket_timeout": socket_timeout,
+            "health_check_interval": 30,
+            "retry": retry_policy,
+            "retry_on_error": retry_errors,
+        }
+        if use_tls:
+            pool_kwargs["ssl_cert_reqs"] = ssl_cert_reqs
+            pool_kwargs["ssl_ca_certs"] = ssl_ca_certs
+
+        pool = aioredis.BlockingConnectionPool(
+            max_connections=max_connections,
+            timeout=pool_timeout,
+            connection_class=connection_class,
+            **pool_kwargs,
+        )
+        client = aioredis.Redis(
+            connection_pool=pool,
+            credential_provider=cred_provider
+            if (cred_provider := credential_provider) is not None
+            else None,
+        )
+        client.auto_close_connection_pool = True
+        return client
+
     class _AsyncRedisClient:
         """Thin async Redis wrapper matching the interface expected by safety.py."""
 
@@ -208,16 +275,14 @@ try:
                     or (self._loop is not None and self._loop.is_closed())
                 ):
                     self._loop = current_loop
-                    self._client = aioredis.Redis(
+                    self._client = _build_pooled_async_redis(
                         host=_REDIS_HOST,
                         port=_REDIS_PORT,
                         db=_REDIS_DB,
                         password=effective_password,
                         credential_provider=cred_provider,
-                        decode_responses=True,
-                        socket_connect_timeout=3.0,
                         socket_timeout=3.0,
-                        ssl=_REDIS_TLS,
+                        use_tls=_REDIS_TLS,
                         ssl_cert_reqs=_REDIS_SSL_CERT_REQS,
                         ssl_ca_certs=_REDIS_CA_CERT_PATH,
                     )
@@ -502,14 +567,17 @@ def get_redis_client() -> "_SyncRedisClient":  # type: ignore[name-defined]
     return sync_redis_client  # type: ignore[return-value]
 
 
-def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any:
-    """Build a ``redis.asyncio.Redis`` for ``url`` with the deployment's TLS and auth.
+def build_async_redis(
+    url: str, *, db: int | None = None, socket_timeout: float = 10.0
+) -> Any:
+    """Build a ``redis.asyncio.Redis`` for ``url`` with the deployment's TLS, auth, and pool.
 
     ``redis.asyncio.from_url(url)`` alone ignores ``REDIS_TLS``,
     ``REDIS_CA_CERT_PATH`` and the Memorystore IAM credential provider, so it
-    cannot reach a TLS- or IAM-protected instance. The evidence stream
-    producer (gateway) and custodian (compliance bridge) both connect through
-    here so they share one connection contract.
+    cannot reach a TLS- or IAM-protected instance. All async Redis clients in
+    the gateway and compliance bridge connect through here so they share one
+    connection contract, a bounded ``BlockingConnectionPool``,
+    ``health_check_interval=30``, and explicit retry policy.
 
     TLS is on when ``REDIS_TLS`` is truthy or the URL scheme is ``rediss://``.
     Certificates are verified (``CERT_REQUIRED``) under every enforcing
@@ -519,8 +587,6 @@ def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any
     """
     from urllib.parse import unquote, urlparse
 
-    import redis.asyncio as aioredis_mod
-
     from src.gateway.infrastructure.redis_credential_factory import (
         get_redis_credential_provider,
     )
@@ -528,6 +594,15 @@ def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any
     parsed = urlparse(url)
     if parsed.scheme not in ("redis", "rediss"):
         raise ValueError(f"Unsupported Redis URL scheme: {parsed.scheme!r}")
+
+    if db is not None:
+        effective_db = db
+    else:
+        path_db = (parsed.path or "").strip("/")
+        if path_db.isdigit():
+            effective_db = int(path_db)
+        else:
+            effective_db = int(os.environ.get("REDIS_DB", "0"))
 
     use_tls = parsed.scheme == "rediss" or os.environ.get("REDIS_TLS", "").lower() in (
         "true",
@@ -545,16 +620,14 @@ def build_async_redis(url: str, *, db: int, socket_timeout: float = 10.0) -> Any
             else os.environ.get("REDIS_PASSWORD") or None
         )
 
-    return aioredis_mod.Redis(
+    return _build_pooled_async_redis(
         host=parsed.hostname or "localhost",
         port=parsed.port or 6379,
-        db=db,
+        db=effective_db,
         password=password,
         credential_provider=cred_provider,
-        decode_responses=True,
-        socket_connect_timeout=3.0,
         socket_timeout=socket_timeout,
-        ssl=use_tls,
+        use_tls=use_tls,
         ssl_cert_reqs=cert_reqs,
         ssl_ca_certs=ca_certs,
     )

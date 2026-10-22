@@ -65,7 +65,7 @@ import logging
 import os
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -153,8 +153,8 @@ def route_after_ftra(state: dict[str, Any]) -> str:
 
 def create_ftra_node(
     config: FtraNodeConfig | None = None,
-) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    """Return a LangGraph node function that performs FTRA analysis.
+) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
+    """Return an async LangGraph node function that performs FTRA analysis.
 
     Args:
         config: Optional :class:`FtraNodeConfig` providing extractor functions
@@ -162,7 +162,7 @@ def create_ftra_node(
             GFA's ``AgentState`` schema).
 
     Returns:
-        An async-compatible node function ``ftra_node(state) -> state_patch``.
+        An async node function ``async def ftra_node(state) -> state_patch``.
 
     Example:
         Using default config::
@@ -210,7 +210,7 @@ def create_ftra_node(
     # Capture span attributes from config
     extra_span_attrs = dict(effective_config.span_attributes)
 
-    def ftra_node(state: dict[str, Any]) -> dict[str, Any]:
+    async def ftra_node(state: dict[str, Any]) -> dict[str, Any]:
         """FTRA Tier 0.5 governance gate — commencement-time reachability check.
 
         Reads from state using configured extractors (defaults to GFA schema):
@@ -223,7 +223,7 @@ def create_ftra_node(
             ftra_defer_id  — DeferQueue token ID (HITL_REQUIRED only)
         """
         try:
-            return _run_ftra(
+            return await _run_ftra(
                 state,
                 analyzer,
                 plan_extractor=plan_extractor,
@@ -266,7 +266,7 @@ def create_ftra_node(
 # ---------------------------------------------------------------------------
 
 
-def _run_ftra(
+async def _run_ftra(
     state: dict[str, Any],
     analyzer: Any,
     *,
@@ -348,8 +348,10 @@ def _run_ftra(
             for key, value in extra_span_attrs.items():
                 span.set_attribute(key, value)
 
-        def _defer_parse_failure(result_payload: dict[str, Any]) -> dict[str, Any]:
-            defer_id = _park_in_defer_queue(state, result_payload, confidence)
+        async def _defer_parse_failure(
+            result_payload: dict[str, Any],
+        ) -> dict[str, Any]:
+            defer_id = await _park_in_defer_queue(state, result_payload, confidence)
             try:
                 interrupt(
                     {
@@ -379,7 +381,7 @@ def _run_ftra(
                 parse_result.error_message,
             )
             # JSON_DECODE_ERROR after sanitization → log ERROR, use safe default (DEFER)
-            return _defer_parse_failure(
+            return await _defer_parse_failure(
                 {
                     "error": parse_result.error_message,
                     "verdict": "HITL_REQUIRED",
@@ -395,7 +397,7 @@ def _run_ftra(
                 parse_result.error_message,
             )
             # SCHEMA_VALIDATION_ERROR → DEFER (needs review)
-            return _defer_parse_failure(
+            return await _defer_parse_failure(
                 {
                     "error": parse_result.error_message,
                     "verdict": "HITL_REQUIRED",
@@ -433,7 +435,7 @@ def _run_ftra(
                     "FTRA: empty plan with low confidence (%.2f) — DEFER for review.",
                     confidence,
                 )
-                return _defer_parse_failure(
+                return await _defer_parse_failure(
                     {
                         "verdict": "HITL_REQUIRED",
                         "ctrl_id": _CTRL_FTRA_001,
@@ -449,7 +451,7 @@ def _run_ftra(
                 "FTRA: plan appears truncated — DEFER for review. Details: %s",
                 parse_result.error_message,
             )
-            return _defer_parse_failure(
+            return await _defer_parse_failure(
                 {
                     "error": parse_result.error_message,
                     "verdict": "HITL_REQUIRED",
@@ -505,7 +507,7 @@ def _run_ftra(
         }
 
     if result.verdict == FTRAVerdict.HITL_REQUIRED:
-        defer_id = _park_in_defer_queue(state, result_dict, confidence)
+        defer_id = await _park_in_defer_queue(state, result_dict, confidence)
         logger.warning(
             "FTRA: plan '%s' HITL_REQUIRED — parked as defer_id='%s'.",
             plan.plan_id,
@@ -833,34 +835,23 @@ def _parse_plan(raw: Any) -> Any | None:
         return None
 
 
-def _park_in_defer_queue(
+async def _park_in_defer_queue(
     state: dict[str, Any],
     result_dict: dict[str, Any],
     confidence: float,
 ) -> str:
-    """Park the suspended plan in DeferQueue db=1 and return the defer_id.
+    """Park the suspended plan in the shared DeferQueue (Redis db=1) and return the defer_id.
 
-    Connects to Redis db=1 via REDIS_URL (matching the deployment contract
-    documented in defer_queue.py — the DEFER token store is isolated from the
-    LangGraph checkpointer at db=0) and parks the token through the existing
-    DeferQueue infrastructure. Falls back to a local, unpersisted UUID token
-    if Redis is unavailable — the HITL_REQUIRED verdict is still enforced by
-    the graph interrupt/state routing, but external HITL API resolution
-    (POST /v1/defer/{id}/escalate or /inject) will not find this token in
-    that fallback case, since it was never written to Redis.
-
-    NOTE (fixed): a prior version instantiated DeferQueue() with zero
-    arguments, but DeferQueue.__init__ requires a redis_client. That always
-    raised TypeError, which was silently caught by the except-Exception
-    fallback below — meaning every HITL_REQUIRED verdict previously fell
-    through to the unpersisted-token path unconditionally. See
-    src/compliance_bridge/main.py's list_defer_pending()/resolve endpoints
-    for the correct DeferQueue(client) instantiation pattern this mirrors.
+    Awaits the process-scoped ``open_defer_queue()`` directly without spawning
+    a background thread or calling ``asyncio.run()``. Falls back to a local,
+    unpersisted UUID token if Redis is unavailable — the HITL_REQUIRED verdict
+    is still enforced by the graph interrupt/state routing.
     """
-    import asyncio
-    import os
-
-    from src.gateway.governance.defer_queue import DeferQueue, DeferReason, DeferToken
+    from src.gateway.governance.defer_queue import (
+        DeferReason,
+        DeferToken,
+        open_defer_queue,
+    )
 
     thread_id: str = state.get("thread_id", str(uuid.uuid4()))
     token = DeferToken(
@@ -874,30 +865,9 @@ def _park_in_defer_queue(
         aarm_vector="AARM-V9",  # Forward-looking reachability block
     )
 
-    async def _park() -> str:
-        import redis.asyncio as aioredis
-
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        try:
-            queue = DeferQueue(client)
-            return await queue.park(token)
-        finally:
-            await client.aclose()
-
     try:
-        # Run in a new event loop if we're not already in one
-        try:
-            asyncio.get_running_loop()
-            # We're inside an async context — schedule as a task
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, _park())
-                return future.result(timeout=5.0)
-        except RuntimeError:
-            # No running loop — safe to use asyncio.run
-            return asyncio.run(_park())
+        async with open_defer_queue() as queue:
+            return await queue.park(token)
     except Exception as exc:
         logger.error(
             "FTRA: DeferQueue park failed (%s) — using local defer_id only "

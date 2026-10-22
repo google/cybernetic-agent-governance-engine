@@ -30,6 +30,7 @@ src/governed_financial_advisor/graph/graph.py.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
@@ -521,7 +522,7 @@ class TestCreateFtraNode:
             "execution_plan_output": self._plan_dict([("s1", "check_price")]),
             "evaluation_result": {"confidence": 0.9},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "CLEAR"
         assert result["ftra_defer_id"] is None
@@ -540,7 +541,7 @@ class TestCreateFtraNode:
             "execution_plan_output": self._plan_dict([("s1", "execute_trade")]),
             "evaluation_result": {"confidence": 0.2},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "BLOCKED"
         assert result["ftra_defer_id"] is None
@@ -553,7 +554,7 @@ class TestCreateFtraNode:
         node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {"evaluation_result": {"confidence": 0.9}}
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "BLOCKED"
         # Error message indicates plan extraction failed (extractor returned None)
@@ -579,7 +580,7 @@ class TestCreateFtraNode:
             "execution_plan_output": {"not_a_valid_plan": True},
             "evaluation_result": {"confidence": 0.9},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Per BUG-FTRA-SCHEMA-001 fix: DEFER (HITL_REQUIRED), not BLOCKED
         assert result["ftra_status"] == "HITL_REQUIRED"
@@ -597,7 +598,7 @@ class TestCreateFtraNode:
         node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {"execution_plan_output": self._plan_dict([("s1", "execute_trade")])}
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "BLOCKED"
 
@@ -627,7 +628,10 @@ class TestCreateFtraNode:
         mock_client = MagicMock()
         mock_client.aclose = AsyncMock()
 
-        with patch("redis.asyncio.from_url", return_value=mock_client) as mock_from_url:
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=mock_client,
+        ) as mock_from_url:
             with patch(
                 "src.gateway.governance.defer_queue.DeferQueue",
                 return_value=mock_queue_instance,
@@ -635,7 +639,7 @@ class TestCreateFtraNode:
                 with patch(
                     "src.gateway.governance.ftra.node_factory.interrupt"
                 ) as mock_interrupt:
-                    node(state)
+                    asyncio.run(node(state))
 
         # The critical regression assertion: DeferQueue must be constructed
         # WITH the redis client (not zero-arg), and park() must be awaited.
@@ -671,11 +675,14 @@ class TestCreateFtraNode:
             "thread_id": "thread-hitl-002",
         }
 
-        with patch("redis.asyncio.from_url", side_effect=ConnectionError("redis down")):
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            side_effect=ConnectionError("redis down"),
+        ):
             with patch(
                 "src.gateway.governance.ftra.node_factory.interrupt"
             ) as mock_interrupt:
-                node(state)
+                asyncio.run(node(state))
 
         # Verify interrupt() was called and defer_id is a valid UUID
         mock_interrupt.assert_called_once()
@@ -702,7 +709,7 @@ class TestCreateFtraNode:
             "execution_plan_output": self._plan_dict([("s1", "check_price")]),
             "evaluation_result": {"confidence": "not-a-float"},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "BLOCKED"
 
@@ -725,7 +732,7 @@ class TestCreateFtraNode:
             "evaluation_result": {"confidence": 0.9},
         }
 
-        config_result = config_node(state)
+        config_result = asyncio.run(config_node(state))
 
         # Must produce expected output
         assert config_result["ftra_status"] == "CLEAR"
@@ -758,7 +765,7 @@ class TestCreateFtraNode:
             "my_custom_plan": self._plan_dict([("s1", "check_price")]),
             "my_custom_confidence": 0.95,
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "CLEAR"
         assert result["ftra_result"]["confidence_at_analysis"] == 0.95
@@ -784,7 +791,7 @@ class TestCreateFtraNode:
             "custom_plan_field": self._plan_dict([("s1", "dangerous_action")]),
             "custom_confidence_field": 0.3,
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "BLOCKED"
 
@@ -807,7 +814,7 @@ class TestCreateFtraNode:
             "alternate_plan_key": self._plan_dict([("s1", "check_balance")]),
             "alternate_eval_key": {"confidence": 0.88},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "CLEAR"
         assert result["ftra_result"]["confidence_at_analysis"] == 0.88
@@ -838,7 +845,7 @@ class TestCreateFtraNode:
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *args: None
 
         with patch("opentelemetry.trace.get_tracer", return_value=mock_tracer):
-            result = node(state)
+            result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "CLEAR"
         # Verify set_attribute was called with custom attrs
@@ -1073,7 +1080,7 @@ class TestBugFtraSchema001:
             "execution_plan_output": {"not_a_valid_plan": True},
             "evaluation_result": {"confidence": 0.9},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Key assertion: should be HITL_REQUIRED (DEFER), not BLOCKED
         assert result["ftra_status"] == "HITL_REQUIRED"
@@ -1096,7 +1103,7 @@ class TestBugFtraSchema001:
             "execution_plan_output": '{"invalid: json',
             "evaluation_result": {"confidence": 0.9},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Key assertion: should be HITL_REQUIRED (DEFER), not BLOCKED
         assert result["ftra_status"] == "HITL_REQUIRED"
@@ -1132,7 +1139,7 @@ class TestBugFtraSchema001:
             "execution_plan_output": empty_plan,
             "evaluation_result": {"confidence": 0.85},  # High confidence
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Key assertion: empty plan + high confidence → CLEAR
         assert result["ftra_status"] == "CLEAR"
@@ -1164,7 +1171,7 @@ class TestBugFtraSchema001:
             "execution_plan_output": empty_plan,
             "evaluation_result": {"confidence": 0.5},  # Low confidence
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Key assertion: empty plan + low confidence → HITL_REQUIRED
         assert result["ftra_status"] == "HITL_REQUIRED"
@@ -1217,7 +1224,7 @@ class TestBugFtraJson001:
             "execution_plan_output": self._plan_json_with_fences(),
             "evaluation_result": {"confidence": 0.9},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Key assertion: should parse successfully and return CLEAR
         assert result["ftra_status"] == "CLEAR"
@@ -1238,7 +1245,7 @@ class TestBugFtraJson001:
             "execution_plan_output": self._plan_json_with_fences(),
             "evaluation_result": {"confidence": 0.9},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # With sanitization disabled, the fences cause a parse failure
         # (should DEFER, not BLOCK per BUG-FTRA-SCHEMA-001 fix)
@@ -1340,7 +1347,7 @@ class TestTelemetry:
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *args: None
 
         with patch("opentelemetry.trace.get_tracer", return_value=mock_tracer):
-            result = node(state)
+            result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "CLEAR"
 
@@ -1384,7 +1391,7 @@ class TestTelemetry:
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *args: None
 
         with patch("opentelemetry.trace.get_tracer", return_value=mock_tracer):
-            result = node(state)
+            result = asyncio.run(node(state))
 
         assert result["ftra_status"] == "CLEAR"
 
@@ -1426,7 +1433,7 @@ class TestTelemetry:
             "execution_plan_output": {"invalid": "plan"},
             "evaluation_result": {"confidence": 0.9},
         }
-        node(state)
+        asyncio.run(node(state))
 
         # Counter should have incremented
         new_value = FTRA_PARSE_FAILURES.labels(
@@ -1509,12 +1516,13 @@ class TestFtraIntegration:
 
         # Mock Redis to avoid actual HITL parking (just test classification)
         with patch(
-            "redis.asyncio.from_url", side_effect=ConnectionError("redis unavailable")
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            side_effect=ConnectionError("redis unavailable"),
         ):
             with patch(
                 "src.gateway.governance.ftra.node_factory.interrupt"
             ) as mock_interrupt:
-                node(state)
+                asyncio.run(node(state))
 
         # Verify interrupt() was called (HITL_REQUIRED verdict)
         mock_interrupt.assert_called_once()
@@ -1551,7 +1559,7 @@ class TestFtraIntegration:
             ),
             "evaluation_result": {"confidence": 0.95},
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # All actions are safe → CLEAR verdict
         assert result["ftra_status"] == "CLEAR"
@@ -1604,7 +1612,7 @@ class TestFtraIntegration:
                 "decision_confidence": 0.92,
             },
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Should extract plan and confidence correctly and return CLEAR
         assert result["ftra_status"] == "CLEAR"
@@ -1685,7 +1693,7 @@ class TestFtraIntegration:
                     "execution_plan_output": self._plan_dict([("s1", action_name)]),
                     "evaluation_result": {"confidence": 0.95},
                 }
-                result = node(state)
+                result = asyncio.run(node(state))
                 assert result["ftra_status"] == "CLEAR", (
                     f"In-graph node status mismatch for '{action_name}': "
                     f"expected CLEAR, got {result['ftra_status']}"
@@ -1782,7 +1790,7 @@ class TestFtraIntegration:
             ),
             "evaluation_result": {"confidence": 0.30},  # Low confidence → BLOCKED
         }
-        result = node(state)
+        result = asyncio.run(node(state))
 
         # Should be BLOCKED due to low confidence + reachable terminal
         assert result["ftra_status"] == "BLOCKED"
@@ -1815,7 +1823,7 @@ class TestFtraIntegration:
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *args: None
 
         with patch("opentelemetry.trace.get_tracer", return_value=mock_tracer):
-            node(state)
+            asyncio.run(node(state))
 
         # Verify all expected attributes are set
         set_attr_calls = {
