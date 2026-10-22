@@ -186,6 +186,12 @@ class CausalTierPlugin(ReadOnlyTier):
             assert self._gatekeeper is not None
             decision = self._gatekeeper.evaluate(params, None, action=action)
         else:
+            assert self._gatekeeper is not None
+            if (
+                self._refresher.snapshot is None
+                and self._gatekeeper._synthetic_telemetry_permitted()
+            ):
+                await self._refresher.refresh_once()
             verdict, provider_error = self._refresher.current_verdict()
             if provider_error is not None:
                 return [
@@ -194,7 +200,6 @@ class CausalTierPlugin(ReadOnlyTier):
                         f"Telemetry provider failed: {provider_error}",
                     )
                 ]
-            assert self._gatekeeper is not None
             decision = self._gatekeeper.evaluate(
                 params,
                 action=action,

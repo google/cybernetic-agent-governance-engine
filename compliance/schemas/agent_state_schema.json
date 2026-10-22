@@ -256,6 +256,12 @@
         "string",
         "null"
       ]
+    },
+    "routing_verdict_cache": {
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
   "$defs": {

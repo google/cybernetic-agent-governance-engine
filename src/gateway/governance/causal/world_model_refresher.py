@@ -288,19 +288,13 @@ class WorldModelRefresher:
 
     async def _compute_verdict(self, frame: pd.DataFrame) -> WorldModelVerdict:
         spec = self._gatekeeper.spec
-        if (
-            not spec.graph_dot
-            or not spec.treatment_col
-            or not spec.outcome_col
-        ):
+        if not spec.graph_dot or not spec.treatment_col or not spec.outcome_col:
             return WorldModelVerdict(False, None, gk_mod.REASON_INCOMPLETE_SPEC)
 
         # If a test or caller monkeypatched _validate_world_model or _CausalModel
         # in-process, or disabled the process pool, run in a worker thread so
         # in-process monkeypatches take effect without blocking the event loop.
-        validate_attr = getattr(
-            type(self._gatekeeper), "_validate_world_model", None
-        )
+        validate_attr = getattr(type(self._gatekeeper), "_validate_world_model", None)
         custom_validate = (
             "_validate_world_model" in self._gatekeeper.__dict__
             or validate_attr is not _DEFAULT_VALIDATE_FN

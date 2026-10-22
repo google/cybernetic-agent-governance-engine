@@ -196,4 +196,3 @@ class AgentState(TypedDict):
     governance_envelope: dict[str, Any] | None  # default None
     governance_status: str | None  # default None
     routing_verdict_cache: dict[str, Any] | None  # default None
-

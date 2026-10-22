@@ -210,7 +210,6 @@ def test_script_never_applies_manifests_and_the_hpa_manifest_is_gone() -> None:
     # while scripts/run_gke_load_test.sh still never applies it and deletes any active HPA.
 
 
-
 def test_stub_locust_rejects_options_locust_does_not_define(tmp_path: Path) -> None:
     env, _ = _environment(tmp_path)
 

@@ -103,7 +103,6 @@ class GovernedTraderState(TypedDict):
     routing_verdict_cache: dict[str, Any] | None  # Cached ALLOW routing verdict
 
 
-
 # ---------------------------------------------------------------------------
 # Prompts
 # ---------------------------------------------------------------------------

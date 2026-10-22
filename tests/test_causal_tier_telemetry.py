@@ -209,7 +209,10 @@ async def test_enforcing_posture_60_rows_reaches_refuter_in_background_and_reque
     assert tier.refresher is not None
     await tier.refresher.refresh_once()
     assert stable_dowhy.refuted == 1
-    assert len(provider.requested) == 1 and provider.requested[0] >= get_causal_min_samples()
+    assert (
+        len(provider.requested) == 1
+        and provider.requested[0] >= get_causal_min_samples()
+    )
 
     # Multiple request evaluations reuse the refreshed snapshot without touching the provider or DoWhy
     assert await tier.evaluate("execute_trade", PARAMS) == []
@@ -272,7 +275,9 @@ async def test_stale_telemetry_watermark_denies_fail_closed(enforcing, stable_do
 
 
 @pytest.mark.asyncio
-async def test_nan_or_nat_telemetry_watermark_denies_fail_closed(enforcing, stable_dowhy):
+async def test_nan_or_nat_telemetry_watermark_denies_fail_closed(
+    enforcing, stable_dowhy
+):
     df = _frame(60)
     df["timestamp"] = pd.Series([pd.NaT] * len(df), dtype="datetime64[ns, UTC]")
     assert gk_mod._extract_telemetry_watermark(df) is None

@@ -234,4 +234,3 @@ def reusable_allow_verdict(
         out["verdict"] = GovernanceDecision.ALLOW.value
         return out
     return {"verdict": GovernanceDecision.ALLOW.value, "violations": []}
-
