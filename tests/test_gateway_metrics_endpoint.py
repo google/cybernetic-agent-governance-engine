@@ -377,3 +377,84 @@ def test_lula_validation_metrics_covers_servicemonitor_and_podmonitoring() -> No
     rego = resource_desc["provider"]["opa-spec"]["rego"]
     assert "service_monitor_valid" in rego
     assert "pod_monitoring_valid" in rego
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        "deployment/k8s/gateway.yaml",
+        "deployment/k8s/gateway.yaml.tpl",
+        "deployment/k8s/gateway-deployment.yaml.tpl",
+    ],
+)
+def test_gateway_manifests_configure_startup_probe_prestop_and_thread_limits(
+    rel_path: str,
+) -> None:
+    docs = [
+        d
+        for d in yaml.safe_load_all((_REPO / rel_path).read_text(encoding="utf-8"))
+        if d
+    ]
+    deploy = next(d for d in docs if d.get("kind") == "Deployment")
+    container = deploy["spec"]["template"]["spec"]["containers"][0]
+
+    envs = {e["name"]: e.get("value") for e in container.get("env", [])}
+    assert envs.get("OMP_NUM_THREADS") == "2"
+    assert envs.get("OPENBLAS_NUM_THREADS") == "2"
+
+    pre_stop = container["lifecycle"]["preStop"]["exec"]["command"]
+    assert pre_stop == ["/bin/sh", "-c", "sleep 5"]
+
+    for probe_name in ("startupProbe", "livenessProbe", "readinessProbe"):
+        probe = container[probe_name]
+        assert probe["httpGet"]["path"] == "/health"
+        assert probe["httpGet"]["port"] == 8080
+
+    assert container["startupProbe"]["periodSeconds"] == 5
+    assert container["startupProbe"]["failureThreshold"] == 30
+
+
+def test_gateway_hpa_uses_gmp_loop_lag_metric_and_defines_pdb() -> None:
+    path = _REPO / "deployment" / "k8s" / "gateway-hpa.yaml"
+    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
+    assert len(docs) == 2
+
+    hpa = next(d for d in docs if d.get("kind") == "HorizontalPodAutoscaler")
+    assert hpa["apiVersion"] == "autoscaling/v2"
+    assert hpa["spec"]["minReplicas"] == 2
+    assert hpa["spec"]["maxReplicas"] == 5
+    metrics = hpa["spec"]["metrics"]
+    assert len(metrics) == 1
+    assert metrics[0]["type"] == "Pods"
+    assert (
+        metrics[0]["pods"]["metric"]["name"]
+        == "prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge"
+    )
+    assert metrics[0]["pods"]["target"] == {
+        "type": "AverageValue",
+        "averageValue": "50m",
+    }
+
+    pdb = next(d for d in docs if d.get("kind") == "PodDisruptionBudget")
+    assert pdb["apiVersion"] == "policy/v1"
+    assert pdb["metadata"]["name"] == "gateway-pdb"
+    assert pdb["spec"]["minAvailable"] == 1
+    assert pdb["spec"]["selector"]["matchLabels"] == {"app": "gateway"}
+
+
+def test_gateway_terraform_module_wires_probes_pdb_and_loop_lag_hpa() -> None:
+    main_tf = (_REPO / "infra/modules/gateway/main.tf").read_text(encoding="utf-8")
+    vars_tf = (_REPO / "infra/modules/gateway/variables.tf").read_text(encoding="utf-8")
+
+    assert 'name  = "OMP_NUM_THREADS"' in main_tf
+    assert 'name  = "OPENBLAS_NUM_THREADS"' in main_tf
+    assert "startup_probe {" in main_tf
+    assert "liveness_probe {" in main_tf
+    assert "readiness_probe {" in main_tf
+    assert "pre_stop {" in main_tf
+    assert 'resource "kubernetes_pod_disruption_budget_v1" "gateway"' in main_tf
+    assert "count = var.replicas >= 2 ? 1 : 0" in main_tf
+    assert 'resource "kubernetes_horizontal_pod_autoscaler_v2" "gateway"' in main_tf
+    assert "prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge" in main_tf
+    assert 'variable "enable_autoscaling"' in vars_tf
+    assert 'variable "autoscaling_target_loop_lag"' in vars_tf

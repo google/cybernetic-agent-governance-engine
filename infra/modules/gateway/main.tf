@@ -448,6 +448,15 @@ resource "kubernetes_deployment" "gateway" {
             name  = "EVIDENCE_STREAM_KEY"
             value = var.evidence_stream_key
           }
+          # Cap BLAS/OpenMP worker pools to the 2-CPU container limit (2000m).
+          env {
+            name  = "OMP_NUM_THREADS"
+            value = "2"
+          }
+          env {
+            name  = "OPENBLAS_NUM_THREADS"
+            value = "2"
+          }
           dynamic "volume_mount" {
             for_each = var.redis_ca_pem != "" ? [1] : []
             content {
@@ -455,6 +464,42 @@ resource "kubernetes_deployment" "gateway" {
               mount_path = "/etc/cage/tls/redis"
               read_only  = true
             }
+          }
+          lifecycle {
+            pre_stop {
+              exec {
+                command = ["/bin/sh", "-c", "sleep 5"]
+              }
+            }
+          }
+          startup_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            period_seconds    = 5
+            failure_threshold = 30
+            timeout_seconds   = 5
+          }
+          liveness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 20
+            failure_threshold     = 3
+            timeout_seconds       = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            failure_threshold     = 3
+            timeout_seconds       = 5
           }
           resources {
             requests = {
@@ -517,6 +562,66 @@ resource "kubernetes_service" "gateway" {
 
     selector = {
       app = "gateway"
+    }
+  }
+}
+
+# ─── PodDisruptionBudget (only when replicas >= 2) ───────────────────────────
+resource "kubernetes_pod_disruption_budget_v1" "gateway" {
+  count = var.replicas >= 2 ? 1 : 0
+
+  metadata {
+    name      = "gateway-pdb"
+    namespace = var.namespace
+    labels = {
+      app = "gateway"
+    }
+  }
+
+  spec {
+    min_available = 1
+
+    selector {
+      match_labels = {
+        app = "gateway"
+      }
+    }
+  }
+}
+
+# ─── Autoscaling on GMP Event-Loop Lag Custom Metric ─────────────────────────
+resource "kubernetes_horizontal_pod_autoscaler_v2" "gateway" {
+  count = var.enable_autoscaling && var.replicas >= 2 ? 1 : 0
+
+  metadata {
+    name      = "gateway-hpa"
+    namespace = var.namespace
+    labels = {
+      app = "gateway"
+    }
+  }
+
+  spec {
+    min_replicas = max(2, var.replicas)
+    max_replicas = var.max_replicas
+
+    scale_target_ref {
+      api_version = "apps/v1"
+      kind        = "Deployment"
+      name        = kubernetes_deployment.gateway.metadata[0].name
+    }
+
+    metric {
+      type = "Pods"
+      pods {
+        metric {
+          name = "prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge"
+        }
+        target {
+          type          = "AverageValue"
+          average_value = var.autoscaling_target_loop_lag
+        }
+      }
     }
   }
 }

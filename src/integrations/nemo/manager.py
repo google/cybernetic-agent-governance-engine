@@ -27,8 +27,6 @@ import logging
 import os
 from typing import Any
 
-import nest_asyncio
-
 try:
     from nemoguardrails import LLMRails, RailsConfig
     from nemoguardrails.context import streaming_handler_var
@@ -136,11 +134,6 @@ def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
             "returning None (NeMo guardrails tier unavailable)."
         )
         return None
-
-    try:
-        nest_asyncio.apply()
-    except Exception as exc:
-        logger.warning("nest_asyncio.apply() failed: %s", exc)
 
     # Apply SDD monkeypatch so _get_analyzer uses en_core_web_sm
     _apply_sdd_monkeypatch()
