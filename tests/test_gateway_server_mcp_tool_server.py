@@ -198,14 +198,14 @@ class TestCheckRateLimit:
 
     @pytest.mark.asyncio
     async def test_expired_timestamps_evicted(self):
-        """Old timestamps outside the window are evicted, freeing quota."""
+        """Past GCRA theoretical arrival times (TATs) in the past allow new requests."""
         import sys
 
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
 
-            mod._rate_limit_buckets = {}
+            mod._rate_limit_buckets.clear()
             original_max = mod._RATE_LIMIT_MAX_CALLS
             original_window = mod._RATE_LIMIT_WINDOW_SECONDS
 
@@ -213,16 +213,17 @@ class TestCheckRateLimit:
             mod._RATE_LIMIT_WINDOW_SECONDS = 1
 
             ip = "3.3.3.3"
-            # Manually plant an old timestamp that is already expired
-            old_ts = time.monotonic() - 10  # 10s ago, well outside a 1s window
-            mod._rate_limit_buckets[ip] = collections.deque([old_ts])
+            # Plant an expired TAT (10s in the past in ms)
+            old_tat_ms = (time.monotonic() - 10.0) * 1000.0
+            mod._rate_limit_buckets[f"rl:tools-execute:p:{ip}"] = old_tat_ms
 
             result = await mod._check_rate_limit(ip)
 
             mod._RATE_LIMIT_MAX_CALLS = original_max
             mod._RATE_LIMIT_WINDOW_SECONDS = original_window
+            mod._rate_limit_buckets.clear()
 
-        assert result is True  # old entry evicted, slot is free
+        assert result is True  # expired TAT allows next cell
 
 
 # ---------------------------------------------------------------------------

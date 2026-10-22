@@ -27,6 +27,7 @@ respectively.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
@@ -38,7 +39,6 @@ from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from typing import Any, NoReturn
 
-from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -325,119 +325,45 @@ async def sanitize_mcp_tool_response(
 governance_app = FastAPI(title="CAGE Governance Middleware")
 
 # ---------------------------------------------------------------------------
-# In-memory rate limiter for /validate-action (GHSA-v3h4-8458-5ww3)
+# Shared, principal-keyed GCRA rate limiter for /validate-action (GHSA-v3h4-8458-5ww3, A4)
 #
-# Prevents unauthenticated DoS and governance configuration oracle attacks
-# by capping requests per client IP within a sliding window.
-#
-# Limits: 60 requests per 60-second window per client IP.
-# Configurable via VALIDATE_ACTION_RATE_LIMIT and VALIDATE_ACTION_RATE_WINDOW.
-#
-# MED-3 LIMITATION: This is an in-process, in-memory rate limiter.  In a
-# multi-pod Kubernetes deployment each pod maintains its own independent bucket,
-# so the effective rate limit is _RATE_LIMIT_MAX x pod_count.  For true
-# cross-pod enforcement, replace this with a Redis-backed sliding window
-# (e.g. ZREMRANGEBYSCORE + ZADD + ZCARD in a Lua script, similar to the
-# TokenQuotaProxy pattern in token_quota_proxy.py).
+# Enforces dual-bucket GCRA limits in Redis across gateway replicas:
+#   - rl:validate-action:id:{l5d-client-id} (fleet workload identity budget)
+#   - rl:validate-action:p:{principal}      (per end-user or session budget)
 # ---------------------------------------------------------------------------
 
-_RATE_LIMIT_MAX: int = int(os.environ.get("VALIDATE_ACTION_RATE_LIMIT", "60"))
-_RATE_LIMIT_WINDOW: int = int(os.environ.get("VALIDATE_ACTION_RATE_WINDOW", "60"))
-
-# {client_ip: [timestamp, ...]} — timestamps of requests within the window
-# Uses TTLCache to prevent unbounded memory growth: entries expire after 1 hour,
-# and max 10,000 unique IPs are tracked simultaneously.
-_validate_action_rate_buckets: TTLCache[str, list[float]] = TTLCache(
-    maxsize=10000, ttl=3600
+from src.gateway.server.rate_limit import (
+    DEFAULT_PRINCIPAL_PER_MIN,
+    DEFAULT_WINDOW_SECONDS,
+    RateLimitVerdict,
+    get_shared_rate_limiter,
 )
 
-# ---------------------------------------------------------------------------
-# HIGH-5: Trusted proxy CIDR list for X-Forwarded-For validation.
-#
-# X-Forwarded-For is a client-controlled header.  Only trust it when the
-# direct TCP connection comes from a known trusted proxy (load balancer, ingress
-# controller, or API gateway).  Requests from untrusted sources use the direct
-# connection IP so attackers cannot spoof their IP to bypass rate limiting.
-#
-# Configure via CAGE_TRUSTED_PROXY_CIDRS (comma-separated CIDR list).
-# Default: RFC-1918 private ranges (suitable for GKE / Cloud Load Balancing).
-# ---------------------------------------------------------------------------
-import ipaddress as _ipaddress
+_RATE_LIMIT_MAX: int = int(
+    os.environ.get(
+        "CAGE_RATE_LIMIT_PRINCIPAL_PER_MIN",
+        os.environ.get("VALIDATE_ACTION_RATE_LIMIT", str(DEFAULT_PRINCIPAL_PER_MIN)),
+    )
+)
+_RATE_LIMIT_WINDOW: int = int(
+    os.environ.get(
+        "CAGE_RATE_LIMIT_WINDOW_SECONDS",
+        os.environ.get("VALIDATE_ACTION_RATE_WINDOW", str(int(DEFAULT_WINDOW_SECONDS))),
+    )
+)
 
-_TRUSTED_PROXY_CIDRS: list[str] = [
-    cidr.strip()
-    for cidr in os.environ.get(
-        "CAGE_TRUSTED_PROXY_CIDRS",
-        "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32,::1/128",
-    ).split(",")
-    if cidr.strip()
-]
+# Retained alias pointing to the shared fallback bucket cache for test reset helpers.
+_validate_action_rate_buckets = get_shared_rate_limiter()._fallback_tat
 
 
-def _is_trusted_proxy(ip: str) -> bool:
-    """Return True if *ip* is within the configured trusted proxy CIDR list."""
-    try:
-        addr = _ipaddress.ip_address(ip)
-        return any(
-            addr in _ipaddress.ip_network(cidr, strict=False)
-            for cidr in _TRUSTED_PROXY_CIDRS
-        )
-    except ValueError:
-        return False
-
-
-def _client_ip(request: Request) -> str:
-    """Rate-limit key: X-Forwarded-For only when the TCP peer is a trusted proxy.
-
-    HIGH-5 fix: untrusted sources use the direct connection IP so attackers
-    cannot spoof their IP to bypass the per-IP rate limit.
-    """
-    direct_ip = request.client.host if request.client else "unknown"
-    if _is_trusted_proxy(direct_ip):
-        xff = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        return xff if xff else direct_ip
-    return direct_ip
-
-
-def _check_validate_action_rate_limit(client_ip: str) -> bool:
-    """Return True if the request is within the rate limit, False if exceeded.
-
-    Uses a sliding window algorithm: timestamps older than the window are
-    evicted on each check.  Thread-safe under Python's GIL for single-process
-    deployments.
-
-    MED-3: In multi-pod Kubernetes deployments this limiter is per-pod.
-    See the module-level comment above for the Redis-backed alternative.
-
-    Memory safety: Uses TTLCache with maxsize=10000 and ttl=3600 to prevent
-    unbounded memory growth from unique IPs.
-    """
-    now = time.monotonic()
-    window_start = now - _RATE_LIMIT_WINDOW
-
-    # TTLCache doesn't auto-create entries like defaultdict; handle missing keys
-    if client_ip not in _validate_action_rate_buckets:
-        _validate_action_rate_buckets[client_ip] = []
-    bucket = _validate_action_rate_buckets[client_ip]
-
-    # Evict expired timestamps (sliding window)
-    _validate_action_rate_buckets[client_ip] = [
-        ts for ts in bucket if ts > window_start
-    ]
-    bucket = _validate_action_rate_buckets[client_ip]
-
-    if len(bucket) >= _RATE_LIMIT_MAX:
-        logger.warning(
-            "🚦 validate-action rate limit exceeded for client=%s "
-            "(%d requests in %ds window)",
-            client_ip,
-            len(bucket),
-            _RATE_LIMIT_WINDOW,
-        )
-        return False
-
-    bucket.append(now)
-    return True
+async def _check_validate_action_rate_limit(request: Request) -> RateLimitVerdict:
+    """Evaluate the dual-bucket GCRA rate limit for ``POST /governance/validate-action``."""
+    return await get_shared_rate_limiter().check_request(
+        request,
+        "validate-action",
+        principal_per_min=_RATE_LIMIT_MAX,
+        window_seconds=float(_RATE_LIMIT_WINDOW),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -715,21 +641,25 @@ async def validate_action_endpoint(
     # GHSA-v3h4-8458-5ww3: the caller is authenticated before any processing by
     # WorkloadIdentityMiddleware (mesh identity, POAM-2026-080) on the root app.
 
-    # ── Rate limiting: prevent DoS via rapid unauthenticated requests ─────────
-    # HIGH-5 fix: only trust X-Forwarded-For when the direct TCP connection
-    # comes from a known trusted proxy (load balancer / ingress controller).
-    # Untrusted sources use the direct connection IP so attackers cannot spoof
-    # their IP to bypass the per-IP rate limit.
-    client_ip = _client_ip(request)
-    if not _check_validate_action_rate_limit(client_ip):
-        raise HTTPException(
+    # ── Rate limiting: shared dual-bucket GCRA (identity + principal) ─────────
+    rl_res = await _check_validate_action_rate_limit(request)
+    if inspect.isawaitable(rl_res):
+        rl_res = await rl_res
+    if isinstance(rl_res, bool):
+        rl_verdict = RateLimitVerdict(
+            allowed=rl_res, retry_after_seconds=1 if not rl_res else 0
+        )
+    else:
+        rl_verdict = rl_res
+    if not rl_verdict.allowed:
+        retry_after = max(1, int(rl_verdict.retry_after_seconds or 1))
+        return JSONResponse(
             status_code=429,
-            detail={
+            headers={"Retry-After": str(retry_after)},
+            content={
                 "error": "rate_limit_exceeded",
-                "message": (
-                    f"Too many requests to /validate-action from {client_ip}. "
-                    f"Limit: {_RATE_LIMIT_MAX} requests per {_RATE_LIMIT_WINDOW}s."
-                ),
+                "scope": rl_verdict.scope or "principal",
+                "retry_after_seconds": retry_after,
             },
         )
 
