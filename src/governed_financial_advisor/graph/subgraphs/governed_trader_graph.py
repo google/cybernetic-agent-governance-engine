@@ -99,6 +99,8 @@ class GovernedTraderState(TypedDict):
     # Written by gateway_tool_guard (POST /governance/validate-action)
     governance_envelope: dict[str, Any] | None  # Gateway ALLOW/NARROW verdict
     governance_status: str | None  # "ALLOWED" | "DENIED" | "REQUIRE_APPROVAL"
+    routing_verdict_cache: dict[str, Any] | None  # Cached ALLOW routing verdict
+
 
 
 # ---------------------------------------------------------------------------

@@ -117,7 +117,7 @@ class TestSafetyNodeGatewayCall:
             _trade_state(execution_plan_output={"action": "research"})
         )
 
-        assert result == {"safety_status": "SKIPPED"}
+        assert result == {"safety_status": "SKIPPED", "routing_verdict_cache": None}
         assert seen == []
 
 

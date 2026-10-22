@@ -57,6 +57,10 @@ from typing import Any, Protocol
 from langchain_core.messages import AIMessage, ToolMessage
 
 from src.gateway.governance.decisions import GovernanceDecision
+from src.governed_financial_advisor.graph.nodes.trade_contract import (
+    TRADE_ACTION,
+    reusable_allow_verdict,
+)
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 
 logger = logging.getLogger(__name__)
@@ -173,6 +177,7 @@ def gateway_tool_guard(
                     "governance_envelope": None,
                     "deferred_id": None,
                     "approval_decision": None,
+                    "routing_verdict_cache": None,
                 }
             if approved_id is not None:
                 # The gateway, not the advisor, decides whether the approval
@@ -184,11 +189,17 @@ def gateway_tool_guard(
                     "governance_envelope": None,
                     "deferred_id": None,
                     "approval_decision": None,
+                    "routing_verdict_cache": None,
                 }
 
             verdicts: list[dict[str, Any]] = []
             refusals: dict[str, str] = {}
             deferred_ids: dict[str, str] = {}
+            cached_cache = (
+                state.get("routing_verdict_cache")
+                if action == TRADE_ACTION and len(tool_calls) == 1
+                else None
+            )
 
             for call in tool_calls:
                 args = call.get("args") or {}
@@ -198,6 +209,14 @@ def gateway_tool_guard(
                 }
                 params.pop("deferred_id", None)  # never self-asserted by the model
                 params.setdefault("action", action)
+                reused = (
+                    reusable_allow_verdict(cached_cache, params)
+                    if cached_cache is not None
+                    else None
+                )
+                if reused is not None:
+                    verdicts.append(reused)
+                    continue
                 verdict, reason = await authorize_action(action, params)
                 if verdict is None:
                     refusals[str(call.get("id"))] = reason or "refused"
@@ -237,6 +256,7 @@ def gateway_tool_guard(
                     ),
                     "governance_status": GOVERNANCE_DENIED,
                     "governance_envelope": None,
+                    "routing_verdict_cache": None,
                 }
 
             if deferred_ids:
@@ -255,6 +275,7 @@ def gateway_tool_guard(
                     "governance_status": GOVERNANCE_REQUIRE_APPROVAL,
                     "governance_envelope": None,
                     "deferred_id": deferred_id,
+                    "routing_verdict_cache": None,
                 }
 
             result = await func(state)
@@ -262,6 +283,7 @@ def gateway_tool_guard(
                 **result,
                 "governance_status": GOVERNANCE_ALLOWED,
                 "governance_envelope": verdicts[-1] if verdicts else None,
+                "routing_verdict_cache": None,
             }
 
         return wrapper
