@@ -1354,7 +1354,10 @@ component-definition:
                 only up to the custodian's signed settled_through minus a clock-skew
                 margin, so the settlement-lag double-spend window is closed (ADR-010,
                 POAM-2026-087). Model risk for execute_trade is assessed by the DoWhy causal
-                gatekeeper (src/gateway/governance/causal/gatekeeper.py) on live telemetry
+                gatekeeper (src/gateway/governance/causal/gatekeeper.py) and its background
+                world-model refresher (src/gateway/governance/causal/world_model_refresher.py,
+                20 s refresh cadence, 60 s verdict TTL via causal.cache_ttl_seconds, and 300 s
+                telemetry freshness bound via telemetry.max_staleness_seconds) on live telemetry
                 supplied to src/cage_finance/tiers/causal_tier.py by get_telemetry_provider();
                 in enforcing postures every failure is a HARD deny, with distinct codes for
                 a missing feed (CAUSAL_TELEMETRY_UNAVAILABLE) and the bootstrap window below

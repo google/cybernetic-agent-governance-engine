@@ -52,7 +52,10 @@ from src.gateway.governance.causal.gatekeeper import (
     REASON_RISK_BOUNDARY,
     REASON_TRUSTED,
     CausalDecision,
+    WorldModelVerdict,
+    validate_world_model,
 )
+from src.gateway.governance.causal.world_model_refresher import WorldModelRefresher
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.schemas.thresholds import get_causal_min_samples
 from src.gateway.governance.telemetry_provider import (
@@ -77,7 +80,7 @@ def _frame(n: int) -> pd.DataFrame:
             "market_volatility": vol,
             "trade_amount": amount,
             "risk_score": risk,
-            "timestamp": time.time() - rng.uniform(0, 600, n),
+            "timestamp": time.time() - rng.uniform(0, 200, n),
         }
     )
 
@@ -143,8 +146,21 @@ def _only(violations):
 
 
 # ---------------------------------------------------------------------------
-# Enforcing posture (decision D3: HARD deny with distinct codes)
+# Enforcing posture (decision D3 + D1 background refresher)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cold_start_before_first_refresh_denies_with_telemetry_unavailable(
+    enforcing, stable_dowhy
+):
+    """Before the background refresher completes its first cycle, trades fail closed."""
+    provider = _Provider(_frame(60))
+    tier = CausalTierPlugin(telemetry_provider=provider)
+    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    assert v.code == CODE_TELEMETRY_UNAVAILABLE
+    assert provider.requested == []
+    assert stable_dowhy.refuted == 0
 
 
 @pytest.mark.asyncio
@@ -152,6 +168,8 @@ async def test_enforcing_posture_null_provider_denies_with_telemetry_unavailable
     enforcing, stable_dowhy
 ):
     tier = CausalTierPlugin(telemetry_provider=NullTelemetryProvider())
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
     assert stable_dowhy.refuted == 0
@@ -161,7 +179,10 @@ async def test_enforcing_posture_null_provider_denies_with_telemetry_unavailable
 async def test_enforcing_posture_no_provider_denies_with_telemetry_unavailable(
     enforcing, stable_dowhy
 ):
-    v = _only(await CausalTierPlugin().evaluate("execute_trade", PARAMS))
+    tier = CausalTierPlugin()
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
+    v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
 
 
@@ -171,19 +192,30 @@ async def test_enforcing_posture_30_rows_denies_with_insufficient_samples(
 ):
     assert get_causal_min_samples() > 30
     tier = CausalTierPlugin(telemetry_provider=_Provider(_frame(30)))
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_INSUFFICIENT_SAMPLES
     assert stable_dowhy.refuted == 0
 
 
 @pytest.mark.asyncio
-async def test_enforcing_posture_60_rows_reaches_refuter(enforcing, stable_dowhy):
+async def test_enforcing_posture_60_rows_reaches_refuter_in_background_and_request_path_does_not_refetch(
+    enforcing, stable_dowhy
+):
     assert get_causal_min_samples() <= 60
     provider = _Provider(_frame(60))
     tier = CausalTierPlugin(telemetry_provider=provider)
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
+    assert stable_dowhy.refuted == 1
+    assert len(provider.requested) == 1 and provider.requested[0] >= get_causal_min_samples()
+
+    # Multiple request evaluations reuse the refreshed snapshot without touching the provider or DoWhy
+    assert await tier.evaluate("execute_trade", PARAMS) == []
     assert await tier.evaluate("execute_trade", PARAMS) == []
     assert stable_dowhy.refuted == 1
-    assert provider.requested and provider.requested[0] >= get_causal_min_samples()
+    assert len(provider.requested) == 1
 
 
 @pytest.mark.asyncio
@@ -192,6 +224,8 @@ async def test_enforcing_posture_risk_boundary_keeps_generic_code(
 ):
     monkeypatch.setattr(gk_mod, "CAUSAL_LOCK_RISK_BOUNDARY", 0.5)
     tier = CausalTierPlugin(telemetry_provider=_Provider(_frame(60)))
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_CHECK_FAILED
     assert stable_dowhy.refuted == 1
@@ -202,9 +236,74 @@ async def test_provider_error_denies_with_telemetry_unavailable(
     enforcing, stable_dowhy
 ):
     tier = CausalTierPlugin(telemetry_provider=_Provider(exc=RuntimeError("feed down")))
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
     assert "feed down" in v.message
+
+
+@pytest.mark.asyncio
+async def test_stale_snapshot_ttl_denies_fail_closed(enforcing, stable_dowhy):
+    gk = build_finance_causal_gatekeeper()
+    refresher = WorldModelRefresher(gk, _Provider(_frame(60)), use_process_pool=False)
+    refresher.seed_snapshot(
+        WorldModelVerdict(True, 1e-5, REASON_TRUSTED),
+        computed_at=time.time() - 61.0,
+        telemetry_watermark=time.time(),
+    )
+    tier = CausalTierPlugin(causal_gatekeeper=gk, world_model_refresher=refresher)
+    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    assert v.code == CODE_CHECK_FAILED
+
+
+@pytest.mark.asyncio
+async def test_stale_telemetry_watermark_denies_fail_closed(enforcing, stable_dowhy):
+    gk = build_finance_causal_gatekeeper()
+    refresher = WorldModelRefresher(gk, _Provider(_frame(60)), use_process_pool=False)
+    refresher.seed_snapshot(
+        WorldModelVerdict(True, 1e-5, REASON_TRUSTED),
+        computed_at=time.time(),
+        telemetry_watermark=time.time() - 301.0,
+    )
+    tier = CausalTierPlugin(causal_gatekeeper=gk, world_model_refresher=refresher)
+    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    assert v.code == CODE_CHECK_FAILED
+
+
+@pytest.mark.asyncio
+async def test_nan_or_nat_telemetry_watermark_denies_fail_closed(enforcing, stable_dowhy):
+    df = _frame(60)
+    df["timestamp"] = pd.Series([pd.NaT] * len(df), dtype="datetime64[ns, UTC]")
+    assert gk_mod._extract_telemetry_watermark(df) is None
+
+    gk = build_finance_causal_gatekeeper()
+    refresher = WorldModelRefresher(gk, _Provider(_frame(60)), use_process_pool=False)
+    refresher.seed_snapshot(
+        WorldModelVerdict(True, 1e-5, REASON_TRUSTED),
+        computed_at=time.time(),
+        telemetry_watermark=float("nan"),
+    )
+    tier = CausalTierPlugin(causal_gatekeeper=gk, world_model_refresher=refresher)
+    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    assert v.code == CODE_CHECK_FAILED
+
+
+def test_worker_validate_world_model_parity_with_gatekeeper():
+    """The pure worker function and CausalGatekeeper._validate_world_model agree on the same frame."""
+    gk = build_finance_causal_gatekeeper()
+    df = _frame(60)
+    v_direct = gk._validate_world_model(df)
+    v_worker = validate_world_model(
+        gk.spec.graph_dot,
+        gk.spec.treatment_col,
+        gk.spec.outcome_col,
+        df,
+    )
+    assert v_worker.trusted == v_direct.trusted
+    assert v_worker.reason == v_direct.reason
+    if v_direct.beta is not None and v_worker.beta is not None:
+        assert abs(v_worker.beta - v_direct.beta) < 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +333,8 @@ async def test_dev_posture_empty_frame_uses_synthetic(dev, monkeypatch):
     tier = CausalTierPlugin(
         causal_gatekeeper=gk, telemetry_provider=NullTelemetryProvider()
     )
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
 
     assert await tier.evaluate("execute_trade", PARAMS) == []
     assert len(seen) == 1 and seen[0] is synthetic
@@ -248,6 +349,8 @@ async def test_dev_posture_nonempty_frame_is_not_overridden(dev, monkeypatch):
     tier = CausalTierPlugin(
         causal_gatekeeper=gk, telemetry_provider=_Provider(_frame(30))
     )
+    assert tier.refresher is not None
+    await tier.refresher.refresh_once()
 
     v = _only(await tier.evaluate("execute_trade", PARAMS))
     assert v.code == CODE_INSUFFICIENT_SAMPLES

@@ -22,10 +22,17 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
 
+from src.gateway.governance.schemas.thresholds import (
+    get_telemetry_max_staleness_seconds,
+)
 from src.gateway.governance.telemetry_provider import (
     MIN_SAMPLES,
     BaseTelemetryProvider,
@@ -37,6 +44,7 @@ logger = logging.getLogger("cage.integrations.telemetry_langfuse")
 
 # The Langfuse public API caps ``GET /api/public/traces`` at 100 rows a page.
 _PAGE_LIMIT = 100
+_MAX_CONCURRENT_PAGES = 5
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:
@@ -57,25 +65,63 @@ def _as_mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _list_recent_traces(client: Any, n_samples: int) -> list[Any]:
+def _list_recent_traces(
+    client: Any,
+    n_samples: int,
+    *,
+    from_timestamp: datetime | None = None,
+    name: str | None = None,
+    tags: str | Sequence[str] | None = None,
+) -> list[Any]:
     """Return up to ``n_samples`` of the most recent traces, newest first.
 
-    Uses the SDK's generated public-API client (``client.api.trace.list``).
-    Langfuse SDK v3 removed the v2 ``Langfuse.fetch_traces`` helper, and calling
-    it raised ``AttributeError`` on every causal evaluation.
+    Uses the SDK's generated public-API client (``client.api.trace.list``) with
+    server-side filters (`from_timestamp`, optional `name` / `tags`) and fetches
+    remaining pages concurrently after page 1.
     """
-    traces: list[Any] = []
-    page = 1
-    while len(traces) < n_samples:
-        limit = min(_PAGE_LIMIT, n_samples - len(traces))
-        response = client.api.trace.list(
-            page=page, limit=limit, order_by="timestamp.desc"
+    if n_samples <= 0:
+        return []
+
+    filter_kwargs: dict[str, Any] = {"order_by": "timestamp.desc"}
+    if from_timestamp is not None:
+        filter_kwargs["from_timestamp"] = from_timestamp
+    if name is not None:
+        filter_kwargs["name"] = name
+    if tags is not None:
+        filter_kwargs["tags"] = tags
+
+    first_limit = min(_PAGE_LIMIT, n_samples)
+    first_resp = client.api.trace.list(
+        page=1,
+        limit=first_limit,
+        **filter_kwargs,
+    )
+    traces: list[Any] = list(getattr(first_resp, "data", None) or [])
+    if len(traces) < first_limit or len(traces) >= n_samples:
+        return traces[:n_samples]
+
+    remaining = n_samples - len(traces)
+    additional_pages = math.ceil(remaining / _PAGE_LIMIT)
+    page_nums = [idx + 2 for idx in range(additional_pages)]
+
+    def _fetch_page(p_num: int) -> list[Any]:
+        resp = client.api.trace.list(
+            page=p_num,
+            limit=_PAGE_LIMIT,
+            **filter_kwargs,
         )
-        batch = list(getattr(response, "data", None) or [])
-        traces.extend(batch)
-        if len(batch) < limit:
-            break
-        page += 1
+        return list(getattr(resp, "data", None) or [])
+
+    if len(page_nums) == 1:
+        traces.extend(_fetch_page(page_nums[0]))
+    else:
+        max_workers = min(_MAX_CONCURRENT_PAGES, len(page_nums))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for batch in pool.map(_fetch_page, page_nums):
+                traces.extend(batch)
+                if not batch:
+                    break
+
     return traces[:n_samples]
 
 
@@ -96,19 +142,34 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
         langfuse_client:  An initialised ``langfuse.Langfuse`` instance.
         fallback:         Provider to use when live data is insufficient.
                           Defaults to NullTelemetryProvider().
+        trace_name:       Optional server-side ``name`` filter passed to
+                          ``client.api.trace.list``.
+        trace_tags:       Optional server-side ``tags`` filter passed to
+                          ``client.api.trace.list``.
     """
 
     def __init__(
         self,
         langfuse_client: object,
         fallback: BaseTelemetryProvider | None = None,
+        *,
+        trace_name: str | None = None,
+        trace_tags: str | Sequence[str] | None = None,
     ) -> None:
         self._client = langfuse_client
         self._fallback = fallback or NullTelemetryProvider()
+        self._trace_name = trace_name
+        self._trace_tags = trace_tags
 
     @classmethod
     def from_credentials(
-        cls, *, host: str, public_key: str, secret_key: str
+        cls,
+        *,
+        host: str,
+        public_key: str,
+        secret_key: str,
+        trace_name: str | None = None,
+        trace_tags: str | Sequence[str] | None = None,
     ) -> LangfuseTelemetryProvider:
         """Construct a client from credentials resolved by the kernel factory.
 
@@ -140,7 +201,11 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
         logger.info(
             "[CTRL_TEL_003] LangfuseTelemetryProvider initialised (host=%s).", host
         )
-        return cls(langfuse_client=client)
+        return cls(
+            langfuse_client=client,
+            trace_name=trace_name,
+            trace_tags=trace_tags,
+        )
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
         """Fetch live trade governance telemetry from Langfuse.
@@ -159,8 +224,17 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
             return self._fallback.get_latest_data(n_samples)
 
         try:
-            # Fetch recent traces from Langfuse (domain-agnostic).
-            traces = _list_recent_traces(self._client, n_samples)
+            max_staleness = get_telemetry_max_staleness_seconds()
+            cutoff = datetime.now(tz=timezone.utc) - timedelta(
+                seconds=max(1, max_staleness)
+            )
+            traces = _list_recent_traces(
+                self._client,
+                n_samples,
+                from_timestamp=cutoff,
+                name=self._trace_name,
+                tags=self._trace_tags,
+            )
 
             rows: list[dict] = []
             for trace in traces:

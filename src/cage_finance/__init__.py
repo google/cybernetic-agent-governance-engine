@@ -26,7 +26,10 @@ from src.cage_finance.safety.bounding.providers import (
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
-from src.cage_finance.tiers.causal_tier import CausalTierPlugin
+from src.cage_finance.tiers.causal_tier import (
+    CausalTierPlugin,
+    build_finance_causal_gatekeeper,
+)
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
@@ -34,6 +37,8 @@ from src.cage_finance.tiers.trade_confidence_tier import (
     TradeConfidenceTier,
     trade_confidence_norm_binding,
 )
+from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
+from src.gateway.governance.causal.world_model_refresher import WorldModelRefresher
 from src.gateway.governance.contracts import GovernanceTier, NormBinding
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
@@ -78,6 +83,9 @@ def create_finance_tiers(
     bounding_registry: BoundingContractRegistry | None = None,
     telemetry_provider: BaseTelemetryProvider | None = None,
     trade_confidence: NormBinding | None = None,
+    *,
+    causal_gatekeeper: CausalGatekeeper | None = None,
+    world_model_refresher: WorldModelRefresher | None = None,
 ) -> tuple[GovernanceTier, ...]:
     """Create finance domain governance tiers for construction-time registration.
 
@@ -100,6 +108,8 @@ def create_finance_tiers(
                           trade-confidence floor. If None, built from the
                           active region's effective
                           ``domains.finance.confidence.min_trade_confidence``.
+        causal_gatekeeper: Optional pre-built :class:`CausalGatekeeper`.
+        world_model_refresher: Optional pre-built :class:`WorldModelRefresher`.
 
     Returns:
         Tuple of finance domain tiers in (phase, order, tier_name) order.
@@ -138,6 +148,13 @@ def create_finance_tiers(
             load_finance_thresholds().confidence.min_trade_confidence
         )
 
+    resolved_provider = telemetry_provider or get_telemetry_provider()
+    resolved_gatekeeper = causal_gatekeeper or build_finance_causal_gatekeeper()
+    resolved_refresher = world_model_refresher or WorldModelRefresher(
+        resolved_gatekeeper,
+        resolved_provider,
+    )
+
     return (
         TradeConfidenceTier(trade_confidence),
         BoundingContractTierPlugin(bounding_registry),
@@ -145,6 +162,8 @@ def create_finance_tiers(
         FiscalTierPlugin(fiscal_guard),
         ConsensusTierPlugin(consensus_gate),
         CausalTierPlugin(
-            telemetry_provider=telemetry_provider or get_telemetry_provider()
+            causal_gatekeeper=resolved_gatekeeper,
+            telemetry_provider=resolved_provider,
+            world_model_refresher=resolved_refresher,
         ),
     )

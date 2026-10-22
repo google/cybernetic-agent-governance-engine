@@ -143,6 +143,12 @@ class FinanceCagePlugin(CagePlugin):
             bounding_registry=bounding_registry,
             trade_confidence=trade_confidence,
         )
+        background_tasks = {"consensus_audit_worker": _background_audit_worker}
+        for tier in tiers:
+            if isinstance(tier, CausalTierPlugin) and tier.refresher is not None:
+                background_tasks["causal_world_model_refresher"] = (
+                    tier.refresher.run_forever
+                )
         # One resolver serves every path that evaluates a trade (the
         # validate-action and MCP previews and the committing run) for both
         # trade actions, so a bounded trade's B2 drawdown is measured too.
@@ -168,7 +174,7 @@ class FinanceCagePlugin(CagePlugin):
             tool_provider=FinancialToolProvider(),
             threshold_sections={"finance": FinanceThresholds},
             compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
-            background_tasks={"consensus_audit_worker": _background_audit_worker},
+            background_tasks=background_tasks,
             norm_bindings=(trade_confidence,),
             server_inputs=dict.fromkeys(TRADE_ACTIONS, trade_inputs),
         )

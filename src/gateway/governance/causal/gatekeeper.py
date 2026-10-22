@@ -150,6 +150,35 @@ _TIMESTAMP_CANDIDATES = ("timestamp", "ts", "event_time", "time", "created_at")
 # ---------------------------------------------------------------------------
 
 
+def _extract_telemetry_watermark(telemetry: pd.DataFrame) -> float | None:
+    """Return the most-recent observation timestamp in *telemetry* as UTC epoch seconds, or ``None``."""
+    try:
+        ts_col: str | None = None
+        for candidate in _TIMESTAMP_CANDIDATES:
+            if candidate in telemetry.columns:
+                ts_col = candidate
+                break
+
+        if ts_col is None or len(telemetry) == 0:
+            return None
+
+        raw_ts = telemetry[ts_col].max()
+        if raw_ts is None or pd.isna(raw_ts):
+            return None
+        if isinstance(raw_ts, (int, float, np.number)):
+            val = float(raw_ts)
+            if not math.isfinite(val):
+                return None
+            if val > 1e12:
+                val = val / 1000.0
+            return val
+        most_recent = pd.to_datetime(raw_ts, utc=True).to_pydatetime()
+        ts_val = float(most_recent.timestamp())
+        return ts_val if math.isfinite(ts_val) else None
+    except Exception:
+        return None
+
+
 def _check_telemetry_freshness(  # type: ignore[no-untyped-def]
     telemetry: pd.DataFrame,
     span,
@@ -172,25 +201,18 @@ def _check_telemetry_freshness(  # type: ignore[no-untyped-def]
             span.set_attribute("causal.telemetry_age_seconds", -1)
             return False
 
-        try:
-            raw_ts = telemetry[ts_col].max()
-            if isinstance(raw_ts, (int, float)):
-                if raw_ts > 1e12:
-                    raw_ts = raw_ts / 1000.0
-                most_recent = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
-            else:
-                most_recent = pd.to_datetime(raw_ts, utc=True).to_pydatetime()
-        except Exception as parse_exc:
+        watermark = _extract_telemetry_watermark(telemetry)
+        if watermark is None:
             logger.warning(
-                "Telemetry freshness check: cannot parse timestamp column '%s': %s "
+                "Telemetry freshness check: cannot parse timestamp column '%s' "
                 "— failing closed.",
                 ts_col,
-                parse_exc,
             )
             span.set_attribute("causal.telemetry_stale", True)
             span.set_attribute("causal.telemetry_age_seconds", -1)
             return False
 
+        most_recent = datetime.fromtimestamp(watermark, tz=timezone.utc)
         now_utc = datetime.now(tz=timezone.utc)
         age_seconds = int((now_utc - most_recent).total_seconds())
         max_staleness = get_telemetry_max_staleness_seconds()
@@ -531,9 +553,12 @@ class CausalGatekeeper:
         current_telemetry: pd.DataFrame | None = None,
         *,
         action: str | None = None,
+        verdict: WorldModelVerdict | None = None,
     ) -> bool:
         """Boolean form of :meth:`evaluate` (``evaluate(...).safe``)."""
-        return self.evaluate(params, current_telemetry, action=action).safe
+        return self.evaluate(
+            params, current_telemetry, action=action, verdict=verdict
+        ).safe
 
     def evaluate(
         self,
@@ -541,6 +566,7 @@ class CausalGatekeeper:
         current_telemetry: pd.DataFrame | None = None,
         *,
         action: str | None = None,
+        verdict: WorldModelVerdict | None = None,
     ) -> CausalDecision:
         """Validate causal world-model integrity and the marginal risk boundary.
 
@@ -548,15 +574,20 @@ class CausalGatekeeper:
             params: Action parameters; the treatment value and context are
                 read via the spec's extractors.
             current_telemetry: Live telemetry to validate the world-model
-                against. ``None`` **or an empty frame** means "no live
-                telemetry": in enforcing postures that fails closed with
-                :data:`REASON_NO_LIVE_TELEMETRY`; in non-enforcing postures the
-                spec's synthetic telemetry factory stands in and the verdict
-                may be cached. A non-empty frame is always validated as given
-                (never replaced by synthetic data), so a frame with fewer than
-                ``min_samples`` rows yields ``insufficient_samples``.
+                against when ``verdict`` is not precomputed. ``None`` **or an
+                empty frame** means "no live telemetry": in enforcing postures
+                that fails closed with :data:`REASON_NO_LIVE_TELEMETRY`; in
+                non-enforcing postures the spec's synthetic telemetry factory
+                stands in and the verdict may be cached. A non-empty frame is
+                always validated as given (never replaced by synthetic data),
+                so a frame with fewer than ``min_samples`` rows yields
+                ``insufficient_samples``.
             action: Action name used to namespace the world-model cache entry.
                 Falls back to ``params["action_type"]`` / ``params["action"]``.
+            verdict: Precomputed :class:`WorldModelVerdict` from the background
+                :class:`WorldModelRefresher`. When supplied, the request path
+                skips DoWhy refutation and evaluates only treatment extraction
+                and the marginal risk boundary against ``verdict.beta``.
 
         Fails closed (``safe=False``) on:
         - Missing, non-numeric, NaN/infinite, or non-positive (<= 0) treatment
@@ -575,6 +606,26 @@ class CausalGatekeeper:
         treatment_value = self._treatment_value(params)
         if treatment_value is None:
             return CausalDecision(False, REASON_INVALID_TREATMENT)
+
+        if verdict is not None:
+            if (
+                not self.spec.graph_dot
+                or not self.spec.treatment_col
+                or not self.spec.outcome_col
+            ):
+                logger.warning(
+                    "causal_safety_check: incomplete CausalSpec — failing closed"
+                )
+                return CausalDecision(False, REASON_INCOMPLETE_SPEC)
+            try:
+                if not verdict.trusted:
+                    return CausalDecision(False, verdict.reason)
+                if not self._within_risk_boundary(verdict.beta, treatment_value):
+                    return CausalDecision(False, REASON_RISK_BOUNDARY)
+                return CausalDecision(True, REASON_TRUSTED)
+            except Exception as e:
+                logger.error("Causal validation failed due to error: %s", e)
+                return CausalDecision(False, REASON_CHECK_ERROR)
 
         no_live = current_telemetry is None or len(current_telemetry) == 0
         if no_live:
@@ -600,10 +651,12 @@ class CausalGatekeeper:
             return CausalDecision(False, REASON_INCOMPLETE_SPEC)
 
         try:
-            verdict = self._resolve_world_model(params, current_telemetry, action)
-            if not verdict.trusted:
-                return CausalDecision(False, verdict.reason)
-            if not self._within_risk_boundary(verdict.beta, treatment_value):
+            resolved_verdict = self._resolve_world_model(
+                params, current_telemetry, action
+            )
+            if not resolved_verdict.trusted:
+                return CausalDecision(False, resolved_verdict.reason)
+            if not self._within_risk_boundary(resolved_verdict.beta, treatment_value):
                 return CausalDecision(False, REASON_RISK_BOUNDARY)
             return CausalDecision(True, REASON_TRUSTED)
         except Exception as e:
@@ -766,162 +819,12 @@ class CausalGatekeeper:
 
     def _validate_world_model(self, telemetry: pd.DataFrame) -> WorldModelVerdict:
         """Run DoWhy estimation and placebo refutation over *telemetry*."""
-        causal_graph = self.spec.graph_dot
-        treatment = self.spec.treatment_col
-        outcome = self.spec.outcome_col
-
-        registry = ControlRegistry()
-        mrm_meta = registry.get_mapping(GovernanceControl.TRADITIONAL_MRM_VALIDATION)
-        tel_meta = registry.get_mapping(GovernanceControl.TELEMETRY_LIVE_VALIDATION)
-        active_region = registry.active_region
-
-        mrm_legacy = (
-            mrm_meta["primary_framework"]
-            if _NO_LEGAL_FORCE_MARKER in mrm_meta["legacy_citation"]
-            else mrm_meta["legacy_citation"]
+        return validate_world_model(
+            self.spec.graph_dot,
+            self.spec.treatment_col,
+            self.spec.outcome_col,
+            telemetry,
         )
-        tel_legacy = (
-            tel_meta["primary_framework"]
-            if _NO_LEGAL_FORCE_MARKER in tel_meta["legacy_citation"]
-            else tel_meta["legacy_citation"]
-        )
-
-        # --------------------------------------------------------------
-        # Phase 1: Statistical Kernel (CTRL_MRM_004 scope)
-        # --------------------------------------------------------------
-        with tracer.start_as_current_span(
-            "causal_gatekeeper.statistical_kernel"
-        ) as mrm_span:
-            mrm_span.set_attribute("governance.control_id", mrm_meta["internal_id"])
-            mrm_span.set_attribute(
-                "governance.framework", mrm_meta["primary_framework"]
-            )
-            mrm_span.set_attribute("governance.legacy_citation", mrm_legacy)
-            mrm_span.set_attribute("governance.scope", mrm_meta["scope"])
-            mrm_span.set_attribute("governance.deployment_region", active_region)
-            mrm_span.set_attribute("causal.graph", causal_graph.strip())
-
-            min_samples = get_causal_min_samples()
-            n_samples = len(telemetry)
-            if n_samples < min_samples:
-                mrm_span.set_attribute("causal.samples_available", n_samples)
-                mrm_span.set_attribute("causal.min_samples_required", min_samples)
-                mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
-                logger.warning(
-                    "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
-                    "failing closed (action BLOCKED).",
-                    n_samples,
-                    min_samples,
-                )
-                return WorldModelVerdict(False, None, REASON_INSUFFICIENT_SAMPLES)
-
-            model = _CausalModel(
-                data=telemetry,
-                treatment=treatment,
-                outcome=outcome,
-                graph=causal_graph,
-            )
-            identified_estimand = model.identify_effect(
-                proceed_when_unidentifiable=True
-            )
-            estimate = model.estimate_effect(
-                identified_estimand, method_name="backdoor.linear_regression"
-            )
-            beta = float(estimate.value)
-            mrm_span.set_attribute("causal.estimated_effect", beta)
-
-            # beta <= 0 (or non-finite) fail-closed guard
-            if not _is_positive_finite(beta):
-                reason = (
-                    "negative_or_zero_causal_slope"
-                    if math.isfinite(beta)
-                    else "non_finite_causal_slope"
-                )
-                logger.warning(
-                    "[%s] CAUSAL LOCK: Estimated causal effect beta=%.4f is not a "
-                    "finite positive slope — untrustworthy world-model.",
-                    GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
-                    beta,
-                )
-                mrm_span.set_attribute("causal.lock_reason", reason)
-                mrm_span.set_attribute("causal.estimated_effect_blocked", beta)
-                return WorldModelVerdict(False, beta, reason)
-
-        # --------------------------------------------------------------
-        # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 §A.9.4)
-        # --------------------------------------------------------------
-        with tracer.start_as_current_span(
-            "causal_gatekeeper.placebo_refutation"
-        ) as tel_span:
-            tel_span.set_attribute("governance.control_id", tel_meta["internal_id"])
-            tel_span.set_attribute(
-                "governance.framework", tel_meta["primary_framework"]
-            )
-            tel_span.set_attribute("governance.legacy_citation", tel_legacy)
-            tel_span.set_attribute("governance.scope", tel_meta["scope"])
-            tel_span.set_attribute("governance.deployment_region", active_region)
-            tel_span.set_attribute("causal.num_simulations", 50)
-
-            if not _check_telemetry_freshness(telemetry, tel_span):
-                tel_span.set_attribute("causal.lock_reason", "stale_telemetry")
-                return WorldModelVerdict(False, beta, "stale_telemetry")
-
-            refuter = model.refute_estimate(
-                identified_estimand,
-                estimate,
-                method_name="placebo_treatment_refuter",
-                num_simulations=50,
-            )
-
-            p_value = getattr(refuter, "refutation_result", {}).get("p_value", 1.0)
-            if isinstance(p_value, (list, tuple, np.ndarray)):
-                p_value = p_value[0]
-
-            new_effect = refuter.new_effect
-            if isinstance(new_effect, (list, tuple, np.ndarray)):
-                new_effect = new_effect[0]
-
-            tel_span.set_attribute(
-                "causal.placebo_p_value",
-                float(p_value) if p_value is not None else -1.0,
-            )
-            tel_span.set_attribute(
-                "causal.placebo_new_effect",
-                float(new_effect) if new_effect is not None else 0.0,
-            )
-
-            if (
-                p_value is not None
-                and not np.isnan(p_value)
-                and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD
-            ):
-                logger.warning(
-                    "[%s] CAUSAL LOCK: Placebo p-value %.4f < %.2f — world-model untrustworthy.",
-                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
-                    p_value,
-                    CAUSAL_LOCK_P_VALUE_THRESHOLD,
-                )
-                tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
-                tel_span.set_attribute(
-                    "causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD
-                )
-                return WorldModelVerdict(False, beta, "p_value_threshold")
-
-            if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
-                logger.warning(
-                    "[%s] CAUSAL LOCK: Placebo effect %.4f > %.2f — world-model untrustworthy.",
-                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
-                    new_effect,
-                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
-                )
-                tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
-                tel_span.set_attribute(
-                    "causal.lock_effect_magnitude_threshold",
-                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
-                )
-                return WorldModelVerdict(False, beta, "placebo_effect_magnitude")
-
-        return WorldModelVerdict(True, beta, REASON_TRUSTED)
 
     # ------------------------------------------------------------------
     # Marginal risk boundary (per request, never cached)
@@ -953,6 +856,176 @@ class CausalGatekeeper:
                 risk_span.set_attribute("causal.lock_reason", "risk_boundary_exceeded")
                 return False
         return True
+
+
+def validate_world_model(
+    graph_dot: str,
+    treatment_col: str,
+    outcome_col: str,
+    telemetry: pd.DataFrame,
+) -> WorldModelVerdict:
+    """Pure, process-pool-safe DoWhy estimation and placebo refutation.
+
+    Takes only primitive graph coordinates and a :class:`pandas.DataFrame` so
+    it can be executed in a :class:`concurrent.futures.ProcessPoolExecutor`
+    without pickling :class:`CausalSpec` callables.
+    """
+    if not _DOWHY_AVAILABLE:
+        logger.warning(
+            "validate_world_model: 'dowhy' is not installed — failing closed."
+        )
+        return WorldModelVerdict(False, None, REASON_DOWHY_UNAVAILABLE)
+
+    causal_graph = graph_dot
+    treatment = treatment_col
+    outcome = outcome_col
+
+    registry = ControlRegistry()
+    mrm_meta = registry.get_mapping(GovernanceControl.TRADITIONAL_MRM_VALIDATION)
+    tel_meta = registry.get_mapping(GovernanceControl.TELEMETRY_LIVE_VALIDATION)
+    active_region = registry.active_region
+
+    mrm_legacy = (
+        mrm_meta["primary_framework"]
+        if _NO_LEGAL_FORCE_MARKER in mrm_meta["legacy_citation"]
+        else mrm_meta["legacy_citation"]
+    )
+    tel_legacy = (
+        tel_meta["primary_framework"]
+        if _NO_LEGAL_FORCE_MARKER in tel_meta["legacy_citation"]
+        else tel_meta["legacy_citation"]
+    )
+
+    # --------------------------------------------------------------
+    # Phase 1: Statistical Kernel (CTRL_MRM_004 scope)
+    # --------------------------------------------------------------
+    with tracer.start_as_current_span(
+        "causal_gatekeeper.statistical_kernel"
+    ) as mrm_span:
+        mrm_span.set_attribute("governance.control_id", mrm_meta["internal_id"])
+        mrm_span.set_attribute("governance.framework", mrm_meta["primary_framework"])
+        mrm_span.set_attribute("governance.legacy_citation", mrm_legacy)
+        mrm_span.set_attribute("governance.scope", mrm_meta["scope"])
+        mrm_span.set_attribute("governance.deployment_region", active_region)
+        mrm_span.set_attribute("causal.graph", causal_graph.strip())
+
+        min_samples = get_causal_min_samples()
+        n_samples = len(telemetry)
+        if n_samples < min_samples:
+            mrm_span.set_attribute("causal.samples_available", n_samples)
+            mrm_span.set_attribute("causal.min_samples_required", min_samples)
+            mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
+            logger.warning(
+                "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
+                "failing closed (action BLOCKED).",
+                n_samples,
+                min_samples,
+            )
+            return WorldModelVerdict(False, None, REASON_INSUFFICIENT_SAMPLES)
+
+        model = _CausalModel(
+            data=telemetry,
+            treatment=treatment,
+            outcome=outcome,
+            graph=causal_graph,
+        )
+        identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
+        estimate = model.estimate_effect(
+            identified_estimand, method_name="backdoor.linear_regression"
+        )
+        beta = float(estimate.value)
+        mrm_span.set_attribute("causal.estimated_effect", beta)
+
+        # beta <= 0 (or non-finite) fail-closed guard
+        if not _is_positive_finite(beta):
+            reason = (
+                "negative_or_zero_causal_slope"
+                if math.isfinite(beta)
+                else "non_finite_causal_slope"
+            )
+            logger.warning(
+                "[%s] CAUSAL LOCK: Estimated causal effect beta=%.4f is not a "
+                "finite positive slope — untrustworthy world-model.",
+                GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                beta,
+            )
+            mrm_span.set_attribute("causal.lock_reason", reason)
+            mrm_span.set_attribute("causal.estimated_effect_blocked", beta)
+            return WorldModelVerdict(False, beta, reason)
+
+    # --------------------------------------------------------------
+    # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 §A.9.4)
+    # --------------------------------------------------------------
+    with tracer.start_as_current_span(
+        "causal_gatekeeper.placebo_refutation"
+    ) as tel_span:
+        tel_span.set_attribute("governance.control_id", tel_meta["internal_id"])
+        tel_span.set_attribute("governance.framework", tel_meta["primary_framework"])
+        tel_span.set_attribute("governance.legacy_citation", tel_legacy)
+        tel_span.set_attribute("governance.scope", tel_meta["scope"])
+        tel_span.set_attribute("governance.deployment_region", active_region)
+        tel_span.set_attribute("causal.num_simulations", 50)
+
+        if not _check_telemetry_freshness(telemetry, tel_span):
+            tel_span.set_attribute("causal.lock_reason", "stale_telemetry")
+            return WorldModelVerdict(False, beta, "stale_telemetry")
+
+        refuter = model.refute_estimate(
+            identified_estimand,
+            estimate,
+            method_name="placebo_treatment_refuter",
+            num_simulations=50,
+        )
+
+        p_value = getattr(refuter, "refutation_result", {}).get("p_value", 1.0)
+        if isinstance(p_value, (list, tuple, np.ndarray)):
+            p_value = p_value[0]
+
+        new_effect = refuter.new_effect
+        if isinstance(new_effect, (list, tuple, np.ndarray)):
+            new_effect = new_effect[0]
+
+        tel_span.set_attribute(
+            "causal.placebo_p_value",
+            float(p_value) if p_value is not None else -1.0,
+        )
+        tel_span.set_attribute(
+            "causal.placebo_new_effect",
+            float(new_effect) if new_effect is not None else 0.0,
+        )
+
+        if (
+            p_value is not None
+            and not np.isnan(p_value)
+            and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD
+        ):
+            logger.warning(
+                "[%s] CAUSAL LOCK: Placebo p-value %.4f < %.2f — world-model untrustworthy.",
+                GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
+                p_value,
+                CAUSAL_LOCK_P_VALUE_THRESHOLD,
+            )
+            tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
+            tel_span.set_attribute(
+                "causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD
+            )
+            return WorldModelVerdict(False, beta, "p_value_threshold")
+
+        if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
+            logger.warning(
+                "[%s] CAUSAL LOCK: Placebo effect %.4f > %.2f — world-model untrustworthy.",
+                GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
+                new_effect,
+                CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+            )
+            tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
+            tel_span.set_attribute(
+                "causal.lock_effect_magnitude_threshold",
+                CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+            )
+            return WorldModelVerdict(False, beta, "placebo_effect_magnitude")
+
+    return WorldModelVerdict(True, beta, REASON_TRUSTED)
 
 
 def causal_safety_check(

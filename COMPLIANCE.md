@@ -130,7 +130,7 @@ risk_score = 1.0 − confidence
 
 ### 2.3 Causal Marginal Risk Boundary
 
-**Source:** [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py) · **Control:** `CTRL_TEL_003`
+**Source:** [`src/gateway/governance/causal/gatekeeper.py`](src/gateway/governance/causal/gatekeeper.py), [`src/gateway/governance/causal/world_model_refresher.py`](src/gateway/governance/causal/world_model_refresher.py) · **Control:** `CTRL_TEL_003`
 
 A proposed action is blocked when the estimated marginal risk exceeds `causal.risk_boundary` (0.95):
 
@@ -138,7 +138,7 @@ A proposed action is blocked when the estimated marginal risk exceeds `causal.ri
 estimated_risk = min(1.0, max(0.0, 0.5 + estimate.value × treatment_value / normalization_scale))
 ```
 
-`treatment_value` and `normalization_scale` come from the active domain's `CausalSpec`. DoWhy's `placebo_treatment_refuter` runs **50 simulations**; the world model is treated as untrustworthy (action blocked) when the placebo **p-value < 0.05** (`causal.p_value_threshold`) or **|placebo effect| > 0.2** (`causal.placebo_effect_magnitude`).
+`treatment_value` and `normalization_scale` come from the active domain's `CausalSpec`. DoWhy's `placebo_treatment_refuter` runs **50 simulations** in a background [`WorldModelRefresher`](src/gateway/governance/causal/world_model_refresher.py) process-pool worker every **20 s** (`CAGE_CAUSAL_REFRESH_INTERVAL_S`); the world model is treated as untrustworthy (action blocked) when the placebo **p-value < 0.05** (`causal.p_value_threshold`), **|placebo effect| > 0.2** (`causal.placebo_effect_magnitude`), the verdict age exceeds **60 s** (`causal.cache_ttl_seconds`), or the underlying telemetry watermark exceeds **300 s** (`telemetry.max_staleness_seconds`). The request path evaluates only the per-request marginal risk boundary against the latest fresh `WorldModelVerdict`.
 
 ### 2.4 FRIA Tier (EU_ECB only)
 

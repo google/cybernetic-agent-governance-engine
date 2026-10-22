@@ -695,6 +695,12 @@ class TestCausalGatekeeperIntegration:
         from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
+        causal_tier = CausalTierPlugin(telemetry_provider=telemetry_provider)
+        if causal_tier.refresher is not None and telemetry_data is not None:
+            assert causal_tier._gatekeeper is not None
+            verdict = causal_tier._gatekeeper._validate_world_model(telemetry_data)
+            causal_tier.refresher.seed_snapshot(verdict)
+
         return make_governor(
             opa=opa_client,
             safety_filter=safety_filter,
@@ -703,7 +709,7 @@ class TestCausalGatekeeperIntegration:
             domain_tiers=(
                 CBFTierPlugin(safety_filter),
                 ConsensusTierPlugin(consensus_engine),
-                CausalTierPlugin(telemetry_provider=telemetry_provider),
+                causal_tier,
             ),
         )
 

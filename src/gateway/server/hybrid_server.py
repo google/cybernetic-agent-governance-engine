@@ -280,6 +280,14 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             pass
         logger.info("Attestation aggregator polling task cancelled cleanly.")
 
+    # Shutdown: cancel plugin-registered background tasks if running
+    for bg_task in getattr(app.state, "background_tasks", ()) or ():
+        bg_task.cancel()
+        try:
+            await bg_task
+        except asyncio.CancelledError:
+            pass
+
     # Shutdown: close OPA HTTP client pool if present
     opa_client = getattr(getattr(governor, "components", None), "opa", None)
     if opa_client is not None and hasattr(opa_client, "close"):
