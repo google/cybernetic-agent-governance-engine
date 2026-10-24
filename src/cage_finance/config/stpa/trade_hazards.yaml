@@ -212,10 +212,11 @@ unsafe_control_actions:
       # to be provable in production rather than merely declared in policy documents.
       execution_type: mcp_tool
       mcp_tool_name: execute_trade_action
+      # The state keys sent as execute_trade_action's arguments, and nothing else.
+      mcp_arguments: [symbol, amount, currency, side, transaction_id]
       parameter_mapping:
         forward.transaction_id: compensating.target_tx_id
         forward.amount: compensating.refund_amount
-        forward.account_id: compensating.account_id
 
   - id: UCA-5
     action: execute_trade
