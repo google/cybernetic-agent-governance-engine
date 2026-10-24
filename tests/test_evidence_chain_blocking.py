@@ -218,12 +218,14 @@ class TestIngestSync:
     async def test_ingest_sync_redis_error_raises_unavailable(self):
         """Verify ingest_sync raises EvidenceChainUnavailableError on Redis error.
 
-        When the Redis append fails, _ingest_with_result returns a failure result
-        (success=False), and ingest_sync raises EvidenceChainUnavailableError.
-        The original_error is only preserved for timeout and unexpected exceptions,
-        not for graceful failure results.
+        A transport error leaves the append's outcome unknown, so the sink
+        re-sends the identical script to settle it (#511). When Redis never
+        answers, the batch fails with EvidenceAppendUnsettledError (an
+        EvidenceChainUnavailableError), which ingest_sync re-raises so the
+        caller does not seal.
         """
         from src.gateway.governance.evidence.stream import (
+            EvidenceAppendUnsettledError,
             EvidenceChainUnavailableError,
             EvidenceStreamSink,
         )
@@ -239,7 +241,8 @@ class TestIngestSync:
         with pytest.raises(EvidenceChainUnavailableError) as exc_info:
             await sink.ingest_sync({"type": "TEST", "controlId": "TEST-001"})
 
-        # Redis failure returns a failure result, not an exception with original_error
+        # Redis never answered, so the outcome stayed unsettled: a failed commit.
+        assert isinstance(exc_info.value, EvidenceAppendUnsettledError)
         assert "commit failed" in str(exc_info.value).lower()
 
 

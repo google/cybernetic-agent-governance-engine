@@ -22,9 +22,12 @@ Covers:
   - EvidenceStreamSink ingestion, hash chaining, ordering
   - Compare-and-append: replicas sharing a stream never fork the chain, and a
     failed write never consumes a sequence number
+  - Retry-safe appends (#511): a lost reply, a re-sent script or a surfaced
+    timeout never writes an event twice, and an unsettled append fails closed
   - Redis-unavailable graceful no-op path
   - start() / stop() lifecycle and start_evidence_sink() posture handling
-  - Fail-closed chain state restoration
+  - Fail-closed chain state restoration: an unverifiable head, and (for a sink
+    that holds a chain) an emptied, rotated or regressed stream, are corrupt
   - get_evidence_sink() singleton
 
 Signing and cold-store custody are the compliance bridge's job and are tested
@@ -33,10 +36,14 @@ fakeredis (with Lua), no GCS, no KMS.
 """
 
 import ast
+import asyncio
+import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import fakeredis
 import pytest
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -71,6 +78,92 @@ def _fake_redis(server=None):
 
 async def _entries(redis):
     return await redis.xrange(STREAM_KEY)
+
+
+def _assert_linear(entries) -> None:
+    """One chain, sequences 0..n-1, every record verifying and linking."""
+    from src.gateway.governance.evidence.stream import verify_record
+
+    assert len({f["chain_id"] for _, f in entries}) == 1
+    prev = ""
+    for i, (_id, fields) in enumerate(entries):
+        assert int(fields["sequence"]) == i
+        assert fields["prev_hash"] == prev
+        assert verify_record(fields, prev_hash=prev).valid
+        prev = fields["record_hash"]
+
+
+def _sealed_entry(
+    chain_id: str = "test-chain-123", sequence: int = 42, prev_hash: str = "b" * 64
+) -> dict[str, str]:
+    """A wire entry whose record_hash really is the hash of its own fields."""
+    sealer = _make_sink()
+    sealer._chain_id = chain_id
+    entry, _record_hash = sealer._seal_record(
+        {"type": "AUDIT_FINDING"},
+        '{"n":42}',
+        "AUDIT_FINDING",
+        "A.5.3",
+        datetime.now(tz=timezone.utc),
+        prev_hash=prev_hash,
+        sequence=sequence,
+    )
+    return entry
+
+
+class _LostReply:
+    """A fakeredis client whose first append script(s) lose their reply.
+
+    The script still runs inside Redis; only the answer is lost. ``mode``:
+
+    * ``"resend"`` - redis-py's ``Retry`` re-sends the identical script and
+      the sink gets the second answer (the path reported in #511).
+    * ``"timeout"`` - the client's retries are exhausted, so redis
+      ``TimeoutError`` reaches the sink after the script ran.
+    * ``"drop"`` - the request never reached Redis; ``TimeoutError`` reaches
+      the sink and the script did not run.
+
+    ``between`` runs after the first execution and before the re-send, to
+    model another writer appending in that window. ``sent_argv`` records the
+    ARGV of every script call the sink made.
+    """
+
+    def __init__(self, inner, mode="resend", between=None, lossy_calls=1):
+        self._inner = inner
+        self._mode = mode
+        self._between = between
+        self._lossy_calls = lossy_calls
+        self.sent_argv: list[tuple] = []
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    async def evalsha(self, *args, **kwargs):
+        return await self._send(self._inner.evalsha, *args, **kwargs)
+
+    async def eval(self, *args, **kwargs):
+        return await self._send(self._inner.eval, *args, **kwargs)
+
+    async def _send(self, call, *args, **kwargs):
+        self.sent_argv.append(tuple(args[3:]))
+        if len(self.sent_argv) > self._lossy_calls:
+            return await call(*args, **kwargs)
+        if self._mode == "drop":
+            raise RedisTimeoutError("request lost before it reached Redis")
+        await call(*args, **kwargs)  # runs in Redis; the reply is lost
+        if self._between is not None:
+            await self._between()
+        if self._mode == "timeout":
+            raise RedisTimeoutError("reply lost after Redis ran the script")
+        return await call(*args, **kwargs)  # the client re-sends it
+
+
+async def _lossy(server, **kwargs) -> _LostReply:
+    from src.gateway.governance.evidence.stream import _APPEND_BATCH_SCRIPT
+
+    inner = _fake_redis(server)
+    await inner.script_load(_APPEND_BATCH_SCRIPT)  # so the first EVALSHA runs
+    return _LostReply(inner, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +414,7 @@ class TestCompareAndAppend:
     @pytest.mark.asyncio
     async def test_stale_head_is_rejected_by_script(self):
         """The script refuses an append whose expected head is not the head."""
-        from src.gateway.governance.evidence.stream import _APPEND_SCRIPT
+        from src.gateway.governance.evidence.stream import _APPEND_BATCH_SCRIPT
 
         redis = _fake_redis()
         sink = _make_sink()
@@ -329,13 +422,17 @@ class TestCompareAndAppend:
         await sink.ingest({"type": "X"})
 
         result = await redis.eval(
-            _APPEND_SCRIPT,
+            _APPEND_BATCH_SCRIPT,
             1,
             STREAM_KEY,
             sink.chain_id,
             "1",
             "f" * 64,
             "1000",
+            "1",
+            "e" * 64,
+            "2026-01-01T00:00:00+00:00",
+            "2",
             "k",
             "v",
         )
@@ -344,14 +441,61 @@ class TestCompareAndAppend:
 
     @pytest.mark.asyncio
     async def test_non_genesis_append_to_empty_stream_is_rejected(self):
-        from src.gateway.governance.evidence.stream import _APPEND_SCRIPT
+        from src.gateway.governance.evidence.stream import _APPEND_BATCH_SCRIPT
 
         redis = _fake_redis()
         result = await redis.eval(
-            _APPEND_SCRIPT, 1, STREAM_KEY, "c", "5", "a" * 64, "1000", "k", "v"
+            _APPEND_BATCH_SCRIPT,
+            1,
+            STREAM_KEY,
+            "c",
+            "5",
+            "a" * 64,
+            "1000",
+            "1",
+            "e" * 64,
+            "2026-01-01T00:00:00+00:00",
+            "2",
+            "k",
+            "v",
         )
         assert result == ["CONFLICT"]
         assert await _entries(redis) == []
+
+    @pytest.mark.asyncio
+    async def test_resent_script_answers_already_without_appending(self):
+        """#511: the same sealing sent twice lands once and reports the same IDs."""
+        from src.gateway.governance.evidence.stream import _APPEND_BATCH_SCRIPT
+
+        redis = _fake_redis()
+        sink = _make_sink()
+        sink._redis = redis
+        await sink.ingest({"type": "GENESIS"})
+        async with sink._chain_lock:
+            sealed = sink._seal_batch(
+                [
+                    sink._prepare_item({"type": "E", "i": i}, future=None)
+                    for i in range(3)
+                ]
+            )
+
+        first = await redis.eval(_APPEND_BATCH_SCRIPT, 1, STREAM_KEY, *sealed.args)
+        again = await redis.eval(_APPEND_BATCH_SCRIPT, 1, STREAM_KEY, *sealed.args)
+
+        assert first[0] == "OK"
+        assert again == ["ALREADY", *first[1:]]
+        entries = await _entries(redis)
+        assert [entry_id for entry_id, _ in entries[1:]] == first[1:]
+        _assert_linear(entries)
+
+        # The same records under another sealing's timestamp are not "this
+        # batch": the head check also pins the last record's timestamp.
+        other_sealing = list(sealed.args)
+        other_sealing[6] = "2000-01-01T00:00:00+00:00"
+        assert await redis.eval(
+            _APPEND_BATCH_SCRIPT, 1, STREAM_KEY, *other_sealing
+        ) == ["CONFLICT"]
+        assert len(await _entries(redis)) == 4
 
     @pytest.mark.asyncio
     async def test_failed_write_does_not_advance_chain(self):
@@ -550,6 +694,26 @@ class TestEvidenceChainRestoration:
     async def test_restore_from_non_empty_stream_resumes_chain(self):
         """Restart with a non-empty stream -> chain_id preserved, resumes at seq+1."""
         redis = _fake_redis()
+        head = _sealed_entry(chain_id="test-chain-123", sequence=42)
+        await redis.xadd(STREAM_KEY, head)
+        sink = _make_sink()
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=redis,
+        ):
+            await sink.start()
+
+        assert sink.chain_id == "test-chain-123"
+        assert sink.chain_root == head["record_hash"]
+        assert sink.total_records == 43
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_well_formed_head_with_arbitrary_hash_is_rejected(self):
+        """#511: the old ``"a" * 64`` fixture is shaped right but proves nothing."""
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        redis = _fake_redis()
         await redis.xadd(
             STREAM_KEY,
             {"chain_id": "test-chain-123", "record_hash": "a" * 64, "sequence": "42"},
@@ -559,11 +723,28 @@ class TestEvidenceChainRestoration:
             "src.gateway.infrastructure.redis_client.build_async_redis",
             return_value=redis,
         ):
-            await sink.start()
+            with pytest.raises(EvidenceChainCorruptError, match="prev_hash is missing"):
+                await sink.start()
+        assert sink.is_running is False
+        assert len(await _entries(redis)) == 1
 
-        assert sink.chain_id == "test-chain-123"
-        assert sink.chain_root == "a" * 64
-        assert sink.total_records == 43
+    @pytest.mark.asyncio
+    async def test_head_that_does_not_hash_to_its_record_hash_is_rejected(self):
+        """#511: a head whose payload no longer matches its hash is corrupt."""
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        redis = _fake_redis()
+        await redis.xadd(STREAM_KEY, {**_sealed_entry(), "payload_json": '{"n":999}'})
+        sink = _make_sink()
+        with patch(
+            "src.gateway.infrastructure.redis_client.build_async_redis",
+            return_value=redis,
+        ):
+            with pytest.raises(
+                EvidenceChainCorruptError, match="does not hash to its record_hash"
+            ):
+                await sink.start()
+        assert len(await _entries(redis)) == 1
 
     @pytest.mark.asyncio
     async def test_restart_continues_chain_across_processes(self):
@@ -932,3 +1113,292 @@ class TestEvidenceGroupCommit:
         entries = await _entries(redis)
         assert len(entries) == 4
         assert [int(f["sequence"]) for _, f in entries] == [0, 1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# 10. Retry-safe appends (#511)
+# ---------------------------------------------------------------------------
+
+
+class TestRetrySafeAppend:
+    """A lost Redis reply never puts an event in the chain twice."""
+
+    @pytest.mark.asyncio
+    async def test_lost_reply_resend_writes_each_event_once(self):
+        """The re-sent script finds its own batch at the head (ALREADY)."""
+        server = fakeredis.FakeServer()
+        redis = await _lossy(server, mode="resend")
+        sink = _make_sink(max_batch_size=8, max_wait_ms=20.0)
+        sink._redis = redis
+
+        results = await asyncio.gather(
+            *(sink.ingest_sync({"type": "G1_EVENT", "n": i}) for i in range(3))
+        )
+
+        entries = await _entries(_fake_redis(server))
+        assert len(entries) == 3
+        _assert_linear(entries)
+        by_n = {json.loads(f["payload_json"])["n"]: (eid, f) for eid, f in entries}
+        assert sorted(by_n) == [0, 1, 2]
+        for n, result in enumerate(results):
+            entry_id, fields = by_n[n]
+            assert result.evidence_id == entry_id
+            assert result.hash == fields["record_hash"]
+            assert result.sequence == int(fields["sequence"])
+
+        # The chain continues from the batch, not from a second copy of it.
+        await sink.ingest({"type": "NEXT"})
+        entries = await _entries(_fake_redis(server))
+        assert len(entries) == 4
+        _assert_linear(entries)
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_lost_reply_then_other_writer_resolves_without_reseal(self):
+        """The re-send meets CONFLICT, but the batch already sits after its predecessor."""
+        server = fakeredis.FakeServer()
+        other = _make_sink()
+        other._redis = _fake_redis(server)
+        await other.ingest({"type": "GENESIS"})
+
+        async def other_writer_appends():
+            await other.ingest({"type": "INTERLEAVED"})
+
+        redis = await _lossy(server, mode="resend", between=other_writer_appends)
+        sink = _make_sink()
+        sink._redis = redis
+        result = await sink.ingest_sync({"type": "MINE"})
+
+        entries = await _entries(_fake_redis(server))
+        assert [f["event_type"] for _, f in entries] == [
+            "GENESIS",
+            "MINE",
+            "INTERLEAVED",
+        ]
+        _assert_linear(entries)
+        assert (result.evidence_id, result.sequence) == (entries[1][0], 1)
+        assert len(redis.sent_argv) == 1  # resolved from the stream, not re-sealed
+
+        await sink.ingest({"type": "AFTER"})
+        entries = await _entries(_fake_redis(server))
+        assert entries[-1][1]["event_type"] == "AFTER"
+        _assert_linear(entries)
+        await sink.stop()
+        await other.stop()
+
+    @pytest.mark.asyncio
+    async def test_genuine_contention_still_reseals_in_order(self):
+        """A real lost race is not mistaken for a landed batch."""
+        from src.gateway.governance.evidence.stream import (
+            EVIDENCE_APPEND_CONFLICTS_TOTAL,
+        )
+
+        server = fakeredis.FakeServer()
+        sink = _make_sink(max_batch_size=8, max_wait_ms=20.0)
+        other = _make_sink()
+        sink._redis, other._redis = _fake_redis(server), _fake_redis(server)
+        await sink.ingest({"type": "GENESIS"})
+
+        sent: list[list[str]] = []
+        original = sink._eval_batch_script
+
+        async def other_writer_first(args):
+            if not sent:
+                await other.ingest({"type": "OTHER"})  # takes sequence 1 first
+            sent.append(list(args))
+            return await original(args)
+
+        conflicts_before = EVIDENCE_APPEND_CONFLICTS_TOTAL._value.get()
+        with patch.object(sink, "_eval_batch_script", side_effect=other_writer_first):
+            results = await asyncio.gather(
+                *(sink.ingest_sync({"type": "MINE", "i": i}) for i in range(3))
+            )
+
+        entries = await _entries(sink._redis)
+        assert [f["event_type"] for _, f in entries] == [
+            "GENESIS",
+            "OTHER",
+            "MINE",
+            "MINE",
+            "MINE",
+        ]
+        _assert_linear(entries)
+        assert [json.loads(f["payload_json"])["i"] for _, f in entries[2:]] == [0, 1, 2]
+        assert sorted(r.sequence for r in results) == [2, 3, 4]
+        # Sealed at sequence 1, lost the race, re-sealed at sequence 2.
+        assert (sent[0][1], sent[1][1]) == ("1", "2")
+        assert EVIDENCE_APPEND_CONFLICTS_TOTAL._value.get() == conflicts_before + 1
+        await sink.stop()
+        await other.stop()
+
+    @pytest.mark.asyncio
+    async def test_surfaced_timeout_after_landing_settles_as_success(self):
+        server = fakeredis.FakeServer()
+        redis = await _lossy(server, mode="timeout")
+        sink = _make_sink()
+        sink._redis = redis
+
+        result = await sink.ingest_sync({"type": "LANDED"})
+
+        entries = await _entries(_fake_redis(server))
+        assert len(entries) == 1
+        assert (result.evidence_id, result.sequence, result.hash) == (
+            entries[0][0],
+            0,
+            entries[0][1]["record_hash"],
+        )
+        # Settled by re-sending the identical ARGV, never by re-sealing.
+        assert len(redis.sent_argv) == 2
+        assert redis.sent_argv[0] == redis.sent_argv[1]
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_surfaced_timeout_before_landing_appends_exactly_once(self):
+        server = fakeredis.FakeServer()
+        redis = await _lossy(server, mode="drop")
+        sink = _make_sink()
+        sink._redis = redis
+
+        result = await sink.ingest_sync({"type": "DROPPED"})
+
+        entries = await _entries(_fake_redis(server))
+        assert len(entries) == 1
+        assert (result.evidence_id, result.sequence) == (entries[0][0], 0)
+        assert len(redis.sent_argv) == 2
+        assert redis.sent_argv[0] == redis.sent_argv[1]
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_unsettled_append_fails_closed_without_resealing(self):
+        from src.gateway.governance.evidence.stream import (
+            _MAX_SETTLE_ATTEMPTS,
+            EvidenceAppendUnsettledError,
+        )
+
+        server = fakeredis.FakeServer()
+        redis = await _lossy(server, mode="drop", lossy_calls=99)
+        sink = _make_sink()
+        sink._redis = redis
+
+        with pytest.raises(
+            EvidenceAppendUnsettledError, match="whether it landed is unknown"
+        ):
+            await sink.ingest_sync({"type": "UNSETTLED"})
+
+        assert len(redis.sent_argv) == _MAX_SETTLE_ATTEMPTS + 1
+        assert len(set(redis.sent_argv)) == 1  # one sealing, re-sent verbatim
+        assert await _entries(_fake_redis(server)) == []
+        # Best-effort ingest() reports an unsettled append as a failed write.
+        assert await sink.ingest({"type": "UNSETTLED_BEST_EFFORT"}) is None
+        await sink.stop()
+
+
+# ---------------------------------------------------------------------------
+# 11. Restore under a live chain (#511)
+# ---------------------------------------------------------------------------
+
+
+class TestLiveChainRestore:
+    """A sink that holds a chain never re-genesises or resumes over a broken stream."""
+
+    @pytest.mark.asyncio
+    async def test_emptied_stream_under_live_sink_is_corrupt_not_genesis(self):
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        redis = _fake_redis()
+        sink = _make_sink()
+        sink._redis = redis
+        await sink.ingest({"type": "X"})
+        await redis.delete(STREAM_KEY)
+
+        with pytest.raises(EvidenceChainCorruptError, match="stream is empty"):
+            await sink.ingest_sync({"type": "Y"})
+        assert await _entries(redis) == []
+        # Still refused on the next write: no silent re-genesis.
+        with pytest.raises(EvidenceChainCorruptError):
+            await sink.ingest({"type": "Z"})
+        assert await _entries(redis) == []
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_regressed_head_is_corrupt(self):
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        redis = _fake_redis()
+        sink = _make_sink()
+        sink._redis = redis
+        for i in range(3):
+            await sink.ingest({"type": "X", "n": i})
+        entries = await _entries(redis)
+        await redis.xdel(STREAM_KEY, entries[-1][0])  # the acknowledged head is gone
+
+        with pytest.raises(
+            EvidenceChainCorruptError, match="behind the last acknowledged sequence"
+        ):
+            await sink.ingest({"type": "NEXT"})
+        assert len(await _entries(redis)) == 2
+        await sink.stop()
+
+    @pytest.mark.asyncio
+    async def test_rewritten_head_at_the_same_sequence_is_corrupt(self):
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        server = fakeredis.FakeServer()
+        sink = _make_sink()
+        sink._redis = _fake_redis(server)
+        for i in range(2):
+            await sink.ingest({"type": "X", "n": i})
+        redis = _fake_redis(server)
+        await redis.xdel(STREAM_KEY, (await _entries(redis))[-1][0])
+        rewriter = _make_sink()
+        rewriter._redis = _fake_redis(server)
+        await rewriter.ingest({"type": "REWRITTEN"})  # a valid, different seq 1
+
+        with pytest.raises(EvidenceChainCorruptError, match="no longer holds"):
+            await sink.ingest({"type": "NEXT"})
+        await sink.stop()
+        await rewriter.stop()
+
+    @pytest.mark.asyncio
+    async def test_head_on_another_chain_is_corrupt(self):
+        from src.gateway.governance.evidence.stream import EvidenceChainCorruptError
+
+        server = fakeredis.FakeServer()
+        sink = _make_sink()
+        sink._redis = _fake_redis(server)
+        await sink.ingest({"type": "X"})
+        await _fake_redis(server).delete(STREAM_KEY)
+        fresh = _make_sink()  # a genuinely fresh sink may cold-start
+        fresh._redis = _fake_redis(server)
+        await fresh.ingest({"type": "NEW_CHAIN"})
+        assert fresh.chain_id != sink.chain_id
+
+        with pytest.raises(
+            EvidenceChainCorruptError, match="but this sink holds chain"
+        ):
+            await sink.ingest({"type": "NEXT"})
+        entries = await _entries(_fake_redis(server))
+        assert [f["event_type"] for _, f in entries] == ["NEW_CHAIN"]
+        await sink.stop()
+        await fresh.stop()
+
+    @pytest.mark.asyncio
+    async def test_cold_start_race_adopts_the_winning_chain(self):
+        """Minting a genesis chain is not holding one: the loser adopts the winner."""
+        server = fakeredis.FakeServer()
+        a, b = _make_sink(), _make_sink()
+        a._redis, b._redis = _fake_redis(server), _fake_redis(server)
+        for sink in (a, b):
+            async with sink._chain_lock:
+                await sink._ensure_chain_restored()  # both see an empty stream
+        assert a.chain_id != b.chain_id
+
+        await a.ingest({"type": "A"})
+        await b.ingest({"type": "B"})
+
+        entries = await _entries(a._redis)
+        assert [f["event_type"] for _, f in entries] == ["A", "B"]
+        assert b.chain_id == a.chain_id
+        _assert_linear(entries)
+        await a.stop()
+        await b.stop()

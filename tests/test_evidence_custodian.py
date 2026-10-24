@@ -24,6 +24,7 @@ fakeredis (with Lua); the cold store and signer are in-memory fakes.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ import pytest
 
 from src.compliance_bridge.evidence_custodian import (
     ATTESTATION_SCHEMA,
+    GAP_KIND_CHAIN_ROTATION,
     CustodyStatus,
     EvidenceCustodian,
     EvidenceCustodyConfigError,
@@ -392,22 +394,45 @@ class TestCustodyContinuity:
         assert records == ["0", "1", "2", "3"]
 
     @pytest.mark.asyncio
-    async def test_chain_rotation_at_genesis_is_accepted(self, server):
+    async def test_chain_rotation_is_recorded_as_gap(self, server):
+        """#511: a new chain at genesis after custody of another one is a gap.
+
+        The stream was emptied and a producer started over, so whatever the old
+        chain held beyond the cursor is gone. The rotation is recorded in the
+        attestation, logged CRITICAL and counted; the batch is still written.
+        """
+        import src.compliance_bridge.evidence_custodian as custodian_module
+
         old = await _produce(server, 2)
         store = FakeColdStore()
         custodian = _custodian(server, store)
         await custodian.flush_once()
 
-        await _redis(server).delete(STREAM_KEY)  # stream lost; new chain starts
+        await _redis(server).delete(STREAM_KEY)
+        await asyncio.sleep(0.002)  # new stream IDs must sort after the cursor
         new = EvidenceStreamSink(stream_key=STREAM_KEY)
         new._redis = _redis(server)
         await new.ingest({"type": "fresh"})
         assert new.chain_id != old.chain_id
 
+        assert custodian_module._PROM_AVAILABLE
+        gaps_before = custodian_module.CUSTODY_GAPS_TOTAL._value.get()
         outcome = await custodian.flush_once()
+
         assert outcome.status is CustodyStatus.WRITTEN
-        assert outcome.gap is False
+        assert outcome.gap is True
         assert f"/{new.chain_id}/000000000000-000000000000.ndjson" in outcome.data_key
+        attestation = json.loads(store.objects[outcome.attestation_key])
+        assert attestation["gap"] == {
+            "detected": True,
+            "kind": GAP_KIND_CHAIN_ROTATION,
+            "previous_chain_id": old.chain_id,
+            "previous_last_sequence": 1,
+            "previous_last_record_hash": old.chain_root,
+        }
+        assert custodian_module.CUSTODY_GAPS_TOTAL._value.get() == gaps_before + 1
+        cursor = await _redis(server).hgetall(CURSOR_KEY)
+        assert (cursor["chain_id"], cursor["last_sequence"]) == (new.chain_id, "0")
 
 
 # ---------------------------------------------------------------------------
