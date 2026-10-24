@@ -72,6 +72,7 @@ from src.gateway.governance.env_posture import (
     is_cage_defer_enabled,
     is_cage_narrow_enabled,
 )
+from src.gateway.governance.execution_idempotency import ExecutionLedger
 from src.gateway.governance.ftra.autonomy import MagnitudeExtractor
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.invariants import validate_invariant
@@ -130,6 +131,11 @@ class GovernorComponents:
     norm_bindings: tuple[NormBinding, ...] = ()
     # Per-action resolvers for params only the gateway may supply.
     server_inputs: Mapping[str, ServerInputResolver] = field(default_factory=dict)
+    # At-most-once claims for actions a tool executes under an idempotency key.
+    # Without Redis it refuses every claim under an enforcing posture.
+    execution_ledger: ExecutionLedger = field(
+        default_factory=lambda: ExecutionLedger(None)
+    )
 
     def __post_init__(self) -> None:
         if self.classifier is None:
@@ -249,6 +255,7 @@ def assemble_governor(
     jurisdiction: JurisdictionContribution | None = None,
     warrant_source: WarrantSource | None = None,
     warrant_clock: WarrantClock | None = None,
+    execution_ledger_redis: Any | None = None,
 ) -> SymbolicGovernor:
     """Collect every plugin's contribution, validate them together, build the governor.
 
@@ -260,7 +267,10 @@ def assemble_governor(
     :func:`~src.gateway.governance.governor.bootstrap.bootstrap_governor`,
     resolves it from ``CAGE_WARRANT_SOURCE``). ``warrant_clock`` is the
     monotonic and wall clock the warrant cache and stage read (default: the
-    process clocks).
+    process clocks). ``execution_ledger_redis`` backs the governor's
+    :class:`~src.gateway.governance.execution_idempotency.ExecutionLedger`
+    (``components.execution_ledger``); without it the ledger refuses claims
+    under an enforcing posture.
 
     Raises:
         GovernorAssemblyError: The contributions collide, leave an
@@ -396,6 +406,7 @@ def assemble_governor(
         jurisdiction=jurisdiction,
         norm_bindings=norm_bindings,
         server_inputs=server_inputs,
+        execution_ledger=ExecutionLedger(execution_ledger_redis),
     )
     governor = SymbolicGovernor(components)
     logger.info(

@@ -125,6 +125,8 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
         "side": action,  # C-01: use validated trade side, not hardcoded "buy"
         "type": "market",
         "time_in_force": "day",
+        # The broker refuses a second order with the same client_order_id.
+        "client_order_id": order.transaction_id,
     }
 
     def _do_post():  # type: ignore[no-untyped-def]

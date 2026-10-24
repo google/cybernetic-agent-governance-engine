@@ -21,6 +21,7 @@ error, missing actuator) releases them.
 
 from __future__ import annotations
 
+import uuid
 from contextlib import ExitStack
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -86,7 +87,7 @@ async def _run(
             currency="USD",
             confidence=0.99,
             governor=governor,
-            **kwargs,
+            **{"transaction_id": str(uuid.uuid4()), **kwargs},
         )
 
 
@@ -165,6 +166,7 @@ async def test_refused_governance_settles_nothing() -> None:
             symbol="AAPL",
             amount=10.0,
             currency="USD",
+            transaction_id=str(uuid.uuid4()),
             governor=governor,
         )
     assert result.startswith("BLOCKED")

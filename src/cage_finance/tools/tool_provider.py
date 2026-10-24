@@ -18,6 +18,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.types import ToolAnnotations
@@ -28,12 +29,20 @@ if TYPE_CHECKING:
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
-from src.cage_finance.models.trade_order import TradeOrder
+from src.cage_finance.models.trade_order import TradeOrder, is_valid_transaction_id
 from src.cage_finance.tools.market_service import get_market_data
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
     dispatch_actuation,
     get_actuator_registry,
+)
+from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
+    Claim,
+    Duplicate,
+    ExecutionLedgerUnavailable,
+    ExecutionStatus,
+    UnsettledDuplicate,
 )
 from src.gateway.governance.governor.server_inputs import bind_server_inputs
 from src.gateway.governance.seams.actuation import ExecutionClearance
@@ -41,6 +50,7 @@ from src.gateway.server.governance_middleware import (
     ActionDeferred,
     enforce_approved_governance,
     enforce_governance,
+    record_refusal,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,9 +70,10 @@ TradeSide = Literal["buy", "sell"]
 
 #: MCP hints for tools that only read; GatewayMCPClient may resend them.
 _READ_ONLY_TOOL = ToolAnnotations(readOnlyHint=True, idempotentHint=True)
-#: A trade is an irreversible external commitment and must never be resent blindly.
+#: A trade is an irreversible external commitment, but its mandatory
+#: transaction_id makes a resend with the same key a replay of the first outcome.
 _TRADE_TOOL = ToolAnnotations(
-    readOnlyHint=False, destructiveHint=True, idempotentHint=False
+    readOnlyHint=False, destructiveHint=True, idempotentHint=True
 )
 
 
@@ -107,6 +118,17 @@ async def execute_trade_action(
     execution cannot proceed by ignoring the governance response.
     Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
+    At most once per ``transaction_id``: the key is claimed in the governor's
+    execution ledger before governance runs. A resubmitted key is neither
+    governed nor actuated again: it gets back the first attempt's reply, or
+    ``UnsettledDuplicate`` is raised while that attempt is still running or its
+    actuation outcome is unknown. Every exit records its outcome, and an
+    UNKNOWN actuation keeps the claim pending reconciliation. The one
+    exception is a resubmission with a ``deferred_id``: an approval may
+    re-claim a key whose earlier attempt was BLOCKED (deferred or refused, so
+    nothing ran), and the gateway verifies and spends it before anything
+    runs. A dry run never actuates, so it claims nothing.
+
     Args:
         symbol: Ticker symbol (e.g. "AAPL").
         amount: Trade quantity (positive float).
@@ -115,7 +137,9 @@ async def execute_trade_action(
             real value — the governance pipeline enforces a minimum threshold
             (US_FED: 0.95).  Omitting this parameter leaves the default 0.0
             which will always fail the confidence gate.
-        transaction_id: Optional idempotency key; auto-generated if absent.
+        transaction_id: Required idempotency key for this trade, a UUIDv4 or
+            UUIDv5; the broker receives it as ``client_order_id``. A missing or
+            invalid one is refused.
         trader_id: Identifier of the requesting agent or user.
         trader_role: RBAC role used for fiscal-limit enforcement.
         dry_run: When True, governance checks run but no broker call is made.
@@ -137,11 +161,6 @@ async def execute_trade_action(
             never supply them. An unavailable source leaves its input unset,
             and the governor refuses the trade.
     """
-    from src.gateway.governance.routing_seal import (
-        SymbolicGovernorViolation,
-        verify_and_consume_seal,
-    )
-
     logger.info(
         "Tool Call: execute_trade(%s, %s, side=%s, confidence=%s, deferred_id=%s)",
         symbol,
@@ -153,7 +172,15 @@ async def execute_trade_action(
     if side not in ("buy", "sell"):
         return f"BLOCKED: invalid trade side {side!r}; expected 'buy' or 'sell'."
     if not transaction_id:
-        transaction_id = str(uuid.uuid4())
+        return (
+            "BLOCKED: transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
+        )
+    if not is_valid_transaction_id(transaction_id):
+        return (
+            f"BLOCKED: invalid transaction_id {str(transaction_id)[:64]!r}; "
+            "expected a UUIDv4 or UUIDv5."
+        )
+    transaction_id = transaction_id.lower()
 
     params: dict[str, Any] = {
         "symbol": symbol,
@@ -166,6 +193,114 @@ async def execute_trade_action(
         "dry_run": dry_run,
         "side": side,
     }
+    ledger = governor.components.execution_ledger
+    claim: Claim | None = None
+    if not dry_run:
+        # Keys are namespaced by action only: this tool is also reached through
+        # the gateway's HTTP /tools/execute dispatch, which passes no request
+        # context, and a resubmission must collide whichever path it takes.
+        # Both paths admit only trusted workload identities. An approval is
+        # new authority, so it may take over a key whose attempt was BLOCKED;
+        # a key whose trade may have executed is never claimed again.
+        try:
+            claimed = await ledger.claim(
+                "execute_trade",
+                SHARED_CALLER,
+                transaction_id,
+                reclaim_blocked=bool(deferred_id),
+            )
+        except ExecutionLedgerUnavailable as exc:
+            reason = (
+                "execution ledger unavailable, at-most-once execution cannot be "
+                f"guaranteed: {exc}"
+            )
+            logger.error("execute_trade %s refused: %s", transaction_id, reason)
+            await record_refusal(
+                "execute_trade", reason, oscal_control_ref="AC-3", params=params
+            )
+            return f"BLOCKED: {reason}"
+        if isinstance(claimed, Duplicate):
+            return await _refuse_duplicate(claimed, transaction_id, params)
+        claim = claimed
+
+    attempt = _TradeAttempt()
+    try:
+        outcome = await _govern_and_actuate(
+            params,
+            deferred_id=deferred_id,
+            dry_run=dry_run,
+            governor=governor,
+            attempt=attempt,
+        )
+    except BaseException as exc:
+        if claim is not None:
+            await ledger.record_outcome(
+                claim,
+                attempt.status,
+                f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
+            )
+        raise
+    if claim is not None:
+        await ledger.record_outcome(claim, attempt.status, outcome)
+    return outcome
+
+
+#: Ledger statuses whose recorded reply settles a resubmission.
+_SETTLED = frozenset({ExecutionStatus.EXECUTED, ExecutionStatus.BLOCKED})
+
+
+@dataclass
+class _TradeAttempt:
+    """What one attempt did at the broker, as the execution ledger records it."""
+
+    status: ExecutionStatus = ExecutionStatus.BLOCKED
+
+
+async def _refuse_duplicate(
+    duplicate: Duplicate, transaction_id: str, params: dict[str, Any]
+) -> str:
+    """Answer a resubmitted ``transaction_id`` without governing it again.
+
+    A first attempt that finished (EXECUTED or BLOCKED) is answered with its
+    own reply. One that may still act, or may have acted (IN_FLIGHT,
+    UNKNOWN), raises ``UnsettledDuplicate``, as an UNKNOWN actuation raises,
+    so that no caller reads the reply as settled.
+    """
+    reason = (
+        f"duplicate submission of transaction_id {transaction_id} "
+        f"(first attempt {duplicate.status.value})"
+    )
+    logger.warning("execute_trade refused: %s", reason)
+    await record_refusal(
+        "execute_trade", reason, oscal_control_ref="AC-3", params=params
+    )
+    if duplicate.outcome is not None and duplicate.status in _SETTLED:
+        return duplicate.outcome
+    state = {
+        ExecutionStatus.IN_FLIGHT: "has not finished",
+        ExecutionStatus.UNKNOWN: "has an unknown outcome, pending reconciliation",
+    }.get(duplicate.status, "left no recorded reply")
+    first = f" First attempt: {duplicate.outcome}" if duplicate.outcome else ""
+    raise UnsettledDuplicate(
+        f"{duplicate.status.value}: transaction_id {transaction_id} was already "
+        f"submitted and its first attempt {state}; it is not executed again.{first}"
+    )
+
+
+async def _govern_and_actuate(
+    params: dict[str, Any],
+    *,
+    deferred_id: str | None,
+    dry_run: bool,
+    governor: "SymbolicGovernor",
+    attempt: _TradeAttempt,
+) -> str:
+    """Govern, seal and actuate one trade; ``attempt.status`` tracks the broker."""
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        verify_and_consume_seal,
+    )
+
     # Server-side inputs are bound by the kernel, exactly as for previews; the
     # seal names these bound params. A missing one is refused by UCA-2 /
     # UCA-5 / UCA-13 inside the governor, which records the refusal.
@@ -324,6 +459,7 @@ async def execute_trade_action(
         # The kernel dispatcher records the receipt exactly once and turns an
         # actuator exception into an UNKNOWN receipt. Anything not provably
         # REJECTED confirms the reservations rather than releasing headroom.
+        attempt.status = ExecutionStatus.UNKNOWN  # the broker may act from here on
         receipt = await dispatch_actuation(actuator, clearance)
         executed = receipt.may_have_executed
 
@@ -338,10 +474,12 @@ async def execute_trade_action(
                     f"pending reconciliation): {findings_str}",
                     action="execute_trade",
                 )
+            attempt.status = ExecutionStatus.BLOCKED
             raise SymbolicGovernorViolation(
                 f"Actuation rejected: {findings_str}", action="execute_trade"
             )
 
+        attempt.status = ExecutionStatus.EXECUTED
         return f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} (Receipt ID: {receipt.receipt_id})"
     finally:
         await _settle(governor, seal, executed=executed)
