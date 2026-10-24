@@ -34,6 +34,8 @@ from src.gateway.governance.decisions import GovernanceDecision
 
 #: The finance domain's registered trade action.
 TRADE_ACTION = "execute_trade"
+#: The gateway MCP tool that executes a trade.
+TRADE_TOOL = "execute_trade_action"
 
 #: Least-privilege RBAC role. The role is never read from model output: a
 #: plan that claimed ``senior`` would raise its own OPA trade limit.

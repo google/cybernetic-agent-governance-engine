@@ -41,7 +41,9 @@ def bootstrap_governor(**assembly_overrides: Any) -> SymbolicGovernor:
     adapter named by ``CAGE_WARRANT_SOURCE``
     (:func:`~src.gateway.governance.warrant.source_factory.warrant_source_from_env`),
     or ``None`` when unset; assembly then refuses any norm the region marks
-    ``requires_warrant``.
+    ``requires_warrant``. Unless overridden, ``execution_ledger_redis`` is the
+    gateway's shared async Redis client, the one routing-seal nonces are
+    consumed from.
 
     Raises:
         RuntimeError: No usable domain plugin, or the domain left an engine
@@ -63,6 +65,10 @@ def bootstrap_governor(**assembly_overrides: Any) -> SymbolicGovernor:
         )
 
         assembly_overrides["warrant_source"] = warrant_source_from_env()
+    if "execution_ledger_redis" not in assembly_overrides:
+        from src.gateway.infrastructure.redis_client import redis_client
+
+        assembly_overrides["execution_ledger_redis"] = redis_client
     governor = assemble_governor([plugin], posture=posture, **assembly_overrides)
     if governor.components.unfilled_slots:
         raise RuntimeError(

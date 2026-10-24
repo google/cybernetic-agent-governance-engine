@@ -498,6 +498,51 @@ component-definition:
                 - href: "../../tests/test_replay_defense.py"
                   rel: test
 
+            - uuid: "bcb59824-06a7-5be1-b456-29504bf608fa"
+              control-id: si-10
+              description: |
+                Governed trades execute at most once per idempotency key.
+                execute_trade_action (src/cage_finance/tools/tool_provider.py) refuses a
+                trade without a UUIDv4 or UUIDv5 transaction_id and claims the key in the
+                kernel ExecutionLedger (src/gateway/governance/execution_idempotency.py;
+                governor.components.execution_ledger, built by assemble_governor) before
+                governance runs: Redis SET NX EX with a per-attempt token claims it, and a
+                Lua compare-and-set on that token records EXECUTED, BLOCKED or UNKNOWN
+                with the outcome text. A resubmitted key is neither governed nor
+                dispatched through the ActuatorRegistry again: it receives the recorded
+                outcome, or UnsettledDuplicate while the first attempt runs or its
+                outcome is UNKNOWN, and the refusal is recorded in the evidence stream
+                as a GOVERNANCE_REFUSAL_RECEIPT (AC-3). An UNKNOWN actuation keeps the
+                claim pending reconciliation. Only a resubmission carrying an approval
+                (deferred_id) may re-claim a key whose attempt was BLOCKED; the gateway
+                verifies and spends the approval before anything runs. Without
+                Redis an enforcing posture refuses the trade; only DEV, TEST and CI fall
+                back to a process-local registry. The broker order carries the
+                transaction_id as client_order_id. GatewayMCPClient
+                (src/gateway/infrastructure/mcp_client.py) resends a tool call only when
+                nothing was sent or the gateway annotates the tool readOnlyHint or
+                idempotentHint, and otherwise raises MCPToolOutcomeUnknownError for the
+                caller to reconcile.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "../../src/gateway/governance/execution_idempotency.py"
+                  rel: implementation
+                  text: "ExecutionLedger at-most-once claims"
+                - href: "../../src/cage_finance/tools/tool_provider.py"
+                  rel: implementation
+                  text: "execute_trade_action claims before governance"
+                - href: "../../src/gateway/infrastructure/mcp_client.py"
+                  rel: implementation
+                  text: "GatewayMCPClient resend policy"
+                - href: "../../tests/cage_finance/test_trade_idempotency.py"
+                  rel: test
+                - href: "../../tests/governance/test_execution_idempotency.py"
+                  rel: test
+
             - uuid: "2de236dc-7f43-4ec2-939e-febbed7f1a5c"
               control-id: au-10
               description: |

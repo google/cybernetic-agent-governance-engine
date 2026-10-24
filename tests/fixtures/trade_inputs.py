@@ -16,7 +16,8 @@
 
 The trade tool binds ``latency_ms`` / ``drawdown`` / ``portfolio_total`` through
 the governor's ``execute_trade`` server-input resolver. Tests that stand in a
-``MagicMock`` governor give it a real resolver over simulated sources.
+``MagicMock`` governor give it a real resolver over simulated sources, and a
+real execution ledger (process-local under the test posture).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from src.cage_finance.simulated_feeds import (
     SimulatedPortfolioNavSource,
 )
 from src.cage_finance.tools.trade_inputs import ServerTradeInputs, TradeInputResolver
+from src.gateway.governance.execution_idempotency import ExecutionLedger
 
 
 def trade_server_inputs(
@@ -67,4 +69,5 @@ def trade_governor(server_inputs: dict[str, Any] | None = None) -> MagicMock:
     governor.components.server_inputs = (
         trade_server_inputs() if server_inputs is None else server_inputs
     )
+    governor.components.execution_ledger = ExecutionLedger(None)
     return governor

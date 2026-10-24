@@ -248,7 +248,7 @@ class Gateway:
             params["amount"],
             params["currency"],
             params["confidence"],
-            None,
+            params.get("transaction_id") or str(uuid.uuid4()),
             params["trader_id"],
             params["trader_role"],
             False,

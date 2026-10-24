@@ -225,7 +225,7 @@ class Stack:
             params["amount"],
             params["currency"],
             params["confidence"],
-            None,
+            params.get("transaction_id") or str(uuid.uuid4()),
             params["trader_id"],
             params["trader_role"],
             False,
@@ -263,7 +263,9 @@ class Stack:
     async def assert_nothing_actuated(self) -> None:
         self.actuate.assert_not_awaited()
         assert await self.records("GOVERNANCE_DECISION") == []  # no seal minted
-        assert await self.seal_redis.dbsize() == 0  # no seal nonce burned
+        # No seal nonce burned. The execution ledger shares this Redis, so its
+        # transaction_id claim is not counted.
+        assert await self.seal_redis.keys("cage:seal:*") == []
 
 
 def trade(confidence: float = 0.98, **extra: Any) -> dict[str, Any]:
@@ -1004,6 +1006,43 @@ async def test_post_hitl_concurrent_redemptions_after_a_deferral_commit_once(
     )
     assert sum(r.startswith("EXECUTED") for r in results) == 1, results
     assert all(r.startswith(("EXECUTED", "BLOCKED")) for r in results), results
+    stack.actuate.assert_awaited_once()
+    assert len(await stack.records("GOVERNANCE_DECISION")) == 1
+    assert await _approval_status(stack, deferred_id) == "CONSUMED"
+
+
+@pytest.mark.eu_ecb
+async def test_post_hitl_retries_under_one_transaction_id_execute_once(
+    build: StackFactory,
+) -> None:
+    """#514: one transaction_id through deferral, retries and redemption.
+
+    The approval re-claims the key its deferred attempt left BLOCKED, so the
+    same trade redeems once the warrant holds again; a plain resubmission
+    gets the recorded reply without being governed; once executed, every
+    resubmission replays EXECUTED and nothing actuates twice.
+    """
+    stack = await build(seed=_vec(SHARED_WARRANT))
+    deferred_id = await _approved_floor_breach(stack)
+    params = trade(0.96, transaction_id=str(uuid.uuid4()))
+
+    stack.source.seed(_vec(VEC_002_REVOKED))
+    stack.clock.advance(60.001)
+    result = await stack.execute(params, deferred_id)
+    await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
+    result = await stack.execute(params, deferred_id)  # governed again, not replayed
+    await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
+    assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3  # park + 2 retries
+
+    assert await stack.execute(params) == result  # a plain resubmission replays
+    assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3
+
+    stack.source.seed(_vec(SHARED_WARRANT))
+    stack.clock.advance(60.001)
+    executed = await stack.execute(params, deferred_id)
+    assert executed.startswith("EXECUTED"), executed
+    assert await stack.execute(params, deferred_id) == executed
+    assert await stack.execute(params) == executed
     stack.actuate.assert_awaited_once()
     assert len(await stack.records("GOVERNANCE_DECISION")) == 1
     assert await _approval_status(stack, deferred_id) == "CONSUMED"

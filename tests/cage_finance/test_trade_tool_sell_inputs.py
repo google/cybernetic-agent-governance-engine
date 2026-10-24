@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import inspect
 import time
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -144,7 +145,7 @@ async def _trade(
         currency="USD",
         confidence=0.99,
         governor=governor or _governor(inputs or _inputs()),
-        **kwargs,
+        **{"transaction_id": str(uuid.uuid4()), **kwargs},
     )
 
 

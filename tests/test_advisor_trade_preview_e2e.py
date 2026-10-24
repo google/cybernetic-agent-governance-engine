@@ -35,6 +35,7 @@ NAV drawdown, current NAV) through ``PluginContribution.server_inputs``:
 from __future__ import annotations
 
 import inspect
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -261,7 +262,7 @@ async def _assert_refused_everywhere(
         500.0,
         "USD",
         0.99,
-        None,
+        str(uuid.uuid4()),
         "agent_001",
         "junior",
         side=side,
