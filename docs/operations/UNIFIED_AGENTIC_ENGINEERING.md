@@ -125,7 +125,6 @@ Codified in `AGENTS.md` (kept strictly under the 24KB cap):
 - Daily implementation and standard debugging run on Claude Sonnet. Claude 5 (Opus 5 / Fable 5.1) is reserved strictly for `escalated-architect` and `escalated-debug`.
 
 ### 12.2 Hard Anti-Loop & Cost Rules
-- **5-Step Execution Cap:** Agents must pause and request human verification after 5 consecutive tool actions.
 - **Context Ceiling (Sub-200k):** Sessions must remain strictly under 200,000 tokens. Never load raw build outputs or multiple unpruned source directories into context.
 - **Fail-Fast Policy:** If a test fails twice with a related error, STOP immediately. Produce a root-cause hypothesis instead of speculative trial-and-error edits.
 - **Two-Phase Testing:**

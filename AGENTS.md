@@ -331,11 +331,10 @@ To eliminate runaway frontier model billing, avoid quota lockouts, and eliminate
 2. **Ambient Keystroke Completion Daemon (Google Antigravity)**: Installed strictly as a headless, passive background daemon for **unmetered inline tab completions (ghost text)** inside editor buffers. Its chat panel remains permanently closed during active development to preserve unified telemetry, single-point audit logging, and `.roomodes` enforcement.
 
 ### Hard Anti-Loop & Cost Invariants
-1. **5-Step Execution Cap**: Never exceed 5 consecutive autonomous tool actions in a single turn without pausing for human verification.
-2. **Context Ceiling (< 200k Tokens)**: Keep active session contexts strictly below 200,000 tokens. Never ingest entire repositories, build artifacts, or multi-megabyte log files into an active session.
-3. **Fail-Fast Policy**: If an edit or test fails twice with a related stack trace, STOP immediately. Formulate a root-cause hypothesis instead of applying speculative patches.
-4. **Immediate Context Reset (`/clear`)**: Issue `/clear` the moment a task passes its tests. Carrying stale diffs and shell logs pushes context across the 200k boundary into higher-priced token tiers.
-5. **Open Tab Context Limit**: Maintain no more than 1 or 2 open editor tabs during active sessions.
+1. **Context Ceiling (< 200k Tokens)**: Keep active session contexts strictly below 200,000 tokens. Never ingest entire repositories, build artifacts, or multi-megabyte log files into an active session.
+2. **Fail-Fast Policy**: If an edit or test fails twice with a related stack trace, STOP immediately. Formulate a root-cause hypothesis instead of applying speculative patches.
+3. **Immediate Context Reset (`/clear`)**: Issue `/clear` the moment a task passes its tests. Carrying stale diffs and shell logs pushes context across the 200k boundary into higher-priced token tiers.
+4. **Open Tab Context Limit**: Maintain no more than 1 or 2 open editor tabs during active sessions.
 
 ### Strict Cache-Invariance Rules
 Prompt caching provides up to a 90% discount on cache reads, but incurs a 25% surcharge on cache writes:
