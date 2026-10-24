@@ -34,6 +34,7 @@ import yaml
 from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
     compile_control_structure,
+    generate_langgraph,
     generate_nemo,
     generate_opa,
     generate_python,
@@ -279,6 +280,47 @@ class TestGeneratedCodeInjection:
         }
         with pytest.raises(Exception, match="langgraph_saga action"):
             ControlStructureModel(**raw)
+
+    @staticmethod
+    def _mcp_saga_raw(mcp_arguments: list[str] | None) -> dict:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        uca = raw["unsafe_control_actions"][0]
+        uca["enforcement"] = ["langgraph"]
+        uca.pop("opa_rule", None)
+        saga = {
+            "forward_action": "do_thing",
+            "compensating_action": "undo_thing",
+            "execution_type": "mcp_tool",
+            "mcp_tool_name": "do_thing_tool",
+        }
+        if mcp_arguments is not None:
+            saga["mcp_arguments"] = mcp_arguments
+        uca["langgraph_saga"] = saga
+        return raw
+
+    @pytest.mark.parametrize("mcp_arguments", [None, [], ["token"]])
+    def test_mcp_saga_without_transaction_id_argument_rejected(
+        self, mcp_arguments: list[str] | None
+    ) -> None:
+        with pytest.raises(Exception, match="mcp_arguments must list"):
+            ControlStructureModel(**self._mcp_saga_raw(mcp_arguments))
+
+    def test_mcp_saga_argument_non_identifier_rejected(self) -> None:
+        raw = self._mcp_saga_raw(["transaction_id", "token\n    import os  #"])
+        with pytest.raises(Exception, match="langgraph_saga.mcp_arguments"):
+            ControlStructureModel(**raw)
+
+    def test_mcp_saga_duplicate_argument_rejected(self) -> None:
+        raw = self._mcp_saga_raw(["transaction_id", "token", "token"])
+        with pytest.raises(Exception, match="lists a key twice"):
+            ControlStructureModel(**raw)
+
+    def test_mcp_saga_forwards_only_declared_arguments(self) -> None:
+        cs = ControlStructureModel(**self._mcp_saga_raw(["token", "transaction_id"]))
+        gen = generate_langgraph(cs)
+        assert 'if k in ("token", "transaction_id")' in gen
+        assert "approval_token" not in gen
+        assert "except MCPToolOutcomeUnknownError" in gen
 
     def test_valid_fields_still_generate_clean_python(self) -> None:
         # Positive control: legitimate values compile and the generated Python

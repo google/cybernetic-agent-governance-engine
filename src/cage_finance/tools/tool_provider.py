@@ -20,6 +20,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
+from mcp.types import ToolAnnotations
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
@@ -55,6 +57,13 @@ get_actuator_registry().register(_broker_actuator, claims={"execute_trade"})
 _APPROVAL_BOUND_FIELDS = ("symbol", "currency", "trader_id", "trader_role", "side")
 
 TradeSide = Literal["buy", "sell"]
+
+#: MCP hints for tools that only read; GatewayMCPClient may resend them.
+_READ_ONLY_TOOL = ToolAnnotations(readOnlyHint=True, idempotentHint=True)
+#: A trade is an irreversible external commitment and must never be resent blindly.
+_TRADE_TOOL = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=False
+)
 
 
 def _approval_covers_trade(approved: dict, requested: dict) -> bool:
@@ -355,7 +364,9 @@ class FinancialToolProvider(DomainToolProvider):
         # governor is bound here rather than in the signature.
 
         @server.tool(
-            name="execute_trade_action", description=execute_trade_action.__doc__
+            name="execute_trade_action",
+            description=execute_trade_action.__doc__,
+            annotations=_TRADE_TOOL,
         )
         async def _execute_trade_tool(
             symbol: str,
@@ -383,12 +394,12 @@ class FinancialToolProvider(DomainToolProvider):
                 governor=governor,
             )
 
-        @server.tool()
+        @server.tool(annotations=_READ_ONLY_TOOL)
         async def check_market_status(symbol: str) -> str:
             """Check current status of a market symbol."""
             return await asyncio.to_thread(get_market_data, symbol)
 
-        @server.tool()
+        @server.tool(annotations=_READ_ONLY_TOOL)
         async def get_market_sentiment(symbol: str) -> str:
             """Retrieve current market sentiment for a symbol."""
             return await asyncio.to_thread(get_market_data, symbol)

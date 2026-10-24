@@ -229,8 +229,9 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    - `UPHOLD` (`DeferQueue.reject`) — confirms the block; decision is logged
    - `DEFER` — escalates to senior reviewer; re-queued with extended SLA
 6. **Single-commit execution (`execute_trade_action(..., deferred_id=...)` → `enforce_approved_governance` → `revalidate_post_hitl`):**
-   On human approval, the advisor invokes `execute_trade_action(..., deferred_id=deferred_id)`
-   ([`src/governed_financial_advisor/tools/trades.py`](../../src/governed_financial_advisor/tools/trades.py)).
+   On human approval, `gateway_tool_guard` adds the `deferred_id` to the tool call's arguments
+   ([`src/governed_financial_advisor/graph/governance/tool_guard.py`](../../src/governed_financial_advisor/graph/governance/tool_guard.py))
+   and the advisor invokes the gateway's `execute_trade_action(..., deferred_id=deferred_id)` MCP tool.
    Inside [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
    `enforce_approved_governance()` checks the quorum-approved `HITL_REQUIRED` token without
    spending it (`DeferQueue.redeemable_approval`, verifying action and canonical parameter SHA-256
