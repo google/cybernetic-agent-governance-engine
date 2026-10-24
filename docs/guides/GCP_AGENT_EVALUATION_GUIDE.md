@@ -396,6 +396,7 @@ PYTHONPATH=/tmp/cage-gcp-eval-demo uv run python -m src.eval_harness.cli \
   --anchors /tmp/cage-gcp-eval-demo/anchors.json \
   --evals /tmp/cage-gcp-eval-demo/evals.json \
   --adapter my_adk_agent:run_agent \
+  --adapter-config '{"model_id": "gemini-3.5-flash"}' \
   --decoy-skills "decoy-sql-skill,decoy-iam-skill,decoy-k8s-skill" \
   --eval-backend vertex \
   --emit-cer /tmp/cage-gcp-eval-demo/gcp-deploy-skill.cer \
@@ -408,11 +409,14 @@ Expected output:
 ```text
 === CAGE 3P Skill Certification Gate [CERTIFIED] ===
 Skill Name          : gcp-deploy-skill (115 words)
+Stages Executed     : [0, 1, 2]
 Stage 0 Static Score: 0.9583 (raw=0.9583, density=1.0000)
 Stage 1 Anchors     : valid=True (agreement=1.0000, r_fail=1.0000)
 Stage 2 Skill Lift  : +0.5812 (IF Lift=+0.7500)
 CER Receipt Digest  : <64-char RFC 8785 JCS SHA-256 hex digest>
 ```
+
+The receipt uses schema `cage.skill.cer.v2`. For this run it records `stages_run: [0, 1, 2]`, `evidence_level: "LIVE_ROLLOUT"`, the `--adapter` reference (`adapter_ref`), the RFC 8785 JCS digest of `--adapter-config` (`adapter_config_sha256`), the adapter's `model_id`, and the digests of `evals.json` and `anchors.json`. When certifying from pre-recorded `--baseline-traces`/`--skill-traces` instead, `--model-id` is required and the receipt binds both trace files' SHA-256 digests (`evidence_level: "PAIRED_TRACES"`). A `--stage0-only` run emits a `STATIC_ONLY` receipt with no model or lift values.
 
 ---
 
@@ -447,6 +451,8 @@ async def publish_and_verify() -> None:
     jwks_client = Ed25519KeyManifestClient(
         manifest_url="https://trust.example.com/.well-known/jwks.json"
     )
+    # Refuses non-v2 schemas and STATIC_ONLY receipts (pass allow_static_only=True
+    # to accept them); min_composite_lift uses lift_meets_threshold (inclusive here).
     verifier = GcsSkillCertificationVerifier(jwks_client, min_composite_lift=0.20)
     verified, reason = await verifier.verify_cer_receipt(
         receipt,

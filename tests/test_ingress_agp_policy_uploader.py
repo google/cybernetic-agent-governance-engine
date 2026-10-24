@@ -267,6 +267,16 @@ class TestGetCredentials:
 # Tests: verify_and_transition_gateway_mode (Module M3)
 # ---------------------------------------------------------------------------
 
+_AGENT_PRINCIPAL = "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/p/locations/l/reasoningEngines/1"
+
+
+async def _accepting_cer_verifier(artifact):
+    return True, "VERIFIED"
+
+
+async def _refusing_cer_verifier(artifact):
+    return False, "static_only_receipt"
+
 
 @pytest.mark.unit
 @pytest.mark.local
@@ -280,7 +290,7 @@ class TestGatewayEnforcementTransition:
 
         return RegistryCatalog(
             agents={
-                "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/p/locations/l/reasoningEngines/1": {
+                _AGENT_PRINCIPAL: {
                     "display_name": "Advisor Agent",
                     "allowed_tools": ["lookup_customer"],
                     "roles": ["advisor"],
@@ -303,42 +313,51 @@ class TestGatewayEnforcementTransition:
             },
         )
 
-    def test_transitions_to_enforced_when_all_gates_pass(self):
-        from src.gateway.governance.ingress.agp_policy_uploader import (
-            verify_and_transition_gateway_mode,
-        )
-
-        catalog = self._build_valid_catalog()
-        discovered = ["mcp.crm-service.internal", "pubsub.googleapis.com"]
-        bindings = [
+    def _valid_bindings(self):
+        return [
             {
                 "role": "roles/iap.egressor",
                 "target": "*",
-                "members": [
-                    "principal://agents.global.org-12345.system.id.goog/resources/aiplatform/projects/p/locations/l/reasoningEngines/1"
-                ],
+                "members": [_AGENT_PRINCIPAL],
                 "condition": {
                     "expression": 'resource.type == "networkservices" && destination.mcp.tool.name in ["lookup_customer"]'
                 },
             }
         ]
-        cer_artifacts = [{"status": "CERTIFIED", "signature": "sig-ed25519-ok"}]
 
-        res = verify_and_transition_gateway_mode(
-            gateway_id="cage-egress-gw-01",
-            discovered_targets=discovered,
-            catalog=catalog,
-            iap_bindings=bindings,
-            cer_artifacts=cer_artifacts,
+    async def _transition(self, **cer_kwargs):
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            verify_and_transition_gateway_mode,
         )
+
+        return await verify_and_transition_gateway_mode(
+            gateway_id="cage-egress-gw-01",
+            discovered_targets=["mcp.crm-service.internal", "pubsub.googleapis.com"],
+            catalog=self._build_valid_catalog(),
+            iap_bindings=self._valid_bindings(),
+            **cer_kwargs,
+        )
+
+    @pytest.mark.asyncio
+    async def test_transitions_to_enforced_when_all_gates_pass(self):
+        seen: list[dict] = []
+
+        async def verifier(artifact):
+            seen.append(dict(artifact))
+            return True, "VERIFIED"
+
+        artifact = {"schema_version": "cage.skill.cer.v2", "skill_name": "s"}
+        res = await self._transition(cer_artifacts=[artifact], cer_verifier=verifier)
         assert res.transition_allowed is True
         assert res.effective_mode == "ENFORCED"
         assert res.unregistered_targets == ()
         assert res.missing_iap_bindings == ()
         assert res.cer_verified is True
         assert res.blocking_reasons == ()
+        assert seen == [artifact]
 
-    def test_blocks_transition_on_unregistered_target(self):
+    @pytest.mark.asyncio
+    async def test_blocks_transition_on_unregistered_target(self):
         from src.gateway.governance.ingress.agp_policy_uploader import (
             verify_and_transition_gateway_mode,
         )
@@ -354,17 +373,20 @@ class TestGatewayEnforcementTransition:
             }
         ]
 
-        res = verify_and_transition_gateway_mode(
+        res = await verify_and_transition_gateway_mode(
             gateway_id="cage-egress-gw-01",
             discovered_targets=discovered,
             catalog=catalog,
             iap_bindings=bindings,
+            cer_artifacts=[{"skill_name": "s"}],
+            cer_verifier=_accepting_cer_verifier,
         )
         assert res.transition_allowed is False
         assert res.effective_mode == "DRY_RUN"
         assert "rogue-exfil.external.io" in res.unregistered_targets
 
-    def test_blocks_transition_on_missing_cel_or_unverified_cer(self):
+    @pytest.mark.asyncio
+    async def test_blocks_transition_on_missing_cel_and_refused_cer(self):
         from src.gateway.governance.ingress.agp_policy_uploader import (
             verify_and_transition_gateway_mode,
         )
@@ -381,17 +403,161 @@ class TestGatewayEnforcementTransition:
             }
         ]
 
-        res = verify_and_transition_gateway_mode(
+        res = await verify_and_transition_gateway_mode(
             gateway_id="cage-egress-gw-01",
             discovered_targets=discovered,
             catalog=catalog,
             iap_bindings=bindings,
-            cer_verified=False,
+            cer_artifacts=[{"skill_name": "s"}],
+            cer_verifier=_refusing_cer_verifier,
         )
         assert res.transition_allowed is False
         assert res.effective_mode == "DRY_RUN"
         assert "mcp.crm-service.internal" in res.missing_iap_bindings
         assert res.cer_verified is False
+
+    @pytest.mark.asyncio
+    async def test_blocks_transition_without_cer_verifier(self):
+        """A presence-only artifact no longer passes: a verifier is mandatory."""
+        res = await self._transition(
+            cer_artifacts=[{"status": "CERTIFIED", "signature": "sig-ed25519-ok"}]
+        )
+        assert res.transition_allowed is False
+        assert res.effective_mode == "DRY_RUN"
+        assert res.cer_verified is False
+        assert any("No .cer verifier configured" in r for r in res.blocking_reasons)
+
+    @pytest.mark.asyncio
+    async def test_blocks_transition_with_failing_cer_verifier(self):
+        res = await self._transition(
+            cer_artifacts=[{"skill_name": "s"}], cer_verifier=_refusing_cer_verifier
+        )
+        assert res.transition_allowed is False
+        assert res.effective_mode == "DRY_RUN"
+        assert res.cer_verified is False
+        assert res.blocking_reasons == (
+            ".cer artifact[0] failed verifier: static_only_receipt",
+        )
+
+    @pytest.mark.asyncio
+    async def test_blocks_transition_when_cer_verifier_raises(self):
+        async def exploding_verifier(artifact):
+            raise RuntimeError("key manifest unreachable")
+
+        res = await self._transition(
+            cer_artifacts=[{"skill_name": "s"}], cer_verifier=exploding_verifier
+        )
+        assert res.transition_allowed is False
+        assert res.cer_verified is False
+        assert res.blocking_reasons == (
+            ".cer artifact[0] verifier raised RuntimeError.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_blocks_transition_when_verifier_result_is_not_true(self):
+        async def truthy_verifier(artifact):
+            return "VERIFIED", "truthy but not True"
+
+        res = await self._transition(
+            cer_artifacts=[{"skill_name": "s"}], cer_verifier=truthy_verifier
+        )
+        assert res.transition_allowed is False
+        assert res.cer_verified is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("artifacts", [None, []])
+    async def test_blocks_transition_without_cer_artifacts(self, artifacts):
+        res = await self._transition(
+            cer_artifacts=artifacts, cer_verifier=_accepting_cer_verifier
+        )
+        assert res.transition_allowed is False
+        assert res.cer_verified is False
+        assert any("No .cer artifacts provided" in r for r in res.blocking_reasons)
+
+    @pytest.mark.asyncio
+    async def test_blocks_transition_on_non_mapping_artifact(self):
+        res = await self._transition(
+            cer_artifacts=["not-a-receipt"], cer_verifier=_accepting_cer_verifier
+        )
+        assert res.transition_allowed is False
+        assert res.blocking_reasons == (".cer artifact[0] is not a mapping.",)
+
+    @pytest.mark.asyncio
+    async def test_real_cer_verifier_gates_the_transition(self, tmp_path):
+        """End to end: signed v2 receipts through `GcsSkillCertificationVerifier`."""
+        from src.eval_harness import CerEvidenceLevel
+        from src.eval_harness.static_linter import lint_skill_file
+        from src.integrations.gcp_eval import (
+            GcpSkillCertifier,
+            GcsSkillCertificationVerifier,
+        )
+        from tests.fixtures.skill_certification import (
+            SAFE_OPS_EVALS,
+            SAFE_OPS_SKILL_MD,
+            SAFE_OPS_WEAK_BASELINE_TRACES,
+            SAFE_OPS_WITH_SKILL_TRACES,
+            make_ed25519_signer_and_jwks,
+            make_lift_report,
+            write_json,
+            write_text,
+        )
+
+        provider, jwks = make_ed25519_signer_and_jwks(tmp_path, "agp-cer-kid")
+        certifier = GcpSkillCertifier(key_id="agp-cer-kid", kms_provider=provider)
+        skill_md = write_text(tmp_path / "safe-ops" / "SKILL.md", SAFE_OPS_SKILL_MD)
+        static_report = lint_skill_file(skill_md)
+        paired = certifier.create_and_sign_receipt(
+            skill_md_path=skill_md,
+            static_report=static_report,
+            stages_run=(0, 2),
+            evidence_level=CerEvidenceLevel.PAIRED_TRACES,
+            lift_report=make_lift_report(),
+            evals_json_path=write_json(tmp_path / "evals.json", SAFE_OPS_EVALS),
+            baseline_traces_path=write_json(
+                tmp_path / "base.json", SAFE_OPS_WEAK_BASELINE_TRACES
+            ),
+            with_skill_traces_path=write_json(
+                tmp_path / "skill.json", SAFE_OPS_WITH_SKILL_TRACES
+            ),
+        )
+        static_only = certifier.create_and_sign_receipt(
+            skill_md_path=skill_md,
+            static_report=static_report,
+            stages_run=(0,),
+            evidence_level=CerEvidenceLevel.STATIC_ONLY,
+        )
+        verifier = GcsSkillCertificationVerifier(jwks)
+        skill_store = {"safe-ops": skill_md.read_bytes()}
+
+        async def cer_verifier(artifact):
+            skill_bytes = skill_store.get(str(artifact.get("skill_name")))
+            if skill_bytes is None:
+                return False, "unknown_skill"
+            return await verifier.verify_cer_receipt(
+                artifact, expected_skill_md_bytes=skill_bytes
+            )
+
+        allowed = await self._transition(
+            cer_artifacts=[paired.to_dict()], cer_verifier=cer_verifier
+        )
+        assert allowed.transition_allowed is True
+        assert allowed.effective_mode == "ENFORCED"
+
+        blocked = await self._transition(
+            cer_artifacts=[paired.to_dict(), static_only.to_dict()],
+            cer_verifier=cer_verifier,
+        )
+        assert blocked.transition_allowed is False
+        assert blocked.blocking_reasons == (
+            ".cer artifact[1] failed verifier: static_only_receipt",
+        )
+
+        presence_only = await self._transition(
+            cer_artifacts=[{"status": "CERTIFIED", "signature": "sig-ed25519-ok"}],
+            cer_verifier=cer_verifier,
+        )
+        assert presence_only.transition_allowed is False
+        assert presence_only.cer_verified is False
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

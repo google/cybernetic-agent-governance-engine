@@ -23,6 +23,10 @@ online CAGE Gateway:
    evaluator verification).
 3. Stage 2 Paired Differential Skill Lift Gate (`evals.json` + baseline/skill
    ATIF trajectories across the 4 ACES prompt buckets).
+
+`--emit-cer` signs a ``cage.skill.cer.v2`` receipt that binds the stages that
+ran, the evidence level, and the digests of the evaluated evidence (the trace
+files, or the rollout adapter reference and configuration digest).
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from src.eval_harness.harness import (
     AnchorCalibrationResult,
     AnchorItem,
     ATIFTrajectory,
+    CerEvidenceLevel,
     EvalBackendProtocol,
     FoundationModelEvalHarness,
     ShadowStateReducer,
@@ -47,6 +52,7 @@ from src.eval_harness.harness import (
     SkillEvalCase,
     SkillLiftReport,
     SkillPromptBucket,
+    lift_meets_threshold,
 )
 from src.eval_harness.runner import (
     AgentRolloutRunner,
@@ -116,6 +122,41 @@ def _parse_adapter_config(raw_config: str | None) -> dict[str, Any]:
     return dict(json.loads(raw_config))
 
 
+def _select_stage2_evidence(
+    *,
+    evals_json_path: Path | None,
+    baseline_traces_path: Path | None,
+    with_skill_traces_path: Path | None,
+    rollout_adapter: BaseRolloutAdapter | str | None,
+) -> CerEvidenceLevel | None:
+    """Return the evidence Stage 2 measures lift from, or ``None`` if inputs are incomplete.
+
+    Pre-recorded paired traces take precedence over a rollout adapter. The gate
+    and the CLI both use this selection so a `.cer` receipt binds exactly the
+    evidence the gate evaluated.
+    """
+    if evals_json_path is None:
+        return None
+    if baseline_traces_path is not None and with_skill_traces_path is not None:
+        return CerEvidenceLevel.PAIRED_TRACES
+    if rollout_adapter is not None:
+        return CerEvidenceLevel.LIVE_ROLLOUT
+    return None
+
+
+def _stages_run(
+    anchor_report: AnchorCalibrationResult | None,
+    lift_report: SkillLiftReport | None,
+) -> tuple[int, ...]:
+    """Return the certification stages that produced a report (Stage 0 always runs)."""
+    stages = [0]
+    if anchor_report is not None:
+        stages.append(1)
+    if lift_report is not None:
+        stages.append(2)
+    return tuple(stages)
+
+
 def _resolve_eval_backend(
     eval_backend: EvalBackendProtocol | str | None,
 ) -> EvalBackendProtocol | None:
@@ -134,6 +175,40 @@ def _resolve_eval_backend(
     return eval_backend
 
 
+async def _evaluate_trace_files(
+    *,
+    harness: FoundationModelEvalHarness,
+    resolved_backend: EvalBackendProtocol | None,
+    skill_name: str,
+    model_id: str,
+    cases: Sequence[SkillEvalCase],
+    baseline_traces_path: Path,
+    with_skill_traces_path: Path,
+    state_reducer: ShadowStateReducer | None,
+) -> SkillLiftReport:
+    """Measure paired Skill Lift over pre-recorded baseline/with-skill trace files."""
+    base_map = _load_trajectories_map(baseline_traces_path)
+    skill_map = _load_trajectories_map(with_skill_traces_path)
+    if resolved_backend is not None:
+        return await resolved_backend.evaluate_paired_skill_lift(
+            harness=harness,
+            skill_name=skill_name,
+            model_id=model_id,
+            cases=cases,
+            baseline_trajectories=base_map,
+            with_skill_trajectories=skill_map,
+            state_reducer=state_reducer,
+        )
+    return await harness.evaluate_paired_skill_lift(
+        skill_name=skill_name,
+        model_id=model_id,
+        cases=cases,
+        baseline_trajectories=base_map,
+        with_skill_trajectories=skill_map,
+        state_reducer=state_reducer,
+    )
+
+
 async def run_certification_gate(
     *,
     skill_md_path: Path,
@@ -146,7 +221,7 @@ async def run_certification_gate(
     anchors_json_path: Path | None = None,
     min_static_score: float = 0.70,
     min_composite_lift: float = 0.0,
-    model_id: str = "gemini-3.5-flash",
+    model_id: str | None = None,
     governor: SymbolicGovernor | None = None,
     state_reducer: ShadowStateReducer | None = None,
     eval_backend: EvalBackendProtocol | str | None = None,
@@ -169,6 +244,13 @@ async def run_certification_gate(
 
     Certification fails closed when Stage 2 paired evaluation is not executed
     unless ``allow_stage0_only=True`` (CLI ``--stage0-only``) is explicitly set.
+
+    ``model_id`` names the model that produced pre-recorded traces and is
+    required with ``baseline_traces_path``/``with_skill_traces_path`` (there is
+    no default model). Rollout-adapter runs record the adapter's model id from
+    the rollout bundle instead. Stage 2 lift must satisfy
+    :func:`~src.eval_harness.harness.lift_meets_threshold`, the same rule the
+    `.cer` verifier applies.
     """
     failures: list[str] = []
 
@@ -215,10 +297,13 @@ async def run_certification_gate(
             rollout_adapter,
         )
     )
-    has_complete_stage2_input = evals_json_path is not None and (
-        (baseline_traces_path is not None and with_skill_traces_path is not None)
-        or rollout_adapter is not None
+    stage2_evidence = _select_stage2_evidence(
+        evals_json_path=evals_json_path,
+        baseline_traces_path=baseline_traces_path,
+        with_skill_traces_path=with_skill_traces_path,
+        rollout_adapter=rollout_adapter,
     )
+    has_complete_stage2_input = stage2_evidence is not None
 
     if has_any_stage2_input and not has_complete_stage2_input:
         failures.append(
@@ -235,8 +320,9 @@ async def run_certification_gate(
         raw_cases = json.loads(evals_json_path.read_text(encoding="utf-8"))
         cases = [_parse_eval_case(c) for c in raw_cases if isinstance(c, Mapping)]
 
-        if rollout_adapter is not None and (
-            baseline_traces_path is None or with_skill_traces_path is None
+        if (
+            stage2_evidence is CerEvidenceLevel.LIVE_ROLLOUT
+            and rollout_adapter is not None
         ):
             resolved_adapter = (
                 load_rollout_adapter(rollout_adapter, adapter_config)
@@ -272,25 +358,20 @@ async def run_certification_gate(
                     state_reducer=state_reducer,
                 )
         elif baseline_traces_path is not None and with_skill_traces_path is not None:
-            base_map = _load_trajectories_map(baseline_traces_path)
-            skill_map = _load_trajectories_map(with_skill_traces_path)
-            if resolved_backend is not None:
-                lift_report = await resolved_backend.evaluate_paired_skill_lift(
-                    harness=harness,
-                    skill_name=static_report.skill_name,
-                    model_id=model_id,
-                    cases=cases,
-                    baseline_trajectories=base_map,
-                    with_skill_trajectories=skill_map,
-                    state_reducer=state_reducer,
+            if model_id is None or not model_id.strip():
+                failures.append(
+                    "stage2_missing_model_id(pre-recorded baseline/with-skill traces "
+                    "require model_id naming the model that produced them)"
                 )
             else:
-                lift_report = await harness.evaluate_paired_skill_lift(
+                lift_report = await _evaluate_trace_files(
+                    harness=harness,
+                    resolved_backend=resolved_backend,
                     skill_name=static_report.skill_name,
-                    model_id=model_id,
+                    model_id=model_id.strip(),
                     cases=cases,
-                    baseline_trajectories=base_map,
-                    with_skill_trajectories=skill_map,
+                    baseline_traces_path=baseline_traces_path,
+                    with_skill_traces_path=with_skill_traces_path,
                     state_reducer=state_reducer,
                 )
 
@@ -312,13 +393,14 @@ async def run_certification_gate(
                         f"stage2_drawback_violation(case={cl.case_id},reasons={list(cl.with_skill.drawback_reasons)})"
                     )
 
-            if min_composite_lift == 0.0 and lift_report.mean_composite_lift <= 0.0:
-                failures.append(
-                    f"stage2_insufficient_skill_lift({lift_report.mean_composite_lift} <= 0.0)"
+            if not lift_meets_threshold(
+                lift_report.mean_composite_lift, min_composite_lift
+            ):
+                required = (
+                    "> 0.0" if min_composite_lift == 0.0 else f">= {min_composite_lift}"
                 )
-            elif lift_report.mean_composite_lift < min_composite_lift:
                 failures.append(
-                    f"stage2_insufficient_skill_lift({lift_report.mean_composite_lift} < {min_composite_lift})"
+                    f"stage2_insufficient_skill_lift(lift={lift_report.mean_composite_lift}, required {required})"
                 )
 
     certified = len(failures) == 0
@@ -360,6 +442,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         default=None,
         help="Optional path to with-skill ATIF trajectories JSON.",
+    )
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default=None,
+        help=(
+            "Model that produced --baseline-traces/--skill-traces (required with them). "
+            "Adapter runs record the adapter's model_id instead."
+        ),
     )
     parser.add_argument(
         "--adapter",
@@ -427,6 +518,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Emit machine-readable JSON certification report.",
     )
     args = parser.parse_args(argv)
+    uses_trace_files = args.baseline_traces is not None or args.skill_traces is not None
+    if uses_trace_files and (args.model_id is None or not args.model_id.strip()):
+        parser.error("--model-id is required with --baseline-traces/--skill-traces")
+    if args.model_id is not None and not uses_trace_files:
+        parser.error(
+            "--model-id applies only to --baseline-traces/--skill-traces; "
+            "adapter runs record the adapter's model_id"
+        )
+    adapter_config = _parse_adapter_config(args.adapter_config)
     decoy_list = (
         tuple(s.strip() for s in args.decoy_skills.split(",") if s.strip())
         if args.decoy_skills
@@ -440,34 +540,50 @@ def main(argv: Sequence[str] | None = None) -> int:
             baseline_traces_path=args.baseline_traces,
             with_skill_traces_path=args.skill_traces,
             rollout_adapter=args.adapter,
-            adapter_config=_parse_adapter_config(args.adapter_config),
+            adapter_config=adapter_config,
             decoy_skills=decoy_list,
             anchors_json_path=args.anchors,
             min_static_score=args.min_static_score,
             min_composite_lift=args.min_lift,
+            model_id=args.model_id,
             eval_backend=args.eval_backend,
             allow_stage0_only=args.stage0_only,
         )
     )
 
-    stages_run: list[int] = [0]
-    if anchor_rep is not None:
-        stages_run.append(1)
-    if lift_rep is not None:
-        stages_run.append(2)
+    stages_run = _stages_run(anchor_rep, lift_rep)
 
     cer_receipt: SkillCertificationReceipt | None = None
     if certified and args.emit_cer is not None:
         from src.integrations.gcp_eval.cer_publisher import GcpSkillCertifier
 
+        stage2_evidence = _select_stage2_evidence(
+            evals_json_path=args.evals,
+            baseline_traces_path=args.baseline_traces,
+            with_skill_traces_path=args.skill_traces,
+            rollout_adapter=args.adapter,
+        )
+        evidence_level = (
+            stage2_evidence
+            if lift_rep is not None and stage2_evidence is not None
+            else CerEvidenceLevel.STATIC_ONLY
+        )
+        paired = evidence_level is CerEvidenceLevel.PAIRED_TRACES
+        live = evidence_level is CerEvidenceLevel.LIVE_ROLLOUT
         certifier = GcpSkillCertifier(key_id=args.kms_key_id)
         cer_receipt = certifier.create_and_sign_receipt(
             skill_md_path=args.skill_md,
             static_report=static_rep,
+            stages_run=stages_run,
+            evidence_level=evidence_level,
             lift_report=lift_rep,
             anchor_report=anchor_rep,
             evals_json_path=args.evals,
             anchors_json_path=args.anchors,
+            baseline_traces_path=args.baseline_traces if paired else None,
+            with_skill_traces_path=args.skill_traces if paired else None,
+            adapter_ref=args.adapter if live else None,
+            adapter_config=adapter_config if live else None,
         )
         cer_target = args.emit_cer.resolve()
         cer_target.parent.mkdir(parents=True, exist_ok=True)
@@ -479,7 +595,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         payload: dict[str, Any] = {
             "certified": certified,
-            "stages_run": stages_run,
+            "stages_run": list(stages_run),
             "failures": list(failures),
             "stage0_static_lint": asdict(static_rep),
             "stage1_anchor_calibration": (
@@ -495,7 +611,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"Skill Name          : {static_rep.skill_name} ({static_rep.word_count} words)"
         )
-        print(f"Stages Executed     : {stages_run}")
+        print(f"Stages Executed     : {list(stages_run)}")
         print(
             f"Stage 0 Static Score: {static_rep.length_adjusted_score:.4f} "
             f"(raw={static_rep.raw_mean_score:.4f}, density={static_rep.information_density_multiplier:.4f})"

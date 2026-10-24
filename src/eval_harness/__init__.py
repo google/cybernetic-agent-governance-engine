@@ -50,10 +50,12 @@ from src.eval_harness.gepa_optimizer import (
     screen_candidate_security,
 )
 from src.eval_harness.harness import (
+    CER_SCHEMA_VERSION,
     AnchorCalibrationResult,
     AnchorItem,
     ATIFStep,
     ATIFTrajectory,
+    CerEvidenceLevel,
     ComposedDrawbackEvaluator,
     DPOPreferenceTriplet,
     DrawbackDetectorFn,
@@ -75,6 +77,7 @@ from src.eval_harness.harness import (
     TrajectoryHarvesterProtocol,
     build_default_drawback_detectors,
     default_shadow_state_reducer,
+    lift_meets_threshold,
 )
 from src.eval_harness.runner import (
     MODEL_PRICING_CATALOG,
@@ -101,6 +104,7 @@ from src.eval_harness.static_linter import (
 )
 
 __all__ = [
+    "CER_SCHEMA_VERSION",
     "DESTRUCTIVE_COMMAND_PATTERN",
     "MODEL_PRICING_CATALOG",
     "ADKSessionRolloutAdapter",
@@ -115,6 +119,7 @@ __all__ = [
     "CageGEPAAdapter",
     "CallableRolloutAdapter",
     "CandidateSecurityReport",
+    "CerEvidenceLevel",
     "ComposedDrawbackEvaluator",
     "DPOPreferenceTriplet",
     "DrawbackDetectorFn",
@@ -158,6 +163,7 @@ __all__ = [
     "estimate_token_count",
     "gemini_cli_jsonl_to_atif",
     "langgraph_state_to_atif",
+    "lift_meets_threshold",
     "lint_skill_file",
     "lint_skill_markdown",
     "load_rollout_adapter",
