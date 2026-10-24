@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -133,6 +134,7 @@ async def _buy(inputs: ServerTradeInputs) -> str:
         amount=500.0,
         currency="USD",
         confidence=0.99,
+        transaction_id=str(uuid.uuid4()),
         governor=trade_governor({"execute_trade": TradeInputResolver(inputs)}),
     )
 

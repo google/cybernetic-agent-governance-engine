@@ -601,7 +601,7 @@ Pydantic model for validated trade orders.
 | `confidence` | `float` | 0.0–1.0 |
 | `side` | `str` (optional) | — |
 | `type` | `str` (optional) | — |
-| `transaction_id` | `str` | UUID v4 |
+| `transaction_id` | `str` | UUID v4 or v5; the trade's idempotency key and the broker `client_order_id` |
 | `trader_id` | `str` (optional) | — |
 | `trader_role` | `str` (optional) | `"junior"` or `"senior"` |
 

@@ -47,6 +47,8 @@ from src.gateway.governance.decisions import GovernanceDecision
 
 #: The finance domain's registered trade action.
 TRADE_ACTION = "execute_trade"
+#: The gateway MCP tool that executes a trade.
+TRADE_TOOL = "execute_trade_action"
 
 #: Plan-step actions that denote a trade, matched exactly and case-insensitively.
 #: ``execute_trade`` is the planner's only trade action (the "Available

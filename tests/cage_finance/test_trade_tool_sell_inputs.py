@@ -31,7 +31,7 @@ for each region (FIN-1 sell fraction EU_ECB 0.08 / APAC_MAS 0.09 / US_FED 0.10):
 from __future__ import annotations
 
 import inspect
-import time
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -144,7 +144,7 @@ async def _trade(
         currency="USD",
         confidence=0.99,
         governor=governor or _governor(inputs or _inputs()),
-        **kwargs,
+        **{"transaction_id": str(uuid.uuid4()), **kwargs},
     )
 
 
@@ -363,13 +363,22 @@ def test_approval_binds_side() -> None:
 
 # ── resolve_portfolio_total snapshot checks ────────────────────────────────
 
+#: The clock these checks run on. Wall-clock timestamps taken when the module
+#: is collected drift: once other tests have run for a minute, a snapshot dated
+#: a minute ahead is no longer in the future.
+_NOW = 1_800_000_000.0
+
+
+def _clock() -> float:
+    return _NOW
+
 
 class _FixedNav:
     def __init__(self, **overrides: Any) -> None:
         fields: dict[str, Any] = {
             "open_nav": _OPEN_NAV,
             "current_nav": _OPEN_NAV,
-            "observed_at": time.time(),
+            "observed_at": _NOW,
             "source_id": "simulated:finance_portfolio_nav",
         }
         fields.update(overrides)
@@ -381,24 +390,30 @@ class _FixedNav:
 
 @pytest.mark.asyncio
 async def test_resolve_returns_current_nav() -> None:
-    total = await resolve_portfolio_total(_FixedNav(current_nav=97_500.0))
+    total = await resolve_portfolio_total(_FixedNav(current_nav=97_500.0), clock=_clock)
     assert total == pytest.approx(97_500.0)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "overrides",
+    ("overrides", "reason"),
     [
-        {"source_id": "unverified_rogue_feed"},
-        {"source_id": ""},
-        {"current_nav": 0.0},
-        {"current_nav": -1.0},
-        {"current_nav": float("inf")},
-        {"current_nav": float("nan")},
-        {"open_nav": 0.0},
-        {"current_nav": "lots"},
-        {"observed_at": time.time() + trade_inputs.MAX_CLOCK_SKEW_S + 60.0},
-        {"observed_at": time.time() - trade_inputs.MAX_NAV_AGE_S - 1.0},
+        ({"source_id": "unverified_rogue_feed"}, "unverified NAV source"),
+        ({"source_id": ""}, "unverified NAV source"),
+        ({"current_nav": 0.0}, "no basis for a sell fraction"),
+        ({"current_nav": -1.0}, "invalid current NAV"),
+        ({"current_nav": float("inf")}, "invalid current NAV"),
+        ({"current_nav": float("nan")}, "invalid current NAV"),
+        ({"open_nav": 0.0}, "invalid opening NAV"),
+        ({"current_nav": "lots"}, "malformed NAV snapshot"),
+        (
+            {"observed_at": _NOW + trade_inputs.MAX_CLOCK_SKEW_S + 60.0},
+            "in the future",
+        ),
+        (
+            {"observed_at": _NOW - trade_inputs.MAX_NAV_AGE_S - 1.0},
+            "stale NAV snapshot",
+        ),
     ],
     ids=[
         "unverified",
@@ -413,14 +428,16 @@ async def test_resolve_returns_current_nav() -> None:
         "stale",
     ],
 )
-async def test_resolve_rejects_untrustworthy_nav(overrides: dict[str, Any]) -> None:
-    with pytest.raises(TradeInputUnavailable):
-        await resolve_portfolio_total(_FixedNav(**overrides))
+async def test_resolve_rejects_untrustworthy_nav(
+    overrides: dict[str, Any], reason: str
+) -> None:
+    with pytest.raises(TradeInputUnavailable, match=reason):
+        await resolve_portfolio_total(_FixedNav(**overrides), clock=_clock)
 
 
 @pytest.mark.asyncio
 async def test_resolve_accepts_small_future_skew() -> None:
-    skewed = time.time() + trade_inputs.MAX_CLOCK_SKEW_S / 2
+    skewed = _NOW + trade_inputs.MAX_CLOCK_SKEW_S / 2
     assert await resolve_portfolio_total(
-        _FixedNav(observed_at=skewed)
+        _FixedNav(observed_at=skewed), clock=_clock
     ) == pytest.approx(_OPEN_NAV)

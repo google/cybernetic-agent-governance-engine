@@ -27,6 +27,7 @@ batch without executing any tool.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -35,7 +36,9 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import END
 
+import src.governed_financial_advisor.graph.governance.tool_guard as tool_guard_module
 from src.governed_financial_advisor.graph.governance.tool_guard import (
+    derive_transaction_id,
     gateway_tool_guard,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
@@ -410,3 +413,103 @@ class TestSubgraphWiring:
             guarded = module.guarded_tool_executor_node
             assert guarded is not module.tool_executor_node
             assert guarded.__wrapped__ is module.tool_executor_node
+
+
+class TestGuardTransactionIds:
+    """Trade tool calls carry a derived, deterministic transaction_id (#514)."""
+
+    @staticmethod
+    def _txn(state: dict[str, Any], index: int = 0) -> str:
+        return state["messages"][-1].tool_calls[index]["args"]["transaction_id"]
+
+    @pytest.mark.asyncio
+    async def test_overrides_the_model_supplied_transaction_id(self, gateway) -> None:
+        seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+        call = _call("call-1")
+        call["args"]["transaction_id"] = "chosen-by-the-model"
+        state = {"messages": [AIMessage(content="", tool_calls=[call], id="ai-1")]}
+
+        await gateway_tool_guard("execute_trade")(spy)(state)
+
+        executed = spy.states[0]["messages"][-1].tool_calls[0]
+        txn = executed["args"]["transaction_id"]
+        assert txn != "chosen-by-the-model"
+        assert uuid.UUID(txn).version == 5
+        assert txn == derive_transaction_id("call-1", thread_id=None, message_id="ai-1")
+        # Only transaction_id changes.
+        assert {k: v for k, v in executed["args"].items() if k != "transaction_id"} == {
+            k: v for k, v in call["args"].items() if k != "transaction_id"
+        }
+        # The preview authorizes the order; the call's key is not part of it.
+        assert "transaction_id" not in json.loads(seen[0].content)["params"]
+
+    @pytest.mark.asyncio
+    async def test_same_tool_call_in_the_same_thread_keeps_its_key(
+        self, gateway, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+        guarded = gateway_tool_guard("execute_trade")(spy)
+        thread = {"configurable": {"thread_id": "thread-7"}}
+        monkeypatch.setattr(tool_guard_module, "get_config", lambda: thread)
+
+        # A re-run rebuilds the AIMessage (new message id), same tool call id.
+        await guarded(
+            {"messages": [AIMessage(content="", tool_calls=[_call("c-1")], id="a")]}
+        )
+        await guarded(
+            {"messages": [AIMessage(content="", tool_calls=[_call("c-1")], id="b")]}
+        )
+        thread["configurable"]["thread_id"] = "thread-8"
+        await guarded(
+            {"messages": [AIMessage(content="", tool_calls=[_call("c-1")], id="a")]}
+        )
+
+        first, rerun, other_thread = (self._txn(s) for s in spy.states)
+        assert first == rerun
+        assert first != other_thread
+        assert first == derive_transaction_id(
+            "c-1", thread_id="thread-7", message_id=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_each_trade_call_in_a_batch_gets_its_own_key(self, gateway) -> None:
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+
+        await gateway_tool_guard("execute_trade")(spy)(
+            _state(_call("t1"), _call("t2", symbol="MSFT"))
+        )
+
+        state = spy.states[0]
+        assert self._txn(state, 0) != self._txn(state, 1)
+
+    @pytest.mark.asyncio
+    async def test_other_tool_calls_are_untouched(self, gateway) -> None:
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+        call = {"name": "get_market_sentiment", "args": {"symbol": "AAPL"}, "id": "m1"}
+
+        await gateway_tool_guard("market_data")(spy)(_state(call))
+
+        assert spy.states[0]["messages"][-1].tool_calls[0]["args"] == {"symbol": "AAPL"}
+
+    @pytest.mark.asyncio
+    async def test_approved_resubmission_keeps_the_derived_key(self, gateway) -> None:
+        seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+        state = {
+            "messages": [AIMessage(content="", tool_calls=[_call("t1")], id="ai-9")],
+            "deferred_id": "d-1",
+            "approval_decision": {"approved": True},
+        }
+
+        await gateway_tool_guard("execute_trade", approvable=True)(spy)(state)
+
+        args = spy.states[0]["messages"][-1].tool_calls[0]["args"]
+        assert args["deferred_id"] == "d-1"
+        assert args["transaction_id"] == derive_transaction_id(
+            "t1", thread_id=None, message_id="ai-9"
+        )
+        assert seen == []  # an approved call is not re-validated

@@ -23,6 +23,7 @@ double-execute.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -153,6 +154,7 @@ async def _run_trade(actuate_mock: AsyncMock) -> tuple[MagicMock, object]:
         try:
             outcome: object = await execute_trade_action(
                 governor=governor,
+                transaction_id=str(uuid.uuid4()),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",

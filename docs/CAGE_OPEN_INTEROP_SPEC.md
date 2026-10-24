@@ -940,7 +940,7 @@ through the governed trade execution pipeline.
 | `confidence` | `float` | Yes | 0.0–1.0 |
 | `side` | `string` | No | — |
 | `type` | `string` | No | — |
-| `transaction_id` | `string` | Yes | UUID v4 |
+| `transaction_id` | `string` | Yes | UUID v4 or v5 |
 | `trader_id` | `string` | No | — |
 | `trader_role` | `string` | No | `"junior"` or `"senior"` |
 

@@ -427,12 +427,36 @@ def _serialize_receipt(
     return _convert_value(receipt_obj)
 
 
+async def record_refusal(
+    action_id: str,
+    refusal_reason: str,
+    *,
+    oscal_control_ref: str,
+    params: dict[str, Any],
+) -> None:
+    """Record a refusal decided outside the governor in the evidence stream.
+
+    Such a refusal has no tier ``RefusalReceipt`` (for example, a resubmitted
+    idempotency key the execution ledger turned away), so its summary receipt
+    is signed and ingested like every other refusal in this module.
+    """
+    await _emit_refusal_receipt(
+        action_id=action_id,
+        refusal_reason=refusal_reason,
+        oscal_control_ref=oscal_control_ref,
+        params=params,
+        receipt_expected=False,
+    )
+
+
 async def _emit_refusal_receipt(
     action_id: str,
     refusal_reason: str,
     oscal_control_ref: str,
     params: dict[str, Any],
     receipt: Any = None,
+    *,
+    receipt_expected: bool = True,
 ) -> None:
     """Emit a signed OSCAL compliance receipt for a hard governance refusal.
 
@@ -455,6 +479,8 @@ async def _emit_refusal_receipt(
         oscal_control_ref: OSCAL control reference (e.g. ``"SC-4"``).
         params:            Original action parameters (used for context only).
         receipt:           Full RefusalReceipt v3 object (if available).
+        receipt_expected:  False for a refusal decided outside the governor,
+                           which never has a RefusalReceipt to attach.
     """
     receipt_id = str(uuid.uuid4())
     timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
@@ -474,12 +500,13 @@ async def _emit_refusal_receipt(
         # Degraded path: emit summary form when receipt is None
         # Log a warning to make this visible — silently emitting thin receipts
         # is how the defect arose in the first place.
-        logger.warning(
-            "⚠️ [A2] Emitting degraded refusal receipt (receipt=None): "
-            "action='%s' — tier_failures and proof_hash unavailable. "
-            "This indicates GovernanceError was raised without a receipt.",
-            action_id,
-        )
+        if receipt_expected:
+            logger.warning(
+                "⚠️ [A2] Emitting degraded refusal receipt (receipt=None): "
+                "action='%s' — tier_failures and proof_hash unavailable. "
+                "This indicates GovernanceError was raised without a receipt.",
+                action_id,
+            )
         receipt_payload = {
             "type": "GOVERNANCE_REFUSAL_RECEIPT",
             "receipt_id": receipt_id,

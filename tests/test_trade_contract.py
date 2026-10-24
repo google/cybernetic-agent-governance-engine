@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -330,13 +331,18 @@ class _RecordingClient:
 
 
 async def _guarded_call(
-    monkeypatch: pytest.MonkeyPatch, args: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch,
+    args: dict[str, Any],
+    executed: list[dict[str, Any]] | None = None,
 ) -> tuple[_RecordingClient, dict[str, Any]]:
+    """Run one trade call through the guard; ``executed`` gets the tool's args."""
     monkeypatch.delenv("CAGE_ROUTING_VERDICT_TTL_S", raising=False)
     client = _RecordingClient()
     monkeypatch.setattr(guard_mod, "GatewayClient", lambda: client)
 
     async def executor(state: dict[str, Any]) -> dict[str, Any]:
+        if executed is not None:
+            executed.append(dict(state["messages"][-1].tool_calls[0]["args"]))
         return {"messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")]}
 
     call = {"name": "execute_trade_action", "id": "c1", "args": args}
@@ -364,7 +370,11 @@ async def test_tool_guard_reuses_the_verdict_for_the_exact_order(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("field", "value"), _EXTRA_FIELDS)
+@pytest.mark.parametrize(
+    ("field", "value"),
+    # The guard replaces a model-supplied transaction_id with its own key (#514).
+    [(field, value) for field, value in _EXTRA_FIELDS if field != "transaction_id"],
+)
 async def test_tool_guard_revalidates_a_call_with_an_extra_field(
     monkeypatch: pytest.MonkeyPatch, field: str, value: Any
 ) -> None:
@@ -373,6 +383,36 @@ async def test_tool_guard_revalidates_a_call_with_an_extra_field(
     assert len(client.calls) == 1
     assert client.calls[0][field] == value
     assert out["governance_status"] == "ALLOWED"
+
+
+@pytest.mark.asyncio
+async def test_tool_guard_replaces_the_model_transaction_id_and_still_reuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed: list[dict[str, Any]] = []
+    client, out = await _guarded_call(
+        monkeypatch, {**_ORDER, "transaction_id": "other-tx"}, executed
+    )
+
+    assert client.calls == []  # the guard's own key does not block reuse
+    assert out["governance_status"] == "ALLOWED"
+    (args,) = executed
+    assert uuid.UUID(args["transaction_id"]).version == 5
+
+
+@pytest.mark.asyncio
+async def test_tool_guard_previews_the_order_without_its_transaction_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed: list[dict[str, Any]] = []
+    client, _ = await _guarded_call(
+        monkeypatch, {**_ORDER, "limit_price": 1.0}, executed
+    )
+
+    (previewed,) = client.calls
+    assert "transaction_id" not in previewed
+    (args,) = executed
+    assert uuid.UUID(args["transaction_id"]).version == 5
 
 
 # ---------------------------------------------------------------------------

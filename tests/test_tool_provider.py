@@ -19,6 +19,7 @@ Validates fail-closed invariant: execute_trade_action() must reject calls with
 missing, empty, or whitespace-only routing seals from enforce_governance().
 """
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,6 +36,7 @@ def _deps() -> dict:
     """Composition-root dependencies injected into execute_trade_action()."""
     return {
         "governor": trade_governor(),
+        "transaction_id": str(uuid.uuid4()),
     }
 
 

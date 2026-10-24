@@ -291,6 +291,7 @@ async def test_execute_trade_action_traverses_actuator():
                         amount=10.0,
                         currency="USD",
                         confidence=0.95,
+                        transaction_id=str(uuid.uuid4()),
                         governor=trade_governor(),
                     )
 

@@ -44,14 +44,15 @@ def _finance_server() -> FastMCP:
 
 
 @pytest.mark.asyncio
-async def test_trade_tool_is_destructive() -> None:
+async def test_trade_tool_is_destructive_and_idempotent() -> None:
+    """Destructive, but the mandatory transaction_id makes a resend a replay."""
     tools = {t.name: t.annotations for t in await _finance_server().list_tools()}
 
     trade = tools["execute_trade_action"]
     assert trade is not None
     assert trade.readOnlyHint is False
     assert trade.destructiveHint is True
-    assert trade.idempotentHint is False
+    assert trade.idempotentHint is True
 
 
 @pytest.mark.asyncio
@@ -100,6 +101,6 @@ async def test_client_reads_the_annotations_over_mcp() -> None:
     async with server.session_manager.run():
         assert await client._is_retry_safe("check_market_status") is True
         assert await client._is_retry_safe("get_market_sentiment") is True
-        assert await client._is_retry_safe("execute_trade_action") is False
+        assert await client._is_retry_safe("execute_trade_action") is True
         assert await client._is_retry_safe("no_such_tool") is False
         await client.close()
