@@ -68,6 +68,7 @@ class TriIdentityCredentialBinding:
     tool_name: str
     routing_seal: str
     oauth_scopes: tuple[str, ...] = field(default_factory=tuple)
+    user_verified: bool = False
 
 
 def validate_tri_identity_binding(
@@ -78,8 +79,8 @@ def validate_tri_identity_binding(
     """Validate that a ``TriIdentityCredentialBinding`` satisfies fail-closed preconditions.
 
     Raises:
-        CredentialAccessDenied: If the agent SVID, user delegation, tool name,
-            or ``PreCredentials`` routing seal is missing or malformed.
+        CredentialAccessDenied: If the agent SVID, verified user delegation,
+            tool name, or ``PreCredentials`` routing seal is missing or malformed.
     """
     if not binding.agent_svid or not binding.agent_svid.startswith(
         ("spiffe://", "principal://agents.global.org-")
@@ -87,10 +88,15 @@ def validate_tri_identity_binding(
         raise CredentialAccessDenied(
             f"Invalid ID-2 agent workload identity for credential brokering: {binding.agent_svid!r}"
         )
-    if require_user_delegation and not binding.user_id.strip():
-        raise CredentialAccessDenied(
-            "Missing ID-1 end-user identity required for delegated ID-3 OAuth token brokering"
-        )
+    if require_user_delegation:
+        if not binding.user_id.strip():
+            raise CredentialAccessDenied(
+                "Missing ID-1 end-user identity required for delegated ID-3 OAuth token brokering"
+            )
+        if not binding.user_verified:
+            raise CredentialAccessDenied(
+                "Unverified ID-1 end-user identity rejected for delegated ID-3 OAuth token brokering"
+            )
     if not binding.tool_name.strip():
         raise CredentialAccessDenied(
             "Missing tool_name for scoped credential brokering"

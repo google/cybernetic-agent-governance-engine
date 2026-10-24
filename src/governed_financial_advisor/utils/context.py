@@ -15,11 +15,16 @@
 """
 User Context Module
 
-Provides a ContextVar for passing user identity through the request lifecycle.
-This allows tools and agents to access the current user without explicit passing.
+Provides ContextVars for passing user identity and its verification status
+through the request lifecycle.
 """
 
 from contextvars import ContextVar
 
 # Thread-safe context variable for current user identity
 user_context: ContextVar[str] = ContextVar("user_context", default="default_user")
+
+# Thread-safe context variable recording whether user_context was cryptographically verified
+principal_verified_context: ContextVar[bool] = ContextVar(
+    "principal_verified_context", default=False
+)

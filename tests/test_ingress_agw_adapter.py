@@ -545,8 +545,20 @@ class TestGeapMcpJsonRpcAndTriIdentity:
             tool_name="update_record",
             routing_seal=seal,
             oauth_scopes=("scope:write",),
+            user_verified=True,
         )
         validate_tri_identity_binding(binding)
+
+        unverified_user_binding = TriIdentityCredentialBinding(
+            user_id="user:alice@example.com",
+            agent_svid="principal://agents.global.org-12345/agent/advisor",
+            tool_name="update_record",
+            routing_seal=seal,
+            oauth_scopes=("scope:write",),
+            user_verified=False,
+        )
+        with pytest.raises(CredentialAccessDenied, match="Unverified ID-1"):
+            validate_tri_identity_binding(unverified_user_binding)
 
         bad_binding = TriIdentityCredentialBinding(
             user_id="user:alice@example.com",
@@ -554,6 +566,7 @@ class TestGeapMcpJsonRpcAndTriIdentity:
             tool_name="update_record",
             routing_seal="",
             oauth_scopes=("scope:write",),
+            user_verified=True,
         )
         with pytest.raises(CredentialAccessDenied):
             validate_tri_identity_binding(bad_binding)
@@ -736,3 +749,61 @@ class TestTriIdentityUserVerified:
         assert decision.tri_identity.user_id == "user:mallory@example.com"
         assert decision.tri_identity.user_verified is False
         governor.validate_action.assert_not_called()
+
+    async def test_request_authz_valid_id2_without_verified_id1_fails_closed(
+        self, geap_adapter
+    ):
+        """A valid ID-2 token without act_sub/user_sub is refused when require_verified_user=True."""
+        adapter, priv = geap_adapter
+        token = _geap_token(priv)  # valid ID-2, no act_sub or user_sub
+        governor = AsyncMock()
+
+        decision = await adapter.evaluate_request_authz(
+            _tools_call(token, **{"x-geap-user-id": "user:mallory@example.com"}),
+            governor=governor,
+        )
+
+        assert decision.allowed is False
+        assert decision.http_status == 403
+        assert decision.decision == "UNAUTHENTICATED"
+        assert "ID-1" in decision.reason
+        assert decision.headers_to_inject == {}
+        assert decision.tri_identity.user_id == "user:mallory@example.com"
+        assert decision.tri_identity.user_verified is False
+        governor.validate_action.assert_not_called()
+
+    async def test_request_authz_allows_unverified_id1_only_when_explicitly_opted_out(
+        self, geap_adapter
+    ):
+        """When require_verified_user=False in dev/test, unverified ID-1 is passed marked False."""
+        from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+
+        adapter, priv = geap_adapter
+        permissive_adapter = AgwAdapter(
+            jwks_cache=adapter._jwks_cache, require_verified_user=False
+        )
+        token = _geap_token(priv)
+        governor = AsyncMock()
+        governor.validate_action.return_value = {"allowed": True, "decision": "ALLOW"}
+
+        with (
+            patch(
+                "src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER",
+                _GEAP_ISSUER,
+            ),
+            patch(
+                "src.gateway.governance.ingress.agw_adapter.generate_seal",
+                return_value="seal.jwt.token",
+            ),
+        ):
+            decision = await permissive_adapter.evaluate_request_authz(
+                _tools_call(token, **{"x-geap-user-id": "user:asserted@example.com"}),
+                governor=governor,
+            )
+
+        assert decision.allowed is True
+        assert decision.tri_identity.user_id == "user:asserted@example.com"
+        assert decision.tri_identity.user_verified is False
+        governed_params = governor.validate_action.call_args.args[1]
+        assert governed_params["_tri_identity"]["id1_user"] == "user:asserted@example.com"
+        assert governed_params["_tri_identity"]["id1_user_verified"] is False

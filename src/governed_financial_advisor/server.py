@@ -61,10 +61,16 @@ from src.gateway.observability.attributes import (
     WEBHOOK_THRESHOLD_BREACH,
 )
 from src.governed_financial_advisor.graph.graph import create_graph
-from src.governed_financial_advisor.infrastructure.auth import require_api_key
+from src.governed_financial_advisor.infrastructure.auth import (
+     require_api_key,
+    resolve_request_principal,
+)
 from src.governed_financial_advisor.models.query import QueryRequest, QueryResponse
 from src.governed_financial_advisor.tools.api import tools_router
-from src.governed_financial_advisor.utils.context import user_context
+from src.governed_financial_advisor.utils.context import (
+    principal_verified_context,
+    user_context,
+)
 
 # Observability
 ENABLE_TRACING = os.environ.get("ENABLE_TRACING", "true").lower() == "true"
@@ -273,7 +279,9 @@ async def query_agent(  # type: ignore[no-untyped-def]
       - double-blocking (guardrail node blocks → server tries to mask user input)
       - CAGE_SEAL_ENFORCEMENT inconsistency between HTTP layer and graph layer
     """
-    token = user_context.set(req.user_id)
+    principal = resolve_request_principal(request, req.user_id)
+    token = user_context.set(principal.user_id)
+    verified_token = principal_verified_context.set(principal.verified)
     try:
         import json as _json
 
@@ -281,9 +289,10 @@ async def query_agent(  # type: ignore[no-untyped-def]
         current_span = trace.get_current_span()
         trace_id = None
         if current_span and current_span.is_recording():
-            current_span.set_attribute(SPAN_ATTR_ENDUSER_ID, req.user_id)
-            # The caller asserts user_id; CAGE_API_KEY authenticates the client, not the user.
-            current_span.set_attribute(SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, False)
+            current_span.set_attribute(SPAN_ATTR_ENDUSER_ID, principal.user_id)
+            current_span.set_attribute(
+                SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, principal.verified
+            )
             current_span.set_attribute("thread.id", req.thread_id)
             current_span.set_attribute(OBSERVATION_TYPE, "generation")
             current_span.set_attribute("gen_ai.operation.name", "chat")
@@ -354,7 +363,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
         try:
             res = await _asyncio.wait_for(
                 request.app.state.graph.ainvoke(
-                    {"messages": [("user", req.prompt)], "user_id": req.user_id},
+                    {"messages": [("user", req.prompt)], "user_id": principal.user_id},
                     {
                         "recursion_limit": 100,
                         "configurable": {"thread_id": req.thread_id},
@@ -433,6 +442,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        principal_verified_context.reset(verified_token)
         user_context.reset(token)
 
 

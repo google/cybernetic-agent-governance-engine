@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 import jwt as pyjwt
 
+from src.gateway.governance.env_posture import env_flag, is_enforcing
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.routing_seal import generate_seal
 
@@ -190,9 +191,15 @@ class AgwAdapter:
     headers for approved outbound tool calls.
     """
 
-    def __init__(self, jwks_cache: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        jwks_cache: dict[str, Any] | None = None,
+        *,
+        require_verified_user: bool | None = None,
+    ) -> None:
         self._http_client: httpx.AsyncClient | None = None
         self._jwks_cache: dict[str, Any] = dict(jwks_cache) if jwks_cache else {}
+        self._require_verified_user: bool | None = require_verified_user
 
     async def validate_oidc_token(
         self,
@@ -421,6 +428,7 @@ class AgwAdapter:
         governor: Any = None,
         seal_minter: Callable[[str, dict[str, Any]], Any] | None = None,
         key_resolver: Callable[[str], str | bytes | None] | None = None,
+        require_verified_user: bool | None = None,
     ) -> AgwRequestAuthzDecision:
         """Evaluate a GEAP Agent Gateway ``REQUEST_AUTHZ`` callout (Modules M1 & M2).
 
@@ -428,6 +436,9 @@ class AgwAdapter:
           1. Translates MCP JSON-RPC 2.0 ``tools/call`` or AGW tool payload.
           2. Validates ``ID-2`` OIDC token via out-of-band ``kid`` resolution and
              extracts ``GeapTriIdentityContext`` (``ID-1``, ``ID-2``, ``ID-3``).
+             When ``require_verified_user`` holds (default True via
+             ``AGW_REQUIRE_VERIFIED_USER`` or enforcing posture), an unverified
+             ``ID-1`` is refused with ``UNAUTHENTICATED`` (HTTP 403).
           3. Evaluates ``governor.validate_action(tool_name, governed_params)``.
           4. On ``ALLOW``, mints ``X-CAGE-Routing-Seal`` and ``X-CAGE-Tri-Identity-Digest``.
              On ``DENY`` or ``DEFER``, returns HTTP 403 with no routing seal.
@@ -464,6 +475,28 @@ class AgwAdapter:
                 tool_name=req.tool_name,
                 tri_identity=tri_identity,
                 reason="OIDC token validation or GEAP agent principal check failed",
+            )
+
+        effective_require_verified = (
+            require_verified_user
+            if require_verified_user is not None
+            else self._require_verified_user
+        )
+        enforce_verified_user = (
+            effective_require_verified
+            if effective_require_verified is not None
+            else (is_enforcing() or env_flag("AGW_REQUIRE_VERIFIED_USER", True))
+        )
+        if enforce_verified_user and not tri_identity.user_verified:
+            return AgwRequestAuthzDecision(
+                allowed=False,
+                http_status=403,
+                decision="UNAUTHENTICATED",
+                headers_to_inject={},
+                agent_id=tri_identity.agent_principal,
+                tool_name=req.tool_name,
+                tri_identity=tri_identity,
+                reason="Verified ID-1 end-user principal required for REQUEST_AUTHZ",
             )
 
         if governor is None:

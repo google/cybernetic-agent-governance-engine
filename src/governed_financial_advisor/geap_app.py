@@ -48,10 +48,18 @@ from config.settings import Config
 from src.governed_financial_advisor.graph.nodes.approval_contract import (
     ApprovalDecision,
 )
+from src.governed_financial_advisor.infrastructure.auth import (
+    requires_verified_principal,
+    resolve_request_principal,
+    verify_user_oidc_token,
+)
 from src.governed_financial_advisor.infrastructure.identity_guard import (
     assert_no_signing_identity,
 )
-from src.governed_financial_advisor.utils.context import user_context
+from src.governed_financial_advisor.utils.context import (
+    principal_verified_context,
+    user_context,
+)
 from src.integrations.gcp_geap.runtime_guards import (
     GovernedMemoryBankGuard,
     MemoryBankGuardResult,
@@ -271,6 +279,25 @@ class GovernedFinancialAdvisorGeapApp:
         assert self._memory_guard is not None
         return self._memory_guard.guard_save_session_to_memory(session_events)
 
+    def _resolve_geap_principal(
+        self,
+        user_id: str,
+        user_oidc_token: str | None = None,
+    ) -> tuple[str, bool]:
+        """Resolve and verify the end-user principal for a GEAP Agent Runtime turn."""
+        if user_oidc_token:
+            verified = verify_user_oidc_token(user_oidc_token)
+            if user_id and user_id != "demo_user" and user_id != verified.user_id:
+                raise ValueError(
+                    "Asserted user_id does not match authenticated principal"
+                )
+            return verified.user_id, True
+        if principal_verified_context.get():
+            return user_id, True
+        if requires_verified_principal():
+            raise ValueError("Verified end-user principal required")
+        return user_id, False
+
     async def async_query(
         self,
         *,
@@ -278,19 +305,24 @@ class GovernedFinancialAdvisorGeapApp:
         user_id: str = "demo_user",
         session_id: str | None = None,
         preloaded_memories: Sequence[str] = (),
+        user_oidc_token: str | None = None,
     ) -> dict[str, Any]:
         """Execute a governed financial advisor turn on GEAP Agent Runtime."""
+        effective_user_id, is_verified = self._resolve_geap_principal(
+            user_id, user_oidc_token
+        )
         graph = self._ensure_graph()
         guard_result = self.guard_preloaded_memories(preloaded_memories)
         safe_memories = [str(m) for m in guard_result.sanitized_events]
-        thread_id = session_id or f"geap_session_{user_id}"
+        thread_id = session_id or f"geap_session_{effective_user_id}"
 
-        token = user_context.set(user_id)
+        token = user_context.set(effective_user_id)
+        verified_token = principal_verified_context.set(is_verified)
         try:
             config = {"configurable": {"thread_id": thread_id}}
             inputs: dict[str, Any] = {
                 "messages": [("user", prompt)],
-                "user_id": user_id,
+                "user_id": effective_user_id,
                 "execution_Mode": "advisor",
                 "Explainability_Mode": "verbose",
             }
@@ -306,13 +338,15 @@ class GovernedFinancialAdvisorGeapApp:
 
             return {
                 "session_id": thread_id,
-                "user_id": user_id,
+                "user_id": effective_user_id,
+                "user_verified": is_verified,
                 "response": response_text,
                 "transaction_status": final_state.get("transaction_status"),
                 "governance_verdict": final_state.get("governance_verdict"),
                 "sanitized_memory_count": len(safe_memories),
             }
         finally:
+            principal_verified_context.reset(verified_token)
             user_context.reset(token)
 
     def query(
@@ -340,19 +374,24 @@ class GovernedFinancialAdvisorGeapApp:
         user_id: str = "demo_user",
         session_id: str | None = None,
         preloaded_memories: Sequence[str] = (),
+        user_oidc_token: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream LangGraph node updates for GEAP Agent Runtime async streaming sessions."""
+        effective_user_id, is_verified = self._resolve_geap_principal(
+            user_id, user_oidc_token
+        )
         graph = self._ensure_graph()
         guard_result = self.guard_preloaded_memories(preloaded_memories)
         safe_memories = [str(m) for m in guard_result.sanitized_events]
-        thread_id = session_id or f"geap_session_{user_id}"
+        thread_id = session_id or f"geap_session_{effective_user_id}"
 
-        token = user_context.set(user_id)
+        token = user_context.set(effective_user_id)
+        verified_token = principal_verified_context.set(is_verified)
         try:
             config = {"configurable": {"thread_id": thread_id}}
             inputs: dict[str, Any] = {
                 "messages": [("user", prompt)],
-                "user_id": user_id,
+                "user_id": effective_user_id,
                 "execution_Mode": "advisor",
                 "Explainability_Mode": "verbose",
             }
@@ -364,6 +403,7 @@ class GovernedFinancialAdvisorGeapApp:
             ):
                 yield {"session_id": thread_id, "event": chunk}
         finally:
+            principal_verified_context.reset(verified_token)
             user_context.reset(token)
 
     def stream_query(
@@ -496,12 +536,23 @@ def create_geap_runtime_router(
         # Prefer async_query when "query" is invoked inside an active event loop
         target_name = "async_query" if method_name == "query" else method_name
         method = getattr(runtime_agent, target_name)
+        verified_token = None
+        if method_name in {"query", "async_query"}:
+            principal = resolve_request_principal(
+                request, str(input_kwargs.get("user_id") or "")
+            )
+            if principal.user_id:
+                input_kwargs = {**input_kwargs, "user_id": principal.user_id}
+            verified_token = principal_verified_context.set(principal.verified)
         try:
             result = method(**input_kwargs)
             if inspect.isawaitable(result):
                 result = await result
         except (ValueError, TypeError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
+        finally:
+            if verified_token is not None:
+                principal_verified_context.reset(verified_token)
         return JSONResponse({"output": jsonable_encoder(result)})
 
     @router.post("/api/stream_reasoning_engine")
@@ -532,6 +583,12 @@ def create_geap_runtime_router(
                 status_code=400,
             )
 
+        principal = resolve_request_principal(
+            request, str(input_kwargs.get("user_id") or "")
+        )
+        if principal.user_id:
+            input_kwargs = {**input_kwargs, "user_id": principal.user_id}
+
         try:
             inspect.signature(runtime_agent.async_stream_query).bind(**input_kwargs)
         except TypeError as exc:
@@ -539,8 +596,12 @@ def create_geap_runtime_router(
 
         async def _ndjson_generator() -> AsyncIterator[str]:
             # Execute via async_stream_query when running inside FastAPI's event loop
-            async for chunk in runtime_agent.async_stream_query(**input_kwargs):
-                yield json.dumps(jsonable_encoder(chunk)) + "\n"
+            v_tok = principal_verified_context.set(principal.verified)
+            try:
+                async for chunk in runtime_agent.async_stream_query(**input_kwargs):
+                    yield json.dumps(jsonable_encoder(chunk)) + "\n"
+            finally:
+                principal_verified_context.reset(v_tok)
 
         return StreamingResponse(
             _ndjson_generator(),

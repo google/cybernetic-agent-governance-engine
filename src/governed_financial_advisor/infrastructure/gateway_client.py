@@ -145,16 +145,23 @@ class GatewayClient:
         """Construct outbound request headers with W3C trace context, x-cage-principal, and GEAP ID-2/ID-1 headers.
 
         ``x-cage-principal`` and ``x-geap-user-id`` carry the same end-user
-        principal, sanitized once by :func:`principal_header_value`. The
-        principal is asserted by the advisor's caller, not authenticated.
+        principal, sanitized once by :func:`principal_header_value`.
+        ``x-cage-principal-verified`` records whether the advisor verified the
+        principal against an out-of-band OIDC trust anchor (``"true"``) or
+        accepted a caller assertion in a permissive posture (``"false"``).
         """
-        from src.governed_financial_advisor.utils.context import user_context
+        from src.governed_financial_advisor.utils.context import (
+            principal_verified_context,
+            user_context,
+        )
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         otel_inject(headers)
         principal = principal_header_value(user_context.get())
+        verified = principal_verified_context.get()
         if principal:
             headers["x-cage-principal"] = principal
+            headers["x-cage-principal-verified"] = "true" if verified else "false"
         id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
         if id2_token:
             headers["Authorization"] = f"Bearer {id2_token}"
