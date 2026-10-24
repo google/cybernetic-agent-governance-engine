@@ -39,6 +39,7 @@ from src.gateway.governance.seams.state_commitment import (
     StateCommitmentReceipt,
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
+from src.governed_financial_advisor.models.principal import principal_header_value
 
 logger = logging.getLogger("infrastructure.gateway_client")
 
@@ -141,19 +142,24 @@ class GatewayClient:
         return self._http
 
     def _build_headers(self) -> dict[str, str]:
-        """Construct outbound request headers with W3C trace context, x-cage-principal, and GEAP ID-2/ID-1 headers."""
+        """Construct outbound request headers with W3C trace context, x-cage-principal, and GEAP ID-2/ID-1 headers.
+
+        ``x-cage-principal`` and ``x-geap-user-id`` carry the same end-user
+        principal, sanitized once by :func:`principal_header_value`. The
+        principal is asserted by the advisor's caller, not authenticated.
+        """
         from src.governed_financial_advisor.utils.context import user_context
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         otel_inject(headers)
-        uid = (user_context.get() or "").strip()
-        if uid:
-            headers["x-cage-principal"] = uid[:64]
+        principal = principal_header_value(user_context.get())
+        if principal:
+            headers["x-cage-principal"] = principal
         id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
         if id2_token:
             headers["Authorization"] = f"Bearer {id2_token}"
-        if os.environ.get("CAGE_ADVISOR_RUNTIME", "").lower() == "geap" and uid:
-            headers["x-geap-user-id"] = uid
+        if os.environ.get("CAGE_ADVISOR_RUNTIME", "").lower() == "geap" and principal:
+            headers["x-geap-user-id"] = principal
         return headers
 
     @side_effect_node(kind="api_call", external_system="gateway_api")

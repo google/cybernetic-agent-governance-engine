@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The advisor's end-user principal is marked as asserted, not authenticated** (`fix(advisor)!`, `#516` — reported by **Daniel Fairbanks (`@danofairanks`)**, [`src/governed_financial_advisor/models/query.py`](src/governed_financial_advisor/models/query.py), [`src/governed_financial_advisor/models/principal.py`](src/governed_financial_advisor/models/principal.py), [`src/governed_financial_advisor/infrastructure/gateway_client.py`](src/governed_financial_advisor/infrastructure/gateway_client.py), [`src/governed_financial_advisor/server.py`](src/governed_financial_advisor/server.py), [`src/gateway/governance/ingress/agw_adapter.py`](src/gateway/governance/ingress/agw_adapter.py)): `CAGE_API_KEY` authenticates the calling client, not a user, so the `user_id` the advisor forwards as `x-cage-principal` is the caller's assertion. `QueryRequest.user_id` no longer defaults to `default_user`: it is required and must be 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`, the gateway's principal charset and cap. [`GatewayClient._build_headers()`](src/governed_financial_advisor/infrastructure/gateway_client.py) now passes `x-geap-user-id` through the same `principal_header_value()` sanitizer and 64-character cap as `x-cage-principal`; it was forwarded raw. The `/agent/query` span records `cage.principal.verified=false` next to `enduser.id`. On the Agent Gateway path, [`GeapTriIdentityContext`](src/gateway/governance/ingress/agw_adapter.py) gains `user_verified`, true only when `ID-1` comes from the `act_sub` / `user_sub` claim of a verified OIDC token, and records it as `id1_user_verified` in the envelope claims; no authorization decision reads `ID-1`. The new [Principal Trust Model](docs/examples/governed-financial-advisor/ARCHITECTURE.md#45-principal-trust-model) section states the boundary; binding the principal to an authenticated identity is a follow-up. **Breaking:** `POST /agent/query` returns HTTP 422 when `user_id` is missing, empty, longer than 64 characters, or outside that charset.
+
 ---
 
 ## [3.2.0] - 2026-10-22

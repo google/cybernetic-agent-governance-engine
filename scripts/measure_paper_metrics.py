@@ -170,6 +170,10 @@ REQUEST_TIMEOUT_S: int = int(os.environ.get("REQUEST_TIMEOUT_S", "90"))
 _RETRY_DELAY_S: float = 4.0
 _MAX_RETRIES: int = 1
 
+# QueryRequest.user_id is required. One asserted principal for the whole run
+# keeps every prompt in a single per-principal rate-limit bucket at the gateway.
+_BENCHMARK_USER_ID: str = "measure-harness"
+
 # Paper §6 SLA budget (FedNow/SEPA Instant 10 s clearing window)
 GOVERNANCE_BUDGET_MS: float = 200.0
 
@@ -1099,7 +1103,7 @@ def _send_prompt(prompt: str) -> tuple[int, str]:
     A fresh ``thread_id`` (UUID4) is generated per call. The backend's
     ``QueryRequest.thread_id`` defaults to the literal string
     ``"default_thread"`` when omitted (see
-    ``src/governed_financial_advisor/server.py::QueryRequest``), and the
+    ``src/governed_financial_advisor/models/query.py::QueryRequest``), and the
     LangGraph checkpointer persists conversation state keyed on that thread
     ID. Reusing the default thread ID across every request in a deflection/
     FPR run causes conversation context to accumulate across all 21 (or 20)
@@ -1125,7 +1129,11 @@ def _send_prompt(prompt: str) -> tuple[int, str]:
 
     url = f"{BACKEND_URL}/agent/query"
     data = json.dumps(
-        {"prompt": prompt, "thread_id": f"measure-{uuid.uuid4()}"}
+        {
+            "prompt": prompt,
+            "user_id": _BENCHMARK_USER_ID,
+            "thread_id": f"measure-{uuid.uuid4()}",
+        }
     ).encode("utf-8")
 
     headers = {"Content-Type": "application/json"}

@@ -56,6 +56,8 @@ from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
+    SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED,
+    SPAN_ATTR_ENDUSER_ID,
     WEBHOOK_THRESHOLD_BREACH,
 )
 from src.governed_financial_advisor.graph.graph import create_graph
@@ -279,7 +281,9 @@ async def query_agent(  # type: ignore[no-untyped-def]
         current_span = trace.get_current_span()
         trace_id = None
         if current_span and current_span.is_recording():
-            current_span.set_attribute("enduser.id", req.user_id)
+            current_span.set_attribute(SPAN_ATTR_ENDUSER_ID, req.user_id)
+            # The caller asserts user_id; CAGE_API_KEY authenticates the client, not the user.
+            current_span.set_attribute(SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, False)
             current_span.set_attribute("thread.id", req.thread_id)
             current_span.set_attribute(OBSERVATION_TYPE, "generation")
             current_span.set_attribute("gen_ai.operation.name", "chat")

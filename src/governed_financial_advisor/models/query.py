@@ -21,12 +21,30 @@ STPA, Evaluator) route through `explainer` and conform to QueryResponse.
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.governed_financial_advisor.models.principal import (
+    PRINCIPAL_MAX_LEN,
+    PRINCIPAL_PATTERN,
+)
+
 
 class QueryRequest(BaseModel):
-    """Request payload for POST /agent/query endpoint."""
+    """Request payload for POST /agent/query endpoint.
+
+    ``user_id`` is the end-user principal asserted by the caller. The advisor
+    does not authenticate it: ``CAGE_API_KEY`` authenticates the client, not a
+    user. It is forwarded to the gateway as ``x-cage-principal`` for
+    attribution and per-principal rate limiting, so it must already fit the
+    gateway's principal charset and 64-character cap.
+    """
 
     prompt: str
-    user_id: str = "default_user"
+    user_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=PRINCIPAL_MAX_LEN,
+        pattern=PRINCIPAL_PATTERN,
+        description="End-user principal asserted by the caller; not authenticated.",
+    )
     thread_id: str = "default_thread"
 
 

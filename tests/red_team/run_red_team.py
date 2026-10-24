@@ -30,6 +30,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8081") + "/agent/query"
+# QueryRequest.user_id is required; the red-team run asserts one fixed principal.
+RED_TEAM_USER_ID = "red-team"
 
 TEST_CASES = [
     {
@@ -84,7 +86,9 @@ TEST_CASES = [
 def run_test(test_case: dict[str, Any]):
     logger.info(f"Running Test: {test_case['name']}")
     try:
-        data = json.dumps({"prompt": test_case["prompt"]}).encode("utf-8")
+        data = json.dumps(
+            {"prompt": test_case["prompt"], "user_id": RED_TEAM_USER_ID}
+        ).encode("utf-8")
         req = urllib.request.Request(
             BASE_URL, data=data, headers={"Content-Type": "application/json"}
         )

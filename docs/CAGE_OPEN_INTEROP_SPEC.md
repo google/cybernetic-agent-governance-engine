@@ -428,6 +428,9 @@ human-in-the-loop (HITL) interrupt. The response body includes
 
 **Response 401 Unauthorized:** Missing or invalid API key.
 
+**Response 422 Unprocessable Entity:** `user_id` is missing or violates the
+constraints in [`QueryRequest`](#86-queryrequest).
+
 **Response 408 Request Timeout:** Agent exceeded the 240-second timeout.
 
 ---
@@ -1001,11 +1004,11 @@ Entries are never modified after creation.
 
 Request body for `POST /agent/query`.
 
-| Field | Type | Required |
-|---|---|---|
-| `prompt` | `string` | Yes |
-| `user_id` | `string` | Yes |
-| `thread_id` | `string` | Yes |
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `prompt` | `string` | Yes | — |
+| `user_id` | `string` | Yes | 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`. Asserted by the caller, not authenticated |
+| `thread_id` | `string` | No | Defaults to `default_thread` |
 
 ---
 

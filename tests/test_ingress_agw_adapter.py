@@ -557,3 +557,182 @@ class TestGeapMcpJsonRpcAndTriIdentity:
         )
         with pytest.raises(CredentialAccessDenied):
             validate_tri_identity_binding(bad_binding)
+
+
+# ---------------------------------------------------------------------------
+# ID-1 provenance: GeapTriIdentityContext.user_verified (issue #516)
+# ---------------------------------------------------------------------------
+
+_GEAP_ISSUER = "https://accounts.google.com"
+_GEAP_AGENT = "principal://agents.global.org-12345/agent/advisor"
+_GEAP_KID = "geap-key-01"
+
+
+def _geap_token(priv, kid: str = _GEAP_KID, **claims) -> str:
+    import time
+
+    import jwt as pyjwt
+
+    payload = {
+        "iss": _GEAP_ISSUER,
+        "sub": _GEAP_AGENT,
+        "aud": "cage-gateway",
+        "exp": int(time.time()) + 300,
+        **claims,
+    }
+    return pyjwt.encode(payload, priv, algorithm="EdDSA", headers={"kid": kid})
+
+
+def _tools_call(token: str, **headers: str) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": "rpc-516",
+        "method": "tools/call",
+        "params": {
+            "name": "rebalance_portfolio",
+            "arguments": {"portfolio_id": "pf-516"},
+        },
+        "headers": {"Authorization": f"Bearer {token}", **headers},
+    }
+
+
+@pytest.fixture
+def geap_adapter():
+    """AgwAdapter trusting one out-of-band Ed25519 key, plus its private key."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+
+    priv = Ed25519PrivateKey.generate()
+    pub_pem = (
+        priv.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("utf-8")
+    )
+    with patch(
+        "src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER", _GEAP_ISSUER
+    ):
+        yield AgwAdapter(jwks_cache={_GEAP_KID: pub_pem}), priv
+
+
+@pytest.mark.unit
+@pytest.mark.local
+class TestTriIdentityUserVerified:
+    """ID-1 is ``user_verified`` only when it comes from verified OIDC claims."""
+
+    @pytest.mark.parametrize("claim", ["act_sub", "user_sub"])
+    async def test_verified_user_claim_sets_user_verified(self, geap_adapter, claim):
+        adapter, priv = geap_adapter
+        ok, claims = await adapter.validate_oidc_token(
+            _geap_token(priv, **{claim: "user:alice@example.com"})
+        )
+        assert ok is True
+
+        tri = adapter.extract_tri_identity(
+            {"headers": {"x-geap-user-id": "user:mallory@example.com"}}, claims
+        )
+
+        assert tri.user_id == "user:alice@example.com"
+        assert tri.user_verified is True
+        assert tri.to_envelope_claims()["id1_user_verified"] is True
+
+    async def test_verified_token_without_user_claim_leaves_id1_asserted(
+        self, geap_adapter
+    ):
+        adapter, priv = geap_adapter
+        ok, claims = await adapter.validate_oidc_token(_geap_token(priv))
+        assert ok is True
+
+        tri = adapter.extract_tri_identity(
+            {
+                "tri_identity": {"user_id": "user:asserted"},
+                "headers": {"x-geap-user-id": "user:header"},
+            },
+            claims,
+        )
+
+        assert tri.user_id == "user:asserted"
+        assert tri.kid == _GEAP_KID
+        assert tri.user_verified is False
+        assert tri.to_envelope_claims()["id1_user_verified"] is False
+
+    def test_header_only_id1_is_unverified(self):
+        from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+
+        tri = AgwAdapter().extract_tri_identity(
+            {"headers": {"x-geap-user-id": "user:header"}}
+        )
+
+        assert tri.user_id == "user:header"
+        assert tri.user_verified is False
+        assert tri.to_envelope_claims()["id1_user_verified"] is False
+
+    def test_claims_without_verification_stamp_are_unverified(self):
+        """Claims that validate_oidc_token did not stamp never mark ID-1 verified."""
+        from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+
+        tri = AgwAdapter().extract_tri_identity(
+            {}, {"act_sub": "user:alice@example.com", "sub": _GEAP_AGENT}
+        )
+
+        assert tri.user_id == "user:alice@example.com"
+        assert tri.user_verified is False
+
+    def test_context_defaults_to_unverified_and_digest_ignores_flag(self):
+        from src.gateway.governance.ingress.agw_adapter import GeapTriIdentityContext
+
+        asserted = GeapTriIdentityContext(
+            user_id="user:alice", agent_principal=_GEAP_AGENT
+        )
+        verified = GeapTriIdentityContext(
+            user_id="user:alice", agent_principal=_GEAP_AGENT, user_verified=True
+        )
+
+        assert asserted.user_verified is False
+        assert asserted.compute_binding_digest() == verified.compute_binding_digest()
+
+    async def test_request_authz_passes_verified_id1_to_governor(self, geap_adapter):
+        adapter, priv = geap_adapter
+        token = _geap_token(priv, act_sub="user:alice@example.com")
+        governor = AsyncMock()
+        governor.validate_action.return_value = {"allowed": True, "decision": "ALLOW"}
+
+        with patch(
+            "src.gateway.governance.ingress.agw_adapter.generate_seal",
+            return_value="seal.jwt.token",
+        ):
+            decision = await adapter.evaluate_request_authz(
+                _tools_call(token, **{"x-geap-user-id": "user:mallory@example.com"}),
+                governor=governor,
+            )
+
+        assert decision.allowed is True
+        assert decision.tri_identity.user_id == "user:alice@example.com"
+        assert decision.tri_identity.user_verified is True
+        governed_params = governor.validate_action.call_args.args[1]
+        assert governed_params["_tri_identity"]["id1_user"] == "user:alice@example.com"
+        assert governed_params["_tri_identity"]["id1_user_verified"] is True
+
+    async def test_request_authz_unverified_token_fails_closed_with_asserted_id1(
+        self, geap_adapter
+    ):
+        adapter, priv = geap_adapter
+        token = _geap_token(priv, kid="unknown-kid", act_sub="user:alice@example.com")
+        governor = AsyncMock()
+
+        decision = await adapter.evaluate_request_authz(
+            _tools_call(token, **{"x-geap-user-id": "user:mallory@example.com"}),
+            governor=governor,
+        )
+
+        assert decision.allowed is False
+        assert decision.http_status == 403
+        assert decision.decision == "UNAUTHENTICATED"
+        assert decision.headers_to_inject == {}
+        assert decision.tri_identity.user_id == "user:mallory@example.com"
+        assert decision.tri_identity.user_verified is False
+        governor.validate_action.assert_not_called()

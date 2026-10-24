@@ -128,12 +128,15 @@ class TestQueryResponseModel:
         assert request.thread_id == "thread_456"
 
     def test_query_request_defaults(self) -> None:
-        """Verify QueryRequest applies default values for user_id and thread_id."""
-        request = QueryRequest(prompt="Tell me about ETFs")
+        """thread_id still defaults; user_id has no default (issue #516)."""
+        request = QueryRequest(prompt="Tell me about ETFs", user_id="investor-7")
 
         assert request.prompt == "Tell me about ETFs"
-        assert request.user_id == "default_user"
+        assert request.user_id == "investor-7"
         assert request.thread_id == "default_thread"
+
+        with pytest.raises(ValidationError):
+            QueryRequest(prompt="Tell me about ETFs")
 
 
 class TestAgentQueryEndpointSchemaConformance:
