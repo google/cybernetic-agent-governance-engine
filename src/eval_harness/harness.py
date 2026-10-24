@@ -1900,28 +1900,276 @@ class FoundationModelEvalHarness:
                 f.write(json.dumps(row) + "\n")
 
 
-@dataclass(frozen=True)
+CER_SCHEMA_VERSION = "cage.skill.cer.v2"
+"""Schema identifier of the only `.cer` receipt format CAGE signs and accepts."""
+
+_CER_SHA256_HEX_RE = re.compile(r"[a-f0-9]{64}")
+_CER_ADAPTER_REF_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.:<>]{0,255}")
+_CER_KNOWN_STAGES = frozenset({0, 1, 2})
+_CER_BODY_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "skill_name",
+    "skill_sha256",
+    "stages_run",
+    "evidence_level",
+    "evals_sha256",
+    "anchors_sha256",
+    "baseline_traces_sha256",
+    "with_skill_traces_sha256",
+    "adapter_ref",
+    "adapter_config_sha256",
+    "model_id",
+    "static_lint_score",
+    "anchor_weighted_agreement",
+    "mean_composite_lift",
+    "mean_instruction_following_lift",
+    "routing_premium",
+    "issued_at",
+)
+_CER_ENVELOPE_FIELDS = frozenset({"signature", "receiptDigest", "receipt_digest"})
+
+
+class CerEvidenceLevel(str, Enum):
+    """Strongest evidence a `.cer` certification decision rests on.
+
+    * ``STATIC_ONLY``: only the Stage 0 lint (plus optional Stage 1 anchor
+      calibration) ran; no Skill Lift was measured.
+    * ``PAIRED_TRACES``: Skill Lift was measured over pre-recorded baseline and
+      with-skill trajectories, whose SHA-256 digests the receipt binds.
+    * ``LIVE_ROLLOUT``: Skill Lift was measured over paired rollouts generated
+      by a rollout adapter; the receipt binds the adapter reference and the
+      digest of its configuration.
+    """
+
+    STATIC_ONLY = "STATIC_ONLY"
+    PAIRED_TRACES = "PAIRED_TRACES"
+    LIVE_ROLLOUT = "LIVE_ROLLOUT"
+
+
+def lift_meets_threshold(lift: float | None, minimum: float) -> bool:
+    """Return whether a mean composite Skill Lift clears ``minimum``.
+
+    The single lift rule shared by the certification gate (``cage-skill-eval``)
+    and the `.cer` verifier, so a receipt never verifies under a threshold its
+    own gate would have rejected:
+
+    * ``minimum == 0.0`` (the default) requires strictly positive lift: a skill
+      that does not measurably improve the agent is not certified.
+    * Any other ``minimum`` is inclusive (``lift >= minimum``).
+    * An unmeasured (``None``) or non-finite lift, or a non-finite minimum,
+      never meets the threshold.
+    """
+    if lift is None:
+        return False
+    lift_value = float(lift)
+    minimum_value = float(minimum)
+    if not (math.isfinite(lift_value) and math.isfinite(minimum_value)):
+        return False
+    if minimum_value == 0.0:
+        return lift_value > 0.0
+    return lift_value >= minimum_value
+
+
+def _is_sha256_hex(value: object) -> bool:
+    return isinstance(value, str) and _CER_SHA256_HEX_RE.fullmatch(value) is not None
+
+
+def _is_finite_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _round_optional_metric(value: float | None) -> float | None:
+    return round(float(value), 4) if value is not None else None
+
+
+def _cer_str(payload: Mapping[str, Any], key: str) -> str:
+    value = payload[key]
+    if not isinstance(value, str):
+        raise ValueError(f"receipt field {key!r} must be a string")
+    return value
+
+
+def _cer_optional_str(payload: Mapping[str, Any], key: str) -> str | None:
+    value = payload[key]
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"receipt field {key!r} must be a string or null")
+    return value
+
+
+def _cer_optional_number(payload: Mapping[str, Any], key: str) -> float | None:
+    value = payload[key]
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"receipt field {key!r} must be a number or null")
+    return float(value)
+
+
+@dataclass(frozen=True, kw_only=True)
 class SkillCertificationReceipt:
-    """Cryptographic Skill Certification Receipt (`.cer`) for the Static Artifact Handshake.
+    """Cryptographic Skill Certification Receipt (`.cer`), schema ``cage.skill.cer.v2``.
 
     Signed via RFC 8785 JCS canonicalization over ``{"protected": {"algorithm": ..., "keyId": ...}, "body": unsigned_body}``
     and verified out-of-band by ``kid`` without embedding a public key in the receipt.
+
+    The signed body binds which evaluation stages ran (``stages_run``), the
+    strongest evidence the decision rests on (``evidence_level``), and the
+    SHA-256 digests of that evidence: the evals suite, the anchors (Stage 1),
+    and either both pre-recorded trace sets (``PAIRED_TRACES``) or the rollout
+    adapter reference plus its configuration digest (``LIVE_ROLLOUT``).
+    ``model_id`` and the lift fields are ``None`` when no Skill Lift was
+    measured (``STATIC_ONLY``). Construction fails closed with ``ValueError``
+    on any field combination that contradicts the declared stages or evidence
+    level, so an inconsistent receipt can be neither signed nor parsed.
     """
 
     skill_name: str
     skill_sha256: str
-    evals_sha256: str
-    model_id: str
     static_lint_score: float
-    mean_composite_lift: float
-    mean_instruction_following_lift: float
+    stages_run: tuple[int, ...]
+    evidence_level: CerEvidenceLevel
     issued_at: str
+    model_id: str | None = None
+    evals_sha256: str | None = None
     anchors_sha256: str | None = None
     anchor_weighted_agreement: float | None = None
+    mean_composite_lift: float | None = None
+    mean_instruction_following_lift: float | None = None
     routing_premium: float | None = None
-    schema_version: str = "cage.skill.cer.v1"
+    baseline_traces_sha256: str | None = None
+    with_skill_traces_sha256: str | None = None
+    adapter_ref: str | None = None
+    adapter_config_sha256: str | None = None
+    schema_version: str = CER_SCHEMA_VERSION
     signature: dict[str, str] = field(default_factory=dict)
     receipt_digest: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stages_run", tuple(self.stages_run))
+        object.__setattr__(
+            self, "evidence_level", CerEvidenceLevel(self.evidence_level)
+        )
+        problems = self.structural_problems()
+        if problems:
+            raise ValueError(
+                "Invalid SkillCertificationReceipt: " + "; ".join(problems)
+            )
+
+    def structural_problems(self) -> tuple[str, ...]:
+        """Return every way this receipt contradicts the v2 schema (empty when consistent)."""
+        problems: list[str] = []
+        if self.schema_version != CER_SCHEMA_VERSION:
+            problems.append(f"unsupported schema_version {self.schema_version!r}")
+        if not isinstance(self.skill_name, str) or not self.skill_name.strip():
+            problems.append("skill_name must be a non-empty string")
+        if not _is_sha256_hex(self.skill_sha256):
+            problems.append("skill_sha256 must be a lowercase hex SHA-256 digest")
+        if not _is_finite_number(self.static_lint_score):
+            problems.append("static_lint_score must be a finite number")
+        if not isinstance(self.issued_at, str) or not self.issued_at.strip():
+            problems.append("issued_at must be a non-empty string")
+
+        stages = self.stages_run
+        if (
+            not stages
+            or any(type(stage) is not int for stage in stages)
+            or stages[0] != 0
+            or list(stages) != sorted(set(stages))
+            or not set(stages) <= _CER_KNOWN_STAGES
+        ):
+            problems.append(
+                "stages_run must be a strictly increasing subset of (0, 1, 2) starting at 0"
+            )
+        ran_stage1 = 1 in stages
+        ran_stage2 = 2 in stages
+
+        if ran_stage1 != (self.anchors_sha256 is not None):
+            problems.append("anchors_sha256 must be present exactly when stage 1 ran")
+        elif self.anchors_sha256 is not None and not _is_sha256_hex(
+            self.anchors_sha256
+        ):
+            problems.append("anchors_sha256 must be a lowercase hex SHA-256 digest")
+        if ran_stage1 != (self.anchor_weighted_agreement is not None):
+            problems.append(
+                "anchor_weighted_agreement must be present exactly when stage 1 ran"
+            )
+        elif self.anchor_weighted_agreement is not None and not _is_finite_number(
+            self.anchor_weighted_agreement
+        ):
+            problems.append("anchor_weighted_agreement must be a finite number")
+
+        trace_fields = {
+            "baseline_traces_sha256": self.baseline_traces_sha256,
+            "with_skill_traces_sha256": self.with_skill_traces_sha256,
+        }
+        adapter_fields = {
+            "adapter_ref": self.adapter_ref,
+            "adapter_config_sha256": self.adapter_config_sha256,
+        }
+        level = self.evidence_level
+        if level is CerEvidenceLevel.STATIC_ONLY:
+            if ran_stage2:
+                problems.append(
+                    "STATIC_ONLY receipts must not list stage 2 in stages_run"
+                )
+            measured_fields = {
+                "model_id": self.model_id,
+                "evals_sha256": self.evals_sha256,
+                "mean_composite_lift": self.mean_composite_lift,
+                "mean_instruction_following_lift": self.mean_instruction_following_lift,
+                "routing_premium": self.routing_premium,
+                **trace_fields,
+                **adapter_fields,
+            }
+            stray = sorted(k for k, v in measured_fields.items() if v is not None)
+            if stray:
+                problems.append(
+                    f"STATIC_ONLY receipts must not carry Stage 2 evidence: {stray}"
+                )
+            return tuple(problems)
+
+        if not ran_stage2:
+            problems.append(f"{level.value} receipts must list stage 2 in stages_run")
+        if not isinstance(self.model_id, str) or not self.model_id.strip():
+            problems.append(f"{level.value} receipts must name the evaluated model_id")
+        if not _is_sha256_hex(self.evals_sha256):
+            problems.append(f"{level.value} receipts must bind evals_sha256")
+        for lift_field in ("mean_composite_lift", "mean_instruction_following_lift"):
+            if not _is_finite_number(getattr(self, lift_field)):
+                problems.append(
+                    f"{level.value} receipts must carry a finite {lift_field}"
+                )
+        if self.routing_premium is not None and not _is_finite_number(
+            self.routing_premium
+        ):
+            problems.append("routing_premium must be a finite number when present")
+
+        if level is CerEvidenceLevel.PAIRED_TRACES:
+            for name, value in trace_fields.items():
+                if not _is_sha256_hex(value):
+                    problems.append(f"PAIRED_TRACES receipts must bind {name}")
+            stray = sorted(k for k, v in adapter_fields.items() if v is not None)
+            if stray:
+                problems.append(
+                    f"PAIRED_TRACES receipts must not carry rollout adapter fields: {stray}"
+                )
+        else:
+            if not isinstance(
+                self.adapter_ref, str
+            ) or not _CER_ADAPTER_REF_RE.fullmatch(self.adapter_ref):
+                problems.append("LIVE_ROLLOUT receipts must bind a valid adapter_ref")
+            if not _is_sha256_hex(self.adapter_config_sha256):
+                problems.append("LIVE_ROLLOUT receipts must bind adapter_config_sha256")
+            stray = sorted(k for k, v in trace_fields.items() if v is not None)
+            if stray:
+                problems.append(
+                    f"LIVE_ROLLOUT receipts must not carry trace digests: {stray}"
+                )
+        return tuple(problems)
 
     def to_unsigned_body(self) -> dict[str, Any]:
         """Return the deterministic unsigned body dictionary for JCS signing."""
@@ -1929,24 +2177,24 @@ class SkillCertificationReceipt:
             "schema_version": self.schema_version,
             "skill_name": self.skill_name,
             "skill_sha256": self.skill_sha256,
+            "stages_run": list(self.stages_run),
+            "evidence_level": self.evidence_level.value,
             "evals_sha256": self.evals_sha256,
             "anchors_sha256": self.anchors_sha256,
+            "baseline_traces_sha256": self.baseline_traces_sha256,
+            "with_skill_traces_sha256": self.with_skill_traces_sha256,
+            "adapter_ref": self.adapter_ref,
+            "adapter_config_sha256": self.adapter_config_sha256,
             "model_id": self.model_id,
             "static_lint_score": round(float(self.static_lint_score), 4),
-            "anchor_weighted_agreement": (
-                round(float(self.anchor_weighted_agreement), 4)
-                if self.anchor_weighted_agreement is not None
-                else None
+            "anchor_weighted_agreement": _round_optional_metric(
+                self.anchor_weighted_agreement
             ),
-            "mean_composite_lift": round(float(self.mean_composite_lift), 4),
-            "mean_instruction_following_lift": round(
-                float(self.mean_instruction_following_lift), 4
+            "mean_composite_lift": _round_optional_metric(self.mean_composite_lift),
+            "mean_instruction_following_lift": _round_optional_metric(
+                self.mean_instruction_following_lift
             ),
-            "routing_premium": (
-                round(float(self.routing_premium), 4)
-                if self.routing_premium is not None
-                else None
-            ),
+            "routing_premium": _round_optional_metric(self.routing_premium),
             "issued_at": self.issued_at,
         }
 
@@ -1969,42 +2217,68 @@ class SkillCertificationReceipt:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> SkillCertificationReceipt:
-        """Parse a `.cer` JSON dictionary into a :class:`SkillCertificationReceipt`."""
-        sig_raw = payload.get("signature")
-        sig_dict = (
-            {str(k): str(v) for k, v in sig_raw.items()}
-            if isinstance(sig_raw, Mapping)
-            else {}
-        )
-        raw_anchor_agree = payload.get("anchor_weighted_agreement")
-        raw_routing_prem = payload.get("routing_premium")
+        """Parse a ``cage.skill.cer.v2`` JSON dictionary, failing closed on any deviation.
+
+        Every signed body field must be present with its JSON type; unknown
+        fields and other schema versions (including ``cage.skill.cer.v1``) are
+        rejected with ``ValueError``.
+        """
+        if not isinstance(payload, Mapping):
+            raise ValueError("receipt payload must be a JSON object")
+        schema_version = payload.get("schema_version")
+        if schema_version != CER_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported schema_version {schema_version!r}; expected {CER_SCHEMA_VERSION!r}"
+            )
+        missing = sorted(set(_CER_BODY_FIELDS) - set(payload))
+        if missing:
+            raise ValueError(f"missing receipt fields: {missing}")
+        unknown = sorted(set(payload) - set(_CER_BODY_FIELDS) - _CER_ENVELOPE_FIELDS)
+        if unknown:
+            raise ValueError(f"unknown receipt fields: {unknown}")
+
+        sig_raw = payload.get("signature", {})
+        if not isinstance(sig_raw, Mapping) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in sig_raw.items()
+        ):
+            raise ValueError("receipt signature must be an object of string values")
+        stages_raw = payload["stages_run"]
+        if not isinstance(stages_raw, (list, tuple)):
+            raise ValueError("receipt field 'stages_run' must be a list")
+        static_score = _cer_optional_number(payload, "static_lint_score")
+        if static_score is None:
+            raise ValueError("receipt field 'static_lint_score' must be a number")
+        digest_raw = payload.get("receiptDigest", payload.get("receipt_digest", ""))
+        if not isinstance(digest_raw, str):
+            raise ValueError("receipt digest must be a string")
+
         return cls(
-            schema_version=str(payload.get("schema_version", "cage.skill.cer.v1")),
-            skill_name=str(payload["skill_name"]),
-            skill_sha256=str(payload["skill_sha256"]),
-            evals_sha256=str(payload.get("evals_sha256", "")),
-            anchors_sha256=(
-                str(payload["anchors_sha256"])
-                if payload.get("anchors_sha256") is not None
-                else None
+            schema_version=schema_version,
+            skill_name=_cer_str(payload, "skill_name"),
+            skill_sha256=_cer_str(payload, "skill_sha256"),
+            static_lint_score=static_score,
+            stages_run=tuple(stages_raw),
+            evidence_level=CerEvidenceLevel(_cer_str(payload, "evidence_level")),
+            issued_at=_cer_str(payload, "issued_at"),
+            model_id=_cer_optional_str(payload, "model_id"),
+            evals_sha256=_cer_optional_str(payload, "evals_sha256"),
+            anchors_sha256=_cer_optional_str(payload, "anchors_sha256"),
+            anchor_weighted_agreement=_cer_optional_number(
+                payload, "anchor_weighted_agreement"
             ),
-            model_id=str(payload.get("model_id", "unknown")),
-            static_lint_score=float(payload.get("static_lint_score", 0.0)),
-            anchor_weighted_agreement=(
-                float(raw_anchor_agree) if raw_anchor_agree is not None else None
+            mean_composite_lift=_cer_optional_number(payload, "mean_composite_lift"),
+            mean_instruction_following_lift=_cer_optional_number(
+                payload, "mean_instruction_following_lift"
             ),
-            mean_composite_lift=float(payload.get("mean_composite_lift", 0.0)),
-            mean_instruction_following_lift=float(
-                payload.get("mean_instruction_following_lift", 0.0)
+            routing_premium=_cer_optional_number(payload, "routing_premium"),
+            baseline_traces_sha256=_cer_optional_str(payload, "baseline_traces_sha256"),
+            with_skill_traces_sha256=_cer_optional_str(
+                payload, "with_skill_traces_sha256"
             ),
-            routing_premium=(
-                float(raw_routing_prem) if raw_routing_prem is not None else None
-            ),
-            issued_at=str(payload.get("issued_at", "")),
-            signature=sig_dict,
-            receipt_digest=str(
-                payload.get("receiptDigest") or payload.get("receipt_digest") or ""
-            ),
+            adapter_ref=_cer_optional_str(payload, "adapter_ref"),
+            adapter_config_sha256=_cer_optional_str(payload, "adapter_config_sha256"),
+            signature=dict(sig_raw),
+            receipt_digest=digest_raw,
         )
 
 
@@ -2052,10 +2326,12 @@ class TrajectoryHarvesterProtocol(Protocol):
 
 
 __all__ = [
+    "CER_SCHEMA_VERSION",
     "ATIFStep",
     "ATIFTrajectory",
     "AnchorCalibrationResult",
     "AnchorItem",
+    "CerEvidenceLevel",
     "ComposedDrawbackEvaluator",
     "DPOPreferenceTriplet",
     "DrawbackDetectorFn",
@@ -2077,4 +2353,5 @@ __all__ = [
     "TrajectoryHarvesterProtocol",
     "build_default_drawback_detectors",
     "default_shadow_state_reducer",
+    "lift_meets_threshold",
 ]

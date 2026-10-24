@@ -25,6 +25,12 @@ Certification Plane and the Online Runtime Enforcement Plane:
 3. ``GcsSkillCertificationVerifier`` resolves signing keys out-of-band by ``kid``
    via ``Ed25519KeyManifestClient`` and verifies ``.cer`` receipts and
    ``SKILL.md`` SHA-256 digests fail-closed.
+
+Receipts use schema ``cage.skill.cer.v2``: the signed body binds the stages
+that ran, the evidence level (``STATIC_ONLY`` / ``PAIRED_TRACES`` /
+``LIVE_ROLLOUT``), and the digests of the evaluated evidence. Verifiers refuse
+every other schema version and, unless explicitly configured otherwise,
+``STATIC_ONLY`` receipts.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,9 +48,12 @@ from typing import Any
 from cryptography.exceptions import InvalidSignature
 
 from src.eval_harness.harness import (
+    CER_SCHEMA_VERSION,
     AnchorCalibrationResult,
+    CerEvidenceLevel,
     SkillCertificationReceipt,
     SkillLiftReport,
+    lift_meets_threshold,
 )
 from src.eval_harness.static_linter import SkillStaticLintReport
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
@@ -79,6 +88,55 @@ def compute_file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def compute_adapter_config_sha256(adapter_config: Mapping[str, Any]) -> str:
+    """Compute the hex SHA-256 digest of a rollout adapter config's RFC 8785 JCS form.
+
+    Hashing the canonical JSON (not the raw CLI string or file bytes) yields
+    the same digest for the same configuration however it was supplied.
+    """
+    return hashlib.sha256(jcs_canonicalize_plan(dict(adapter_config))).hexdigest()
+
+
+def _optional_file_sha256(path: Path | None) -> str | None:
+    """Digest ``path`` when given; a missing file raises instead of being skipped."""
+    return compute_file_sha256(path) if path is not None else None
+
+
+def _resolve_receipt_model_id(
+    lift_report: SkillLiftReport | None, explicit_model_id: str | None
+) -> str | None:
+    """Resolve the evaluated model id without falling back to a default model.
+
+    The lift report is authoritative (for live rollouts it carries the rollout
+    bundle's model id); an explicit ``model_id`` may only confirm it, or name
+    the model when the report carries none. A receipt without measured lift
+    names no model.
+    """
+    explicit = explicit_model_id.strip() if explicit_model_id is not None else None
+    if explicit_model_id is not None and not explicit:
+        raise ValueError("model_id must be a non-empty string when given")
+    if lift_report is None:
+        if explicit is not None:
+            raise ValueError(
+                "model_id was given but no Skill Lift was measured (no lift_report); "
+                "STATIC_ONLY receipts name no model"
+            )
+        return None
+    measured = (lift_report.model_id or "").strip()
+    if not measured:
+        if explicit is None:
+            raise ValueError(
+                "Stage 2 ran without a model id: the lift report names no model_id "
+                "and no explicit model_id was given"
+            )
+        return explicit
+    if explicit is not None and explicit != measured:
+        raise ValueError(
+            f"model_id {explicit!r} contradicts the lift report's model_id {measured!r}"
+        )
+    return measured
+
+
 class GcpSkillCertifier:
     """Signs offline skill evaluation results into `.cer` cryptographic receipts."""
 
@@ -105,50 +163,80 @@ class GcpSkillCertifier:
         *,
         skill_md_path: Path,
         static_report: SkillStaticLintReport,
+        stages_run: Sequence[int],
+        evidence_level: CerEvidenceLevel | str,
         lift_report: SkillLiftReport | None = None,
         anchor_report: AnchorCalibrationResult | None = None,
         evals_json_path: Path | None = None,
         anchors_json_path: Path | None = None,
-        model_id: str = "gemini-3.5-flash",
+        baseline_traces_path: Path | None = None,
+        with_skill_traces_path: Path | None = None,
+        adapter_ref: str | None = None,
+        adapter_config: Mapping[str, Any] | None = None,
+        model_id: str | None = None,
         issued_at: str | None = None,
     ) -> SkillCertificationReceipt:
-        """Create and sign a :class:`SkillCertificationReceipt` via JCS + KMS."""
+        """Create and sign a ``cage.skill.cer.v2`` receipt via JCS + KMS.
+
+        ``stages_run`` and ``evidence_level`` are signed as declared and must
+        agree with the supplied reports and evidence. Every digest is computed
+        here from the artifacts actually evaluated: ``evals_json_path``,
+        ``anchors_json_path``, both trace files (``PAIRED_TRACES``), or
+        ``adapter_ref`` plus the JCS digest of ``adapter_config``
+        (``LIVE_ROLLOUT``). ``model_id`` comes from ``lift_report``; an
+        explicit ``model_id`` must match it. There is no default model.
+
+        Raises ``ValueError`` when Stage 2 ran without a model id or on any
+        contradiction between the declared stages, evidence level, and inputs,
+        and ``OSError`` when a given evidence file cannot be read.
+        """
         safe_skill = _validate_safe_identifier(static_report.skill_name, "skill_name")
-        skill_sha256 = compute_file_sha256(skill_md_path)
-        evals_sha256 = (
-            compute_file_sha256(evals_json_path)
-            if evals_json_path is not None and evals_json_path.exists()
-            else hashlib.sha256(b"").hexdigest()
-        )
-        anchors_sha256 = (
-            compute_file_sha256(anchors_json_path)
-            if anchors_json_path is not None and anchors_json_path.exists()
-            else None
-        )
-        ts = issued_at or datetime.now(timezone.utc).isoformat()
+        stages = tuple(stages_run)
+        level = CerEvidenceLevel(evidence_level)
+        if (2 in stages) != (lift_report is not None):
+            raise ValueError(
+                "stages_run must list stage 2 exactly when a lift_report is supplied"
+            )
+        if (1 in stages) != (anchor_report is not None):
+            raise ValueError(
+                "stages_run must list stage 1 exactly when an anchor_report is supplied"
+            )
+        if adapter_config is not None and adapter_ref is None:
+            raise ValueError("adapter_config was given without adapter_ref")
+        resolved_model_id = _resolve_receipt_model_id(lift_report, model_id)
 
         unsigned = SkillCertificationReceipt(
             skill_name=safe_skill,
-            skill_sha256=skill_sha256,
-            evals_sha256=evals_sha256,
-            anchors_sha256=anchors_sha256,
-            model_id=lift_report.model_id if lift_report is not None else model_id,
+            skill_sha256=compute_file_sha256(skill_md_path),
             static_lint_score=static_report.length_adjusted_score,
+            stages_run=stages,
+            evidence_level=level,
+            issued_at=issued_at or datetime.now(timezone.utc).isoformat(),
+            model_id=resolved_model_id,
+            evals_sha256=_optional_file_sha256(evals_json_path),
+            anchors_sha256=_optional_file_sha256(anchors_json_path),
             anchor_weighted_agreement=(
                 anchor_report.weighted_agreement if anchor_report is not None else None
             ),
             mean_composite_lift=(
-                lift_report.mean_composite_lift if lift_report is not None else 0.0
+                lift_report.mean_composite_lift if lift_report is not None else None
             ),
             mean_instruction_following_lift=(
                 lift_report.mean_instruction_following_lift
                 if lift_report is not None
-                else 0.0
+                else None
             ),
             routing_premium=(
                 lift_report.routing_premium if lift_report is not None else None
             ),
-            issued_at=ts,
+            baseline_traces_sha256=_optional_file_sha256(baseline_traces_path),
+            with_skill_traces_sha256=_optional_file_sha256(with_skill_traces_path),
+            adapter_ref=adapter_ref,
+            adapter_config_sha256=(
+                compute_adapter_config_sha256(adapter_config or {})
+                if adapter_ref is not None
+                else None
+            ),
         )
 
         unsigned_body = unsigned.to_unsigned_body()
@@ -274,7 +362,13 @@ class GcsArtifactHandshakePublisher:
 
 
 class GcsSkillCertificationVerifier:
-    """Fail-closed verifier for `.cer` receipts using out-of-band `kid` resolution."""
+    """Fail-closed verifier for ``cage.skill.cer.v2`` receipts with out-of-band ``kid`` resolution.
+
+    ``min_composite_lift`` is applied with :func:`lift_meets_threshold`, the
+    same rule as the certification gate (the default ``0.0`` requires strictly
+    positive lift). ``STATIC_ONLY`` receipts carry no measured lift and are
+    refused unless the verifier is constructed with ``allow_static_only=True``.
+    """
 
     def __init__(
         self,
@@ -282,29 +376,45 @@ class GcsSkillCertificationVerifier:
         *,
         min_composite_lift: float = 0.0,
         min_static_score: float = 0.70,
+        allow_static_only: bool = False,
     ) -> None:
         self._key_resolver = key_resolver
         self._min_composite_lift = min_composite_lift
         self._min_static_score = min_static_score
+        self._allow_static_only = allow_static_only
 
     async def verify_cer_receipt(
         self,
         receipt_payload: Mapping[str, Any] | SkillCertificationReceipt,
         *,
-        expected_skill_md_bytes: bytes | None = None,
+        expected_skill_md_bytes: bytes,
     ) -> tuple[bool, str]:
-        """Verify `.cer` digest, out-of-band `kid` Ed25519 signature, and `SKILL.md` hash.
+        """Verify a `.cer` receipt's signature, ``SKILL.md`` binding, and policy.
 
-        Returns ``(verified, reason)`` and fails closed on any discrepancy.
+        ``expected_skill_md_bytes`` is required: a receipt certifies only the
+        exact skill bytes the caller is about to load. Returns
+        ``(verified, reason)`` and fails closed, in order, on: a schema other
+        than ``cage.skill.cer.v2`` (``unsupported_schema_version``), a
+        structurally inconsistent receipt (``malformed_cer_receipt``), a
+        receipt digest or Ed25519 signature failure, a ``SKILL.md`` digest
+        mismatch, a ``STATIC_ONLY`` receipt (``static_only_receipt``) unless
+        allowed, and static score or composite lift below threshold.
         """
-        try:
-            receipt = (
-                receipt_payload
-                if isinstance(receipt_payload, SkillCertificationReceipt)
-                else SkillCertificationReceipt.from_dict(receipt_payload)
+        if not isinstance(expected_skill_md_bytes, (bytes, bytearray)):
+            raise TypeError(
+                "expected_skill_md_bytes must be the SKILL.md bytes the receipt certifies"
             )
-        except Exception as exc:
-            return False, f"malformed_cer_receipt: {exc}"
+        if isinstance(receipt_payload, SkillCertificationReceipt):
+            receipt = receipt_payload
+        elif isinstance(receipt_payload, Mapping):
+            if receipt_payload.get("schema_version") != CER_SCHEMA_VERSION:
+                return False, "unsupported_schema_version"
+            try:
+                receipt = SkillCertificationReceipt.from_dict(receipt_payload)
+            except Exception as exc:
+                return False, f"malformed_cer_receipt: {exc}"
+        else:
+            return False, "malformed_cer_receipt: payload must be a JSON object"
 
         if not receipt.receipt_digest:
             return False, "missing_receipt_digest"
@@ -312,17 +422,6 @@ class GcsSkillCertificationVerifier:
         computed_digest = receipt.compute_signed_digest()
         if computed_digest != receipt.receipt_digest:
             return False, "receipt_digest_mismatch"
-
-        if expected_skill_md_bytes is not None:
-            actual_skill_sha = hashlib.sha256(expected_skill_md_bytes).hexdigest()
-            if actual_skill_sha != receipt.skill_sha256:
-                return False, "skill_md_sha256_mismatch"
-
-        if receipt.static_lint_score < self._min_static_score:
-            return False, "static_lint_score_below_threshold"
-
-        if receipt.mean_composite_lift < self._min_composite_lift:
-            return False, "composite_lift_below_threshold"
 
         sig_block = receipt.signature
         if sig_block.get("algorithm") != "Ed25519":
@@ -355,6 +454,22 @@ class GcsSkillCertificationVerifier:
         except Exception as exc:
             return False, f"signature_verification_error:{exc}"
 
+        actual_skill_sha = hashlib.sha256(bytes(expected_skill_md_bytes)).hexdigest()
+        if actual_skill_sha != receipt.skill_sha256:
+            return False, "skill_md_sha256_mismatch"
+
+        static_only = receipt.evidence_level is CerEvidenceLevel.STATIC_ONLY
+        if static_only and not self._allow_static_only:
+            return False, "static_only_receipt"
+
+        if receipt.static_lint_score < self._min_static_score:
+            return False, "static_lint_score_below_threshold"
+
+        if not static_only and not lift_meets_threshold(
+            receipt.mean_composite_lift, self._min_composite_lift
+        ):
+            return False, "composite_lift_below_threshold"
+
         return True, "VERIFIED"
 
 
@@ -362,5 +477,6 @@ __all__ = [
     "GcpSkillCertifier",
     "GcsArtifactHandshakePublisher",
     "GcsSkillCertificationVerifier",
+    "compute_adapter_config_sha256",
     "compute_file_sha256",
 ]
