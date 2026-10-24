@@ -49,6 +49,31 @@ the kernel workload preserves the per-workload key partition, and the
 custodian's independent re-verification means a compromised producer cannot
 get a broken chain signed.
 
+Retry-safe appends
+------------------
+The pooled Redis client re-sends a command whose reply was lost (redis-py
+``Retry`` on ``ConnectionError`` / ``TimeoutError``), so the append script
+can run twice. Each batch therefore carries its last record's identity: a
+re-sent script that finds that record at the head answers ``ALREADY`` with
+the batch's entry IDs and writes nothing. A ``CONFLICT`` is not taken at face
+value either: the sink first reads the ``k`` entries after the record the
+batch was sealed against, and if they are the batch (it landed, then another
+writer appended before the re-send arrived) it resolves from them instead of
+re-sealing. When Redis does not answer at all, the identical script is
+re-sent to settle the outcome; a batch is never re-sealed while its outcome
+is unknown, and one that stays unknown fails with
+``EvidenceAppendUnsettledError``. A record is therefore on the stream at most
+once, and exactly once when its commit succeeds.
+
+Chain restore
+-------------
+Chain state is restored from the stream head, which must hash to its own
+``record_hash``. Only a sink that holds no chain yet may start a new one on
+an empty stream (cold start). A sink that already holds a chain treats an
+emptied stream, a head on another chain, or a head behind the last one it
+acknowledged as truncation or tampering, and raises
+``EvidenceChainCorruptError`` rather than starting over.
+
 Wire format (Redis Stream entries, ``cage-audit/3.0``)
 ------------------------------------------------------
 Each Redis Stream entry is a flat dict of strings (Redis Streams limitation)::
@@ -246,17 +271,32 @@ class EvidenceChainUnavailableError(Exception):
 
 
 class EvidenceChainCorruptError(EvidenceChainUnavailableError):
-    """Raised when Redis is reachable but the chain head cannot be parsed.
+    """Raised when Redis is reachable but the chain head cannot be trusted.
 
     This is deliberately distinct from a cold start. An empty stream is a
-    legitimate genesis condition; a *non-empty* stream whose newest entry is
-    missing its chain fields, or carries a non-integer sequence, is evidence of
-    truncation or tampering. Re-seeding genesis in that situation would silently
-    fork the chain and destroy the only signal that something went wrong, so the
-    sink refuses to start instead.
+    legitimate genesis condition for a sink that holds no chain yet; a
+    *non-empty* stream whose newest entry is missing its chain fields, carries
+    a non-integer sequence, or does not hash to its own ``record_hash`` is
+    evidence of truncation or tampering. So is, for a sink that already holds
+    a chain, an emptied stream, a head on another chain, or a head behind the
+    last one it acknowledged. Re-seeding genesis or resuming in that situation
+    would silently fork the chain and destroy the only signal that something
+    went wrong, so the sink refuses instead.
 
     Subclasses ``EvidenceChainUnavailableError`` so that callers already written
     to fail closed on an unavailable chain also fail closed on a corrupt one.
+    """
+
+
+class EvidenceAppendUnsettledError(EvidenceChainUnavailableError):
+    """Raised when Redis did not answer an append, even after re-sending it.
+
+    The append script may have run with only its reply lost, so the batch is
+    on the stream at most once, but whether it landed is unknown. Re-sealing
+    it is how one event ends up in the chain twice, so the sink fails the
+    batch instead and re-reads the head before the next one. Blocking callers
+    must not seal, as for any unavailable chain; best-effort ``ingest()``
+    reports it like any other failed write.
     """
 
 
@@ -877,43 +917,30 @@ def verify_record(
 # Compare-and-append
 # ---------------------------------------------------------------------------
 
-# The head check and the XADD run atomically inside Redis. Each gateway
+# The head check and the XADDs run atomically inside Redis. Each gateway
 # replica keeps its chain head in memory, and HA deployments run more than
 # one replica against the same stream; a plain XADD would let two replicas
-# seal against the same head and fork the chain. The script appends only if
-# the stream's newest entry is still (chain_id, sequence - 1, prev_hash), or
-# the stream is empty and the record is a genesis record.
+# seal against the same head and fork the chain. The script appends a batch
+# only if the stream's newest entry is still the record the batch was sealed
+# against (chain_id, first_sequence - 1, first_prev_hash), or the stream is
+# empty and the batch starts at genesis.
+#
+# The pooled client re-sends a script whose reply was lost, so the script must
+# also be safe to run twice. A re-sent script finds the batch's own last
+# record at the head and answers ALREADY with the batch's entry IDs, writing
+# nothing. That record is matched on chain_id, sequence, record_hash and
+# timestamp_utc: the record hash is content-addressed, and the timestamp ties
+# the match to this sealing rather than to a byte-identical event.
 #
 # KEYS[1] = stream key
-# ARGV[1] = chain_id, ARGV[2] = sequence, ARGV[3] = prev_hash,
-# ARGV[4] = MAXLEN, ARGV[5..] = flattened entry field/value pairs.
-_APPEND_SCRIPT = """
-local head = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
-if #head == 0 then
-  if ARGV[2] ~= '0' or ARGV[3] ~= '' then
-    return {'CONFLICT'}
-  end
-else
-  local fields = head[1][2]
-  local h = {}
-  for i = 1, #fields, 2 do
-    h[fields[i]] = fields[i + 1]
-  end
-  if h['chain_id'] ~= ARGV[1] or h['record_hash'] ~= ARGV[3]
-      or tonumber(h['sequence']) + 1 ~= tonumber(ARGV[2]) then
-    return {'CONFLICT'}
-  end
-end
-local id = redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[4], '*', unpack(ARGV, 5))
-return {'OK', id}
-"""
-
-# Group-commit batch compare-and-append script:
-# KEYS[1] = stream key
 # ARGV[1] = chain_id, ARGV[2] = first_sequence, ARGV[3] = first_prev_hash,
-# ARGV[4] = MAXLEN, ARGV[5] = k (number of entries in batch),
-# Followed by k records: [field_token_count_i, f1, v1, f2, v2, ...]
+# ARGV[4] = MAXLEN, ARGV[5] = k (records in the batch),
+# ARGV[6] = last record_hash, ARGV[7] = last timestamp_utc,
+# followed by k records: [field_token_count_i, f1, v1, f2, v2, ...]
+#
+# Returns {'OK', id_1..id_k}, {'ALREADY', id_1..id_k} or {'CONFLICT'}.
 _APPEND_BATCH_SCRIPT = """
+local count = tonumber(ARGV[5])
 local head = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
 if #head == 0 then
   if ARGV[2] ~= '0' or ARGV[3] ~= '' then
@@ -925,19 +952,28 @@ else
   for i = 1, #fields, 2 do
     h[fields[i]] = fields[i + 1]
   end
+  local head_seq = tonumber(h['sequence'])
+  if h['chain_id'] == ARGV[1] and h['record_hash'] == ARGV[6]
+      and h['timestamp_utc'] == ARGV[7]
+      and head_seq == tonumber(ARGV[2]) + count - 1 then
+    local landed = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', count)
+    local out = {'ALREADY'}
+    for r = #landed, 1, -1 do
+      out[#out + 1] = landed[r][1]
+    end
+    return out
+  end
   if h['chain_id'] ~= ARGV[1] or h['record_hash'] ~= ARGV[3]
-      or tonumber(h['sequence']) + 1 ~= tonumber(ARGV[2]) then
+      or head_seq == nil or head_seq + 1 ~= tonumber(ARGV[2]) then
     return {'CONFLICT'}
   end
 end
-local count = tonumber(ARGV[5])
-local idx = 6
+local idx = 8
 local out = {'OK'}
 for r = 1, count do
   local nfields = tonumber(ARGV[idx])
   idx = idx + 1
-  local id = redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[4], '*', unpack(ARGV, idx, idx + nfields - 1))
-  out[r + 1] = id
+  out[r + 1] = redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[4], '*', unpack(ARGV, idx, idx + nfields - 1))
   idx = idx + nfields
 end
 return out
@@ -953,6 +989,36 @@ _MAX_APPEND_ATTEMPTS = 8
 _CONFLICT_BACKOFF_BASE_S = 0.001
 _CONFLICT_BACKOFF_CAP_S = 0.010
 
+# Bound on re-sending the identical script after Redis did not answer. The
+# pooled client has already retried by then; these sends only settle whether
+# the batch landed. The batch is never re-sealed while that is unknown.
+_MAX_SETTLE_ATTEMPTS = 2
+_SETTLE_BACKOFF_S = 0.05
+
+
+def _redis_transport_errors() -> tuple[type[Exception], ...]:
+    """Errors after which a sent command may or may not have run.
+
+    redis-py raises its own ``ConnectionError`` / ``TimeoutError``, which do
+    not subclass the builtins; it is imported lazily, like the client.
+    """
+    errors: tuple[type[Exception], ...] = (
+        ConnectionError,
+        TimeoutError,
+        asyncio.TimeoutError,
+    )
+    try:
+        from redis.exceptions import ConnectionError as RedisConnectionError
+        from redis.exceptions import TimeoutError as RedisTimeoutError
+    except ImportError:  # pragma: no cover - redis is a runtime dependency
+        return errors
+    return (*errors, RedisConnectionError, RedisTimeoutError)
+
+
+def _as_str(value: Any) -> str:
+    """Decode a Redis reply element (``bytes`` unless ``decode_responses``)."""
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
 
 @dataclass(frozen=True)
 class _AppendedRecord:
@@ -963,6 +1029,47 @@ class _AppendedRecord:
     msg_id: str
     sequence: int
     timestamp: datetime
+
+
+@dataclass(frozen=True)
+class _SealedRecord:
+    """A record sealed for a batch that Redis has not acknowledged yet."""
+
+    entry: dict[str, str]
+    record_hash: str
+    sequence: int
+    timestamp: datetime
+
+
+@dataclass(frozen=True)
+class _SealedBatch:
+    """One sealing of a queued batch against a specific chain head.
+
+    ``prev_id`` is the stream ID of the record the batch was sealed against
+    (``""`` at genesis). A batch that landed sits immediately after it, which
+    is how a ``CONFLICT`` that hides an already-landed batch is told apart
+    from a genuine lost race. ``args`` is the script ARGV, re-sent verbatim
+    whenever the same sealing is re-sent.
+    """
+
+    chain_id: str
+    first_sequence: int
+    prev_id: str
+    records: tuple[_SealedRecord, ...]
+    args: tuple[str, ...]
+
+    @property
+    def last_sequence(self) -> int:
+        return self.records[-1].sequence
+
+
+@dataclass(frozen=True)
+class _ChainHead:
+    """The newest record a sink knows to be on the stream."""
+
+    chain_id: str
+    sequence: int
+    record_hash: str
 
 
 @dataclass(frozen=True)
@@ -1040,6 +1147,14 @@ class EvidenceStreamSink:
         self._chain_id: str = ""
         self._prev_hash: str = ""
         self._sequence: int = 0
+        # Stream ID of the record at ``_sequence - 1`` ("" at genesis): the
+        # predecessor the next batch is sealed against.
+        self._prev_id: str = ""
+        # Newest record this sink has seen on the stream, restored or appended.
+        # Minting a genesis chain does not set it, so a sink that loses a
+        # cold-start race still adopts the winner's chain; once it is set,
+        # restore refuses an emptied stream, another chain or a regressed head.
+        self._acked_head: _ChainHead | None = None
         self._chain_restored = False
         self._running = False
         self._stopping = False
@@ -1222,20 +1337,30 @@ class EvidenceStreamSink:
 
         Three outcomes, and only three:
 
-        * **Stream empty** — a genuine cold start. Mint a new ``chain_id`` and
-          begin at sequence 0 with ``prev_hash = ""`` (stored NULL), satisfying
-          the DDL's ``CONSTRAINT chk_genesis_prev_hash``.
-        * **Stream has a well-formed head** — resume at ``sequence + 1`` with
+        * **Stream empty, and this sink holds no chain yet** — a genuine cold
+          start. Mint a new ``chain_id`` and begin at sequence 0 with
+          ``prev_hash = ""`` (stored NULL), satisfying the DDL's
+          ``CONSTRAINT chk_genesis_prev_hash``.
+        * **Stream has a head that verifies** — resume at ``sequence + 1`` with
           ``prev_hash`` set to that record's hash, under the same ``chain_id``.
-        * **Stream has a head we cannot parse** — raise. Redis answered, so this
-          is not a cold start; it is truncation or tampering, and re-genesising
-          would overwrite the only evidence that it happened.
+          A sink that already holds a chain resumes only if the head is on
+          that chain and not behind the last head it acknowledged.
+        * **Anything else** — raise. That covers a head that cannot be parsed
+          or does not hash to its own ``record_hash`` and, for a sink that
+          already holds a chain, an emptied stream, a head on another chain,
+          or a head behind (or forked from) the last acknowledged one. Redis
+          answered, so none of these is a cold start: it is truncation or
+          tampering, and re-genesising or resuming would overwrite the only
+          evidence that it happened.
+
+        The hash check rejects a corrupted head, or a forged one that was not
+        re-hashed. It cannot authenticate the writer (the chain carries no
+        secret), so write access to the stream stays a trust boundary.
 
         Raises:
             EvidenceChainUnavailableError: Redis client is absent, or the read
                 itself failed.
-            EvidenceChainCorruptError: The newest entry exists but is missing
-                or malforming the fields needed to continue the chain.
+            EvidenceChainCorruptError: The head is unusable, as described above.
         """
         if self._redis is None:
             raise EvidenceChainUnavailableError(
@@ -1252,10 +1377,25 @@ class EvidenceStreamSink:
                 exc,
             ) from exc
 
+        acked = self._acked_head
+
+        def _corrupt(detail: str) -> EvidenceChainCorruptError:
+            return EvidenceChainCorruptError(
+                f"Evidence chain head in {self._stream_key} is unusable: {detail}. "
+                "Refusing to start or resume a chain over it — this is a "
+                "truncation or tampering signal, not a cold start."
+            )
+
         if not entries:
+            if acked is not None:
+                raise _corrupt(
+                    f"the stream is empty, but this sink already holds chain "
+                    f"{acked.chain_id} up to sequence {acked.sequence}"
+                )
             self._chain_id = str(uuid.uuid4())
             self._prev_hash = ""
             self._sequence = 0
+            self._prev_id = ""
             logger.info(
                 "[EvidenceStream] Stream %s is empty — starting new chain %s at "
                 "sequence 0.",
@@ -1264,14 +1404,7 @@ class EvidenceStreamSink:
             )
             return
 
-        _msg_id, fields = entries[0]
-
-        def _corrupt(detail: str) -> EvidenceChainCorruptError:
-            return EvidenceChainCorruptError(
-                f"Evidence chain head in {self._stream_key} is unusable: {detail}. "
-                "Refusing to start a new chain over an existing one — this is a "
-                "truncation or tampering signal, not a cold start."
-            )
+        msg_id, fields = entries[0]
 
         chain_id = fields.get("chain_id") or ""
         record_hash = fields.get("record_hash") or ""
@@ -1293,10 +1426,36 @@ class EvidenceStreamSink:
             raise _corrupt(f"sequence {sequence_raw!r} is not an integer") from exc
         if last_sequence < 0:
             raise _corrupt(f"sequence {last_sequence} is negative")
+        prev_hash = fields.get("prev_hash")
+        if prev_hash is None:
+            raise _corrupt("prev_hash is missing")
+        verdict = verify_record(fields, prev_hash)
+        if not verdict.valid:
+            raise _corrupt(
+                f"the head record does not hash to its record_hash ({verdict.error})"
+            )
+
+        if acked is not None:
+            if chain_id != acked.chain_id:
+                raise _corrupt(
+                    f"the head is on chain {chain_id}, but this sink holds chain "
+                    f"{acked.chain_id}"
+                )
+            if last_sequence < acked.sequence:
+                raise _corrupt(
+                    f"the head (sequence {last_sequence}) is behind the last "
+                    f"acknowledged sequence {acked.sequence}"
+                )
+            if last_sequence == acked.sequence and record_hash != acked.record_hash:
+                raise _corrupt(
+                    f"sequence {last_sequence} no longer holds the acknowledged record"
+                )
 
         self._chain_id = chain_id
         self._prev_hash = record_hash
         self._sequence = last_sequence + 1
+        self._prev_id = _as_str(msg_id)
+        self._acked_head = _ChainHead(chain_id, last_sequence, record_hash)
         logger.info(
             "[EvidenceStream] Resumed chain %s at sequence %d (head=%s…).",
             self._chain_id,
@@ -1469,19 +1628,29 @@ class EvidenceStreamSink:
 
         Returns:
             The Redis Stream message ID, or None if Redis is unavailable or
-            the write failed.
+            the write failed. An append whose outcome Redis never settled
+            (``EvidenceAppendUnsettledError``) counts as a failed write: the
+            record is on the stream at most once either way.
 
         Raises:
             EvidenceChainUnavailableError: Chain state could not be restored,
                 or the head stayed contended for every append attempt.
                 Emitting into an unrestored chain would fork it, so this fails
                 closed rather than returning None.
+            EvidenceChainCorruptError: The stream head cannot be trusted (see
+                :meth:`_restore_chain_state`).
         """
         if self._redis is None:
             return None
 
         try:
             appended = await self._append(event)
+        except EvidenceAppendUnsettledError as exc:
+            logger.error(
+                "[EvidenceStream] Failed to write to Redis Stream: %s",
+                exc,
+            )
+            return None
         except EvidenceChainUnavailableError:
             raise
         except Exception as exc:
@@ -1630,7 +1799,9 @@ class EvidenceStreamSink:
         """Append ``event`` and return a structured commit proof.
 
         Used by ``ingest_sync()``. A Redis write failure yields
-        ``success=False``; chain state is untouched in that case.
+        ``success=False``; chain state is untouched in that case. An append
+        whose outcome Redis never settled raises ``EvidenceAppendUnsettledError``
+        instead, so the caller sees why it must not seal.
         """
         if self._redis is None:
             logger.error("[EvidenceStream] Redis not connected in _ingest_with_result")
@@ -1777,8 +1948,242 @@ class EvidenceStreamSink:
             _APPEND_BATCH_SCRIPT, 1, self._stream_key, *args
         )
 
+    def _seal_batch(self, batch: list[_QueuedEvidenceItem]) -> _SealedBatch:
+        """Seal ``batch`` against the current head without advancing it.
+
+        Callers hold ``self._chain_lock`` and have restored chain state.
+        """
+        prev_hash = self._prev_hash
+        sequence = self._sequence
+        records: list[_SealedRecord] = []
+        record_args: list[str] = []
+        for item in batch:
+            timestamp = datetime.now(tz=timezone.utc)
+            entry, record_hash = self._seal_record(
+                event=item.event,
+                payload_json=item.payload_json,
+                event_type=item.event_type,
+                control_id=item.control_id,
+                timestamp=timestamp,
+                prev_hash=prev_hash,
+                sequence=sequence,
+                trace_id=item.trace_id,
+            )
+            records.append(_SealedRecord(entry, record_hash, sequence, timestamp))
+            record_args.append(str(len(entry) * 2))
+            for name, value in entry.items():
+                record_args.extend((name, value))
+            prev_hash = record_hash
+            sequence += 1
+
+        last = records[-1]
+        args = (
+            self._chain_id,
+            str(self._sequence),
+            self._prev_hash,
+            str(self._max_len),
+            str(len(records)),
+            last.record_hash,
+            last.entry["timestamp_utc"],
+            *record_args,
+        )
+        return _SealedBatch(
+            chain_id=self._chain_id,
+            first_sequence=self._sequence,
+            prev_id=self._prev_id,
+            records=tuple(records),
+            args=args,
+        )
+
+    async def _send_settled(self, sealed: _SealedBatch) -> Any:
+        """Run the append script, re-sending the identical ARGV if Redis is silent.
+
+        A transport error that survives the pooled client's own retries leaves
+        the outcome unknown: the script may have run and only its reply been
+        lost. Re-sending the same sealing is safe (a landed batch answers
+        ``ALREADY``); re-sealing it is not, so this never re-seals.
+
+        Raises:
+            EvidenceAppendUnsettledError: No send got an answer.
+        """
+        transport_errors = _redis_transport_errors()
+        sends = _MAX_SETTLE_ATTEMPTS + 1
+        last_error: Exception | None = None
+        for send in range(1, sends + 1):
+            try:
+                return await self._eval_batch_script(list(sealed.args))
+            except transport_errors as exc:
+                last_error = exc
+                if send == sends:
+                    break
+                logger.warning(
+                    "[EvidenceStream] No reply to the append of seq=%d..%d (%s); "
+                    "re-sending the identical script to settle it (%d/%d).",
+                    sealed.first_sequence,
+                    sealed.last_sequence,
+                    exc,
+                    send,
+                    _MAX_SETTLE_ATTEMPTS,
+                )
+                await asyncio.sleep(_SETTLE_BACKOFF_S * send)
+        raise EvidenceAppendUnsettledError(
+            f"Evidence commit failed: Redis did not answer the append of sequences "
+            f"{sealed.first_sequence}..{sealed.last_sequence} on {self._stream_key} "
+            f"after {sends} sends ({last_error}). The batch is on the stream at "
+            "most once, but whether it landed is unknown.",
+            last_error,
+        ) from last_error
+
+    async def _find_landed(self, sealed: _SealedBatch) -> list[str] | None:
+        """Return the entry IDs of ``sealed`` if a previous send already landed it.
+
+        ``CONFLICT`` does not prove the batch is absent: if its first send ran
+        and the reply was lost, the client re-sent it, and another writer may
+        have appended in between, so the re-send no longer finds the batch at
+        the head. A landed batch sits immediately after the record it was
+        sealed against, so this reads exactly ``k`` entries after that
+        predecessor. The read is bounded by the batch size, however far the
+        head has moved since.
+
+        Returns:
+            The batch's entry IDs in order, or None when the position it was
+            sealed for holds another writer's record (a genuine lost race) or
+            nothing at all.
+
+        Raises:
+            EvidenceAppendUnsettledError: The read got no answer, or that
+                position has been trimmed, so the outcome cannot be told.
+            EvidenceChainCorruptError: Only part of the batch is present.
+        """
+        redis = self._redis
+        if redis is None:
+            raise EvidenceChainUnavailableError(
+                "Evidence chain unavailable: Redis connection not established."
+            )
+        try:
+            entries = await redis.xrange(
+                self._stream_key,
+                min=f"({sealed.prev_id}" if sealed.prev_id else "-",
+                max="+",
+                count=len(sealed.records),
+            )
+        except _redis_transport_errors() as exc:
+            raise EvidenceAppendUnsettledError(
+                f"Evidence commit failed: could not read back sequences "
+                f"{sealed.first_sequence}..{sealed.last_sequence} on "
+                f"{self._stream_key} after a CONFLICT ({exc}).",
+                exc,
+            ) from exc
+        if not entries:
+            return None
+
+        _first_id, first = entries[0]
+        if first != sealed.records[0].entry:
+            try:
+                first_sequence = int(first.get("sequence", ""))
+            except (TypeError, ValueError):
+                return None
+            if (
+                first.get("chain_id") == sealed.chain_id
+                and first_sequence > sealed.first_sequence
+            ):
+                raise EvidenceAppendUnsettledError(
+                    f"Evidence commit failed: sequence {sealed.first_sequence} on "
+                    f"{self._stream_key} was trimmed before this append's outcome "
+                    "could be checked."
+                )
+            return None
+
+        if [fields for _id, fields in entries] != [r.entry for r in sealed.records]:
+            raise EvidenceChainCorruptError(
+                f"Evidence chain in {self._stream_key} holds only part of the batch "
+                f"sealed for sequences {sealed.first_sequence}..{sealed.last_sequence}; "
+                "an atomic append cannot leave that behind."
+            )
+        return [_as_str(entry_id) for entry_id, _fields in entries]
+
+    def _acknowledge(
+        self,
+        batch: list[_QueuedEvidenceItem],
+        sealed: _SealedBatch,
+        ids: list[str],
+    ) -> None:
+        """Advance chain state past ``sealed`` and resolve each caller's future."""
+        if len(ids) != len(sealed.records):
+            raise EvidenceChainUnavailableError(
+                f"Evidence append of sequences {sealed.first_sequence}.."
+                f"{sealed.last_sequence} on {self._stream_key} was acknowledged "
+                f"with {len(ids)} entry IDs for {len(sealed.records)} records; "
+                "cannot bind each record to its entry."
+            )
+        last = sealed.records[-1]
+        self._prev_hash = last.record_hash
+        self._sequence = last.sequence + 1
+        self._prev_id = ids[-1]
+        self._acked_head = _ChainHead(sealed.chain_id, last.sequence, last.record_hash)
+        for item, record, msg_id in zip(batch, sealed.records, ids, strict=True):
+            if item.future is not None and not item.future.done():
+                item.future.set_result(
+                    _AppendedRecord(
+                        entry=record.entry,
+                        record_hash=record.record_hash,
+                        msg_id=msg_id,
+                        sequence=record.sequence,
+                        timestamp=record.timestamp,
+                    )
+                )
+
+    async def _append_once(
+        self, batch: list[_QueuedEvidenceItem], sealed: _SealedBatch
+    ) -> bool:
+        """Send one sealing: True once the batch is on the stream, False if it lost the head."""
+        result = await self._send_settled(sealed)
+        status = _as_str(result[0]) if result else ""
+        if status in ("OK", "ALREADY"):
+            if status == "ALREADY":
+                logger.warning(
+                    "[EvidenceStream] Re-sent append of seq=%d..%d found the batch "
+                    "already at the head (its reply was lost); not re-sealing.",
+                    sealed.first_sequence,
+                    sealed.last_sequence,
+                )
+            self._acknowledge(batch, sealed, [_as_str(i) for i in result[1:]])
+            return True
+
+        landed = await self._find_landed(sealed)
+        if landed is None:
+            return False
+        logger.warning(
+            "[EvidenceStream] Append of seq=%d..%d had landed before another writer "
+            "appended (its reply was lost); resolving it without re-sealing.",
+            sealed.first_sequence,
+            sealed.last_sequence,
+        )
+        self._acknowledge(batch, sealed, landed)
+        # The head has moved past this batch; re-read it before the next one.
+        self._chain_restored = False
+        return True
+
     async def _commit_batch(self, batch: list[_QueuedEvidenceItem]) -> None:
-        """Chain ``batch`` locally and write it atomically with ``_APPEND_BATCH_SCRIPT``."""
+        """Seal ``batch`` and append it to the stream exactly once.
+
+        Each attempt seals the batch against the current head and sends it
+        with ``_APPEND_BATCH_SCRIPT``:
+
+        * ``OK`` — appended. ``ALREADY`` — a re-sent script found the batch at
+          the head: its first send landed and only the reply was lost.
+        * ``CONFLICT`` — first check whether this sealing landed anyway
+          (:meth:`_find_landed`) and resolve from those entries if so. Only a
+          genuine lost race re-reads the head and re-seals, up to
+          ``_MAX_APPEND_ATTEMPTS`` times.
+        * No answer — :meth:`_send_settled` re-sends the identical script. A
+          batch whose outcome stays unknown fails with
+          ``EvidenceAppendUnsettledError`` and is never re-sealed.
+
+        Chain state advances only once Redis has acknowledged the batch. Any
+        failure after a send invalidates it, so the next batch re-reads (and
+        re-checks) the head first.
+        """
         if not batch:
             return
 
@@ -1786,72 +2191,22 @@ class EvidenceStreamSink:
             async with self._chain_lock:
                 for attempt in range(_MAX_APPEND_ATTEMPTS):
                     await self._ensure_chain_restored()
-
-                    first_sequence = self._sequence
-                    first_prev_hash = self._prev_hash
-                    working_prev_hash = first_prev_hash
-                    working_seq = first_sequence
-
-                    sealed_items: list[tuple[dict[str, str], str, int, datetime]] = []
-                    args: list[str] = [
-                        self._chain_id,
-                        str(first_sequence),
-                        first_prev_hash,
-                        str(self._max_len),
-                        str(len(batch)),
-                    ]
-
-                    for item in batch:
-                        timestamp = datetime.now(tz=timezone.utc)
-                        entry, record_hash = self._seal_record(
-                            event=item.event,
-                            payload_json=item.payload_json,
-                            event_type=item.event_type,
-                            control_id=item.control_id,
-                            timestamp=timestamp,
-                            prev_hash=working_prev_hash,
-                            sequence=working_seq,
-                            trace_id=item.trace_id,
-                        )
-                        sealed_items.append(
-                            (entry, record_hash, working_seq, timestamp)
-                        )
-                        args.append(str(len(entry) * 2))
-                        for name, value in entry.items():
-                            args.extend((name, value))
-                        working_prev_hash = record_hash
-                        working_seq += 1
-
-                    result = await self._eval_batch_script(args)
-                    if result and result[0] == "OK":
-                        self._prev_hash = working_prev_hash
-                        self._sequence = working_seq
-                        for idx, (
-                            item,
-                            (entry, record_hash, seq, timestamp),
-                        ) in enumerate(zip(batch, sealed_items, strict=True)):
-                            msg_id = (
-                                str(result[idx + 1])
-                                if idx + 1 < len(result)
-                                else str(result[1])
-                            )
-                            if item.future is not None and not item.future.done():
-                                item.future.set_result(
-                                    _AppendedRecord(
-                                        entry=entry,
-                                        record_hash=record_hash,
-                                        msg_id=msg_id,
-                                        sequence=seq,
-                                        timestamp=timestamp,
-                                    )
-                                )
+                    sealed = self._seal_batch(batch)
+                    try:
+                        appended = await self._append_once(batch, sealed)
+                    except BaseException:
+                        # The batch may or may not be on the stream; whatever
+                        # this sink believed about the head no longer holds.
+                        self._chain_restored = False
+                        raise
+                    if appended:
                         return
 
-                    # Another writer moved the head. Re-read it and re-seal the batch.
+                    # Another writer took the head. Re-read it and re-seal the batch.
                     logger.info(
                         "[EvidenceStream] Chain head moved under batch starting seq=%d "
                         "(len=%d); re-reading.",
-                        first_sequence,
+                        sealed.first_sequence,
                         len(batch),
                     )
                     if _PROM_AVAILABLE and EVIDENCE_APPEND_CONFLICTS_TOTAL is not None:
@@ -1866,13 +2221,10 @@ class EvidenceStreamSink:
                         jitter_s = (secrets.randbelow(1000) / 1000.0) * cap
                         await asyncio.sleep(jitter_s)
 
-            err = EvidenceChainUnavailableError(
-                f"Evidence append lost the chain head race {_MAX_APPEND_ATTEMPTS} "
-                f"times on {self._stream_key}; refusing to fork the chain."
-            )
-            for item in batch:
-                if item.future is not None and not item.future.done():
-                    item.future.set_exception(err)
+                raise EvidenceChainUnavailableError(
+                    f"Evidence append lost the chain head race {_MAX_APPEND_ATTEMPTS} "
+                    f"times on {self._stream_key}; refusing to fork the chain."
+                )
 
         except BaseException as exc:
             for item in batch:

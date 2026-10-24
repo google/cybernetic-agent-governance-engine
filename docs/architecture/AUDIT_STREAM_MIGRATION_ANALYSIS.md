@@ -416,10 +416,14 @@ header = {
 - [`EvidenceStreamSink.start()`](../../src/gateway/governance/evidence/stream.py:967)
   and both ingest paths call `_ensure_chain_restored()`, which runs
   `_restore_chain_state()` once. An empty stream mints a new `chain_id` at
-  sequence 0 with `prev_hash = ""`; a well-formed head resumes at `sequence + 1`
-  under the same `chain_id`.
-- A head that is missing `chain_id`, `record_hash`, or `sequence` raises
-  `EvidenceChainCorruptError` instead of re-genesising over existing evidence.
+  sequence 0 with `prev_hash = ""` only for a sink that holds no chain yet; a
+  head that verifies (`verify_record()`) resumes at `sequence + 1` under the
+  same `chain_id`.
+- A head that is missing `chain_id`, `record_hash`, `sequence` or `prev_hash`,
+  or does not hash to its own `record_hash`, raises `EvidenceChainCorruptError`
+  instead of re-genesising over existing evidence. So does, for a sink that
+  already holds a chain, an emptied stream, a head on another chain, or a head
+  behind the last acknowledged sequence.
 
 **Risk if Migration Occurs:**
 - Mixed-schema chains (v2.0 + v3.0 records) would break restoration

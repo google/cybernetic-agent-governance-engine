@@ -42,7 +42,10 @@ batch must continue the previous one (next sequence, ``prev_hash`` equal to
 the previous ``last_record_hash``). A jump is acceptable only when the later
 attestation itself declares the gap (the custodian records trimming it
 observed); an undeclared jump means a batch is missing and fails. A data
-object with no attestation also fails.
+object with no attestation also fails. A chain rotation (a new chain whose
+first batch starts at genesis after another chain was custodied) is declared
+the same way, as a ``CHAIN_ROTATION`` gap, and reported as a declared gap at
+the end of the previous chain, whose extent is unknown.
 
 Unsigned attestations (``.attestation.unsigned.json``, dev/test/ci only) are
 listed as non-evidentiary and never counted as verified. Their sequence
@@ -89,6 +92,7 @@ from src.gateway.governance.evidence.stream import verify_record
 from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
 from .evidence_custodian import (
+    GAP_KIND_CHAIN_ROTATION,
     EvidenceCustodyConfigError,
     NonEvidentiaryAttestationError,
     assert_citable,
@@ -106,6 +110,9 @@ DEFAULT_INTERVAL_S = 300.0
 TRUST_ANCHORS_FILE_ENV = "EVIDENCE_TRUST_ANCHORS_FILE"
 VERIFY_INTERVAL_ENV = "EVIDENCE_VERIFY_INTERVAL_S"
 VERIFY_PREFIX_ENV = "EVIDENCE_VERIFY_PREFIX"
+# DeclaredGap.kind for entries trimmed before custody. The custodian's
+# attestation records these with ``expected_sequence`` and no kind.
+GAP_KIND_STREAM_TRIM = "STREAM_TRIM"
 
 _DATA_SUFFIX = ".ndjson"
 _SIGNED_SUFFIX = ".attestation.json"
@@ -143,7 +150,8 @@ try:
     )
     DECLARED_GAPS = _gauge(
         "cage_evidence_declared_gaps",
-        "Declared stream-trim gaps in the last completed verification run",
+        "Declared custody gaps (stream trims, chain rotations) in the last "
+        "completed verification run",
     )
     NON_EVIDENTIARY_BATCHES = _gauge(
         "cage_evidence_non_evidentiary_batches",
@@ -259,6 +267,9 @@ class VerifiedBatch:
     key_id: str
     gap_declared: bool
     gap_expected_sequence: int | None
+    # Set when the batch declares a CHAIN_ROTATION gap: the chain it replaced.
+    rotated_from_chain_id: str | None = None
+    rotated_from_last_sequence: int | None = None
 
 
 @dataclass(frozen=True)
@@ -271,12 +282,19 @@ class VerificationFailure:
 
 @dataclass(frozen=True)
 class DeclaredGap:
-    """A sequence range the custodian recorded as trimmed before custody."""
+    """A sequence range the custodian recorded as lost before custody.
+
+    ``kind`` is ``STREAM_TRIM`` (entries trimmed from the stream) or
+    ``CHAIN_ROTATION`` (the stream started a new chain: the previous chain's
+    records from ``missing_from`` on are gone, how many is unknown, so
+    ``missing_to`` is None).
+    """
 
     chain_id: str
     missing_from: int
-    missing_to: int
+    missing_to: int | None
     attestation_key: str
+    kind: str = GAP_KIND_STREAM_TRIM
 
 
 @dataclass
@@ -328,7 +346,8 @@ class CustodyVerificationReport:
             )
         if self.declared_gaps and not allow_declared_gaps:
             gaps = ", ".join(
-                f"{g.chain_id}[{g.missing_from}..{g.missing_to}]"
+                f"{g.chain_id}[{g.missing_from}.."
+                f"{'?' if g.missing_to is None else g.missing_to}]"
                 for g in self.declared_gaps
             )
             raise EvidenceVerificationError(
@@ -357,6 +376,42 @@ class CustodyVerificationReport:
 def _fail(key: str, reason: str) -> EvidenceVerificationError:
     logger.critical("[EvidenceVerifier] %s: %s", key, reason)
     return EvidenceVerificationError(f"{key}: {reason}")
+
+
+def _rotation_origin(
+    gap: dict[str, Any], chain_id: str, first_seq: int, first_prev: str, key: str
+) -> tuple[str, int]:
+    """Validate a declared chain rotation; return the replaced chain and its last sequence."""
+    if first_seq != 0 or first_prev != "":
+        raise _fail(
+            key, "chain rotation declared on a batch that does not start at genesis"
+        )
+    previous_chain = gap.get("previous_chain_id")
+    if (
+        not isinstance(previous_chain, str)
+        or not previous_chain
+        or previous_chain == chain_id
+    ):
+        raise _fail(key, "declared chain rotation has an invalid previous_chain_id")
+    previous_seq = gap.get("previous_last_sequence")
+    if (
+        not isinstance(previous_seq, int)
+        or isinstance(previous_seq, bool)
+        or previous_seq < 0
+    ):
+        raise _fail(
+            key, "declared chain rotation has an invalid previous_last_sequence"
+        )
+    previous_hash = gap.get("previous_last_record_hash")
+    if (
+        not isinstance(previous_hash, str)
+        or len(previous_hash) != 64
+        or any(c not in "0123456789abcdef" for c in previous_hash)
+    ):
+        raise _fail(
+            key, "declared chain rotation has an invalid previous_last_record_hash"
+        )
+    return previous_chain, previous_seq
 
 
 def _require_int(att: dict[str, Any], name: str, key: str) -> int:
@@ -510,7 +565,10 @@ class CustodyVerifier:
         if not isinstance(gap, dict) or not isinstance(gap.get("detected"), bool):
             raise _fail(key, "attestation gap field is malformed")
         gap_expected: int | None = None
-        if gap["detected"]:
+        rotated_from: tuple[str, int] | None = None
+        if gap["detected"] and gap.get("kind") == GAP_KIND_CHAIN_ROTATION:
+            rotated_from = _rotation_origin(gap, chain_id, first_seq, first_prev, key)
+        elif gap["detected"]:
             gap_expected = gap.get("expected_sequence")
             if (
                 not isinstance(gap_expected, int)
@@ -571,6 +629,8 @@ class CustodyVerifier:
             key_id=kid,
             gap_declared=gap["detected"],
             gap_expected_sequence=gap_expected,
+            rotated_from_chain_id=rotated_from[0] if rotated_from else None,
+            rotated_from_last_sequence=rotated_from[1] if rotated_from else None,
         )
 
     async def verify_all(self, prefix: str | None = None) -> CustodyVerificationReport:
@@ -688,6 +748,19 @@ class CustodyVerifier:
             expected_seq, expected_prev = 0, ""
             for batch in batches:
                 key = batch.attestation_key
+                if (
+                    batch.rotated_from_chain_id is not None
+                    and batch.rotated_from_last_sequence is not None
+                ):
+                    report.declared_gaps.append(
+                        DeclaredGap(
+                            batch.rotated_from_chain_id,
+                            batch.rotated_from_last_sequence + 1,
+                            None,
+                            key,
+                            kind=GAP_KIND_CHAIN_ROTATION,
+                        )
+                    )
                 if batch.first_sequence < expected_seq:
                     report.failures.append(
                         VerificationFailure(
