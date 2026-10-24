@@ -902,3 +902,28 @@ def test_pending_max_age_outlasts_the_governor_settlement_hold() -> None:
     )
 
     assert get_reconciliation_pending_debit_max_age_seconds() >= DEFAULT_HOLD_SECONDS
+
+
+def test_debit_ledger_namespace_isolation() -> None:
+    """DebitLedger suffixes instance keys when a non-default namespace is supplied."""
+    from src.gateway.governance.safety.debit_ledger import DebitLedger
+
+    default_ledger = DebitLedger()
+    assert default_ledger.DEBITS_KEY == "cbf:debits"
+    assert default_ledger.DEBITS_PENDING_KEY == "cbf:debits:pending"
+    assert default_ledger.DEBITS_BY_TIME_KEY == "cbf:debits:by_time"
+    assert default_ledger.DEBITS_TOTAL_KEY == "cbf:debits:total"
+    assert default_ledger.DEBITS_ROLLED_BACK_KEY == "cbf:debits:rolled_back"
+
+    legacy_ledger = DebitLedger(namespace="finance.cash_balance")
+    assert legacy_ledger.DEBITS_KEY == "cbf:debits"
+
+    ns_ledger = DebitLedger(namespace="healthcare.dosage")
+    assert ns_ledger.DEBITS_KEY == "cbf:debits:healthcare.dosage"
+    assert ns_ledger.DEBITS_PENDING_KEY == "cbf:debits:pending:healthcare.dosage"
+    assert ns_ledger.DEBITS_BY_TIME_KEY == "cbf:debits:by_time:healthcare.dosage"
+    assert ns_ledger.DEBITS_TOTAL_KEY == "cbf:debits:total:healthcare.dosage"
+    assert (
+        ns_ledger.DEBITS_ROLLED_BACK_KEY == "cbf:debits:rolled_back:healthcare.dosage"
+    )
+    assert DebitLedger.DEBITS_KEY == "cbf:debits"

@@ -46,7 +46,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
     # module paths (src.gateway.governance), or UUIDs (which contain hyphens, not dots).
     (
         re.compile(
-            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\b"
+            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}(?![A-Za-z0-9_\-])"
         ),
         "[REDACTED_JWS]",
     ),
@@ -317,8 +317,8 @@ class PIISanitizer:
 
         return result
 
-    def sanitize_dict(self, data: dict) -> dict:
-        """Recursively sanitize all string values in a dict.
+    def sanitize_dict(self, data: Mapping) -> dict:
+        """Recursively sanitize all string values in a mapping.
 
         Useful for sanitizing an entire request body or UCA record before
         WORM persistence.  Non-string values are passed through unchanged.
@@ -330,7 +330,7 @@ class PIISanitizer:
         pattern fails to match (e.g. due to format variations).
 
         Args:
-            data: A dict (possibly nested) to sanitize.
+            data: A mapping (possibly nested) to sanitize.
 
         Returns:
             A new dict with all string values sanitized.
@@ -338,7 +338,7 @@ class PIISanitizer:
         result: dict = {}
         for key, value in data.items():
             # R5: Key-based redaction for known-sensitive keys
-            if key.lower() in _KEY_DENYLIST:
+            if str(key).lower() in _KEY_DENYLIST:
                 if isinstance(value, str):
                     result[key] = "[REDACTED_TOKEN]"
                     logger.debug(
@@ -355,24 +355,28 @@ class PIISanitizer:
                     )
             elif isinstance(value, str):
                 result[key] = self.sanitize(value)
-                if _is_bic_key(key):
+                if _is_bic_key(str(key)):
                     # The key is the contextual cue for an unlabelled BIC value.
                     result[key] = _BIC_STANDALONE.sub(
                         _redact_standalone_bic, result[key]
                     )
-            elif isinstance(value, dict):
+            elif isinstance(value, Mapping):
                 result[key] = self.sanitize_dict(value)
+            elif isinstance(value, tuple):
+                result[key] = tuple(
+                    self._sanitize_list(list(value), bic_key=_is_bic_key(str(key)))
+                )
             elif isinstance(value, list):
-                result[key] = self._sanitize_list(value, bic_key=_is_bic_key(key))
+                result[key] = self._sanitize_list(value, bic_key=_is_bic_key(str(key)))
             else:
                 result[key] = value
         return result
 
-    def _sanitize_list(self, items: list, bic_key: bool = False) -> list:
-        """Sanitize list items, recursing into nested lists and dicts.
+    def _sanitize_list(self, items: list | tuple, bic_key: bool = False) -> list:
+        """Sanitize list/tuple items, recursing into nested lists, tuples, and mappings.
 
-        Nested lists (e.g. table-shaped agent state) were previously passed
-        through unsanitized.
+        Nested lists and tuples (e.g. table-shaped agent state) are recursively
+        sanitized.
         """
         out: list = []
         for item in items:
@@ -381,8 +385,10 @@ class PIISanitizer:
                 if bic_key:
                     redacted = _BIC_STANDALONE.sub(_redact_standalone_bic, redacted)
                 out.append(redacted)
-            elif isinstance(item, dict):
+            elif isinstance(item, Mapping):
                 out.append(self.sanitize_dict(item))
+            elif isinstance(item, tuple):
+                out.append(tuple(self._sanitize_list(list(item), bic_key=bic_key)))
             elif isinstance(item, list):
                 out.append(self._sanitize_list(item, bic_key=bic_key))
             else:

@@ -504,7 +504,9 @@ class TestDPoPValidator:
             )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("non_finite_iat", [float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize(
+        "non_finite_iat", [float("nan"), float("inf"), float("-inf")]
+    )
     async def test_non_finite_iat_claim_rejected(
         self, validator, test_keypair, test_cert_pem, non_finite_iat
     ):

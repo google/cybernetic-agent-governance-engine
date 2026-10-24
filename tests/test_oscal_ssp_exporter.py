@@ -306,8 +306,9 @@ class TestGenerateFtraComponentEntry:
         entry = generate_ftra_component_entry()
         impl_reqs = entry["control-implementations"][0]["implemented-requirements"]
         desc = next(r for r in impl_reqs if r["control-id"] == "si-10")["description"]
-        assert "src/cage_finance/stpa/uca_rules.py" in desc
-        assert "src/cage_finance/opa/trade_governance.rego" in desc
+        assert "domain STPA UCA rules" in desc
+        assert "domain OPA policy" in desc
+        assert "src/cage_finance" not in desc
         assert "ActionSchema" not in desc and "schemas.py" not in desc
 
     def test_ftra_oscal_text_cites_only_existing_paths(self) -> None:

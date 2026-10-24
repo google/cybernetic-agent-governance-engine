@@ -59,7 +59,16 @@ from pathlib import Path
 from typing import Any, Literal, get_args
 
 import yaml
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 logger = logging.getLogger("stpa_compiler")
 
@@ -202,12 +211,12 @@ class ConditionModel(BaseModel):
         | None
     ) = None
     threshold_ref: str | None = None  # e.g. "stpa.max_latency_ms"
-    threshold: float | None = None  # literal value
+    threshold: StrictBool | StrictFloat | StrictStr | None = None  # literal value
     semantic_pattern: str | None = None
     # ``<lhs> > threshold_ref(<path>) * <rhs>`` only (see _COMPOSITE_SCALED_THRESHOLD_RE)
     composite: str | None = None
-    # composite only: a missing operand is a violation (fail closed) instead of
-    # leaving the UCA unevaluated when both operands are absent.
+    # composite or literal comparison: a missing operand is a violation (fail closed)
+    # instead of leaving the UCA unevaluated when absent.
     require_params: bool = False
     # Evaluate the condition only for requests in this scope (e.g. one order side).
     applies_when: AppliesWhenModel | None = None
@@ -231,6 +240,19 @@ class ConditionModel(BaseModel):
             v
             if v is None
             else _require_pattern(v, _DOTTED_IDENT_RE, "condition.threshold_ref")
+        )
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def _v_threshold_literal(cls, v: Any) -> Any:
+        if v is None or isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            return _reject_source_breaking(v, "condition.threshold")
+        raise ValueError(
+            f"condition.threshold must be a number, string, or boolean; got {type(v).__name__}"
         )
 
     @field_validator("semantic_pattern")
@@ -260,9 +282,23 @@ class ConditionModel(BaseModel):
 
     @model_validator(mode="after")
     def _v_require_params(self) -> ConditionModel:
-        if self.require_params and not self.composite:
+        if self.require_params and not (
+            self.composite
+            or (self.param and self.operator in ("greater_than", "less_than", "equals"))
+        ):
             raise ValueError(
                 "condition.require_params applies only to a composite condition"
+            )
+        if (
+            self.operator in ("greater_than", "less_than")
+            and self.threshold is not None
+            and (
+                isinstance(self.threshold, bool)
+                or not isinstance(self.threshold, (int, float))
+            )
+        ):
+            raise ValueError(
+                f"condition.threshold must be numeric for operator {self.operator!r}"
             )
         return self
 
@@ -851,6 +887,20 @@ def generate_opa(cs: ControlStructureModel) -> str:
                         lines.append(
                             f"    input.{param} < input._thresholds.{cond.threshold_ref.replace('.', '_')}"
                         )
+                elif op == "equals":
+                    if cond.threshold is not None:
+                        if isinstance(cond.threshold, bool):
+                            lit = "true" if cond.threshold else "false"
+                        elif isinstance(cond.threshold, str):
+                            lit = f'"{cond.threshold}"'
+                        else:
+                            lit = f"{cond.threshold}"
+                        lines.append(f"    input.{param} == {lit}")
+                    elif cond.threshold_ref:
+                        ref_comment = f"  # threshold from governance_thresholds.json:{cond.threshold_ref}"
+                        lines.append(
+                            f"    input.{param} == input._thresholds.{cond.threshold_ref.replace('.', '_')}{ref_comment}"
+                        )
             elif cond.composite:
                 lhs, ref, rhs = _composite_parts(cond.composite)
                 lines.append(f"    # composite: {cond.composite}")
@@ -1172,6 +1222,13 @@ def generate_python(cs: ControlStructureModel) -> str:
                     f'                    message="Missing required param `{param}`.",',
                     "                    kind=ViolationKind.HARD,",
                     "                )",
+                    "            if isinstance(val, bool) or not isinstance(val, (int, float, str)):",
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message="Invalid non-numeric param `{param}`.",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
                     "            f_val = float(val)",
                     "            if not math.isfinite(f_val):",
                     "                return Violation(",
@@ -1234,14 +1291,32 @@ def generate_python(cs: ControlStructureModel) -> str:
                     "                    )",
                 ]
         elif param and op == "greater_than" and cond.threshold is not None:
+            body_lines.append(f'            val = params.get("{param}")')
+            if cond.require_params:
+                body_lines += [
+                    "            if val is None:",
+                    f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message="Missing required param `{param}`.",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
+                ]
             body_lines += [
-                f'            val = params.get("{param}")',
                 "            if val is not None:",
                 "                if isinstance(val, bool):",
                 "                    return Violation(",
                 '                        tier="stpa",',
                 f'                        code="{uca_code}",',
                 f'                        message="Boolean param `{param}` is not a valid numeric value.",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
+                "                if not isinstance(val, (int, float, str)):",
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="Invalid non-numeric param `{param}`.",',
                 "                        kind=ViolationKind.HARD,",
                 "                    )",
                 "                f_val = float(val)",
@@ -1273,6 +1348,13 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f'                    message="Missing required param `{param}`.",',
                 "                    kind=ViolationKind.HARD,",
                 "                )",
+                "            if isinstance(val, bool) or not isinstance(val, (int, float, str)):",
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Invalid non-numeric param `{param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
                 "            f_val = float(val)",
                 "            if not math.isfinite(f_val):",
                 "                return Violation(",
@@ -1290,14 +1372,32 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                )",
             ]
         elif param and op == "less_than" and cond.threshold is not None:
+            body_lines.append(f'            val = params.get("{param}")')
+            if cond.require_params:
+                body_lines += [
+                    "            if val is None:",
+                    f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                    "                return Violation(",
+                    '                    tier="stpa",',
+                    f'                    code="{uca_code}",',
+                    f'                    message="Missing required param `{param}`.",',
+                    "                    kind=ViolationKind.HARD,",
+                    "                )",
+                ]
             body_lines += [
-                f'            val = params.get("{param}")',
                 "            if val is not None:",
                 "                if isinstance(val, bool):",
                 "                    return Violation(",
                 '                        tier="stpa",',
                 f'                        code="{uca_code}",',
                 f'                        message="Boolean param `{param}` is not a valid numeric value.",',
+                "                        kind=ViolationKind.HARD,",
+                "                    )",
+                "                if not isinstance(val, (int, float, str)):",
+                "                    return Violation(",
+                '                        tier="stpa",',
+                f'                        code="{uca_code}",',
+                f'                        message="Invalid non-numeric param `{param}`.",',
                 "                        kind=ViolationKind.HARD,",
                 "                    )",
                 "                f_val = float(val)",
@@ -1315,6 +1415,50 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f'                        message="{uca.description}",',
                 "                        kind=ViolationKind.HARD,",
                 "                    )",
+            ]
+        elif param and op == "equals" and cond.threshold_ref:
+            attr_path = _qualify_threshold_ref(cond.threshold_ref, cs.system.domain)
+            body_lines += [
+                "            try:",
+                f'                threshold: Any = THRESHOLDS.resolve("{attr_path}")',
+                "            except Exception:",
+                f'                threshold = _resolve_threshold("{attr_path}")',
+                f'            val = params.get("{param}")',
+                "            if val is None:",
+                f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Missing required param `{param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
+                "            if isinstance(val, bool) == isinstance(threshold, bool) and val == threshold:",
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message=f"{uca.description} ({{val!r}} == {{threshold!r}})",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
+            ]
+        elif param and op == "equals" and cond.threshold is not None:
+            thresh_repr = repr(cond.threshold)
+            body_lines += [
+                f'            val = params.get("{param}")',
+                "            if val is None:",
+                f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="Missing required param `{param}`.",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
+                f"            if isinstance(val, bool) is {isinstance(cond.threshold, bool)} and val == {thresh_repr}:",
+                "                return Violation(",
+                '                    tier="stpa",',
+                f'                    code="{uca_code}",',
+                f'                    message="{uca.description}",',
+                "                    kind=ViolationKind.HARD,",
+                "                )",
             ]
         elif cond.composite:
             lhs_param, raw_thresh_ref, rhs_param = _composite_parts(cond.composite)

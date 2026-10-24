@@ -45,7 +45,7 @@ def _prepare_for_canonicalization(obj: Any) -> Any:
         return obj
 
 
-def jcs_canonicalize_plan(plan: dict[str, Any]) -> bytes:
+def jcs_canonicalize_plan(plan: Any) -> bytes:
     """Produce an RFC 8785 deterministic byte representation of a payload.
 
     This replaces ad-hoc json.dumps(sort_keys=True) which is vulnerable to

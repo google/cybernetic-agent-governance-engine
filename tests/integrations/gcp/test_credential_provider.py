@@ -275,3 +275,61 @@ async def test_bearer_token_authorization_header_format() -> None:
         audience="https://example.com",
     )
     assert token.authorization_header == "Bearer my-secret-token-12345"
+
+
+def test_outbound_credential_factory_gke_detection_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GKE Workload Identity is detected as GCP, and PRODUCTION/STAGING fail closed when no platform is detected."""
+    import src.gateway.governance.outbound_credential_factory as ocf
+    from src.gateway.governance.outbound_credential_factory import (
+        NullCredentialProvider,
+        _detect_platform,
+        get_outbound_credential_provider,
+    )
+
+    for var in (
+        "CAGE_CLOUD_PROVIDER",
+        "K_SERVICE",
+        "GCP_PROJECT",
+        "GOOGLE_CLOUD_PROJECT",
+        "GCLOUD_PROJECT",
+        "WORKLOAD_IDENTITY_POOL",
+        "KUBERNETES_SERVICE_HOST",
+        "ECS_CONTAINER_METADATA_URI_V4",
+        "AWS_EXECUTION_ENV",
+        "AWS_REGION",
+        "IDENTITY_ENDPOINT",
+        "IDENTITY_HEADER",
+        "CAGE_ALLOW_NULL_OUTBOUND_CREDENTIALS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    monkeypatch.setattr(ocf, "_PROVIDER_INSTANCE", None)
+    monkeypatch.setattr(ocf, "_DETECTED_PLATFORM", None)
+
+    # GKE Workload Identity detection
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "my-gke-project")
+    assert _detect_platform() == "gcp"
+
+    # Unset GCP signals -> None platform
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    assert _detect_platform() is None
+
+    # Development posture allows NullCredentialProvider
+    monkeypatch.setenv("CAGE_ENV", "development")
+    monkeypatch.setattr(ocf, "_PROVIDER_INSTANCE", None)
+    assert isinstance(get_outbound_credential_provider(), NullCredentialProvider)
+
+    # Production posture fails closed unless explicitly overridden
+    monkeypatch.setenv("CAGE_ENV", "production")
+    monkeypatch.setattr(ocf, "_PROVIDER_INSTANCE", None)
+    with pytest.raises(
+        RuntimeError, match="Refusing to fall back to NullCredentialProvider"
+    ):
+        get_outbound_credential_provider()
+
+    monkeypatch.setenv("CAGE_ALLOW_NULL_OUTBOUND_CREDENTIALS", "true")
+    monkeypatch.setattr(ocf, "_PROVIDER_INSTANCE", None)
+    assert isinstance(get_outbound_credential_provider(), NullCredentialProvider)

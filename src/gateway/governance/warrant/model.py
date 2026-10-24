@@ -343,4 +343,5 @@ class StandingVerificationResult:
             "attested_at": self.attested_at,
             "warrant_id": self.warrant_id,
             "warrant_digest": self.warrant_digest,
+            "verification_status": self.verification_status,
         }

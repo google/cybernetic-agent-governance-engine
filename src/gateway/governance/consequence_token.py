@@ -96,6 +96,14 @@ class ConsequenceTokenError(Exception):
     """Raised on bad signature, expired token, or malformed claims."""
 
 
+class ConsequenceTokenMalformedError(ConsequenceTokenError):
+    """Raised when a ConsequenceToken has malformed structure or claims."""
+
+
+class ConsequenceTokenSignatureError(ConsequenceTokenError):
+    """Raised when a ConsequenceToken fails cryptographic or header verification."""
+
+
 @dataclass(frozen=True)
 class ConsequenceTokenClaims:
     """Claims payload for a ConsequenceToken JWS.
@@ -243,43 +251,84 @@ class ConsequenceToken:
                 malformed input, algorithm confusion, etc.).
         """
         # Step 1: Split into three segments
+        if not isinstance(token, str):
+            raise ConsequenceTokenMalformedError("Malformed token: expected str")
         try:
             parts = token.split(".")
             if len(parts) != 3:
-                raise ConsequenceTokenError(
+                raise ConsequenceTokenMalformedError(
                     f"Malformed token: expected 3 segments, got {len(parts)}"
                 )
             header_b64, payload_b64, signature_b64 = parts
         except ValueError as exc:
-            raise ConsequenceTokenError(f"Malformed token: {exc}") from exc
+            raise ConsequenceTokenMalformedError(f"Malformed token: {exc}") from exc
 
         # Step 2: Decode and validate protected header
         try:
             header_bytes = _b64url_decode(header_b64)
             header = json.loads(header_bytes)
         except Exception as exc:
-            raise ConsequenceTokenError(f"Invalid header: {exc}") from exc
+            raise ConsequenceTokenMalformedError(f"Invalid header: {exc}") from exc
+
+        if not isinstance(header, dict):
+            raise ConsequenceTokenMalformedError("Invalid header: expected JSON object")
+
+        raw_alg = header.get("alg")
+        if not isinstance(raw_alg, str) or not raw_alg:
+            raise ConsequenceTokenSignatureError("Invalid or missing alg header")
 
         # Security: Reject alg: none (critical security defect if allowed)
-        header_alg = header.get("alg", "").upper()
+        header_alg = raw_alg.upper()
         if header_alg == "NONE":
-            raise ConsequenceTokenError("Rejected token with alg: none")
+            raise ConsequenceTokenSignatureError("Rejected token with alg: none")
 
         # Security: Reject algorithm confusion (header alg != signer's expected alg)
         try:
             expected_alg = signer.jose_alg
         except RuntimeError as exc:
-            raise ConsequenceTokenError(
+            raise ConsequenceTokenSignatureError(
                 f"Cannot determine expected algorithm: {exc}"
             ) from exc
 
-        if header_alg != expected_alg.upper():
-            raise ConsequenceTokenError(
+        if not isinstance(expected_alg, str) or header_alg != expected_alg.upper():
+            raise ConsequenceTokenSignatureError(
                 f"Algorithm confusion: header alg={header_alg}, expected {expected_alg}"
             )
 
+        # Validate kid against signer's active key_id or trust-anchor registry when present
+        header_kid = header.get("kid")
+        if header_kid is not None:
+            if not isinstance(header_kid, str):
+                raise ConsequenceTokenSignatureError("Invalid kid header: expected str")
+            if header_kid:
+                signer_kid: str | None = None
+                try:
+                    raw_signer_kid = getattr(signer, "key_id", None)
+                    if isinstance(raw_signer_kid, str):
+                        signer_kid = raw_signer_kid
+                except Exception:
+                    signer_kid = None
+                resolved_anchor = (
+                    signer.resolve_trust_anchor(header_kid)
+                    if hasattr(signer, "resolve_trust_anchor")
+                    else None
+                )
+                if (
+                    (signer_kid is not None or hasattr(signer, "resolve_trust_anchor"))
+                    and header_kid != signer_kid
+                    and not (
+                        isinstance(resolved_anchor, (bytes, bytearray))
+                        and len(resolved_anchor) > 0
+                    )
+                ):
+                    raise ConsequenceTokenSignatureError(
+                        f"Unknown or untrusted kid in header: {header_kid!r}"
+                    )
+
         # Validate typ header (should be JWT)
         header_typ = header.get("typ", "")
+        if not isinstance(header_typ, str):
+            raise ConsequenceTokenMalformedError("Invalid typ header: expected str")
         if header_typ.upper() not in ("JWT", ""):
             # 'ConsequenceToken' is the class name; logs masked ids or the error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -293,14 +342,21 @@ class ConsequenceToken:
             payload_bytes = _b64url_decode(payload_b64)
             payload = json.loads(payload_bytes)
         except Exception as exc:
-            raise ConsequenceTokenError(f"Invalid payload: {exc}") from exc
+            raise ConsequenceTokenMalformedError(f"Invalid payload: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            raise ConsequenceTokenMalformedError(
+                "Invalid payload: expected JSON object"
+            )
 
         now = int(time.time())
 
         # Check expiry (exp in the past)
         exp = payload.get("exp")
-        if not isinstance(exp, int):
-            raise ConsequenceTokenError(f"Invalid exp claim: {exp!r} (expected int)")
+        if isinstance(exp, bool) or not isinstance(exp, int):
+            raise ConsequenceTokenMalformedError(
+                f"Invalid exp claim: {exp!r} (expected int)"
+            )
         if now > exp:
             raise ConsequenceTokenError(
                 f"Token expired: exp={exp}, now={now} (age={now - exp}s)"
@@ -308,8 +364,10 @@ class ConsequenceToken:
 
         # Check iat (issued-at) is not implausibly in the future
         iat = payload.get("iat")
-        if not isinstance(iat, int):
-            raise ConsequenceTokenError(f"Invalid iat claim: {iat!r} (expected int)")
+        if isinstance(iat, bool) or not isinstance(iat, int):
+            raise ConsequenceTokenMalformedError(
+                f"Invalid iat claim: {iat!r} (expected int)"
+            )
         if iat > now + _CLOCK_SKEW_TOLERANCE_SECONDS:
             raise ConsequenceTokenError(
                 f"Token iat too far in future: iat={iat}, now={now} "
@@ -321,35 +379,64 @@ class ConsequenceToken:
         try:
             signature_bytes = _b64url_decode(signature_b64)
         except Exception as exc:
-            raise ConsequenceTokenError(f"Invalid signature encoding: {exc}") from exc
+            raise ConsequenceTokenSignatureError(
+                f"Invalid signature encoding: {exc}"
+            ) from exc
 
         try:
             valid = signer.verify_raw(signing_input, signature_bytes)
         except RuntimeError as exc:
             # verify_raw raises RuntimeError on inactive KMS or missing public key (fail-closed)
-            raise ConsequenceTokenError(
+            raise ConsequenceTokenSignatureError(
                 f"Signature verification failed: {exc}"
             ) from exc
 
         if not valid:
-            raise ConsequenceTokenError("Invalid signature")
+            raise ConsequenceTokenSignatureError("Invalid signature")
 
         # Step 5: Parse and validate required claims
         try:
-            claims = ConsequenceTokenClaims(
-                sub=payload["sub"],
-                tid=payload["tid"],
-                rec=payload["rec"],
-                act=payload["act"],
-                ver=payload.get("ver"),  # nullable
-                iat=iat,
-                exp=exp,
-                jti=payload["jti"],
-            )
+            sub = payload["sub"]
+            tid = payload["tid"]
+            rec = payload["rec"]
+            act = payload["act"]
+            jti = payload["jti"]
+            ver = payload.get("ver")
         except KeyError as exc:
-            raise ConsequenceTokenError(f"Missing required claim: {exc}") from exc
-        except TypeError as exc:
-            raise ConsequenceTokenError(f"Invalid claim type: {exc}") from exc
+            raise ConsequenceTokenMalformedError(
+                f"Missing required claim: {exc}"
+            ) from exc
+
+        for claim_name, claim_val in (
+            ("sub", sub),
+            ("tid", tid),
+            ("rec", rec),
+            ("act", act),
+            ("jti", jti),
+        ):
+            if not isinstance(claim_val, str) or not claim_val:
+                raise ConsequenceTokenMalformedError(
+                    f"Invalid claim type for {claim_name}: expected non-empty str"
+                )
+        if ver is not None and not isinstance(ver, str):
+            raise ConsequenceTokenMalformedError(
+                "Invalid claim type for ver: expected str or None"
+            )
+        if jti != rec:
+            raise ConsequenceTokenMalformedError(
+                f"Claim mismatch: jti ({jti!r}) must equal rec ({rec!r})"
+            )
+
+        claims = ConsequenceTokenClaims(
+            sub=sub,
+            tid=tid,
+            rec=rec,
+            act=act,
+            ver=ver,
+            iat=iat,
+            exp=exp,
+            jti=jti,
+        )
 
         # Never log the full claims (security requirement)
         # 'ConsequenceToken' is the class name; logs masked ids or the error only.

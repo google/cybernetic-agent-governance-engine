@@ -921,3 +921,62 @@ class TestUnwrapGovernanceEnvelope:
         flat = {"verdict": "APPROVED", "seal": "test-seal"}
         unwrapped = unwrap_governance_envelope(flat)
         assert unwrapped == flat
+
+    def test_nested_action_hash_parity_and_algorithm_expiry_binding(
+        self, ec_key_pair, sample_governance_result
+    ):
+        """Nested list/dict params match routing_seal.compute_action_hash and verify binds alg + expiry."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import utils
+
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
+        from src.gateway.governance.routing_seal import compute_action_hash
+
+        builder = GovernanceEnvelopeBuilder()
+        nested_params = {
+            "legs": [{"symbol": "AAPL", "qty": 10}],
+            "tags": ["urgent", "limit"],
+        }
+        env = builder.build_unsigned(
+            action="execute_trade",
+            params=nested_params,
+            governance_result=sample_governance_result,
+        )
+        assert (
+            env.subject.action_hash
+            == f"sha256:{compute_action_hash('execute_trade', nested_params)}"
+        )
+        # Ensure structured list does not collide with stringified list representation
+        stringified_env = builder.build_unsigned(
+            action="execute_trade",
+            params={
+                "legs": str(nested_params["legs"]),
+                "tags": str(nested_params["tags"]),
+            },
+            governance_result=sample_governance_result,
+        )
+        assert env.subject.action_hash != stringified_env.subject.action_hash
+
+        private_key, _, public_pem = ec_key_pair
+        digest = env.compute_digest()
+        sig_der = private_key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+        kid = pem_to_jwk(public_pem)["kid"]
+        jwks = JWKSet()
+        jwks.add_key(public_pem, kid=kid)
+
+        # Algorithm mismatch (RS256 claimed on EC key) must fail closed
+        wrong_alg_env = builder.attach_signature(env, sig_der, kid, "RS256")
+        with patch("src.gateway.governance.jwks.get_jwks", return_value=jwks):
+            assert builder.verify(wrong_alg_env) is False
+
+        # Expired envelope must fail closed by default and pass when verify_expiry=False
+        env.expires_at = "2020-01-01T00:00:00Z"
+        exp_digest = env.compute_digest()
+        exp_sig_der = private_key.sign(
+            exp_digest, ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+        )
+        valid_env = builder.attach_signature(env, exp_sig_der, kid, "ES256")
+        with patch("src.gateway.governance.jwks.get_jwks", return_value=jwks):
+            assert builder.verify(valid_env) is False
+            assert builder.verify(valid_env, verify_expiry=False) is True

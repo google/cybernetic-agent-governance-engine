@@ -532,44 +532,112 @@ class AgwAdapter:
             )
 
         if isinstance(verdict, Mapping):
-            allowed = bool(verdict.get("allowed", False))
-            decision_str = str(
-                verdict.get("decision") or ("ALLOW" if allowed else "DENY")
-            ).upper()
-            reason = str(verdict.get("reason", ""))
-            defer_token = verdict.get("defer_token")
+            raw_decision = verdict.get("decision") or verdict.get("verdict")
+            raw_decision_str = (
+                str(getattr(raw_decision, "value", raw_decision)).upper()
+                if raw_decision is not None
+                else ""
+            )
+            if "allowed" in verdict:
+                allowed = bool(verdict.get("allowed", False))
+            elif "execution_allowed" in verdict:
+                allowed = bool(verdict.get("execution_allowed", False))
+            else:
+                allowed = raw_decision_str in ("ALLOW", "NARROW")
+            decision_str = raw_decision_str or ("ALLOW" if allowed else "DENY")
+            reason = str(
+                verdict.get("reason")
+                or verdict.get("classification_reason")
+                or verdict.get("defer_reason")
+                or verdict.get("narrowing_reason")
+                or ""
+            )
+            defer_token = (
+                verdict.get("defer_token")
+                or verdict.get("deferred_id")
+                or verdict.get("approval_token")
+            )
+            existing_seal = verdict.get("seal")
+            narrowed_params = verdict.get("narrowed_params")
         else:
-            allowed = bool(getattr(verdict, "allowed", False))
-            decision_str = str(
-                getattr(verdict, "decision", None) or ("ALLOW" if allowed else "DENY")
-            ).upper()
-            reason = str(getattr(verdict, "reason", ""))
-            defer_token = getattr(verdict, "defer_token", None)
+            raw_decision = getattr(verdict, "decision", None) or getattr(
+                verdict, "verdict", None
+            )
+            raw_decision_str = (
+                str(getattr(raw_decision, "value", raw_decision)).upper()
+                if raw_decision is not None
+                else ""
+            )
+            if hasattr(verdict, "allowed"):
+                allowed = bool(getattr(verdict, "allowed", False))
+            elif hasattr(verdict, "execution_allowed"):
+                allowed = bool(getattr(verdict, "execution_allowed", False))
+            else:
+                allowed = raw_decision_str in ("ALLOW", "NARROW")
+            decision_str = raw_decision_str or ("ALLOW" if allowed else "DENY")
+            reason = str(
+                getattr(verdict, "reason", None)
+                or getattr(verdict, "classification_reason", None)
+                or getattr(verdict, "defer_reason", None)
+                or getattr(verdict, "narrowing_reason", None)
+                or ""
+            )
+            defer_token = (
+                getattr(verdict, "defer_token", None)
+                or getattr(verdict, "deferred_id", None)
+                or getattr(verdict, "approval_token", None)
+            )
+            existing_seal = getattr(verdict, "seal", None)
+            narrowed_params = getattr(verdict, "narrowed_params", None)
 
-        if not allowed or decision_str != "ALLOW":
+        if not allowed or decision_str not in ("ALLOW", "NARROW"):
+            effective_decision = (
+                decision_str
+                if decision_str in ("DENY", "DEFER", "REQUIRE_APPROVAL")
+                else "DENY"
+            )
+            default_reason = (
+                "Action requires human approval"
+                if effective_decision == "REQUIRE_APPROVAL"
+                else "Governance policy denied or deferred action"
+            )
             return AgwRequestAuthzDecision(
                 allowed=False,
                 http_status=403,
-                decision=decision_str if decision_str in ("DENY", "DEFER") else "DENY",
+                decision=effective_decision,
                 headers_to_inject={},
                 agent_id=tri_identity.agent_principal,
                 tool_name=req.tool_name,
                 tri_identity=tri_identity,
-                reason=reason or "Governance policy denied or deferred action",
+                reason=reason or default_reason,
                 defer_token=str(defer_token) if defer_token else None,
             )
 
-        # Mint X-CAGE-Routing-Seal over the exact tool_name and parameters
+        effective_params = (
+            dict(narrowed_params)
+            if isinstance(narrowed_params, Mapping)
+            else req.parameters
+        )
+        if (
+            isinstance(narrowed_params, Mapping)
+            and "_tri_identity" in effective_params
+            and "_tri_identity" not in req.parameters
+        ):
+            effective_params.pop("_tri_identity", None)
+
+        # Reuse governor-provided seal or mint X-CAGE-Routing-Seal over effective parameters
         try:
             if seal_minter is not None:
-                seal_res = seal_minter(req.tool_name, req.parameters)
+                seal_res = seal_minter(req.tool_name, effective_params)
                 seal = (
                     await seal_res if inspect.isawaitable(seal_res) else str(seal_res)
                 )
+            elif isinstance(existing_seal, str) and existing_seal.strip():
+                seal = existing_seal.strip()
             else:
                 seal = await generate_seal(
                     req.tool_name,
-                    req.parameters,
+                    effective_params,
                     aud=f"cage-actuator:{req.tool_name}",
                 )
         except Exception as exc:

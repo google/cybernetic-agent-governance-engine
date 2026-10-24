@@ -59,6 +59,7 @@ import hashlib
 import logging
 import os
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.infrastructure.redis_single_use import new_op_id, set_nx_retry_safe
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ class ConsequenceAuthorityStore:
         action_digest: str,
         state_version: str | None,
     ) -> str:
-        """Return SHA-256 hex digest of the binding tuple.
+        """Return SHA-256 hex digest of the JCS-canonicalized binding tuple.
 
         Args:
             thread_id: Conversation/request thread identifier.
@@ -113,8 +114,10 @@ class ConsequenceAuthorityStore:
         """
         # Normalize None → "" for consistent hashing
         normalized_version = state_version if state_version is not None else ""
-        payload = f"{thread_id}:{actor_id}:{action_digest}:{normalized_version}"
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        canonical = jcs_canonicalize_plan(
+            [thread_id, actor_id, action_digest, normalized_version]
+        )
+        return hashlib.sha256(canonical).hexdigest()
 
     async def consume_once(self, authority_record_id: str, binding: str) -> bool:
         """Atomically consume the authority token for the given record ID.

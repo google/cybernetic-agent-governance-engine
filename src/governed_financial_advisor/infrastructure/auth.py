@@ -246,9 +246,7 @@ def verify_user_oidc_token(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    raw_principal = (
-        claims.get("act_sub") or claims.get("user_sub") or claims.get("sub")
-    )
+    raw_principal = claims.get("act_sub") or claims.get("user_sub") or claims.get("sub")
     if (
         not isinstance(raw_principal, str)
         or not (1 <= len(raw_principal) <= PRINCIPAL_MAX_LEN)
@@ -260,7 +258,9 @@ def verify_user_oidc_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return PrincipalIdentity(user_id=raw_principal, verified=True, issuer=expected_issuer, kid=kid)
+    return PrincipalIdentity(
+        user_id=raw_principal, verified=True, issuer=expected_issuer, kid=kid
+    )
 
 
 def requires_verified_principal() -> bool:

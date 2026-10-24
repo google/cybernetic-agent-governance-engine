@@ -62,7 +62,7 @@ from src.gateway.observability.attributes import (
 )
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
-     require_api_key,
+    require_api_key,
     resolve_request_principal,
 )
 from src.governed_financial_advisor.models.query import QueryRequest, QueryResponse

@@ -38,6 +38,11 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from src.gateway.governance.env_posture import (
+    DeploymentPosture,
+    env_flag,
+    resolve_posture,
+)
 from src.gateway.governance.seams.outbound_credential import (
     BearerToken,
     OutboundCredentialProvider,
@@ -57,6 +62,12 @@ def _detect_platform() -> str | None:
         "gcp" | "aws" | "azure" | None
     """
     if os.getenv("K_SERVICE"):
+        return "gcp"
+    if os.getenv("KUBERNETES_SERVICE_HOST") and (
+        os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("GCLOUD_PROJECT")
+        or os.getenv("WORKLOAD_IDENTITY_POOL")
+    ):
         return "gcp"
     if os.getenv("ECS_CONTAINER_METADATA_URI_V4"):
         return "aws"
@@ -128,9 +139,13 @@ def get_outbound_credential_provider() -> OutboundCredentialProvider:
     Get singleton outbound credential provider (auto-detected platform).
 
     Returns:
-        - GcpOidcCredentialProvider if running on GCP Cloud Run.
-        - NullCredentialProvider if running locally/CI.
+        - GcpOidcCredentialProvider if running on GCP Cloud Run or GKE Workload Identity.
+        - NullCredentialProvider if running locally/CI (or when explicitly allowed).
         - AWS/Azure providers when implemented.
+
+    Raises:
+        RuntimeError: If no cloud platform is detected in PRODUCTION/STAGING
+            posture and ``CAGE_ALLOW_NULL_OUTBOUND_CREDENTIALS`` is not set.
 
     Thread-Safety:
         This function is not thread-safe during initial instantiation, but
@@ -142,16 +157,29 @@ def get_outbound_credential_provider() -> OutboundCredentialProvider:
     if _PROVIDER_INSTANCE is not None:
         return _PROVIDER_INSTANCE
 
-    if _DETECTED_PLATFORM is None:
+    platform = (
+        _DETECTED_PLATFORM if _DETECTED_PLATFORM is not None else _detect_platform()
+    )
+
+    if platform is None:
+        posture = resolve_posture()
+        if posture in (
+            DeploymentPosture.PRODUCTION,
+            DeploymentPosture.STAGING,
+        ) and not env_flag("CAGE_ALLOW_NULL_OUTBOUND_CREDENTIALS", False):
+            raise RuntimeError(
+                f"No cloud platform detected for outbound credential provider in "
+                f"{posture.value} posture (K_SERVICE, GKE Workload Identity, "
+                f"ECS_CONTAINER_METADATA_URI_V4, IDENTITY_ENDPOINT absent). "
+                f"Refusing to fall back to NullCredentialProvider."
+            )
         logger.info(
-            "No cloud platform detected (K_SERVICE, ECS_*, IDENTITY_ENDPOINT absent). "
-            "Using NullCredentialProvider for local development."
+            "No cloud platform detected (K_SERVICE, GKE Workload Identity, ECS_*, "
+            "IDENTITY_ENDPOINT absent). Using NullCredentialProvider for local development."
         )
         _PROVIDER_INSTANCE = NullCredentialProvider()
     else:
-        logger.info(
-            "Detected platform: %s. Loading credential provider.", _DETECTED_PLATFORM
-        )
-        _PROVIDER_INSTANCE = _load_provider(_DETECTED_PLATFORM)
+        logger.info("Detected platform: %s. Loading credential provider.", platform)
+        _PROVIDER_INSTANCE = _load_provider(platform)
 
     return _PROVIDER_INSTANCE

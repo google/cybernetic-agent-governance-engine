@@ -239,11 +239,18 @@ class TestOpaRouterFactory:
         )
         assert router({"safety_status": "APPROVED"}) == "trader"
 
-    def test_skipped_routes_to_approved_target(self):
-        router = create_opa_safety_router(
+    def test_skipped_routes_to_blocked_by_default_and_approved_when_opted_in(self):
+        default_router = create_opa_safety_router(
             approved_target="trader", blocked_target="planner"
         )
-        assert router({"safety_status": "SKIPPED"}) == "trader"
+        assert default_router({"safety_status": "SKIPPED"}) == "planner"
+
+        opt_in_router = create_opa_safety_router(
+            approved_target="trader",
+            blocked_target="planner",
+            allow_skipped=True,
+        )
+        assert opt_in_router({"safety_status": "SKIPPED"}) == "trader"
 
     def test_blocked_routes_to_blocked_target(self):
         router = create_opa_safety_router(
@@ -256,6 +263,23 @@ class TestOpaRouterFactory:
             approved_target="trader", blocked_target="planner"
         )
         assert router({"safety_status": "ESCALATED"}) == "planner"
+
+    @pytest.mark.asyncio
+    async def test_governance_deferred_routes_to_escalated_without_string_match(self):
+        from src.gateway.governance.governor.errors import GovernanceDeferred
+
+        config = _make_config()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
+        mock_gov.govern = AsyncMock(
+            side_effect=GovernanceDeferred(
+                "Human approval required",
+                defer_reason="HITL",
+                deferred_id="def-123",
+            )
+        )
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
+        assert result["safety_status"] == "ESCALATED"
 
     def test_custom_state_key(self):
         router = create_opa_safety_router(

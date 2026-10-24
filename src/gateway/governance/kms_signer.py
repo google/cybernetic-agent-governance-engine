@@ -749,22 +749,29 @@ class KMSGovernanceSigner:
             if provider and not provider.is_software_fallback:
                 try:
                     remote_pem = provider.get_public_key_pem()
-                    if public_key_pem.strip().replace(
-                        b"\n", b""
-                    ) != remote_pem.strip().replace(b"\n", b""):
-                        logger.error(
-                            "[%s] CRITICAL: Local PEM validation failed. Does not match Remote HSM Key!",
-                            provider.provider_name,
-                        )
-                    else:
-                        logger.info(
-                            "[%s] Local PEM successfully validated against HSM.",
-                            provider.provider_name,
-                        )
                 except Exception as exc:
                     logger.warning(
                         "[KMSSigner] Could not validate local PEM against remote HSM: %s",
                         exc,
+                    )
+                else:
+                    pub_local_bytes = (
+                        public_key_pem.strip().replace(b"\r", b"").replace(b"\n", b"")
+                    )
+                    pub_remote_bytes = (
+                        remote_pem.strip().replace(b"\r", b"").replace(b"\n", b"")
+                    )
+                    if pub_local_bytes != pub_remote_bytes:
+                        logger.error(
+                            "[%s] CRITICAL: Local PEM validation failed. Does not match Remote HSM Key!",
+                            provider.provider_name,
+                        )
+                        raise RuntimeError(
+                            "Local KMS_GOVERNANCE_PUBLIC_PEM does not match remote HSM public key"
+                        )
+                    logger.info(
+                        "[%s] Local PEM successfully validated against HSM.",
+                        provider.provider_name,
                     )
         elif provider:
             try:
@@ -1203,8 +1210,17 @@ class KMSGovernanceSigner:
             digest = hashlib.new(hash_alg_name.lower(), message).digest()
 
             if isinstance(public_key, ec.EllipticCurvePublicKey):
+                coord_size = (public_key.curve.key_size + 7) // 8
+                sig_to_verify = signature
+                if len(signature) == 2 * coord_size and (
+                    getattr(self._provider, "ecdsa_signature_encoding", "der") == "raw"
+                    or (len(signature) > 0 and signature[0] != 0x30)
+                ):
+                    r = int.from_bytes(signature[:coord_size], byteorder="big")
+                    s = int.from_bytes(signature[coord_size:], byteorder="big")
+                    sig_to_verify = asym_utils.encode_dss_signature(r, s)
                 public_key.verify(
-                    signature,
+                    sig_to_verify,
                     digest,
                     ec.ECDSA(asym_utils.Prehashed(hash_alg)),
                 )
@@ -1276,8 +1292,17 @@ class KMSGovernanceSigner:
             digest = hashlib.new(hash_alg_name.lower(), plan_bytes).digest()
 
             if isinstance(public_key, ec.EllipticCurvePublicKey):
+                coord_size = (public_key.curve.key_size + 7) // 8
+                sig_to_verify = signature_bytes
+                if len(signature_bytes) == 2 * coord_size and (
+                    getattr(self._provider, "ecdsa_signature_encoding", "der") == "raw"
+                    or (len(signature_bytes) > 0 and signature_bytes[0] != 0x30)
+                ):
+                    r = int.from_bytes(signature_bytes[:coord_size], byteorder="big")
+                    s = int.from_bytes(signature_bytes[coord_size:], byteorder="big")
+                    sig_to_verify = asym_utils.encode_dss_signature(r, s)
                 public_key.verify(
-                    signature_bytes,
+                    sig_to_verify,
                     digest,
                     ec.ECDSA(asym_utils.Prehashed(hash_alg)),
                 )

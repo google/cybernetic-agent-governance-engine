@@ -128,9 +128,13 @@ class ConsequenceGateway:
         ``EvidenceChainUnavailableError`` on a connected sink fails closed by
         downgrading the decision to ``BLOCK`` (``EVIDENCE_CHAIN_UNAVAILABLE``).
         """
+        from inspect import iscoroutinefunction
+
         from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
+            EvidenceStreamSink,
             get_evidence_sink,
+            is_evidence_chain_blocking,
         )
 
         event_type = (
@@ -151,9 +155,34 @@ class ConsequenceGateway:
             "ver": getattr(claims, "ver", None),
             "recomputed_digest": recomputed_digest,
         }
+        blocking_execute = (
+            evaluation.decision == ConsequenceDecision.EXECUTE
+            and is_evidence_chain_blocking()
+        )
         try:
             sink = get_evidence_sink()
-            await sink.ingest(event)
+            if blocking_execute:
+                if isinstance(sink, EvidenceStreamSink):
+                    if "ingest" in sink.__dict__ and "ingest_sync" not in sink.__dict__:
+                        res = await sink.ingest(event)
+                        if res is None:
+                            raise EvidenceChainUnavailableError(
+                                "Evidence stream ingest returned None"
+                            )
+                    elif sink._redis is not None or "ingest_sync" in sink.__dict__:
+                        await sink.ingest_sync(event)
+                    else:
+                        await sink.ingest(event)
+                elif iscoroutinefunction(getattr(sink, "ingest_sync", None)):
+                    await sink.ingest_sync(event)
+                else:
+                    res = await sink.ingest(event)
+                    if res is None:
+                        raise EvidenceChainUnavailableError(
+                            "Evidence stream ingest returned None"
+                        )
+            else:
+                await sink.ingest(event)
         except EvidenceChainUnavailableError as exc:
             logger.error(
                 "[ConsequenceGateway] Evidence stream unavailable on %s (%s): %s",
@@ -161,7 +190,7 @@ class ConsequenceGateway:
                 evaluation.reason_code,
                 exc,
             )
-            if evaluation.decision == ConsequenceDecision.EXECUTE:
+            if blocking_execute:
                 return ConsequenceEvaluation(
                     decision=ConsequenceDecision.BLOCK,
                     reason_code="EVIDENCE_CHAIN_UNAVAILABLE",
@@ -174,6 +203,12 @@ class ConsequenceGateway:
                 evaluation.reason_code,
                 exc,
             )
+            if blocking_execute:
+                return ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="EVIDENCE_CHAIN_UNAVAILABLE",
+                    detail=str(exc),
+                )
         return evaluation
 
     async def evaluate(

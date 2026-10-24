@@ -61,7 +61,7 @@ class NullColdStore(EvidenceColdStore):
         allow_nonblocking_prod = (
             os.environ.get("CAGE_ALLOW_NONBLOCKING_PROD", "false").lower() == "true"
         )
-        if cage_env == "prod" and not allow_nonblocking_prod:
+        if cage_env in ("prod", "production") and not allow_nonblocking_prod:
             raise RuntimeError(
                 "[NullColdStore] CAGE_ENV=prod requires durable cold storage. "
                 "Configure EVIDENCE_COLD_STORE (gcs or s3) and regional bucket. "

@@ -386,18 +386,36 @@ def _initialize_jwks_from_kms(jwks: JWKSet) -> None:
             try:
                 # Try multi-key method first
                 pem_dict = signer._provider.get_public_keys_pem()
+                if len(pem_dict) * 2 > jwks._max_keys:
+                    jwks._max_keys = len(pem_dict) * 2
                 for _key_id, pem_bytes in pem_dict.items():
-                    jwks.add_key(pem_bytes)
+                    if _key_id:
+                        jwks.add_key(pem_bytes, kid=_key_id)
+                    default_kid = _compute_kid(pem_bytes)
+                    if not _key_id or _key_id != default_kid:
+                        jwks.add_key(pem_bytes)
                 logger.info(
                     "✅ JWKSet initialized with %d key(s) from KMS", len(pem_dict)
                 )
             except AttributeError:
                 # Fallback to single-key method
                 pem_bytes = signer._provider.get_public_key_pem()
-                jwks.add_key(pem_bytes)
+                signer_kid = getattr(signer, "_key_version_name", "") or getattr(
+                    signer._provider, "key_id", ""
+                )
+                if signer_kid:
+                    jwks.add_key(pem_bytes, kid=signer_kid)
+                default_kid = _compute_kid(pem_bytes)
+                if not signer_kid or signer_kid != default_kid:
+                    jwks.add_key(pem_bytes)
                 logger.info("✅ JWKSet initialized with 1 key from KMS")
         elif signer._public_key_pem:
-            jwks.add_key(signer._public_key_pem)
+            signer_kid = getattr(signer, "_key_version_name", "")
+            if signer_kid:
+                jwks.add_key(signer._public_key_pem, kid=signer_kid)
+            default_kid = _compute_kid(signer._public_key_pem)
+            if not signer_kid or signer_kid != default_kid:
+                jwks.add_key(signer._public_key_pem)
             logger.info("✅ JWKSet initialized with 1 key from local PEM")
     except Exception as e:
         logger.error("❌ Failed to initialize JWKSet from KMS: %s", e)

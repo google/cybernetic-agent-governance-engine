@@ -288,15 +288,23 @@ class GovernanceEnvelopeBuilder:
         self._issuer = issuer or IssuerMetadata()
         self._ttl_s = ttl_s
 
+    @classmethod
+    def _sanitize_for_action_hash(cls, value: Any) -> Any:
+        """Recursively preserve JSON-native containers/scalars and stringify custom leaves."""
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        if isinstance(value, dict):
+            return {str(k): cls._sanitize_for_action_hash(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._sanitize_for_action_hash(item) for item in value]
+        return str(value)
+
     def _compute_action_hash(self, action: str, params: dict[str, Any]) -> str:
         """Compute the action hash from action name and parameters."""
         from src.gateway.governance.routing_seal import compute_action_hash
 
-        # Normalize params to safe types before nested canonicalization
-        safe_params = {
-            k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
-            for k, v in params.items()
-        }
+        # Normalize non-JSON-native leaves while preserving nested dicts/lists
+        safe_params = self._sanitize_for_action_hash(params)
         return f"sha256:{compute_action_hash(action, safe_params)}"
 
     def _get_policy_version(self) -> str:
@@ -509,11 +517,14 @@ class GovernanceEnvelopeBuilder:
     def verify(
         self,
         envelope: GovernanceEnvelope | dict[str, Any],
+        *,
+        verify_expiry: bool = True,
     ) -> bool:
         """Verify an envelope's signature.
 
         Args:
             envelope: The envelope to verify (GovernanceEnvelope or dict).
+            verify_expiry: Whether to reject expired envelopes (default True).
 
         Returns:
             True if signature is valid, False otherwise.
@@ -525,6 +536,29 @@ class GovernanceEnvelopeBuilder:
         if envelope.signature is None:
             logger.warning("⚠️ Envelope has no signature")
             return False
+
+        if verify_expiry and envelope.expires_at:
+            try:
+                raw_exp = envelope.expires_at
+                if raw_exp.endswith("Z"):
+                    raw_exp = raw_exp[:-1] + "+00:00"
+                exp_dt = datetime.fromisoformat(raw_exp)
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= exp_dt:
+                    logger.warning(
+                        "⚠️ Envelope expired at %s: id=%s",
+                        envelope.expires_at,
+                        envelope.envelope_id,
+                    )
+                    return False
+            except ValueError:
+                logger.warning(
+                    "⚠️ Envelope has invalid expires_at=%r: id=%s",
+                    envelope.expires_at,
+                    envelope.envelope_id,
+                )
+                return False
 
         try:
             import base64
@@ -550,6 +584,7 @@ class GovernanceEnvelopeBuilder:
 
             # Load the public key
             public_key = serialization.load_pem_public_key(pem)
+            alg = (envelope.signature.algorithm or "").strip().upper()
 
             # Decode signature
             sig_b64 = envelope.signature.value
@@ -562,8 +597,20 @@ class GovernanceEnvelopeBuilder:
             # Compute expected digest
             digest = envelope.compute_digest()
 
-            # Verify based on key type
+            # Verify based on key type and bind algorithm header
             if isinstance(public_key, ec.EllipticCurvePublicKey):
+                if alg not in {
+                    "ES256",
+                    "ES384",
+                    "ES512",
+                    "ECDSA_P256_SHA256",
+                    "ECDSA_P384_SHA384",
+                }:
+                    logger.warning(
+                        "⚠️ Envelope algorithm %r incompatible with EC public key",
+                        envelope.signature.algorithm,
+                    )
+                    return False
                 # Convert IEEE P1363 signature to DER if needed
                 key_size = (public_key.curve.key_size + 7) // 8
                 if len(signature_bytes) == key_size * 2:
@@ -578,10 +625,22 @@ class GovernanceEnvelopeBuilder:
                     ec.ECDSA(utils.Prehashed(hashes.SHA256())),
                 )
             elif isinstance(public_key, ed25519.Ed25519PublicKey):
+                if alg not in {"EDDSA", "ED25519"}:
+                    logger.warning(
+                        "⚠️ Envelope algorithm %r incompatible with Ed25519 public key",
+                        envelope.signature.algorithm,
+                    )
+                    return False
                 # Ed25519 uses message, not digest
                 canonical = envelope.to_canonical_bytes(include_signature=False)
                 public_key.verify(signature_bytes, canonical)
             elif isinstance(public_key, rsa.RSAPublicKey):
+                if alg not in {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"}:
+                    logger.warning(
+                        "⚠️ Envelope algorithm %r incompatible with RSA public key",
+                        envelope.signature.algorithm,
+                    )
+                    return False
                 # RSA
                 from cryptography.hazmat.primitives.asymmetric import (
                     padding as rsa_padding,

@@ -1839,3 +1839,61 @@ class TestFtraIntegration:
         assert "cage.ftra.sanitization_applied" in set_attr_calls
         assert "cage.ftra.confidence_at_analysis" in set_attr_calls
         assert "cage.ftra.config_source" in set_attr_calls
+
+    def test_ftra_empty_steps_confidence_normalization_and_defer_floor(self, tmp_path):
+        """Verify _run_ftra normalizes confidence (bool, None, NaN, clamping) and uses confidence_defer_floor."""
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+
+        registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
+        empty_plan = {
+            "plan_id": "empty-1",
+            "rationale": "No actions required",
+            "steps": [],
+        }
+
+        for bad_conf in (True, None, float("nan"), float("inf"), -0.5):
+            node = create_ftra_node(
+                config=FtraNodeConfig(
+                    registry_path=registry_path,
+                    confidence_extractor=lambda _s, c=bad_conf: c,  # type: ignore[return-value]
+                )
+            )
+            with patch(
+                "src.gateway.governance.ftra.node_factory._park_in_defer_queue",
+                return_value="defer-tok-1",
+            ):
+                res = asyncio.run(node({"execution_plan_output": empty_plan}))
+            assert res["ftra_status"] == "HITL_REQUIRED"
+            assert res["ftra_result"]["confidence_at_analysis"] == 0.0
+
+        # Clamping > 1.0 to 1.0 and respecting configured confidence_defer_floor
+        node_high = create_ftra_node(
+            config=FtraNodeConfig(
+                registry_path=registry_path,
+                confidence_extractor=lambda _s: 1.5,
+            )
+        )
+        res_high = asyncio.run(node_high({"execution_plan_output": empty_plan}))
+        assert res_high["ftra_status"] == "CLEAR"
+        assert res_high["ftra_result"]["confidence_at_analysis"] == 1.0
+
+        # Custom defer floor (0.85) rejects 0.75 confidence on EMPTY_STEPS
+        node_mid = create_ftra_node(
+            config=FtraNodeConfig(
+                registry_path=registry_path,
+                confidence_extractor=lambda _s: 0.75,
+            )
+        )
+        with (
+            patch(
+                "src.gateway.governance.schemas.thresholds.get_confidence_defer_floor",
+                return_value=0.85,
+            ),
+            patch(
+                "src.gateway.governance.ftra.node_factory._park_in_defer_queue",
+                return_value="defer-tok-2",
+            ),
+        ):
+            res_mid = asyncio.run(node_mid({"execution_plan_output": empty_plan}))
+        assert res_mid["ftra_status"] == "HITL_REQUIRED"

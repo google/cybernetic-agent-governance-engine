@@ -317,12 +317,20 @@ class TestGatewayEnforcementTransition:
         return [
             {
                 "role": "roles/iap.egressor",
-                "target": "*",
+                "target": "mcp.crm-service.internal",
                 "members": [_AGENT_PRINCIPAL],
                 "condition": {
                     "expression": 'resource.type == "networkservices" && destination.mcp.tool.name in ["lookup_customer"]'
                 },
-            }
+            },
+            {
+                "role": "roles/iap.egressor",
+                "target": "pubsub.googleapis.com",
+                "members": [_AGENT_PRINCIPAL],
+                "condition": {
+                    "expression": 'resource.type == "networkservices" && destination.mcp.tool.name in ["lookup_customer"]'
+                },
+            },
         ]
 
     async def _transition(self, **cer_kwargs):
@@ -367,7 +375,7 @@ class TestGatewayEnforcementTransition:
         bindings = [
             {
                 "role": "roles/iap.egressor",
-                "target": "*",
+                "target": "mcp.crm-service.internal",
                 "members": ["principal://agents.global.org-12345"],
                 "condition": {"expression": 'resource.type == "networkservices"'},
             }
@@ -384,6 +392,56 @@ class TestGatewayEnforcementTransition:
         assert res.transition_allowed is False
         assert res.effective_mode == "DRY_RUN"
         assert "rogue-exfil.external.io" in res.unregistered_targets
+
+    @pytest.mark.asyncio
+    async def test_blocks_transition_on_empty_discovered_targets_and_wildcard_binding(
+        self,
+    ):
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            upload_agp_policy,
+            verify_and_transition_gateway_mode,
+        )
+
+        catalog = self._build_valid_catalog()
+        empty_res = await verify_and_transition_gateway_mode(
+            gateway_id="cage-egress-gw-01",
+            discovered_targets=[],
+            catalog=catalog,
+            iap_bindings=self._valid_bindings(),
+            cer_artifacts=[{"skill_name": "s"}],
+            cer_verifier=_accepting_cer_verifier,
+        )
+        assert empty_res.transition_allowed is False
+        assert any(
+            "No discovered outbound targets provided" in r
+            for r in empty_res.blocking_reasons
+        )
+
+        wildcard_res = await verify_and_transition_gateway_mode(
+            gateway_id="cage-egress-gw-01",
+            discovered_targets=["mcp.crm-service.internal"],
+            catalog=catalog,
+            iap_bindings=[
+                {
+                    "role": "roles/iap.egressor",
+                    "target": "*",
+                    "members": [_AGENT_PRINCIPAL],
+                    "condition": {"expression": 'resource.type == "networkservices"'},
+                }
+            ],
+            cer_artifacts=[{"skill_name": "s"}],
+            cer_verifier=_accepting_cer_verifier,
+        )
+        assert wildcard_res.transition_allowed is False
+        assert "mcp.crm-service.internal" in wildcard_res.missing_iap_bindings
+
+        with pytest.raises(ValueError, match="invalid project segment"):
+            await upload_agp_policy(
+                policy_text="DENY: test policy",
+                project="../evil",
+                location="us-central1",
+                policy_id="pol-1",
+            )
 
     @pytest.mark.asyncio
     async def test_blocks_transition_on_missing_cel_and_refused_cer(self):

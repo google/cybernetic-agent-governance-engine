@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -83,6 +84,17 @@ if TYPE_CHECKING:
     from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
 logger = logging.getLogger("Gateway.Governance.FTRA.NodeFactory")
+
+
+def _normalize_ftra_confidence(confidence: Any) -> float:
+    """Return a finite float confidence score clamped to [0.0, 1.0], defaulting to 0.0."""
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return 0.0
+    val = float(confidence)
+    if not math.isfinite(val):
+        return 0.0
+    return max(0.0, min(1.0, val))
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -184,6 +196,16 @@ def create_ftra_node(
     from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
     from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer
     from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+    from src.gateway.governance.schemas import thresholds as _thresholds_mod
+
+    if not hasattr(PlanGraphAnalyzer, "_normalize_confidence"):
+        PlanGraphAnalyzer._normalize_confidence = staticmethod(  # type: ignore[attr-defined]
+            _normalize_ftra_confidence
+        )
+    if not hasattr(PlanGraphAnalyzer, "confidence_defer_floor"):
+        PlanGraphAnalyzer.confidence_defer_floor = property(  # type: ignore[attr-defined]
+            lambda _self: _thresholds_mod.get_confidence_defer_floor()
+        )
 
     # Determine config source for telemetry
     if config is not None:
@@ -288,7 +310,18 @@ async def _run_ftra(
     """
     from opentelemetry import trace
 
+    from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer
     from src.gateway.governance.ftra.models import ExecutionPlan, FTRAVerdict
+    from src.gateway.governance.schemas import thresholds as _thresholds_mod
+
+    if not hasattr(PlanGraphAnalyzer, "_normalize_confidence"):
+        PlanGraphAnalyzer._normalize_confidence = staticmethod(  # type: ignore[attr-defined]
+            _normalize_ftra_confidence
+        )
+    if not hasattr(PlanGraphAnalyzer, "confidence_defer_floor"):
+        PlanGraphAnalyzer.confidence_defer_floor = property(  # type: ignore[attr-defined]
+            lambda _self: _thresholds_mod.get_confidence_defer_floor()
+        )
 
     tracer = trace.get_tracer("cage.ftra")
 
@@ -324,7 +357,16 @@ async def _run_ftra(
     # ----------------------------------------------------------------
     # 2. Extract evaluator confidence using configured extractor
     # ----------------------------------------------------------------
-    confidence: float = confidence_extractor(state)
+    raw_confidence = confidence_extractor(state)
+    confidence: float = _normalize_ftra_confidence(
+        PlanGraphAnalyzer._normalize_confidence(raw_confidence)  # type: ignore[attr-defined]
+    )
+    raw_floor = getattr(analyzer, "confidence_defer_floor", None)
+    defer_floor: float = (
+        float(raw_floor)
+        if isinstance(raw_floor, (int, float)) and not isinstance(raw_floor, bool)
+        else _thresholds_mod.get_confidence_defer_floor()
+    )
 
     # ----------------------------------------------------------------
     # 3. Handle parse failures based on failure class
@@ -410,7 +452,7 @@ async def _run_ftra(
         # Handle EMPTY_STEPS with high confidence → ALLOW
         # Per spec: empty plan is a valid choice
         if parse_result.failure_class == ParseFailureClass.EMPTY_STEPS:
-            if confidence >= 0.70:
+            if confidence >= defer_floor:
                 logger.info(
                     "FTRA: empty plan with high confidence (%.2f) — ALLOW (empty plan is valid choice).",
                     confidence,
@@ -535,7 +577,7 @@ async def _run_ftra(
         "FTRA: plan '%s' BLOCKED (confidence=%.3f < %.2f, reachable_terminals=%s).",
         plan.plan_id,
         confidence,
-        0.70,
+        defer_floor,
         result.reachable_terminals,
     )
     return {

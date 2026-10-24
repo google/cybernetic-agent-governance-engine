@@ -61,6 +61,55 @@ DEBITS_BY_TIME_KEY = "cbf:debits:by_time"
 DEBITS_PENDING_KEY = "cbf:debits:pending"
 DEBITS_TOTAL_KEY = "cbf:debits:total"
 DEBITS_ROLLED_BACK_KEY = "cbf:debits:rolled_back"
+DEFAULT_DEBIT_TTL_SECONDS = 86400
+_LEGACY_DEFAULT_INVARIANT_ID = "finance.cash_balance"
+
+
+class DebitLedger:
+    """Per-invariant Redis debit ledger namespace and key registry."""
+
+    DEBITS_KEY = DEBITS_KEY
+    DEBITS_BY_TIME_KEY = DEBITS_BY_TIME_KEY
+    DEBITS_PENDING_KEY = DEBITS_PENDING_KEY
+    DEBITS_TOTAL_KEY = DEBITS_TOTAL_KEY
+    DEBITS_ROLLED_BACK_KEY = DEBITS_ROLLED_BACK_KEY
+
+    def __init__(
+        self,
+        redis_client: Any = None,
+        ttl_seconds: int = DEFAULT_DEBIT_TTL_SECONDS,
+        namespace: str | None = None,
+    ) -> None:
+        self.redis_client = redis_client
+        self.ttl_seconds = ttl_seconds
+        clean_ns = (namespace or "").strip()
+        self.namespace: str | None = (
+            clean_ns if clean_ns and clean_ns != _LEGACY_DEFAULT_INVARIANT_ID else None
+        )
+        if self.namespace is not None:
+            suffix = f":{self.namespace}"
+            self.DEBITS_KEY = f"{DEBITS_KEY}{suffix}"
+            self.DEBITS_BY_TIME_KEY = f"{DEBITS_BY_TIME_KEY}{suffix}"
+            self.DEBITS_PENDING_KEY = f"{DEBITS_PENDING_KEY}{suffix}"
+            self.DEBITS_TOTAL_KEY = f"{DEBITS_TOTAL_KEY}{suffix}"
+            self.DEBITS_ROLLED_BACK_KEY = f"{DEBITS_ROLLED_BACK_KEY}{suffix}"
+        else:
+            self.DEBITS_KEY = DEBITS_KEY
+            self.DEBITS_BY_TIME_KEY = DEBITS_BY_TIME_KEY
+            self.DEBITS_PENDING_KEY = DEBITS_PENDING_KEY
+            self.DEBITS_TOTAL_KEY = DEBITS_TOTAL_KEY
+            self.DEBITS_ROLLED_BACK_KEY = DEBITS_ROLLED_BACK_KEY
+
+    def settle_keys(self) -> list[str]:
+        """Return the 5-key list expected by ``LUA_SETTLE_DEBITS``."""
+        return [
+            self.DEBITS_KEY,
+            self.DEBITS_BY_TIME_KEY,
+            self.DEBITS_TOTAL_KEY,
+            self.DEBITS_ROLLED_BACK_KEY,
+            self.DEBITS_PENDING_KEY,
+        ]
+
 
 LUA_SETTLE_DEBITS: str = """
 -- Settle confirmed debits stamped at or before ARGV[1] and re-derive the total.
@@ -239,14 +288,8 @@ def _settled_count(res: Any, cutoff: float) -> int:
     return settled
 
 
-def _settle_keys() -> list[str]:
-    return [
-        DEBITS_KEY,
-        DEBITS_BY_TIME_KEY,
-        DEBITS_TOTAL_KEY,
-        DEBITS_ROLLED_BACK_KEY,
-        DEBITS_PENDING_KEY,
-    ]
+def _settle_keys(namespace: str | None = None) -> list[str]:
+    return DebitLedger(namespace=namespace).settle_keys()
 
 
 def settle_debits_sync(
@@ -255,6 +298,7 @@ def settle_debits_sync(
     *,
     orphan_before: float | None = None,
     now: float | None = None,
+    namespace: str | None = None,
 ) -> int:
     """Prune confirmed debits stamped at or before ``cutoff``; return how many settled.
 
@@ -264,7 +308,7 @@ def settle_debits_sync(
     if client is None or cutoff is None or not math.isfinite(cutoff):
         return 0
     raw_client = _unwrap_sync(client)
-    keys = _settle_keys()
+    keys = _settle_keys(namespace)
     try:
         res = raw_client.eval(
             LUA_SETTLE_DEBITS,
@@ -284,11 +328,12 @@ async def settle_debits(
     *,
     orphan_before: float | None = None,
     now: float | None = None,
+    namespace: str | None = None,
 ) -> int:
     """Async variant of :func:`settle_debits_sync` for in-process callers."""
     if client is None or cutoff is None or not math.isfinite(cutoff):
         return 0
-    keys = _settle_keys()
+    keys = _settle_keys(namespace)
     try:
         res = client.eval(
             LUA_SETTLE_DEBITS,
@@ -305,7 +350,11 @@ async def settle_debits(
 
 
 async def confirm_debit(
-    client: Any, debit_id: str, *, now: float | None = None
+    client: Any,
+    debit_id: str,
+    *,
+    now: float | None = None,
+    namespace: str | None = None,
 ) -> bool:
     """Mark ``debit_id`` executed: move it from pending to confirmed at ``now``.
 
@@ -314,13 +363,14 @@ async def confirm_debit(
     the governor reports a failed confirm as ``CONFIRM_FAILED``, and the entry
     stays pending, which only withholds headroom.
     """
+    ledger = DebitLedger(namespace=namespace)
     stamp = now if now is not None else time.time()
     res = client.eval(
         LUA_CONFIRM_DEBIT,
         3,
-        DEBITS_KEY,
-        DEBITS_BY_TIME_KEY,
-        DEBITS_PENDING_KEY,
+        ledger.DEBITS_KEY,
+        ledger.DEBITS_BY_TIME_KEY,
+        ledger.DEBITS_PENDING_KEY,
         debit_id,
         repr(float(stamp)),
     )
@@ -329,18 +379,21 @@ async def confirm_debit(
     return bool(int(res or 0))
 
 
-def unsettled_total_sync(client: Any, cutoff: float) -> float:
+def unsettled_total_sync(
+    client: Any, cutoff: float, *, namespace: str | None = None
+) -> float:
     """Pending debits plus confirmed ones stamped after ``cutoff`` (daemon-side read)."""
     if client is None or cutoff is None or not math.isfinite(cutoff):
         return 0.0
+    ledger = DebitLedger(namespace=namespace)
     raw_client = _unwrap_sync(client)
     try:
         res = raw_client.eval(
             LUA_UNSETTLED_TOTAL,
             3,
-            DEBITS_KEY,
-            DEBITS_BY_TIME_KEY,
-            DEBITS_PENDING_KEY,
+            ledger.DEBITS_KEY,
+            ledger.DEBITS_BY_TIME_KEY,
+            ledger.DEBITS_PENDING_KEY,
             repr(float(cutoff)),
         )
         return _coerce_float(res)
@@ -349,24 +402,30 @@ def unsettled_total_sync(client: Any, cutoff: float) -> float:
         return 0.0
 
 
-def outstanding_debits_total_sync(client: Any) -> float:
+def outstanding_debits_total_sync(
+    client: Any, *, namespace: str | None = None
+) -> float:
     """Current value of ``cbf:debits:total`` (0.0 when absent)."""
     if client is None:
         return 0.0
+    ledger = DebitLedger(namespace=namespace)
     raw_client = _unwrap_sync(client)
     try:
-        return _coerce_float(raw_client.get(DEBITS_TOTAL_KEY))
+        return _coerce_float(raw_client.get(ledger.DEBITS_TOTAL_KEY))
     except Exception as exc:
         logger.warning("Failed to read outstanding debit total: %s", exc)
         return 0.0
 
 
-async def outstanding_debits_total(client: Any) -> float:
+async def outstanding_debits_total(
+    client: Any, *, namespace: str | None = None
+) -> float:
     """Async read of ``cbf:debits:total`` (0.0 when absent)."""
     if client is None:
         return 0.0
+    ledger = DebitLedger(namespace=namespace)
     try:
-        res = client.get(DEBITS_TOTAL_KEY)
+        res = client.get(ledger.DEBITS_TOTAL_KEY)
         if inspect.isawaitable(res):
             res = await res
         return _coerce_float(res)
@@ -381,9 +440,11 @@ __all__ = [
     "DEBITS_PENDING_KEY",
     "DEBITS_ROLLED_BACK_KEY",
     "DEBITS_TOTAL_KEY",
+    "DEFAULT_DEBIT_TTL_SECONDS",
     "LUA_CONFIRM_DEBIT",
     "LUA_SETTLE_DEBITS",
     "LUA_UNSETTLED_TOTAL",
+    "DebitLedger",
     "confirm_debit",
     "outstanding_debits_total",
     "outstanding_debits_total_sync",

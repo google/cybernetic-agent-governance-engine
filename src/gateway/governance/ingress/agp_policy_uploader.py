@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,6 +69,25 @@ _AGP_CHAR_BUDGET = 5_000
 
 # AGP API base URL (Vertex AI Agent Platform)
 _AGP_API_BASE = "https://{location}-aiplatform.googleapis.com/v1beta1"
+
+_SAFE_RESOURCE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+_UNSAFE_SEGMENT_CHARS_RE = re.compile(r"[/\\?#%@]|(\.\.)|\s")
+
+
+def _validate_resource_segment(value: str, field_name: str) -> str:
+    """Validate a GCP resource identifier segment against URL/path injection."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or _UNSAFE_SEGMENT_CHARS_RE.search(value)
+        or not _SAFE_RESOURCE_SEGMENT_RE.match(value)
+    ):
+        raise ValueError(
+            f"AGPPolicyUploader: invalid {field_name} segment {value!r}; "
+            "must match ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ with no path/URL metacharacters."
+        )
+    return value
+
 
 CerArtifactVerifier = Callable[[Mapping[str, Any]], Awaitable[tuple[bool, str]]]
 """Async seam that cryptographically verifies one skill ``.cer`` artifact.
@@ -130,20 +150,23 @@ async def verify_and_transition_gateway_mode(
     require_cel_conditions: bool = True,
     cer_artifacts: Sequence[Mapping[str, Any]] | None = None,
     cer_verifier: CerArtifactVerifier | None = None,
+    allow_empty_targets: bool = False,
 ) -> GatewayEnforcementTransitionResult:
     """Gate the GEAP 4-step ``DRY_RUN`` -> ``ENFORCED`` Agent Gateway transition.
 
     Enforces three fail-closed preconditions before flipping a GEAP Agent
     Gateway from observation (``DRY_RUN``) to active blocking (``ENFORCED``):
 
-      1. **Registry Coverage**: Every target in ``discovered_targets`` (from
-         Cloud Logging ``gapi.core.services`` / MCP egress logs) must match a
-         registered MCP server, endpoint destination URL/ID, or agent in
+      1. **Registry Coverage**: ``discovered_targets`` must be non-empty (unless
+         ``allow_empty_targets=True``), and every target in ``discovered_targets``
+         (from Cloud Logging ``gapi.core.services`` / MCP egress logs) must match
+         a registered MCP server, endpoint destination URL/ID, or agent in
          ``catalog``.
       2. **IAM + CEL Egress Binding**: Every discovered target must have an
-         explicit ``roles/iap.egressor`` binding in ``iap_bindings`` with at
-         least one ``principal://`` or ``principalSet://`` member and (when
-         ``require_cel_conditions=True``) a non-empty CEL ``condition.expression``.
+         explicit per-target ``roles/iap.egressor`` binding in ``iap_bindings``
+         (wildcard ``*`` targets are rejected) with at least one ``principal://``
+         or ``principalSet://`` member and (when ``require_cel_conditions=True``)
+         a non-empty CEL ``condition.expression``.
       3. **Skill Certification (``.cer``)**: a ``cer_verifier`` must be
          supplied, at least one ``cer_artifacts`` entry must be provided, and
          every artifact must pass the verifier. A missing verifier, a missing
@@ -155,6 +178,11 @@ async def verify_and_transition_gateway_mode(
     if not catalog.is_valid:
         blocking_reasons.append(
             f"RegistryCatalog is invalid or empty (error={catalog.error!r})."
+        )
+
+    if not discovered_targets and not allow_empty_targets:
+        blocking_reasons.append(
+            "No discovered outbound targets provided; cannot verify registry or IAP egress coverage."
         )
 
     # Collect all registered identifiers and exact parsed hostnames/URLs from the catalog
@@ -227,9 +255,9 @@ async def verify_and_transition_gateway_mode(
             b_target = str(
                 binding.get("target") or binding.get("resource") or ""
             ).strip()
-            if not b_target:
+            if not b_target or b_target == "*":
                 continue
-            if b_target != "*" and b_target != target:
+            if b_target != target:
                 b_host = _extract_host(b_target)
                 if not (target_host and b_host and target_host == b_host):
                     continue
@@ -414,6 +442,13 @@ def upload_agp_policy(
         "GOOGLE_CLOUD_LOCATION", "us-central1"
     )
     effective_policy_id = policy_id or os.environ.get("CAGE_AGP_POLICY_ID")
+
+    effective_project = _validate_resource_segment(effective_project, "project")
+    effective_location = _validate_resource_segment(effective_location, "location")
+    if effective_policy_id:
+        effective_policy_id = _validate_resource_segment(
+            effective_policy_id, "policy_id"
+        )
 
     if dry_run:
         logger.info(

@@ -275,5 +275,17 @@ class TestCBRNKeywordCoverage:
         missing = [t for t in self.EXPECTED_TERMS if t not in loaded]
         assert not missing, f"Missing CBRN terms from tier1_keywords_cbrn: {missing}"
 
+    def test_nfkc_and_zero_width_normalization(self):
+        """Fullwidth and zero-width characters do not bypass Aho-Corasick scans."""
+        from src.gateway.governance.text_filter import (
+            _load_tier1_keywords,
+            ac_keyword_scan,
+        )
+
+        assert ac_cbrn_keyword_scan("sarin\u200b \uff50roduction") is True
+        tier1_kw = _load_tier1_keywords()[0]
+        obfuscated = tier1_kw[:2] + "\u200b" + tier1_kw[2:]
+        assert ac_keyword_scan(obfuscated) is True
+
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

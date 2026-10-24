@@ -334,3 +334,33 @@ def test_get_worm_bucket_regional_routing(uca_logger):
     ):
         bucket = uca_logger._get_worm_bucket()
         assert bucket == "us-worm-bucket"
+
+
+@pytest.mark.asyncio
+@pytest.mark.local
+async def test_sign_record_resolves_kms_key_id_attributes(uca_logger):
+    from unittest.mock import AsyncMock, MagicMock
+
+    signer = MagicMock(spec=["sign_async", "key_id"])
+    signer.sign_async = AsyncMock(return_value="deadbeef")
+    signer.key_id = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
+
+    uca_logger._signer = signer
+    uca_logger._test_mode = False
+    record = {"uca_id": "UCA-FIN-001", "action": "transfer_funds"}
+    await uca_logger._sign_record(record)
+    assert record["cryptographic_signature"] == "deadbeef"
+    assert (
+        record["signing_key_id"]
+        == "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
+    )
+
+    signer_v2 = MagicMock(spec=["sign_async", "_key_version_name"])
+    signer_v2.sign_async = AsyncMock(return_value="cafebabe")
+    signer_v2._key_version_name = "arn:aws:kms:us-east-1:111122223333:key/abc"
+
+    uca_logger._signer = signer_v2
+    record_v2 = {"uca_id": "UCA-FIN-002", "action": "transfer_funds"}
+    await uca_logger._sign_record(record_v2)
+    assert record_v2["cryptographic_signature"] == "cafebabe"
+    assert record_v2["signing_key_id"] == "arn:aws:kms:us-east-1:111122223333:key/abc"

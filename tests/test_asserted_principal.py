@@ -363,15 +363,16 @@ class TestAuthenticatedPrincipalBinding:
         priv, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
         monkeypatch.setenv("CAGE_ADVISOR_RUNTIME", "geap")
 
         token = _mint_user_jwt(priv, sub="user:alice@example.com")
         resp = client.post(
             "/agent/query",
-            json={"prompt": "Rebalance my portfolio", "user_id": "user:alice@example.com"},
+            json={
+                "prompt": "Rebalance my portfolio",
+                "user_id": "user:alice@example.com",
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
@@ -423,13 +424,13 @@ class TestAuthenticatedPrincipalBinding:
     ) -> None:
         """Out-of-band RSA JWK entry in CAGE_USER_OIDC_JWKS_JSON verifies RS256 user tokens."""
         rsa_priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        jwk_dict = json.loads(pyjwt.algorithms.RSAAlgorithm.to_jwk(rsa_priv.public_key()))
+        jwk_dict = json.loads(
+            pyjwt.algorithms.RSAAlgorithm.to_jwk(rsa_priv.public_key())
+        )
         jwk_dict["kid"] = "rsa-key-01"
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({"keys": [jwk_dict]})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({"keys": [jwk_dict]}))
 
         token = _mint_user_jwt(
             rsa_priv,
@@ -456,9 +457,7 @@ class TestAuthenticatedPrincipalBinding:
         priv, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
 
         token = _mint_user_jwt(priv, sub="user:alice@example.com")
         resp = client.post(
@@ -483,9 +482,7 @@ class TestAuthenticatedPrincipalBinding:
         priv, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
 
         token = _mint_user_jwt(priv, kid="unknown-kid")
         resp = client.post(
@@ -508,9 +505,7 @@ class TestAuthenticatedPrincipalBinding:
         priv, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
 
         token = _mint_user_jwt(
             priv, extra_headers={embedded_field: "https://attacker.example/jwks.json"}
@@ -533,9 +528,7 @@ class TestAuthenticatedPrincipalBinding:
         priv, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
 
         expired = _mint_user_jwt(priv, exp_offset=-60)
         resp_exp = client.post(
@@ -564,9 +557,7 @@ class TestAuthenticatedPrincipalBinding:
         client, graph = query_client
         _, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
 
         resp = client.post(
             "/agent/query",
@@ -603,9 +594,7 @@ class TestAuthenticatedPrincipalBinding:
         client, graph = query_client
         _, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
         monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", "true")
 
         resp = client.post(
@@ -659,9 +648,7 @@ class TestQuerySpanMarksPrincipalVerification:
         priv, pub_pem = ed25519_keypair
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
-        monkeypatch.setenv(
-            "CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem})
-        )
+        monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
         token = _mint_user_jwt(priv, sub="user:alice@example.com")
 
         exporter = InMemorySpanExporter()

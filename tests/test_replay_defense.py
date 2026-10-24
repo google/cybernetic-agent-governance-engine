@@ -315,7 +315,7 @@ class TestReconciliationSequenceIntegration:
         mock_redis.incr.assert_called_once_with("reconciliation:sequence:latest")
 
     def test_reconcile_skips_sequence_when_disabled(self) -> None:
-        """Verify reconcile() does not stamp sequence when feature flag is disabled."""
+        """Verify reconcile() does not call Redis INCR and preserves provider sequence when disabled."""
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.gateway.governance.reconciliation.daemon import (
             ExternalLedgerReconciler,
@@ -337,8 +337,37 @@ class TestReconciliationSequenceIntegration:
         ):
             result = reconciler.reconcile()
 
-        assert result.sequence == 0
+        assert result.sequence == 1
         mock_redis.incr.assert_not_called()
+
+    def test_reconcile_fails_closed_when_sequence_incr_raises(self) -> None:
+        """Verify reconcile() fails closed when Redis INCR for sequence raises an exception."""
+        from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
+        from src.gateway.governance.reconciliation.daemon import (
+            ExternalLedgerReconciler,
+        )
+
+        mock_redis = MagicMock()
+        mock_redis.incr.side_effect = RuntimeError("redis sequence incr error")
+        mock_pipe = MagicMock()
+        mock_redis.pipeline.return_value = mock_pipe
+
+        reconciler = ExternalLedgerReconciler(
+            provider=SimulatedCashLedgerProvider(),
+            redis_client=mock_redis,
+            account_id="test",
+        )
+
+        with patch(
+            "src.gateway.governance.reconciliation.daemon.REPLAY_DEFENSE_ENABLED", True
+        ):
+            result = reconciler.reconcile()
+
+        assert result.is_valid is False
+        assert result.error is not None
+        assert "Failed to increment sequence counter" in result.error
+        assert reconciler.failure_count == 1
+        mock_pipe.setex.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

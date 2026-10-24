@@ -805,5 +805,78 @@ class TestTriIdentityUserVerified:
         assert decision.tri_identity.user_id == "user:asserted@example.com"
         assert decision.tri_identity.user_verified is False
         governed_params = governor.validate_action.call_args.args[1]
-        assert governed_params["_tri_identity"]["id1_user"] == "user:asserted@example.com"
+        assert (
+            governed_params["_tri_identity"]["id1_user"] == "user:asserted@example.com"
+        )
         assert governed_params["_tri_identity"]["id1_user_verified"] is False
+
+    async def test_request_authz_require_approval_and_seal_reuse_and_narrowed_params(
+        self, geap_adapter
+    ):
+        """evaluate_request_authz preserves REQUIRE_APPROVAL, reuses governor seal, and mints over narrowed_params."""
+        adapter, priv = geap_adapter
+        token = _geap_token(priv, act_sub="user:alice@example.com")
+
+        # 1. REQUIRE_APPROVAL is preserved (not collapsed to DENY)
+        gov_defer = AsyncMock()
+        gov_defer.validate_action.return_value = {
+            "allowed": False,
+            "decision": "REQUIRE_APPROVAL",
+            "reason": "Escalated to HITL queue",
+        }
+        defer_decision = await adapter.evaluate_request_authz(
+            _tools_call(token), governor=gov_defer
+        )
+        assert defer_decision.allowed is False
+        assert defer_decision.http_status == 403
+        assert defer_decision.decision == "REQUIRE_APPROVAL"
+        assert "X-CAGE-Routing-Seal" not in defer_decision.headers_to_inject
+
+        # 2. Governor-minted seal is reused without calling generate_seal again
+        gov_with_seal = AsyncMock()
+        gov_with_seal.validate_action.return_value = {
+            "allowed": True,
+            "decision": "ALLOW",
+            "seal": "pre-minted-governor-seal",
+        }
+        with patch(
+            "src.gateway.governance.ingress.agw_adapter.generate_seal",
+            side_effect=AssertionError("generate_seal should not be called"),
+        ):
+            reused = await adapter.evaluate_request_authz(
+                _tools_call(token), governor=gov_with_seal
+            )
+        assert reused.allowed is True
+        assert (
+            reused.headers_to_inject["X-CAGE-Routing-Seal"]
+            == "pre-minted-governor-seal"
+        )
+
+        # 3. When governor returns narrowed_params without a seal, seal is minted over narrowed_params
+        gov_narrowed = AsyncMock()
+        gov_narrowed.validate_action.return_value = {
+            "allowed": True,
+            "decision": "ALLOW",
+            "narrowed_params": {"portfolio_id": "pf-516", "max_slippage": 0.01},
+        }
+        captured_seal_args = {}
+
+        async def _capture_minter(action_name, params, record_hash=None):
+            captured_seal_args["action_name"] = action_name
+            captured_seal_args["params"] = params
+            return "narrowed.seal.token"
+
+        narrowed_decision = await adapter.evaluate_request_authz(
+            _tools_call(token),
+            governor=gov_narrowed,
+            seal_minter=_capture_minter,
+        )
+        assert narrowed_decision.allowed is True
+        assert (
+            narrowed_decision.headers_to_inject["X-CAGE-Routing-Seal"]
+            == "narrowed.seal.token"
+        )
+        assert captured_seal_args["params"] == {
+            "portfolio_id": "pf-516",
+            "max_slippage": 0.01,
+        }

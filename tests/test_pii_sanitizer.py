@@ -361,3 +361,41 @@ def test_sanitize_dict_recurses_into_nested_lists(sanitizer: PIISanitizer) -> No
     assert "123-45-6789" not in flat
     assert "555-0134" not in flat
     assert result["rows"][0][0] == "contact"
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_jws_followed_by_period_or_slash_redacted(sanitizer: PIISanitizer) -> None:
+    """A compact JWS immediately followed by '.' or '/' is still redacted."""
+    fake_jws = (
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImRldi1rZXktMDEifQ."
+        "eyJzdWIiOiJhY3RvcjoxMjMiLCJ0aWQiOiJ0aHJlYWQ6NDU2IiwicmVjIjoicmVjOmFiYzEyMyIsImFjdCI6InNoYTI1NjphYmNkZWYxMjM0NTYiLCJ2ZXIiOm51bGwsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMDYwLCJqdGkiOiJyZWM6YWJjMTIzIn0."
+        "cGFkZGVkX2Zha2Vfc2lnbmF0dXJlX2Jhc2U2NHVybF9lbmNvZGVkX3BsYWNlaG9sZGVyX25vdF9yZWFsX2NyeXB0b19kYXRhX2p1c3RfYV90ZXN0X2ZpeHR1cmVfZm9yX3JlZ2V4X21hdGNoaW5n"
+    )
+    assert "[REDACTED_JWS]." in sanitizer.sanitize(f"Token: {fake_jws}.")
+    assert "[REDACTED_JWS]/callback" in sanitizer.sanitize(
+        f"https://example.com/{fake_jws}/callback"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_sanitize_dict_recurses_into_tuples_and_mappings(
+    sanitizer: PIISanitizer,
+) -> None:
+    """Tuples and read-only MappingProxyType containers are recursively sanitized."""
+    from types import MappingProxyType
+
+    data = {
+        "tuple_field": ("jane.doe@example.com", ("123-45-6789",)),
+        "mapping_field": MappingProxyType(
+            {"email": "john.doe@example.com", "token": "secret-jwt"}
+        ),
+    }
+    result = sanitizer.sanitize_dict(data)
+    assert isinstance(result["tuple_field"], tuple)
+    assert result["tuple_field"] == ("[REDACTED_EMAIL]", ("[REDACTED_SSN]",))
+    assert result["mapping_field"] == {
+        "email": "[REDACTED_EMAIL]",
+        "token": "[REDACTED_TOKEN]",
+    }

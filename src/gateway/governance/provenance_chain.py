@@ -128,12 +128,24 @@ class ProvenanceRecord:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_for_jcs(value: object) -> object:
+    """Recursively normalize a structure for RFC 8785 JCS canonicalization."""
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _normalize_for_jcs(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_for_jcs(item) for item in value]
+    return str(value)
+
+
 def compute_hash(data: dict) -> str:
     """Return the SHA-256 hex digest of the RFC 8785 canonical JSON-serialised dict.
 
     Uses RFC 8785 JSON Canonicalization Scheme (JCS) to guarantee cross-language
     and cross-platform byte determinism (AI 600-1 §2.7 information integrity).
-    Non-serialisable values are coerced to strings.
+    Non-serialisable leaf values are coerced to strings while preserving nested
+    dict and list structure.
 
     Args:
         data: A dict to hash.
@@ -141,10 +153,7 @@ def compute_hash(data: dict) -> str:
     Returns:
         A 64-character lowercase hex string (SHA-256 digest).
     """
-    safe = {
-        k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
-        for k, v in data.items()
-    }
+    safe = _normalize_for_jcs(data)
     canonical_bytes = jcs_canonicalize_plan(safe)
     return hashlib.sha256(canonical_bytes).hexdigest()
 

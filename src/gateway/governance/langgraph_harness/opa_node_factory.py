@@ -34,7 +34,8 @@ from typing import Any
 
 from opentelemetry import trace
 
-from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
+from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
+from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
 from src.gateway.observability.attributes import (
@@ -46,6 +47,54 @@ from src.gateway.observability.attributes import (
 
 logger = logging.getLogger("gateway.governance.langgraph_harness.opa_node_factory")
 tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.opa_node_factory")
+
+_ESCALATED_VERDICTS = frozenset(
+    {"ESCALATED", "DEFER", "REQUIRE_APPROVAL", "MANUAL_REVIEW", "CONSENSUS_ESCALATED"}
+)
+
+
+def _is_escalated_governance_error(exc: GovernanceError) -> bool:
+    """Return True if ``exc`` represents an escalation / human-review deferral.
+
+    Checks structured exception attributes and payload metadata first, falling
+    back to message substring matching only for legacy callers.
+    """
+    if isinstance(exc, GovernanceDeferred):
+        return True
+    for attr in ("verdict", "decision", "status"):
+        val = getattr(exc, attr, None)
+        if val is not None:
+            norm = str(getattr(val, "value", val)).upper()
+            if norm in _ESCALATED_VERDICTS:
+                return True
+    if isinstance(getattr(exc, "payload", None), dict):
+        for key in ("decision", "verdict", "status", "outcome"):
+            val = exc.payload.get(key)
+            if (
+                val is not None
+                and str(getattr(val, "value", val)).upper() in _ESCALATED_VERDICTS
+            ):
+                return True
+        if exc.payload.get("escalated") or exc.payload.get("require_approval"):
+            return True
+    receipt = getattr(exc, "receipt", None)
+    if receipt is not None:
+        r_verdict = getattr(receipt, "verdict", None) or getattr(
+            receipt, "decision", None
+        )
+        if (
+            r_verdict is not None
+            and str(getattr(r_verdict, "value", r_verdict)).upper()
+            in _ESCALATED_VERDICTS
+        ):
+            return True
+    msg = str(exc)
+    return (
+        "Manual Review" in msg
+        or "Consensus Escalation" in msg
+        or "CONSENSUS_ESCALATED" in msg
+        or "escalating for human review" in msg
+    )
 
 
 def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) -> None:
@@ -81,8 +130,8 @@ def create_opa_safety_node(
     Governance decisions:
         - **SKIPPED** — ``config.plan_state_key`` is absent/empty in state.
         - **APPROVED** — ``govern()`` succeeded (no exception).
-        - **ESCALATED** — ``GovernanceError`` with "Manual Review" or
-          "Consensus Escalation" in the message.
+        - **ESCALATED** — ``GovernanceError`` carrying a structured escalation/defer
+          verdict or escalation message.
         - **BLOCKED** — ``GovernanceError`` (other) or any unexpected exception
           (fail-closed).
 
@@ -163,12 +212,7 @@ def create_opa_safety_node(
                 span.set_attribute("governance.reason", msg)
                 span.set_attribute(OBSERVATION_OUTPUT, msg)
 
-                if (
-                    "Manual Review" in msg
-                    or "Consensus Escalation" in msg
-                    or "CONSENSUS_ESCALATED" in msg
-                    or "escalating for human review" in msg
-                ):
+                if _is_escalated_governance_error(exc):
                     logger.warning(
                         "⚠️ Safety Check ESCALATED: %s — %s",
                         opa_input.get("action", config.policy_action_name),
@@ -254,12 +298,15 @@ def create_opa_safety_router(
     blocked_target: str | None = None,
     allow_target: str | None = None,
     deny_target: str | None = None,
+    allow_skipped: bool = False,
 ) -> Callable:
     """Return a deterministic routing function for OPA safety outcomes.
 
     Maps:
-        - ``APPROVED`` / ``SKIPPED`` → *approved_target* (or *allow_target*)
-        - ``BLOCKED`` / ``ESCALATED`` → *blocked_target* (or *deny_target*)
+        - ``APPROVED`` (and ``SKIPPED`` only when ``allow_skipped=True``) →
+          *approved_target* (or *allow_target*)
+        - ``BLOCKED`` / ``ESCALATED`` / ``SKIPPED`` (default) / unknown →
+          *blocked_target* (or *deny_target*)
 
     Both target node names are required keyword arguments; no domain-specific
     defaults are provided.
@@ -274,7 +321,7 @@ def create_opa_safety_router(
 
     def route_safety(state: StateDict) -> str:
         status = state.get(status_state_key)
-        if status in ("APPROVED", "SKIPPED"):
+        if status == "APPROVED" or (allow_skipped and status == "SKIPPED"):
             return resolved_approved
         return resolved_blocked
 

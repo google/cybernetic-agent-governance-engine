@@ -152,7 +152,7 @@ async def test_read_cbf_state_uses_reconciled_balance_when_kms_valid(make_cbf):
 
 @pytest.mark.asyncio
 async def test_read_cbf_state_falls_back_when_kms_sig_invalid(make_cbf):
-    """When KMS signature is invalid, falls back to self-reported balance."""
+    """When KMS signature is invalid, fails closed with signature_invalid instead of falling back to self-reported."""
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     await _seed_balance(fake_redis, _SAFE_BALANCE)
 
@@ -187,9 +187,13 @@ async def test_read_cbf_state_falls_back_when_kms_sig_invalid(make_cbf):
         ),
     ):
         state = await cbf._read_cbf_state_atomic()
+        verdict = await cbf.verify_action("execute_trade", {"amount": 100.0})
+        admissible = await cbf.admissible_cost()
 
-    assert state["source"] == "self_reported"
-    assert state["current_cash"] == _SAFE_BALANCE
+    assert state["source"] == "signature_invalid"
+    assert state["current_cash"] is None
+    assert "Violation" in verdict
+    assert admissible is None
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +291,7 @@ async def test_read_cbf_state_accepts_unsigned_balance_in_dev_mode(make_cbf):
 
 @pytest.mark.asyncio
 async def test_read_cbf_state_rejects_unsigned_balance_in_production(make_cbf):
-    """In production, an unsigned reconciled balance is rejected → self-reported."""
+    """In production, an unsigned reconciled balance is rejected fail-closed."""
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     await _seed_balance(fake_redis, _SAFE_BALANCE)
 
@@ -315,8 +319,81 @@ async def test_read_cbf_state_rejects_unsigned_balance_in_production(make_cbf):
         ),
     ):
         state = await cbf._read_cbf_state_atomic()
+        verdict = await cbf.verify_action("execute_trade", {"amount": 100.0})
+        admissible = await cbf.admissible_cost()
 
-    assert state["source"] == "self_reported"
+    assert state["source"] == "unsigned_production_snapshot"
+    assert state["current_cash"] is None
+    assert "Violation" in verdict
+    assert admissible is None
+
+
+@pytest.mark.asyncio
+async def test_read_cbf_state_rejects_sequence_regression_and_strict_self_reported(
+    make_cbf,
+):
+    """When replay defense detects sequence regression, fails closed; strict mode also rejects self_reported."""
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    await _seed_balance(fake_redis, _SAFE_BALANCE)
+
+    cbf, _ = make_cbf(gamma=_GAMMA)
+
+    verified = MagicMock()
+    verified.is_valid = True
+    verified.signature = "valid-sig"
+    verified.kms_key_id = "reconciler-kid"
+    verified.signing_algorithm = "gcp_kms"
+    verified.sequence = 3
+    verified.state_scalar = 88_000.0
+    verified.source = "plaid"
+    verified.verified_at = 1_700_000_000.0
+
+    mock_signer = MagicMock()
+    mock_signer.verify_decision = MagicMock(return_value=True)
+
+    mock_redis_mod = MagicMock()
+    mock_redis_mod.get_raw_client = MagicMock(return_value=fake_redis)
+
+    with (
+        patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
+        patch("src.gateway.governance.safety.cbf_engine._REPLAY_DEFENSE_ENABLED", True),
+        patch.object(
+            cbf,
+            "_validate_sequence",
+            AsyncMock(return_value=(False, "sequence=3 < last_accepted=10")),
+        ),
+        patch(
+            "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
+            AsyncMock(return_value=verified),
+        ),
+        patch(
+            "src.gateway.governance.reconciliation.trust.get_reconciler_verifier",
+            return_value=mock_signer,
+        ),
+    ):
+        state = await cbf._read_cbf_state_atomic()
+        verdict = await cbf.verify_action("execute_trade", {"amount": 100.0})
+        admissible = await cbf.admissible_cost()
+
+    assert state["source"] == "sequence_regression"
+    assert state["current_cash"] is None
+    assert "Violation" in verdict
+    assert admissible is None
+
+    # Strict mode with no reconciled snapshot rejects self_reported in verify_action and admissible_cost
+    with (
+        patch("src.gateway.governance.safety.cbf_engine.redis_client", mock_redis_mod),
+        patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", True),
+        patch(
+            "src.gateway.governance.safety.cbf_engine.asyncio.to_thread",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        strict_verdict = await cbf.verify_action("execute_trade", {"amount": 100.0})
+        strict_admissible = await cbf.admissible_cost()
+
+    assert "Violation" in strict_verdict
+    assert strict_admissible is None
 
 
 # ---------------------------------------------------------------------------

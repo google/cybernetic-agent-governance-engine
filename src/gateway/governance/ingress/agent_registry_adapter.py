@@ -73,12 +73,32 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("cage.agent_registry_adapter")
+
+_SAFE_RESOURCE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+_UNSAFE_SEGMENT_CHARS_RE = re.compile(r"[/\\?#%@]|(\.\.)|\s")
+
+
+def _validate_resource_segment(value: str, field_name: str) -> str:
+    """Validate a GCP resource identifier segment against URL/path injection."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or _UNSAFE_SEGMENT_CHARS_RE.search(value)
+        or not _SAFE_RESOURCE_SEGMENT_RE.match(value)
+    ):
+        raise ValueError(
+            f"agent_registry_adapter: invalid {field_name} segment {value!r}; "
+            "must match ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ with no path/URL metacharacters."
+        )
+    return value
+
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -232,11 +252,10 @@ class AgentRegistryAdapter:
     @property
     def registry_resource_name(self) -> str:
         """Full GCP resource name: projects/{project}/locations/{location}/agentRegistries/{id}"""
-        return (
-            f"projects/{self._project}"
-            f"/locations/{self._location}"
-            f"/agentRegistries/{self._registry_id}"
-        )
+        project = _validate_resource_segment(self._project, "project")
+        location = _validate_resource_segment(self._location, "location")
+        registry_id = _validate_resource_segment(self._registry_id, "registry_id")
+        return f"projects/{project}/locations/{location}/agentRegistries/{registry_id}"
 
     async def fetch_catalog(self) -> RegistryCatalog:
         """Fetch agent catalog from GEAP Agent Registry API.

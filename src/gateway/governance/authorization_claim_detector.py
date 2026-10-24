@@ -37,12 +37,21 @@ from __future__ import annotations
 import functools
 import logging
 import re
+import unicodedata
 from collections.abc import Iterable
 from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
 _FLAGS = re.IGNORECASE | re.DOTALL
+
+_ZERO_WIDTH_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+
+
+def _normalize_for_scan(text: str) -> str:
+    """Apply Unicode NFKC normalization and strip zero-width/format characters."""
+    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
+
 
 DEFAULT_EXECUTION_VERBS: frozenset[str] = frozenset(
     {
@@ -231,6 +240,8 @@ def detect_authorization_claim(
             matched_text=None,
         )
 
+    normalized_text = _normalize_for_scan(text)
+
     if execution_verbs is None and high_stakes_actions is None:
         patterns: Iterable[tuple[str, re.Pattern[str]]] = _AUTHCLAIM_PATTERNS
     else:
@@ -243,7 +254,7 @@ def detect_authorization_claim(
         patterns = _build_authclaim_patterns(combined_verbs)
 
     for category, pattern in patterns:
-        match = pattern.search(text)
+        match = pattern.search(normalized_text)
         if match:
             snippet = match.group(0)[:200]
             logger.warning(

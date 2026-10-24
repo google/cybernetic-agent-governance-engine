@@ -84,9 +84,16 @@ _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
 FENCE_EPOCH_KEY = "safety:fence_epoch"
 _CBF_FENCE_EPOCH_KEY = "safety:cbf_fence_epoch"
 
-# Legacy default fallback when domain plugin discovery is bypassed in isolated unit tests
+# Compatibility fallback aliases when a domain plugin does not supply an explicit
+# InvariantModel (e.g. when domain plugin discovery is bypassed in isolated unit tests).
+_DEFAULT_INVARIANT_ID: str = os.environ.get(
+    "CAGE_DEFAULT_INVARIANT_ID", "finance.cash_balance"
+)
+_DEFAULT_STATE_KEY: str = os.environ.get(
+    "CAGE_DEFAULT_STATE_KEY", "safety:current_cash"
+)
 _DEFAULT_STATE_KEYS: dict[str, str] = {
-    "finance.cash_balance": "safety:current_cash",
+    _DEFAULT_INVARIANT_ID: _DEFAULT_STATE_KEY,
 }
 
 
@@ -112,7 +119,7 @@ class ReconciliationResult:
     raw_response: dict[str, Any] | None = None
     error: str | None = None
     sequence: int = 0
-    invariant_id: str = "finance.cash_balance"
+    invariant_id: str = _DEFAULT_INVARIANT_ID
     kms_key_id: str = ""
     signing_algorithm: str = ""
     discrepancy_detected: bool = False
@@ -926,7 +933,12 @@ class GroundTruthReconciler:
                         "[R-04] Failed to increment sequence counter: %s",
                         seq_exc,
                     )
-            elif is_snapshot:
+                    self._failure_count += 1
+                    self._invalidate_redis_verified_state(result.invariant_id)
+                    result.error = f"Failed to increment sequence counter: {seq_exc}"
+                    _set_span_attr("reconciliation.error", result.error)
+                    return result
+            elif is_snapshot and result.sequence < 0:
                 result.sequence = 0
 
             _set_span_attr("cage.reconciliation.sequence", result.sequence)

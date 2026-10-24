@@ -379,9 +379,10 @@ class TestGuardApprovedResume:
         )
 
         (executed,) = spy.states[0]["messages"][-1].tool_calls
-        assert {
-            k: v for k, v in executed["args"].items() if k != "transaction_id"
-        } == {**_call("t1")["args"], "deferred_id": "d-1"}
+        assert {k: v for k, v in executed["args"].items() if k != "transaction_id"} == {
+            **_call("t1")["args"],
+            "deferred_id": "d-1",
+        }
 
     @pytest.mark.asyncio
     async def test_approved_multi_call_batch_refuses(self, gateway) -> None:

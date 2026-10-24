@@ -32,6 +32,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -45,6 +46,13 @@ logger = logging.getLogger(__name__)
 _FLAGS = re.IGNORECASE | re.DOTALL
 
 _HIGH_STAKES_ACTIONS: frozenset[str] = frozenset()
+
+_ZERO_WIDTH_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+
+
+def _normalize_for_scan(text: str) -> str:
+    """Apply Unicode NFKC normalization and strip zero-width/format characters."""
+    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
 
 
 @functools.lru_cache(maxsize=32)
@@ -61,7 +69,7 @@ def _build_confclaim_patterns(
                 r"\b(?:set|override|force|assign|make|with)\s+"
                 r"(?:the\s+)?(?:model\s+)?confidence(?:_score)?\s*"
                 r"(?:to|=|:|\s+is|\s+at)\s*"
-                r"(?:1(?:\.0+)?|0\.9[5-9]\d*|100\s*%)\b",
+                r"(?:(?:1(?:\.0+)?|0\.9[5-9]\d*)\b|100\s*%(?!\w))",
                 _FLAGS,
             ),
         ),
@@ -70,7 +78,7 @@ def _build_confclaim_patterns(
             re.compile(
                 r"\bconfidence(?:_score)?\s*"
                 r"(?:=|:|\s+is|\s+of|\s+at)\s*"
-                r"(?:1\.0+|0\.9[5-9]\d*|100\s*%)\b",
+                r"(?:(?:1(?:\.0+)?|0\.9[5-9]\d*)\b|100\s*%(?!\w))",
                 _FLAGS,
             ),
         ),
@@ -242,7 +250,8 @@ def detect_confidence_claim(
     if not text:
         return ConfidenceClaimResult(detected=False)
 
-    text_lower = text.lower()
+    normalized_text = _normalize_for_scan(text)
+    text_lower = normalized_text.lower()
     if execution_verbs is None and high_stakes_actions is None:
         patterns: Iterable[tuple[str, re.Pattern[str]]] = _CONFCLAIM_PATTERNS
     else:
@@ -254,7 +263,9 @@ def detect_confidence_claim(
         )
 
     for name, pattern in patterns:
-        if pattern.search(text_lower if pattern.flags & re.IGNORECASE else text):
+        if pattern.search(
+            text_lower if pattern.flags & re.IGNORECASE else normalized_text
+        ):
             logger.warning(
                 "🚨 ConfidenceClaimDetector: confidence-spoofing detected: "
                 "pattern=%r text_snippet=%r",

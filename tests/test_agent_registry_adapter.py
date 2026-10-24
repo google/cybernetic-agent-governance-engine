@@ -261,6 +261,16 @@ class TestAgentRegistryAdapter:
             == "projects/my-gcp-project/locations/us-central1/agentRegistries/cage-agent-registry"
         )
 
+    def test_registry_resource_name_rejects_traversal_segment(self, monkeypatch):
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryAdapter,
+        )
+
+        monkeypatch.setenv("CAGE_AGENT_REGISTRY_PROJECT", "my-project/../evil")
+        adapter = AgentRegistryAdapter()
+        with pytest.raises(ValueError, match="invalid project segment"):
+            _ = adapter.registry_resource_name
+
     def test_get_registry_audit_reference_empty_when_not_configured(self):
         from src.gateway.governance.ingress.agent_registry_adapter import (
             AgentRegistryAdapter,

@@ -941,4 +941,130 @@ class TestSandboxPolicyGeneration:
         assert "credential_broker_rules:" in res.sandbox_content
 
 
+class TestEqualsOperatorAndTypeSafety:
+    """Tests for `equals` operator in OPA/Python and non-numeric guards on threshold_ref."""
+
+    def test_equals_literal_string_bool_numeric_opa_and_python(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"] = [
+            {
+                "id": "UCA-EQ-STR",
+                "action": "do_thing",
+                "uca_type": "unsafe_action",
+                "hazard_refs": ["H-1"],
+                "description": "Blocked status value.",
+                "condition": {
+                    "param": "status",
+                    "operator": "equals",
+                    "threshold": "SANCTIONED",
+                },
+                "enforcement": ["opa", "python"],
+                "opa_rule": {"decision": "DENY", "message": "Sanctioned status."},
+            },
+            {
+                "id": "UCA-EQ-BOOL",
+                "action": "do_thing",
+                "uca_type": "unsafe_action",
+                "hazard_refs": ["H-1"],
+                "description": "Blocked boolean flag.",
+                "condition": {
+                    "param": "bypass_flag",
+                    "operator": "equals",
+                    "threshold": True,
+                },
+                "enforcement": ["opa", "python"],
+                "opa_rule": {"decision": "DENY", "message": "Bypass flag."},
+            },
+            {
+                "id": "UCA-EQ-NUM",
+                "action": "do_thing",
+                "uca_type": "unsafe_action",
+                "hazard_refs": ["H-1"],
+                "description": "Blocked zero code.",
+                "condition": {
+                    "param": "code",
+                    "operator": "equals",
+                    "threshold": 0.0,
+                },
+                "enforcement": ["opa", "python"],
+                "opa_rule": {"decision": "DENY", "message": "Zero code."},
+            },
+        ]
+        cs = ControlStructureModel(**raw)
+        rego = generate_opa(cs)
+        assert 'input.status == "SANCTIONED"' in rego
+        assert "input.bypass_flag == true" in rego
+        assert "input.code == 0.0" in rego
+
+        py = generate_python(cs)
+        ns: dict = {}
+        exec(py, ns)  # noqa: S102
+        validator = ns["GeneratedSTPAValidator"]()
+
+        # Matching literal triggers violation
+        v_str = validator._check_uca_eq_str("do_thing", {"status": "SANCTIONED"})
+        assert v_str is not None and v_str.code == "STPA_UCA_UCA_EQ_STR"
+        assert validator._check_uca_eq_str("do_thing", {"status": "ACTIVE"}) is None
+
+        # Missing required param fails closed
+        v_missing = validator._check_uca_eq_str("do_thing", {})
+        assert v_missing is not None and "Missing required param" in v_missing.message
+
+        # Bool literal does not match integer 1, and numeric 0.0 does not match False
+        assert (
+            validator._check_uca_eq_bool("do_thing", {"bypass_flag": True}) is not None
+        )
+        assert validator._check_uca_eq_bool("do_thing", {"bypass_flag": 1}) is None
+        assert validator._check_uca_eq_num("do_thing", {"code": 0}) is not None
+        assert validator._check_uca_eq_num("do_thing", {"code": False}) is None
+
+    def test_single_key_threshold_ref_rejects_boolean_and_non_numeric(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["system"]["domain"] = "finance"
+        raw["unsafe_control_actions"] = [
+            {
+                "id": "UCA-GT-REF",
+                "action": "do_thing",
+                "uca_type": "unsafe_action",
+                "hazard_refs": ["H-1"],
+                "description": "Latency exceeds max.",
+                "condition": {
+                    "param": "latency_ms",
+                    "operator": "greater_than",
+                    "threshold_ref": "stpa.max_latency_ms",
+                },
+                "enforcement": ["python"],
+            },
+            {
+                "id": "UCA-LT-REF",
+                "action": "do_thing",
+                "uca_type": "unsafe_action",
+                "hazard_refs": ["H-1"],
+                "description": "Latency below max.",
+                "condition": {
+                    "param": "latency_ms",
+                    "operator": "less_than",
+                    "threshold_ref": "stpa.max_latency_ms",
+                },
+                "enforcement": ["python"],
+            },
+        ]
+        cs = ControlStructureModel(**raw)
+        py = generate_python(cs)
+        ns: dict = {}
+        exec(py, ns)  # noqa: S102
+        validator = ns["GeneratedSTPAValidator"]()
+
+        # Boolean True would otherwise coerce to 1.0 <= max_latency_ms (500.0) and pass UCA-GT-REF!
+        v_gt_bool = validator._check_uca_gt_ref("do_thing", {"latency_ms": True})
+        assert (
+            v_gt_bool is not None and "Invalid non-numeric param" in v_gt_bool.message
+        )
+
+        v_lt_bool = validator._check_uca_lt_ref("do_thing", {"latency_ms": False})
+        assert (
+            v_lt_bool is not None and "Invalid non-numeric param" in v_lt_bool.message
+        )
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

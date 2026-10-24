@@ -484,7 +484,12 @@ class UCALogger:
                 sig_hex = await self._signer.sign_async(payload)
                 record["cryptographic_signature"] = sig_hex
                 # Expose the key version resource name if available
-                key_id = getattr(self._signer, "_key_version", "") or ""
+                key_id = (
+                    getattr(self._signer, "key_id", None)
+                    or getattr(self._signer, "_key_version_name", None)
+                    or getattr(self._signer, "_key_version", "")
+                    or ""
+                )
                 record["signing_key_id"] = key_id
             except Exception as exc:
                 from src.gateway.governance.env_posture import (

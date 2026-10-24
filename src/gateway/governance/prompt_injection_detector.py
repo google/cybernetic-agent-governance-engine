@@ -63,6 +63,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
@@ -339,7 +340,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "structural_attack_patterns",
         re.compile(
             r"\b(?:os\.system|subprocess\.(?:call|run|Popen)|eval\s*\(|exec\s*\(|"
-            r"__import__\s*\(|importlib\.import_module|compile\s*\(.*exec)"
+            r"__import__\s*\(|importlib\.import_module|compile\s*\([^;\n]{0,200}?exec)"
             r"|(?:&&|\|\|)\s*(?:rm|curl|wget|bash|sh|python|python3)\b",
             re.IGNORECASE,
         ),
@@ -353,6 +354,13 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
 ]
+
+_ZERO_WIDTH_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+
+
+def _normalize_for_scan(text: str) -> str:
+    """Apply Unicode NFKC normalization and strip zero-width/format characters."""
+    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
 
 
 # ---------------------------------------------------------------------------
@@ -407,11 +415,13 @@ def detect_prompt_injection(text: str) -> InjectionResult:
     if not text:
         return InjectionResult(detected=False, pattern_matched=None, confidence=0.0)
 
+    normalized_text = _normalize_for_scan(text)
+
     # ------------------------------------------------------------------
     # Stage 2 — Structural regex patterns (fail-fast on first match)
     # ------------------------------------------------------------------
     for pattern_name, pattern in _INJECTION_PATTERNS:
-        if pattern.search(text):
+        if pattern.search(normalized_text):
             logger.warning(
                 "🚨 Prompt injection detected: pattern=%s text_preview=%r "
                 "(citation=%s — blocking request)",

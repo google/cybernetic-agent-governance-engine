@@ -558,7 +558,8 @@ async def chat_completions(
                                         "content": safe_content
                                         if filtered_content
                                         and (
-                                            safe_content := await verify_and_mask_output(
+                                            safe_content
+                                            := await verify_and_mask_output(
                                                 rails, filtered_content
                                             )
                                         )

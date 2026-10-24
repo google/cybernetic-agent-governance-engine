@@ -74,13 +74,13 @@ receipt time, not an issuer-declared time) and ``age_seconds`` how old that
 state was when the decision relied on it; ``max_age_seconds`` is the
 freshness window it was held to (``warrant.cache.WarrantCache``).
 
-``verification_status`` is always ``UNVERIFIED``. The declared digest proves
-the warrant is internally consistent, not who issued it; issuer signatures
-against a ``kid``-resolved trust anchor are a Warrant Contract v0.2 item.
-Until then no record can claim more, so the field cannot be set. The envelope
-attestation status is ``UNVERIFIED`` for the same reason; an ineligible
-warrant is never expressed as ``DENIED``, which would read as an institutional
-verdict rather than a reliance outcome.
+``verification_status`` is ``VERIFIED`` when a Warrant Contract v0.2 warrant
+is cryptographically verified against an active key in a ``VerifiedKeyManifest``
+resolved by ``kid``, and ``UNVERIFIED`` otherwise (for unsigned v0.1 warrants
+or when signature verification does not establish authenticity). The envelope
+attestation status mirrors this distinction; an ineligible warrant is never
+expressed as ``DENIED``, which would read as an institutional verdict rather
+than a reliance outcome.
 
 The emitting source is the ``WarrantSource.provider_name`` the stage was
 assembled with; the kernel never names a vendor.

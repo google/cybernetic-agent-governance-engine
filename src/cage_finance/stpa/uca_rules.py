@@ -114,6 +114,13 @@ class GeneratedSTPAValidator(STPAValidator):
                     message="Missing required param `latency_ms`.",
                     kind=ViolationKind.HARD,
                 )
+            if isinstance(val, bool) or not isinstance(val, (int, float, str)):
+                return Violation(
+                    tier="stpa",
+                    code="STPA_UCA_UCA_2",
+                    message="Invalid non-numeric param `latency_ms`.",
+                    kind=ViolationKind.HARD,
+                )
             f_val = float(val)
             if not math.isfinite(f_val):
                 return Violation(

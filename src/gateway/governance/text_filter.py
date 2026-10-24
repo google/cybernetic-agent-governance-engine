@@ -25,6 +25,7 @@ Keyword list is sourced entirely from the validated threshold singleton
 
 import logging
 import re
+import unicodedata
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -33,6 +34,14 @@ from typing import Any
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger("SafetyLayer")
+
+_ZERO_WIDTH_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+
+
+def _normalize_for_scan(text: str) -> str:
+    """Apply Unicode NFKC normalization and strip zero-width/format characters."""
+    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
+
 
 # ---------------------------------------------------------------------------
 # Aho-Corasick Tier-1 Keyword Scanner
@@ -143,7 +152,7 @@ def ac_keyword_scan(text: str) -> bool:
     """
     global _AC_AUTOMATON, _AC_BUILT
 
-    upper_text = text.upper()
+    upper_text = _normalize_for_scan(text).upper()
 
     if _AC_AVAILABLE:
         if not _AC_BUILT:
@@ -179,7 +188,7 @@ def ac_cbrn_keyword_scan(text: str) -> bool:
     if not cbrn_keywords:
         return False
 
-    upper_text = text.upper()
+    upper_text = _normalize_for_scan(text).upper()
     for kw in cbrn_keywords:
         if kw in upper_text:
             logger.warning(

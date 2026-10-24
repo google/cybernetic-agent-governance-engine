@@ -42,6 +42,7 @@ from src.gateway.governance.safety.debit_ledger import (
     DEBITS_PENDING_KEY,
     DEBITS_ROLLED_BACK_KEY,
     DEBITS_TOTAL_KEY,
+    DebitLedger,
     confirm_debit,
     outstanding_debits_total,
 )
@@ -459,6 +460,9 @@ return {1, status, tostring(restored), new_epoch}
         invariant: InvariantModel | None = None,
         cost_resolver: Any = None,
         skip_epoch_seed: bool = False,
+        *,
+        debit_ledger: DebitLedger | None = None,
+        debit_namespace: str | None = None,
     ) -> None:
         if invariant is None:
             raise ValueError(
@@ -468,6 +472,11 @@ return {1, status, tostring(restored), new_epoch}
         self._cost_resolver = cost_resolver or self._default_cost_resolver
         self._gamma_override: float | None = None
         self._threshold_override: float | None = None
+        self._debit_ledger: DebitLedger = (
+            debit_ledger
+            if debit_ledger is not None
+            else DebitLedger(namespace=debit_namespace)
+        )
 
         # Validate threshold_key resolves at construction time
         _ = self._resolve_threshold()
@@ -971,7 +980,8 @@ return {1, status, tostring(restored), new_epoch}
             # scalar with a pre-settle (larger) total — conservative. The
             # opposite order could net a stale scalar with a settled total.
             outstanding = await outstanding_debits_total(
-                await _get_raw_redis(redis_client)
+                await _get_raw_redis(redis_client),
+                namespace=self._debit_ledger.namespace,
             )
             verified = await asyncio.to_thread(
                 read_verified_snapshot,
@@ -1019,6 +1029,13 @@ return {1, status, tostring(restored), new_epoch}
                                         _REPLAY_REJECTED_COUNTER.labels(
                                             source=verified.source
                                         ).inc()
+                                    return {
+                                        "state_scalar": None,
+                                        "current_cash": None,
+                                        "source": "sequence_regression",
+                                        "fence_epoch": 0,
+                                        "reason": seq_reason,
+                                    }
                                 else:
                                     fence_epoch = await self._get_fence_epoch()
                                     if _FENCE_EPOCH_ENABLED:
@@ -1066,6 +1083,13 @@ return {1, status, tostring(restored), new_epoch}
                                     }
                                 )
                             )
+                            return {
+                                "state_scalar": None,
+                                "current_cash": None,
+                                "source": "signature_invalid",
+                                "fence_epoch": 0,
+                                "reason": "reconciled snapshot signature invalid",
+                            }
                     except Exception as sig_exc:
                         logger.critical(
                             json.dumps(
@@ -1095,6 +1119,13 @@ return {1, status, tostring(restored), new_epoch}
                                 }
                             )
                         )
+                        return {
+                            "state_scalar": None,
+                            "current_cash": None,
+                            "source": "unsigned_production_snapshot",
+                            "fence_epoch": 0,
+                            "reason": "reconciled snapshot unsigned in production",
+                        }
                     else:
                         return self._reconciled_state(
                             verified,
@@ -1195,15 +1226,25 @@ return {1, status, tostring(restored), new_epoch}
                     "raw_payload": state.get("raw_payload"),
                 },
             )
-        if _CBF_STRICT_MODE and state.get("source") in (
+        source = state.get("source")
+        if source in (
             "epoch_regression",
-            "self_reported",
-        ):
-            fallback_reason = (
-                state.get("epoch_reason")
-                if state.get("source") == "epoch_regression"
-                else "reconciliation unavailable"
-            )
+            "sequence_regression",
+            "signature_invalid",
+            "unsigned_production_snapshot",
+        ) or (_CBF_STRICT_MODE and source == "self_reported"):
+            if source == "epoch_regression":
+                fallback_reason = state.get("epoch_reason") or "epoch regression"
+            elif source in (
+                "sequence_regression",
+                "signature_invalid",
+                "unsigned_production_snapshot",
+            ):
+                fallback_reason = (
+                    state.get("reason") or f"reconciled snapshot rejected ({source})"
+                )
+            else:
+                fallback_reason = "reconciliation unavailable"
             from src.gateway.governance.governor.governor import GovernanceError
 
             raise GovernanceError(
@@ -1269,19 +1310,44 @@ return {1, status, tostring(restored), new_epoch}
         state = await self._read_cbf_state_atomic()
         balance_source: str = str(state.get("source", "unknown"))
 
-        if state.get("current_cash") is None or balance_source == "epoch_regression":
-            epoch_reason = state.get("epoch_reason", "unknown")
-            fence_epoch = state.get("fence_epoch", 0)
+        if (
+            state.get("current_cash") is None
+            or balance_source
+            in (
+                "epoch_regression",
+                "sequence_regression",
+                "signature_invalid",
+                "unsigned_production_snapshot",
+            )
+            or (_CBF_STRICT_MODE and balance_source == "self_reported")
+        ):
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
+            )
+            if balance_source == "epoch_regression":
+                epoch_reason = state.get("epoch_reason", "unknown")
+                fence_epoch = state.get("fence_epoch", 0)
+                result = (
+                    f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
+                    f"{_mrm_meta['primary_framework']} Violation: "
+                    f"R-05 Fence epoch regression detected (epoch={fence_epoch}). "
+                    f"Reason: {epoch_reason}. Fail-closed."
+                )
+                logger.warning(
+                    "CBF check rejected: epoch regression — %s", epoch_reason
+                )
+                return result
+            reason = state.get("reason") or (
+                "unverified self_reported balance in strict mode"
+                if balance_source == "self_reported"
+                else f"reconciled state rejected ({balance_source})"
             )
             result = (
                 f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
                 f"{_mrm_meta['primary_framework']} Violation: "
-                f"R-05 Fence epoch regression detected (epoch={fence_epoch}). "
-                f"Reason: {epoch_reason}. Fail-closed."
+                f"Ground truth verification failed ({balance_source}): {reason}. Fail-closed."
             )
-            logger.warning("CBF check rejected: epoch regression — %s", epoch_reason)
+            logger.warning("CBF check rejected: %s — %s", balance_source, reason)
             return result
 
         current_state = float(state["current_cash"])
@@ -1371,9 +1437,17 @@ return {1, status, tostring(restored), new_epoch}
         offer). A snapshot only: narrowed params are re-verified.
         """
         state = await self._read_cbf_state_atomic()
+        source = state.get("source")
         if (
             state.get("current_cash") is None
-            or state.get("source") == "epoch_regression"
+            or source
+            in (
+                "epoch_regression",
+                "sequence_regression",
+                "signature_invalid",
+                "unsigned_production_snapshot",
+            )
+            or (_CBF_STRICT_MODE and source == "self_reported")
         ):
             return None
         h_t = self.evaluate_barrier(float(state["current_cash"]))
@@ -1468,12 +1542,12 @@ return {1, status, tostring(restored), new_epoch}
                 self.redis_key,
                 "audit:state_ledger",
                 _REDIS_KEY_FENCE_EPOCH,
-                DEBITS_KEY,
+                self._debit_ledger.DEBITS_KEY,
                 _REDIS_KEY_FENCE_EPOCH_HWM,
-                DEBITS_BY_TIME_KEY,
-                DEBITS_TOTAL_KEY,
-                DEBITS_ROLLED_BACK_KEY,
-                DEBITS_PENDING_KEY,
+                self._debit_ledger.DEBITS_BY_TIME_KEY,
+                self._debit_ledger.DEBITS_TOTAL_KEY,
+                self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
+                self._debit_ledger.DEBITS_PENDING_KEY,
             ]
             argv = [
                 repr(float(magnitude)),
@@ -1516,7 +1590,9 @@ return {1, status, tostring(restored), new_epoch}
                     ledgered = bool(debit_id) and hasattr(pipe, "hget")
                     if ledgered:
                         await pipe.watch(
-                            self.redis_key, DEBITS_KEY, DEBITS_ROLLED_BACK_KEY
+                            self.redis_key,
+                            self._debit_ledger.DEBITS_KEY,
+                            self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
                         )
                     else:
                         await pipe.watch(self.redis_key)
@@ -1528,22 +1604,30 @@ return {1, status, tostring(restored), new_epoch}
                     if ledgered:
                         # Same rules as LUA_ROLLBACK_CBF: a tombstoned id is a
                         # no-op; only a ledgered amount is restored.
-                        if await pipe.hexists(DEBITS_ROLLED_BACK_KEY, debit_id):
+                        if await pipe.hexists(
+                            self._debit_ledger.DEBITS_ROLLED_BACK_KEY, debit_id
+                        ):
                             await pipe.reset()
                             return
-                        entry = await pipe.hget(DEBITS_KEY, debit_id)
+                        entry = await pipe.hget(self._debit_ledger.DEBITS_KEY, debit_id)
                         restore = _ledgered_amount(entry)
                     restored = current + restore
                     pipe.multi()
                     pipe.set(self.redis_key, str(restored))
                     pipe.incr(_REDIS_KEY_FENCE_EPOCH)
                     if ledgered:
-                        pipe.hdel(DEBITS_KEY, debit_id)
-                        pipe.zrem(DEBITS_BY_TIME_KEY, debit_id)
-                        pipe.zrem(DEBITS_PENDING_KEY, debit_id)
+                        pipe.hdel(self._debit_ledger.DEBITS_KEY, debit_id)
+                        pipe.zrem(self._debit_ledger.DEBITS_BY_TIME_KEY, debit_id)
+                        pipe.zrem(self._debit_ledger.DEBITS_PENDING_KEY, debit_id)
                         if restore:
-                            pipe.incrbyfloat(DEBITS_TOTAL_KEY, -restore)
-                        pipe.hset(DEBITS_ROLLED_BACK_KEY, debit_id, repr(time.time()))
+                            pipe.incrbyfloat(
+                                self._debit_ledger.DEBITS_TOTAL_KEY, -restore
+                            )
+                        pipe.hset(
+                            self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
+                            debit_id,
+                            repr(time.time()),
+                        )
                     if governance_signature:
                         ledger_entry = json.dumps(
                             {
@@ -1596,7 +1680,9 @@ return {1, status, tostring(restored), new_epoch}
             target_client = await _get_raw_redis(redis_client)
         if target_client is None:
             raise RuntimeError("Redis client unavailable — cannot confirm CBF debit.")
-        return await confirm_debit(target_client, debit_id)
+        return await confirm_debit(
+            target_client, debit_id, namespace=self._debit_ledger.namespace
+        )
 
     async def atomic_verify_and_commit(
         self,
@@ -1637,10 +1723,10 @@ return {1, status, tostring(restored), new_epoch}
             self._invariant.state_key,
             "audit:state_ledger",
             _REDIS_KEY_FENCE_EPOCH,
-            DEBITS_KEY,
+            self._debit_ledger.DEBITS_KEY,
             _REDIS_KEY_FENCE_EPOCH_HWM,
-            DEBITS_PENDING_KEY,
-            DEBITS_TOTAL_KEY,
+            self._debit_ledger.DEBITS_PENDING_KEY,
+            self._debit_ledger.DEBITS_TOTAL_KEY,
             reconciled_state_key(self._invariant.invariant_id),
         ]
         resolved_threshold = self._resolve_threshold()

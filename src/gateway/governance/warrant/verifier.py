@@ -252,6 +252,11 @@ class WarrantStandingVerifier:
             )
 
         # 4b. Issuer state freshness (v0.2 state_as_of)
+        if warrant.is_v02 and not warrant.state_as_of:
+            return _ineligible(
+                RelianceStatus.INELIGIBLE_UNRESOLVED,
+                "Warrant state_as_of is missing",
+            )
         if warrant.state_as_of:
             try:
                 state_dt = datetime.fromisoformat(
