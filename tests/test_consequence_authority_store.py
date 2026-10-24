@@ -511,6 +511,8 @@ async def test_key_schema_format(
     exists = await redis_client.exists(key)
     assert exists == 1, f"Key {key} should exist in Redis"
 
-    # Verify the stored value is the binding hash
+    # Verify the stored marker is the binding hash plus the attempt's op id
     stored_value = await redis_client.get(key)
-    assert stored_value == binding
+    stored_binding, _, op_id = stored_value.rpartition(":")
+    assert stored_binding == binding
+    assert len(op_id) == 32

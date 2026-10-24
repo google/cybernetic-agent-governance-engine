@@ -64,6 +64,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from src.gateway.infrastructure.redis_single_use import new_op_id
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -84,8 +86,8 @@ _DEFAULT_HOLD_TTL = 300  # 5-minute default TTL for external hold escalations
 #: The guard is checked on the snapshot ``_cas_update`` compares by revision.
 #: Every write that moves a token out of these statuses (``approve``,
 #: ``_resolve``) goes through ``_cas_update`` and bumps the revision;
-#: ``atomic_resolve`` writes status alone but only ever leaves RESOLVED,
-#: which no entry below accepts.
+#: ``atomic_resolve`` writes only status (and ``op_id``) but only ever leaves
+#: RESOLVED, which no entry below accepts.
 _RESOLVABLE_FROM: dict[str, frozenset[str]] = {
     "INJECTED": frozenset({"PARKED"}),
     "EXPIRED": frozenset({"PARKED", "PARTIALLY_APPROVED"}),
@@ -107,10 +109,17 @@ _RESOLVABLE_FROM: dict[str, frozenset[str]] = {
 #:   ARGV[1] — Expected revision (integer as string)
 #:   ARGV[2] — New token JSON blob (opaque string, no parsing in Lua)
 #:   ARGV[3] — New status string
+#:   ARGV[4] — Operation id: random, one per ``_cas_update`` call
 #:
 #: Returns:
 #:   {1, new_rev}      — Success: updated token, status, and revision
 #:   {0, actual_rev}   — Conflict: current revision != expected revision
+#:
+#: The ``op_id`` field holds the id of the last write to the hash (park,
+#: ``_cas_update`` or ``atomic_resolve``). If the revision has moved but
+#: ``op_id`` is still this update's, the move was this update: the client
+#: re-sent the script after a lost reply. The script then returns the success
+#: it already had instead of a conflict.
 #:
 #: Slot-safety: Touches exactly one key (KEYS[1]) — safe for Redis Cluster.
 _CAS_UPDATE_LUA = """
@@ -121,12 +130,47 @@ end
 
 local expected_rev = ARGV[1]
 if current_rev ~= expected_rev then
+    if redis.call('HGET', KEYS[1], 'op_id') == ARGV[4] then
+        return {1, tonumber(current_rev)}
+    end
     return {0, tonumber(current_rev)}
 end
 
 local new_rev = tonumber(current_rev) + 1
-redis.call('HSET', KEYS[1], 'token', ARGV[2], 'status', ARGV[3], 'rev', new_rev)
+redis.call(
+    'HSET', KEYS[1], 'token', ARGV[2], 'status', ARGV[3], 'rev', new_rev, 'op_id', ARGV[4]
+)
 return {1, new_rev}
+"""
+
+#: Lua script that parks a new token atomically.
+#:
+#: Writes token, status, revision, ``op_id`` and TTL in one step, so a key can
+#: never hold a token without status or TTL (unapprovable, and never
+#: expired). A re-send after a lost reply finds its own ``op_id`` and reports
+#: the creation again instead of an existing key.
+#:
+#: Arguments:
+#:   KEYS[1] — Redis hash key (e.g., "DEFER:{defer_id}")
+#:   ARGV[1] — Token JSON blob
+#:   ARGV[2] — TTL in seconds
+#:   ARGV[3] — Operation id: random, one per ``park`` call
+#:
+#: Returns:
+#:   1 — this call created the key
+#:   0 — the key already existed (idempotent re-park)
+#:
+#: Slot-safety: Touches exactly one key (KEYS[1]) — safe for Redis Cluster.
+_PARK_LUA = """
+if redis.call('HSETNX', KEYS[1], 'token', ARGV[1]) == 1 then
+    redis.call('HSET', KEYS[1], 'status', 'PARKED', 'rev', 0, 'op_id', ARGV[3])
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+    return 1
+end
+if redis.call('HGET', KEYS[1], 'op_id') == ARGV[3] then
+    return 1
+end
+return 0
 """
 
 
@@ -576,6 +620,8 @@ class DeferQueue:
             - Compares the current revision in Redis against expected_rev.
             - If they match: updates token blob + status + increments revision.
             - If they conflict: returns failure + the actual current revision.
+            - A re-send of this same update after a lost reply (same random
+              ``op_id``) returns the success it already had, not a conflict.
 
         The Lua script (_CAS_UPDATE_LUA) is executed via EVALSHA for efficiency,
         with a fallback to EVAL + SCRIPT LOAD if the script is not yet cached.
@@ -613,6 +659,7 @@ class DeferQueue:
         """
         key = f"{_KEY_PREFIX}{defer_id}"
         token_json = updated_token.model_dump_json()
+        op_id = new_op_id()
 
         cas_sha = await self.ensure_scripts_loaded()
 
@@ -625,6 +672,7 @@ class DeferQueue:
                 str(expected_rev),
                 token_json,
                 new_status,
+                op_id,
             )
         except Exception as exc:
             # NOSCRIPT error: script was evicted, reload and retry with EVAL
@@ -640,6 +688,7 @@ class DeferQueue:
                     str(expected_rev),
                     token_json,
                     new_status,
+                    op_id,
                 )
                 # Re-cache the SHA for future calls
                 self._cas_update_sha = await self._redis.script_load(_CAS_UPDATE_LUA)
@@ -676,9 +725,11 @@ class DeferQueue:
     async def park(self, token: DeferToken, correlation_id: str | None = None) -> str:
         """Park a DeferToken in Redis.
 
-        Uses atomic HSETNX for initial key creation. If the key already exists
-        (idempotent re-park), uses CAS retry loop to update only if current
-        status is PARKED (does not overwrite RESOLVED tokens).
+        Creates the key atomically with ``_PARK_LUA`` (token, status, revision
+        and TTL in one step); a re-send of that script after a lost reply still
+        counts as this call's creation. If the key already exists (idempotent
+        re-park), uses CAS retry loop to update only if current status is
+        PARKED (does not overwrite RESOLVED tokens).
 
         Args:
             token: The fully constructed DeferToken.
@@ -694,17 +745,13 @@ class DeferQueue:
         expiry_ts = time.time() + token.ttl_seconds
         token_json = token.model_dump_json()
 
-        # Attempt atomic key creation with HSETNX
-        created = await self._redis.hsetnx(key, "token", token_json)
+        # Atomic key creation: token, status, revision and TTL in one script
+        created = await self._redis.eval(
+            _PARK_LUA, 1, key, token_json, token.ttl_seconds, new_op_id()
+        )
 
         if created:
-            # New key — complete initialization with pipeline
-            async with self._redis.pipeline(transaction=False) as pipe:
-                pipe.hset(key, "status", "PARKED")
-                pipe.hset(key, "rev", 0)
-                pipe.expire(key, token.ttl_seconds)
-                pipe.zadd(_EXPIRY_ZSET, {token.defer_id: expiry_ts})
-                await pipe.execute()
+            await self._redis.zadd(_EXPIRY_ZSET, {token.defer_id: expiry_ts})
 
             logger.info(
                 "[defer_queue] Parked deferral defer_id=%s thread_id=%s correlation_id=%s reason=%s "
@@ -911,7 +958,9 @@ class DeferQueue:
         Implementation:
             Uses a Lua script executed on Redis to ensure atomicity across
             concurrent resume requests. The script checks current status and
-            only updates if it matches the expected value.
+            only updates if it matches the expected value. A random ``op_id``
+            stored with the new status lets a re-send of this same call (after
+            a lost reply) recognise its own transition and return True again.
 
         Args:
             ticket_id:       The defer_id or ticket identifier to resolve.
@@ -943,11 +992,13 @@ class DeferQueue:
         lua_script = """
         local current = redis.call('HGET', KEYS[1], 'status')
         if current == ARGV[1] then
-            redis.call('HSET', KEYS[1], 'status', ARGV[2])
+            redis.call('HSET', KEYS[1], 'status', ARGV[2], 'op_id', ARGV[3])
             return 1
-        else
-            return 0
         end
+        if current == ARGV[2] and redis.call('HGET', KEYS[1], 'op_id') == ARGV[3] then
+            return 1
+        end
+        return 0
         """
 
         try:
@@ -957,6 +1008,7 @@ class DeferQueue:
                 key,
                 expected_status,
                 new_status,
+                new_op_id(),
             )
 
             if result == 1:

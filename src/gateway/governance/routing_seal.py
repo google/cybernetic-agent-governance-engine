@@ -88,6 +88,7 @@ from src.gateway.governance.evidence.stream import (
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.jwks import pem_to_jwk
 from src.gateway.governance.kms_signer import get_governance_signer
+from src.gateway.infrastructure.redis_single_use import new_op_id, set_nx_retry_safe
 
 tracer = trace.get_tracer(__name__)
 
@@ -193,6 +194,11 @@ _HMAC_KEY = hashlib.sha256(_GOVERNANCE_SALT.encode()).digest()
 #   1. Attempts to SET the nonce key with NX (only if not exists) and EX (TTL)
 #   2. Returns 0 if successfully consumed (first use), 1 if already consumed
 #
+# The metadata carries a random per-attempt ``op_id``. If the key already
+# holds exactly this metadata, the SET is this attempt's own: redis-py re-sent
+# the script after a lost reply (see ``redis_single_use``), so the script
+# returns 0 again rather than reporting its own consume as a replay.
+#
 # verify_and_consume_seal() runs it only AFTER verify_seal() has succeeded
 # (POAM-2026-089, verify -> burn -> execute). Verification is stateless, so
 # racing callers holding the same valid seal may all verify; this script then
@@ -200,7 +206,7 @@ _HMAC_KEY = hashlib.sha256(_GOVERNANCE_SALT.encode()).digest()
 #
 # KEYS[1]: nonce_key (e.g., "cage:seal:nonce:{nonce}")
 # ARGV[1]: ttl_seconds (integer)
-# ARGV[2]: metadata (JSON string with action, timestamp for audit trail)
+# ARGV[2]: metadata (JSON string with action, timestamp and op_id)
 #
 # Returns:
 #   0 = Successfully consumed (caller owns the seal and may execute)
@@ -215,9 +221,11 @@ local metadata = ARGV[2]
 local result = redis.call('SET', nonce_key, metadata, 'NX', 'EX', ttl_s)
 if result then
     return 0  -- Success: nonce consumed, caller owns the seal
-else
-    return 1  -- Replay: nonce was already burned by another request
 end
+if redis.call('GET', nonce_key) == metadata then
+    return 0  -- This attempt's own SET, re-sent after a lost reply
+end
+return 1  -- Replay: nonce was already burned by another request
 """
 
 # SHA1 hash of the Lua script for EVALSHA optimization (computed at runtime)
@@ -1144,8 +1152,10 @@ async def verify_and_consume_seal(
            at issuance, never from the seal itself (issue #379). A seal with
            no index entry is refused.
         3. ``verify_seal()`` -- stateless; any failure raises, nothing is written.
-        4. Atomically write the nonce key via the Redis Lua script.
-        5. If the key already existed, reject: as revoked if
+        4. Atomically write the nonce key via the Redis Lua script. A
+           re-send of this attempt's own write (lost reply) still counts as
+           this caller's consume.
+        5. If another writer holds the key, reject: as revoked if
            :func:`revoke_seal` wrote it, otherwise as a replay.
 
     Fail-closed: if Redis is unavailable or the script errors, a seal that
@@ -1237,6 +1247,9 @@ async def verify_and_consume_seal(
             "action": action,
             "burned_at": datetime.now(tz=timezone.utc).isoformat(),
             "nonce_prefix": nonce[:16],
+            # Unique per attempt, so the burn script can tell its own
+            # re-sent SET from another consumer's.
+            "op_id": new_op_id(),
         }
     )
     _burn_start_ns = _time_module.time_ns()
@@ -1423,14 +1436,15 @@ async def revoke_seal(seal: str, reason: str, redis_client: Any = None) -> bool:
             "reason": reason[:200],
             "revoked_at": datetime.now(tz=timezone.utc).isoformat(),
             "nonce_prefix": nonce[:16],
+            "op_id": new_op_id(),
         }
     )
     try:
         redis = await _resolve_redis(redis_client)
-        written = await redis.set(
+        written = await set_nx_retry_safe(
+            redis,
             f"{_NONCE_PREFIX}{nonce}",
             record,
-            nx=True,
             ex=max(remaining_ttl + 60, 60),
         )
     except Exception as exc:

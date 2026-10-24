@@ -39,11 +39,13 @@ Live GKE Staging Proof Ceiling (out of scope for this test):
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.gateway.governance.defer_queue import (
+    _PARK_LUA,
     ApprovalStatus,
     DeferQueue,
     DeferReason,
@@ -208,6 +210,18 @@ def fake_redis_defer():
             return 1
         return 0
 
+    async def _zadd(zset_key: str, mapping: dict):
+        zsets.setdefault(zset_key, {}).update(mapping)
+
+    async def _eval(script: str, num_keys: int, key: str, *argv: Any) -> int:
+        """Simulate the park script: create the token hash atomically."""
+        assert script == _PARK_LUA, "fake implements only DeferQueue._PARK_LUA"
+        token_json, _ttl, op_id = argv
+        if await _hsetnx(key, "token", token_json):
+            store[key].update({"status": "PARKED", "rev": "0", "op_id": op_id})
+            return 1
+        return int(store[key].get("op_id") == op_id)
+
     async def _watch(key: str):
         pass
 
@@ -261,6 +275,8 @@ def fake_redis_defer():
     redis.hget = _hget
     redis.hmget = _hmget
     redis.hsetnx = _hsetnx
+    redis.zadd = _zadd
+    redis.eval = _eval
     redis.watch = _watch
     redis.unwatch = _unwatch
     redis.pipeline = lambda transaction=True: FakePipeline()

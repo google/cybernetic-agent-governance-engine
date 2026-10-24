@@ -31,6 +31,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
+from src.gateway.infrastructure.redis_single_use import new_op_id, set_nx_retry_safe
+
 
 class TokenBindingError(ValueError):
     """Raised when DPoP token binding validation fails (fail-closed)."""
@@ -218,13 +220,14 @@ class DPoPValidator(ProofOfPossessionValidator):
         )
 
         # Record JTI only after cryptographic verification succeeds so forged
-        # proofs cannot pollute the replay cache.
+        # proofs cannot pollute the replay cache. The value is a per-attempt
+        # op id, so a SET re-sent after a lost reply is not read as a replay.
         if self._redis_client is not None:
             try:
-                claimed = await self._redis_client.set(
+                claimed = await set_nx_retry_safe(
+                    self._redis_client,
                     f"{self._JTI_REDIS_PREFIX}{jti}",
-                    "1",
-                    nx=True,
+                    new_op_id(),
                     ex=self._jti_ttl_seconds,
                 )
             except Exception as exc:
