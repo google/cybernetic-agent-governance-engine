@@ -429,6 +429,7 @@ The gateway authenticates callers by Linkerd mTLS workload identity (POAM-2026-0
 - The `vllm-inference` namespace uses PSA `baseline` for GPU/CUDA access.
 - The `agentsight` namespace requires PSA `privileged` for eBPF (host PID + network).
 - Gateway ingress is deny-by-default by Linkerd workload identity ([`workload_identity.py`](../src/gateway/server/workload_identity.py)). `CAGE_TRUSTED_CLIENT_IDENTITIES` lists the admitted identities (only the advisor) and is required in every environment; the gateway always enforces workload identity and fails at startup if `CAGE_TRUSTED_CLIENT_IDENTITIES` is unset. Callers through Agent Gateway or the raw `ingress.yaml` are refused.
+- The finance trade policy's `trader_role` (and `trader_id`) is bound from that verified identity, never from a request ([`trader_binding.py`](../src/cage_finance/tools/trader_binding.py)). `CAGE_TRADER_ROLE_BINDINGS` maps an identity to `junior` or `senior`; it is unset in the shipped manifests, so the advisor trades as `junior`. An invalid value stops the gateway at startup.
 - `KMS_GOVERNANCE_KEY` activates Cloud KMS asymmetric signing (CTRL_KMS_001); HMAC fallback is dev/CI only.
 - `RECONCILER_KMS_KEY` is the reconciler's separate snapshot-signing key. The reconciliation worker signs with it; the gateway verifies ground-truth snapshots against it by `kid` and refuses an enforcing startup without it (G8).
 

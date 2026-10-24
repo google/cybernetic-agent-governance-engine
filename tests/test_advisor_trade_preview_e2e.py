@@ -46,7 +46,7 @@ from src.cage_finance.stpa import uca_rules
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
-from src.gateway.server.workload_identity import CLIENT_IDENTITY_HEADER
+from src.gateway.server.workload_identity import CLIENT_IDENTITY_HEADER, _serving
 from src.governed_financial_advisor.graph.governance.tool_guard import (
     gateway_tool_guard,
 )
@@ -54,6 +54,7 @@ from src.governed_financial_advisor.graph.nodes.safety_node import safety_check_
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from tests.test_trade_governance_e2e import (  # noqa: F401  (gw is a fixture)
     ADVISOR,
+    JUNIOR_DESK,
     Gateway,
     gw,
 )
@@ -108,8 +109,6 @@ def _tool_call(side: str = "buy", **extra: Any) -> dict[str, Any]:
             "amount": 500.0,
             "currency": "USD",
             "confidence": 0.99,
-            "trader_id": "agent_001",
-            "trader_role": "junior",
             "side": side,
             **extra,
         },
@@ -120,18 +119,20 @@ def _trader(gateway: Gateway, results: list[str]) -> Any:
     """The governed trader: the trade tool's committing run, per tool call.
 
     The live node calls the tool over MCP; arguments the tool does not accept
-    are rejected there, so they are dropped here too.
+    are rejected there, so they are dropped here too. The MCP request carries
+    the advisor's verified identity (WorkloadIdentityMiddleware).
     """
 
     async def node(state: dict[str, Any]) -> dict[str, Any]:
         messages = []
         for call in state["messages"][-1].tool_calls:
             kwargs = {k: v for k, v in call["args"].items() if k in _TOOL_KWARGS}
-            result = await execute_trade_action(
-                **kwargs,
-                deferred_id=state.get("deferred_id"),
-                governor=gateway.governor,
-            )
+            with _serving(ADVISOR):
+                result = await execute_trade_action(
+                    **kwargs,
+                    deferred_id=state.get("deferred_id"),
+                    governor=gateway.governor,
+                )
             results.append(result)
             messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
         return {"messages": messages}
@@ -257,17 +258,16 @@ async def _assert_refused_everywhere(
 
     # The committing tool, called directly (no preview), refuses too.
     gateway.refusals.reset_mock()
-    result = await execute_trade_action(
-        "AAPL",
-        500.0,
-        "USD",
-        0.99,
-        str(uuid.uuid4()),
-        "agent_001",
-        "junior",
-        side=side,
-        governor=gateway.governor,
-    )
+    with _serving(ADVISOR):
+        result = await execute_trade_action(
+            "AAPL",
+            500.0,
+            "USD",
+            0.99,
+            str(uuid.uuid4()),
+            side=side,
+            governor=gateway.governor,
+        )
     assert result.startswith("BLOCKED"), result
     assert codes[0] in _refused_codes(gateway)
     gateway.actuate.assert_not_awaited()
@@ -321,3 +321,23 @@ async def test_daily_volume_fault_refuses_with_uca_6(
 ) -> None:
     advisor.market_feed.inject_volume_fault(FaultMode.STALE_TIMESTAMP)
     await _assert_refused_everywhere(advisor, ("STPA_UCA_UCA_6",))
+
+
+async def test_a_tool_call_claiming_senior_is_routed_as_junior(
+    advisor: Gateway,
+) -> None:
+    # GHSA-w39v-5v7h-fxg9: a prompt-injected tool call claims senior for
+    # $6,000 from an advisor workload with no senior binding. The guard's
+    # preview is evaluated as junior (MANUAL_REVIEW), so the call parks for a
+    # human and the trade tool never runs.
+    advisor.http.headers[CLIENT_IDENTITY_HEADER] = JUNIOR_DESK
+    call = _tool_call(amount=6_000.0, trader_role="senior", trader_id="trader-7")
+
+    out, results = await _run_trader(advisor, call)
+
+    assert out["governance_status"] == "REQUIRE_APPROVAL"
+    assert out["deferred_id"]
+    assert results == []
+    (evaluated,) = advisor.policy.calls
+    assert (evaluated["trader_role"], evaluated["trader_id"]) == ("junior", JUNIOR_DESK)
+    advisor.actuate.assert_not_awaited()

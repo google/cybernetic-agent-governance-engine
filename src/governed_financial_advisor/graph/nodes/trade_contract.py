@@ -31,6 +31,14 @@ it approved. :func:`canonical_trade_digest` binds every field of the
 canonical payload, including the exact ``confidence``, and refuses a payload
 that carries any other field, so a request that differs in a field the
 digest cannot see is always re-validated.
+
+Who is trading is not part of the request. The gateway binds ``trader_role``
+(the RBAC role that sets the trade's OPA limits) and ``trader_id`` from the
+advisor's verified workload identity on every path that evaluates a trade, and
+drops any value a caller sends (GHSA-w39v-5v7h-fxg9). The advisor therefore
+never sends either, and a plan that claims ``senior`` changes nothing. A
+tool call that still names either key has no digest, so it is always
+re-validated.
 """
 
 from __future__ import annotations
@@ -61,18 +69,17 @@ TRADE_STEP_ACTIONS: frozenset[str] = frozenset(
     {"execute_trade", "trade", "buy", "sell"}
 )
 
-#: Least-privilege RBAC role. The role is never read from model output: a
-#: plan that claimed ``senior`` would raise its own OPA trade limit.
-DEFAULT_TRADER_ROLE = "junior"
-
 #: Confidence previewed for a trade step that omits it. It is the committing
 #: tool's default (``execute_trade_action(confidence=0.0)``), so the preview
 #: is the request the tool will actually make.
 DEFAULT_CONFIDENCE = 0.0
 
 #: Keys of the canonical ``execute_trade`` payload built by :func:`trade_params`.
+#: No ``trader_role`` / ``trader_id``: the gateway binds who trades from the
+#: caller's verified workload identity, so a payload naming either has no
+#: digest (GHSA-w39v-5v7h-fxg9).
 TRADE_PARAM_KEYS: frozenset[str] = frozenset(
-    {"action", "symbol", "amount", "currency", "trader_role", "confidence", "side"}
+    {"action", "symbol", "amount", "currency", "confidence", "side"}
 )
 
 #: Keys ``gateway_tool_guard`` adds to a tool call's arguments. ``tool_name``
@@ -163,8 +170,9 @@ def _confidence(source: Mapping[str, Any]) -> float:
 def trade_params(source: Mapping[str, Any]) -> dict[str, Any]:
     """Return the canonical ``execute_trade`` parameters for a plan or plan step.
 
-    ``trade_governance.rego`` needs ``trader_role``, ``amount`` and
-    ``currency`` to evaluate a trade. A missing role is an explicit DENY.
+    ``trade_governance.rego`` evaluates ``amount`` and ``currency`` against the
+    limits of ``trader_role``, which the gateway binds from the caller's
+    verified workload identity; the request carries no role or trader id.
 
     A missing ``confidence`` becomes :data:`DEFAULT_CONFIDENCE` (``0.0``), as
     in the committing tool.
@@ -189,7 +197,6 @@ def trade_params(source: Mapping[str, Any]) -> dict[str, Any]:
         "symbol": str(source.get("symbol") or "UNKNOWN"),
         "amount": amount,
         "currency": str(source.get("currency") or "USD"),
-        "trader_role": DEFAULT_TRADER_ROLE,
         "confidence": _confidence(source),
         "side": str(source.get("side") or "buy").lower(),
     }
@@ -199,17 +206,19 @@ def canonical_trade_digest(source: Mapping[str, Any]) -> str:
     """Compute a deterministic SHA-256 digest of the canonical trade parameters.
 
     Binds the trade identity (``action``, ``symbol``, ``amount``, ``currency``,
-    ``trader_role``, ``side``) and validates that ``confidence`` meets the
-    minimum admissible threshold (>= 0.95) so an under-confident tool call can
-    never reuse a previewed ``ALLOW`` verdict. The exact ``confidence`` is part
-    of the identity as well.
+    ``side``) and validates that ``confidence`` meets the minimum admissible
+    threshold (>= 0.95) so an under-confident tool call can never reuse a
+    previewed ``ALLOW`` verdict. The exact ``confidence`` is part of the
+    identity as well. ``trader_role`` is not part of it: the gateway binds
+    the role from the caller's identity, never from the call.
 
     ``source`` may carry only the keys of the canonical payload
     (:data:`TRADE_PARAM_KEYS`) plus the ``tool_name`` and ``action`` keys
     ``gateway_tool_guard`` adds, and its ``action``, if any, must be
     :data:`TRADE_ACTION`. Any other field (``limit_price``, ``account_id``,
     ``transaction_id``, ...) could change the order without changing the
-    digest, so a payload carrying one has no digest.
+    digest, so a payload carrying one has no digest. So does a payload that
+    still names ``trader_role`` or ``trader_id``.
 
     Raises:
         ValueError: ``source`` carries a field the digest does not bind, names
@@ -238,7 +247,6 @@ def canonical_trade_digest(source: Mapping[str, Any]) -> str:
         "symbol": canonical["symbol"].upper(),
         "amount": canonical["amount"],
         "currency": canonical["currency"].upper(),
-        "trader_role": str(source.get("trader_role") or canonical["trader_role"]),
         "side": canonical["side"],
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(

@@ -151,6 +151,73 @@ def minimal_cs() -> ControlStructureModel:
     return ControlStructureModel(**raw)
 
 
+def _finance_cs() -> ControlStructureModel:
+    """The finance source set exactly as the STPA freshness check compiles it."""
+    from src.gateway.governance.stpa_compiler import load_control_structures
+
+    return load_control_structures(sorted(_FINANCE_YAML_PATH.parent.rglob("*.yaml")))
+
+
+class TestSagaServerBoundParams:
+    """A generated saga tool call never sends a ``server_bound`` param.
+
+    GHSA-w39v-5v7h-fxg9: ``trader_role`` is required by the trade policy but
+    bound by the gateway from the verified caller identity. A saga sends
+    exactly its ``mcp_arguments``, and the control structure refuses one that
+    names a server-bound param of the forward action.
+    """
+
+    @staticmethod
+    def _raw() -> dict:
+        return yaml.safe_load(_FINANCE_YAML_PATH.read_text())
+
+    @staticmethod
+    def _trade_saga(raw: dict) -> dict:
+        (uca,) = [u for u in raw["unsafe_control_actions"] if u["id"] == "UCA-4"]
+        return uca["langgraph_saga"]
+
+    @staticmethod
+    def _trader_role(raw: dict) -> dict:
+        (trade,) = [
+            ca for ca in raw["control_actions"] if ca["name"] == "execute_trade"
+        ]
+        (role,) = [p for p in trade["params"] if p["name"] == "trader_role"]
+        return role
+
+    def test_the_trade_saga_never_sends_the_trader_role(self) -> None:
+        from src.gateway.governance.stpa_compiler import generate_langgraph
+
+        generated = generate_langgraph(_finance_cs())
+
+        assert 'name="execute_trade_action"' in generated
+        assert '"trader_role"' not in generated
+
+    def test_a_saga_sending_a_server_bound_param_is_refused(self) -> None:
+        raw = self._raw()
+        self._trade_saga(raw)["mcp_arguments"].append("trader_role")
+
+        with pytest.raises(ValueError, match="server_bound"):
+            ControlStructureModel(**raw)
+
+    def test_the_flag_is_what_refuses_it(self) -> None:
+        from src.gateway.governance.stpa_compiler import generate_langgraph
+
+        raw = self._raw()
+        self._trade_saga(raw)["mcp_arguments"].append("trader_role")
+        role = self._trader_role(raw)
+        assert role["required"] is True and role["server_bound"] is True
+        role["server_bound"] = False
+
+        assert '"trader_role"' in generate_langgraph(ControlStructureModel(**raw))
+
+    def test_server_bound_must_be_a_boolean(self) -> None:
+        raw = self._raw()
+        self._trader_role(raw)["server_bound"] = "yes"
+
+        with pytest.raises(ValueError, match="server_bound must be a boolean"):
+            ControlStructureModel(**raw)
+
+
 @pytest.fixture
 def nemo_cs() -> ControlStructureModel:
     raw = yaml.safe_load(_NEMO_YAML)

@@ -144,15 +144,18 @@ def _make_trade_params() -> dict:
     }
 
 
-def _make_committing_trade_params(principal_id: str) -> dict:
-    """Generate trade parameters for the committing POST /tools/execute path."""
+def _make_committing_trade_params() -> dict:
+    """Generate trade parameters for the committing POST /tools/execute path.
+
+    No trader_role / trader_id: the gateway binds both from the caller's
+    verified workload identity (GHSA-w39v-5v7h-fxg9), and execute_trade_action
+    takes neither.
+    """
     return {
         "symbol": random.choice(TICKERS),
         "amount": float(random.randint(10, 250)),
         "currency": "USD",
         "confidence": round(random.uniform(0.96, 0.99), 2),
-        "trader_id": principal_id,
-        "trader_role": "senior",
         "dry_run": True,
         "side": "buy",
     }
@@ -322,7 +325,7 @@ class GovernedTradeUser(HttpUser):
     @task(1)
     def governed_trade_flow(self) -> None:
         """Run validate-action followed by committing execute_trade_action."""
-        trade_params = _make_committing_trade_params(self.principal_id)
+        trade_params = _make_committing_trade_params()
 
         # Step 1: Non-committing preview via POST /governance/validate-action
         validate_payload = {
@@ -332,8 +335,6 @@ class GovernedTradeUser(HttpUser):
                 "amount": trade_params["amount"],
                 "currency": trade_params["currency"],
                 "confidence": trade_params["confidence"],
-                "trader_id": trade_params["trader_id"],
-                "trader_role": trade_params["trader_role"],
                 "side": trade_params["side"],
             },
         }

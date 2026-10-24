@@ -169,9 +169,9 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                         "currency": order.currency,
                         "confidence": order.confidence,
                         "transaction_id": order.transaction_id,
-                        "trader_id": order.trader_id or "agent_001",
-                        "trader_role": order.trader_role or "junior",
-                        # The gateway values the portfolio itself for a sell.
+                        # The gateway values the portfolio itself for a sell,
+                        # and binds trader_role / trader_id from this
+                        # service's verified workload identity.
                         "side": order.side or "buy",
                     },
                 )

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
@@ -28,8 +29,11 @@ from src.gateway.server.workload_identity import (
     TRUSTED_IDENTITIES_ENV,
     IdentityPolicy,
     WorkloadIdentityMiddleware,
+    _serving,
+    current_client_identity,
     extract_client_identity,
     is_open_path,
+    is_workload_identity,
     load_identity_policy,
 )
 
@@ -274,3 +278,146 @@ def test_real_gateway_refuses_unidentified_calls_to_governed_routes() -> None:
     ):
         assert client.post(path, json={}).status_code == 403, path
     assert client.get("/mcp/").status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# current_client_identity(): the verified caller, for its own request only
+# (GHSA-w39v-5v7h-fxg9: the finance plugin binds trader_role from it)
+# ---------------------------------------------------------------------------
+
+
+def _recording(seen: list[str | None]):  # type: ignore[no-untyped-def]
+    async def app(scope, receive, send):  # type: ignore[no-untyped-def]
+        seen.append(current_client_identity())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    return app
+
+
+async def _status(app, path: str, identity: str | None = None) -> int:  # type: ignore[no-untyped-def]
+    headers = (
+        []
+        if identity is None
+        else [(CLIENT_IDENTITY_HEADER.encode(), identity.encode())]
+    )
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {"type": "http", "method": "POST", "path": path, "headers": headers}
+    await app(scope, receive, send)
+    return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+async def test_a_trusted_request_runs_as_its_verified_identity() -> None:
+    seen: list[str | None] = []
+    app = WorkloadIdentityMiddleware(_recording(seen), ENFORCED)
+
+    assert await _status(app, "/tools/execute", ADVISOR) == 200
+
+    assert seen == [ADVISOR]
+    assert current_client_identity() is None  # reset once the request is served
+
+
+async def test_an_open_path_never_runs_as_a_caller() -> None:
+    seen: list[str | None] = []
+    app = WorkloadIdentityMiddleware(_recording(seen), ENFORCED)
+
+    with _serving(OTHER):  # even nested inside another verified request
+        assert await _status(app, "/health", ADVISOR) == 200
+        assert current_client_identity() == OTHER
+
+    assert seen == [None]
+
+
+@pytest.mark.parametrize("identity", [None, OTHER], ids=["none", "untrusted"])
+async def test_a_refused_request_never_runs(identity: str | None) -> None:
+    seen: list[str | None] = []
+    app = WorkloadIdentityMiddleware(_recording(seen), ENFORCED)
+
+    assert await _status(app, "/tools/execute", identity) == 403
+
+    assert seen == []
+
+
+def test_there_is_no_identity_outside_a_request() -> None:
+    assert current_client_identity() is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (ADVISOR, True),
+        (ADVISOR.upper(), False),
+        ("spiffe://cluster.local/ns/governance-stack/sa/cage-advisor-sa", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_workload_identity(value: object, expected: bool) -> None:
+    assert is_workload_identity(value) is expected
+
+
+class _MeshProxy(httpx.AsyncBaseTransport):
+    """Stands in for the Linkerd inbound proxy: sets ``l5d-client-id``."""
+
+    def __init__(self, app) -> None:  # type: ignore[no-untyped-def]
+        self._inner = httpx.ASGITransport(app=app)
+        self.identity = ADVISOR
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        request.headers[CLIENT_IDENTITY_HEADER] = self.identity
+        return await self._inner.handle_async_request(request)
+
+
+async def test_an_mcp_tool_call_runs_as_the_identity_of_its_own_request() -> None:
+    # Stateless MCP (as the gateway runs it) serves each call in the context of
+    # the HTTP request that carried it, so a tool sees that caller's identity
+    # and never the identity of an earlier request on the same client session.
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from src.gateway.infrastructure.mcp_client import GatewayMCPClient
+
+    server = FastMCP(
+        "identity-propagation",
+        stateless_http=True,
+        json_response=True,
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(allowed_hosts=["gateway:*"]),
+    )
+
+    @server.tool()
+    async def whoami() -> str:
+        return str(current_client_identity())
+
+    proxy = _MeshProxy(
+        WorkloadIdentityMiddleware(
+            Starlette(routes=[Mount("/mcp", app=server.streamable_http_app())]),
+            IdentityPolicy(trusted=frozenset({ADVISOR, OTHER})),
+        )
+    )
+    client = GatewayMCPClient("http://gateway:8080/mcp/", http_transport=proxy)
+    seen: list[str] = []
+    async with server.session_manager.run():
+        try:
+            for identity in (ADVISOR, OTHER, ADVISOR):
+                proxy.identity = identity
+                seen.append(await client.call_tool("whoami", {}))
+        finally:
+            await client.close()
+
+    assert seen == [ADVISOR, OTHER, ADVISOR]
+
+
+def test_the_gateway_mcp_server_is_stateless() -> None:
+    # The propagation above holds only for stateless serving: a stateful
+    # session would run every call in the context of the request that opened it.
+    from src.gateway.server.mcp_tool_server import mcp
+
+    assert mcp.settings.stateless_http is True

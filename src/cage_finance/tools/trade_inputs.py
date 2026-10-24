@@ -12,14 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Server-side STPA inputs for a governed trade.
+"""Server-side inputs for a governed trade: STPA measurements and the trader.
 
 UCA-2 / FIN-2 read ``latency_ms``, UCA-5 reads ``drawdown``, UCA-6 reads
 ``order_size`` and ``daily_vol`` and, for a sell, UCA-13 / FIN-1 reads
-``portfolio_total`` from the trade params. The gateway never takes any of
-these values from its caller. It measures or derives them here for every
-evaluation of a trade: each preview and each committing run (including the
-POST_HITL re-run after an approval).
+``portfolio_total`` from the trade params; the trade policy reads
+``trader_role`` and the fiscal tier ``trader_id``. The gateway never takes any
+of these values from its caller. It measures, derives or binds them here for
+every evaluation of a trade: each preview and each committing run (including
+the POST_HITL re-run after an approval).
+
+``trader_role`` / ``trader_id`` (OPA RBAC, fiscal limits)
+    Who is trading, bound from the caller's verified workload identity by
+    :class:`~src.cage_finance.tools.trader_binding.TraderRoleBindings`.
+    ``trade_governance.rego`` sets the trade's limits by role, so a caller
+    that could name its own role could raise them (GHSA-w39v-5v7h-fxg9).
 
 ``latency_ms`` (UCA-2 / FIN-2)
     FIN-2: "Agent must not execute trade if latency exceeds max_latency_ms";
@@ -88,14 +95,16 @@ action in :data:`TRADE_ACTIONS` (``execute_trade`` and
 kernel applies it on every path that evaluates a trade (``validate-action``
 and the other previews, and the committing run in the trade tool). It drops
 any caller value for these keys, including the UCA-5 aliases
-``portfolio_drawdown_pct`` and ``current_drawdown``, so a preview and the
-binding run see the same measured values.
+``portfolio_drawdown_pct`` and ``current_drawdown`` and the trader's role and
+id, so a preview and the binding run see the same server-side values.
 
 Fail closed: if a source is missing, times out, or returns a reading that
 fails validation, or ``amount`` is not a usable number, the input is left out
 of the params. The generated UCA-2 / UCA-5 / UCA-6 / UCA-13 rules (and, for a
 bounded trade, B2) then refuse the trade inside the governor, which records
-the refusal in the evidence chain.
+the refusal in the evidence chain. Likewise, without a verified caller
+identity an enforcing posture leaves ``trader_role`` and ``trader_id`` out,
+and the trade policy refuses the missing role.
 """
 
 from __future__ import annotations
@@ -105,10 +114,16 @@ import logging
 import math
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from src.cage_finance.tools.trader_binding import (
+    TRADER_KEYS,
+    TraderIdentityUnavailable,
+    TraderRoleBindings,
+)
 from src.gateway.governance.reconciliation.daemon import TTL_SECONDS
+from src.gateway.server.workload_identity import current_client_identity
 
 logger = logging.getLogger(__name__)
 
@@ -487,48 +502,74 @@ class ServerTradeInputs:
 #: The actions that place a trade. Each gets :class:`TradeInputResolver`.
 TRADE_ACTIONS: tuple[str, ...] = ("execute_trade", "execute_trade_bounded")
 
-#: Every trade param a UCA-2 / UCA-5 / UCA-6 / UCA-13 rule or bounding contract
-#: B2 reads as measured state, including UCA-5's aliases
-#: (``trade_hazards.yaml``). Only the gateway sets these; a caller value is
-#: always dropped.
-TRADE_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
-    {
-        "latency_ms",
-        "drawdown",
-        "portfolio_drawdown_pct",
-        "current_drawdown",
-        "order_size",
-        "daily_vol",
-        "portfolio_total",
-    }
+#: Every trade param the gateway owns: the measured state a UCA-2 / UCA-5 /
+#: UCA-6 / UCA-13 rule or bounding contract B2 reads, including UCA-5's aliases
+#: (``trade_hazards.yaml``), and who is trading (``trader_role`` /
+#: ``trader_id``, bound from the verified caller identity). Only the gateway
+#: sets these; a caller value is always dropped.
+TRADE_SERVER_INPUT_KEYS: frozenset[str] = (
+    frozenset(
+        {
+            "latency_ms",
+            "drawdown",
+            "portfolio_drawdown_pct",
+            "current_drawdown",
+            "order_size",
+            "daily_vol",
+            "portfolio_total",
+        }
+    )
+    | TRADER_KEYS
 )
 
 
 @dataclass(frozen=True)
 class TradeInputResolver:
-    """Trade server-input resolver over :class:`ServerTradeInputs`.
+    """Trade server-input resolver over :class:`ServerTradeInputs` and the trader.
 
     Registered for every action in :data:`TRADE_ACTIONS`.
 
-    Reads ``symbol``, ``side`` and ``amount`` from the (already stripped)
-    params. A missing symbol resolves nothing, so UCA-2 / UCA-5 / UCA-6
-    refuse; an unusable ``amount`` leaves ``order_size`` unset. ``side`` is
-    matched case-insensitively, like UCA-13's ``applies_when``, so every
-    request UCA-13 treats as a sell gets ``portfolio_total``.
+    Binds ``trader_role`` and ``trader_id`` from the verified identity of the
+    request being served (:func:`~src.gateway.server.workload_identity.
+    current_client_identity`) through ``traders``; the default binds every
+    verified identity as ``junior``. Then reads ``symbol``, ``side`` and
+    ``amount`` from the (already stripped) params. A missing symbol resolves
+    no measurement, so UCA-2 / UCA-5 / UCA-6 refuse; an unusable ``amount``
+    leaves ``order_size`` unset. ``side`` is matched case-insensitively, like
+    UCA-13's ``applies_when``, so every request UCA-13 treats as a sell gets
+    ``portfolio_total``.
     """
 
     inputs: ServerTradeInputs
+    traders: TraderRoleBindings = field(default_factory=TraderRoleBindings)
     owned_keys: frozenset[str] = TRADE_SERVER_INPUT_KEYS
 
     async def resolve(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        resolved: dict[str, Any] = self._trader()
         symbol = params.get("symbol")
         if not isinstance(symbol, str) or not symbol.strip():
             logger.warning(
-                "trade inputs: no symbol in %s; nothing resolved", sorted(params)
+                "trade inputs: no symbol in %s; no measurement resolved",
+                sorted(params),
+            )
+            return resolved
+        side = str(params.get("side") or "buy").lower()
+        resolved.update(
+            await self.inputs.resolve(symbol, side=side, amount=params.get("amount"))
+        )
+        return resolved
+
+    def _trader(self) -> dict[str, Any]:
+        """``trader_role`` / ``trader_id`` for the caller, or none (refused)."""
+        try:
+            return dict(self.traders.bind(current_client_identity()))
+        except TraderIdentityUnavailable as exc:
+            logger.warning(
+                "trade inputs: %s; trader_role / trader_id unset (the trade "
+                "policy will refuse)",
+                exc,
             )
             return {}
-        side = str(params.get("side") or "buy").lower()
-        return await self.inputs.resolve(symbol, side=side, amount=params.get("amount"))
 
 
 __all__ = [

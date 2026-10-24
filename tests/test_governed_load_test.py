@@ -183,7 +183,10 @@ def test_governed_trade_user_assigns_distinct_principals_and_executes_flow(
     assert len(user_a.client.calls) == 3
     assert user_a.client.calls[0]["url"] == "/governance/validate-action"
     assert user_a.client.calls[0]["json"]["action"] == "execute_trade"
-    assert user_a.client.calls[0]["json"]["params"]["trader_id"] == user_a.principal_id
+    # Who trades is bound by the gateway from the workload identity
+    # (GHSA-w39v-5v7h-fxg9): neither request names a role or a trader.
+    for call in user_a.client.calls[:2]:
+        assert not {"trader_role", "trader_id"} & set(call["json"]["params"])
     assert user_a.client.calls[1]["url"] == "/tools/execute"
     assert user_a.client.calls[1]["json"]["tool_name"] == "execute_trade_action"
     assert user_a.client.calls[2]["url"] == "/mcp/"

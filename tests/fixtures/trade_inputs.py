@@ -14,10 +14,11 @@
 
 """Server-side trade inputs for tests that drive ``execute_trade_action``.
 
-The trade tool binds ``latency_ms`` / ``drawdown`` / ``portfolio_total`` through
-the governor's ``execute_trade`` server-input resolver. Tests that stand in a
-``MagicMock`` governor give it a real resolver over simulated sources, and a
-real execution ledger (process-local under the test posture).
+The trade tool binds ``latency_ms`` / ``drawdown`` / ``portfolio_total`` and the
+trader (``trader_role`` / ``trader_id``) through the governor's
+``execute_trade`` server-input resolver. Tests that stand in a ``MagicMock``
+governor give it a real resolver over simulated sources, and a real execution
+ledger (process-local under the test posture).
 """
 
 from __future__ import annotations
@@ -29,7 +30,12 @@ from src.cage_finance.simulated_feeds import (
     SimulatedMarketQuoteFeed,
     SimulatedPortfolioNavSource,
 )
-from src.cage_finance.tools.trade_inputs import ServerTradeInputs, TradeInputResolver
+from src.cage_finance.tools.trade_inputs import (
+    TRADE_ACTIONS,
+    ServerTradeInputs,
+    TradeInputResolver,
+)
+from src.cage_finance.tools.trader_binding import TraderRoleBindings
 from src.gateway.governance.execution_idempotency import ExecutionLedger
 
 
@@ -39,13 +45,18 @@ def trade_server_inputs(
     nav_source: Any = None,
     no_market_feed: bool = False,
     no_nav_source: bool = False,
+    traders: TraderRoleBindings | None = None,
 ) -> dict[str, TradeInputResolver]:
-    """``execute_trade`` resolver; defaults are in limit in every region.
+    """The trade resolver for every trade action, as the finance plugin wires it.
 
-    A 10 ms quote age and a flat day (no drawdown, NAV = opening NAV).
+    Defaults are in limit in every region: a 10 ms quote age and a flat day
+    (no drawdown, NAV = opening NAV). ``traders`` binds ``trader_role`` /
+    ``trader_id``; by default every verified identity is ``junior``, and so is
+    a call with no identity in the (permissive) test posture.
     """
-    return {
-        "execute_trade": TradeInputResolver(
+    return dict.fromkeys(
+        TRADE_ACTIONS,
+        TradeInputResolver(
             ServerTradeInputs(
                 market_feed=None
                 if no_market_feed
@@ -58,9 +69,10 @@ def trade_server_inputs(
                 nav_source=None
                 if no_nav_source
                 else (nav_source or SimulatedPortfolioNavSource()),
-            )
-        )
-    }
+            ),
+            traders=TraderRoleBindings() if traders is None else traders,
+        ),
+    )
 
 
 def trade_governor(server_inputs: dict[str, Any] | None = None) -> MagicMock:

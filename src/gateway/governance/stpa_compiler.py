@@ -579,6 +579,17 @@ class ControlStructureModel(BaseModel):
                     f"control action {action.get('name')!r}: terminal_classification "
                     f"{classification!r} is not one of {allowed}"
                 )
+            # ``server_bound: true`` marks a param the gateway resolves itself
+            # (a measured input, or who the verified caller is); a caller
+            # never sends it.
+            for param in action.get("params") or []:
+                if isinstance(param, dict) and not isinstance(
+                    param.get("server_bound", False), bool
+                ):
+                    raise ValueError(
+                        f"control action {action.get('name')!r}: param "
+                        f"{param.get('name')!r} server_bound must be a boolean"
+                    )
         return actions
 
     @field_validator("unsafe_control_actions")
@@ -588,6 +599,33 @@ class ControlStructureModel(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate UCA IDs found in unsafe_control_actions.")
         return ucas
+
+    @model_validator(mode="after")
+    def _v_sagas_send_no_server_bound_param(self) -> ControlStructureModel:
+        # A generated saga tool call that listed a server_bound param would
+        # send a value only the gateway may set, so the structure is refused.
+        server_bound: dict[str, set[str]] = {
+            str(action.get("name")): {
+                str(param.get("name"))
+                for param in action.get("params") or []
+                if isinstance(param, dict) and param.get("server_bound") is True
+            }
+            for action in self.control_actions
+        }
+        for uca in self.unsafe_control_actions:
+            saga = uca.langgraph_saga
+            if saga is None or saga.execution_type != "mcp_tool":
+                continue
+            sent = sorted(
+                set(saga.mcp_arguments) & server_bound.get(saga.forward_action, set())
+            )
+            if sent:
+                raise ValueError(
+                    f"{uca.id}: langgraph_saga.mcp_arguments sends server_bound "
+                    f"params of {saga.forward_action!r}: {sent}. The gateway binds "
+                    "them; a saga tool call must not send them."
+                )
+        return self
 
     @classmethod
     def merge(cls, models: list[ControlStructureModel]) -> ControlStructureModel:
@@ -1448,6 +1486,12 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
        - Traverses COMPLETED entries in LIFO order and routes to the appropriate
          compensating node.
        - Routes to ``human_review`` if a compensating node itself fails.
+
+    An ``mcp_tool`` forward node sends exactly the saga's ``mcp_arguments``.
+    :class:`ControlStructureModel` refuses an entry that names a
+    ``server_bound: true`` param of the forward action: the gateway resolves
+    those itself (a measured input, or who the verified caller is), so a caller
+    never sends them.
     """
     saga_ucas = [u for u in cs.unsafe_control_actions if "langgraph" in u.enforcement]
 

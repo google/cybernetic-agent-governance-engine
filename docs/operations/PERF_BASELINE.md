@@ -20,7 +20,7 @@ Historically, [`scripts/run_gke_load_test.sh`](../../scripts/run_gke_load_test.s
 
 [`GovernedTradeUser`](../../tests/load/locustfile.py) in [`tests/load/locustfile.py`](../../tests/load/locustfile.py) exercises the full committing trade lifecycle on every iteration:
 
-1. **Preview (`POST /governance/validate-action`)**: Submits an `execute_trade` payload with a per-user `trader_id` (`load_principal_<seq>`) and `l5d-client-id` workload identity header.
+1. **Preview (`POST /governance/validate-action`)**: Submits an `execute_trade` payload with a per-user `x-cage-principal` header (`load_principal_<seq>`) and the `l5d-client-id` workload identity header. The payload names no trader: the gateway binds `trader_role` and `trader_id` from the verified workload identity, so every virtual user trades as that identity.
 2. **Committing Execution (`POST /tools/execute`)**: Invokes `execute_trade_action` ([`src/cage_finance/tools/tool_provider.py`](../../src/cage_finance/tools/tool_provider.py)), which executes:
    - `SymbolicGovernor.govern()` (full phase-1 + phase-2 committing pipeline);
    - KMS routing seal generation and blocking `cage-audit/3.0` evidence append;

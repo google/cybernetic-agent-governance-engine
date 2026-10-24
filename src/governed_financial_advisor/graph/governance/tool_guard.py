@@ -43,6 +43,11 @@ forwards the ``deferred_id`` in each tool call's arguments and the gateway
 consumes that approval exactly once, re-validating the fresh params. The
 advisor never decides that an approval holds.
 
+A ``deferred_id`` the model put in a tool call never counts: it is removed
+from the call ``validate-action`` previews and from every call the wrapped
+node executes. Only the approved resume above adds one, so an ALLOW for one
+call can never redeem an approval the model named (GHSA-w39v-5v7h-fxg9).
+
 Every refused call is answered with a ``ToolMessage`` so the conversation
 stays well-formed.
 
@@ -202,14 +207,29 @@ def _with_derived_transaction_ids(state: Any) -> Any:
     return {**state, "messages": messages}
 
 
-def _with_deferred_id(state: Any, deferred_id: str) -> Any:
-    """Return ``state`` whose last message's tool calls carry ``deferred_id``."""
+def _without_model_deferred_id(args: Any) -> dict[str, Any]:
+    """Return a copy of a tool call's ``args`` without a ``deferred_id``."""
+    return {
+        k: v
+        for k, v in (args if isinstance(args, dict) else {}).items()
+        if k != "deferred_id"
+    }
+
+
+def _with_deferred_id(state: Any, deferred_id: str | None) -> Any:
+    """Return ``state`` whose last message's tool calls carry only ``deferred_id``.
+
+    Any ``deferred_id`` the model wrote into a call is dropped first. With
+    ``deferred_id=None`` (no human approval) the calls carry none at all.
+    """
     messages = list(state.get("messages") or [])
     last = messages[-1]
-    calls = [
-        {**call, "args": {**(call.get("args") or {}), "deferred_id": deferred_id}}
-        for call in (getattr(last, "tool_calls", None) or [])
-    ]
+    calls = []
+    for call in getattr(last, "tool_calls", None) or []:
+        args = _without_model_deferred_id(call.get("args"))
+        if deferred_id is not None:
+            args["deferred_id"] = deferred_id
+        calls.append({**call, "args": args})
     messages[-1] = AIMessage(content=getattr(last, "content", ""), tool_calls=calls)
     return {**state, "messages": messages}
 
@@ -272,12 +292,11 @@ def gateway_tool_guard(
             )
 
             for call in tool_calls:
-                args = call.get("args") or {}
                 params: dict[str, Any] = {
-                    **(args if isinstance(args, dict) else {}),
+                    # never self-asserted by the model
+                    **_without_model_deferred_id(call.get("args")),
                     "tool_name": call.get("name", ""),
                 }
-                params.pop("deferred_id", None)  # never self-asserted by the model
                 if call.get("name") == TRADE_TOOL:
                     # The derived idempotency key names the call, not the order.
                     params.pop("transaction_id", None)
@@ -351,7 +370,8 @@ def gateway_tool_guard(
                     "routing_verdict_cache": None,
                 }
 
-            result = await func(state)
+            # Execute exactly what was validated: no model-supplied deferred_id.
+            result = await func(_with_deferred_id(state, None))
             return {
                 **result,
                 "governance_status": GOVERNANCE_ALLOWED,

@@ -104,6 +104,7 @@ from src.gateway.server.workload_identity import (
     CLIENT_IDENTITY_HEADER,
     IdentityPolicy,
     WorkloadIdentityMiddleware,
+    _serving,
 )
 from src.integrations.provider_05 import Provider05WarrantSource
 from tests.integrations.provider_05.test_provider_05_veip_vectors import (
@@ -220,19 +221,20 @@ class Stack:
     async def execute(
         self, params: dict[str, Any], deferred_id: str | None = None
     ) -> str:
-        return await execute_trade_action(
-            params["symbol"],
-            params["amount"],
-            params["currency"],
-            params["confidence"],
-            params.get("transaction_id") or str(uuid.uuid4()),
-            params["trader_id"],
-            params["trader_role"],
-            False,
-            deferred_id,
-            params["side"],
-            governor=self.governor,
-        )
+        # The advisor's MCP call reaches the tool behind WorkloadIdentityMiddleware,
+        # which makes its verified identity current (the trader binding reads it).
+        with _serving(ADVISOR):
+            return await execute_trade_action(
+                params["symbol"],
+                params["amount"],
+                params["currency"],
+                params["confidence"],
+                params.get("transaction_id") or str(uuid.uuid4()),
+                False,
+                deferred_id,
+                params["side"],
+                governor=self.governor,
+            )
 
     async def approve(self, deferred_id: str, *approvers: str) -> None:
         queue = DeferQueue(self.defer_redis)
@@ -274,8 +276,8 @@ def trade(confidence: float = 0.98, **extra: Any) -> dict[str, Any]:
         "amount": 500.0,
         "currency": "USD",
         "confidence": confidence,
-        "trader_id": "trader-7",
-        "trader_role": "junior",
+        # No trader_role / trader_id: the gateway binds both from the
+        # verified caller identity (ADVISOR is unbound, so junior).
         "side": "buy",
         **extra,
     }

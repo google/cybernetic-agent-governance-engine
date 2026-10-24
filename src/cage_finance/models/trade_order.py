@@ -65,8 +65,9 @@ class TradeOrder(BaseModel):
         description="Unique UUID for the transaction",
     )
     # trader_id and trader_role are optional to allow unit test construction without
-    # a full agent identity context; production execution requires these to be populated
-    # before the order is submitted to the broker.
+    # a full agent identity context. On the governed path the gateway binds both from
+    # the caller's verified workload identity (TradeInputResolver) before the order is
+    # submitted to the broker; a caller never supplies them.
     trader_id: str | None = Field(
         default=None, description="Unique identifier for the trading agent"
     )

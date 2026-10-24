@@ -46,6 +46,11 @@ class FiscalTierPlugin(MutatingTier):
     daily cap) and reserves that same cost.
     """
 
+    #: Server-bound params this tier reads: the trader a reservation is
+    #: attributed to, bound from the verified caller identity by the trade
+    #: actions' server-input resolver.
+    server_input_keys: frozenset[str] = frozenset({"trader_id"})
+
     def __init__(
         self,
         guard: FiscalLimitGuard,

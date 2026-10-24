@@ -35,11 +35,12 @@ from src.gateway.governance.contracts import (
 
 logger = logging.getLogger(__name__)
 
-#: The params this tier reads as measured state. The finance plugin's
-#: ``execute_trade_bounded`` server-input resolver owns them, so the gateway
-#: drops any caller value and binds its own reading on every path (previews
-#: and the committing run).
-BOUNDING_SERVER_INPUT_KEYS: frozenset[str] = frozenset({"drawdown"})
+#: The server-bound params this tier reads: ``drawdown`` (measured state) and
+#: ``trader_role`` (who trades, bound from the verified caller identity, for
+#: the audit trail). The finance plugin's ``execute_trade_bounded``
+#: server-input resolver owns them, so the gateway drops any caller value and
+#: binds its own on every path (previews and the committing run).
+BOUNDING_SERVER_INPUT_KEYS: frozenset[str] = frozenset({"drawdown", "trader_role"})
 
 
 def bound_drawdown_fraction(params: dict[str, Any]) -> float | None:
@@ -70,8 +71,9 @@ class BoundingContractTierPlugin(ReadOnlyTier):
     - HARD_BLOCK severity → ViolationKind.HARD
     - HITL_ESCALATE severity → ViolationKind.HITL (parks in DeferQueue)
 
-    B2 reads ``drawdown`` (:data:`BOUNDING_SERVER_INPUT_KEYS`), which only the
-    gateway sets; the request fields are the caller's order.
+    B2 reads ``drawdown`` and the audit trail ``trader_role``
+    (:data:`BOUNDING_SERVER_INPUT_KEYS`), which only the gateway sets; the
+    request fields are the caller's order.
     """
 
     #: Server-bound params this tier reads (see the module constant).

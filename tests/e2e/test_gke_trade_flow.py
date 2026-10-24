@@ -139,15 +139,19 @@ async def live() -> AsyncIterator[Live]:
         )  # type: ignore[arg-type]
 
 
-def _trade(amount: float, role: str = "junior", **extra: Any) -> dict[str, Any]:
-    """A trade with a run-unique trader so fiscal state never leaks between tests."""
+def _trade(amount: float, **extra: Any) -> dict[str, Any]:
+    """A trade as this client sends it.
+
+    No trader_role / trader_id: the gateway binds both from the client's
+    verified workload identity (GHSA-w39v-5v7h-fxg9), and execute_trade_action
+    takes neither. The shipped manifests set no CAGE_TRADER_ROLE_BINDINGS, so
+    the client trades as junior.
+    """
     return {
         "symbol": "AAPL",
         "amount": amount,
         "currency": "USD",
         "confidence": 0.98,
-        "trader_id": f"e2e-{uuid.uuid4().hex[:12]}",
-        "trader_role": role,
         "side": "buy",
         **extra,
     }
@@ -272,18 +276,18 @@ async def test_s1b_mid_junior_trade_requires_approval_for_opa_review(
 # ── S1 / S2 / S3: the approval path ──────────────────────────────────────────
 
 
-async def test_s1_large_senior_trade_parks_an_approval_token(live: Live) -> None:
-    await _require_approval(live, _trade(20_000.0, "senior"))
+async def test_s1_reviewed_junior_trade_parks_an_approval_token(live: Live) -> None:
+    await _require_approval(live, _trade(7_500.0))
 
 
 async def test_s1_unapproved_token_never_executes(live: Live) -> None:
-    params = _trade(20_000.0, "senior")
+    params = _trade(7_500.0)
     deferred_id = await _require_approval(live, params)
     assert (await live.execute(params, deferred_id)).startswith("BLOCKED")
 
 
 async def test_s2_approved_token_executes_exactly_once(live: Live) -> None:
-    params = _trade(20_000.0, "senior")
+    params = _trade(7_500.0)
     deferred_id = await _require_approval(live, params)
     await live.approve(deferred_id)
 
@@ -295,18 +299,18 @@ async def test_s2_approved_token_executes_exactly_once(live: Live) -> None:
 
 
 async def test_s2_approval_does_not_cover_a_larger_trade(live: Live) -> None:
-    params = _trade(20_000.0, "senior")
+    params = _trade(7_500.0)
     deferred_id = await _require_approval(live, params)
     await live.approve(deferred_id)
 
-    grown = await live.execute({**params, "amount": 40_000.0}, deferred_id)
+    grown = await live.execute({**params, "amount": 9_000.0}, deferred_id)
     assert grown.startswith("BLOCKED"), grown
     # The mismatch did not burn the approval.
     assert (await live.execute(params, deferred_id)).startswith("EXECUTED")
 
 
 async def test_s3_concurrent_replay_executes_exactly_once(live: Live) -> None:
-    params = _trade(20_000.0, "senior")
+    params = _trade(7_500.0)
     deferred_id = await _require_approval(live, params)
     await live.approve(deferred_id)
 

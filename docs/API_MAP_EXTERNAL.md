@@ -602,8 +602,14 @@ Pydantic model for validated trade orders.
 | `side` | `str` (optional) | — |
 | `type` | `str` (optional) | — |
 | `transaction_id` | `str` | UUID v4 or v5; the trade's idempotency key and the broker `client_order_id` |
-| `trader_id` | `str` (optional) | — |
-| `trader_role` | `str` (optional) | `"junior"` or `"senior"` |
+| `trader_id` | `str` (optional) | Set by the gateway; see below |
+| `trader_role` | `str` (optional) | `"junior"` or `"senior"`; set by the gateway |
+
+`trader_role` and `trader_id` are not caller input. On the governed path the
+gateway binds both from the caller's verified workload identity
+(`CAGE_TRADER_ROLE_BINDINGS`; an unbound identity is `junior`) in
+[`TradeInputResolver`](../src/cage_finance/tools/trade_inputs.py), and drops any
+value a client sends (GHSA-w39v-5v7h-fxg9). The advisor never forwards them.
 
 ---
 
@@ -863,12 +869,14 @@ error is returned as an error, never as `SUCCESS`.
     "symbol": "AAPL",
     "amount": 5000.0,
     "currency": "USD",
-    "confidence": 0.91,
-    "trader_id": "u-001",
-    "trader_role": "senior"
+    "confidence": 0.91
   }
 }
 ```
+
+The request names no trader: the gateway binds `trader_role` (which sets the
+trade's OPA limits) and `trader_id` from the caller's verified workload
+identity.
 
 **Supported `tool_name` values:**
 

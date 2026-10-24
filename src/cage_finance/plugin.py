@@ -92,6 +92,7 @@ class FinanceCagePlugin(CagePlugin):
             ServerTradeInputs,
             TradeInputResolver,
         )
+        from src.cage_finance.tools.trader_binding import TraderRoleBindings
         from src.gateway.governance.schemas import thresholds as thresholds_module
 
         # The region's effective domains.finance (regional overlay applied).
@@ -151,12 +152,16 @@ class FinanceCagePlugin(CagePlugin):
                 )
         # One resolver serves every path that evaluates a trade (the
         # validate-action and MCP previews and the committing run) for both
-        # trade actions, so a bounded trade's B2 drawdown is measured too.
+        # trade actions, so a bounded trade's B2 drawdown is measured too. It
+        # also binds trader_role / trader_id from the caller's verified
+        # workload identity; an invalid CAGE_TRADER_ROLE_BINDINGS raises here,
+        # so the gateway does not start (GHSA-w39v-5v7h-fxg9).
         trade_inputs = TradeInputResolver(
             ServerTradeInputs(
                 market_feed=SimulatedMarketQuoteFeed(),
                 nav_source=SimulatedPortfolioNavSource.from_env(),
-            )
+            ),
+            traders=TraderRoleBindings.from_env(),
         )
         return PluginContribution(
             domain=self.name,

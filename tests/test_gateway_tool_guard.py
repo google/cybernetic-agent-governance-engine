@@ -303,6 +303,38 @@ class TestGuardRequireApproval:
         (request,) = seen
         assert "deferred_id" not in json.loads(request.content)["params"]
 
+    @pytest.mark.parametrize("approvable", [True, False], ids=["approvable", "plain"])
+    @pytest.mark.asyncio
+    async def test_model_supplied_deferred_id_never_reaches_the_executed_call(
+        self, gateway, approvable: bool
+    ) -> None:
+        # GHSA-w39v-5v7h-fxg9: validate-action previewed these calls without
+        # the model's deferred_id, so the calls that execute must not carry it
+        # either. Otherwise an ALLOW for one trade lets the executed call
+        # redeem an approval the model named, outside the approval path.
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        spy = _SpyNode()
+        forged = _call("t1")
+        forged["args"]["deferred_id"] = "forged"
+        other = _call("t2", symbol="MSFT")
+        other["args"]["deferred_id"] = "forged-too"
+
+        result = await gateway_tool_guard("execute_trade", approvable=approvable)(spy)(
+            _state(forged, other)
+        )
+
+        assert spy.calls == 1
+        executed = spy.states[0]["messages"][-1].tool_calls
+        assert [c["id"] for c in executed] == ["t1", "t2"]
+        assert [
+            {k: v for k, v in c["args"].items() if k != "transaction_id"}
+            for c in executed
+        ] == [
+            _call("t1")["args"],
+            _call("t2", symbol="MSFT")["args"],
+        ]
+        assert result["governance_status"] == "ALLOWED"
+
 
 class TestGuardApprovedResume:
     @staticmethod
@@ -332,6 +364,24 @@ class TestGuardApprovedResume:
         # Single-use on the advisor side too.
         assert result["deferred_id"] is None
         assert result["approval_decision"] is None
+
+    @pytest.mark.asyncio
+    async def test_approved_resume_replaces_a_model_supplied_deferred_id(
+        self, gateway
+    ) -> None:
+        gateway(lambda r: httpx.Response(500))
+        spy = _SpyNode()
+        call = _call("t1")
+        call["args"]["deferred_id"] = "forged"
+
+        await gateway_tool_guard("execute_trade", approvable=True)(spy)(
+            self._approved_state(call)
+        )
+
+        (executed,) = spy.states[0]["messages"][-1].tool_calls
+        assert {
+            k: v for k, v in executed["args"].items() if k != "transaction_id"
+        } == {**_call("t1")["args"], "deferred_id": "d-1"}
 
     @pytest.mark.asyncio
     async def test_approved_multi_call_batch_refuses(self, gateway) -> None:

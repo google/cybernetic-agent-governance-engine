@@ -67,7 +67,13 @@ def test_owned_keys_cover_the_uca_13_portfolio_total() -> None:
 
 def test_caller_intent_is_never_owned() -> None:
     # Amount, side and symbol are what the caller asks for; they stay its own.
-    assert not {"amount", "side", "symbol", "trader_role"} & TRADE_SERVER_INPUT_KEYS
+    assert not {"amount", "side", "symbol"} & TRADE_SERVER_INPUT_KEYS
+
+
+def test_who_is_trading_is_owned() -> None:
+    # GHSA-w39v-5v7h-fxg9: the role sets the OPA limits, so the gateway binds
+    # it (and the trader id) from the verified caller identity.
+    assert {"trader_role", "trader_id"} <= TRADE_SERVER_INPUT_KEYS
 
 
 def test_plugin_contributes_the_execute_trade_resolver() -> None:
@@ -80,10 +86,14 @@ def test_plugin_contributes_the_execute_trade_resolver() -> None:
     assert set(contribution.server_inputs) <= set(contribution.registered_actions)
 
 
-async def test_resolver_returns_nothing_without_a_symbol() -> None:
+async def test_resolver_measures_nothing_without_a_symbol() -> None:
     resolver = trade_server_inputs()["execute_trade"]
 
-    assert await resolver.resolve({"amount": 1.0}) == {}
+    # Only the trader binding (junior: no identity, permissive test posture).
+    assert await resolver.resolve({"amount": 1.0}) == {
+        "trader_role": "junior",
+        "trader_id": "unverified-caller",
+    }
 
 
 async def test_resolver_resolves_sell_inputs_for_a_mixed_case_side() -> None:

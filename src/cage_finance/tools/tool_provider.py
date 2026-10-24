@@ -64,6 +64,9 @@ get_actuator_registry().register(_broker_actuator, claims={"execute_trade"})
 
 #: Params an approval binds exactly; the amount may only shrink (see _approval_covers_trade).
 #: ``side`` is bound so an approved buy can never be re-hydrated as a sell.
+#: ``trader_id`` / ``trader_role`` are the server-bound values for the verified
+#: caller (``TradeInputResolver``), so an approval redeems only for the
+#: identity it was granted to.
 _APPROVAL_BOUND_FIELDS = ("symbol", "currency", "trader_id", "trader_role", "side")
 
 TradeSide = Literal["buy", "sell"]
@@ -100,8 +103,6 @@ async def execute_trade_action(
     currency: str,
     confidence: float = 0.0,
     transaction_id: str | None = None,
-    trader_id: str = "agent_001",
-    trader_role: str = "junior",
     dry_run: bool = False,
     deferred_id: str | None = None,
     side: TradeSide = "buy",
@@ -140,8 +141,6 @@ async def execute_trade_action(
         transaction_id: Required idempotency key for this trade, a UUIDv4 or
             UUIDv5; the broker receives it as ``client_order_id``. A missing or
             invalid one is refused.
-        trader_id: Identifier of the requesting agent or user.
-        trader_role: RBAC role used for fiscal-limit enforcement.
         dry_run: When True, governance checks run but no broker call is made.
         deferred_id: The ``deferred_id`` a REQUIRE_APPROVAL verdict returned,
             once operators have approved it. With it, the gateway consumes
@@ -159,7 +158,10 @@ async def execute_trade_action(
             supplies ``latency_ms`` (UCA-2 / FIN-2), ``drawdown`` (UCA-5) and,
             for a sell, ``portfolio_total`` (UCA-13 / FIN-1); a caller can
             never supply them. An unavailable source leaves its input unset,
-            and the governor refuses the trade.
+            and the governor refuses the trade. The same resolver binds
+            ``trader_role`` (the RBAC role that sets the trade's OPA limits)
+            and ``trader_id`` from the caller's verified workload identity,
+            which is why neither is a parameter here (GHSA-w39v-5v7h-fxg9).
     """
     logger.info(
         "Tool Call: execute_trade(%s, %s, side=%s, confidence=%s, deferred_id=%s)",
@@ -188,8 +190,6 @@ async def execute_trade_action(
         "currency": currency,
         "confidence": confidence,
         "transaction_id": transaction_id,
-        "trader_id": trader_id,
-        "trader_role": trader_role,
         "dry_run": dry_run,
         "side": side,
     }
@@ -301,9 +301,11 @@ async def _govern_and_actuate(
         verify_and_consume_seal,
     )
 
-    # Server-side inputs are bound by the kernel, exactly as for previews; the
-    # seal names these bound params. A missing one is refused by UCA-2 /
-    # UCA-5 / UCA-13 inside the governor, which records the refusal.
+    # Server-side inputs (the STPA measurements and the trader's role and id)
+    # are bound by the kernel, exactly as for previews; the seal names these
+    # bound params. A missing one is refused inside the governor (UCA-2 /
+    # UCA-5 / UCA-13, or the trade policy for a missing role), which records
+    # the refusal.
     params = await bind_server_inputs(
         governor.components.server_inputs, "execute_trade", params
     )
@@ -499,7 +501,9 @@ async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) ->
 class FinancialToolProvider(DomainToolProvider):
     def register_tools(self, server: "FastMCP", governor: "SymbolicGovernor") -> None:
         # The MCP schema must expose only the agent-facing parameters, so the
-        # governor is bound here rather than in the signature.
+        # governor is bound here rather than in the signature. Who is trading
+        # (trader_role / trader_id) is not agent-facing: the gateway binds it
+        # from the caller's verified workload identity (GHSA-w39v-5v7h-fxg9).
 
         @server.tool(
             name="execute_trade_action",
@@ -512,8 +516,6 @@ class FinancialToolProvider(DomainToolProvider):
             currency: str,
             confidence: float = 0.0,
             transaction_id: str | None = None,
-            trader_id: str = "agent_001",
-            trader_role: str = "junior",
             dry_run: bool = False,
             deferred_id: str | None = None,
             side: TradeSide = "buy",
@@ -524,8 +526,6 @@ class FinancialToolProvider(DomainToolProvider):
                 currency,
                 confidence,
                 transaction_id,
-                trader_id,
-                trader_role,
                 dry_run,
                 deferred_id,
                 side,

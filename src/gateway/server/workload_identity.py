@@ -44,16 +44,30 @@ separated). The variable is required in every environment — there is no
 development or test off-switch — and startup fails closed if it is unset,
 empty, or contains a malformed identity.
 
+Who is calling
+--------------
+While the middleware serves a request it admitted, the verified identity is
+available to everything that runs for that request through
+:func:`current_client_identity`. Governance reads it when an action's params
+must describe the caller rather than the caller's claims (for example a
+domain role bound to a workload identity), so the identity is never taken
+from a request body or a tool argument. Open paths, refused requests and code
+running outside a request see ``None``. The MCP tool server runs stateless
+(one MCP server run per HTTP request), so a tool call sees the identity of
+the request that carried it.
+
 This module is domain-agnostic kernel code (Layer 1).
 """
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -94,6 +108,39 @@ Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+
+#: The caller identity :class:`WorkloadIdentityMiddleware` verified for the
+#: request being served. Only the middleware sets it (:func:`_serving`).
+_VERIFIED_CLIENT_IDENTITY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cage_verified_client_identity", default=None
+)
+
+
+def current_client_identity() -> str | None:
+    """Return the verified workload identity of the request being served.
+
+    :class:`WorkloadIdentityMiddleware` sets it, for the duration of the
+    downstream call, once the request's single ``l5d-client-id`` is trusted.
+    It is ``None`` on open paths and outside a request (a background task,
+    an in-process call): an identity is never inferred, so a caller that
+    needs one must treat ``None`` as unauthenticated.
+    """
+    return _VERIFIED_CLIENT_IDENTITY.get()
+
+
+@contextmanager
+def _serving(identity: str | None) -> Iterator[None]:
+    """Make ``identity`` the verified caller for the enclosed downstream call."""
+    token = _VERIFIED_CLIENT_IDENTITY.set(identity)
+    try:
+        yield
+    finally:
+        _VERIFIED_CLIENT_IDENTITY.reset(token)
+
+
+def is_workload_identity(value: object) -> bool:
+    """True if ``value`` is a Linkerd workload identity (``l5d-client-id`` form)."""
+    return isinstance(value, str) and _LINKERD_IDENTITY.match(value) is not None
 
 
 @dataclass(frozen=True)
@@ -235,7 +282,9 @@ class WorkloadIdentityMiddleware:
             return
         path = scope.get("path", "")
         if is_open_path(path):
-            await self.app(scope, receive, send)
+            # An open path never runs as an authenticated caller.
+            with _serving(None):
+                await self.app(scope, receive, send)
             return
         presented = _client_identities(scope)
         # Exactly one header, and it must be trusted. Several headers mean
@@ -245,7 +294,8 @@ class WorkloadIdentityMiddleware:
             and presented[0] in self.policy.trusted
             and await self._verify_geap_id2_principal(scope)
         ):
-            await self.app(scope, receive, send)
+            with _serving(presented[0]):
+                await self.app(scope, receive, send)
             return
         logger.warning(
             "INGRESS_IDENTITY_REFUSED path=%s identity=%s",

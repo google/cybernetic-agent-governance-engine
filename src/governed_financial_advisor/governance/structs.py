@@ -44,9 +44,8 @@ class ExecutionPlan(BaseModel):
     )
     symbol: str = Field(default="UNKNOWN", description="Trading instrument symbol")
     currency: str = Field(default="USD", description="ISO 4217 currency code")
-    trader_role: str = Field(
-        default="junior", description="RBAC role of the requesting trader"
-    )
+    # No trader_role: the gateway binds the RBAC role from the caller's
+    # verified workload identity, so a plan never states it.
     confidence: float = Field(
         default=1.0,
         ge=0.0,

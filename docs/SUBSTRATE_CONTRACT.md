@@ -121,12 +121,16 @@ before execution.
   "action": "execute_trade",
   "params": {
     "amount": 50000,
-    "symbol": "AAPL",
-    "trader_role": "junior"
+    "symbol": "AAPL"
   },
   "policy_version_id": "a1b2c3d4e5f6a7b8"
 }
 ```
+
+Params that describe the caller or measured state are not request fields. For
+a trade, the gateway binds `trader_role` and `trader_id` from the caller's
+verified workload identity and measures the STPA inputs itself; a value in
+`params` for any of them is dropped.
 
 The `policy_version_id` field is optional. If provided, the governance engine
 validates that the active policy version matches before evaluating. If the version

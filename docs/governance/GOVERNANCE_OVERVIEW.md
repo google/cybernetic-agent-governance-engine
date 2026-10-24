@@ -96,7 +96,7 @@ The following components are essential infrastructure but are **not** numbered g
 | Component | Role | Notes |
 |-----------|------|-------|
 | **Redis Session Persistence** | Stateful sessions on stateless compute | `AsyncRedisSaver` checkpoints graph state after each node transition; `MemorySaver` fallback emits OTel alert. |
-| **Pydantic Schema Validation** | Structural integrity at the request boundary | Strict Pydantic v2 models validate every tool call before it reaches the pipeline. UUID v4, ticker regex `^[A-Z]{1,5}$`, and `trader_role` enforced here. |
+| **Pydantic Schema Validation** | Structural integrity at the request boundary | Strict Pydantic v2 models validate every tool call before it reaches the pipeline. UUID v4 and ticker regex `^[A-Z]{1,5}$` enforced here. `trader_role` and `trader_id` are not request fields: [`TradeInputResolver`](../../src/cage_finance/tools/trade_inputs.py) binds both from the caller's verified workload identity (`CAGE_TRADER_ROLE_BINDINGS`, default `junior`) and drops any caller value (GHSA-w39v-5v7h-fxg9). |
 | **KMS Routing Seal v2** | Cryptographic authorization between agent nodes | Issued after full pipeline approval (see above). GCP KMS asymmetric signing (primary); HMAC-SHA256 fallback with `record_hash` binding for dev/CI. Implementation: `src/gateway/governance/routing_seal.py` |
 | **Synchronous Replication Barrier** | Distributed multi-agent state consistency | Redis `WAIT` synchronization in `src/gateway/governance/safety/cbf_engine.py` with automatic fail-closed rollback (`rollback_state()`) on replica lag timeout in production. |
 

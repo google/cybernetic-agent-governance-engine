@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-10-22T18:52:39Z'
+    last-modified: '2026-10-24T16:31:32Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -99,9 +99,11 @@ component-definition:
       - uuid: b8c9d0e1-f2a3-4567-bcde-678901234567
         control-id: A.8.4
         description: 'finance_policy.rego enforces fiscal limits (junior: $5k/$10k,
-          senior: $500k/$1M) and role-based access control. Manual review thresholds
-          prevent unchecked high-value trade execution. ISO 42001 A.8.4 operational
-          controls for AI system boundary enforcement.
+          senior: $500k/$1M) and role-based access control. The role is bound server-side
+          from the verified caller workload identity (TradeInputResolver), never taken
+          from the request (GHSA-w39v-5v7h-fxg9). Manual review thresholds prevent
+          unchecked high-value trade execution. ISO 42001 A.8.4 operational controls
+          for AI system boundary enforcement.
 
           '
         remarks: 'Deployment verified by compliance.iso42001/enabled label on opa-compliance-status
@@ -612,7 +614,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-10-22T18:52:39Z'
+      value: '2026-10-24T16:31:32Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -672,7 +674,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-10-22T18:52:39Z'
+      value: '2026-10-24T16:31:32Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home

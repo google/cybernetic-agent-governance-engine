@@ -226,7 +226,11 @@ def test_the_guard_sees_the_bounded_tier_and_the_stpa_rules(
     contribution: PluginContribution,
 ) -> None:
     # The guard is not vacuous: it finds both kinds of consumer.
-    assert _tier_consumers(contribution)[_BOUNDED] == {"drawdown"}
+    assert _tier_consumers(contribution)[_BOUNDED] == {
+        "drawdown",
+        "trader_role",
+        "trader_id",
+    }
     assert {"latency_ms", "drawdown", "order_size", "daily_vol"} <= (
         _stpa_consumers()["execute_trade"]
     )
@@ -240,7 +244,9 @@ def test_the_guard_catches_an_action_without_a_resolver(
         contribution,
         server_inputs={"execute_trade": contribution.server_inputs["execute_trade"]},
     )
-    assert _unbound_consumers(unbound) == {_BOUNDED: {"drawdown"}}
+    assert _unbound_consumers(unbound) == {
+        _BOUNDED: {"drawdown", "trader_role", "trader_id"}
+    }
 
 
 def test_every_tier_declares_the_owned_keys_it_names(

@@ -23,7 +23,8 @@ from an unknown role, so OPA returned DENY. The evaluator also treated
 REQUIRE_APPROVAL (FTRA: an irreversible trade needs a human) as a rejection
 and re-planned until the loop cap gave up. It now builds the payload with the
 same ``trade_contract`` as the pre-trade gate and proceeds on the same
-verdicts.
+verdicts. Since GHSA-w39v-5v7h-fxg9 neither path sends a role at all: the
+gateway binds ``trader_role`` from the advisor's verified workload identity.
 """
 
 from __future__ import annotations
@@ -40,7 +41,6 @@ from src.gateway.governance.ftra.classifier import _load_registry_document
 from src.governed_financial_advisor.graph.nodes import evaluator_node as evaluator_mod
 from src.governed_financial_advisor.graph.nodes import safety_node as safety_mod
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
-    DEFAULT_TRADER_ROLE,
     PROCEED_VERDICTS,
     TRADE_ACTION,
     trade_params,
@@ -109,14 +109,21 @@ def _install_dry_run(monkeypatch, verdict: str) -> list[tuple[str, dict[str, Any
 # ---------------------------------------------------------------------------
 
 
-def test_trade_params_never_take_the_role_from_the_source() -> None:
-    params = trade_params({"symbol": "AAPL", "amount": "500", "trader_role": "senior"})
+def test_trade_params_never_carry_a_role_or_trader() -> None:
+    # The gateway binds both from the verified caller identity.
+    params = trade_params(
+        {
+            "symbol": "AAPL",
+            "amount": "500",
+            "trader_role": "senior",
+            "trader_id": "desk-7",
+        }
+    )
     assert params == {
         "action": TRADE_ACTION,
         "symbol": "AAPL",
         "amount": 500.0,
         "currency": "USD",
-        "trader_role": DEFAULT_TRADER_ROLE,
         "confidence": 0.0,
         "side": "buy",
     }
@@ -148,7 +155,7 @@ async def test_dry_run_previews_the_canonical_trade(monkeypatch) -> None:
 
     [(tool, params)] = calls
     assert tool == TRADE_ACTION
-    assert params["trader_role"] == DEFAULT_TRADER_ROLE
+    assert "trader_role" not in params  # the model's "senior" never leaves
     assert (params["symbol"], params["amount"], params["currency"]) == (
         "AAPL",
         500.0,
@@ -234,7 +241,7 @@ async def test_safety_gate_submits_the_same_payload(monkeypatch) -> None:
     assert out["safety_status"] == "APPROVED"
     assert seen["action"] == TRADE_ACTION
     assert seen["params"] == trade_params(plan)
-    assert seen["params"]["trader_role"] == DEFAULT_TRADER_ROLE
+    assert "trader_role" not in seen["params"]
 
 
 # ---------------------------------------------------------------------------
@@ -452,13 +459,14 @@ async def test_expired_or_mismatched_routing_cache_calls_validate_action(
         reusable_allow_verdict(cache, {**params, "side": "sell"}, now=110.0, ttl_s=30.0)
         is None
     )
-    # Explicit trader_role changed -> misses cache
-    assert (
-        reusable_allow_verdict(
-            cache, {**params, "trader_role": "intern"}, now=110.0, ttl_s=30.0
+    # A tool call that still names trader_role / trader_id carries a field the
+    # digest does not bind (the gateway binds who trades) -> misses cache, so
+    # it is always re-validated
+    for claim in ({"trader_role": "senior"}, {"trader_id": "desk-7"}):
+        assert (
+            reusable_allow_verdict(cache, {**params, **claim}, now=110.0, ttl_s=30.0)
+            is None
         )
-        is None
-    )
     # Confidence below 0.95 -> misses cache
     assert (
         reusable_allow_verdict(

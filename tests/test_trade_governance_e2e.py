@@ -71,6 +71,10 @@ from src.cage_finance.tools.trade_inputs import (
     TRADE_SERVER_INPUT_KEYS,
     TradeInputResolver,
 )
+from src.cage_finance.tools.trader_binding import (
+    TraderRoleBindings,
+    parse_trader_role_bindings,
+)
 from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.causal.gatekeeper import CausalDecision
@@ -94,6 +98,7 @@ from src.gateway.server.workload_identity import (
     CLIENT_IDENTITY_HEADER,
     IdentityPolicy,
     WorkloadIdentityMiddleware,
+    _serving,
 )
 from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
@@ -103,6 +108,18 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 ADVISOR = (
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+)
+#: A second trusted workload with no role binding: least privilege (junior).
+JUNIOR_DESK = (
+    "junior-desk-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+)
+#: The gateway's CAGE_TRADER_ROLE_BINDINGS: the advisor is the senior desk
+#: "trader-7". Enforcing, as in production: no verified identity, no role.
+TRADER_BINDINGS = TraderRoleBindings(
+    parse_trader_role_bindings(
+        json.dumps({ADVISOR: {"role": "senior", "trader_id": "trader-7"}})
+    ),
+    require_identity=True,
 )
 DAILY_CAP_USD = 500_000.0
 OPENING_CASH = 1_000_000.0
@@ -210,11 +227,12 @@ class Gateway:
         *,
         action: str = "execute_trade",
         headers: dict[str, str] | None = None,
+        identity: str = ADVISOR,
     ) -> httpx.Response:
         return await self.http.post(
             "/governance/validate-action",
             json={"action": action, "params": params},
-            headers={CLIENT_IDENTITY_HEADER: ADVISOR} if headers is None else headers,
+            headers={CLIENT_IDENTITY_HEADER: identity} if headers is None else headers,
         )
 
     async def cash(self) -> float:
@@ -241,33 +259,43 @@ class Gateway:
             )
 
     async def execute(
-        self, params: dict[str, Any], deferred_id: str | None = None
+        self,
+        params: dict[str, Any],
+        deferred_id: str | None = None,
+        *,
+        identity: str | None = ADVISOR,
     ) -> str:
-        return await execute_trade_action(
+        """The trade tool's committing run, as the MCP call ``identity`` makes it.
+
+        WorkloadIdentityMiddleware makes the caller's verified identity current
+        for the MCP request; ``identity=None`` is an in-process call with none.
+        """
+        call = execute_trade_action(
             params["symbol"],
             params["amount"],
             params["currency"],
             params["confidence"],
             params.get("transaction_id") or str(uuid.uuid4()),
-            params["trader_id"],
-            params["trader_role"],
             False,
             deferred_id,
             params.get("side", "buy"),
             governor=self.governor,
         )
+        if identity is None:
+            return await call
+        with _serving(identity):
+            return await call
 
 
-def trade(amount: float, role: str = "senior", **extra: Any) -> dict[str, Any]:
+def trade(amount: float, **extra: Any) -> dict[str, Any]:
     return {
         "symbol": "AAPL",
         "amount": amount,
         "currency": "USD",
         "confidence": 0.98,
-        "trader_id": "trader-7",
-        "trader_role": role,
-        # No latency_ms / drawdown: the gateway binds them server-side.
-        # The tool always sends a side, and an approval binds it.
+        # No latency_ms / drawdown and no trader_role / trader_id: the gateway
+        # binds them server-side. The tool always sends a side, and an
+        # approval binds it.
         "side": "buy",
         **extra,
     }
@@ -303,7 +331,7 @@ def _build_governor(
         ),
         safety_filter=cbf,
         magnitude_extractor=extract_field_magnitude("amount"),
-        server_inputs=server_inputs or trade_server_inputs(),
+        server_inputs=server_inputs or trade_server_inputs(traders=TRADER_BINDINGS),
     )
 
 
@@ -366,7 +394,9 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
         cbf,
         fiscal_tier,
         _classifier(),
-        trade_server_inputs(market_feed=market_feed, nav_source=nav_source),
+        trade_server_inputs(
+            market_feed=market_feed, nav_source=nav_source, traders=TRADER_BINDINGS
+        ),
     )
     governance_app.state.governor = governor
 
@@ -388,7 +418,7 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
 
     root = WorkloadIdentityMiddleware(
         Starlette(routes=[Mount("/governance", app=governance_app)]),
-        IdentityPolicy(trusted=frozenset({ADVISOR})),
+        IdentityPolicy(trusted=frozenset({ADVISOR, JUNIOR_DESK})),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=root), base_url="http://gateway"
@@ -518,13 +548,8 @@ async def test_s2_unapproved_token_is_blocked(
 
 @pytest.mark.parametrize(
     "change",
-    [
-        {"amount": 20_000.01},
-        {"symbol": "MSFT"},
-        {"trader_role": "junior"},
-        {"trader_id": "someone-else"},
-    ],
-    ids=["amount-grows", "other-symbol", "other-role", "other-trader"],
+    [{"amount": 20_000.01}, {"symbol": "MSFT"}],
+    ids=["amount-grows", "other-symbol"],
 )
 async def test_s2_approval_does_not_cover_other_params_and_is_not_burned(
     gw: Gateway, change: dict[str, Any]
@@ -536,6 +561,23 @@ async def test_s2_approval_does_not_cover_other_params_and_is_not_burned(
     assert (await gw.execute({**params, **change}, deferred_id)).startswith("BLOCKED")
     await _assert_nothing_committed(gw)
     # A mismatched request does not burn the approval; the approved trade still runs.
+    assert (await gw.execute(params, deferred_id)).startswith("EXECUTED")
+
+
+async def test_s2_approval_redeems_only_for_the_identity_it_was_granted_to(
+    gw: Gateway,
+) -> None:
+    # The approval binds the server-bound trader_role / trader_id of the
+    # advisor; another workload presenting the same deferred_id is bound as
+    # itself (junior, its own trader id), so the approval does not cover it.
+    params = trade(20_000.0)
+    deferred_id = await _require_approval(gw, params)
+    await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
+
+    result = await gw.execute(params, deferred_id, identity=JUNIOR_DESK)
+
+    assert result.startswith("BLOCKED"), result
+    await _assert_nothing_committed(gw)
     assert (await gw.execute(params, deferred_id)).startswith("EXECUTED")
 
 
@@ -584,8 +626,14 @@ async def _assert_denied(gw: Gateway, resp: httpx.Response, code: str) -> None:
 
 
 async def test_s4_rbac_denial_parks_nothing_and_emits_a_refusal(gw: Gateway) -> None:
+    # A junior workload claiming senior in the request is still a junior.
     await _assert_denied(
-        gw, await gw.validate(trade(50_000.0, role="junior")), "CTRL_OPA_005"
+        gw,
+        await gw.validate(
+            trade(50_000.0, trader_role="senior", trader_id="trader-7"),
+            identity=JUNIOR_DESK,
+        ),
+        "CTRL_OPA_005",
     )
 
 
@@ -718,8 +766,11 @@ async def test_s9_causal_refusal_is_denied(gw: Gateway) -> None:
 
 
 async def _unregistered(gw: Gateway) -> httpx.Response:
+    # Not a trade action, so no trader binding applies: the params reach the
+    # pipeline as sent, and only FTRA's unregistered-action check stops it.
     return await gw.validate(
-        trade(10.0, confidence=0.99), action="rebalance_portfolio_unregistered"
+        trade(10.0, confidence=0.99, trader_role="senior"),
+        action="rebalance_portfolio_unregistered",
     )
 
 
@@ -738,22 +789,89 @@ async def test_s12_unregistered_action_never_auto_clears(gw: Gateway) -> None:
 
 
 async def test_s1a_small_trade_allowed_then_committed_exactly_once(gw: Gateway) -> None:
-    params = trade(500.0, role="junior")
-    body = _body(await gw.validate(params))
+    params = trade(500.0)
+    body = _body(await gw.validate(params, identity=JUNIOR_DESK))
     assert body["verdict"] == GovernanceDecision.ALLOW
     assert "seal" not in body
     await _assert_nothing_committed(gw)
 
-    assert (await gw.execute(params)).startswith("EXECUTED")
+    assert (await gw.execute(params, identity=JUNIOR_DESK)).startswith("EXECUTED")
     assert await gw.fiscal.current_spend_usd() == 500.0
 
 
 async def test_s1b_opa_manual_review_alone_requires_approval(gw: Gateway) -> None:
-    resp = await gw.validate(trade(7_500.0, role="junior"))
+    resp = await gw.validate(trade(7_500.0), identity=JUNIOR_DESK)
     body = _body(resp)
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
     assert body["classification_reason"] == "opa_manual_review"
     assert [v for v in body["violations"] if "FTRA" in str(v)] == []
+
+
+# ---------------------------------------------------------------------------
+# GHSA-w39v-5v7h-fxg9 — who is trading is bound to the verified identity
+# ---------------------------------------------------------------------------
+
+
+async def test_claimed_senior_role_is_evaluated_as_junior(gw: Gateway) -> None:
+    # A tool call claiming senior for $6,000 (prompt injection) from a workload
+    # with no senior binding: the policy sees junior, so $6,000 is MANUAL_REVIEW
+    # and the preview routes REQUIRE_APPROVAL, never ALLOW.
+    claimed = trade(6_000.0, trader_role="senior", trader_id="trader-7")
+
+    body = _body(await gw.validate(claimed, identity=JUNIOR_DESK))
+
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert body["classification_reason"] == "opa_manual_review"
+    (evaluated,) = gw.policy.calls
+    assert evaluated["trader_role"] == "junior"
+    assert evaluated["trader_id"] == JUNIOR_DESK
+    await _assert_nothing_committed(gw)
+
+
+async def test_claimed_senior_role_never_executes_on_the_committing_path(
+    gw: Gateway,
+) -> None:
+    # The committing run binds the same junior role, so the trade is not
+    # sealed or actuated without a human approval.
+    result = await gw.execute(
+        trade(6_000.0, trader_role="senior", trader_id="trader-7"),
+        identity=JUNIOR_DESK,
+    )
+
+    assert not result.startswith("EXECUTED"), result
+    assert [c["trader_role"] for c in gw.policy.calls] == ["junior"]
+    await _assert_nothing_committed(gw)
+
+
+async def test_identity_bound_to_senior_gets_senior_limits(gw: Gateway) -> None:
+    # Same $50,000 trade: the junior workload is refused by the RBAC limit,
+    # the advisor (bound to senior) passes OPA and is routed for review.
+    denied = await gw.validate(trade(50_000.0), identity=JUNIOR_DESK)
+    assert denied.status_code == 403, denied.text
+    assert any("CTRL_OPA_005" in str(v) for v in denied.json()["violations"])
+
+    body = _body(await gw.validate(trade(50_000.0, trader_role="junior")))
+    assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
+    assert not any("CTRL_OPA_005" in str(v) for v in body["violations"])
+    assert [(c["trader_role"], c["trader_id"]) for c in gw.policy.calls] == [
+        ("junior", JUNIOR_DESK),
+        ("senior", "trader-7"),
+    ]
+
+
+async def test_no_verified_identity_is_refused_under_an_enforcing_posture(
+    gw: Gateway,
+) -> None:
+    # An in-process call with no verified identity: the enforcing binding
+    # binds no role, and the policy refuses the missing role.
+    result = await gw.execute(trade(500.0, trader_role="senior"), identity=None)
+
+    assert result.startswith("BLOCKED"), result
+    (evaluated,) = gw.policy.calls
+    assert "trader_role" not in evaluated
+    assert "trader_id" not in evaluated
+    gw.refusals.assert_awaited_once()
+    await _assert_nothing_committed(gw)
 
 
 async def test_s1_require_approval_names_ftra_provenance(gw: Gateway) -> None:

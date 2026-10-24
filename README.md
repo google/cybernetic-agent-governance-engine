@@ -789,6 +789,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `CAGE_DOMAIN`                                    | **Required.** The single domain plugin this process runs (`finance` or `healthcare` today; POAM-2026-077 closed 2026-09-30) |
 | `CAGE_DEPLOYMENT_REGION`                         | Deployment region baseline (`US_FED`, `EU_ECB`, `APAC_MAS`, or `LOCAL`) |
 | `CAGE_TRUSTED_CLIENT_IDENTITIES`                 | Linkerd workload identities (`l5d-client-id`) allowed to call the gateway; enforced in every environment |
+| `CAGE_TRADER_ROLE_BINDINGS`                      | Finance: JSON object mapping a verified workload identity to its trade-policy role (`junior` / `senior`, optionally `{"role": ..., "trader_id": ...}`); unbound identities are `junior`, and an invalid value stops the gateway from starting ([`trader_binding.py`](src/cage_finance/tools/trader_binding.py)) |
 | `KMS_GOVERNANCE_KEY`                             | Gateway Cloud KMS key version for routing-seal / envelope signing |
 | `RECONCILER_KMS_KEY`                             | Reconciler snapshot signing key; the gateway needs `publicKeyViewer` on it to verify ground-truth snapshots (required under an enforcing posture) |
 | `EVIDENCE_KMS_KEY`                               | Compliance-bridge evidence batch signing key; must differ from the gateway and reconciler keys |

@@ -365,6 +365,16 @@ class TestForwardExecuteTradeNodeUCA4:
         assert [e["status"] for e in yielded["completed_transactions"]] == ["PENDING"]
         assert call_tool.await_count == 1
 
+    def test_server_bound_trader_fields_are_never_forwarded(self) -> None:
+        """GHSA-w39v-5v7h-fxg9: the gateway binds who trades; a saga never sends it."""
+        state = {**self._trade_state(), "trader_role": "senior", "trader_id": "desk-1"}
+
+        _, _, call_tool = self._run_forward(state)
+
+        call_tool.assert_awaited_once_with(
+            name="execute_trade_action", arguments=self._expected_arguments()
+        )
+
 
 # ===========================================================================
 # TestCompensateReverseTradeNodeUCA4

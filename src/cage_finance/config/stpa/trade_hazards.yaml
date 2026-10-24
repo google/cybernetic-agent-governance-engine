@@ -54,24 +54,35 @@ control_actions:
       - name: quantity
         type: float
         required: false
+      # server_bound: the gateway resolves the param itself on every path that
+      # evaluates a trade and drops any caller value (TradeInputResolver), so
+      # a caller (and a generated saga tool call) never sends it.
       - name: portfolio_total
         type: float
         required: false
+        server_bound: true
       - name: drawdown
         type: float
         required: false
+        server_bound: true
       - name: latency_ms
         type: float
         required: false
+        server_bound: true
       - name: order_size
         type: float
         required: false
+        server_bound: true
       - name: daily_vol
         type: float
         required: false
+        server_bound: true
+      # Bound from the caller's verified workload identity
+      # (CAGE_TRADER_ROLE_BINDINGS); sets the trade's OPA limits.
       - name: trader_role
         type: string
         required: true
+        server_bound: true
       - name: risk_assessed
         type: boolean
         required: false
@@ -115,6 +126,7 @@ control_actions:
       - name: trader_role
         type: string
         required: false
+        server_bound: true
       - name: transaction_id
         type: string
         required: false

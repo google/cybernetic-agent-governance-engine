@@ -672,12 +672,14 @@ actuation. The caller must present a trusted mesh workload identity
     "symbol": "AAPL",
     "amount": 5000.0,
     "currency": "USD",
-    "confidence": 0.91,
-    "trader_id": "u-001",
-    "trader_role": "senior"
+    "confidence": 0.91
   }
 }
 ```
+
+The request names no trader. The Gateway Service binds `trader_role` (which
+sets the trade's policy limits) and `trader_id` from the caller's verified
+workload identity, and drops any value a client sends.
 
 **Supported `tool_name` values:**
 
@@ -941,8 +943,13 @@ through the governed trade execution pipeline.
 | `side` | `string` | No | — |
 | `type` | `string` | No | — |
 | `transaction_id` | `string` | Yes | UUID v4 or v5 |
-| `trader_id` | `string` | No | — |
-| `trader_role` | `string` | No | `"junior"` or `"senior"` |
+| `trader_id` | `string` | No | Server-bound; never caller input |
+| `trader_role` | `string` | No | `"junior"` or `"senior"`; server-bound, never caller input |
+
+`trader_role` and `trader_id` are bound by the Gateway Service from the
+caller's verified workload identity (`CAGE_TRADER_ROLE_BINDINGS`, an unbound
+identity is `junior`) on every evaluation of a trade. A value in a request is
+dropped, so a caller cannot raise its own limits (GHSA-w39v-5v7h-fxg9).
 
 ---
 
