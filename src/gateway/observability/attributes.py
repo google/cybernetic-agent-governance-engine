@@ -282,6 +282,10 @@ SPAN_ATTR_CAGE_GOVERNANCE: Final[str] = "cage.governance"
 SPAN_ATTR_CAGE_VERDICT: Final[str] = "cage.verdict"
 """CAGE governance verdict (ALLOW, DENY, etc.)"""
 
+SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED: Final[str] = "cage.principal.verified"
+"""Boolean: was the span's end-user principal (``enduser.id``) authenticated?
+``False`` when the principal is caller-asserted."""
+
 SPAN_ATTR_CAGE_SEAL_ISSUED: Final[str] = "cage.seal_issued"
 """Boolean: was a routing seal issued?"""
 
@@ -330,6 +334,10 @@ SPAN_ATTR_ISO42001_CONTROL_ID: Final[str] = "iso42001.control_id"
 
 SPAN_ATTR_THREAD_ID: Final[str] = "thread.id"
 """Thread/conversation identifier"""
+
+SPAN_ATTR_ENDUSER_ID: Final[str] = "enduser.id"
+"""End-user identifier (OpenTelemetry ``enduser.id``); pair with
+``SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED`` to record whether it was authenticated"""
 
 SPAN_ATTR_MCP_TOOL_RESULT_LENGTH: Final[str] = "mcp.tool.result_length"
 """MCP tool result length (characters)"""

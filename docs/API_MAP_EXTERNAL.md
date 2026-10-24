@@ -358,6 +358,7 @@ Main LangGraph agent query. Requires `X-API-Key` header. 240-second timeout.
 
 **Response 408 Request Timeout:** Agent exceeded 240 seconds.
 **Response 401 Unauthorized:** Missing or invalid API key.
+**Response 422 Unprocessable Entity:** `user_id` missing or outside the principal constraints (see [§5.6](#56-queryrequest)).
 
 ---
 
@@ -695,11 +696,11 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 
 ### 5.6 `QueryRequest`
 
-| Field | Type |
-|---|---|
-| `prompt` | `str` |
-| `user_id` | `str` |
-| `thread_id` | `str` |
+| Field | Type | Constraints |
+|---|---|---|
+| `prompt` | `str` | — |
+| `user_id` | `str` | Required; 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`. Asserted by the caller, not authenticated |
+| `thread_id` | `str` | Optional; defaults to `default_thread` |
 
 ---
 

@@ -1015,6 +1015,7 @@ class TestFlowSignalHttp202Receipt:
         assert resp.status_code == 200
         data = resp.json()
         assert data["decision"] == "ALLOW"
+        assert data["tri_identity"]["user_verified"] is False
         mock_adapter.evaluate_request_authz.assert_awaited_once_with(
             {"tool_name": "execute_trade", "parameters": {"amount": 100}},
             governor=mock_gov,
