@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Routing-verdict reuse binds the full order, and the advisor's trade previews cover every trade step** (`fix(advisor)`, `#513` — reported by **Daniel Fairbanks (`@danofairanks`)**): [`trade_contract.py`](src/governed_financial_advisor/graph/nodes/trade_contract.py) matched plan steps by substring, so `buyer_survey`, `executed_report` and `bestseller_scan` were trades that failed with "Invalid trade amount None" and counted toward `MAX_CONSECUTIVE_DENIALS`. A step is now a trade only when its action is exactly one of `TRADE_STEP_ACTIONS` (`execute_trade`, `trade`, `buy`, `sell`, ignoring case). `extract_trade_step()` returned only a plan's first trade step, so [`safety_check_node`](src/governed_financial_advisor/graph/nodes/safety_node.py) reported APPROVED and reset the denial budget on step 1 alone. `extract_trade_steps()` returns every trade step: the safety node submits each to `POST /governance/validate-action` (a refusal of any step blocks the plan and counts one denial; a deferral parks it unless a later step is refused), and [`evaluator_node`](src/governed_financial_advisor/graph/nodes/evaluator_node.py) dry-runs each. A missing `confidence` was previewed as `1.0` while `execute_trade_action` defaults it to `0.0`; it is now previewed as `0.0`, and a boolean, non-numeric or non-finite `confidence` is rejected. `canonical_trade_digest()` bound only part of the order, so a cached `ALLOW` was reused for a call with a different `limit_price`, `account_id`, `order_type`, `venue`, `agent_id` or `transaction_id`. The digest now binds the exact `confidence` and refuses any field outside the canonical payload (other than the `tool_name` / `action` keys `gateway_tool_guard` adds), so such a call is always re-validated, and only a single-trade plan answered `ALLOW` is cached. Tests: [`tests/test_trade_contract.py`](tests/test_trade_contract.py).
+
 ---
 
 ## [3.2.0] - 2026-10-22
