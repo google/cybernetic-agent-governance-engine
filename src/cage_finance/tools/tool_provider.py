@@ -100,7 +100,8 @@ async def execute_trade_action(
 
     Args:
         symbol: Ticker symbol (e.g. "AAPL").
-        amount: Trade quantity (positive float).
+        amount: Trade notional in ``currency`` (positive float), not a share
+            count.
         currency: ISO 4217 currency code (e.g. "USD").
         confidence: Model confidence score [0.0, 1.0].  Callers MUST supply a
             real value — the governance pipeline enforces a minimum threshold

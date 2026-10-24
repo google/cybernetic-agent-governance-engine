@@ -119,9 +119,11 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
 
     headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": api_secret}
 
+    # amount is the USD notional that the fiscal tier, the CBF cash barrier and
+    # UCA-6 governed, so it is sent as Alpaca's notional, never as a share qty.
     payload = {
         "symbol": order.symbol,
-        "qty": order.amount,
+        "notional": order.amount,
         "side": action,  # C-01: use validated trade side, not hardcoded "buy"
         "type": "market",
         "time_in_force": "day",
