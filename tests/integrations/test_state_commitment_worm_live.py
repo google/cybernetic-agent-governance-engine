@@ -144,6 +144,14 @@ class _PrefixedStore:
     async def get(self, key: str) -> bytes:
         return bytes(await self._inner.get(self.prefix + key))
 
+    async def list_keys(self, prefix: str) -> list[str]:
+        full_prefix = self.prefix + prefix
+        return [
+            k[len(self.prefix) :]
+            for k in await self._inner.list_keys(full_prefix)
+            if k.startswith(self.prefix)
+        ]
+
 
 def _key(suffix: str) -> str:
     return f"live-tests/state-commitment/{uuid.uuid4()}/{suffix}"

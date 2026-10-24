@@ -85,9 +85,22 @@ class FakeColdStore:
         return receipt, created
 
     async def get(self, key):
+        if "get" in self.fail_on:
+            raise ColdStoreError(
+                f"injected failure for get({key!r})", backend_id="fake"
+            )
         if key not in self.objects:
             raise ColdStoreError(f"missing {key}", backend_id="fake")
         return self.objects[key]
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        if "list_keys" in self.fail_on or any(
+            prefix.endswith(suffix) for suffix in self.fail_on
+        ):
+            raise ColdStoreError(
+                f"injected failure for list_keys({prefix!r})", backend_id="fake"
+            )
+        return sorted(k for k in self.objects if k.startswith(prefix))
 
     def data_keys(self) -> list[str]:
         return sorted(k for k in self.objects if k.endswith(".ndjson"))
@@ -655,3 +668,268 @@ class TestAssertCitable:
         mutate(att)
         with pytest.raises(NonEvidentiaryAttestationError):
             assert_citable(att)
+
+
+# ---------------------------------------------------------------------------
+# WORM-anchored custody cursor recovery (#519)
+# ---------------------------------------------------------------------------
+
+
+class TestCustodyCursorRecovery:
+    """#519: When <stream_key>:custody in Redis is lost, recover from WORM."""
+
+    @pytest.mark.asyncio
+    async def test_full_redis_wipe_recovers_cursor_and_records_chain_rotation(
+        self, server
+    ):
+        """FLUSHDB wipes both stream and cursor; new genesis chain records rotation."""
+        import src.compliance_bridge.evidence_custodian as custodian_module
+
+        old = await _produce(server, 3)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        first = await custodian.flush_once()
+        assert (first.first_sequence, first.last_sequence) == (0, 2)
+
+        # Total Redis loss (both STREAM_KEY and CURSOR_KEY wiped).
+        await _redis(server).flushdb()
+        assert await _redis(server).hgetall(CURSOR_KEY) == {}
+
+        new = EvidenceStreamSink(stream_key=STREAM_KEY)
+        new._redis = _redis(server)
+        await new.ingest({"type": "GOVERNANCE_DECISION", "controlId": "AU-9", "n": 0})
+        await new.ingest({"type": "GOVERNANCE_DECISION", "controlId": "AU-9", "n": 1})
+        assert new.chain_id != old.chain_id
+
+        gaps_before = custodian_module.CUSTODY_GAPS_TOTAL._value.get()
+        outcome = await custodian.flush_once()
+
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.gap is True
+        assert (outcome.first_sequence, outcome.last_sequence) == (0, 1)
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["gap"] == {
+            "detected": True,
+            "kind": GAP_KIND_CHAIN_ROTATION,
+            "previous_chain_id": old.chain_id,
+            "previous_last_sequence": 2,
+            "previous_last_record_hash": old.chain_root,
+        }
+        assert custodian_module.CUSTODY_GAPS_TOTAL._value.get() == gaps_before + 1
+        cursor = await _redis(server).hgetall(CURSOR_KEY)
+        assert (cursor["chain_id"], cursor["last_sequence"]) == (new.chain_id, "1")
+
+    @pytest.mark.asyncio
+    async def test_full_redis_wipe_with_empty_stream_restores_cursor_and_returns_idle(
+        self, server
+    ):
+        """When Redis is wiped and no new stream exists yet, cursor is restored to Redis."""
+        old = await _produce(server, 2)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        await custodian.flush_once()
+
+        await _redis(server).flushdb()
+        idle = await custodian.flush_once()
+        assert idle.status is CustodyStatus.IDLE
+        cursor = await _redis(server).hgetall(CURSOR_KEY)
+        assert cursor["chain_id"] == old.chain_id
+        assert cursor["last_sequence"] == "1"
+        assert cursor["last_record_hash"] == old.chain_root
+
+        # When a new chain later starts, the restored cursor detects the rotation.
+        new = EvidenceStreamSink(stream_key=STREAM_KEY)
+        new._redis = _redis(server)
+        await new.ingest({"type": "after-empty-recovery"})
+        outcome = await custodian.flush_once()
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.gap is True
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["gap"] == {
+            "detected": True,
+            "kind": GAP_KIND_CHAIN_ROTATION,
+            "previous_chain_id": old.chain_id,
+            "previous_last_sequence": 1,
+            "previous_last_record_hash": old.chain_root,
+        }
+
+    @pytest.mark.asyncio
+    async def test_cursor_only_loss_continues_same_chain_without_duplicate_or_gap(
+        self, server
+    ):
+        """Cursor key deleted while stream keeps running on same chain: skips 0..1, custodies 2..3."""
+        sink = await _produce(server, 2)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        first = await custodian.flush_once()
+        assert (first.first_sequence, first.last_sequence) == (0, 1)
+
+        await _redis(server).delete(CURSOR_KEY)
+        for i in range(2, 4):
+            await sink.ingest(
+                {"type": "GOVERNANCE_DECISION", "controlId": "AU-9", "n": i}
+            )
+
+        second = await custodian.flush_once()
+        assert second.status is CustodyStatus.WRITTEN
+        assert (second.first_sequence, second.last_sequence) == (2, 3)
+        assert second.gap is False
+        att = json.loads(store.objects[second.attestation_key])
+        assert att["gap"] == {"detected": False}
+        assert len(store.data_keys()) == 2
+
+    @pytest.mark.asyncio
+    async def test_cursor_only_loss_after_stream_trim_records_exact_trim_gap(
+        self, server
+    ):
+        """Cursor lost and stream trimmed past custodied range + 1 uncustodied entry."""
+        sink = await _produce(server, 2, max_len=3)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        first = await custodian.flush_once()
+        assert (first.first_sequence, first.last_sequence) == (0, 1)
+        first_att = json.loads(store.objects[first.attestation_key])
+
+        await _redis(server).delete(CURSOR_KEY)
+        # Ingest 4 more entries (seq 2..5); max_len=3 retains only seq 3..5,
+        # so custodied 0..1 and uncustodied seq 2 are trimmed.
+        for i in range(2, 6):
+            await sink.ingest({"type": "burst", "n": i})
+
+        outcome = await custodian.flush_once()
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.gap is True
+        assert (outcome.first_sequence, outcome.last_sequence) == (3, 5)
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["gap"] == {
+            "detected": True,
+            "expected_sequence": 2,
+            "expected_prev_hash": first_att["last_record_hash"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_full_wipe_followed_by_trimmed_new_chain_preserves_previous_chain(
+        self, server
+    ):
+        """Wipe + new chain whose genesis was already trimmed records both expected_sequence=0 and previous_chain_id."""
+        old = await _produce(server, 2)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        await custodian.flush_once()
+
+        await _redis(server).flushdb()
+        await _produce(server, 4, max_len=2)  # retains only seq 2..3 of the new chain
+
+        outcome = await custodian.flush_once()
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.gap is True
+        assert (outcome.first_sequence, outcome.last_sequence) == (2, 3)
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["gap"] == {
+            "detected": True,
+            "expected_sequence": 0,
+            "expected_prev_hash": "",
+            "previous_chain_id": old.chain_id,
+            "previous_last_sequence": 1,
+            "previous_last_record_hash": old.chain_root,
+        }
+
+    @pytest.mark.asyncio
+    async def test_multi_batch_and_multi_chain_worm_history_picks_latest_batch(
+        self, server
+    ):
+        """Across multiple batches and chain rotations in WORM, recovery anchors to the latest."""
+        chain_a = await _produce(server, 4)
+        store = FakeColdStore()
+        custodian = _custodian(server, store, batch_size=2)
+        await custodian.flush_once()  # chain_a 0..1
+        await custodian.flush_once()  # chain_a 2..3
+
+        await _redis(server).delete(STREAM_KEY)
+        chain_b = await _produce(server, 3)
+        assert chain_b.chain_id != chain_a.chain_id
+        await custodian.flush_once()  # chain_b 0..1 (rotates from chain_a)
+        await custodian.flush_once()  # chain_b 2..2
+
+        # Full Redis wipe, then chain_c starts at genesis.
+        await _redis(server).flushdb()
+        chain_c = await _produce(server, 1)
+        assert chain_c.chain_id not in {chain_a.chain_id, chain_b.chain_id}
+
+        outcome = await custodian.flush_once()
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.gap is True
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["gap"] == {
+            "detected": True,
+            "kind": GAP_KIND_CHAIN_ROTATION,
+            "previous_chain_id": chain_b.chain_id,
+            "previous_last_sequence": 2,
+            "previous_last_record_hash": chain_b.chain_root,
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fail_target", ["list_keys", "get"])
+    async def test_cold_store_error_during_recovery_fails_closed(
+        self, server, fail_target
+    ):
+        """ColdStoreError on list_keys or get during cursor recovery propagates and writes nothing."""
+        await _produce(server, 2)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        await custodian.flush_once()
+
+        await _redis(server).flushdb()
+        await _produce(server, 1)
+        keys_before = set(store.objects)
+        store.fail_on = {fail_target}
+
+        with pytest.raises(ColdStoreError):
+            await custodian.flush_once()
+
+        assert set(store.objects) == keys_before
+        assert await _redis(server).hgetall(CURSOR_KEY) == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "corrupt",
+        [
+            lambda raw: b"{not-valid-json",
+            lambda raw: json.dumps({**json.loads(raw), "schema": "wrong/0"}).encode(),
+            lambda raw: json.dumps({**json.loads(raw), "last_sequence": -1}).encode(),
+            lambda raw: json.dumps(
+                {**json.loads(raw), "last_stream_id": "bad-id"}
+            ).encode(),
+            lambda raw: json.dumps(
+                {**json.loads(raw), "signature_status": "UNSIGNED"}
+            ).encode(),
+        ],
+        ids=[
+            "invalid-json",
+            "wrong-schema",
+            "negative-sequence",
+            "malformed-stream-id",
+            "unsigned-under-signed-key",
+        ],
+    )
+    async def test_corrupt_worm_attestation_during_recovery_halts_custody(
+        self, server, corrupt
+    ):
+        """Corrupt WORM attestation raises EvidenceCustodyIntegrityError instead of resetting to genesis."""
+        await _produce(server, 2)
+        store = FakeColdStore()
+        custodian = _custodian(server, store)
+        first = await custodian.flush_once()
+
+        await _redis(server).flushdb()
+        await _produce(server, 1)
+        store.objects[first.attestation_key] = corrupt(
+            store.objects[first.attestation_key]
+        )
+        keys_before = set(store.objects)
+
+        with pytest.raises(EvidenceCustodyIntegrityError):
+            await custodian.flush_once()
+
+        assert set(store.objects) == keys_before
+        assert await _redis(server).hgetall(CURSOR_KEY) == {}

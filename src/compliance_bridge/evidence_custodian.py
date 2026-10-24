@@ -24,6 +24,9 @@ Custody cycle (:meth:`EvidenceCustodian.flush_once`)
 ----------------------------------------------------
 1. Read the cursor hash ``<stream_key>:custody`` (``last_id``,
    ``last_record_hash``, ``last_sequence``, ``chain_id``, ``pending_end_id``).
+   When the cursor is absent in Redis, recover the latest verified attestation
+   for ``<stream_key>`` from the WORM cold store so a full Redis wipe or lost
+   cursor key cannot silently reset custody to a first-ever start.
 2. ``XRANGE`` entries after ``last_id``. If ``pending_end_id`` is set, a
    previous cycle failed mid-write; the range is bounded to it so the retry
    reproduces the same object keys and bytes.
@@ -246,6 +249,16 @@ def _stream_id_date(stream_id: str) -> str:
     return datetime.fromtimestamp(millis / 1000, tz=timezone.utc).strftime("%Y/%m/%d")
 
 
+def _parse_stream_id(stream_id: str) -> tuple[int, int]:
+    """Parse a Redis Stream ID ``"<ms>-<seq>"`` into ``(ms, seq)`` integers."""
+    if not isinstance(stream_id, str) or "-" not in stream_id:
+        raise EvidenceCustodyIntegrityError(f"Malformed Redis stream ID {stream_id!r}.")
+    parts = stream_id.split("-")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        raise EvidenceCustodyIntegrityError(f"Malformed Redis stream ID {stream_id!r}.")
+    return int(parts[0]), int(parts[1])
+
+
 def _ndjson(entries: list[tuple[str, dict[str, str]]]) -> bytes:
     lines = [
         json.dumps(
@@ -391,6 +404,102 @@ class EvidenceCustodian:
         last_id = cursor.get("last_id", "")
         pending_end_id = cursor.get("pending_end_id", "")
 
+        if not cursor.get("chain_id") and not last_id and not pending_end_id:
+            latest_att = await self._recover_cursor_from_cold_store()
+            if latest_att:
+                att_chain_id = str(latest_att["chain_id"])
+                att_last_id = str(latest_att["last_stream_id"])
+                att_last_seq = int(latest_att["last_sequence"])
+                att_first_seq = int(latest_att["first_sequence"])
+                att_last_hash = str(latest_att["last_record_hash"])
+
+                head = await self._redis.xrange(
+                    self._stream_key, min="-", max="+", count=1
+                )
+                if not head:
+                    restored = {
+                        "last_id": att_last_id,
+                        "last_record_hash": att_last_hash,
+                        "last_sequence": str(att_last_seq),
+                        "chain_id": att_chain_id,
+                    }
+                    await self._redis.hset(self._cursor_key, mapping=restored)
+                    logger.warning(
+                        "[EvidenceCustodian] Recovered lost custody cursor from WORM "
+                        "attestation chain=%s seq=%d last_id=%s (stream empty).",
+                        att_chain_id,
+                        att_last_seq,
+                        att_last_id,
+                    )
+                    if _PROM_AVAILABLE:
+                        CUSTODY_BATCHES_TOTAL.labels(outcome="idle").inc()
+                    return CustodyOutcome(status=CustodyStatus.IDLE)
+
+                head_chain = head[0][1].get("chain_id", "")
+                if head_chain != att_chain_id:
+                    cursor = {
+                        "chain_id": att_chain_id,
+                        "last_sequence": str(att_last_seq),
+                        "last_record_hash": att_last_hash,
+                        "last_id": "",
+                    }
+                    last_id = ""
+                    logger.critical(
+                        "[EvidenceCustodian] Recovered custody cursor from WORM "
+                        "(chain=%s seq=%d) after Redis cursor and stream loss; "
+                        "stream now holds chain=%s.",
+                        att_chain_id,
+                        att_last_seq,
+                        head_chain,
+                    )
+                else:
+                    try:
+                        head_seq = int(head[0][1]["sequence"])
+                    except (KeyError, ValueError) as exc:
+                        raise EvidenceCustodyIntegrityError(
+                            f"Record {head[0][0]} has no integer sequence."
+                        ) from exc
+                    after = await self._redis.xrange(
+                        self._stream_key,
+                        min=f"({att_last_id}",
+                        max="+",
+                        count=1,
+                    )
+                    tail = await self._redis.xrevrange(
+                        self._stream_key, max="+", min="-", count=1
+                    )
+                    tail_id = tail[0][0] if tail else ""
+                    if (
+                        not after
+                        and head_seq == att_first_seq
+                        and tail_id == att_last_id
+                    ):
+                        cursor = self._parent_cursor_for_replay(latest_att)
+                        last_id = ""
+                    else:
+                        cursor = {
+                            "last_id": att_last_id,
+                            "last_record_hash": att_last_hash,
+                            "last_sequence": str(att_last_seq),
+                            "chain_id": att_chain_id,
+                        }
+                        await self._redis.hset(self._cursor_key, mapping=cursor)
+                        # If all custodied entries were trimmed (head_seq > att_last_seq)
+                        # or if stream rolled backwards (tail_seq < att_last_seq), read
+                        # from "-" so we never miss entries even under stream-ID skew.
+                        last_id = att_last_id if after else ""
+                        logger.warning(
+                            "[EvidenceCustodian] Recovered lost custody cursor from WORM "
+                            "on active chain=%s seq=%d last_id=%s.",
+                            att_chain_id,
+                            att_last_seq,
+                            att_last_id,
+                        )
+        elif cursor.get("chain_id") and last_id and not pending_end_id:
+            head = await self._redis.xrange(self._stream_key, min="-", max="+", count=1)
+            if head and head[0][1].get("chain_id", "") != cursor.get("chain_id", ""):
+                last_id = ""
+
         entries = await self._redis.xrange(
             self._stream_key,
             min=f"({last_id}" if last_id else "-",
@@ -520,6 +629,169 @@ class EvidenceCustodian:
             evidentiary=signature is not None,
         )
 
+    async def _recover_cursor_from_cold_store(self) -> dict[str, Any]:
+        """Recover the latest attestation for ``self._stream_key`` from WORM storage.
+
+        Used when ``<stream_key>:custody`` in Redis is empty so that a total
+        Redis wipe (or cursor key loss) cannot silently reset custody to a
+        first-ever genesis state when prior batches are already in WORM.
+        """
+        if self._cold_store.backend_id == "null":
+            return {}
+        keys = await self._cold_store.list_keys("evidence-stream/")
+        if not keys:
+            return {}
+
+        by_chain: dict[str, list[dict[str, Any]]] = {}
+        for key in keys:
+            is_signed_key = key.endswith(".attestation.json")
+            is_unsigned_key = not self._require_signature and key.endswith(
+                ".attestation.unsigned.json"
+            )
+            if not is_signed_key and not is_unsigned_key:
+                continue
+
+            raw = await self._cold_store.get(key)
+            try:
+                att = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                self._integrity_failure(
+                    key, f"corrupt attestation JSON in cold store: {exc}"
+                )
+            if not isinstance(att, dict):
+                self._integrity_failure(
+                    key, "attestation in cold store is not a JSON object"
+                )
+            if att.get("schema") != ATTESTATION_SCHEMA:
+                self._integrity_failure(
+                    key, f"unexpected attestation schema {att.get('schema')!r}"
+                )
+            if is_signed_key:
+                try:
+                    assert_citable(att)
+                except NonEvidentiaryAttestationError as exc:
+                    self._integrity_failure(key, str(exc))
+
+            for str_field in (
+                "stream_key",
+                "chain_id",
+                "last_record_hash",
+                "last_stream_id",
+                "content_sha256",
+                "data_key",
+            ):
+                val = att.get(str_field)
+                if not isinstance(val, str) or not val:
+                    self._integrity_failure(
+                        key,
+                        f"attestation field {str_field!r} is missing or not a non-empty string",
+                    )
+            for int_field in ("first_sequence", "last_sequence", "entries_count"):
+                val = att.get(int_field)
+                if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+                    self._integrity_failure(
+                        key,
+                        f"attestation field {int_field!r} is missing or not a non-negative integer",
+                    )
+            if att["last_sequence"] < att["first_sequence"] or att["entries_count"] < 1:
+                self._integrity_failure(
+                    key, "attestation sequence range or entries_count is invalid"
+                )
+            try:
+                _parse_stream_id(att["last_stream_id"])
+            except EvidenceCustodyIntegrityError as exc:
+                self._integrity_failure(key, str(exc))
+
+            gap = att.get("gap")
+            if gap is not None and (
+                not isinstance(gap, dict) or not isinstance(gap.get("detected"), bool)
+            ):
+                self._integrity_failure(key, "attestation gap field is malformed")
+
+            if att["stream_key"] != self._stream_key:
+                continue
+            by_chain.setdefault(att["chain_id"], []).append(att)
+
+        if not by_chain:
+            return {}
+
+        latest_for_chain: dict[str, dict[str, Any]] = {}
+        prev_of: dict[str, str] = {}
+        superseded: set[str] = set()
+        for cid, chain_atts in by_chain.items():
+            chain_atts.sort(
+                key=lambda a: (int(a["last_sequence"]), int(a["first_sequence"]))
+            )
+            latest_for_chain[cid] = chain_atts[-1]
+            for a in chain_atts:
+                gap = a.get("gap") or {}
+                prev_cid = gap.get("previous_chain_id")
+                if (
+                    isinstance(prev_cid, str)
+                    and prev_cid
+                    and prev_cid != cid
+                    and prev_cid in by_chain
+                ):
+                    prev_of[cid] = prev_cid
+                    superseded.add(prev_cid)
+
+        def _chain_depth(cid: str) -> int:
+            depth = 0
+            seen: set[str] = {cid}
+            curr = prev_of.get(cid)
+            while curr is not None and curr not in seen:
+                seen.add(curr)
+                depth += 1
+                curr = prev_of.get(curr)
+            return depth
+
+        def _chain_order_key(
+            cid: str,
+        ) -> tuple[bool, int, tuple[int, int], int, str]:
+            latest = latest_for_chain[cid]
+            return (
+                cid not in superseded,
+                _chain_depth(cid),
+                _parse_stream_id(latest["last_stream_id"]),
+                int(latest["last_sequence"]),
+                cid,
+            )
+
+        latest_chain_id = max(by_chain, key=_chain_order_key)
+        return dict(latest_for_chain[latest_chain_id])
+
+    @staticmethod
+    def _parent_cursor_for_replay(latest_att: dict[str, Any]) -> dict[str, str]:
+        """Reconstruct the cursor state immediately preceding ``latest_att``."""
+        att_chain_id = str(latest_att["chain_id"])
+        att_first_seq = int(latest_att["first_sequence"])
+        gap = latest_att.get("gap") or {}
+        if gap.get("detected"):
+            if "previous_chain_id" in gap:
+                return {
+                    "chain_id": str(gap["previous_chain_id"]),
+                    "last_sequence": str(int(gap["previous_last_sequence"])),
+                    "last_record_hash": str(gap.get("previous_last_record_hash", "")),
+                    "last_id": "",
+                }
+            expected_seq = int(gap.get("expected_sequence", 0))
+            if expected_seq > 0:
+                return {
+                    "chain_id": att_chain_id,
+                    "last_sequence": str(expected_seq - 1),
+                    "last_record_hash": str(gap.get("expected_prev_hash", "")),
+                    "last_id": "",
+                }
+            return {}
+        if att_first_seq > 0:
+            return {
+                "chain_id": att_chain_id,
+                "last_sequence": str(att_first_seq - 1),
+                "last_record_hash": str(latest_att.get("first_prev_hash", "")),
+                "last_id": "",
+            }
+        return {}
+
     def _check_continuity(
         self,
         cursor: dict[str, str],
@@ -590,6 +862,14 @@ class EvidenceCustodian:
         else:
             # First-ever batch, or a new chain, that does not start at genesis.
             expected = {"expected_sequence": 0, "expected_prev_hash": ""}
+            if cursor_chain:
+                expected.update(
+                    {
+                        "previous_chain_id": cursor_chain,
+                        "previous_last_sequence": int(cursor["last_sequence"]),
+                        "previous_last_record_hash": cursor.get("last_record_hash", ""),
+                    }
+                )
 
         logger.critical(
             "[EvidenceCustodian] GAP: chain %s resumes at seq %d (expected %s). "

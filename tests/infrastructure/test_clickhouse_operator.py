@@ -439,6 +439,12 @@ class _LockedWormColdStore(EvidenceColdStore):
     async def exists(self, key: str) -> bool:
         return key in self.objects
 
+    async def get(self, key: str) -> bytes:
+        return self.objects[key]
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        return sorted(k for k in self.objects if k.startswith(prefix))
+
     async def put_if_absent(
         self,
         key: str,
