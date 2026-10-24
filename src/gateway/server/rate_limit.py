@@ -116,6 +116,12 @@ except ImportError:
 # ARGV[5] = p_delay_tolerance_ms      (window_ms)
 #
 # Returns: {allowed (1|0), retry_after_ms (int), blocked_scope (''|'identity'|'principal')}
+#
+# Not idempotent, by design: if redis-py re-sends the script after a lost
+# reply, an admitted request is charged twice (both TATs advance by 2T) and
+# the re-send may answer 429 for a request the first run admitted. That only
+# ever throttles more, never admits beyond the budget, so it is accepted
+# rather than storing an operation id with every bucket.
 LUA_GCRA_DUAL_BUCKET = """
 local id_key = KEYS[1]
 local p_key = KEYS[2]

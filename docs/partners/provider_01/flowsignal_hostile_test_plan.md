@@ -176,7 +176,7 @@ uv run pytest tests/test_consequence_gateway_integration.py::test_replay_immedia
 ```bash
 # Check Redis for consumed token
 redis-cli -h <redis-host> GET "flowsignal:token:replay-test-001"
-# Should return binding hash from first consumption
+# Should return "<binding hash>:<op id>" from the first consumption
 ```
 
 ##### 3.2: Delayed Replay (within 90s TTL)

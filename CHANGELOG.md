@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Single-use Redis operations are retry-safe** (`fix(gateway)`; found while fixing `#511`, reported by **Daniel Fairbanks (`@danofairanks`)**). Pooled clients from [`build_async_redis()`](src/gateway/infrastructure/redis_client.py) retry `ConnectionError` and `TimeoutError`, so when a reply is lost redis-py re-sends a command the server already ran, and a single-use write then saw its own first success as a conflict. Each write now stores a random per-attempt `op_id` ([`redis_single_use.py`](src/gateway/infrastructure/redis_single_use.py)); a re-send that finds its own `op_id` reports the original success, and every other writer, including a genuine replay, is refused exactly as before. Fixed: the routing-seal consume script and [`revoke_seal()`](src/gateway/governance/routing_seal.py) (a consumed seal read as a replay; a revocation that took effect returned `False`); [`DeferQueue.park()`](src/gateway/governance/defer_queue.py), now one atomic script (a re-sent `HSETNX` left a token with no status, TTL or expiry-index entry, so it could never be approved or expire); the revision CAS behind `approve()` and `_resolve()` (a quorum approval returned `NOT_FOUND`, an injection resolved the ticket but dropped its `injection_data`, an expiry skipped the DLQ); `atomic_resolve()` (a spent approval was refused as a replay); [`ConsequenceAuthorityStore.consume_once()`](src/gateway/governance/consequence_authority_store.py), whose marker is now `<binding>:<op_id>` (`get_binding()` still returns the binding); and the DPoP `jti` claim in [`dpop_validator.py`](src/gateway/server/dpop_validator.py). The GCRA limiter in [`rate_limit.py`](src/gateway/server/rate_limit.py) still charges a re-sent request twice: that only ever throttles more, and is documented. Tests: [`tests/test_redis_lost_reply.py`](tests/test_redis_lost_reply.py).
+
 ---
 
 ## [3.2.0] - 2026-10-22

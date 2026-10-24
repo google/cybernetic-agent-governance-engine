@@ -25,11 +25,13 @@ Test coverage:
 """
 
 import inspect
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.gateway.governance.defer_queue import (
+    _PARK_LUA,
     DeferQueue,
     DeferReason,
     DeferToken,
@@ -180,6 +182,7 @@ def fake_redis():
         expected_rev: str,
         token_json: str,
         new_status: str,
+        op_id: str,
     ) -> list:
         """Simulate the CAS Lua script: compare rev, then write token+status+rev."""
         current_rev_raw = store.get(key, {}).get("rev")
@@ -188,11 +191,27 @@ def fake_redis():
             return [0, int(current_rev)]
         new_rev = int(current_rev) + 1
         store.setdefault(key, {}).update(
-            {"token": token_json, "status": new_status, "rev": str(new_rev)}
+            {
+                "token": token_json,
+                "status": new_status,
+                "rev": str(new_rev),
+                "op_id": op_id,
+            }
         )
         return [1, new_rev]
 
     redis.evalsha = _evalsha
+
+    async def _eval(script: str, num_keys: int, key: str, *argv: Any) -> int:
+        """Simulate the park script: create the token hash atomically."""
+        assert script == _PARK_LUA, "fake implements only DeferQueue._PARK_LUA"
+        token_json, _ttl, op_id = argv
+        if await _hsetnx(key, "token", token_json):
+            store[key].update({"status": "PARKED", "rev": "0", "op_id": op_id})
+            return 1
+        return int(store[key].get("op_id") == op_id)
+
+    redis.eval = _eval
 
     # watch/unwatch for approval tests
     redis.watch = AsyncMock()
