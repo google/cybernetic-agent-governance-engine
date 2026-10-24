@@ -371,6 +371,21 @@ async def _check_validate_action_rate_limit(request: Request) -> RateLimitVerdic
 # ---------------------------------------------------------------------------
 
 
+def _check_non_finite_recursive(obj: Any, path: str = "params") -> None:
+    """Recursively reject NaN and Infinity across dicts, lists, and tuples."""
+    if isinstance(obj, float) and not math.isfinite(obj):
+        raise ValueError(
+            f"{path} contains non-finite float {obj!r} "
+            "— NaN and Infinity are not permitted"
+        )
+    if isinstance(obj, dict):
+        for key, val in obj.items():
+            _check_non_finite_recursive(val, f"{path}[{key!r}]")
+    elif isinstance(obj, (list, tuple)):
+        for idx, item in enumerate(obj):
+            _check_non_finite_recursive(item, f"{path}[{idx}]")
+
+
 class ValidateActionRequest(BaseModel):
     """Payload for POST /governance/validate-action."""
 
@@ -381,12 +396,7 @@ class ValidateActionRequest(BaseModel):
     @field_validator("params")
     @classmethod
     def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
-        for key, val in v.items():
-            if isinstance(val, float) and not math.isfinite(val):
-                raise ValueError(
-                    f"params[{key!r}] contains non-finite float {val!r} "
-                    "— NaN and Infinity are not permitted"
-                )
+        _check_non_finite_recursive(v, "params")
         return v
 
 
@@ -881,6 +891,7 @@ except ImportError:
     _jwks_cache: dict[str, Any] = {}  # type: ignore[no-redef]
 _JWKS_CACHE_TTL_S: float = 3600.0  # 1 hour
 _jwks_fetched_at: float = 0.0
+_jwks_cached_uri: str = ""
 
 
 def _get_jwks_cache_key() -> str:
@@ -911,15 +922,30 @@ async def _fetch_jwks() -> dict[str, Any]:
     SSL context and suppressed the Bandit S310 warning.
 
     Raises:
-        RuntimeError: If the JWKS endpoint is unreachable or returns invalid JSON.
+        RuntimeError: If the JWKS endpoint is unreachable, has an invalid URL
+            scheme, or returns invalid JSON.
     """
-    global _jwks_fetched_at
+    global _jwks_fetched_at, _jwks_cached_uri
     now = time.monotonic()
-    if _jwks_cache and (now - _jwks_fetched_at) < _JWKS_CACHE_TTL_S:
+    cache_key = _get_jwks_cache_key()
+    if (
+        _jwks_cache
+        and (now - _jwks_fetched_at) < _JWKS_CACHE_TTL_S
+        and (_jwks_cached_uri in ("", cache_key))
+    ):
         return dict(_jwks_cache)  # type: ignore[arg-type,return-value]
 
     if not _OIDC_JWKS_URI:
         return {}
+
+    from urllib.parse import urlparse
+
+    parsed_uri = urlparse(_OIDC_JWKS_URI)
+    if parsed_uri.scheme not in ("https", "http") or not parsed_uri.netloc:
+        raise RuntimeError(
+            f"Failed to fetch JWKS from {_OIDC_JWKS_URI}: "
+            f"unsupported URL scheme {parsed_uri.scheme!r} or missing host"
+        )
 
     try:
         import httpx as _httpx
@@ -940,6 +966,7 @@ async def _fetch_jwks() -> dict[str, Any]:
             keys[kid] = key_data
 
     _jwks_fetched_at = now
+    _jwks_cached_uri = cache_key
     _jwks_cache.clear()
     _jwks_cache.update(keys)
     return dict(_jwks_cache)  # type: ignore[arg-type]

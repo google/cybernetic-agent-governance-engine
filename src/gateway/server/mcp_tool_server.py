@@ -561,12 +561,20 @@ class ToolExecutionRequest(BaseModel):
     @field_validator("params")
     @classmethod
     def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
-        for key, val in v.items():
-            if isinstance(val, float) and not math.isfinite(val):
+        def _walk(obj: Any, path: str = "params") -> None:
+            if isinstance(obj, float) and not math.isfinite(obj):
                 raise ValueError(
-                    f"params[{key!r}] contains non-finite float {val!r} "
+                    f"{path} contains non-finite float {obj!r} "
                     "— NaN and Infinity are not permitted"
                 )
+            if isinstance(obj, dict):
+                for key, val in obj.items():
+                    _walk(val, f"{path}[{key!r}]")
+            elif isinstance(obj, (list, tuple)):
+                for idx, item in enumerate(obj):
+                    _walk(item, f"{path}[{idx}]")
+
+        _walk(v, "params")
         return v
 
 

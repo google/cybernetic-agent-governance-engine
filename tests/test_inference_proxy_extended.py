@@ -859,3 +859,103 @@ async def test_shutdown_closes_http_client():
         assert _mod._http_client is None
     finally:
         _mod._http_client = original_client
+
+
+@pytest.mark.asyncio
+async def test_null_max_tokens_defaults_to_zero(proxy_deps):
+    """OpenAI-compatible requests with max_tokens=None succeed and reserve 0 tokens."""
+    app = proxy_deps["app"]
+    quota_proxy = proxy_deps["quota_proxy"]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/chat/completions", json=_chat_body(max_tokens=None)
+        )
+
+    assert resp.status_code == 200
+    quota_proxy.check_and_increment.assert_awaited_once()
+    assert quota_proxy.check_and_increment.call_args.kwargs["token_delta"] == 0
+
+
+@pytest.mark.asyncio
+async def test_negative_max_tokens_rejected_with_400(proxy_deps):
+    """Negative max_tokens values are rejected with HTTP 400 before quota reservation."""
+    app = proxy_deps["app"]
+    quota_proxy = proxy_deps["quota_proxy"]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/chat/completions", json=_chat_body(max_tokens=-50000)
+        )
+
+    assert resp.status_code == 400
+    quota_proxy.check_and_increment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_output_filter_exception_triggers_quota_rollback(proxy_deps, monkeypatch):
+    """When verify_and_mask_output raises, quota is rolled back before re-raising."""
+    from starlette.background import BackgroundTasks
+    from starlette.datastructures import Headers
+    from starlette.requests import Request
+
+    mod = proxy_deps["module"]
+    quota_proxy = proxy_deps["quota_proxy"]
+    app = proxy_deps["app"]
+    app.state.nemo_rails = MagicMock()
+
+    async def _explode_output(_rails, _text):
+        raise RuntimeError("output filter failed")
+
+    monkeypatch.setattr(
+        "src.gateway.governance.semantic_rail_factory.verify_and_mask_semantic_output",
+        _explode_output,
+    )
+
+    body_bytes = json.dumps(_chat_body(max_tokens=250)).encode()
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "query_string": b"",
+        "headers": Headers({"content-type": "application/json"}).raw,
+        "app": app,
+    }
+
+    async def _receive():
+        return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+    with pytest.raises(RuntimeError, match="output filter failed"):
+        await mod.chat_completions(Request(scope, _receive), BackgroundTasks())
+
+    quota_proxy.rollback_step.assert_awaited_once_with(
+        "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        reserved_tokens=250,
+    )
+
+
+@pytest.mark.asyncio
+async def test_gateway_client_generate_extra_headers_not_duplicated():
+    """GatewayClient.generate() pops extra_headers without mutating caller dict or raising TypeError."""
+    from src.gateway.core.llm import GatewayClient
+
+    gw = GatewayClient.__new__(GatewayClient)
+    gw.mode = "gateway"
+    fake_choice = MagicMock()
+    fake_choice.message.content = "ok"
+    fake_resp = MagicMock(choices=[fake_choice], usage=None)
+    fake_openai = MagicMock()
+    fake_openai.chat.completions.create = AsyncMock(return_value=fake_resp)
+    gw.gateway_client = fake_openai
+
+    caller_headers = {"X-Custom": "val"}
+    out = await gw.generate("hello", extra_headers=caller_headers, temperature=0.1)
+    assert out == "ok"
+    assert caller_headers == {"X-Custom": "val"}
+    sent_kwargs = fake_openai.chat.completions.create.call_args.kwargs
+    assert sent_kwargs["extra_headers"]["X-Custom"] == "val"
+    assert sent_kwargs["temperature"] == 0.1

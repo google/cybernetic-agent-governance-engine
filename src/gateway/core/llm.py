@@ -102,7 +102,7 @@ class GatewayClient:
                 kwargs["extra_body"] = extra_body
 
             # Inject Trace Context for AgentSight Correlation (Hybrid Strategy)
-            extra_headers = kwargs.get("extra_headers", {})
+            extra_headers = dict(kwargs.pop("extra_headers", None) or {})
             try:
                 current_span = trace.get_current_span()
                 if current_span and current_span.get_span_context().is_valid:

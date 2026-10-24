@@ -336,5 +336,36 @@ class TestOIDCValidationMiddleware:
         )
         assert status_msg["status"] == 401
 
+    @pytest.mark.asyncio
+    async def test_fetch_jwks_rejects_invalid_url_scheme(self):
+        """_fetch_jwks raises RuntimeError when _OIDC_JWKS_URI uses a non-http(s) scheme."""
+        import src.gateway.server.governance_middleware as gm
+
+        with (
+            patch.object(gm, "_OIDC_JWKS_URI", "file:///etc/passwd"),
+            patch.object(gm, "_jwks_cache", {}),
+        ):
+            with pytest.raises(RuntimeError, match="unsupported URL scheme"):
+                await gm._fetch_jwks()
+
+    def test_recursive_non_finite_float_rejected_in_requests(self):
+        """ValidateActionRequest and ToolExecutionRequest reject nested NaN/Infinity floats."""
+        from pydantic import ValidationError
+
+        from src.gateway.server.governance_middleware import ValidateActionRequest
+        from src.gateway.server.mcp_tool_server import ToolExecutionRequest
+
+        with pytest.raises(ValidationError, match="non-finite float"):
+            ValidateActionRequest(
+                action="transfer",
+                params={"nested": {"items": [1.0, float("nan")]}},
+            )
+
+        with pytest.raises(ValidationError, match="non-finite float"):
+            ToolExecutionRequest(
+                tool_name="transfer",
+                params={"nested": {"limit": float("inf")}},
+            )
+
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

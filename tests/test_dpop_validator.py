@@ -502,3 +502,42 @@ class TestDPoPValidator:
                 expected_uri="https://api.example.com/resource",
                 http_method="POST",
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("non_finite_iat", [float("nan"), float("inf"), float("-inf")])
+    async def test_non_finite_iat_claim_rejected(
+        self, validator, test_keypair, test_cert_pem, non_finite_iat
+    ):
+        """Reject DPoP proofs containing NaN or Infinity in the iat claim (fail-closed)."""
+        private_key, public_key = test_keypair
+        dpop_proof = self._create_dpop_jwt(
+            private_key=private_key,
+            public_key=public_key,
+            htm="POST",
+            htu="https://api.example.com/resource",
+            iat=non_finite_iat,  # type: ignore[arg-type]
+            jti="non-finite-iat-token",
+        )
+
+        with pytest.raises(TokenBindingError):
+            await validator.validate_token_binding(
+                dpop_proof=dpop_proof,
+                client_cert_pem=test_cert_pem,
+                expected_uri="https://api.example.com/resource",
+                http_method="POST",
+            )
+
+    def test_partial_mtls_transport_fails_closed(self, tmp_path):
+        """create_mtls_transport raises ValueError when only cert_path or key_path is given."""
+        from src.gateway.client.transport import create_mtls_transport
+
+        cert_file = tmp_path / "client.crt"
+        key_file = tmp_path / "client.key"
+        cert_file.write_text("dummy")
+        key_file.write_text("dummy")
+
+        with pytest.raises(ValueError, match="Both cert_path and key_path"):
+            create_mtls_transport(cert_path=str(cert_file), key_path=None)
+
+        with pytest.raises(ValueError, match="Both cert_path and key_path"):
+            create_mtls_transport(cert_path=None, key_path=str(key_file))

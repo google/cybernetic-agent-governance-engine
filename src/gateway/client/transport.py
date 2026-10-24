@@ -53,6 +53,12 @@ def create_mtls_transport(
     - If all mTLS paths are None: Standard TLS with strict certificate verification
     - If mTLS paths are provided: Validates file existence, configures mutual TLS
     """
+    # Fail-closed validation: cert_path and key_path must be supplied together
+    if (cert_path is None) != (key_path is None):
+        raise ValueError(
+            "Both cert_path and key_path must be provided together for mutual TLS"
+        )
+
     # Fail-closed validation: If mTLS paths are supplied, files MUST exist
     if cert_path is not None:
         cert_file = Path(cert_path)

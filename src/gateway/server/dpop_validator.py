@@ -22,6 +22,7 @@ to prevent token replay attacks. Enforces strict fail-closed validation.
 import base64
 import hashlib
 import json
+import math
 import time
 from typing import Any, Protocol
 
@@ -32,6 +33,11 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 from src.gateway.infrastructure.redis_single_use import new_op_id, set_nx_retry_safe
+
+
+def _reject_json_constant(val: str) -> Any:
+    """Reject non-standard JSON constants (NaN, Infinity, -Infinity) fail-closed."""
+    raise ValueError(f"Non-finite JSON constant not permitted in DPoP JWT: {val}")
 
 
 class TokenBindingError(ValueError):
@@ -122,8 +128,8 @@ class DPoPValidator(ProofOfPossessionValidator):
         try:
             header = self._decode_base64url(dpop_parts[0])
             payload = self._decode_base64url(dpop_parts[1])
-            dpop_header = json.loads(header)
-            dpop_claims = json.loads(payload)
+            dpop_header = json.loads(header, parse_constant=_reject_json_constant)
+            dpop_claims = json.loads(payload, parse_constant=_reject_json_constant)
         except Exception as e:
             raise TokenBindingError(f"Failed to decode DPoP JWT: {e}") from e
 
@@ -149,9 +155,13 @@ class DPoPValidator(ProofOfPossessionValidator):
         # Validate timestamp freshness (fail-closed on skew > max_age_seconds)
         current_time = int(time.time())
         proof_time = dpop_claims["iat"]
-        if not isinstance(proof_time, (int, float)) or isinstance(proof_time, bool):
+        if (
+            not isinstance(proof_time, (int, float))
+            or isinstance(proof_time, bool)
+            or not math.isfinite(proof_time)
+        ):
             raise TokenBindingError(
-                f"Invalid DPoP 'iat' claim: expected numeric timestamp, got {type(proof_time).__name__}"
+                f"Invalid DPoP 'iat' claim: expected finite numeric timestamp, got {type(proof_time).__name__}"
             )
         age = current_time - proof_time
 

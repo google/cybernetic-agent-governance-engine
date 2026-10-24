@@ -410,6 +410,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         if inspect.isawaitable(close_res):
             await close_res
 
+    # Shutdown: close shared inference proxy HTTP client pool
+    from src.gateway.server.inference_proxy import _shutdown_http_client
+
+    await _shutdown_http_client()
+
     if rl_redis is not None and hasattr(rl_redis, "aclose"):
         try:
             await rl_redis.aclose()

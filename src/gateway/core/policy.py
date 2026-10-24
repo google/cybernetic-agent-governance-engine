@@ -751,7 +751,9 @@ class OPAClient:
             if CAGE_OPA_EXPLAIN_LOGGING:
                 policy_path = input_data.get("action", "unknown")
                 try:
-                    _explain_queue.put_nowait((policy_path, input_data, decision_str))
+                    _explain_queue.put_nowait(
+                        (policy_path, normalized_input, decision_str)
+                    )
                 except asyncio.QueueFull:
                     logger.warning(
                         "OPA explain queue full (maxsize=%d) — dropping explain "

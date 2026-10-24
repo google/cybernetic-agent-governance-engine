@@ -31,6 +31,7 @@ Governance pipeline applied here:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -76,12 +77,24 @@ def _safe_error_response(exc: Exception, status_code: int = 500) -> dict:
 # keep-alive and connection pooling to vLLM backends.  The client is
 # initialised lazily on first use and lives for the process lifetime.
 _http_client: httpx.AsyncClient | None = None
+_http_client_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_http_client() -> httpx.AsyncClient:
     """Return (or lazily create) the shared pooled httpx.AsyncClient."""
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
+    global _http_client, _http_client_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if (
+        _http_client is None
+        or _http_client.is_closed
+        or (_http_client_loop is not None and _http_client_loop != current_loop)
+        or (_http_client_loop is not None and _http_client_loop.is_closed())
+    ):
+        _http_client_loop = current_loop
         _http_client = httpx.AsyncClient(
             limits=httpx.Limits(
                 max_connections=50,
@@ -96,10 +109,11 @@ def _get_http_client() -> httpx.AsyncClient:
 @inference_app.on_event("shutdown")
 async def _shutdown_http_client() -> None:
     """Close the shared httpx client on app shutdown."""
-    global _http_client
+    global _http_client, _http_client_loop
     if _http_client and not _http_client.is_closed:
         await _http_client.aclose()
-        _http_client = None
+    _http_client = None
+    _http_client_loop = None
 
 
 async def _stream_vllm(
@@ -314,7 +328,40 @@ async def chat_completions(
 
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
-        token_delta = int(body.get("max_tokens", 0))
+        raw_max_tokens = body.get("max_tokens")
+        if raw_max_tokens is None:
+            token_delta = 0
+        elif isinstance(raw_max_tokens, bool) or not isinstance(
+            raw_max_tokens, (int, float, str)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_request_error",
+                    "message": "max_tokens must be a non-negative integer",
+                },
+            )
+        else:
+            try:
+                parsed_max_tokens = int(raw_max_tokens)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "invalid_request_error",
+                        "message": "max_tokens must be a non-negative integer",
+                    },
+                ) from exc
+            if parsed_max_tokens < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "invalid_request_error",
+                        "message": "max_tokens must be non-negative",
+                    },
+                )
+            token_delta = parsed_max_tokens
+
         quota_result = await _get_token_quota_proxy().check_and_increment(
             agent_id=agent_id,
             token_delta=token_delta,
@@ -358,18 +405,17 @@ async def chat_completions(
                 return JSONResponse(content=blocked, status_code=403)
             stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")
 
+            # 5. Forward to vLLM (R-06 fix — pooled client, streaming support)
+            api_base = _resolve_backend_url(model_id)
+            api_key = config_manager.get("VLLM_API_KEY") or "EMPTY"
+            target_url = f"{api_base.rstrip('/')}/chat/completions"
+            raw_client = _get_http_client()
+            client = await raw_client if inspect.isawaitable(raw_client) else raw_client
         except Exception:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
             )
             raise
-
-        # 5. Forward to vLLM (R-06 fix — pooled client, streaming support)
-        api_base = _resolve_backend_url(model_id)
-        api_key = config_manager.get("VLLM_API_KEY") or "EMPTY"
-        target_url = f"{api_base.rstrip('/')}/chat/completions"
-        raw_client = _get_http_client()
-        client = await raw_client if inspect.isawaitable(raw_client) else raw_client
 
         # Respect the caller's streaming preference.  When stream=True the
         # response is proxied byte-for-byte as an SSE stream so the frontend
@@ -465,100 +511,109 @@ async def chat_completions(
                     agent_id, reserved_tokens=token_delta
                 )
 
-            # Apply NeMo output filtering to streamed tool_calls arguments
-            if streamed_tool_calls:
-                tool_calls_modified = False
-                sanitized_tool_calls: list[dict[str, Any]] = []
-                for tc_idx in sorted(streamed_tool_calls):
-                    tc_entry = streamed_tool_calls[tc_idx]
-                    raw_args = tc_entry["arguments"]
-                    safe_args_str = raw_args
-                    if raw_args:
-                        safe_args = await verify_and_mask_output(rails, raw_args)
-                        safe_args_str = (
-                            safe_args.strip()
-                            if isinstance(safe_args, str)
-                            else str(safe_args)
+            try:
+                # Apply NeMo output filtering to streamed tool_calls arguments
+                if streamed_tool_calls:
+                    tool_calls_modified = False
+                    sanitized_tool_calls: list[dict[str, Any]] = []
+                    for tc_idx in sorted(streamed_tool_calls):
+                        tc_entry = streamed_tool_calls[tc_idx]
+                        raw_args = tc_entry["arguments"]
+                        safe_args_str = raw_args
+                        if raw_args:
+                            safe_args = await verify_and_mask_output(rails, raw_args)
+                            safe_args_str = (
+                                safe_args.strip()
+                                if isinstance(safe_args, str)
+                                else str(safe_args)
+                            )
+                            if safe_args_str != raw_args:
+                                tool_calls_modified = True
+                        sanitized_tool_calls.append(
+                            {
+                                "id": tc_entry["id"] or f"call-{tc_idx}",
+                                "type": "function",
+                                "function": {
+                                    "name": tc_entry["name"],
+                                    "arguments": safe_args_str,
+                                },
+                            }
                         )
-                        if safe_args_str != raw_args:
-                            tool_calls_modified = True
-                    sanitized_tool_calls.append(
-                        {
-                            "id": tc_entry["id"] or f"call-{tc_idx}",
-                            "type": "function",
-                            "function": {
-                                "name": tc_entry["name"],
-                                "arguments": safe_args_str,
+                    if tool_calls_modified:
+                        logger.info(
+                            "Streaming tool_calls filtered by NeMo: model=%s", model_id
+                        )
+                        ts = int(time.time())
+                        filtered_response = {
+                            "id": f"chatcmpl-{ts}",
+                            "object": "chat.completion",
+                            "created": ts,
+                            "model": model_id,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "finish_reason": "tool_calls",
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": safe_content
+                                        if filtered_content
+                                        and (
+                                            safe_content := await verify_and_mask_output(
+                                                rails, filtered_content
+                                            )
+                                        )
+                                        else filtered_content,
+                                        "tool_calls": sanitized_tool_calls,
+                                    },
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                                "total_tokens": 0,
                             },
                         }
-                    )
-                if tool_calls_modified:
-                    logger.info(
-                        "Streaming tool_calls filtered by NeMo: model=%s", model_id
-                    )
-                    ts = int(time.time())
-                    filtered_response = {
-                        "id": f"chatcmpl-{ts}",
-                        "object": "chat.completion",
-                        "created": ts,
-                        "model": model_id,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "finish_reason": "tool_calls",
-                                "message": {
-                                    "role": "assistant",
-                                    "content": safe_content
-                                    if filtered_content
-                                    and (
-                                        safe_content := await verify_and_mask_output(
-                                            rails, filtered_content
-                                        )
-                                    )
-                                    else filtered_content,
-                                    "tool_calls": sanitized_tool_calls,
-                                },
-                            }
-                        ],
-                        "usage": {
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                        },
-                    }
-                    return JSONResponse(content=filtered_response)
+                        return JSONResponse(content=filtered_response)
 
-            # Apply NeMo output filtering to the assembled content
-            if filtered_content:
-                safe_content = await verify_and_mask_output(rails, filtered_content)
-                if safe_content != filtered_content:
-                    logger.info("Streaming output filtered by NeMo: model=%s", model_id)
-                    # Return filtered content as a non-streaming JSON response
-                    # LOW-5 fix: removed inline `import time as _time` — time is
-                    # already imported at module level.
-                    ts = int(time.time())
-                    filtered_response = {
-                        "id": f"chatcmpl-{ts}",
-                        "object": "chat.completion",
-                        "created": ts,
-                        "model": model_id,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "finish_reason": "stop",
-                                "message": {
-                                    "role": "assistant",
-                                    "content": safe_content,
-                                },
-                            }
-                        ],
-                        "usage": {
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                        },
-                    }
-                    return JSONResponse(content=filtered_response)
+                # Apply NeMo output filtering to the assembled content
+                if filtered_content:
+                    safe_content = await verify_and_mask_output(rails, filtered_content)
+                    if safe_content != filtered_content:
+                        logger.info(
+                            "Streaming output filtered by NeMo: model=%s", model_id
+                        )
+                        # Return filtered content as a non-streaming JSON response
+                        # LOW-5 fix: removed inline `import time as _time` — time is
+                        # already imported at module level.
+                        ts = int(time.time())
+                        filtered_response = {
+                            "id": f"chatcmpl-{ts}",
+                            "object": "chat.completion",
+                            "created": ts,
+                            "model": model_id,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "finish_reason": "stop",
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": safe_content,
+                                    },
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                                "total_tokens": 0,
+                            },
+                        }
+                        return JSONResponse(content=filtered_response)
+            except Exception:
+                if not stream_backend_error:
+                    await _get_token_quota_proxy().rollback_step(
+                        agent_id, reserved_tokens=token_delta
+                    )
+                raise
 
             # Content passed output filtering — re-stream the collected chunks
             async def _replay_chunks() -> AsyncIterator[bytes]:
@@ -609,24 +664,40 @@ async def chat_completions(
             raise HTTPException(status_code=500, detail=safe_err)
 
         # 6. Output filtering / PII masking
-        if vllm_response.get("choices"):
-            choice = vllm_response["choices"][0]
-            message = choice.get("message", {})
+        try:
+            if vllm_response.get("choices"):
+                choice = vllm_response["choices"][0]
+                message = choice.get("message", {})
 
-            if choice.get("finish_reason") == "tool_calls" or "tool_calls" in message:
-                for tool_call in message.get("tool_calls", []):
-                    if "function" in tool_call and "arguments" in tool_call["function"]:
-                        raw_args = tool_call["function"]["arguments"]
-                        if raw_args:
-                            safe_args = await verify_and_mask_output(rails, raw_args)
-                            tool_call["function"]["arguments"] = (
-                                safe_args.strip()
-                                if isinstance(safe_args, str)
-                                else str(safe_args)
-                            )
-            elif message.get("content"):
-                safe_content = await verify_and_mask_output(rails, message["content"])
-                message["content"] = safe_content
+                if (
+                    choice.get("finish_reason") == "tool_calls"
+                    or "tool_calls" in message
+                ):
+                    for tool_call in message.get("tool_calls", []):
+                        if (
+                            "function" in tool_call
+                            and "arguments" in tool_call["function"]
+                        ):
+                            raw_args = tool_call["function"]["arguments"]
+                            if raw_args:
+                                safe_args = await verify_and_mask_output(
+                                    rails, raw_args
+                                )
+                                tool_call["function"]["arguments"] = (
+                                    safe_args.strip()
+                                    if isinstance(safe_args, str)
+                                    else str(safe_args)
+                                )
+                elif message.get("content"):
+                    safe_content = await verify_and_mask_output(
+                        rails, message["content"]
+                    )
+                    message["content"] = safe_content
+        except Exception:
+            await _get_token_quota_proxy().rollback_step(
+                agent_id, reserved_tokens=token_delta
+            )
+            raise
 
         if span.is_recording():
             choice_msg = vllm_response.get("choices", [{}])[0].get("message", {})
