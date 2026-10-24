@@ -45,7 +45,10 @@ from collections.abc import Coroutine, Generator
 from typing import Any
 
 from src.gateway.governance.saga_compensator import FunctionSagaCompensator
-from src.gateway.infrastructure.mcp_client import GatewayMCPClient
+from src.gateway.infrastructure.mcp_client import (
+    GatewayMCPClient,
+    MCPToolOutcomeUnknownError,
+)
 
 AgentState = Any
 LedgerEntry = dict[str, Any]
@@ -86,7 +89,7 @@ def _next_sequence_id(state: AgentState) -> int:
     return (max(t["sequence_id"] for t in txns) + 1) if txns else 0
 
 
-def _run_async(coro: Coroutine[Any, Any, dict[str, Any]]) -> dict[str, Any]:
+def _run_async(coro: Coroutine[Any, Any, str]) -> str:
     """Run an async coroutine from a synchronous WAL generator node."""
     try:
         return asyncio.get_event_loop().run_until_complete(coro)
@@ -111,16 +114,24 @@ def forward_execute_trade_node_uca_4(
     This node MUST be wrapped in a try/except by the caller.
     On exception, the PENDING entry persists so saga_router_node
     can reconcile ghost state on the next execution.
+    An unknown outcome (MCPToolOutcomeUnknownError) is never resent: the
+    PENDING entry, which records the request, is left for reconciliation.
     """
     seq_id = _next_sequence_id(state)
+    arguments: dict[str, Any] = {
+        k: v
+        for k, v in state.items()
+        if k in ("symbol", "amount", "currency", "side", "transaction_id")
+    }
+    tx_id: str = str(arguments.get("transaction_id") or "")
     intent: LedgerEntry = {
         "sequence_id": seq_id,
         "timestamp": _utcnow(),
         "uca_ref": "UCA-4",
         "action": "execute_trade",
-        "idempotency_key": "",  # populated after API call returns tx_id
+        "idempotency_key": "",  # set on the COMPLETED entry
         "status": "PENDING",
-        "context_data": {},
+        "context_data": dict(arguments),
     }
     # Step 1: Persist WAL intent BEFORE the API call
     logger.info("UCA-4: writing PENDING intent seq_id=%s", seq_id)
@@ -131,25 +142,31 @@ def forward_execute_trade_node_uca_4(
     # (Aho-Corasick → NeMo → STPA → OPA → CBF → Consensus → DoWhy)
     # before executing the action, ensuring atomicity guarantees are
     # proven in production and not merely declared in policy documents.
-    result: dict[str, Any] = _run_async(
-        _get_mcp_client().call_tool(
-            name="execute_trade_action",
-            arguments={
-                k: v
-                for k, v in state.items()
-                if k
-                in (
-                    "approval_token",
-                    "amount",
-                    "symbol",
-                    "account_id",
-                    "trader_role",
-                    "approval_token",
-                )
-            },
+    try:
+        outcome = _run_async(
+            _get_mcp_client().call_tool(
+                name="execute_trade_action",
+                arguments=arguments,
+            )
         )
-    )
-    tx_id: str = result.get("transaction_id", "")
+    except MCPToolOutcomeUnknownError as exc:
+        # The request may have reached the gateway. A resend could execute
+        # it twice, and COMPLETED would let a compensator reverse an action
+        # that may never have run: the PENDING entry stays for
+        # saga_router_node's ghost-state reconciliation.
+        logger.error(
+            "UCA-4: outcome UNKNOWN tx_id=%s, WAL entry left PENDING: %s",
+            tx_id,
+            exc,
+        )
+        return {}
+    # The gateway answers "<STATUS>: <detail>", e.g. "BLOCKED: <reason>".
+    status, _, detail = outcome.partition(":")
+    result: dict[str, Any] = {
+        **arguments,
+        "outcome": status.strip(),
+        "detail": detail.strip(),
+    }
 
     # Step 3: Mark COMPLETED
     confirmed: LedgerEntry = {
@@ -194,7 +211,6 @@ def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
     # Extract parameters via parameter_mapping
     _target_tx_id = context_data.get("transaction_id")
     _refund_amount = context_data.get("amount")
-    _account_id = context_data.get("account_id")
 
     try:
         # Replace with real reverse API call, e.g.:
@@ -202,7 +218,6 @@ def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
         #     idempotency_key=idempotency_key,
         #     target_tx_id=_target_tx_id,
         #     refund_amount=_refund_amount,
-        #     account_id=_account_id,
         # )
         logger.info("UCA-4: 'reverse_trade' executed. key=%s", idempotency_key)
         rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]

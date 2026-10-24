@@ -43,6 +43,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, field_validator
 
 from src.gateway.observability.attributes import (
@@ -379,7 +380,7 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 async def simulate_governance_check(
     target_tool: str, target_params: dict, risk_profile: str = "Medium"
 ) -> dict[str, Any]:
@@ -496,7 +497,8 @@ _SAFETY_INTERVENTION_TTL_SECONDS: int = int(
 )
 
 
-@mcp.tool()
+# Setting the lock twice leaves the same state, so a resend is safe.
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=True))
 async def trigger_safety_intervention(reason: str = "Unknown") -> str:
     """Trigger an immediate safety intervention to lock the system."""
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis

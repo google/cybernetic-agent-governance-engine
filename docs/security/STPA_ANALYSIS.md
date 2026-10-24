@@ -79,6 +79,8 @@ Step 3: Write COMPLETED confirmation with idempotency_key
 
 If the agent crashes between Step 1 and Step 3, the `PENDING` entry persists in the Redis checkpointer. On the next execution, `saga_router_node` detects the dangling `PENDING` entry and escalates to `human_review`.
 
+With `execution_type: mcp_tool`, the forward node sends only the state keys listed in `langgraph_saga.mcp_arguments`, and the `PENDING` intent records them. `GatewayMCPClient.call_tool()` raises `MCPToolOutcomeUnknownError` when the request may have reached the gateway but no result came back; the forward node then neither resends the request nor marks it `COMPLETED`, and the entry stays `PENDING` for reconciliation.
+
 ### 4.2 Ledger Schema (`AgentState.completed_transactions`)
 
 ```python
@@ -91,7 +93,7 @@ LedgerEntry = TypedDict(
         "action": str,  # e.g. "execute_trade"
         "idempotency_key": str,  # SHA-256(tx_id + action)[:32]
         "status": LedgerEntryStatus,  # PENDING | COMPLETED | ROLLED_BACK | PARTIAL_FAILURE
-        "context_data": dict,  # forward action result (tx_id, amount, account_id)
+        "context_data": dict,  # request arguments; once COMPLETED, also the parsed outcome
     },
 )
 ```
@@ -130,10 +132,12 @@ The ledger uses `Annotated[list[LedgerEntry], add]` â€” an append-only reducer â
   langgraph_saga:
     forward_action: execute_trade
     compensating_action: reverse_trade
+    execution_type: mcp_tool
+    mcp_tool_name: execute_trade_action
+    mcp_arguments: [symbol, amount, currency, side, transaction_id]
     parameter_mapping:
       forward.transaction_id: compensating.target_tx_id
       forward.amount: compensating.refund_amount
-      forward.account_id: compensating.account_id
 ```
 
 ### 4.6 ISO 42001 Telemetry

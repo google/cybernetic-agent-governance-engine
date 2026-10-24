@@ -39,6 +39,48 @@ _CONNECT_MAX_ATTEMPTS = 3
 _CONNECT_BASE_BACKOFF_S = 0.05
 
 
+class MCPToolCallError(Exception):
+    """A ``tools/call`` that produced no successful result."""
+
+    def __init__(self, tool_name: str, message: str) -> None:
+        super().__init__(message)
+        self.tool_name = tool_name
+
+
+class MCPToolOutcomeUnknownError(MCPToolCallError):
+    """The request may have reached the gateway, but no result came back.
+
+    The tool may or may not have run. :meth:`GatewayMCPClient.call_tool` does
+    not resend it, so the caller must reconcile (for example, look the action
+    up by its idempotency key) before deciding whether to submit it again.
+    The transport error is chained as ``__cause__``.
+    """
+
+
+class MCPToolExecutionError(MCPToolCallError):
+    """The gateway answered the call with a tool error (``CallToolResult.isError``)."""
+
+    def __init__(self, tool_name: str, text: str) -> None:
+        super().__init__(tool_name, f"MCP tool {tool_name!r} returned an error: {text}")
+        self.text = text
+
+
+def _result_text(result: Any) -> str:
+    """Join the text blocks of a ``CallToolResult``."""
+    return "\n".join(
+        content.text
+        for content in getattr(result, "content", None) or []
+        if hasattr(content, "text")
+    )
+
+
+def _outcome_unknown_message(name: str, exc: Exception) -> str:
+    return (
+        f"MCP tool {name!r} may have run: the request was sent but no result "
+        f"came back ({type(exc).__name__}: {exc}); reconcile before resubmitting"
+    )
+
+
 def _normalize_mcp_url(raw_url: str | None) -> str:
     """Normalize an MCP endpoint URL to the stateless Streamable HTTP path (``/mcp/``)."""
     url = (raw_url or "").strip()
@@ -61,6 +103,8 @@ class GatewayMCPClient:
     Maintains one pooled ``httpx.AsyncClient`` and one long-lived ``ClientSession``
     over ``streamable_http_client(url, http_client=...)``, guarded by an asyncio
     lock with automatic reconnect on transport failure and a 300s tool-list cache.
+    :meth:`call_tool` never resends a request that may have reached the gateway
+    unless the gateway annotates the tool read-only or idempotent.
     """
 
     def __init__(
@@ -76,6 +120,8 @@ class GatewayMCPClient:
         self.session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
         self._http_client: httpx.AsyncClient | None = None
+        # The transport write stream the session sends its requests into.
+        self._write_stream: Any | None = None
         self._http_transport = http_transport
         self._connect_lock: asyncio.Lock | None = None
         self._bound_loop: asyncio.AbstractEventLoop | None = None
@@ -95,6 +141,7 @@ class GatewayMCPClient:
             self.session = None
             self._exit_stack = None
             self._http_client = None
+            self._write_stream = None
             self._cached_lc_tools = None
             self._cached_lc_tools_at = 0.0
             self._connect_lock = asyncio.Lock()
@@ -117,8 +164,23 @@ class GatewayMCPClient:
             follow_redirects=True,
         )
 
+    def _transport_open(self) -> bool:
+        """Whether the session's transport still accepts requests.
+
+        mcp's streamable HTTP transport closes its write stream when its POST
+        writer exits, for example after a transport error. A request sent into
+        that session would fail before reaching the gateway, so the session is
+        treated as gone and re-established first.
+        """
+        stream = self._write_stream
+        if stream is None:
+            return True
+        stats = stream.statistics()
+        return stats.open_send_streams > 0 and stats.open_receive_streams > 0
+
     async def _reset_unlocked(self) -> None:
         self.session = None
+        self._write_stream = None
         self._cached_lc_tools = None
         self._cached_lc_tools_at = 0.0
         stack = self._exit_stack
@@ -151,6 +213,7 @@ class GatewayMCPClient:
             )
             self._http_client = http_client
             self._exit_stack = stack
+            self._write_stream = write_stream
             self.session = session
 
             if getattr(self.session.call_tool, "_otel_patched", False):
@@ -168,6 +231,7 @@ class GatewayMCPClient:
             self.session = None
             self._http_client = None
             self._exit_stack = None
+            self._write_stream = None
             try:
                 await stack.aclose()
             except Exception as close_exc:
@@ -198,13 +262,25 @@ class GatewayMCPClient:
             raise last_exc
 
     async def ensure_connected(self) -> ClientSession:
-        """Return the active ``ClientSession``, connecting under a lock if needed."""
+        """Return the active ``ClientSession``, connecting under a lock if needed.
+
+        A session whose transport is known to have closed is re-established
+        first instead of being handed out.
+        """
         loop = asyncio.get_running_loop()
-        if self.session is not None and self._bound_loop is loop:
+        if (
+            self.session is not None
+            and self._bound_loop is loop
+            and self._transport_open()
+        ):
             return self.session
         lock = self._get_lock()
         async with lock:
-            if self.session is not None and self._bound_loop is loop:
+            if (
+                self.session is not None
+                and self._bound_loop is loop
+                and self._transport_open()
+            ):
                 return self.session
             last_exc: Exception | None = None
             for attempt in range(1, _CONNECT_MAX_ATTEMPTS + 1):
@@ -313,8 +389,29 @@ class GatewayMCPClient:
             self._cached_lc_tools_at = time.monotonic()
             return list(self._cached_lc_tools)
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        """Invoke an MCP tool over the pooled long-lived Streamable HTTP session."""
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        """Invoke an MCP tool and return the text of its result.
+
+        A request that may have reached the gateway is never sent twice unless
+        the gateway's ``ToolAnnotations`` declare the tool ``readOnlyHint`` or
+        ``idempotentHint``. The call is retried at most once:
+
+        * a failure while (re)establishing the session happens before the
+          request is sent, so it is retried;
+        * a failure once the request was handed to the session leaves the
+          outcome unknown: the session is discarded and, unless the tool is
+          annotated read-only or idempotent, ``MCPToolOutcomeUnknownError`` is
+          raised without a resend;
+        * a result with ``isError`` set raises ``MCPToolExecutionError`` and is
+          never retried.
+
+        Raises:
+            MCPToolOutcomeUnknownError: The request may have reached the
+                gateway and no result came back; the caller must reconcile.
+            MCPToolExecutionError: The gateway reported a tool error.
+            Exception: The session could not be established on either
+                attempt; the request was never sent.
+        """
         logger.info("📞 Calling MCP Tool: %s", name)
 
         from opentelemetry import trace
@@ -325,32 +422,97 @@ class GatewayMCPClient:
             span.set_attribute(SPAN_ATTR_GEN_AI_OPERATION_NAME, "tool_call")
 
             try:
-                await self.ensure_connected()
-                assert self.session is not None
-                try:
-                    result = await self.session.call_tool(name, arguments)
-                except Exception as first_exc:
-                    logger.warning(
-                        "MCP call_tool(%s) failed (%s); reconnecting once...",
-                        name,
-                        first_exc,
-                    )
-                    await self.connect()
-                    assert self.session is not None
-                    result = await self.session.call_tool(name, arguments)
-
-                output: list[str] = []
-                if hasattr(result, "content"):
-                    for content in result.content:
-                        if hasattr(content, "text"):
-                            output.append(content.text)
-
-                final_output = "\n".join(output)
-                span.set_attribute(OBSERVATION_OUTPUT, final_output)
-                return final_output
+                result = await self._call_tool_at_most_once(name, arguments)
+                text = _result_text(result)
+                if getattr(result, "isError", False):
+                    raise MCPToolExecutionError(name, text)
+                span.set_attribute(OBSERVATION_OUTPUT, text)
+                return text
             except Exception as e:
                 span.record_exception(e)
                 raise
+
+    async def _call_tool_at_most_once(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Any:
+        """Send ``tools/call``, retrying once only when a resend cannot duplicate it."""
+        sent = False
+        retried = False
+        while True:
+            try:
+                session = await self.ensure_connected()
+            except Exception as exc:
+                if not retried:
+                    retried = True
+                    logger.warning(
+                        "MCP session for %s could not be established (%s); "
+                        "nothing was sent, retrying once",
+                        name,
+                        exc,
+                    )
+                    continue
+                if sent:
+                    raise MCPToolOutcomeUnknownError(
+                        name, _outcome_unknown_message(name, exc)
+                    ) from exc
+                raise
+            try:
+                return await session.call_tool(name, arguments)
+            except Exception as exc:
+                sent = True
+                await self._discard_session(session)
+                if not retried and await self._is_retry_safe(name):
+                    retried = True
+                    logger.warning(
+                        "MCP call_tool(%s) failed after sending (%s); the gateway "
+                        "annotates it read-only or idempotent, retrying once",
+                        name,
+                        exc,
+                    )
+                    continue
+                logger.error(
+                    "MCP call_tool(%s) failed after sending (%s); outcome unknown, "
+                    "not retrying",
+                    name,
+                    exc,
+                )
+                raise MCPToolOutcomeUnknownError(
+                    name, _outcome_unknown_message(name, exc)
+                ) from exc
+
+    async def _discard_session(self, session: ClientSession) -> None:
+        """Drop ``session`` after a failed call so the next call reconnects first."""
+        lock = self._get_lock()
+        async with lock:
+            if self.session is session:
+                await self._reset_unlocked()
+
+    async def _is_retry_safe(self, name: str) -> bool:
+        """Whether the gateway annotates ``name`` ``readOnlyHint`` or ``idempotentHint``.
+
+        Reads the cached ``tools/list`` metadata, fetching it when it is not
+        cached. An unlisted or unannotated tool, or a failed lookup, answers
+        False, so a tool is resent only when the gateway declares it safe.
+        """
+        try:
+            tools = await self.list_tools()
+        except Exception as exc:
+            logger.warning(
+                "MCP tool annotations for %s unavailable (%s); not resending",
+                name,
+                exc,
+            )
+            return False
+        for tool in tools:
+            if getattr(tool, "name", None) != name:
+                continue
+            annotations = getattr(tool, "annotations", None)
+            if annotations is None:
+                return False
+            return (
+                annotations.readOnlyHint is True or annotations.idempotentHint is True
+            )
+        return False
 
     async def close(self) -> None:
         lock = self._get_lock()

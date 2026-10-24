@@ -19,11 +19,14 @@ OPA, or MCP connections required.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from src.gateway.infrastructure.mcp_client import MCPToolExecutionError
 
 # ---------------------------------------------------------------------------
 # Helpers — build minimal AgentState dicts for tests
@@ -180,38 +183,51 @@ class TestNextSequenceId:
 class TestForwardExecuteTradeNodeUCA4:
     """Tests for forward_execute_trade_node_uca_4 generator function."""
 
-    def _run_forward(
-        self, state: dict, mcp_result: dict | None = None
-    ) -> tuple[dict, dict]:
-        """Drive the generator to completion and return (yielded, returned)."""
-        if mcp_result is None:
-            mcp_result = {"transaction_id": "tx-from-mcp", "amount": 500}
+    _TX_ID = "5f0c6f7e-9d43-4b8e-a1e2-3c4d5e6f7a8b"
+    _EXECUTED = "EXECUTED: AAPL x 500 (Receipt ID: r-1)"
 
-        mock_client = MagicMock()
-        mock_client.call_tool = AsyncMock(return_value=mcp_result)
+    def _trade_state(self, transactions: list[dict] | None = None) -> dict[str, Any]:
+        return _make_state(
+            transactions=transactions,
+            currency="USD",
+            side="buy",
+            transaction_id=self._TX_ID,
+        )
+
+    def _expected_arguments(self) -> dict[str, Any]:
+        return {
+            "symbol": "AAPL",
+            "amount": 500,
+            "currency": "USD",
+            "side": "buy",
+            "transaction_id": self._TX_ID,
+        }
+
+    def _run_forward(
+        self, state: dict, outcome: str | BaseException = _EXECUTED
+    ) -> tuple[dict, dict, AsyncMock]:
+        """Drive the generator to completion; return (yielded, returned, call_tool)."""
+        call_tool = AsyncMock(side_effect=[outcome])
+        client = MagicMock()
+        client.call_tool = call_tool
 
         with (
-            patch.object(saga, "_get_mcp_client", return_value=mock_client),
-            patch("asyncio.get_event_loop") as mock_loop,
+            patch.object(saga, "_get_mcp_client", return_value=client),
+            patch.object(saga, "_run_async", side_effect=asyncio.run),
         ):
-            mock_loop.return_value.run_until_complete = MagicMock(
-                return_value=mcp_result
-            )
             gen = saga.forward_execute_trade_node_uca_4(state)  # type: ignore[arg-type]
-            # First: consume the yielded PENDING entry
             yielded = next(gen)
-            # Second: exhaust the generator to get the return value
             try:
                 next(gen)
-                returned: dict = {}
             except StopIteration as exc:
-                returned = exc.value or {}
+                returned: dict = exc.value
+            else:
+                pytest.fail("forward node yielded more than the PENDING intent")
 
-        return yielded, returned
+        return yielded, returned, call_tool
 
     def test_first_yield_is_pending_entry(self) -> None:
-        state = _make_state(transactions=[])
-        yielded, _ = self._run_forward(state)
+        yielded, _, _ = self._run_forward(self._trade_state())
 
         assert "completed_transactions" in yielded
         entries = yielded["completed_transactions"]
@@ -219,101 +235,135 @@ class TestForwardExecuteTradeNodeUCA4:
         assert entries[0]["status"] == "PENDING"
 
     def test_pending_entry_has_correct_uca_ref(self) -> None:
-        state = _make_state(transactions=[])
-        yielded, _ = self._run_forward(state)
+        yielded, _, _ = self._run_forward(self._trade_state())
 
         entry = yielded["completed_transactions"][0]
         assert entry["uca_ref"] == "UCA-4"
 
     def test_pending_entry_has_correct_action(self) -> None:
-        state = _make_state(transactions=[])
-        yielded, _ = self._run_forward(state)
+        yielded, _, _ = self._run_forward(self._trade_state())
 
         entry = yielded["completed_transactions"][0]
         assert entry["action"] == "execute_trade"
 
     def test_pending_entry_has_empty_idempotency_key(self) -> None:
-        """WAL intent is written before the API call, so key is empty at yield time."""
-        state = _make_state(transactions=[])
-        yielded, _ = self._run_forward(state)
+        """The compensation key is set on the COMPLETED entry, not the intent."""
+        yielded, _, _ = self._run_forward(self._trade_state())
 
         entry = yielded["completed_transactions"][0]
         assert entry["idempotency_key"] == ""
 
+    def test_pending_entry_records_the_request(self) -> None:
+        """The intent carries what is about to be sent, for reconciliation."""
+        yielded, _, _ = self._run_forward(self._trade_state())
+
+        entry = yielded["completed_transactions"][0]
+        assert entry["context_data"] == self._expected_arguments()
+
+    def test_only_the_declared_arguments_are_forwarded(self) -> None:
+        """approval_token, account_id and any other state field stay behind."""
+        _, _, call_tool = self._run_forward(self._trade_state())
+
+        call_tool.assert_awaited_once_with(
+            name="execute_trade_action", arguments=self._expected_arguments()
+        )
+
     def test_return_value_is_completed_entry(self) -> None:
-        state = _make_state(transactions=[])
-        _, returned = self._run_forward(state, mcp_result={"transaction_id": "tx-999"})
+        _, returned, _ = self._run_forward(self._trade_state())
 
         assert "completed_transactions" in returned
         entries = returned["completed_transactions"]
         assert len(entries) == 1
         assert entries[0]["status"] == "COMPLETED"
 
-    def test_completed_entry_has_idempotency_key_set(self) -> None:
-        state = _make_state(transactions=[])
-        _, returned = self._run_forward(state, mcp_result={"transaction_id": "tx-123"})
+    def test_completed_entry_key_derives_from_transaction_id(self) -> None:
+        _, returned, _ = self._run_forward(self._trade_state())
 
         entry = returned["completed_transactions"][0]
-        expected_key = saga._derive_idempotency_key("tx-123", "reverse_trade")
+        expected_key = saga._derive_idempotency_key(self._TX_ID, "reverse_trade")
         assert entry["idempotency_key"] == expected_key
+
+    def test_completed_entry_context_data_records_parsed_outcome(self) -> None:
+        _, returned, _ = self._run_forward(self._trade_state())
+
+        entry = returned["completed_transactions"][0]
+        assert entry["context_data"] == {
+            **self._expected_arguments(),
+            "outcome": "EXECUTED",
+            "detail": "AAPL x 500 (Receipt ID: r-1)",
+        }
+
+    def test_refusal_is_recorded_as_its_outcome(self) -> None:
+        _, returned, _ = self._run_forward(
+            self._trade_state(), outcome="BLOCKED: governance refused"
+        )
+
+        context = returned["completed_transactions"][0]["context_data"]
+        assert context["outcome"] == "BLOCKED"
+        assert context["detail"] == "governance refused"
 
     def test_sequence_id_increments_from_existing_transactions(self) -> None:
         existing = [_make_ledger_entry(sequence_id=4)]
-        state = _make_state(transactions=existing)
-        yielded, _ = self._run_forward(state)
+        yielded, _, _ = self._run_forward(self._trade_state(transactions=existing))
 
         pending = yielded["completed_transactions"][0]
         assert pending["sequence_id"] == 5
 
     def test_sequence_id_is_zero_for_empty_ledger(self) -> None:
-        state = _make_state(transactions=[])
-        yielded, _ = self._run_forward(state)
+        yielded, _, _ = self._run_forward(self._trade_state())
 
         pending = yielded["completed_transactions"][0]
         assert pending["sequence_id"] == 0
 
-    def test_completed_entry_context_data_contains_mcp_result(self) -> None:
-        mcp_result = {"transaction_id": "tx-abc", "amount": 500, "status": "ok"}
-        state = _make_state(transactions=[])
-        _, returned = self._run_forward(state, mcp_result=mcp_result)
-
-        entry = returned["completed_transactions"][0]
-        assert entry["context_data"] == mcp_result
-
     def test_pending_entry_timestamp_is_iso_format(self) -> None:
-        state = _make_state(transactions=[])
-        yielded, _ = self._run_forward(state)
+        yielded, _, _ = self._run_forward(self._trade_state())
 
         ts = yielded["completed_transactions"][0]["timestamp"]
         # ISO 8601 strings contain 'T' and '+' or 'Z'
         assert "T" in ts
 
-    def test_state_fields_forwarded_to_mcp_call(self) -> None:
-        """Only allowed keys should be passed to call_tool arguments."""
-        state = _make_state(transactions=[])
-        mock_client = MagicMock()
-        mock_client.call_tool = AsyncMock(return_value={"transaction_id": "x"})
+    def test_unknown_outcome_leaves_entry_pending(self) -> None:
+        """An unknown outcome is neither resent nor marked COMPLETED (#514)."""
+        unknown = saga.MCPToolOutcomeUnknownError(
+            "execute_trade_action", "request sent, no result"
+        )
+        yielded, returned, call_tool = self._run_forward(
+            self._trade_state(), outcome=unknown
+        )
 
-        def fake_run_until_complete(coro):  # type: ignore[override]
-            # We cannot await the coro in sync context, capture the mock return
-            return {"transaction_id": "x"}
+        assert call_tool.await_count == 1
+        assert returned == {}
+        ledger = yielded["completed_transactions"] + returned.get(
+            "completed_transactions", []
+        )
+        assert [e["status"] for e in ledger] == ["PENDING"]
+        assert ledger[0]["context_data"]["transaction_id"] == self._TX_ID
+
+        routed = saga.saga_router_node(_make_state(transactions=ledger))  # type: ignore[arg-type]
+        assert routed["safety_status"] == "ESCALATED"
+        assert routed["next_step"] == "human_review"
+
+    def test_tool_error_propagates_and_leaves_entry_pending(self) -> None:
+        """A gateway tool error raises; the yielded PENDING entry persists."""
+        call_tool = AsyncMock(
+            side_effect=MCPToolExecutionError(
+                "execute_trade_action", "Actuation outcome indeterminate"
+            )
+        )
+        client = MagicMock()
+        client.call_tool = call_tool
 
         with (
-            patch.object(saga, "_get_mcp_client", return_value=mock_client),
-            patch("asyncio.get_event_loop") as mock_loop,
+            patch.object(saga, "_get_mcp_client", return_value=client),
+            patch.object(saga, "_run_async", side_effect=asyncio.run),
         ):
-            mock_loop.return_value.run_until_complete = MagicMock(
-                side_effect=fake_run_until_complete
-            )
-            gen = saga.forward_execute_trade_node_uca_4(state)  # type: ignore[arg-type]
-            next(gen)
-            try:
+            gen = saga.forward_execute_trade_node_uca_4(self._trade_state())  # type: ignore[arg-type]
+            yielded = next(gen)
+            with pytest.raises(MCPToolExecutionError):
                 next(gen)
-            except StopIteration:
-                pass
 
-        # The mock was called with run_until_complete — verify it was invoked at all
-        mock_loop.return_value.run_until_complete.assert_called_once()
+        assert [e["status"] for e in yielded["completed_transactions"]] == ["PENDING"]
+        assert call_tool.await_count == 1
 
 
 # ===========================================================================

@@ -20,7 +20,11 @@ from typing import Any
 import httpx
 from opentelemetry import trace
 
-from src.gateway.infrastructure.mcp_client import get_mcp_client
+from src.gateway.infrastructure.mcp_client import (
+    MCPToolExecutionError,
+    MCPToolOutcomeUnknownError,
+    get_mcp_client,
+)
 from src.gateway.observability.attributes import OBSERVATION_TYPE
 
 logger = logging.getLogger("EvaluatorAgent")
@@ -81,6 +85,9 @@ async def check_market_status(symbol: str) -> str:
         return await get_mcp_client().call_tool(
             "check_market_status", {"symbol": symbol}
         )
+    except MCPToolExecutionError as e:
+        logger.error("Market Check Failed: gateway tool error: %s", e.text)
+        return f"ERROR: Could not fetch market status: {e.text}"
     except Exception as e:
         logger.error(f"Market Check Failed: {e}")
         return f"ERROR: Could not fetch market status: {e}"
@@ -186,6 +193,13 @@ async def simulate_governance_check(
             "message": f"Unexpected MCP response type/shape: {raw!r:.200}",
             "violations": ["System Error"],
         }
+    except MCPToolExecutionError as e:
+        logger.error("Safety Simulation Failed: gateway tool error: %s", e.text)
+        return {
+            "verdict": "ERROR",
+            "message": f"Gateway tool error: {e.text}",
+            "violations": ["System Error"],
+        }
     except Exception as e:
         logger.error(f"Safety Simulation Failed: {e}")
         return {"verdict": "ERROR", "message": str(e), "violations": ["System Error"]}
@@ -203,6 +217,14 @@ async def safety_intervention(reason: str) -> str:
         return await get_mcp_client().call_tool(
             "trigger_safety_intervention", {"reason": reason}
         )
+    except MCPToolExecutionError as e:
+        logger.critical("FATAL: Gateway refused the intervention: %s", e.text)
+        return f"ERROR: Intervention Failed: {e.text}"
+    except MCPToolOutcomeUnknownError as e:
+        # The lock may or may not be set; report failure so it is re-triggered
+        # (the gateway tool is idempotent).
+        logger.critical("FATAL: Intervention outcome unknown: %s", e)
+        return f"ERROR: Intervention Failed: outcome unknown, re-trigger it: {e}"
     except Exception as e:
         logger.critical(f"FATAL: Could not trigger intervention: {e}")
         return f"ERROR: Intervention Failed: {e}"

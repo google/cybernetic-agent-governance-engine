@@ -56,7 +56,7 @@ async def run_demo():  # type: ignore[no-untyped-def]
     token = user_context.set(user_id)
     try:
         # We invoke the graph with a prompt that triggers the tool
-        # The LLM will call propose_trade -> execute_trade
+        # The LLM will call the gateway's execute_trade_action tool
         # We need to force it or phrase it clearly.
         # Note: The agent flow is complex. For this demo, we can just simulate the tool call
         # OR invoke the agent. Invoking the agent is better for full trace.

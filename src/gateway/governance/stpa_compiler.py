@@ -337,6 +337,9 @@ class SagaModel(BaseModel):
           # real MCP call instead of a hollow stub in the WAL forward node.
           execution_type: mcp_tool          # 'mcp_tool' | 'local'
           mcp_tool_name: execute_action_tool  # required when execution_type=mcp_tool
+          # State keys sent as the tool's arguments; required when
+          # execution_type=mcp_tool and must include transaction_id.
+          mcp_arguments: [transaction_id, amount]
           parameter_mapping:
             forward.transaction_id: compensating.target_tx_id
             forward.amount: compensating.refund_amount
@@ -348,6 +351,9 @@ class SagaModel(BaseModel):
     # [CTRL_WAL_002] fields — control how the forward WAL node executes the action.
     execution_type: ExecutionType = "local"
     mcp_tool_name: str | None = None
+    # Only these state keys are sent, so a state field the tool does not accept
+    # never reaches it.
+    mcp_arguments: list[str] = Field(default_factory=list)
 
     @field_validator("forward_action", "compensating_action")
     @classmethod
@@ -363,6 +369,15 @@ class SagaModel(BaseModel):
             else _require_pattern(v, _IDENT_RE, "langgraph_saga.mcp_tool_name")
         )
 
+    @field_validator("mcp_arguments")
+    @classmethod
+    def _v_mcp_arguments(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("langgraph_saga.mcp_arguments lists a key twice.")
+        return [
+            _require_pattern(k, _IDENT_RE, "langgraph_saga.mcp_arguments") for k in v
+        ]
+
     @model_validator(mode="before")
     @classmethod
     def _parse_parameter_mapping(cls, data: Any) -> Any:
@@ -373,10 +388,17 @@ class SagaModel(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _validate_mcp_tool_name(self) -> SagaModel:
-        if self.execution_type == "mcp_tool" and not self.mcp_tool_name:
+    def _validate_mcp_execution(self) -> SagaModel:
+        if self.execution_type != "mcp_tool":
+            return self
+        if not self.mcp_tool_name:
             raise ValueError(
                 "SagaModel: mcp_tool_name is required when execution_type='mcp_tool'."
+            )
+        if "transaction_id" not in self.mcp_arguments:
+            raise ValueError(
+                "SagaModel: mcp_arguments must list the state keys sent to the MCP "
+                "tool, including transaction_id, when execution_type='mcp_tool'."
             )
         return self
 
@@ -1447,8 +1469,13 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         "from src.gateway.governance.saga_compensator import FunctionSagaCompensator",
     ]
     if needs_mcp_imports:
-        thirdparty_import_lines.append(
-            "from src.gateway.infrastructure.mcp_client import GatewayMCPClient"
+        thirdparty_import_lines.extend(
+            [
+                "from src.gateway.infrastructure.mcp_client import (",
+                "    GatewayMCPClient,",
+                "    MCPToolOutcomeUnknownError,",
+                ")",
+            ]
         )
     thirdparty_import_lines.extend(
         [
@@ -1499,7 +1526,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
 
     run_async_helper_lines: list[str] = (
         [
-            "def _run_async(coro: Coroutine[Any, Any, dict[str, Any]]) -> dict[str, Any]:",
+            "def _run_async(coro: Coroutine[Any, Any, str]) -> str:",
             '    """Run an async coroutine from a synchronous WAL generator node."""',
             "    try:",
             "        return asyncio.get_event_loop().run_until_complete(coro)",
@@ -1600,55 +1627,69 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         # execution_type=local    → retains a clearly-labeled local stub that
         #                           the implementor must wire before promotion.
         if saga.execution_type == "mcp_tool":
-            req_keys = [
-                str(p["name"] if isinstance(p, dict) else p.name)
-                for ca in cs.control_actions
-                if (ca.get("name") if isinstance(ca, dict) else ca.name)
-                == saga.forward_action
-                for p in (ca.get("params", []) if isinstance(ca, dict) else ca.params)
-                if (
-                    p.get("required")
-                    if isinstance(p, dict)
-                    else getattr(p, "required", False)
-                )
-            ]
-            map_keys = [
-                pm.forward_key
-                for pm in saga.parameter_mapping
-                if pm.forward_key != "transaction_id" and pm.forward_key not in req_keys
-            ]
-            fwd_keys = (
-                (*req_keys[:-1], *map_keys, req_keys[-1], "approval_token")
-                if req_keys
-                else (*map_keys, "approval_token")
+            keys = saga.mcp_arguments
+            keys_tuple_src = (
+                "("
+                + ", ".join(f'"{k}"' for k in keys)
+                + ("," if len(keys) == 1 else "")
+                + ")"
             )
-            keys_tuple_src = "(" + ", ".join(f'"{k}"' for k in fwd_keys) + ")"
+            request_lines = [
+                "    arguments: dict[str, Any] = {",
+                f"        k: v for k, v in state.items() if k in {keys_tuple_src}",
+                "    }",
+                '    tx_id: str = str(arguments.get("transaction_id") or "")',
+            ]
+            intent_context_src = "dict(arguments)"
             step2_lines = [
                 "    # Step 2: [CTRL_WAL_002] — real async MCP tool invocation.",
                 "    # GatewayMCPClient traverses the full 7-layer governance pipeline",
                 "    # (Aho-Corasick → NeMo → STPA → OPA → CBF → Consensus → DoWhy)",
                 "    # before executing the action, ensuring atomicity guarantees are",
                 "    # proven in production and not merely declared in policy documents.",
-                "    result: dict[str, Any] = _run_async(",
-                "        _get_mcp_client().call_tool(",
-                f'            name="{saga.mcp_tool_name}",',
-                "            arguments={",
-                "                k: v",
-                "                for k, v in state.items()",
-                "                if k",
-                f"                in {keys_tuple_src}",
-                "            },",
+                "    try:",
+                "        outcome = _run_async(",
+                "            _get_mcp_client().call_tool(",
+                f'                name="{saga.mcp_tool_name}",',
+                "                arguments=arguments,",
+                "            )",
                 "        )",
-                "    )",
+                "    except MCPToolOutcomeUnknownError as exc:",
+                "        # The request may have reached the gateway. A resend could execute",
+                "        # it twice, and COMPLETED would let a compensator reverse an action",
+                "        # that may never have run: the PENDING entry stays for",
+                "        # saga_router_node's ghost-state reconciliation.",
+                "        logger.error(",
+                f'            "{uca_id}: outcome UNKNOWN tx_id=%s, WAL entry left PENDING: %s",',
+                "            tx_id,",
+                "            exc,",
+                "        )",
+                "        return {}",
+                '    # The gateway answers "<STATUS>: <detail>", e.g. "BLOCKED: <reason>".',
+                '    status, _, detail = outcome.partition(":")',
+                "    result: dict[str, Any] = {",
+                "        **arguments,",
+                '        "outcome": status.strip(),',
+                '        "detail": detail.strip(),',
+                "    }",
+            ]
+            unknown_outcome_doc = [
+                "    An unknown outcome (MCPToolOutcomeUnknownError) is never resent: the",
+                "    PENDING entry, which records the request, is left for reconciliation.",
             ]
         else:
+            request_lines = []
+            intent_context_src = "{}"
             step2_lines = [
                 "    # Step 2: LOCAL stub — wire to a real implementation before promoting",
                 "    # to production.  See execution_type field in stpa_control_structure.yaml.",
-                "    # To use MCP: set execution_type: mcp_tool + mcp_tool_name in the YAML",
-                "    # and regenerate with: python -m src.gateway.governance.stpa_compiler compile",
+                "    # To use MCP: set execution_type: mcp_tool, mcp_tool_name and",
+                "    # mcp_arguments in the YAML and regenerate with:",
+                "    #   python -m src.gateway.governance.stpa_compiler compile",
                 "    result: dict[str, Any] = {}  # STUB: replace before production",
+                '    tx_id: str = result.get("transaction_id", "")',
             ]
+            unknown_outcome_doc = []
 
         lines += [
             f"# --- {uca_id}: {uca.description} ---",
@@ -1665,23 +1706,24 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "    This node MUST be wrapped in a try/except by the caller.",
             "    On exception, the PENDING entry persists so saga_router_node",
             "    can reconcile ghost state on the next execution.",
+            *unknown_outcome_doc,
             '    """',
             "    seq_id = _next_sequence_id(state)",
+            *request_lines,
             "    intent: LedgerEntry = {",
             '        "sequence_id": seq_id,',
             '        "timestamp": _utcnow(),',
             f'        "uca_ref": "{uca_id}",',
             f'        "action": "{saga.forward_action}",',
-            '        "idempotency_key": "",  # populated after API call returns tx_id',
+            '        "idempotency_key": "",  # set on the COMPLETED entry',
             '        "status": "PENDING",',
-            '        "context_data": {},',
+            f'        "context_data": {intent_context_src},',
             "    }",
             "    # Step 1: Persist WAL intent BEFORE the API call",
             f'    logger.info("{uca_id}: writing PENDING intent seq_id=%s", seq_id)',
             '    yield {"completed_transactions": [intent]}',
             "",
             *step2_lines,
-            '    tx_id: str = result.get("transaction_id", "")',
             "",
             "    # Step 3: Mark COMPLETED",
             "    confirmed: LedgerEntry = {",

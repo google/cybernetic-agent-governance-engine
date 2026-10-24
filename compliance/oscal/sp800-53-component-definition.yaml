@@ -118,7 +118,7 @@ component-definition:
                 mutates no state, and mints no GovernanceSeal. When an action requires human
                 approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken
                 (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
-                execute_trade_action(..., deferred_id=...) (src/governed_financial_advisor/tools/trades.py)
+                execute_trade_action(..., deferred_id=...) (src/cage_finance/tools/tool_provider.py)
                 is the sole committing path: enforce_approved_governance()
                 (src/gateway/server/governance_middleware.py) checks the approved token without
                 spending it (DeferQueue.redeemable_approval()) and hands
