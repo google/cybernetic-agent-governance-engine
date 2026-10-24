@@ -820,6 +820,8 @@ python scripts/verify_limits.py --amount 50000
             str(base_file),
             "--skill-traces",
             str(skill_traces_file),
+            "--model-id",
+            "gemini-3.5-flash",
             "--json",
         ]
     )
@@ -1945,6 +1947,7 @@ async def test_issue_472_certification_gate_and_eval_residuals(
         evals_json_path=evals_path,
         baseline_traces_path=base_zero_path,
         with_skill_traces_path=skill_zero_path,
+        model_id="test",
     )
     assert zero_lift_rep is not None
     assert zero_lift_rep.mean_composite_lift == 0.0
@@ -1995,6 +1998,7 @@ async def test_issue_472_certification_gate_and_eval_residuals(
         evals_json_path=evals_path,
         baseline_traces_path=base_weak_path,
         with_skill_traces_path=skill_viol_path,
+        model_id="test",
     )
     assert viol_lift_rep is not None
     assert viol_lift_rep.mean_composite_lift > 0.0

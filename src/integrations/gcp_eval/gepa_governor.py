@@ -39,6 +39,15 @@ applies a four-stage CAGE survival and fitness filter across every mutated gener
    with CAGE's paired 4-bucket ``mean_composite_lift``, ``mean_instruction_following_lift``,
    and ``routing_premium``, then signs the top-performing survivor into a KMS-backed
    ``.cer`` receipt via :class:`~src.integrations.gcp_eval.cer_publisher.GcpSkillCertifier`.
+   The ``PAIRED_TRACES`` receipt binds the stages that ran and the SHA-256
+   digests of the RFC 8785 canonical JSON of the evaluated evidence: the eval
+   cases (``{"cases": [...]}``), the baseline and winning with-skill
+   trajectory sets (``{"isolated": {...}, "group": {...} | null}``), and the
+   anchors (``{"anchors": [...]}``) when Stage 1 ran.
+
+Candidates must clear :func:`~src.eval_harness.harness.lift_meets_threshold`
+(the rule shared with the CLI gate and the `.cer` verifier), so the optimizer
+never signs a receipt the verifier would refuse on lift.
 """
 
 from __future__ import annotations
@@ -46,7 +55,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -54,15 +63,18 @@ from src.eval_harness.harness import (
     AnchorCalibrationResult,
     AnchorItem,
     ATIFTrajectory,
+    CerEvidenceLevel,
     FoundationModelEvalHarness,
     ShadowStateReducer,
     SkillCertificationReceipt,
     SkillEvalCase,
     SkillLiftReport,
     SkillPromptBucket,
+    lift_meets_threshold,
 )
 from src.eval_harness.runner import TrajectoryTokenomics, compute_trajectory_tokenomics
 from src.eval_harness.static_linter import SkillStaticLintReport, lint_skill_markdown
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.integrations.gcp_eval.cer_publisher import (
     GcpSkillCertifier,
     _validate_safe_identifier,
@@ -75,6 +87,42 @@ DEFAULT_GEPA_METRICS: tuple[str, ...] = (
     "tool_selection",
     "safety",
 )
+
+
+def _eval_case_document(case: SkillEvalCase) -> dict[str, Any]:
+    """Serialize a ``SkillEvalCase`` in the ``evals.json`` shape ``cage-skill-eval`` reads."""
+    return {**asdict(case), "bucket": case.bucket.value}
+
+
+def _trajectory_set_document(
+    isolated: Mapping[str, ATIFTrajectory],
+    group: Mapping[str, ATIFTrajectory] | None,
+) -> dict[str, Any]:
+    """Serialize one side (baseline or with-skill) of the lift: isolated and group-mode runs."""
+    return {
+        "isolated": {case_id: traj.to_dict() for case_id, traj in isolated.items()},
+        "group": (
+            {case_id: traj.to_dict() for case_id, traj in group.items()}
+            if group is not None
+            else None
+        ),
+    }
+
+
+def _anchor_document(item: AnchorItem) -> dict[str, Any]:
+    """Serialize an ``AnchorItem`` in the ``anchors.json`` shape ``cage-skill-eval`` reads."""
+    return {
+        "item_id": item.item_id,
+        "case": _eval_case_document(item.case),
+        "trajectory": item.trajectory.to_dict(),
+        "golden_passed": item.golden_passed,
+    }
+
+
+def _write_canonical_json(path: Path, document: dict[str, Any]) -> Path:
+    """Write ``document`` as RFC 8785 canonical JSON so its receipt digest is reproducible."""
+    path.write_bytes(jcs_canonicalize_plan(document))
+    return path
 
 
 @dataclass(frozen=True)
@@ -268,9 +316,12 @@ class GovernedGEPAOptimizer:
             elimination_reasons.append(
                 f"negative_control_restraint_violated:{len(neg_control_violations)}"
             )
-        if lift_report.mean_composite_lift < self._min_composite_lift:
+        if not lift_meets_threshold(
+            lift_report.mean_composite_lift, self._min_composite_lift
+        ):
             elimination_reasons.append(
-                f"composite_lift_below_minimum:{lift_report.mean_composite_lift:.4f}<{self._min_composite_lift:.4f}"
+                f"composite_lift_below_minimum:{lift_report.mean_composite_lift:.4f}"
+                f"(min={self._min_composite_lift:.4f})"
             )
         if self._eliminate_on_quadratic_bloat and bloat_count > 0:
             elimination_reasons.append(f"quadratic_token_bloat_cases:{bloat_count}")
@@ -359,9 +410,9 @@ class GovernedGEPAOptimizer:
                 )
 
         evals: list[GEPACandidateEvaluation] = []
-        markdown_by_cid: dict[str, str] = {}
+        spec_by_cid: dict[str, GEPACandidateSpec] = {}
         for cand in candidates:
-            markdown_by_cid[cand.candidate_id] = cand.skill_markdown
+            spec_by_cid[cand.candidate_id] = cand
             ev = await self.evaluate_candidate(
                 cand,
                 model_id=model_id,
@@ -384,23 +435,56 @@ class GovernedGEPAOptimizer:
                 ),
             )
 
-        winning_md = (
-            markdown_by_cid[winning.candidate_id] if winning is not None else None
+        winning_spec = (
+            spec_by_cid[winning.candidate_id] if winning is not None else None
         )
+        winning_md = winning_spec.skill_markdown if winning_spec is not None else None
         receipt: SkillCertificationReceipt | None = None
         if (
             winning is not None
-            and winning_md is not None
+            and winning_spec is not None
             and self._certifier is not None
         ):
             with tempfile.TemporaryDirectory() as tmp_dir:
-                skill_md_path = Path(tmp_dir) / "SKILL.md"
-                skill_md_path.write_text(winning_md, encoding="utf-8")
+                evidence_dir = Path(tmp_dir)
+                skill_md_path = evidence_dir / "SKILL.md"
+                skill_md_path.write_text(winning_spec.skill_markdown, encoding="utf-8")
+                evals_path = _write_canonical_json(
+                    evidence_dir / "evals.json",
+                    {"cases": [_eval_case_document(case) for case in cases]},
+                )
+                baseline_path = _write_canonical_json(
+                    evidence_dir / "baseline_traces.json",
+                    _trajectory_set_document(
+                        baseline_trajectories, group_baseline_trajectories
+                    ),
+                )
+                with_skill_path = _write_canonical_json(
+                    evidence_dir / "with_skill_traces.json",
+                    _trajectory_set_document(
+                        winning_spec.with_skill_trajectories,
+                        winning_spec.group_with_skill_trajectories,
+                    ),
+                )
+                anchors_path = (
+                    _write_canonical_json(
+                        evidence_dir / "anchors.json",
+                        {"anchors": [_anchor_document(item) for item in anchors]},
+                    )
+                    if anchor_cal is not None and anchors is not None
+                    else None
+                )
                 receipt = self._certifier.create_and_sign_receipt(
                     skill_md_path=skill_md_path,
                     static_report=winning.static_lint_report,
+                    stages_run=(0, 1, 2) if anchor_cal is not None else (0, 2),
+                    evidence_level=CerEvidenceLevel.PAIRED_TRACES,
                     lift_report=winning.lift_report,
                     anchor_report=anchor_cal,
+                    evals_json_path=evals_path,
+                    anchors_json_path=anchors_path,
+                    baseline_traces_path=baseline_path,
+                    with_skill_traces_path=with_skill_path,
                     model_id=model_id,
                 )
 

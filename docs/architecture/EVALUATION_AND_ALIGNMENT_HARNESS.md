@@ -102,6 +102,7 @@ uv run cage-skill-eval \
   --evals path/to/evals.json \
   --baseline-traces path/to/baseline.json \
   --skill-traces path/to/with_skill.json \
+  --model-id gemini-3.5-flash \
   --anchors path/to/anchors.json \
   --json
 
@@ -110,9 +111,14 @@ uv run cage-skill-eval \
   --skill-md path/to/SKILL.md \
   --evals path/to/evals.json \
   --adapter my_package.agent:run_agent \
+  --adapter-config '{"model_id": "gemini-3.5-flash"}' \
   --decoy-skills decoy-skill-a,decoy-skill-b \
   --json
 ```
+
+Mode A requires `--model-id` (the model that produced the trace files); there is no default model. Mode B records the rollout bundle's model id, set through `--adapter-config`.
+
+**Signed `.cer` receipts (`cage.skill.cer.v2`).** `--emit-cer <path>` signs a [`SkillCertificationReceipt`](../../src/eval_harness/harness.py) whose body binds `stages_run`, an `evidence_level` ([`CerEvidenceLevel`](../../src/eval_harness/harness.py): `STATIC_ONLY`, `PAIRED_TRACES`, or `LIVE_ROLLOUT`), and the SHA-256 digests of the evaluated evidence: `evals_sha256`, `anchors_sha256` (Stage 1), `baseline_traces_sha256` and `with_skill_traces_sha256` (Mode A, file bytes), or `adapter_ref` and `adapter_config_sha256` (Mode B, RFC 8785 JCS digest of the adapter config). `model_id` and the lift fields are `null` on `STATIC_ONLY` receipts (`--stage0-only`). [`GcsSkillCertificationVerifier`](../../src/integrations/gcp_eval/cer_publisher.py) refuses any other schema version (`unsupported_schema_version`), refuses `STATIC_ONLY` receipts unless constructed with `allow_static_only=True` (`static_only_receipt`), requires the `SKILL.md` bytes (`expected_skill_md_bytes`), and checks lift with [`lift_meets_threshold()`](../../src/eval_harness/harness.py), the same rule the gate applies (a `0.0` minimum requires strictly positive lift).
 
 ---
 

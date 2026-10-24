@@ -29,6 +29,7 @@ from src.eval_harness import (
     AnchorItem,
     ATIFStep,
     ATIFTrajectory,
+    CerEvidenceLevel,
     ComposedDrawbackEvaluator,
     FoundationModelEvalHarness,
     SkillCertificationReceipt,
@@ -61,6 +62,7 @@ from src.integrations.gcp_eval import (
 )
 from src.integrations.trust.key_manifest import Ed25519KeyManifestClient
 from tests.fixtures.governor import default_classifier, make_governor
+from tests.fixtures.skill_certification import make_lift_report, write_json
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -202,6 +204,12 @@ async def test_cer_signing_and_out_of_band_kid_verification(tmp_path: Path) -> N
     receipt = certifier.create_and_sign_receipt(
         skill_md_path=skill_md,
         static_report=static_report,
+        stages_run=(0, 2),
+        evidence_level=CerEvidenceLevel.PAIRED_TRACES,
+        lift_report=make_lift_report(skill_name="gcp-deploy-skill"),
+        evals_json_path=write_json(tmp_path / "evals.json", [{"case_id": "c1"}]),
+        baseline_traces_path=write_json(tmp_path / "baseline.json", {}),
+        with_skill_traces_path=write_json(tmp_path / "with_skill.json", {}),
     )
 
     verifier = GcsSkillCertificationVerifier(jwks_client)
@@ -226,7 +234,9 @@ async def test_cer_signing_and_out_of_band_kid_verification(tmp_path: Path) -> N
     # Recompute outer digest so signature check is reached
     tampered_receipt = SkillCertificationReceipt.from_dict(unknown_kid_dict)
     unknown_kid_dict["receiptDigest"] = tampered_receipt.compute_signed_digest()
-    ok_kid, reason_kid = await verifier.verify_cer_receipt(unknown_kid_dict)
+    ok_kid, reason_kid = await verifier.verify_cer_receipt(
+        unknown_kid_dict, expected_skill_md_bytes=skill_md.read_bytes()
+    )
     assert ok_kid is False
     assert reason_kid == "unknown_kid:unknown-kid-999"
 
@@ -235,7 +245,9 @@ async def test_cer_signing_and_out_of_band_kid_verification(tmp_path: Path) -> N
     forged_dict["mean_composite_lift"] = 0.9999
     forged_receipt = SkillCertificationReceipt.from_dict(forged_dict)
     forged_dict["receiptDigest"] = forged_receipt.compute_signed_digest()
-    ok_sig, reason_sig = await verifier.verify_cer_receipt(forged_dict)
+    ok_sig, reason_sig = await verifier.verify_cer_receipt(
+        forged_dict, expected_skill_md_bytes=skill_md.read_bytes()
+    )
     assert ok_sig is False
     assert reason_sig == "ed25519_signature_verification_failed"
 
@@ -251,6 +263,8 @@ def test_gcs_handshake_publisher_atomic_immutability_and_path_hygiene(
     receipt = certifier.create_and_sign_receipt(
         skill_md_path=skill_md,
         static_report=static_report,
+        stages_run=(0,),
+        evidence_level=CerEvidenceLevel.STATIC_ONLY,
     )
 
     fake_gcs = _FakeGcsClient()
@@ -655,6 +669,11 @@ def test_cli_emit_cer_with_vertex_backend(
     assert cer_out.exists()
     cer_data = json.loads(cer_out.read_text(encoding="utf-8"))
     assert cer_data["skill_name"] == "gcp-deploy-skill"
+    assert cer_data["schema_version"] == "cage.skill.cer.v2"
+    assert cer_data["stages_run"] == [0]
+    assert cer_data["evidence_level"] == "STATIC_ONLY"
+    assert cer_data["model_id"] is None
+    assert cer_data["mean_composite_lift"] is None
     assert cer_data["signature"]["keyId"] == "cage-cli-test-kid"
     assert len(cer_data["receiptDigest"]) == 64
 
@@ -1268,6 +1287,17 @@ async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
     assert report.winning_candidate.candidate_id == "gen3-clean-winner"
     assert report.winning_candidate.fitness_score > 0.5
     assert report.cer_receipt is not None
+    assert report.cer_receipt.stages_run == (0, 1, 2)
+    assert report.cer_receipt.evidence_level is CerEvidenceLevel.PAIRED_TRACES
+    assert report.cer_receipt.model_id == "gemini-2.5-flash"
+    assert report.cer_receipt.evals_sha256 is not None
+    assert report.cer_receipt.anchors_sha256 is not None
+    assert report.cer_receipt.baseline_traces_sha256 is not None
+    assert report.cer_receipt.with_skill_traces_sha256 is not None
+    assert (
+        report.cer_receipt.baseline_traces_sha256
+        != report.cer_receipt.with_skill_traces_sha256
+    )
 
     verifier = GcsSkillCertificationVerifier(jwks_client)
     ok, reason = await verifier.verify_cer_receipt(

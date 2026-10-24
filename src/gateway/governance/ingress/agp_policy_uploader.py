@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,15 @@ _AGP_CHAR_BUDGET = 5_000
 
 # AGP API base URL (Vertex AI Agent Platform)
 _AGP_API_BASE = "https://{location}-aiplatform.googleapis.com/v1beta1"
+
+CerArtifactVerifier = Callable[[Mapping[str, Any]], Awaitable[tuple[bool, str]]]
+"""Async seam that cryptographically verifies one skill ``.cer`` artifact.
+
+Returns ``(verified, reason)``. Integrators inject a closure over the offline
+plane's ``.cer`` verifier that resolves signing keys out-of-band by ``kid`` and
+supplies the ``SKILL.md`` bytes the artifact must certify. Only ``verified is
+True`` counts as success; an exception counts as a failure.
+"""
 
 
 def _extract_host(url_or_host: str) -> str:
@@ -96,7 +105,8 @@ class GatewayEnforcementTransitionResult:
             are not registered in the ``RegistryCatalog``.
         missing_iap_bindings: Targets lacking a valid ``roles/iap.egressor``
             binding or required CEL condition.
-        cer_verified: True iff all required skill ``.cer`` artifacts verified.
+        cer_verified: True iff a ``cer_verifier`` was supplied and every
+            provided skill ``.cer`` artifact (at least one) passed it.
         blocking_reasons: Human-readable list of fail-closed blockers.
     """
 
@@ -110,7 +120,7 @@ class GatewayEnforcementTransitionResult:
     blocking_reasons: tuple[str, ...] = field(default_factory=tuple)
 
 
-def verify_and_transition_gateway_mode(
+async def verify_and_transition_gateway_mode(
     gateway_id: str,
     discovered_targets: list[str],
     catalog: RegistryCatalog,
@@ -118,9 +128,8 @@ def verify_and_transition_gateway_mode(
     *,
     current_mode: str = "DRY_RUN",
     require_cel_conditions: bool = True,
-    cer_verified: bool = True,
-    cer_artifacts: list[dict[str, Any]] | None = None,
-    cer_verifier: Callable[[dict[str, Any]], tuple[bool, str]] | None = None,
+    cer_artifacts: Sequence[Mapping[str, Any]] | None = None,
+    cer_verifier: CerArtifactVerifier | None = None,
 ) -> GatewayEnforcementTransitionResult:
     """Gate the GEAP 4-step ``DRY_RUN`` -> ``ENFORCED`` Agent Gateway transition.
 
@@ -135,9 +144,11 @@ def verify_and_transition_gateway_mode(
          explicit ``roles/iap.egressor`` binding in ``iap_bindings`` with at
          least one ``principal://`` or ``principalSet://`` member and (when
          ``require_cel_conditions=True``) a non-empty CEL ``condition.expression``.
-      3. **Skill Certification (``.cer``)**: ``cer_verified`` must be True and
-         any provided ``cer_artifacts`` must carry ``status == "CERTIFIED"``
-         (and pass ``cer_verifier`` when supplied).
+      3. **Skill Certification (``.cer``)**: a ``cer_verifier`` must be
+         supplied, at least one ``cer_artifacts`` entry must be provided, and
+         every artifact must pass the verifier. A missing verifier, a missing
+         artifact, a refusal, or a verifier exception is a blocking reason;
+         there is no presence-only fallback.
     """
     blocking_reasons: list[str] = []
 
@@ -247,35 +258,38 @@ def verify_and_transition_gateway_mode(
             f"{missing_bindings}"
         )
 
-    # Check .cer skill certifications
-    effective_cer_ok = bool(cer_verified)
-    if not effective_cer_ok:
-        blocking_reasons.append("Skill .cer certification flag is False.")
-
-    if cer_artifacts is not None:
-        if not cer_artifacts:
-            effective_cer_ok = False
-            blocking_reasons.append("No .cer artifacts provided for verification.")
+    # Check .cer skill certifications: cryptographic verification is mandatory.
+    effective_cer_ok = True
+    if cer_verifier is None:
+        effective_cer_ok = False
+        blocking_reasons.append(
+            "No .cer verifier configured; skill certifications cannot be verified."
+        )
+    if not cer_artifacts:
+        effective_cer_ok = False
+        blocking_reasons.append("No .cer artifacts provided for verification.")
+    elif cer_verifier is not None:
         for idx, artifact in enumerate(cer_artifacts):
-            if not isinstance(artifact, dict):
+            if not isinstance(artifact, Mapping):
                 effective_cer_ok = False
-                blocking_reasons.append(f".cer artifact[{idx}] is not a dictionary.")
+                blocking_reasons.append(f".cer artifact[{idx}] is not a mapping.")
                 continue
-            if cer_verifier is not None:
-                ok, reason = cer_verifier(artifact)
-                if not ok:
-                    effective_cer_ok = False
-                    blocking_reasons.append(
-                        f".cer artifact[{idx}] failed verifier: {reason}"
-                    )
-            else:
-                status = artifact.get("status") or artifact.get("certification_status")
-                sig = artifact.get("signature") or artifact.get("signature_b64")
-                if status != "CERTIFIED" or not sig:
-                    effective_cer_ok = False
-                    blocking_reasons.append(
-                        f".cer artifact[{idx}] is not CERTIFIED or lacks signature."
-                    )
+            try:
+                ok, reason = await cer_verifier(artifact)
+            except Exception as exc:
+                effective_cer_ok = False
+                logger.warning(
+                    ".cer verifier raised %s for artifact[%d]", type(exc).__name__, idx
+                )
+                blocking_reasons.append(
+                    f".cer artifact[{idx}] verifier raised {type(exc).__name__}."
+                )
+                continue
+            if ok is not True:
+                effective_cer_ok = False
+                blocking_reasons.append(
+                    f".cer artifact[{idx}] failed verifier: {reason}"
+                )
 
     transition_allowed = (
         catalog.is_valid
