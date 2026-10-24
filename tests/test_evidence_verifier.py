@@ -23,6 +23,7 @@ tests tamper with the archive and observe the verifier refusing it.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 
@@ -192,6 +193,72 @@ class TestVerifiesCustodiedArchive:
         assert len(report.verified) == 2
         [gap] = report.declared_gaps
         assert (gap.missing_from, gap.missing_to) == (2, 3)
+
+    @pytest.mark.asyncio
+    async def test_declared_chain_rotation_is_reported_not_failed(
+        self, server, store, signer, provider
+    ):
+        """#511: a rotation attestation verifies; the old chain's tail is a gap."""
+        old = await _sink(server)
+        custodian = _custodian(server, store, signer)
+        await _ingest(old, 2)
+        await custodian.flush_once()
+        await _redis(server).delete(STREAM_KEY)
+        await asyncio.sleep(0.002)  # new stream IDs must sort after the cursor
+        new = await _sink(server)
+        await _ingest(new, 1)
+        await custodian.flush_once()
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok, _reasons(report)
+        assert len(report.verified) == 2
+        [gap] = report.declared_gaps
+        assert (gap.chain_id, gap.missing_from, gap.missing_to, gap.kind) == (
+            old.chain_id,
+            2,
+            None,
+            "CHAIN_ROTATION",
+        )
+        assert not report.citable
+        with pytest.raises(
+            ev.EvidenceVerificationError, match=rf"{old.chain_id}\[2\.\.\?\]"
+        ):
+            report.assert_citable()
+        assert len(report.assert_citable(allow_declared_gaps=True)) == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("field", "value", "reason"),
+        [
+            ("previous_chain_id", None, "invalid previous_chain_id"),
+            ("previous_last_sequence", -1, "invalid previous_last_sequence"),
+            (
+                "previous_last_record_hash",
+                "not-a-hash",
+                "invalid previous_last_record_hash",
+            ),
+        ],
+    )
+    async def test_malformed_chain_rotation_fails(
+        self, server, store, signer, provider, field, value, reason
+    ):
+        old = await _sink(server)
+        custodian = _custodian(server, store, signer)
+        await _ingest(old, 1)
+        await custodian.flush_once()
+        await _redis(server).delete(STREAM_KEY)
+        await asyncio.sleep(0.002)  # new stream IDs must sort after the cursor
+        new = await _sink(server)
+        await _ingest(new, 1)
+        outcome = await custodian.flush_once()
+        att = json.loads(store._entries[outcome.attestation_key])
+        # None stands for "the new chain itself": a chain cannot replace itself.
+        att["gap"][field] = new.chain_id if value is None else value
+        await _resign(store, signer, outcome.attestation_key, att)
+
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert reason in _reasons(report)
 
     @pytest.mark.asyncio
     async def test_unsigned_attestations_are_never_verified(

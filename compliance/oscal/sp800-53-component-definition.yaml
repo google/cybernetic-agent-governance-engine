@@ -1123,9 +1123,18 @@ component-definition:
                 (src/gateway/governance/evidence/stream.py, EvidenceStreamSink) only
                 hash-chains records into a Redis Stream through a per-process group-commit
                 appender and atomic Lua batch compare-and-append (_APPEND_BATCH_SCRIPT),
-                so HA replicas share one linear chain without forks; refusal and deferral
-                receipts use awaited enqueue (never dropped), while best-effort
-                GOVERNANCE_TRACE telemetry sheds with a metric if the bounded queue fills.
+                so HA replicas share one linear chain without forks. Appends are
+                retry-safe (issue #511): a script re-sent after a lost Redis reply answers
+                ALREADY instead of appending again, a CONFLICT first checks whether the
+                batch already landed after its predecessor, and a batch whose outcome is
+                unknown is re-sent verbatim, never re-sealed, then failed with
+                EvidenceAppendUnsettledError, so each event is recorded at most once. On
+                restore the stream head must hash to its own record_hash, and a sink that
+                already holds a chain raises EvidenceChainCorruptError on an emptied
+                stream, a head on another chain or a regressed head instead of starting a
+                new chain. Refusal and deferral receipts use awaited enqueue (never
+                dropped), while best-effort GOVERNANCE_TRACE telemetry sheds with a metric
+                if the bounded queue fills.
                 The gateway holds no evidence signing key, no cold store and no WORM
                 bucket IAM.
 
@@ -1133,7 +1142,9 @@ component-definition:
                 (src/compliance_bridge/evidence_custodian.py) independently re-verifies
                 every record hash, prev_hash link and sequence before writing, halts
                 without advancing its durable cursor on any integrity violation, records
-                sequence gaps (entries trimmed before custody) in the batch attestation,
+                sequence gaps (entries trimmed before custody) and chain rotations (a new
+                chain starting at genesis after another chain was custodied, logged
+                CRITICAL as kind CHAIN_ROTATION) in the batch attestation,
                 and writes NDJSON batches plus attestations with put_if_absent to the
                 retention-locked, CMEK-encrypted GCS WORM bucket (infra/modules/worm_bucket;
                 locked 1 day in staging, 7 years in prod). The cursor advances only after
@@ -1170,6 +1181,9 @@ component-definition:
                 - href: "../../tests/test_evidence_custodian.py"
                   rel: test
                   text: "Integrity halt, gap recording, retry-safe cursor, fail-closed config"
+                - href: "../../tests/test_evidence_stream.py"
+                  rel: test
+                  text: "Retry-safe appends and fail-closed chain restore (issue #511)"
 
             - uuid: "abd3ab8a-f0cf-439c-a0ee-8537cbf42b2b"
               control-id: au-11
@@ -1267,7 +1281,10 @@ component-definition:
                 EVIDENCE_TRUST_ANCHORS_FILE for retired versions), never from the
                 attestation, and rejects gateway or reconciler kids. It also binds each
                 attestation to its data object, re-verifies every record, and fails on
-                any undeclared break in chain continuity. Unsigned attestations are
+                any undeclared break in chain continuity. A chain rotation is a declared
+                break: the custodian records it as a CHAIN_ROTATION gap and the verifier
+                reports it among the declared gaps, which block citation unless explicitly
+                allowed; a malformed rotation declaration fails. Unsigned attestations are
                 non-evidentiary by construction (see AU-9(3)). The compliance-bridge
                 lifespan (src/compliance_bridge/main.py) runs CustodyVerifier.run_forever()
                 on a configurable schedule (EVIDENCE_VERIFY_INTERVAL_S), exports Prometheus

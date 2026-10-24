@@ -31,11 +31,14 @@ Custody cycle (:meth:`EvidenceCustodian.flush_once`)
    rotation starts a new batch on the next cycle).
 4. Continuity check against the cursor. A sequence jump on the same chain, or
    a first-ever batch that does not start at genesis, is a **gap**: records
-   were trimmed (``EVIDENCE_STREAM_MAX_LEN``) before custody. The batch is
-   still written — the remaining evidence must not be lost too — but the gap
-   is recorded in the attestation, logged CRITICAL and counted. A new
-   ``chain_id`` starting at sequence 0 with an empty ``prev_hash`` is a clean
-   rotation.
+   were trimmed (``EVIDENCE_STREAM_MAX_LEN``) before custody. A new
+   ``chain_id`` starting at genesis after another chain was custodied is a
+   **chain rotation** gap (``kind: CHAIN_ROTATION``, recording the previous
+   chain's id, last custodied sequence and record hash): the producer started
+   over, so anything the old chain held beyond the cursor is gone. Either way
+   the batch is still written — the remaining evidence must not be lost too —
+   but the gap is recorded in the attestation, logged CRITICAL and counted.
+   Only a first-ever batch that starts at genesis is clean.
 5. Re-verify every record's hash and ``prev_hash`` link. Any mismatch raises
    :class:`EvidenceCustodyIntegrityError`: nothing is written and the cursor
    does not move, so custody stays stuck until an operator investigates.
@@ -105,6 +108,9 @@ from src.gateway.governance.evidence.stream import verify_record
 logger = logging.getLogger("cage.compliance_bridge.evidence_custodian")
 
 ATTESTATION_SCHEMA = "cage-evidence-batch/1"
+# ``gap.kind`` for a batch that starts a new chain at genesis after another
+# chain was custodied. Trim gaps carry ``expected_sequence`` and no kind.
+GAP_KIND_CHAIN_ROTATION = "CHAIN_ROTATION"
 # Every evidence-stream payload is PII-sanitized before it is hash-chained
 # (EvidenceStreamSink._append), so custodied objects are Internal and
 # PII-sanitized — not PII-free by construction for every possible input; see
@@ -519,7 +525,13 @@ class EvidenceCustodian:
         cursor: dict[str, str],
         batch: list[tuple[str, dict[str, str]]],
     ) -> tuple[int, bool, dict[str, Any]]:
-        """Return ``(first_sequence, gap, expected)`` for the batch head."""
+        """Return ``(first_sequence, gap, expected)`` for the batch head.
+
+        ``expected`` is the attestation's gap detail: ``expected_sequence`` and
+        ``expected_prev_hash`` for records trimmed before custody, or, for a
+        ``CHAIN_ROTATION``, the previous chain's id, last sequence and last
+        record hash as recorded by the cursor.
+        """
         first = batch[0][1]
         try:
             first_seq = int(first["sequence"])
@@ -553,13 +565,28 @@ class EvidenceCustodian:
                 "expected_prev_hash": expected_prev,
             }
         elif is_genesis:
-            if cursor_chain:
-                logger.warning(
-                    "[EvidenceCustodian] Chain rotation %s → %s at genesis.",
-                    cursor_chain,
-                    chain_id,
-                )
-            return first_seq, False, {}
+            if not cursor_chain:
+                return first_seq, False, {}
+            # A new chain at genesis after another chain was custodied: the
+            # producer started over (e.g. the stream was emptied), so whatever
+            # the old chain held beyond the cursor was lost before custody.
+            rotation: dict[str, Any] = {
+                "kind": GAP_KIND_CHAIN_ROTATION,
+                "previous_chain_id": cursor_chain,
+                "previous_last_sequence": int(cursor["last_sequence"]),
+                "previous_last_record_hash": cursor.get("last_record_hash", ""),
+            }
+            logger.critical(
+                "[EvidenceCustodian] GAP: chain %s starts at genesis after custodied "
+                "chain %s seq %d (chain rotation). Records after the cursor may "
+                "have been lost before custody.",
+                chain_id,
+                cursor_chain,
+                rotation["previous_last_sequence"],
+            )
+            if _PROM_AVAILABLE:
+                CUSTODY_GAPS_TOTAL.inc()
+            return first_seq, True, rotation
         else:
             # First-ever batch, or a new chain, that does not start at genesis.
             expected = {"expected_sequence": 0, "expected_prev_hash": ""}
