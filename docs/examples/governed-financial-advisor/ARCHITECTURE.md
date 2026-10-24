@@ -137,7 +137,7 @@ The GFA exposes a FastAPI server ([`src/governed_financial_advisor/server.py`](.
 
 | Endpoint | Method | Purpose | Request Body |
 |---|---|---|---|
-| **`/agent/query`** | POST | Submit natural-language advisory prompt | `QueryRequest` (query, user_id, thread_id) |
+| **`/agent/query`** | POST | Submit natural-language advisory prompt | `QueryRequest` (`prompt`, required `user_id`, `thread_id`) |
 | **`/agent/stream`** | POST | SSE-streamed agent execution | Same as `/agent/query` |
 | **`/health`** | GET | Liveness probe | None |
 
@@ -160,13 +160,23 @@ The GFA exposes a FastAPI server ([`src/governed_financial_advisor/server.py`](.
 ### 4.4 Authentication & Authorization
 
 All endpoints require:
-- **`X-API-Key` header**: Validated against `CAGE_API_KEY` environment variable
+- **`Authorization: Bearer <CAGE_API_KEY>` header**: Checked by [`require_api_key()`](../../../src/governed_financial_advisor/infrastructure/auth.py) against the `CAGE_API_KEY` environment variable, a single shared secret (see §4.5)
 
 Calls from the GFA to the gateway carry no shared secret. The gateway
 authenticates the GFA by its Linkerd mTLS workload identity
 (`cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local`),
 see [`workload_identity.py`](../../../src/gateway/server/workload_identity.py)
 (POAM-2026-080).
+
+### 4.5 Principal Trust Model
+
+The end-user principal is **asserted, not authenticated**:
+
+- **The gateway's trust boundary is the workload identity.** The gateway authenticates the GFA by its Linkerd mTLS workload identity (§4.4). It reads `x-cage-principal` only on requests that carry that verified identity ([`extract_rate_limit_keys()`](../../../src/gateway/server/rate_limit.py)) and uses it only as a per-principal rate-limit key. The per-identity budget bounds the GFA however many principals it asserts.
+- **The GFA asserts the end-user principal.** [`QueryRequest.user_id`](../../../src/governed_financial_advisor/models/query.py) is required and must fit the gateway's principal charset and cap: 1–64 characters matching `^[A-Za-z0-9._:@/-]+$` ([`principal.py`](../../../src/governed_financial_advisor/models/principal.py)). On GEAP Agent Runtime the `user_id` argument of [`GovernedFinancialAdvisorGeapApp.async_query()`](../../../src/governed_financial_advisor/geap_app.py) plays the same role. The GFA forwards the value as `x-cage-principal` and, on GEAP, as `x-geap-user-id`, both sanitized by the same `principal_header_value()` helper, and tags the request span with `enduser.id` and `cage.principal.verified=false`. `CAGE_API_KEY` authenticates the client, not a user: any holder of the key can assert any `user_id`.
+- **Reviewer names are attribution only.** The `reviewer` sent to `POST /v1/approvals/{thread_id}/resume` and the `approver_id` passed to [`GovernedFinancialAdvisorGeapApp.resume_approval()`](../../../src/governed_financial_advisor/geap_app.py) are caller-supplied. Approval authority stays with the gateway's quorum-approved `DeferQueue` ([`enforce_approved_governance()`](../../../src/gateway/server/governance_middleware.py)).
+- **GEAP `ID-1` records its provenance.** On the Agent Gateway path, [`GeapTriIdentityContext`](../../../src/gateway/governance/ingress/agw_adapter.py) sets `user_verified=True` only when `ID-1` comes from the `act_sub` or `user_sub` claim of an OIDC token verified by `AgwAdapter.validate_oidc_token()`. Values taken from the request payload or the `x-geap-user-id` header carry `user_verified=False` (`id1_user_verified` in the envelope claims). No authorization decision reads `ID-1`.
+- **Follow-up.** Binding the principal to an authenticated identity, for example verified GEAP `ID-1` OIDC claims, is tracked as a follow-up to issue #516. Until then, do not use `user_id`, `x-cage-principal` or `enduser.id` for per-user authorization or data access.
 
 ---
 

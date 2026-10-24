@@ -312,10 +312,11 @@ kubectl port-forward svc/governed-financial-advisor 18080:80 -n governance-stack
 # Health check
 curl http://localhost:18080/health
 
-# Agent query
+# Agent query (user_id is required; the advisor treats it as asserted, not authenticated)
 curl -X POST http://localhost:18080/agent/query \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello"}'
+  -H "Authorization: Bearer $CAGE_API_KEY" \
+  -d '{"prompt": "Hello", "user_id": "demo-user"}'
 ```
 
 ### Makefile targets

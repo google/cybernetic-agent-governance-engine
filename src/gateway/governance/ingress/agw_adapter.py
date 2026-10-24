@@ -61,6 +61,11 @@ class GeapTriIdentityContext:
         delegated_token_sha256: ``ID-3`` — SHA-256 hex digest of the delegated
             OAuth 2.0 token (raw token is never persisted in governance state).
         kid: Key ID from the verified ``ID-2`` OIDC token header.
+        user_verified: ``True`` only when ``user_id`` came from the ``act_sub``
+            or ``user_sub`` claim of a token verified by
+            :meth:`AgwAdapter.validate_oidc_token`. ``False`` when it came from
+            the unverified request payload or headers, in which case it is an
+            asserted value fit for attribution only.
     """
 
     user_id: str
@@ -68,6 +73,7 @@ class GeapTriIdentityContext:
     oauth_scopes: tuple[str, ...] = field(default_factory=tuple)
     delegated_token_sha256: str = ""
     kid: str = ""
+    user_verified: bool = False
 
     @property
     def is_valid_agent_principal(self) -> bool:
@@ -77,7 +83,12 @@ class GeapTriIdentityContext:
         )
 
     def compute_binding_digest(self) -> str:
-        """Compute deterministic RFC 8785 JCS SHA-256 digest over ``ID-1``, ``ID-2``, and ``ID-3``."""
+        """Compute deterministic RFC 8785 JCS SHA-256 digest over ``ID-1``, ``ID-2``, and ``ID-3``.
+
+        The digest binds identity values only. It does not attest that ``ID-1``
+        was verified; that is recorded as ``id1_user_verified`` in
+        :meth:`to_envelope_claims`.
+        """
         canonical = jcs_canonicalize_plan(
             {
                 "id1_user": self.user_id,
@@ -92,6 +103,7 @@ class GeapTriIdentityContext:
         """Return safe, non-secret tri-identity claims for ``GovernanceEnvelope`` binding."""
         return {
             "id1_user": self.user_id,
+            "id1_user_verified": self.user_verified,
             "id2_agent_principal": self.agent_principal,
             "id3_scopes": list(self.oauth_scopes),
             "id3_token_sha256": self.delegated_token_sha256,
@@ -256,16 +268,23 @@ class AgwAdapter:
         raw_request: dict[str, Any],
         verified_claims: Mapping[str, Any] | None = None,
     ) -> GeapTriIdentityContext:
-        """Extract and bind ``ID-1`` (user), ``ID-2`` (agent), and ``ID-3`` (OAuth) context."""
+        """Extract and bind ``ID-1`` (user), ``ID-2`` (agent), and ``ID-3`` (OAuth) context.
+
+        ``ID-1`` prefers the ``act_sub`` / ``user_sub`` claim. It is marked
+        ``user_verified`` only when ``verified_claims`` carries the
+        ``_verified_kid`` stamp that :meth:`validate_oidc_token` adds after
+        signature verification. The fallbacks (``tri_identity.user_id``,
+        ``auth.user_id``, the ``x-geap-user-id`` header) are caller-asserted.
+        """
         claims = dict(verified_claims or {})
         tri_raw = raw_request.get("tri_identity") or {}
         auth_raw = raw_request.get("auth") or {}
         headers_raw = raw_request.get("headers") or {}
 
-        user_id = str(
-            claims.get("act_sub")
-            or claims.get("user_sub")
-            or tri_raw.get("user_id")
+        claimed_user = str(claims.get("act_sub") or claims.get("user_sub") or "")
+        user_verified = bool(claimed_user) and bool(claims.get("_verified_kid"))
+        user_id = claimed_user or str(
+            tri_raw.get("user_id")
             or auth_raw.get("user_id")
             or headers_raw.get("x-geap-user-id")
             or ""
@@ -309,6 +328,7 @@ class AgwAdapter:
             oauth_scopes=scopes,
             delegated_token_sha256=token_sha256,
             kid=str(claims.get("_verified_kid", "")),
+            user_verified=user_verified,
         )
 
     async def translate_request(self, raw_request: dict[str, Any]) -> AgwRequest:
