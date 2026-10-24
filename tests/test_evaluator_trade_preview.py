@@ -63,6 +63,14 @@ _TRADE_STEP = {
     },
 }
 
+#: ``_TRADE_STEP`` with a confidence that clears the reuse threshold. A step
+#: without one is previewed at 0.0 (the committing tool's default), and its
+#: ``ALLOW`` verdict is never cached.
+_CONFIDENT_TRADE_STEP = {
+    **_TRADE_STEP,
+    "parameters": {**_TRADE_STEP["parameters"], "confidence": 0.99},
+}
+
 
 def _plan(*steps: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -109,7 +117,7 @@ def test_trade_params_never_take_the_role_from_the_source() -> None:
         "amount": 500.0,
         "currency": "USD",
         "trader_role": DEFAULT_TRADER_ROLE,
-        "confidence": 1.0,
+        "confidence": 0.0,
         "side": "buy",
     }
 
@@ -149,11 +157,14 @@ async def test_dry_run_previews_the_canonical_trade(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_trade_like_step_names_are_previewed_as_the_registered_action(
-    monkeypatch,
+@pytest.mark.parametrize("name", ["buy", "SELL", "Trade"])
+async def test_trade_step_names_are_previewed_as_the_registered_action(
+    monkeypatch, name: str
 ) -> None:
+    # Names match TRADE_STEP_ACTIONS exactly, ignoring case. Substrings such
+    # as ``buy_stock`` are not trades (#513, tests/test_trade_contract.py).
     calls = _install_dry_run(monkeypatch, "ALLOW")
-    step = {**_TRADE_STEP, "action": "buy_stock"}
+    step = {**_TRADE_STEP, "action": name}
 
     await evaluator_mod.evaluator_node({"execution_plan_output": _plan(step)})
 
@@ -271,7 +282,7 @@ async def test_safety_gate_extracts_trade_step_from_structured_execution_plan(
             }
 
     monkeypatch.setattr(safety_mod, "GatewayClient", _Client)
-    structured_plan = _plan(_TRADE_STEP)
+    structured_plan = _plan(_CONFIDENT_TRADE_STEP)
 
     out = await safety_mod.safety_check_node(
         {"execution_plan_output": structured_plan, "consecutive_denials": 0}
@@ -279,7 +290,7 @@ async def test_safety_gate_extracts_trade_step_from_structured_execution_plan(
 
     assert out["safety_status"] == "APPROVED"
     assert seen["action"] == TRADE_ACTION
-    assert seen["params"] == trade_params(_TRADE_STEP["parameters"])
+    assert seen["params"] == trade_params(_CONFIDENT_TRADE_STEP["parameters"])
     assert out["routing_verdict_cache"] is not None
     assert out["routing_verdict_cache"]["verdict"] == "ALLOW"
 
@@ -296,7 +307,7 @@ async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_gua
     )
 
     _install_dry_run(monkeypatch, "ALLOW")
-    structured_plan = _plan(_TRADE_STEP)
+    structured_plan = _plan(_CONFIDENT_TRADE_STEP)
 
     eval_out = await evaluator_mod.evaluator_node(
         {"execution_plan_output": structured_plan}
@@ -421,7 +432,7 @@ async def test_expired_or_mismatched_routing_cache_calls_validate_action(
         reusable_allow_verdict,
     )
 
-    params = trade_params(_TRADE_STEP["parameters"])
+    params = trade_params(_CONFIDENT_TRADE_STEP["parameters"])
     cache = build_routing_verdict_cache(params, verdict="ALLOW", now=100.0)
     assert cache is not None
 
