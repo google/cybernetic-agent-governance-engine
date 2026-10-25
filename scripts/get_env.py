@@ -60,4 +60,3 @@ def main(env_path: Path = Path(".env")) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

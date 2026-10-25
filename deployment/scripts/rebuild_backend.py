@@ -28,12 +28,25 @@ if env_path.exists():
             env_vars[k.strip()] = v.strip().strip('"').strip("'")
 
 project_id = env_vars.get("GOOGLE_CLOUD_PROJECT", "your-project-id")
-print(f"🏗️ Rebuilding Backend for {project_id} (Logging Fix)...")
+short_sha = subprocess.run(
+    ["git", "rev-parse", "--short", "HEAD"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+print(f"🏗️ Rebuilding Backend for {project_id} (SHA: {short_sha})...")
 
-image_uri = f"gcr.io/{project_id}/financial-advisor:latest"
-# Use same build command as before
 subprocess.run(
-    ["gcloud", "builds", "submit", "--tag", image_uri, "--project", project_id, "."],
+    [
+        "gcloud",
+        "builds",
+        "submit",
+        "--config=deployment/docker/cloudbuild.image.yaml",
+        f"--substitutions=_IMAGE_NAME=governed-financial-advisor,_DOCKERFILE=deployment/docker/Dockerfile.advisor,_SHORT_SHA={short_sha}",
+        "--project",
+        project_id,
+        ".",
+    ],
     check=True,
 )
 print("✅ Backend Rebuilt.")

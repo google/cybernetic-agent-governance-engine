@@ -131,8 +131,16 @@ spec:
             # The custody cursor lives in "<EVIDENCE_STREAM_KEY>:custody".
             - name: EVIDENCE_STREAM_ENABLED
               value: "true"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
             - name: EVIDENCE_STREAM_REDIS_URL
-              value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
             - name: EVIDENCE_STREAM_REDIS_DB
               value: "1"
             - name: EVIDENCE_STREAM_KEY

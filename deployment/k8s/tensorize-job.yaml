@@ -28,6 +28,11 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       # Run on GPU node — tensorizer serialization benefits from GPU-accelerated loading
       tolerations:
         - key: "nvidia.com/gpu"
@@ -46,6 +51,15 @@ spec:
           # Use same vLLM image as inference pods for version consistency
           image: vllm/vllm-openai:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
           resources:
             limits:
               nvidia.com/gpu: "1"
@@ -143,10 +157,10 @@ spec:
               print(f"Loading model for serialization: {model_id}")
               model = AutoModelForCausalLM.from_pretrained(
                   local_path,
-                  trust_remote_code=True,
+                  trust_remote_code=False,
                   device_map="cuda",
               )
-              tokenizer = AutoTokenizer.from_pretrained(local_path)
+              tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=False)
 
               s3 = boto3.client(
                   "s3",

@@ -111,7 +111,7 @@ async def administer_dose_action(
         c2 = ("clinician_001", int(time.time()), "CONSTRUCTION_TIME", tid)
         c3 = ("THREAD_DERIVED", seal, digest, uuid.uuid4().hex[:32], params)
         c4 = ("cage_healthcare_clinical", "local://default", "HIGH_CLINICAL")
-        clearance = _seam.ExecutionClearance(*c1, *c2, *c3, *c4, routing_seal=seal)
+        clearance = _seam.ExecutionClearance(*c1, *c2, *c3, *c4, routing_seal=seal)  # type: ignore[arg-type]
         receipt = await dispatch_actuation(actuator, clearance)
         executed = receipt.may_have_executed
         if not receipt.accepted:

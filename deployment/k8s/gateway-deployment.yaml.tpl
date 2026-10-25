@@ -100,8 +100,16 @@ spec:
               value: "${REDIS_PORT}"
             - name: REDIS_HOST
               value: "${REDIS_HOST}"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
             - name: REDIS_URL
-              value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
             # Evidence producer only: custody runs in the compliance bridge,
             # which reads the same URL/db/key.
             - name: EVIDENCE_STREAM_ENABLED
@@ -109,7 +117,10 @@ spec:
             - name: EVIDENCE_CHAIN_BLOCKING
               value: "true"
             - name: EVIDENCE_STREAM_REDIS_URL
-              value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
             - name: EVIDENCE_STREAM_REDIS_DB
               value: "1"
             - name: EVIDENCE_STREAM_KEY

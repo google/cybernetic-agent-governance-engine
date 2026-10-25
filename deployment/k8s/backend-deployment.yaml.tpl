@@ -63,8 +63,16 @@ spec:
               value: "${REDIS_HOST}"
             - name: REDIS_PORT
               value: "${REDIS_PORT}"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
             - name: REDIS_URL
-              value: "redis://${REDIS_HOST}:${REDIS_PORT}"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
 
             # --- Model Configuration (Tiered) ---
             - name: MODEL_FAST

@@ -166,6 +166,12 @@ resource "kubernetes_deployment" "gateway" {
             }
           }
 
+          env_from {
+            secret_ref {
+              name = "gateway-secrets"
+            }
+          }
+
           # Deployment jurisdiction: single source is the cage-deployment
           # ConfigMap (modules/deployment_config). optional = false: a pod
           # never starts without a declared region.

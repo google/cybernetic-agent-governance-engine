@@ -19,9 +19,23 @@ metadata:
   namespace: governance-stack
 spec:
   restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
   containers:
   - name: reset
     image: postgres:alpine
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+      capabilities:
+        drop:
+          - ALL
     envFrom:
     - secretRef:
         name: advisor-secrets

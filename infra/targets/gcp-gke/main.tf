@@ -87,8 +87,8 @@ module "gke" {
   environment      = var.environment
   regional_cluster = var.regional_cluster
 
-  # Security posture toggles
-  enable_nist_compliance         = var.enable_nist_compliance
+  # Security posture toggles (DEP-20: any jurisdiction compliance flag activates hardening)
+  enable_nist_compliance         = local.any_compliance_active
   enable_deletion_protection     = var.enable_deletion_protection
   enable_binary_authorization    = var.enable_binary_authorization
   enable_audit_logging           = var.enable_audit_logging
@@ -207,7 +207,7 @@ resource "google_storage_bucket" "langfuse_events" {
   # ensures even the compliance bridge cannot erase evidence it writes.
   retention_policy {
     retention_period = 220752000 # 2555 days in seconds
-    is_locked        = var.enable_nist_compliance ? true : false
+    is_locked        = local.any_compliance_active ? true : false
   }
 
   # Lifecycle rule now transitions to cold storage, not deletes
@@ -265,8 +265,8 @@ module "worm_bucket" {
   enable_cmek              = var.enable_cmek
   kms_key_id               = local.cmek_key_id
   retention_period_seconds = var.environment == "staging" ? 86400 : 220752000
-  is_locked                = var.environment == "prod" || var.environment == "staging" || var.enable_nist_compliance
-  force_destroy            = var.environment == "dev" && !var.enable_nist_compliance
+  is_locked                = var.environment == "prod" || var.environment == "staging" || var.enable_nist_compliance || local.any_compliance_active
+  force_destroy            = var.environment == "dev" && !local.any_compliance_active
 }
 
 
@@ -595,7 +595,7 @@ module "nemo_guardrails" {
   presidio_cpu_limit      = var.enable_high_availability ? "1000m" : ""
   presidio_memory_limit   = var.enable_high_availability ? "2Gi" : ""
 
-  enable_security_context = var.enable_nist_compliance
+  enable_security_context = local.any_compliance_active
 
   depends_on = [module.gke, module.vllm]
 }
@@ -1012,13 +1012,30 @@ module "deployment_config" {
 
 # ─── Application Secrets ──────────────────────────────────────────────────────
 
+resource "random_password" "advisor_salt" {
+  length  = 32
+  special = false
+}
+
+resource "random_password" "cage_api_key" {
+  length  = 32
+  special = false
+}
+
+resource "random_password" "cage_internal_token" {
+  length  = 32
+  special = false
+}
+
 module "app_secrets" {
   source = "../../modules/app_secrets"
 
   namespace = module.namespace.name
 
   governance_salt      = var.governance_salt
-  salt                 = var.governance_salt
+  salt                 = random_password.advisor_salt.result
+  cage_api_key         = var.cage_api_key != "" ? var.cage_api_key : random_password.cage_api_key.result
+  cage_internal_token  = var.cage_internal_token != "" ? var.cage_internal_token : random_password.cage_internal_token.result
   alphavantage_api_key = "" # Add variable if needed
   openai_api_key       = ""
   model_fast           = var.served_model_fast
@@ -1048,8 +1065,8 @@ module "app_secrets" {
 
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
   # Dev posture: pass the key as-is (may be empty → module skips secret creation
-  #   when enable_nist_compliance=false; compliance bridge handles None gracefully).
-  # Prod posture (enable_nist_compliance=true): the precondition below enforces
+  #   when any_compliance_active=false; compliance bridge handles None gracefully).
+  # Prod posture (any_compliance_active=true): the precondition below enforces
   #   that a real, distinct cage-compliance project key is provided.
   #   The silent fallback to module.langfuse.public_key has been removed to prevent
   #   circular evidence contamination in Step 5 (_fetch_failing_traces).
@@ -1067,10 +1084,10 @@ module "app_secrets" {
 
 
 # POAM-019 enforcement: fail the plan if compliance keys are missing when
-# enable_nist_compliance=true.  lifecycle { precondition } is only valid inside
-# resource blocks, not module blocks, so this terraform_data resource carries
-# the guard.  It runs at plan time and provides a clear error message citing
-# the POAM item and remediation path.
+# any compliance posture (US_FED, EU_ECB, APAC_MAS) is active. lifecycle { precondition }
+# is only valid inside resource blocks, not module blocks, so this terraform_data
+# resource carries the guard. It runs at plan time and provides a clear error message
+# citing the POAM item and remediation path.
 resource "terraform_data" "poam_019_compliance_key_guard" {
   lifecycle {
     precondition {
@@ -1078,7 +1095,7 @@ resource "terraform_data" "poam_019_compliance_key_guard" {
       error_message = "[POAM-2026-086] SC-8 Memorystore CA pinning invariant violated: when enable_memorystore_tls=true, module.memorystore_governance.managed_server_ca must be non-empty so gateway and compliance-bridge pods can pin the server CA."
     }
     precondition {
-      condition = !(var.enable_nist_compliance && (
+      condition = !(local.any_compliance_active && (
         var.langfuse_compliance_public_key == "" ||
         var.langfuse_compliance_secret_key == "" ||
         var.langfuse_compliance_public_key == var.langfuse_public_key ||
@@ -1086,7 +1103,7 @@ resource "terraform_data" "poam_019_compliance_key_guard" {
       ))
       error_message = <<-EOT
         [POAM-019] AU-9 dual-project telemetry isolation violated.
-        When enable_nist_compliance=true, the Langfuse compliance project keys
+        When compliance hardening is active (enable_nist_compliance, enable_eu_ecb_compliance, or enable_apac_mas_compliance), the Langfuse compliance project keys
         (langfuse_compliance_public_key / langfuse_compliance_secret_key) must be:
           (1) Non-empty
           (2) Distinct from the application project keys (langfuse_public_key / langfuse_secret_key)

@@ -17,7 +17,22 @@ spec:
       annotations:
         config.linkerd.io/skip-inbound-ports: "9090"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: cage-gateway-sa
+      # §3: Governance-critical pods carry an explicit anti-Spot nodeAffinity rule
+      # so even a wildcard toleration cannot schedule them on Spot VMs.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-spot
+                    operator: NotIn
+                    values:
+                      - "true"
       containers:
         - name: gateway
           image: gcr.io/YOUR_PROJECT_ID/gateway:latest
@@ -100,8 +115,8 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: redis-secret
-                  key: redis-password
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
@@ -171,6 +186,13 @@ spec:
             # value names that provider; it is a label, not a selector.
             - name: RECONCILIATION_PROVIDER
               value: "simulated"
+            # ADR-010: the simulated custodian's journal is shared between this
+            # pod (BrokerActuator journals each fill) and the reconciliation
+            # worker (SimulatedSource settles them), so it must live in Redis.
+            - name: CAGE_SIM_LEDGER_BACKEND
+              value: "redis"
+            - name: CAGE_SIM_SETTLEMENT_LAG_SECONDS
+              value: "90"
             # Signing-key references come from gateway-secrets, never from the
             # shared advisor-secrets: the advisor loads advisor-secrets via
             # envFrom and refuses to start if either key is present

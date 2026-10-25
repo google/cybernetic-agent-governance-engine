@@ -192,10 +192,9 @@ async def _map_flowsignal_decision(
                     }
                 ]
 
-        receipt_obj = (
-            data.get("authority_receipt")
-            if isinstance(data.get("authority_receipt"), dict)
-            else {}
+        raw_receipt_obj = data.get("authority_receipt")
+        receipt_obj: dict[str, Any] = (
+            raw_receipt_obj if isinstance(raw_receipt_obj, dict) else {}
         )
         receipt_id = str(
             receipt_obj.get("id") or data.get("authority_receipt_id") or ""
@@ -524,7 +523,7 @@ class FlowSignalNormativeProvider:
             if "amount" in source or "magnitude" in source:
                 raw_mag = source.get("amount", source.get("magnitude"))
                 try:
-                    mag_val = float(raw_mag)
+                    mag_val = float(raw_mag) if raw_mag is not None else float("nan")
                     valid_mag = (
                         not isinstance(raw_mag, bool)
                         and math.isfinite(mag_val)

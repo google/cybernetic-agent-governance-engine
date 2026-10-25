@@ -46,14 +46,38 @@ import uuid
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def run(cmd: str, capture_output: bool = True) -> str:
+def _redact_cmd(cmd: list[str]) -> list[str]:
+    """Redact sensitive --from-literal values before logging command failures."""
+    redacted: list[str] = []
+    for token in cmd:
+        if (
+            token.startswith("--from-literal=")
+            and "=" in token[len("--from-literal=") :]
+        ):
+            key = token.split("=", 2)[1]
+            redacted.append(f"--from-literal={key}=****")
+        else:
+            redacted.append(token)
+    return redacted
+
+
+def run(
+    cmd: list[str],
+    capture_output: bool = True,
+    input_data: str | None = None,
+) -> str:
     try:
         result = subprocess.run(
-            cmd, shell=True, check=True, capture_output=capture_output, text=True
+            cmd,
+            shell=False,
+            check=True,
+            capture_output=capture_output,
+            text=True,
+            input=input_data,
         )
-        return result.stdout.strip()
+        return result.stdout.strip() if result.stdout else ""
     except subprocess.CalledProcessError as e:
-        print(f"Error running: {cmd}")
+        print(f"Error running: {_redact_cmd(cmd)}")
         print(e.stderr)
         raise
 
@@ -83,8 +107,15 @@ def _get_or_prompt(env_key: str, prompt: str, default: str = "") -> str:
 def patch_database_url(project_id: str, instance_name: str, conn_string: str) -> None:
     print("⏳ Fetching Cloud SQL instance private IP…")
     instance_json = run(
-        f"gcloud sql instances describe {instance_name} "
-        f"--project={project_id} --format=json"
+        [
+            "gcloud",
+            "sql",
+            "instances",
+            "describe",
+            instance_name,
+            f"--project={project_id}",
+            "--format=json",
+        ]
     )
     instance_data = json.loads(instance_json)
     ip_addresses = instance_data.get("ipAddresses", [])
@@ -94,8 +125,16 @@ def patch_database_url(project_id: str, instance_name: str, conn_string: str) ->
 
     if not private_ip:
         ops = run(
-            f"gcloud sql operations list --instance={instance_name} "
-            f"--limit=1 --filter='status=RUNNING' --format='value(name)'"
+            [
+                "gcloud",
+                "sql",
+                "operations",
+                "list",
+                f"--instance={instance_name}",
+                "--limit=1",
+                "--filter=status=RUNNING",
+                "--format=value(name)",
+            ]
         )
         if ops:
             print(f"⚠️  Operation {ops} is still running — please wait and retry.")
@@ -121,18 +160,30 @@ def patch_database_url(project_id: str, instance_name: str, conn_string: str) ->
 
     username, password = user_pass.split(":", 1)
     new_url = f"postgresql://{username}:{password}@{private_ip}:5432/langfuse"
-    print(f"🔑 New DATABASE_URL: {new_url}")
+    masked_pw = password[:4] + "****" if len(password) > 4 else "****"
+    masked_url = f"postgresql://{username}:{masked_pw}@{private_ip}:5432/langfuse"
+    print(f"🔑 New DATABASE_URL: {masked_url}")
 
     print("🚀 Patching advisor-secrets…")
-    secret_json = run("kubectl get secret advisor-secrets -n governance-stack -o json")
+    secret_json = run(
+        [
+            "kubectl",
+            "get",
+            "secret",
+            "advisor-secrets",
+            "-n",
+            "governance-stack",
+            "-o",
+            "json",
+        ]
+    )
     secret_data = json.loads(secret_json)
     secret_data["data"]["DATABASE_URL"] = b64enc(new_url)
 
-    tmp = "/tmp/advisor-secrets-patch.json"
-    with open(tmp, "w") as f:
-        json.dump(secret_data, f)
-    run(f"kubectl apply -f {tmp}")
-    os.remove(tmp)
+    run(
+        ["kubectl", "apply", "-f", "-"],
+        input_data=json.dumps(secret_data),
+    )
     print("✅ advisor-secrets patched.")
 
 
@@ -169,41 +220,77 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
 
     # Check whether the secret already exists so we can decide create vs patch.
     exists_rc = subprocess.run(
-        f"kubectl get secret langfuse-secrets -n {namespace}",
-        shell=True,
+        ["kubectl", "get", "secret", "langfuse-secrets", "-n", namespace],
+        shell=False,
+        check=False,
         capture_output=True,
     ).returncode
 
     if exists_rc == 0:
         print("[INFO] langfuse-secrets already exists - patching keys...")
-        # Read, merge, re-apply.
-        raw = run(f"kubectl get secret langfuse-secrets -n {namespace} -o json")
+        # Read, merge, re-apply via stdin without writing temporary secret files.
+        raw = run(
+            [
+                "kubectl",
+                "get",
+                "secret",
+                "langfuse-secrets",
+                "-n",
+                namespace,
+                "-o",
+                "json",
+            ]
+        )
         obj = json.loads(raw)
         obj.setdefault("data", {})
         obj["data"]["init-project-id"] = b64enc(project_id_val)
         obj["data"]["init-user-email"] = b64enc(user_email)
         obj["data"]["init-user-password"] = b64enc(user_password)
-        tmp = "/tmp/langfuse-secrets-patch.json"
-        with open(tmp, "w") as f:
-            json.dump(obj, f)
-        run(f"kubectl apply -f {tmp}")
-        os.remove(tmp)
+        run(
+            ["kubectl", "apply", "-f", "-"],
+            input_data=json.dumps(obj),
+        )
     else:
         print("[+] Creating langfuse-secrets...")
         run(
-            f"kubectl create secret generic langfuse-secrets"
-            f" --from-literal=init-project-id={project_id_val}"
-            f" --from-literal=init-user-email={user_email}"
-            f" --from-literal=init-user-password={user_password}"
-            f" -n {namespace}"
+            [
+                "kubectl",
+                "create",
+                "secret",
+                "generic",
+                "langfuse-secrets",
+                f"--from-literal=init-project-id={project_id_val}",
+                f"--from-literal=init-user-email={user_email}",
+                f"--from-literal=init-user-password={user_password}",
+                "-n",
+                namespace,
+            ]
         )
 
     print("✅ langfuse-secrets is ready.")
 
     # Force a rolling restart so langfuse-web picks up the new secret.
     print("🔄 Rolling restart of langfuse-web and langfuse-worker…")
-    run("kubectl rollout restart deployment/langfuse-web -n governance-stack")
-    run("kubectl rollout restart deployment/langfuse-worker -n governance-stack")
+    run(
+        [
+            "kubectl",
+            "rollout",
+            "restart",
+            "deployment/langfuse-web",
+            "-n",
+            "governance-stack",
+        ]
+    )
+    run(
+        [
+            "kubectl",
+            "rollout",
+            "restart",
+            "deployment/langfuse-worker",
+            "-n",
+            "governance-stack",
+        ]
+    )
     print("✅ Rollout triggered — watch with:")
     print("   kubectl rollout status deployment/langfuse-web -n governance-stack")
     print("   kubectl rollout status deployment/langfuse-worker -n governance-stack")

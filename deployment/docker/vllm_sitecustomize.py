@@ -62,8 +62,9 @@ def _patched_glob(s3=None, path: str = "", allow_pattern=None):
     if isinstance(path, str) and path.lower().startswith("gs://"):
         bucket_name, _, _, blobs = _gcs_list_blobs(path, allow_pattern=allow_pattern)
         local_files = []
+        weights_root = Path(tempfile.gettempdir()) / "vllm-weights"
         for blob in blobs:
-            dest = Path("/tmp/vllm-weights") / bucket_name / blob.name
+            dest = weights_root / bucket_name / blob.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             if not dest.exists() or dest.stat().st_size != blob.size:
                 blob.download_to_filename(str(dest))
@@ -78,7 +79,7 @@ class _PatchedS3Model(_orig_S3Model):
         for sig in (signal.SIGINT, signal.SIGTERM):
             existing_handler = signal.getsignal(sig)
             signal.signal(sig, self._close_by_signal(existing_handler))
-        self.dir = tempfile.mkdtemp(dir="/tmp")
+        self.dir = tempfile.mkdtemp(prefix="vllm-s3-")
 
     def pull_files(
         self, s3_model_path: str = "", allow_pattern=None, ignore_pattern=None

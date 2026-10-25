@@ -100,7 +100,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
 
           env_from {
             secret_ref {
-              name = "advisor-secrets"
+              name = "compliance-bridge-secrets"
             }
           }
 

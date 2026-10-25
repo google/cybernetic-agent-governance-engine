@@ -328,15 +328,10 @@ resource "google_container_node_pool" "primary_nodes" {
     disk_type    = var.primary_node_pool_disk_type
     spot         = false
 
-    # Optional SC-39 gVisor user-space kernel sandbox on E2 CPU nodes (requires image_type = "COS_CONTAINERD")
+    # Optional SC-39 gVisor user-space kernel sandbox on E2 CPU nodes (requires image_type = "COS_CONTAINERD";
+    # note: the node_config.sandbox_config block requires the hashicorp/google-beta provider, so under GA
+    # hashicorp/google we set COS_CONTAINERD image_type and the sandbox.gke.io/runtime label).
     image_type = var.enable_gvisor_sandbox ? "COS_CONTAINERD" : null
-
-    dynamic "sandbox_config" {
-      for_each = var.enable_gvisor_sandbox ? [1] : []
-      content {
-        sandbox_type = "gvisor"
-      }
-    }
 
     # OAuth scopes for GCP service access
     oauth_scopes = [
@@ -361,6 +356,7 @@ resource "google_container_node_pool" "primary_nodes" {
         pool-name     = "general"
         environment   = var.environment
       },
+      var.enable_gvisor_sandbox ? { "sandbox.gke.io/runtime" = "gvisor" } : {},
       var.primary_node_pool_labels
     )
 

@@ -94,11 +94,12 @@ header "Step 4 — Current pod status after action"
 kubectl get pods -n "$NAMESPACE" -l app=governed-financial-advisor
 
 # ---------------------------------------------------------------------------
-# Step 5: Verify environment variables
+# Step 5: Verify non-sensitive environment variables (never dump secrets)
 # ---------------------------------------------------------------------------
-header "Step 5 — Environment variables in governed-financial-advisor"
-if kubectl exec -n "$NAMESPACE" deploy/governed-financial-advisor -- env | sort; then
-  ok "Env vars printed above."
+header "Step 5 — Non-sensitive configuration in governed-financial-advisor"
+if kubectl exec -n "$NAMESPACE" deploy/governed-financial-advisor -- \
+     sh -c 'env | grep -E "^(CAGE_DOMAIN|CAGE_ENV|CAGE_DEPLOYMENT_REGION|PORT|GATEWAY_URL|OPA_URL|VLLM_BASE_URL|VLLM_FAST_API_BASE|VLLM_REASONING_API_BASE|LANGFUSE_HOST|OTEL_TRACES_EXPORTER|OTEL_EXPORTER_OTLP_ENDPOINT|REDIS_HOST|REDIS_PORT)=" | sort'; then
+  ok "Non-sensitive configuration vars printed above (secrets omitted)."
 else
   warn "Could not exec into deployment — pod may still be starting."
 fi

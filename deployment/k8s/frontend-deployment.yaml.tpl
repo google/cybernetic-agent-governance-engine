@@ -15,11 +15,25 @@ spec:
       labels:
         app: financial-advisor-ui
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: cage-frontend-sa
       containers:
         - name: ui
           image: ${REGISTRY_URL}/financial-advisor-ui:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
           env:

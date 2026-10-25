@@ -7,9 +7,23 @@ spec:
   ttlSecondsAfterFinished: 600 # Clean up job after checks
   template:
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: downloader
         image: python:3.9-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+              - ALL
         command: ["/bin/sh", "-c"]
         args:
         - |

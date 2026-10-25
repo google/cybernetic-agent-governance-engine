@@ -45,30 +45,46 @@ resource "kubernetes_secret" "advisor_secrets" {
     namespace = var.namespace
   }
 
+  # Least-privilege secret for the untrusted governed-financial-advisor plane
+  # (POAM-2026-079). Never include GOVERNANCE_SALT, ClickHouse admin credentials,
+  # or compliance-bridge internal tokens here.
   data = {
-    "SALT"                     = var.salt
-    "ALPHAVANTAGE_API_KEY"     = var.alphavantage_api_key
-    "OPENAI_API_KEY"           = var.openai_api_key
-    "LANGFUSE_PUBLIC_KEY"      = var.langfuse_public_key
-    "LANGFUSE_SECRET_KEY"      = var.langfuse_secret_key
-    "LANGFUSE_HOST"            = var.langfuse_host
-    "CLICKHOUSE_URL"           = var.clickhouse_url
-    "CLICKHOUSE_MIGRATION_URL" = var.clickhouse_migration_url
-    "CLICKHOUSE_USER"          = var.clickhouse_user
-    "CLICKHOUSE_PASSWORD"      = var.clickhouse_password
-    "DATABASE_URL"             = var.database_url
-    "NEXTAUTH_SECRET"          = var.nextauth_secret
-    "NEXTAUTH_URL"             = var.nextauth_url
-    # CAGE_DEPLOYMENT_REGION is not a secret: it lives in the cage-deployment
-    # ConfigMap (modules/deployment_config), the single source every workload reads.
-    "GOVERNANCE_SALT"                  = var.governance_salt
-    "CAGE_API_KEY"                     = var.cage_api_key != "" ? var.cage_api_key : var.governance_salt
-    "CAGE_INTERNAL_TOKEN"              = var.cage_internal_token != "" ? var.cage_internal_token : var.governance_salt
-    "COMPLIANCE_BRIDGE_INTERNAL_TOKEN" = var.cage_internal_token != "" ? var.cage_internal_token : var.governance_salt
+    "SALT"                       = var.salt
+    "ALPHAVANTAGE_API_KEY"       = var.alphavantage_api_key
+    "OPENAI_API_KEY"             = var.openai_api_key
+    "LANGFUSE_PUBLIC_KEY"        = var.langfuse_public_key
+    "LANGFUSE_SECRET_KEY"        = var.langfuse_secret_key
+    "LANGFUSE_HOST"              = var.langfuse_host
+    "CAGE_API_KEY"               = var.cage_api_key
+    "CAGE_INTERNAL_TOKEN"        = var.cage_internal_token
+    "OTEL_EXPORTER_OTLP_HEADERS" = var.otel_exporter_otlp_headers
+    "LANGFUSE_BASIC_AUTH_B64"    = var.otel_exporter_otlp_headers
+    "REDIS_PASSWORD"             = var.redis_password
+  }
+}
+
+resource "kubernetes_secret" "gateway_secrets" {
+  metadata {
+    name      = "gateway-secrets"
+    namespace = var.namespace
+  }
+
+  data = {
+    "GOVERNANCE_SALT"         = var.governance_salt
+    "EVIDENCE_STREAM_ENABLED" = "true"
+  }
+}
+
+resource "kubernetes_secret" "compliance_bridge_secrets" {
+  metadata {
+    name      = "compliance-bridge-secrets"
+    namespace = var.namespace
+  }
+
+  data = {
+    "CAGE_INTERNAL_TOKEN"              = var.cage_internal_token
+    "COMPLIANCE_BRIDGE_INTERNAL_TOKEN" = var.cage_internal_token
     "EVIDENCE_STREAM_ENABLED"          = "true"
-    "OTEL_EXPORTER_OTLP_HEADERS"       = var.otel_exporter_otlp_headers
-    "LANGFUSE_BASIC_AUTH_B64"          = var.otel_exporter_otlp_headers
-    "REDIS_PASSWORD"                   = var.redis_password
   }
 }
 

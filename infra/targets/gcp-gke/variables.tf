@@ -933,6 +933,20 @@ variable "governance_salt" {
   default     = ""
 }
 
+variable "cage_api_key" {
+  description = "Bearer API key for governed-financial-advisor in non-dev environments (generated independently when empty)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "cage_internal_token" {
+  description = "Internal bearer token for compliance-bridge endpoints in non-dev environments (generated independently when empty)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "kms_signing_protection_level" {
   description = "Protection level for the Terraform-provisioned signing keys in kms_signing.tf (gateway-seal, reconciler-snapshot, compliance-evidence). HSM for staging/prod; SOFTWARE only in dev postures (POAM-2026-079 / SC-12)."
   type        = string

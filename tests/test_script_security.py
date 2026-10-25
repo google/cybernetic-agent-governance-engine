@@ -109,4 +109,3 @@ class TestShellInjectionPrevention:
         assert "OIDC_CLIENT_SECRET=shor****" in out
         assert "GOOGLE_PIN=****" in out
         assert "# Workload Identity comment" in out
-
