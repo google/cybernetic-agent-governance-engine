@@ -125,10 +125,10 @@ Never write code that embeds secrets:
 - Secret values belong in `terraform.auto.tfvars` (gitignored) — never in committed `.tf` files.
 - `terraform plan` must always precede `terraform apply`. Never edit Terraform state directly.
 
-### Mandatory Pre-Commit Code & Security Review (`SKILL.md`)
-Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo both a **code review** and a **security review** using the repository's native review skill ([`.agents/skills/review/SKILL.md`](.agents/skills/review/SKILL.md) and [`.agents/skills/review/references/agent_implementation.md`](.agents/skills/review/references/agent_implementation.md)) and security rules ([`.agents/rules/security.md`](.agents/rules/security.md)) before committing or declaring a task complete:
-- **Code Review Gate**: Execute the working-copy review workflow in [`.agents/skills/review/SKILL.md`](.agents/skills/review/SKILL.md) across all modified and newly created files to verify 3-layer boundary isolation ([`scripts/check_import_boundaries.py`](scripts/check_import_boundaries.py)), ADR-008 governance gate invariants, Apache 2.0 license headers, and pytest marker contracts.
-- **Security Review Gate**: Audit all uncommitted changes against [`.agents/rules/security.md`](.agents/rules/security.md) and the `security` / `governance` review categories in [`.agents/skills/review/references/agent_implementation.md`](.agents/skills/review/references/agent_implementation.md) (no hardcoded or fallback secrets, no `shell=True`, no insecure deserialization, out-of-band `kid` trust-anchor resolution, and B310 URL scheme validation), backed by `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`. Never rely on external IDE scanner daemons (`SECURECODER_API_PORT`).
+### Mandatory Pre-Commit Code & Security Review
+Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo both a **code review** and a **security review** against this document and [`.agents/rules/security.md`](.agents/rules/security.md) before committing or declaring a task complete:
+- **Code Review Gate**: Inspect all modified and newly created files to verify 3-layer boundary isolation ([`scripts/check_import_boundaries.py`](scripts/check_import_boundaries.py)), documentation link and symbol synchronization ([`scripts/check_doc_references.py`](scripts/check_doc_references.py)), ADR-008 governance gate invariants, Apache 2.0 license headers, and pytest marker contracts.
+- **Security Review Gate**: Audit all uncommitted changes against [`.agents/rules/security.md`](.agents/rules/security.md) (no hardcoded or fallback secrets, no `shell=True`, no insecure deserialization, out-of-band `kid` trust-anchor resolution, and B310 URL scheme validation), backed by `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`. Never rely on external IDE scanner daemons (`SECURECODER_API_PORT`).
 - **Fail-Closed Resolution**: All `HIGH` and `MEDIUM` code or security review findings must be resolved in the working copy prior to `git commit`.
 
 ---
@@ -291,11 +291,11 @@ Always launch parallel test suites with `--dist loadscope` to isolate modules ac
 
 ### Two-Phase Testing Lifecycle
 - **Inner Loop (Active Turn)**: Target only the isolated unit test (`uv run pytest tests/<path>::<test_name> -v`) during iterative editing turns. This keeps shell buffer outputs compact (<10 lines) and preserves prompt caching.
-- **Gate Phase (Pre-Completion & PR)**: Execute the full-suite gate (`make test-fast`) and the mandatory uncommitted-code & security review ([`.agents/skills/review/SKILL.md`](.agents/skills/review/SKILL.md)) once before committing, declaring a task complete, or opening a PR.
+- **Gate Phase (Pre-Completion & PR)**: Execute the full-suite gate (`make test-fast`) and the mandatory uncommitted-code & security review ([`AGENTS.md`](#mandatory-pre-commit-code--security-review) and [`.agents/rules/security.md`](.agents/rules/security.md)) once before committing, declaring a task complete, or opening a PR.
 
 ### Verification Rules (fail-closed)
 - **Full-gate before green**: A change is not green until `make test-fast` passes across the entire suite.
-- **Uncommitted code & security review before commit**: Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo code review and security review via [`.agents/skills/review/SKILL.md`](.agents/skills/review/SKILL.md) and [`.agents/rules/security.md`](.agents/rules/security.md) (plus `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`) with zero unresolved `HIGH` or `MEDIUM` findings before committing or declaring completion.
+- **Uncommitted code & security review before commit**: Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo code review and security review via [`AGENTS.md`](#mandatory-pre-commit-code--security-review) and [`.agents/rules/security.md`](.agents/rules/security.md) (plus `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`) with zero unresolved `HIGH` or `MEDIUM` findings before committing or declaring completion.
 - **Attribute failures to the merge base**: Before characterizing a failure as pre-existing, verify against the merge base and quote the result.
 - **Grep after renaming**: After renaming any symbol crossing module boundaries, run `rg -n '<old_symbol>' src/` and require zero results before declaring done.
 - **Every fail-closed path needs a test observing it fail**: Happy-path tests prove mechanisms run, not that they block. Never leave placeholder tests (`pass # TODO`).
