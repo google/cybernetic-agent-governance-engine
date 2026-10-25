@@ -362,7 +362,13 @@ class EvidenceCustodian:
                 "the evidence stream."
             )
 
-        cold_store = get_cold_store()
+        try:
+            cold_store = get_cold_store()
+        except RuntimeError as exc:
+            raise EvidenceCustodyConfigError(
+                "EVIDENCE_COLD_STORE=null is forbidden under an enforcing posture; "
+                f"evidence custody needs a WORM backend (gcs or s3): {exc}"
+            ) from exc
         if enforcing and cold_store.backend_id == "null":
             raise EvidenceCustodyConfigError(
                 "EVIDENCE_COLD_STORE=null is forbidden under an enforcing posture; "

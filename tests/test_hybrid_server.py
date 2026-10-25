@@ -89,7 +89,8 @@ def _make_hybrid_stubs() -> dict:
             start_all=MagicMock(return_value=[])
         ),
         "src.gateway.server.inference_proxy": MagicMock(
-            inference_app=mock_inference_app
+            inference_app=mock_inference_app,
+            _shutdown_http_client=AsyncMock(),
         ),
         "src.gateway.server.governance_middleware": MagicMock(
             governance_app=mock_governance_app,

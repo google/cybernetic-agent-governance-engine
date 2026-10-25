@@ -439,6 +439,7 @@ def test_envelope_verify_rejects_unknown_kid_without_signer_fallback() -> None:
     from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
     envelope = MagicMock()
+    envelope.expires_at = None
     envelope.signature.kid = "unknown-kid"
     jwks = MagicMock()
     jwks.get_pem.return_value = None

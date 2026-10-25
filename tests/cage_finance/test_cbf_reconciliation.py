@@ -609,15 +609,14 @@ def test_kms_signature_verified_before_commit() -> None:
         ),
         patch("src.gateway.governance.safety.cbf_engine._CBF_STRICT_MODE", False),
     ):
-        # Attempt commit with invalid signature (should fall back to self-reported in non-strict mode)
+        # Attempt commit with invalid signature (must fail closed even in non-strict mode)
         committed, message, _ = asyncio.run(
             cbf.atomic_verify_and_commit(
                 "execute_trade", {"amount": 100.0}, governance_signature="test_sig"
             )
         )
 
-    # In non-strict mode, it should fall back to self-reported balance and succeed
-    # (though this is logged as CRITICAL by _read_cbf_state_atomic)
-    assert committed is True, (
-        f"Expected fallback to self-reported balance to succeed, got: {message}"
+    assert committed is False, (
+        f"Expected invalid KMS signature to block commit, got: {message}"
     )
+    assert "reconciled snapshot signature invalid" in message
