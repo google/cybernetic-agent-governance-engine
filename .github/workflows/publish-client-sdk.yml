@@ -47,7 +47,29 @@ jobs:
       - name: Build CAGE Client SDK Wheel & Sdist
         run: |
           cd packages/cage-client
+          rm -rf dist
           uv build
+
+      - name: Publish CAGE Client SDK to GitHub Packages (GHCR)
+        env:
+          GH_ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-client/pyproject.toml", "rb"))["project"]["version"])')
+          IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/cage-client"
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          cat > packages/cage-client/Dockerfile.pkg <<'EOF'
+          FROM scratch
+          LABEL org.opencontainers.image.title="cage-client"
+          LABEL org.opencontainers.image.description="Lightweight LangGraph / LangChain PEP Client for CAGE Governance Gateway"
+          LABEL org.opencontainers.image.source="https://github.com/google/cybernetic-agent-governance-engine"
+          LABEL org.opencontainers.image.licenses="Apache-2.0"
+          COPY dist/ /dist/
+          EOF
+          docker build -f packages/cage-client/Dockerfile.pkg -t "${IMAGE}:${VERSION}" -t "${IMAGE}:latest" packages/cage-client
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:latest"
+          rm -f packages/cage-client/Dockerfile.pkg
 
       - name: Attach Wheels to GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3

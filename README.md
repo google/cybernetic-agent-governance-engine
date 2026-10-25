@@ -64,9 +64,36 @@ agent → gateway → [ FTRA → STPA → OPA → confidence → warrant → CBF
 
 - **Kernel** — domain- and vendor-neutral enforcement. Import boundaries are enforced in CI, not by convention.
 - **Domain plugins** — finance and healthcare ship complete configurations. Exactly one domain is active per process.
-- **Adapters** — LangGraph today, via [`packages/cage-client`](packages/cage-client/).
+- **Adapters** — LangGraph today, via [`packages/cage-client`](packages/cage-client/) ([GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine) · [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0)).
 
 Deeper material lives in [`docs/architecture/`](docs/architecture/), and the formal guarantees — control barrier functions, reachability analysis, the correctness invariants — are documented in [`docs/architecture/`](docs/architecture/) with proofs under [`proof/`](proof/).
+
+## Using with LangGraph (`cage-client`)
+
+Install the lightweight `cage-client` Policy Enforcement Point (PEP) SDK from [GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine), [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0), or directly via `pip` / `uv`:
+
+```bash
+pip install "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
+# Or install the pre-built release wheel directly:
+pip install https://github.com/google/cybernetic-agent-governance-engine/releases/download/v3.2.0/cage_client-0.2.0-py3-none-any.whl
+```
+
+Decorate any LangGraph node with `@cage_guard` to route tool execution through the CAGE Gateway:
+
+```python
+from cage_client import CageClient
+from cage_client.adapters.langgraph import cage_guard
+
+cage = CageClient(gateway_url="http://localhost:8080")
+
+
+@cage_guard(client=cage, action="execute_trade")
+async def trade_execution_node(state: dict) -> dict:
+    # Executes only when CAGE Gateway issues a signed ALLOW envelope
+    return {"trade_status": "EXECUTED"}
+```
+
+See [`packages/cage-client/README.md`](packages/cage-client/README.md) for full SDK documentation and [`docs/guides/langgraph_governance_tutorial.ipynb`](docs/guides/langgraph_governance_tutorial.ipynb) for an interactive walkthrough.
 
 ## When not to use this
 
