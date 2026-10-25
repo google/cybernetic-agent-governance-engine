@@ -65,10 +65,18 @@ ENV VIRTUAL_ENV=/app/.venv \
 #   whose adapter (src/integrations/telemetry_langfuse) imports langfuse at startup.
 RUN uv sync --frozen --no-dev --extra gateway --extra advisor --extra compliance --extra langfuse --no-install-project
 
-# Download spaCy large model via direct wheel URL (avoids CDN redirect failures).
-# Target the venv explicitly so the package lands in /app/.venv.
-RUN uv pip install --python /app/.venv --no-cache \
-    "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+# Install spaCy model via direct wheel URL (avoids CDN redirect failures).
+# Defaults to en_core_web_sm (~12 MB) for fast quickstart builds; pass
+# --build-arg SPACY_MODEL=en_core_web_lg for the 560 MB production model.
+# src/integrations/presidio/redactor.py automatically prefers lg when present.
+ARG SPACY_MODEL=en_core_web_sm
+ARG SPACY_MODEL_VERSION=3.8.0
+RUN case "${SPACY_MODEL}" in \
+      en_core_web_sm|en_core_web_md|en_core_web_lg) ;; \
+      *) echo "Unsupported SPACY_MODEL: ${SPACY_MODEL}" >&2; exit 1 ;; \
+    esac \
+    && uv pip install --python /app/.venv --no-cache \
+    "https://github.com/explosion/spacy-models/releases/download/${SPACY_MODEL}-${SPACY_MODEL_VERSION}/${SPACY_MODEL}-${SPACY_MODEL_VERSION}-py3-none-any.whl"
 
 # Copy Source Code
 COPY src/__init__.py /app/src/__init__.py

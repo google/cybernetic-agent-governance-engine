@@ -5,6 +5,31 @@
   "recorded_date": "2026-10-12",
   "status": "STEP1_VERIFIED",
   "claim_boundary": "Cross-boundary Step 1 qualification over frozen Phase 3 v0.2 wire contract (/cage/validate, 37-field CageAuthorityDetermineRequest) and CAGE Path 1 (ConsequenceGateway + dispatch_actuation) and Path 2 (FriaTier + routing_seal + revalidate_post_hitl) enforcement.",
+  "provenance": {
+    "schema_version": "cage-conformance-provenance/1.0",
+    "adapter_under_test": {
+      "provider_id": "provider_01",
+      "adapter_author_org": "Google LLC",
+      "counterparty_org": "FlowSignal",
+      "adapter_version": "0.2.0",
+      "adapter_commit": "5595a82ef907fec25aec7ccc8ed5832303bd9f26",
+      "contract_profile": "flowsignal-v0.2"
+    },
+    "runner": {
+      "runner_org": "Google LLC",
+      "runner_identity": "cage-maintainer-harness",
+      "identity_proof": "NONE",
+      "oidc_issuer": null,
+      "oidc_subject": null,
+      "oidc_token_sha256": null,
+      "cage_conformance_version": "0.1.0",
+      "cage_commit": "5595a82ef907fec25aec7ccc8ed5832303bd9f26",
+      "timestamp_utc": "2026-10-12T00:00:00Z"
+    },
+    "verification_posture": "AUTHOR_SELF_TEST",
+    "independent_of_author": false,
+    "third_party_independent": false
+  },
   "flowsignal_baseline": {
     "candidate_package": "docs/partners/provider_01/FlowSignal-CAGE-Phase3-v0.2-Candidate.zip",
     "candidate_baseline_commit": "87fc133828ca9e8c16a9bda425aa508aa661469e",

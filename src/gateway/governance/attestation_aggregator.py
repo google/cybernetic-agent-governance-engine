@@ -73,6 +73,24 @@ def _load_attestation_provider(name: str) -> AttestationProvider:
 
         return Provider05BlueprintProvider.from_env()
 
+    import importlib.metadata
+
+    for ep in importlib.metadata.entry_points(group="cage.attestation_providers"):
+        if ep.name.strip().lower() == normalized:
+            target = ep.load()
+            if isinstance(target, type) and hasattr(target, "from_env"):
+                instance = target.from_env()
+            elif callable(target):
+                instance = target()
+            else:
+                instance = target
+            if not isinstance(instance, AttestationProvider):
+                raise TypeError(
+                    f"Entry point {ep.name!r} in group 'cage.attestation_providers' "
+                    f"returned {type(instance)!r}, which does not implement AttestationProvider"
+                )
+            return instance
+
     raise ValueError(
         f"Unknown attestation provider: '{name}'. Supported: provider_02, provider_05"
     )

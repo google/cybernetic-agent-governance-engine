@@ -33,7 +33,7 @@ import hashlib
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 class ExecutionStatus(str, Enum):
@@ -132,6 +132,7 @@ class EvidenceSeal:
     error: str | None = None
 
 
+@runtime_checkable
 class NormativeProvider(Protocol):
     """3-endpoint contract matching §2.5.2 of EXTENSIBILITY_ARCHITECTURE.md.
 

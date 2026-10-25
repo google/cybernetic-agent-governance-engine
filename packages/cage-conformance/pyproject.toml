@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cage-conformance"
+version = "0.1.0"
+description = "Standalone black-box conformance runner and attributable provenance verifier for CAGE governance and partner integrations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Google LLC" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "cryptography>=41.0.0",
+]
+
+[project.scripts]
+cage-conformance = "cage_conformance.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/google/cybernetic-agent-governance-engine"
+Repository = "https://github.com/google/cybernetic-agent-governance-engine"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cage_conformance = ["py.typed", "vectors/*.json"]

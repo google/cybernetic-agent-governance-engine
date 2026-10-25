@@ -276,6 +276,24 @@ def get_estate_provider(name: str | None = None) -> EstateProvider:
 
         return Provider09EstateProvider.from_env()
 
+    import importlib.metadata
+
+    for ep in importlib.metadata.entry_points(group="cage.estate_providers"):
+        if ep.name.strip().lower() == provider_name:
+            target = ep.load()
+            if isinstance(target, type) and hasattr(target, "from_env"):
+                instance = target.from_env()
+            elif callable(target):
+                instance = target()
+            else:
+                instance = target
+            if not isinstance(instance, EstateProvider):
+                raise TypeError(
+                    f"Entry point {ep.name!r} in group 'cage.estate_providers' "
+                    f"returned {type(instance)!r}, which does not implement EstateProvider"
+                )
+            return instance
+
     raise ValueError(
         f"Unknown estate provider: {provider_name!r}. "
         f"Available providers: {list(_VALID_PROVIDERS)}."

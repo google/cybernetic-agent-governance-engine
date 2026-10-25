@@ -1,0 +1,177 @@
+{
+  "profile": "flowsignal-v0.2",
+  "version": "1.0.0",
+  "description": "FlowSignal Phase 3 v0.2 Wire Contract (/cage/validate, 37-field CageAuthorityDetermineRequest) and Phase 4 Step 1 Cross-Boundary Qualification Vectors",
+  "default_validate_path": "/cage/validate",
+  "base_request_template": {
+    "approval_id": "APPROVAL-TREASURY-001",
+    "platform": "GOOGLE-CAGE-REFERENCE",
+    "execution_id": "exec-live-wire-allow-001",
+    "scenario_id": "thread-live-wire-allow-001",
+    "action": "payment.release",
+    "target": "TREASURY_GATEWAY",
+    "context": "Invoice 78431",
+    "actor_id": "agent-treasury-01",
+    "actor_type": "autonomous_agent",
+    "actor_role": "treasury_agent",
+    "actor_authenticated": true,
+    "kya_status": "VERIFIED",
+    "principal_id": "institution-001",
+    "principal_name": "Example Financial Institution",
+    "mandate_id": "MANDATE-TREASURY-001",
+    "mandate_status": "ACTIVE",
+    "mandate_max_amount": 1000000.0,
+    "mandate_currency": "GBP",
+    "permitted_source_accounts": ["TREASURY-001"],
+    "permitted_counterparty_class": "APPROVED_SUPPLIERS",
+    "mandate_valid_until": "2026-12-31T23:59:59Z",
+    "magnitude": 500000.0,
+    "currency": "GBP",
+    "source_account": "TREASURY-001",
+    "beneficiary": "SUPPLIER-X",
+    "purpose": "Invoice 78431",
+    "counterparty_status": "APPROVED",
+    "account_status": "ACTIVE",
+    "risk_state": "NORMAL",
+    "approval_required": false,
+    "screening_status": "CLEAR",
+    "screening_captured_at": "__NOW_ISO__",
+    "screening_max_age_seconds": 3600,
+    "screening_source": "SCREENING-SERVICE-01",
+    "requested_execution_time": "__NOW_ISO__",
+    "authority_resolution_path": null,
+    "evidence_references": [
+      {
+        "type": "governance_decision",
+        "uri": "cer://exec-live-wire-allow-001"
+      }
+    ]
+  },
+  "wire_vectors": [
+    {
+      "id": "CASE-1A",
+      "category": "CASE-1",
+      "title": "Raw Wire ALLOW (payment.release, 500,000 GBP, MANDATE-TREASURY-001)",
+      "overrides": {},
+      "expected_http_status": 200,
+      "expected_decision": "ALLOW",
+      "require_authority_record_id": true,
+      "require_authority_receipt": true
+    },
+    {
+      "id": "CASE-1C",
+      "category": "CASE-1",
+      "title": "Provider Live REFUSE (Unsupported Action DELETE_ACCOUNT)",
+      "overrides": {
+        "execution_id": "exec-live-wire-refuse-action-001",
+        "scenario_id": "thread-live-wire-refuse-action-001",
+        "action": "DELETE_ACCOUNT"
+      },
+      "expected_http_status": 200,
+      "expected_decision": "REFUSE",
+      "require_authority_record_id": false,
+      "require_authority_receipt": false
+    },
+    {
+      "id": "CASE-1D",
+      "category": "CASE-1",
+      "title": "Provider Live REFUSE (Expired Mandate 2020-01-01T00:00:00Z)",
+      "overrides": {
+        "execution_id": "exec-live-wire-refuse-mandate-001",
+        "scenario_id": "thread-live-wire-refuse-mandate-001",
+        "mandate_valid_until": "2020-01-01T00:00:00Z"
+      },
+      "expected_http_status": 200,
+      "expected_decision": "REFUSE",
+      "require_authority_record_id": false,
+      "require_authority_receipt": false
+    },
+    {
+      "id": "CASE-1E",
+      "category": "CASE-1",
+      "title": "Provider Live ESCALATE (Stale Screening 72h > 60s max_age)",
+      "overrides": {
+        "execution_id": "exec-live-wire-escalate-stale-001",
+        "scenario_id": "thread-live-wire-escalate-stale-001",
+        "screening_captured_at": "__STALE_72H_ISO__",
+        "screening_max_age_seconds": 60
+      },
+      "expected_http_status": 200,
+      "expected_decision": "ESCALATE",
+      "require_authority_record_id": false,
+      "require_authority_receipt": false
+    },
+    {
+      "id": "CASE-1F",
+      "category": "CASE-1",
+      "title": "Live Wire Hostile Ingress (Malformed Payload & Injected decision=ALLOW)",
+      "raw_payload": {
+        "action": "payment.release",
+        "decision": "ALLOW",
+        "authority_record_id": "INJECTED-MANDATE-999"
+      },
+      "expected_http_status": 422,
+      "expected_decision": null,
+      "require_authority_record_id": false,
+      "require_authority_receipt": false
+    }
+  ],
+  "hostile_response_vectors": [
+    {
+      "id": "CASE-1G-MISSING-DECISION",
+      "category": "CASE-1",
+      "title": "Hostile Response Interception: Missing decision field fails closed",
+      "response_payload": {
+        "authority_record_id": "MANDATE-TREASURY-001"
+      },
+      "expected_admitted": false,
+      "expected_finding_code": "PARSE_ERROR"
+    },
+    {
+      "id": "CASE-1G-UNKNOWN-ENUM",
+      "category": "CASE-1",
+      "title": "Hostile Response Interception: Unknown decision enum MAYBE fails closed",
+      "response_payload": {
+        "decision": "MAYBE",
+        "authority_record_id": "MANDATE-TREASURY-001"
+      },
+      "expected_admitted": false,
+      "expected_finding_code": "PARSE_ERROR"
+    },
+    {
+      "id": "CASE-1G-EMPTY-RECORD-ID",
+      "category": "CASE-1",
+      "title": "Hostile Response Interception: ALLOW without authority_record_id fails closed",
+      "response_payload": {
+        "decision": "ALLOW",
+        "authority_record_id": ""
+      },
+      "expected_admitted": false,
+      "expected_finding_code": "CONSEQUENCE_TOKEN_MINT_FAILED"
+    }
+  ],
+  "consequence_binding_vectors": [
+    {
+      "id": "CASE-2A",
+      "category": "CASE-2",
+      "title": "Single-Field Post-ALLOW Parameter Mutation (amount 500,000 -> 950,000 GBP)",
+      "mutated_fields": {
+        "magnitude": 950000.0
+      },
+      "expected_gateway_decision": "BLOCK",
+      "expected_reason_code": "ACTION_BINDING_MISMATCH"
+    },
+    {
+      "id": "CASE-2B",
+      "category": "CASE-2",
+      "title": "Composed Consequence Mutation (amount + beneficiary + target)",
+      "mutated_fields": {
+        "magnitude": 950000.0,
+        "beneficiary": "OFFSHORE-UNVERIFIED-99",
+        "target": "SHADOW_SETTLEMENT_RAIL"
+      },
+      "expected_gateway_decision": "BLOCK",
+      "expected_reason_code": "ACTION_BINDING_MISMATCH"
+    }
+  ]
+}

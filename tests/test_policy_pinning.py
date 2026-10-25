@@ -240,11 +240,42 @@ def test_serialization_float_coercion_consistency():
 
 
 def test_policy_version_get_endpoint(registry):
-    """GET /policy-version should return the active hash."""
+    """GET /policy-version should return policy_version_id, active_region, and active_hash."""
     client = TestClient(governance_app, raise_server_exceptions=False)
     resp = client.get("/policy-version")
     assert resp.status_code == 200
-    assert resp.json()["active_hash"] == registry.active_hash
+    data = resp.json()
+    assert data["active_hash"] == registry.active_hash
+    assert data["policy_version_id"] == registry.active_hash[:16]
+    assert data["active_region"] == registry.active_region
+
+
+def test_ingest_policy_post_endpoint():
+    """POST /ingest-policy should translate an external spec and return policy_version_id."""
+    client = TestClient(governance_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/ingest-policy",
+        json={
+            "spec": {
+                "behaviorDeclarations": [
+                    {
+                        "id": "ACS-001",
+                        "action": "execute_trade",
+                        "effect": "deny",
+                        "condition": "amount > 50000",
+                    }
+                ]
+            }
+        },
+    )
+    assert resp.status_code in (200, 422)
+    data = resp.json()
+    assert data["format_detected"] == "acs"
+    assert isinstance(data["policy_version_id"], str)
+    assert len(data["policy_version_id"]) == 16
+    assert "artifacts" in data
+    assert "warnings" in data
+    assert "errors" in data
 
 
 @pytest.mark.asyncio

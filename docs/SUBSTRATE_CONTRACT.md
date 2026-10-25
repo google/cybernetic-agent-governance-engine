@@ -32,8 +32,6 @@ POST /governance/ingest-policy
 Content-Type: application/json
 ```
 
-> **Status: Specification Only.** This endpoint is not yet implemented in the gateway. The internal policy translation module exists at `src/gateway/governance/ingress/policy_translator.py` but no HTTP route has been created.
-
 Accepts any supported policy specification format and returns compiled enforcement
 artifacts plus a `policy_version_id` for pinning.
 

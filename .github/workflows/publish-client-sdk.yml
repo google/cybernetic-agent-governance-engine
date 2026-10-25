@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Publish CAGE Client SDK
+name: Publish CAGE Client & Conformance SDKs
 
 on:
   push:
     tags:
       - 'client-v*'
+      - 'conformance-v*'
   workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   build-and-publish:
@@ -44,38 +46,65 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify cage-conformance proof sync
+        run: python3 scripts/check_conformance_sync.py
+
       - name: Build CAGE Client SDK Wheel & Sdist
         run: |
           cd packages/cage-client
           rm -rf dist
           uv build
 
-      - name: Publish CAGE Client SDK to GitHub Packages (GHCR)
+      - name: Build CAGE Conformance SDK Wheel & Sdist
+        run: |
+          cd packages/cage-conformance
+          rm -rf dist
+          uv build
+
+      - name: Publish CAGE Client & Conformance SDKs to GitHub Packages (GHCR)
         env:
           GH_ACTOR: ${{ github.actor }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-client/pyproject.toml", "rb"))["project"]["version"])')
-          IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/cage-client"
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-          cat > packages/cage-client/Dockerfile.pkg <<'EOF'
+
+          for PKG in cage-client cage-conformance; do
+            VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('packages/${PKG}/pyproject.toml', 'rb'))['project']['version'])")
+            DESC=$(python3 -c "import tomllib; print(tomllib.load(open('packages/${PKG}/pyproject.toml', 'rb'))['project']['description'])")
+            IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/${PKG}"
+            cat > "packages/${PKG}/Dockerfile.pkg" <<EOF
           FROM scratch
-          LABEL org.opencontainers.image.title="cage-client"
-          LABEL org.opencontainers.image.description="Lightweight LangGraph / LangChain PEP Client for CAGE Governance Gateway"
+          LABEL org.opencontainers.image.title="${PKG}"
+          LABEL org.opencontainers.image.description="${DESC}"
           LABEL org.opencontainers.image.source="https://github.com/google/cybernetic-agent-governance-engine"
           LABEL org.opencontainers.image.licenses="Apache-2.0"
           COPY dist/ /dist/
           EOF
-          docker build -f packages/cage-client/Dockerfile.pkg -t "${IMAGE}:${VERSION}" -t "${IMAGE}:latest" packages/cage-client
-          docker push "${IMAGE}:${VERSION}"
-          docker push "${IMAGE}:latest"
-          rm -f packages/cage-client/Dockerfile.pkg
+            docker build -f "packages/${PKG}/Dockerfile.pkg" -t "${IMAGE}:${VERSION}" -t "${IMAGE}:latest" "packages/${PKG}"
+            docker push "${IMAGE}:${VERSION}"
+            docker push "${IMAGE}:latest"
+            rm -f "packages/${PKG}/Dockerfile.pkg"
+          done
+
+      - name: Publish to PyPI via Trusted Publisher (OIDC)
+        if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true'
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.12.4
+        with:
+          packages-dir: packages/cage-client/dist/
+
+      - name: Publish cage-conformance to PyPI via Trusted Publisher (OIDC)
+        if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true'
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.12.4
+        with:
+          packages-dir: packages/cage-conformance/dist/
 
       - name: Attach Wheels to GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        if: startsWith(github.ref, 'refs/tags/client-v')
+        if: startsWith(github.ref, 'refs/tags/client-v') || startsWith(github.ref, 'refs/tags/conformance-v')
         with:
-          files: packages/cage-client/dist/*
+          files: |
+            packages/cage-client/dist/*
+            packages/cage-conformance/dist/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,43 @@
+{
+  "profile": "trace-v1",
+  "version": "1.0.0",
+  "description": "Canonical GOVERNANCE_TRACE vectors exercising the 7 formal trace_conformance rules",
+  "conformant_trace": [
+    {
+      "type": "GOVERNANCE_TRACE",
+      "schema_version": 1,
+      "profile": "FULL",
+      "governed": true,
+      "phase": "SEAL_ISSUED",
+      "verdict": "ALLOW",
+      "seal_present": true,
+      "seal_ref": "seal-allow-0001-abcd1234",
+      "plan": [
+        ["ftra", 1],
+        ["stpa", 1],
+        ["confidence", 1],
+        ["opa", 1],
+        ["consensus", 1],
+        ["causal", 1],
+        ["cbf", 2],
+        ["fiscal", 2]
+      ],
+      "outcomes": [
+        ["ftra", "PASS"],
+        ["stpa", "PASS"],
+        ["confidence", "PASS"],
+        ["opa", "PASS"],
+        ["consensus", "PASS"],
+        ["causal", "PASS"],
+        ["cbf", "PASS"],
+        ["fiscal", "PASS"]
+      ]
+    },
+    {
+      "type": "GOVERNANCE_TRACE",
+      "schema_version": 1,
+      "phase": "EXECUTED",
+      "seal_ref": "seal-allow-0001-abcd1234"
+    }
+  ]
+}

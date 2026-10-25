@@ -1,3 +1,11 @@
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> **Partner Integration Status & Non-Endorsement Header**
+> - **Authorship:** Partner-authored or bilateral integration specification material; **not Google-authored** product documentation.
+> - **Endorsement:** **Not Google-endorsed.** Hosting in this repository is for technical interoperability and conformance reference only and does not constitute a Google certification, qualification, or regulatory endorsement.
+> - **Contribution & License:** Contributed under the repository CLA and licensed under Apache-2.0.
+> - **Verification Status:** `AUTHOR_SELF_TEST` — **not independently verified** (`independent_of_author: false`, `third_party_independent: false`). Independent or counterparty verification requires executing `cage-conformance` with verified OIDC runner provenance.
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 # NVIDIA Sentry / DOCA DPU Partner Integration (actuator_03)
 
 > **Architecture Standard — Generic in Code, Specific in Prose.**  

@@ -54,15 +54,26 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from proof.model import (
-    KERNEL_TIERS,
-    PHASES,
-    PROFILES,
-    UNGOVERNED_TIERS,
-    State,
-    reachable_over,
-    runs_under_profile,
-)
+if __package__:
+    from .model import (
+        KERNEL_TIERS,
+        PHASES,
+        PROFILES,
+        UNGOVERNED_TIERS,
+        State,
+        reachable_over,
+        runs_under_profile,
+    )
+else:  # pragma: no cover
+    from proof.model import (
+        KERNEL_TIERS,
+        PHASES,
+        PROFILES,
+        UNGOVERNED_TIERS,
+        State,
+        reachable_over,
+        runs_under_profile,
+    )
 
 TRACE_EVENT_TYPE = "GOVERNANCE_TRACE"
 TRACE_SCHEMA_VERSION = 1

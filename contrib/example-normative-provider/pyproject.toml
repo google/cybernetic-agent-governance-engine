@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "example-normative-provider"
+version = "0.1.0"
+description = "Minimal reference skeleton for an external CAGE NormativeProvider plugin registered via entry_points"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.entry-points."cage.normative_providers"]
+example_partner = "example_normative_provider:ExampleNormativeProvider"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/example_normative_provider"]

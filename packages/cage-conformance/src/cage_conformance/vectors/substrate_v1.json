@@ -1,0 +1,25 @@
+{
+  "profile": "substrate-v1",
+  "version": "1.0.0",
+  "description": "CAGE Substrate Contract v1.0 HTTP Endpoint Conformance Vectors",
+  "endpoints": [
+    {
+      "id": "SUBSTRATE-POLICY-VERSION",
+      "category": "SUBSTRATE-CONTRACT",
+      "title": "GET /governance/policy-version returns active_hash",
+      "method": "GET",
+      "path": "/governance/policy-version",
+      "expected_http_status": 200,
+      "required_keys": ["active_hash"]
+    },
+    {
+      "id": "SUBSTRATE-JWKS",
+      "category": "SUBSTRATE-CONTRACT",
+      "title": "GET /governance/jwks returns RFC 7517 JWK Set",
+      "method": "GET",
+      "path": "/governance/jwks",
+      "expected_http_status": 200,
+      "required_keys": ["keys"]
+    }
+  ]
+}

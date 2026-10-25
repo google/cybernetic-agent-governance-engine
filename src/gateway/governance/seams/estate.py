@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 class CloudOpsReversibility(str, Enum):
@@ -242,6 +242,7 @@ class TopologySnapshot:
         return self.status is EstateQueryStatus.OK and self.error is None
 
 
+@runtime_checkable
 class EstateProvider(Protocol):
     """Infrastructure estate context provider seam (Layer 1 ↔ Layer 3).
 

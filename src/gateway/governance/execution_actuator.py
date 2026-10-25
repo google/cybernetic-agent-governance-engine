@@ -202,6 +202,24 @@ def _load_actuator(name: str) -> ExecutionActuator:
 
         return Actuator03Adapter.from_env()
 
+    import importlib.metadata
+
+    for ep in importlib.metadata.entry_points(group="cage.execution_actuators"):
+        if ep.name.strip().lower() == normalized:
+            target = ep.load()
+            if isinstance(target, type) and hasattr(target, "from_env"):
+                instance = target.from_env()
+            elif callable(target):
+                instance = target()
+            else:
+                instance = target
+            if not isinstance(instance, ExecutionActuator):
+                raise TypeError(
+                    f"Entry point {ep.name!r} in group 'cage.execution_actuators' "
+                    f"returned {type(instance)!r}, which does not implement ExecutionActuator"
+                )
+            return instance
+
     raise ValueError(
         f"Unknown execution actuator: '{name}'. Supported: actuator_01, actuator_02, actuator_03"
     )

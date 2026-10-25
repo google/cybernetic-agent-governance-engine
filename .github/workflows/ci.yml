@@ -231,6 +231,17 @@ jobs:
         # Violations indicate a regression in the plugin seam architecture.
         run: |
           uv run python scripts/check_import_boundaries.py --verbose
+      - name: Conformance package sync & zero-src/ isolation check
+        # Ensures packages/cage-conformance stays byte-for-byte synced with proof/
+        # and imports nothing from src/.
+        run: |
+          uv run python scripts/check_conformance_sync.py
+      - name: Partner content status header check
+        # Ensures every document under docs/partners/ carries the mandatory
+        # non-endorsement & verification posture header (or sibling header for
+        # MANIFEST.sha256-locked directories).
+        run: |
+          uv run python scripts/check_partner_headers.py
       - name: Domain literal check (G6 - No domain action names in kernel/integrations)
         # C7: kernel and integrations must be domain-agnostic.
         # Domain action names (execute_trade, reverse_trade) belong in domain plugins.

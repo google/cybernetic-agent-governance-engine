@@ -572,6 +572,25 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
         return Provider08NormativeProvider.from_env()
 
+    # External partner SPI — discovered via importlib.metadata.entry_points
+    import importlib.metadata
+
+    for ep in importlib.metadata.entry_points(group="cage.normative_providers"):
+        if ep.name.strip().lower() == provider_name:
+            target = ep.load()
+            if isinstance(target, type) and hasattr(target, "from_env"):
+                instance = target.from_env()
+            elif callable(target):
+                instance = target()
+            else:
+                instance = target
+            if not isinstance(instance, NormativeProvider):
+                raise TypeError(
+                    f"Entry point {ep.name!r} in group 'cage.normative_providers' "
+                    f"returned {type(instance)!r}, which does not implement NormativeProvider"
+                )
+            return instance
+
     valid = [
         *_PROVIDERS.keys(),
         "provider_01",

@@ -567,12 +567,50 @@ async def _emit_refusal_receipt(
         )
 
 
+class IngestPolicyRequest(BaseModel):
+    """Payload for POST /governance/ingest-policy."""
+
+    spec: dict[str, Any]
+
+
+@governance_app.post("/ingest-policy")
+async def ingest_policy_endpoint(body: IngestPolicyRequest) -> JSONResponse:
+    """Translate an external policy specification into compiled enforcement artifacts."""
+    from src.gateway.governance.ingress.policy_translator import translate_policy
+
+    bundle = translate_policy(body.spec)
+    status_code = 200 if bundle.success else 422
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "policy_version_id": bundle.policy_version_id,
+            "format_detected": bundle.format_detected,
+            "artifacts": {
+                "opa_content": bundle.opa_content,
+                "nemo_content": bundle.nemo_content,
+                "python_content": bundle.python_content,
+                "langgraph_content": bundle.langgraph_content,
+            },
+            "warnings": bundle.warnings,
+            "errors": bundle.errors,
+        },
+    )
+
+
 @governance_app.get("/policy-version")
 async def get_policy_version_endpoint() -> JSONResponse:
     """Retrieve the active policy hash for session pinning verification."""
     from src.gateway.governance.constants import ControlRegistry
 
-    return JSONResponse(content={"active_hash": ControlRegistry().active_hash})
+    registry = ControlRegistry()
+    active_hash = registry.active_hash
+    return JSONResponse(
+        content={
+            "policy_version_id": active_hash[:16],
+            "active_region": registry.active_region,
+            "active_hash": active_hash,
+        }
+    )
 
 
 @governance_app.get("/jwks")
