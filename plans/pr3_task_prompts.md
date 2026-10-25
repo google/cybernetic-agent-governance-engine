@@ -35,7 +35,7 @@ flowchart LR
 
 ## Shared rules — include verbatim in every prompt
 ```text
-Repository: /Users/laah/Code/cybernetic-governance-engine (CAGE reference architecture).
+Repository: cybernetic-agent-governance-engine (CAGE reference architecture).
 Follow AGENTS.md at the repo root without exception. In particular:
 - Never commit to main. Create the branch named in this task from origin/main (lowercase kebab-case, ≤30 chars after prefix).
 - Conventional Commits: <type>(<scope>): <summary> ≤72 chars; breaking changes need "!" AND a "BREAKING CHANGE:" footer.

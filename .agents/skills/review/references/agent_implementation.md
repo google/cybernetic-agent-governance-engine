@@ -89,8 +89,7 @@ When consolidating multiple `{shard_output_file}` JSON documents into the final
 
 ## 4. Rendered Markdown Report Format
 
-When rendering `{output_file}` without the Google3 Blaze `review_report_cli`
-binary, format the report as follows:
+Render `{output_file}` using the following Markdown report format:
 
 ```markdown
 ## 🔍 AI Code Review Report

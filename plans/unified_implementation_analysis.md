@@ -73,7 +73,7 @@ The unified plan poses 6 open questions. Each is answered below strictly from co
 
 ### 3.1 The adapter is explicitly not production-ready
 
-The package's own [`README.md:1-5`](../tmp/cage-provider_01-adapter-v0.3/README.md:1) states its purpose plainly: *"This package is the lightweight Python adapter Lars requested for **CAGE-side fidelity review**."* Section "Review requested from Lars" ([README.md:53-63](../tmp/cage-provider_01-adapter-v0.3/README.md:53)) asks for review of contract *fidelity* — method signatures, request/response treatment, routing-threshold modeling — explicitly **not** a request to endorse the architecture for production use. Treating this artifact as a drop-in Phase 1 deliverable misreads its intended scope.
+The package's own `README.md:1-5` states its purpose plainly: *"This package is the lightweight Python adapter the maintainer requested for **CAGE-side fidelity review**."* Section "Review requested from the maintainer" ([README.md:53-63](../tmp/cage-provider_01-adapter-v0.3/README.md:53)) asks for review of contract *fidelity* — method signatures, request/response treatment, routing-threshold modeling — explicitly **not** a request to endorse the architecture for production use. Treating this artifact as a drop-in Phase 1 deliverable misreads its intended scope.
 
 ### 3.2 Return-type incompatibility with the kernel's `NormativeProvider` contract
 

@@ -209,7 +209,7 @@ def main() -> int:
             "  - If recently created, allow time for DNS TTL propagation (typically 5-300 seconds)."
         )
         print(
-            "  - For maintainers using Argolis, confirm the 24h CAI sync and go/argolis delegation completed."
+            "  - Confirm that parent-zone NS delegation to your Cloud DNS managed zone has completed."
         )
 
     # 2. Check SSL Certificate (if requested)

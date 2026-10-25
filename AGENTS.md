@@ -145,7 +145,7 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
     --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
   ```
 - **Local/agnostic target**: `./deploy_all.sh --target agnostic --env dev`
-- **DNS & Custom Domains (Argolis / Altostrat Sandbox Option)**: Deploying to Argolis / Altostrat (`altostrat.com`) is an internal Google sandbox option for dev and staging postures, not a generic CAGE or GCP deployment rule. When utilizing this option, subdomains under `altostrat.com` must be managed in Cloud DNS and delegated via `go/argolis` (no external registrars, vanity domains, or Cloud Domains purchases). Managed zones must be persistent foundational resources to avoid orphaned zone takeover.
+- **DNS & Custom Domains**: When provisioning custom domains in cloud sandbox or staging environments, subdomains must be managed in Cloud DNS with upstream NS delegation rather than ephemeral workload stacks. Managed zones must be persistent foundational resources to avoid orphaned zone takeover.
 - `deployment/terraform/` was historical reference (directory has been removed from the repository); active IaC lives exclusively under `infra/`.
 
 ---

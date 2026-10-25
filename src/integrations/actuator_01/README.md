@@ -79,9 +79,7 @@ environment variables:
 `ARCHYTAN_ASSERTION_V1:` (assertion signing) and `ARCHYTAN_QUORUM_V1:`
 (quorum signing) embedded in wire signatures are load-bearing in the
 wire protocol. This makes vendor anonymization unavailable for this partner
-without a coordinated protocol change. See
-[`docs/meetings/luis_actuator_01_response.md`](../../../docs/meetings/luis_actuator_01_response.md)
-for wire-protocol collaboration history.
+without a coordinated protocol change.
 
 ### Envelope Structure
 

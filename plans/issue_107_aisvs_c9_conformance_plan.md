@@ -200,14 +200,14 @@ ScoringCategory` that derives the category from observable fields:
   profile would deny if requested directly.
 
 Discriminating the first two requires knowing whether the truncating action
-*should* have been benign, which is exactly the judgement Lars had to make by
+*should* have been benign, which is exactly the judgement the maintainer had to make by
 hand when he inspected `critical_path=['s1']`. Passing that in as explicit
 fixture metadata is legitimate and keeps the judgement visible; hardcoding the
 answer as the assertion is not.
 
 The suite's `scenario.md` at v1.2.0 defines four categories. **Encoding only
 three would report a reachability pass for every case the fail-closed default
-catches** — the exact error Lars nearly made on VEC-001.
+catches** — the exact error the maintainer nearly made on VEC-001.
 
 | Category | Meaning |
 |---|---|

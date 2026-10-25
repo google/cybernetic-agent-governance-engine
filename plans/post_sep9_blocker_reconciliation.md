@@ -1,7 +1,7 @@
 # Post-Sep-9 Blocker Reconciliation
 
 **Date:** 2026-09-09, after the NexArt sync
-**Inputs:** `telemetry_pipeline_analysis.md` (v2) · [`plans/provider_02_cer_unblocked_work.md`](provider_02_cer_unblocked_work.md) · [`docs/meetings/nexart_sep9_prep.md`](../docs/meetings/nexart_sep9_prep.md)
+**Inputs:** `telemetry_pipeline_analysis.md` (v2) · [`plans/provider_02_cer_unblocked_work.md`](provider_02_cer_unblocked_work.md)
 **Question:** with the meeting done, what is still blocked?
 
 ---

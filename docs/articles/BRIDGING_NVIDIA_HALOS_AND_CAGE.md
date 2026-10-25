@@ -246,8 +246,8 @@ As physical AI moves into hospitals, factories, city streets, and critical infra
 ---
 
 ### Resources & Open Source References
-* **CAGE Repository & Physical AI Framework:** [`docs/architecture/PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md`](file:///home/admin_laah_altostrat_com/cybernetic-governance-engine/docs/architecture/PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md)
-* **Physical AI Domain Plugin:** [`src/cage_physical_ai/`](file:///home/admin_laah_altostrat_com/cybernetic-governance-engine/src/cage_physical_ai/)
+* **CAGE Repository & Physical AI Framework:** [`docs/architecture/PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md`](../architecture/PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md)
+* **Physical AI Domain Plugin:** [`src/cage_physical_ai/`](../../src/cage_physical_ai/)
 * **Foundational Architecture:** Krti Tallam (2026), *A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents*, arXiv:2606.12320.
 * **Control Barrier Functions:** Ames, A. D., et al. (2019), *Control Barrier Functions: Theory and Applications*, European Control Conference.
 * **Simplex Architecture:** Sha, L. (2001), *Using Simplex to Build Dependable Systems Using Unreliable Components*, IEEE Software.

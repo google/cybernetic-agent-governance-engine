@@ -1049,8 +1049,8 @@ First stable reference implementation with full security hardening scope.
 
 ---
 
-[3.0.0]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.2...v3.0.0
-[2.1.2]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.1...v2.1.2
-[v2.1.1]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.0...v2.1.1
-[v2.1.0]: https://github.com/google/cybernetic-governance-engine/compare/v2.0.0...v2.1.0
-[v2.0.0]: https://github.com/google/cybernetic-governance-engine/releases/tag/v2.0.0
+[3.0.0]: https://github.com/google/cybernetic-agent-governance-engine/compare/v2.1.2...v3.0.0
+[2.1.2]: https://github.com/google/cybernetic-agent-governance-engine/compare/v2.1.1...v2.1.2
+[v2.1.1]: https://github.com/google/cybernetic-agent-governance-engine/compare/v2.1.0...v2.1.1
+[v2.1.0]: https://github.com/google/cybernetic-agent-governance-engine/compare/v2.0.0...v2.1.0
+[v2.0.0]: https://github.com/google/cybernetic-agent-governance-engine/releases/tag/v2.0.0

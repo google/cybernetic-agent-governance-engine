@@ -39,10 +39,8 @@ respective releases. Documented here for transparency.
 **Please do not report security vulnerabilities through public GitHub issues.**
 
 To report a security vulnerability, please use the GitHub Security Advisory
-["Report a Vulnerability"](https://github.com/google/cybernetic-governance-engine/security/advisories/new)
-feature.
-
-Alternatively, you may email the maintainers directly. Please include:
+["Report a Vulnerability"](https://github.com/google/cybernetic-agent-governance-engine/security/advisories/new)
+feature. Please include:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce the issue

@@ -75,8 +75,8 @@ also exists and is **out of scope but must not be ignored** — see
 
 | # | Branch | Tip SHA | Author | Committed (UTC) | Local | Remote | Sync |
 |---|---|---|---|---|---|---|---|
-| 1 | `feat/provider-06-adapter` | `1f63d76f` | Lars Ahlfors | 2026-08-22 | ✅ | ✅ | in sync |
-| 2 | `refactor/ecosystem-anonymization` | `3f861d13` | Lars Ahlfors | 2026-08-24 | ✅ | ✅ | in sync |
+| 1 | `feat/provider-06-adapter` | `1f63d76f` | CAGE Maintainer | 2026-08-22 | ✅ | ✅ | in sync |
+| 2 | `refactor/ecosystem-anonymization` | `3f861d13` | CAGE Maintainer | 2026-08-24 | ✅ | ✅ | in sync |
 | 3 | `feat/flowsignal-provider-seam` | `1ee36941` | CAGE Bot | 2026-08-25 | ✅ | ✅ | in sync |
 
 All three exist **both locally and on `origin`**, and every local tip equals its
@@ -139,7 +139,7 @@ Equivalent to `git log --oneline main..<branch>`, reconstructed from reflogs.
 ```
 
 The tip commit `1ee36941` was amended once (`3f861d13 → df47020e → 1ee36941`)
-and authored by a distinct identity, **`CAGE Bot <cage-bot@laah-cybernetics.internal>`**.
+and authored by a distinct identity, **`CAGE Bot <cage-bot@example.com>`**.
 Note that `docs/POAM.md` line 105 cites the **pre-amend** SHA `df47020e` as the
 remediation commit — see [§7 Risk R5](#7-pre-merge-risks-and-required-remediations).
 
@@ -152,7 +152,7 @@ remediation commit — see [§7 Risk R5](#7-pre-merge-risks-and-required-remedia
 | Attribute | Value |
 |---|---|
 | Tip SHA | `1f63d76fd1331d88b16b9ec6300d1afd68050a59` |
-| Author | Lars Ahlfors `<ahlfors.lars@gmail.com>` |
+| Author | CAGE Maintainer `<maintainer@example.com>` |
 | Ahead / behind `main` | **2 / 0** |
 | Branch name conforms to AGENTS.md? | ✅ Yes — `feat/` + 20-char kebab-case description |
 | Risk level | **Low** |
@@ -203,7 +203,7 @@ live integration test plus provider aliases.
 | Attribute | Value |
 |---|---|
 | Tip SHA | `3f861d1324e7f210cf1d24246b3df2991c8f363a` |
-| Author | Lars Ahlfors `<ahlfors.lars@gmail.com>` |
+| Author | CAGE Maintainer `<maintainer@example.com>` |
 | Ahead / behind `main` | **4 / 0** (2 own + 2 inherited) |
 | Branch name conforms to AGENTS.md? | ✅ Yes — `refactor/` + 23-char kebab-case description |
 | Risk level | **Low–Medium** (rename-heavy; wide but shallow blast radius) |
@@ -242,7 +242,7 @@ isolates live-API tests so they cannot execute in PR CI (satisfying the
 | Attribute | Value |
 |---|---|
 | Tip SHA | `1ee36941b2d13635f4368c7d251e1929ea2de2ca` |
-| Author | **CAGE Bot** `<cage-bot@laah-cybernetics.internal>` (differs from the other two) |
+| Author | **CAGE Bot** `<cage-bot@example.com>` (differs from the other two) |
 | Ahead / behind `main` | **5 / 0** (1 own + 4 inherited) |
 | Branch name conforms to AGENTS.md? | ✅ Yes — `feat/` + 24-char kebab-case description |
 | Risk level | **High** — touches the governance hot path, compliance artifacts, and a POAM closure |
@@ -588,7 +588,7 @@ feat(governance): add FlowSignal provider seam and TLS hardening
 | **R3** | **Working-tree cleanliness unverified.** `git status` could not be run. 14 files are open in the editor, several of which are branch-3 files. | **Medium** | Run `git status --porcelain` first. Commit or stash before any rebase. |
 | **R4** | **`HEAD` is on `feat/flowsignal-provider-seam`, not `main`.** Any command assuming `main` is checked out will target the wrong branch. | **Medium** | Explicitly `git switch main` before step 1, and verify with `git branch --show-current`. |
 | **R5** | **POAM/OSCAL cite a SHA that will not exist.** `docs/POAM.md:105` records `df47020e`, already superseded by the amend to `1ee36941`, and squash will produce a third SHA. | **Medium** | Post-merge, update both `docs/POAM.md` and the OSCAL `remediation-commit` property to the final squash SHA within 2 business days. |
-| **R6** | **Author identity mismatch on branch 3.** Tip authored by `CAGE Bot <cage-bot@laah-cybernetics.internal>` rather than the human author of the other two. | **Low** | Confirm the bot identity is authorized under CODEOWNERS / DCO before merging. |
+| **R6** | **Author identity mismatch on branch 3.** Tip authored by `CAGE Bot <cage-bot@example.com>` rather than the human author of the other two. | **Low** | Confirm the bot identity is authorized under CODEOWNERS / DCO before merging. |
 | **R7** | **Stale remote branch may be confused for in-scope work.** `origin/refactor/anonymize-integrations` has a similar name to branch 2. | **Low** | See §8. Do not merge it; confirm and delete separately. |
 | **R8** | **`--admin` bypasses required reviews.** The requested `gh pr merge --squash --admin` overrides branch protection. | **Medium** | Use `--admin` only after CI is green. Never use it to bypass a *failing* check. |
 

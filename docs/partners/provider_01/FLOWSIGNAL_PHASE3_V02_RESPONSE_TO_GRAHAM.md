@@ -120,4 +120,4 @@ Please reach out if you need our updated reference fixtures or JCS test vectors 
 
 Best,
 
-Lars
+CAGE Maintainer

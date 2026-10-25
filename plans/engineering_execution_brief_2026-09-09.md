@@ -117,8 +117,8 @@ and [`__init__.py:28`](../src/integrations/__init__.py:28) documents
 `actuator_01/ — Downstream execution actuator`.
 
 **The partner has approved the re-scope.** This is documentation drift, not an
-unresolved partner issue. [`luis_actuator_01_response.md`](../docs/meetings/luis_actuator_01_response.md)
-records active wire-protocol collaboration on the actuator integration — domain
+unresolved partner issue. Partner wire-protocol sync notes
+record active wire-protocol collaboration on the actuator integration — domain
 tag corrected to `ARCHYTAN_QUORUM_V1:`, header corrected to
 `X-Archytan-Signatures`, both matched against the partner's own verification
 path. That level of detail is only reachable with a partner who has accepted the

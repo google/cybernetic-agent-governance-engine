@@ -292,8 +292,8 @@ Create:
 
 ## Next Actions (Immediate)
 
-1. **CAGE (Lars):** Begin Phase 1 schema extraction (estimated 3 days)
-2. **CAGE (Lars):** Send coordination email to Jeremy with:
+1. **CAGE Maintainer:** Begin Phase 1 schema extraction (estimated 3 days)
+2. **CAGE Maintainer:** Send coordination email to Partner Lead with:
    - Confirmation of Option 2A decision
    - Timeline proposal
    - Request for open question responses (Q1–Q4 above)

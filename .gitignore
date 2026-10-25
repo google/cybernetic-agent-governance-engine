@@ -196,6 +196,7 @@ local/
 .local/
 .maintainer/
 docs/internal/
+docs/meetings/
 *[cC][aA][gG][eE]_[aA][rR][xX][iI][vV]*
 *cage_arxiv*
 *CAGE_ARXIV*

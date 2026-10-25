@@ -11,9 +11,9 @@
 | [`provider_02_cer_unblocked_work.md`](provider_02_cer_unblocked_work.md) | CER read path, Phases 0–5 |
 | [`post_sep9_blocker_reconciliation.md`](post_sep9_blocker_reconciliation.md) | Evidence-chain gaps, blocker correction |
 | [`layer_inversion_remediation_plan.md`](layer_inversion_remediation_plan.md) | Partner adapter layer inversions, Phases 0–12 |
-| [`docs/meetings/nexart_sep9_prep.md`](../docs/meetings/nexart_sep9_prep.md) | Bundle shape decision, adapter domain leakage |
+| Partner CER sync notes (2026-09-09) | Bundle shape decision, adapter domain leakage |
 | [`cage_internal_blockers_implementation_plan.md`](cage_internal_blockers_implementation_plan.md) | `provider_04` → `actuator_01` retirement (added rev 2) |
-| [`docs/meetings/luis_actuator_01_response.md`](../docs/meetings/luis_actuator_01_response.md) | Confirms the actuator re-scope is partner-approved (added rev 2) |
+| Partner actuator sync notes (2026-09-09) | Confirms the actuator re-scope is partner-approved (added rev 2) |
 
 ---
 

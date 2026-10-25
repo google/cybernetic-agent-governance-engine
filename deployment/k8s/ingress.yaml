@@ -38,13 +38,13 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - gateway.laah.altostrat.com
+        - gateway.cage.example.com
       # cert-manager will create and manage this Secret automatically when the
       # cert-manager.io/cluster-issuer annotation is set above.
       # For manual TLS: create a Secret named 'cage-tls' with tls.crt and tls.key.
       secretName: cage-tls
   rules:
-    - host: gateway.laah.altostrat.com
+    - host: gateway.cage.example.com
       http:
         paths:
           - path: /

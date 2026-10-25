@@ -131,7 +131,7 @@ CAGE → mTLS handshake → envelope submission → 200 OK → ACCEPTED receipt
 
 ## 7. Contact Information
 
-**CAGE Technical Contact:** Lars Ahlfors  
+**CAGE Technical Contact:** CAGE Maintainer  
 **Integration Package:** `src/integrations/actuator_01/`  
 **Wire Protocol Documentation:** `src/integrations/actuator_01/README.md`
 

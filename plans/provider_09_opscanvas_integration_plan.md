@@ -2,7 +2,7 @@
 
 **Document ID:** PLAN-2026-PROV09-01  
 **Status:** DRAFT / PROPOSAL  
-**Author:** Lars Ahlfors  
+**Author:** CAGE Maintainer  
 **Target Package:** `src/integrations/provider_09/`  
 **Target Seams:** [`src/gateway/governance/seams/estate.py`](../src/gateway/governance/seams/estate.py) (primary, `EstateProvider`) · [`src/gateway/governance/seams/normative.py`](../src/gateway/governance/seams/normative.py) (optional) · [`src/gateway/governance/defer_queue.py`](../src/gateway/governance/defer_queue.py) · [`src/gateway/governance/ftra/`](../src/gateway/governance/ftra/)  
 **Classification:** Reference Architecture Partner Integration  

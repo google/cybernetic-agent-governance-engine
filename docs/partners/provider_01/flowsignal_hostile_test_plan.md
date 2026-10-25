@@ -524,8 +524,8 @@ Store in: `results/flowsignal-hostile-validation-<YYYY-MM-DD>/`
 
 ## Contact & Coordination
 
-- **CAGE Team Lead:** Lars (lars@example.com)
-- **FlowSignal Integration Lead:** Graham Brimage (graham@flowsignal.example)
+- **CAGE Team Lead:** CAGE Maintainer (maintainer@example.com)
+- **FlowSignal Integration Lead:** FlowSignal Integration Lead (integration@flowsignal.example)
 - **Slack Channel:** `#cage-flowsignal-integration`
 - **Status Cadence:** Daily standup during hostile validation window
 

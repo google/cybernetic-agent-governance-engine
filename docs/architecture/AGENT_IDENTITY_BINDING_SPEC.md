@@ -119,7 +119,7 @@ A DPoP proof is a signed JWT containing:
 {
   "jti": "550e8400-e29b-41d4-a716-446655440000",
   "htm": "POST",
-  "htu": "https://gateway.cage.altostrat.com/v1/evaluate",
+  "htu": "https://gateway.cage.example.com/v1/evaluate",
   "iat": 1726939200,
   "jkt": "fZI9TRd8LNX7p6M3yD0WYvgKa2klGvNM8xJ1NqQw8Zs"  // SHA-256 hash of TLS cert pubkey
 }
@@ -169,7 +169,7 @@ def create_dpop_proof(
     Args:
         signing_key: EC private key corresponding to the TLS certificate
         http_method: HTTP method (e.g., "POST")
-        http_uri: Target URI (e.g., "https://gateway.cage.altostrat.com/v1/evaluate")
+        http_uri: Target URI (e.g., "https://gateway.cage.example.com/v1/evaluate")
         tls_cert_der: DER-encoded TLS client certificate
         nonce: Optional server-provided nonce
 
@@ -276,7 +276,7 @@ The DPoP proof is presented in the `DPoP` HTTP header:
 
 ```http
 POST /v1/evaluate HTTP/1.1
-Host: gateway.cage.altostrat.com
+Host: gateway.cage.example.com
 DPoP: eyJhbGciOiJFUzI1NiIsInR5cCI6ImRwb3Arand0IiwiandrIjp7Imt0eSI6...
 Content-Type: application/json
 ```
@@ -313,8 +313,8 @@ async def dpop_validation_middleware(request: Request, call_next):
 
 In Kubernetes/serverless environments, agent pods are continuously recreated with new SPIFFE IDs:
 ```
-spiffe://cage.altostrat.com/agents/finance/trading-bot-abc123  # Pod 1 (terminated)
-spiffe://cage.altostrat.com/agents/finance/trading-bot-xyz789  # Pod 2 (replacement)
+spiffe://cage.example.com/agents/finance/trading-bot-abc123  # Pod 1 (terminated)
+spiffe://cage.example.com/agents/finance/trading-bot-xyz789  # Pod 2 (replacement)
 ```
 
 Writing policies against exact UUIDs causes `POLICY_DRIFT_VIOLATION` errors whenever pods restart. The namespace prefix (`/agents/finance/`) represents the **logical agent role**, while the suffix represents the ephemeral instance.
@@ -329,7 +329,7 @@ The target OPA policy evaluation input is:
 ```json
 {
   "input": {
-    "agent_id": "spiffe://cage.altostrat.com/agents/finance/trading-bot-xyz789",
+    "agent_id": "spiffe://cage.example.com/agents/finance/trading-bot-xyz789",
     "agent_namespace": "finance",
     "action": "ftra.market.place_order",
     "consequence": {
@@ -355,7 +355,7 @@ import future.keywords.in
 # Extract namespace from SPIFFE ID
 agent_namespace := ns if {
     parts := split(input.agent_id, "/")
-    # spiffe://cage.altostrat.com/agents/<namespace>/<instance-id>
+    # spiffe://cage.example.com/agents/<namespace>/<instance-id>
     #   [0]      [1]                 [2]     [3]        [4]
     count(parts) >= 5
     parts[2] == "agents"
@@ -384,12 +384,12 @@ deny[msg] if {
 ```python
 # ❌ DRIFT-INDUCING: Exact SPIFFE ID in policy
 allow if {
-    input.agent_id == "spiffe://cage.altostrat.com/agents/finance/trading-bot-abc123"
+    input.agent_id == "spiffe://cage.example.com/agents/finance/trading-bot-abc123"
 }
 
 # ✅ DRIFT-RESISTANT: Namespace prefix matching
 allow if {
-    startswith(input.agent_id, "spiffe://cage.altostrat.com/agents/finance/")
+    startswith(input.agent_id, "spiffe://cage.example.com/agents/finance/")
 }
 ```
 
@@ -398,9 +398,9 @@ allow if {
 spiffe://<trust-domain>/agents/<domain>/<role>-<ephemeral-suffix>
 
 Examples:
-  spiffe://cage.altostrat.com/agents/finance/advisor-7f3a9b2c
-  spiffe://cage.altostrat.com/agents/healthcare/hipaa-auditor-1a4c8d3e
-  spiffe://cage.altostrat.com/agents/security/penetration-tester-9e2b5f1a
+  spiffe://cage.example.com/agents/finance/advisor-7f3a9b2c
+  spiffe://cage.example.com/agents/healthcare/hipaa-auditor-1a4c8d3e
+  spiffe://cage.example.com/agents/security/penetration-tester-9e2b5f1a
 ```
 
 ### 3.5 Agent Registration with Namespace Prefixes
@@ -434,11 +434,11 @@ Multi-agent workflows require parent agents to spawn subagents for specialized t
 
 Subagent SPIFFE IDs encode the parent relationship:
 ```
-spiffe://cage.altostrat.com/agents/<domain>/<parent-role>/<subagent-role>-<suffix>
+spiffe://cage.example.com/agents/<domain>/<parent-role>/<subagent-role>-<suffix>
 
 Example:
-  Parent:   spiffe://cage.altostrat.com/agents/finance/advisor-7f3a9b2c
-  Subagent: spiffe://cage.altostrat.com/agents/finance/advisor-7f3a9b2c/quant-researcher-4d2e1a9b
+  Parent:   spiffe://cage.example.com/agents/finance/advisor-7f3a9b2c
+  Subagent: spiffe://cage.example.com/agents/finance/advisor-7f3a9b2c/quant-researcher-4d2e1a9b
 ```
 
 ### 4.3 OPA Policy for A2A Authorization
@@ -489,7 +489,7 @@ envelope = await builder.build(
     action="ftra.market.analyze_volatility",
     consequence={"target_market": "NASDAQ", "timeframe": "30d"},
     delegation={
-        "subagent_spiffe": "spiffe://cage.altostrat.com/agents/finance/advisor-7f3a9b2c/quant-researcher-4d2e1a9b",
+        "subagent_spiffe": "spiffe://cage.example.com/agents/finance/advisor-7f3a9b2c/quant-researcher-4d2e1a9b",
         "delegated_actions": [
             "ftra.analytics.fetch_timeseries",
             "ftra.analytics.compute_volatility",

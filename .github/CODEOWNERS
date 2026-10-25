@@ -1,0 +1,55 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# CAGE Repository Code Owners
+# See .github/branch-protection-rules.md for required review enforcement.
+# Do not add an owner to a subsystem without prior agreement on review load.
+
+# Default fallback for unmatched paths
+*                                       @lahlfors
+
+# Layer 1 — Governance Kernel & Server Ingress
+/src/gateway/                           @lahlfors
+/src/gateway/governance/                @lahlfors
+/src/gateway/server/                    @lahlfors
+/config/                                @lahlfors
+/proof/                                 @lahlfors
+
+# Public Contract & Interoperability Surfaces
+/docs/SUBSTRATE_CONTRACT.md             @lahlfors
+/docs/CAGE_OPEN_INTEROP_SPEC.md         @lahlfors
+/docs/architecture/                     @lahlfors
+/packages/cage-client/                  @lahlfors
+
+# Layer 2 — Domain Plugins
+/src/cage_finance/                      @lahlfors
+/src/cage_healthcare/                   @lahlfors
+/src/cage_physical_ai/                  @lahlfors
+
+# Layer 3 — Integrations, Compliance Bridge & Artifacts
+/src/integrations/                      @lahlfors
+/src/compliance_bridge/                 @lahlfors
+/compliance/                            @lahlfors
+/contrib/                               @lahlfors
+
+# Offline Evaluation & Certification Plane
+/src/eval_harness/                      @lahlfors
+
+# Supply Chain, CI/CD & Infrastructure
+/.github/                               @lahlfors
+/infra/                                 @lahlfors
+/deployment/                            @lahlfors
+/scripts/                               @lahlfors
+/pyproject.toml                         @lahlfors
+/SECURITY.md                            @lahlfors

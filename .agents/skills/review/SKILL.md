@@ -1,10 +1,8 @@
 ---
 name: review
-description: "🔍 Performs an AI code review of workspace changes, specified revisions/CLs, individual directories/subsystems, or the entire repository (via sharded parallel subagents) by delegating to dynamic subagents or executing directly in the session. Use when the user asks to review changes, perform a self-review, review a specific CL, or audit a directory or full repository. Don't use for preparing CLs (like formatting, linting, description generation) or for running model evaluations."
+description: "🔍 Performs an AI code review of workspace changes, specified revisions/PRs, individual directories/subsystems, or the entire repository (via sharded parallel subagents) by delegating to dynamic subagents or executing directly in the session. Use when the user asks to review changes, perform a self-review, review a specific commit/branch, or audit a directory or full repository. Don't use for preparing commits (like formatting, linting, description generation) or for running model evaluations."
 metadata:
   icon: 👁️
-  logo: https://www.gstatic.com/images/branding/productlogos/critique/v1/192px.svg
-  certification: 🔍 go/certified-skills-level-2-evaluated
 ---
 
 # AI Code Review
@@ -14,17 +12,17 @@ entire repository by delegating to one or more dynamic subagents (when subagent
 tools are available) or by directly executing the bundled
 [`references/agent_implementation.md`](references/agent_implementation.md)
 evaluation instructions in the current session. This skill is intended for
-coding agents to review diffs interactively before sending CLs/PRs for human
-review or to perform sharded architectural/governance audits across supported
-version control systems (`git`, Jujutsu `jj`, Fig `hg`, or Piper `g4`).
+coding agents to review diffs interactively before opening PRs for human
+review or to perform sharded architectural/governance audits across standard
+version control systems (`git` or Jujutsu `jj`).
 
 ## Overview
 
-This skill orchestrates AI code reviews across four granularties (working copy,
+This skill orchestrates AI code reviews across four granularities (working copy,
 commit/branch diff, directory/subsystem, or sharded full-repository audit):
 
 1.  **Scope Detection & Sharding**: Detects active VCS and determines the target
-    scope (working copy, commit, stack, branch, CL, directory, or full
+    scope (working copy, commit, stack, branch, directory, or full
     repository). Large or full-repository scopes are partitioned into
     architectural shards so each subagent inspects a focused, bounded file set.
 2.  **Intent Extraction**: Extracts the goal and context of the changes (for
@@ -43,7 +41,7 @@ commit/branch diff, directory/subsystem, or sharded full-repository audit):
 ## When to Use
 
 -   The user asks to "review my changes", "do a code review", "review this
-    commit", "review the CL", "review the PR", "do a self-review", or something
+    commit", "review the PR", "do a self-review", or something
     similar.
 -   The user asks to "review the entire repo", "audit the repository", or
     "review `src/<package>/`" across a subsystem or directory.
@@ -56,14 +54,13 @@ commit/branch diff, directory/subsystem, or sharded full-repository audit):
 
 ### Step 1: Infer Target Scope, Plan Shards & Record Start
 
-Detect active workspace VCS (`git` in standalone repositories, or
-[vcs](/learning/gemini/agents/skills/vcs/SKILL.md) for `jj`, `hg`, `g4` in
-CitC) and determine the exact review scope:
+Detect active workspace VCS (`git` or `jj`) and determine the exact review
+scope:
 
 1.  **Explicit Revision, Directory, or Full-Repository Scope**:
-    -   **Revision / Branch / CL**: If the user specified a target revision,
-        commit SHA, branch, or CL number (e.g., `-r <REV>`, `HEAD~1`,
-        `main..HEAD`, `@-`, or `cl/123456`), target that specific revision/CL.
+    -   **Revision / Branch**: If the user specified a target revision,
+        commit SHA, or branch (e.g., `-r <REV>`, `HEAD~1`,
+        `main..HEAD`, or `@-`), target that specific revision.
     -   **Directory / Subsystem Scope**: If the user specified one or more
         directory or file paths (e.g., "review `src/eval_harness/`"), target all
         tracked files under those paths at `HEAD` (`git ls-files <path>`).
@@ -73,17 +70,14 @@ CitC) and determine the exact review scope:
 2.  **Contextual Scope Inferencing (When Unspecified)**:
     -   **Commit Stack / Feature Branch**: If the user or agent worked on a
         feature branch or multi-commit stack, target the branch diff against
-        `main` (`git diff main...HEAD`, or `immutable()..@` in `jj`, or stacked
-        pending CLs in `hg`).
-    -   **Parent Commit / CL**: If the user asks to review the "last commit" or
-        "previous change", target `HEAD` (`git show HEAD`, `@-` in `jj`, parent
-        CL in `hg`/`g4`).
+        `main` (`git diff main...HEAD` or `immutable()..@` in `jj`).
+    -   **Parent Commit**: If the user asks to review the "last commit" or
+        "previous change", target `HEAD` (`git show HEAD` or `@-` in `jj`).
     -   **Working Copy / Uncommitted Changes**: If there are modifications in
         the active working copy (`git status --porcelain`), target the working
-        copy (`git diff HEAD`, `@` in `jj`, or uncommitted changes in
-        `hg`/`g4`).
+        copy (`git diff HEAD` or `@` in `jj`).
     -   **Fallback**: If the working copy is empty and no revision was
-        specified, inspect `git log -n 5 --oneline` (or `vcs`) to target `HEAD`
+        specified, inspect `git log -n 5 --oneline` to target `HEAD`
         or `main...HEAD`.
 3.  **Architectural Sharding (Full-Repository or Large Cross-Layer Scopes)**:
     -   When reviewing the entire repository (or a diff/directory spanning $>25$
@@ -100,31 +94,10 @@ CitC) and determine the exact review scope:
         | `eval_and_proof` | `src/eval_harness/`, `proof/`, `scripts/` | Offline Eval split-plane isolation (`OFFLINE_EVAL_PATTERN`), Stage 0 `SKILL.md` linter, GEPA optimizer security screening, `proof/model.py` safety invariants |
         | `infra_compliance_docs` | `infra/`, `deployment/`, `compliance/`, `docs/`, `AGENTS.md`, `README.md` | Secret hygiene (`secretKeyRef`, no hardcoded credentials), OSCAL/Lula/STPA synchronization, Gate G9 documentation reference accuracy |
 
-4.  **Record the Review Request (`record-start`)**:
+4.  **Generate a Run Identifier (`{run_id}`)**:
 
     -   Once the scope is known, generate a unique `{run_id}` (e.g.
         `run_id=$(uuidgen)`).
-    -   If `/google/bin/releases/arca9-local-blaze-cli/blaze-for-agents` is
-        available (Google3/CitC environment), record the `EVENT_TYPE_START`
-        event:
-
-        ```bash
-        /google/bin/releases/arca9-local-blaze-cli/blaze-for-agents run \
-          //learning/gemini/agents/skills/review/scripts:review_telemetry_cli -- \
-          record-start \
-          --run_id="{run_id}" \
-          --trigger_source="{manual|post_task|pre_upload|eval}" \
-          --vcs="{jj|fig|piper|git}" \
-          --citc_workspace_name="{workspace_name}" \
-          --base_revision="{base_revision}" \
-          --target_revisions="{rev_1},{rev_2}" \
-          --changed_files="{path_1}@{rev_1},{path_2}"
-        ```
-
-    -   If running in a local standalone Git workspace where
-        `/google/bin/releases/arca9-local-blaze-cli/blaze-for-agents` is not
-        installed, skip the Blaze telemetry CLI invocation and proceed directly
-        with `{run_id}`.
 
 ### Step 2: Determine & Communicate Change Intent (CRITICAL)
 
@@ -132,11 +105,10 @@ To perform a meaningful code review, the reviewer needs to understand the goal
 and rationale of the changes or audit.
 
 1.  **Extract Intent**:
-    -   **Commit / CL Descriptions (Diff Mode)**: Extract commit or CL
+    -   **Commit Descriptions (Diff Mode)**: Extract commit
         descriptions using the active VCS commands (e.g., `git log --format=%B
-        -n 1 <REV>` for `git`, `jj log -r <REV> --no-graph --no-pager
-        --color=never -T description` for `jj`, `hg log -r <REV> -T "{desc}\n"`
-        for `hg`, or `g4 describe <CL>` for `g4`).
+        -n 1 <REV>` for `git`, or `jj log -r <REV> --no-graph --no-pager
+        --color=never -T description` for `jj`).
     -   **Architectural & Invariant Baseline (Directory / Full-Repo Mode)**:
         Run repository-wide deterministic verification gates once up front to
         supply concrete ground truth to the shard reviewers:
@@ -222,37 +194,14 @@ NOT attempt to call missing tools or search for CLI workarounds. Read
 execute the review workflow directly in the current session (iterating shard by
 shard when in full-repository mode) to write `{output_file}`.
 
-### Step 4: Render Report & Record Finish Telemetry
+### Step 4: Render Report
 
 Once `{output_file}` is written:
 
 1.  **Render Markdown Report**:
-    -   If `/google/bin/releases/arca9-local-blaze-cli/blaze-for-agents` is
-        available, run `review_report_cli` on `{output_file}` and capture the
-        rendered Markdown report from stdout:
-
-        ```bash
-        /google/bin/releases/arca9-local-blaze-cli/blaze-for-agents run \
-          //learning/gemini/agents/skills/review/scripts:review_report_cli -- \
-          --review_result_file="{output_file}"
-        ```
-
-    -   If running in a local standalone Git workspace without Blaze, render the
-        structured findings from `{output_file}` directly using the Markdown
-        report format defined in
+    -   Render the structured findings from `{output_file}` directly using the
+        Markdown report format defined in
         [`references/agent_implementation.md`](references/agent_implementation.md).
-
-2.  **Record Finish Telemetry (`record-finish`)**:
-    -   If `/google/bin/releases/arca9-local-blaze-cli/blaze-for-agents` is
-        available:
-
-        ```bash
-        /google/bin/releases/arca9-local-blaze-cli/blaze-for-agents run \
-          //learning/gemini/agents/skills/review/scripts:review_telemetry_cli -- \
-          record-finish \
-          --run_id="{run_id}" \
-          --review_result_file="{output_file}"
-        ```
 
 ### Step 5: Present Findings, Apply Fixes & Record Resolutions
 
@@ -300,24 +249,12 @@ Once review execution and report rendering complete:
         -   `acknowledged`: the finding is valid but deliberately left for a
             follow-up.
 
-    -   If `/google/bin/releases/arca9-local-blaze-cli/blaze-for-agents` is
-        available, run `record-resolution` to log the `EVENT_TYPE_RESOLUTION`
-        event using `{run_id}`:
-
-        ```bash
-        /google/bin/releases/arca9-local-blaze-cli/blaze-for-agents run \
-          //learning/gemini/agents/skills/review/scripts:review_telemetry_cli -- \
-          record-resolution \
-          --run_id="{run_id}" \
-          --resolutions_file="${TMPDIR:-/tmp}/review_resolutions_{run_id}.json"
-        ```
-
 ## Command Reference
 
 -   **Git (Standalone Workspace)**:
     -   Check modified files: `git status --short` or `git diff --stat <REV>`
     -   Inspect descriptions: `git log -n 1 --format=%B <REV>`
--   **Jujutsu (`jj`, Google3 CitC)**:
+-   **Jujutsu (`jj`)**:
     -   Check modified files: `jj diff --stat -r <REV> --no-pager --color=never`
     -   Inspect descriptions: `jj log -r <REV> --no-graph --no-pager --color=never -T description`
 
@@ -325,3 +262,4 @@ Once review execution and report rendering complete:
 
 -   [agent_implementation.md](references/agent_implementation.md) (Code review
     subagent instructions reference)
+

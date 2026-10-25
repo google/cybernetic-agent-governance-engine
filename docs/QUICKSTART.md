@@ -13,8 +13,8 @@ Get CAGE running locally in under 10 minutes using Docker Compose.
 ## 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/cybernetic-governance-engine.git
-cd cybernetic-governance-engine
+git clone https://github.com/google/cybernetic-agent-governance-engine.git
+cd cybernetic-agent-governance-engine
 
 # Copy environment template
 cp .env.example .env

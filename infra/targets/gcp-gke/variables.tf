@@ -1141,7 +1141,7 @@ variable "dns_managed_zone_name" {
 }
 
 variable "dns_domain_name" {
-  description = "FQDN for the GKE Ingress DNS A-record (e.g., gateway.laah.altostrat.com. — §5.4)"
+  description = "FQDN for the GKE Ingress DNS A-record (e.g., gateway.cage.example.com. — §5.4)"
   type        = string
   default     = ""
 }
