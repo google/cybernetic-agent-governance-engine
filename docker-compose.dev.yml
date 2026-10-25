@@ -25,7 +25,7 @@ services:
     command: ["python", "src/gateway/server/hybrid_server.py"]
     environment:
       - PORT=8080
-      - OPA_URL=http://opa:8181/v1/data/trade/governance
+      - OPA_URL=http://opa:8181
       - CAGE_TRUSTED_CLIENT_IDENTITIES=${CAGE_TRUSTED_CLIENT_IDENTITIES:-governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local}
       # v0.1.0: override in .env to test EU_ECB or APAC_MAS compliance posture locally
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}

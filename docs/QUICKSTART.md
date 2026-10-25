@@ -13,8 +13,8 @@ Get CAGE running locally in under 10 minutes using Docker Compose.
 ## 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/cybernetic-governance-engine.git
-cd cybernetic-governance-engine
+git clone https://github.com/google/cybernetic-agent-governance-engine.git
+cd cybernetic-agent-governance-engine
 
 # Copy environment template
 cp .env.example .env
@@ -25,10 +25,13 @@ Edit `.env` and set at minimum:
 ```bash
 OPENAI_API_KEY=<your-api-key>          # Or your LLM provider key
 
-# Exactly one domain per process (required). Only `finance` is runnable today;
-# see §8 for why healthcare and physical_ai refuse to start.
+# Exactly one domain per process (required). Both `finance` and `healthcare`
+# ship a complete DomainConfig today; see §8 for why `physical_ai` refuses to start.
 CAGE_DOMAIN=finance
-CAGE_DEPLOYMENT_REGION=LOCAL
+CAGE_DEPLOYMENT_REGION=US_FED
+# CAGE_ENV=development enables local software fallbacks (HMAC seal, optional Redis).
+# Note: CAGE_ENV=local / production / staging are enforcing postures that require
+# live Cloud KMS, Redis, and GroundTruthReconciler.
 CAGE_ENV=development
 CAGE_TRUSTED_CLIENT_IDENTITIES=cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
 ```
@@ -48,8 +51,8 @@ docker compose up -d
 
 This starts:
 - **Gateway** (`localhost:8080`) — Gateway: 8080 (REST Ingress / Stateless FastMCP Streamable HTTP / In-Process Tier Pipeline)
-- **Governed Application (`app`)** (`localhost:3000`) — Governed application service container
-- **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies
+- **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies (mounts only `src/cage_${CAGE_DOMAIN}/opa`)
+- *(Optional)* **Governed Financial Advisor (`app`)** (`localhost:3000`) — Finance reference application container (`docker compose --profile advisor up -d`)
 
 ## 3. Verify the gateway is running
 
@@ -68,7 +71,7 @@ curl -s -X POST http://localhost:8080/mcp/ \
 
 ```bash
 uv sync
-uv run python examples/governance_demo.py
+uv run python examples/governance_demo.py --no-pause
 ```
 
 This exercises the **domain-neutral substrate** end to end and prints the decision trace. All three acts are domain-independent mechanisms:
@@ -112,12 +115,12 @@ This asserts that each shipped example plugin contributes its tiers without a ke
 Domain behaviour is contributed by packages registered in the `cage.plugins` entry-point group. A CAGE process runs **exactly one** domain, named by the required `CAGE_DOMAIN` environment variable ([`env_posture.py`](../src/gateway/governance/env_posture.py)). An unset value, a comma-separated list, or a name matching no registered plugin aborts startup. The example domains are equal-standing illustrations of the same extension contract.
 
 ```bash
-export CAGE_DOMAIN=finance        # the only domain that ships a DomainConfig today
-export CAGE_DOMAIN=healthcare     # refuses to start: no FTRA registry (POAM-2026-077)
-export CAGE_DOMAIN=physical_ai    # refuses to start: no FTRA registry (POAM-2026-077)
+export CAGE_DOMAIN=finance        # runnable: ships full DomainConfig (trade.governance)
+export CAGE_DOMAIN=healthcare     # runnable: ships full DomainConfig (dosing.governance)
+export CAGE_DOMAIN=physical_ai    # refuses to start: no FTRA registry yet (POAM-2026-077)
 ```
 
-Each plugin must declare a `DomainConfig`: its FTRA terminal registry, an optional causal graph, and the Rego package (plus required rules) the kernel queries on the OPA server. The kernel reads its FTRA registry and causal graph only from the active domain, so a plugin without one fails closed at startup rather than borrowing another domain's configuration. `OPA_URL` is a base URL only (e.g. `http://localhost:8181`); at startup the gateway lists OPA's loaded policies and refuses to start unless the domain's package and every required rule are present (finance: `trade.governance` with `allow`).
+Each plugin must declare a `DomainConfig`: its FTRA terminal registry, an optional causal graph, and the Rego package (plus required rules) the kernel queries on the OPA server. The kernel reads its FTRA registry and causal graph only from the active domain, so a plugin without one fails closed at startup rather than borrowing another domain's configuration. `OPA_URL` is a base URL only (e.g. `http://localhost:8181`); at startup the gateway lists OPA's loaded policies and refuses to start unless the domain's package and every required rule are present (finance: `trade.governance` with `allow`; healthcare: `dosing.governance` with `allow`).
 
 ### 8a. Domain Plugin Example: Finance
 
@@ -125,7 +128,7 @@ Each plugin must declare a `DomainConfig`: its FTRA terminal registry, an option
 
 ```bash
 export CAGE_DOMAIN=finance
-docker compose restart gateway
+docker compose up -d opa gateway
 uv run python examples/chaos_agent_playground.py --scenario A
 ```
 
@@ -141,15 +144,19 @@ uv run python examples/chaos_agent_playground.py --scenario A
 
 **Package:** [`src/cage_healthcare/`](../src/cage_healthcare/) · **Status:** example domain, not a clinical device
 
-The healthcare plugin cannot yet be the active domain: it declares no `DomainConfig` (POAM-2026-077). Its contract is exercised by tests:
+The healthcare plugin ships a complete `DomainConfig` (FTRA terminal registry, `dosing.governance` OPA package, and causal graph) and wires `DoseBarrierTier` with an invariant-parametric `ControlBarrierFunction` over `SerumConcentrationBarrier`. Note that the `app` service (`governed_financial_advisor`) in `docker-compose.yml` is finance-specific; to run the healthcare gateway stack or its hermetic test suite:
 
 ```bash
+# Run the hermetic plugin + end-to-end governor suite
 uv run pytest tests/test_healthcare_plugin.py -v
+
+# Or boot OPA + Gateway with ONLY the healthcare policy bundle mounted
+CAGE_DOMAIN=healthcare docker compose up -d --force-recreate opa gateway
 ```
 
 | Contribution | Concrete artifact |
 |---|---|
-| Governed actions | `dose_order` and the rest of `HEALTHCARE_GOVERNED_ACTIONS` |
+| Governed actions | `administer_dose` and the rest of `HEALTHCARE_GOVERNED_ACTIONS` |
 | Barrier | `SerumConcentrationBarrier` watching a serum-concentration scalar |
 | Tiers | Dose barrier tier, clinical consensus tier |
 | Critics | Clinical reviewer personas from `src/cage_<domain>/config/critics.yaml` |
@@ -168,10 +175,9 @@ Manufacturing, logistics, energy dispatch, customer service, critical infrastruc
 Regional compliance is configuration, independent of which domain plugin you loaded. Any plugin runs under any posture.
 
 ```bash
-export CAGE_DEPLOYMENT_REGION=LOCAL       # universal ISO 42001 baseline only (default)
-export CAGE_DEPLOYMENT_REGION=US_FED      # + NIST AI 600-1, SP 800-53, AI RMF, FedRAMP, SR 26-2
-export CAGE_DEPLOYMENT_REGION=EU_ECB      # + GDPR, DORA, EU AI Act, MiFID II
-export CAGE_DEPLOYMENT_REGION=APAC_MAS    # + MAS Notice 655, FEAT principles, MAS TRM
+export CAGE_DEPLOYMENT_REGION=US_FED      # NIST AI 600-1, SP 800-53, AI RMF, FedRAMP, SR 26-2 (default)
+export CAGE_DEPLOYMENT_REGION=EU_ECB      # GDPR, DORA, EU AI Act, MiFID II
+export CAGE_DEPLOYMENT_REGION=APAC_MAS    # MAS Notice 655, FEAT principles, MAS TRM
 ```
 
 Verify each posture's profile. The test harness runs every region-marked test under its own region, so no export is needed. See [`tests/README.md`](../tests/README.md#deployment-region).

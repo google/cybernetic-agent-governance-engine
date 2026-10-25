@@ -750,3 +750,119 @@ jobs:
         if: always()
         run: kind delete cluster --name cage-mesh-test || true
 
+  quickstart-smoke:
+    name: "Quickstart Bootstrap & First-DENY Smoke Gate"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install Dependencies
+        run: uv sync --extra gateway --group dev
+      - name: Validate Docker Compose config & boot stack (finance domain)
+        run: |
+          cp .env.example .env
+          set -a; source .env; set +a
+          test -n "${OPA_AUTH_TOKEN}" || (echo "::error::OPA_AUTH_TOKEN is empty in .env.example" && exit 1)
+          docker compose config -q
+          if ! docker compose up -d --build --wait; then
+            echo "::error::docker compose up -d --wait failed; dumping container logs:"
+            docker compose ps -a || true
+            docker compose logs --no-color || true
+            exit 1
+          fi
+          # Verify single-domain policy isolation: finance mounts trade.governance only
+          policies_json=$(curl -sf -H "Authorization: Bearer ${OPA_AUTH_TOKEN}" "${OPA_URL}/v1/policies")
+          echo "$policies_json" | grep -q "trade"
+          if echo "$policies_json" | grep -q "dosing"; then
+            echo "::error::Cross-domain policy leak: dosing.governance loaded under CAGE_DOMAIN=finance"
+            exit 1
+          fi
+      - name: Verify containerized Gateway /health, /mcp/, and assert First-DENY
+        run: |
+          set -a; source .env; set +a
+          curl -sf http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+          echo "✅ Containerized Gateway /health is ready"
+          # Verify Stateless FastMCP tools/list with trusted workload identity on the running gateway container
+          mcp_resp=$(curl -sf -X POST http://127.0.0.1:8080/mcp/ \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
+          echo "$mcp_resp" | grep -q "execute_trade"
+          # Verify live OPA + Governor DENY inside the running gateway container
+          docker compose exec -T gateway python -c "
+          import asyncio
+          from src.gateway.governance.governor.errors import GovernanceError
+          from src.gateway.server.mcp_tool_server import _activate_domain
+          async def main():
+              gov = await _activate_domain()
+              try:
+                  res = await gov.validate_action('execute_trade', {'symbol': 'AAPL', 'amount': 0, 'role': 'junior', 'claimed_authorization_present': True})
+              except GovernanceError as exc:
+                  assert 'CTRL_OPA_005' in str(exc) or 'Denied' in str(exc), f'Unexpected GovernanceError: {exc}'
+                  print('✅ Live containerized finance first-DENY verified:', exc)
+                  return
+              assert isinstance(res, dict) and res.get('verdict') == 'DENY', f'Expected GovernanceError or DENY dict, got {res}'
+          asyncio.run(main())
+          "
+      - name: Verify Healthcare Domain Container Isolation & Handshake
+        run: |
+          set -a; source .env; set +a
+          export CAGE_DOMAIN=healthcare
+          if ! CAGE_DOMAIN=healthcare docker compose up -d --wait --force-recreate; then
+            echo "::error::Healthcare docker compose up -d --wait failed; dumping container logs:"
+            docker compose ps -a || true
+            docker compose logs --no-color || true
+            exit 1
+          fi
+          policies_json=$(curl -sf -H "Authorization: Bearer ${OPA_AUTH_TOKEN}" "${OPA_URL}/v1/policies")
+          echo "$policies_json" | grep -q "dosing"
+          if echo "$policies_json" | grep -q "trade_governance"; then
+            echo "::error::Cross-domain policy leak: trade_governance.rego loaded under CAGE_DOMAIN=healthcare"
+            exit 1
+          fi
+          curl -sf http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+          mcp_resp=$(curl -sf -X POST http://127.0.0.1:8080/mcp/ \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
+          echo "$mcp_resp" | grep -q "administer_dose"
+          if echo "$mcp_resp" | grep -q "execute_trade"; then
+            echo "::error::Cross-domain tool leak: execute_trade exposed under CAGE_DOMAIN=healthcare"
+            exit 1
+          fi
+          docker compose exec -T gateway python -c "
+          import asyncio
+          from src.gateway.governance.governor.errors import GovernanceError
+          from src.gateway.server.mcp_tool_server import _activate_domain
+          async def main():
+              gov = await _activate_domain()
+              try:
+                  res = await gov.validate_action('administer_dose', {'patient_id': 'P001', 'medication': 'vancomycin', 'dose_mg': 999.0, 'contraindication_present': True})
+              except GovernanceError as exc:
+                  assert 'CTRL_OPA_005' in str(exc) or 'Denied' in str(exc), f'Unexpected GovernanceError: {exc}'
+                  print('✅ Live containerized healthcare first-DENY verified:', exc)
+                  return
+              assert isinstance(res, dict) and res.get('verdict') == 'DENY', f'Expected GovernanceError or DENY dict, got {res}'
+          asyncio.run(main())
+          "
+      - name: Run Quickstart Step 4 (examples/governance_demo.py --no-pause)
+        run: |
+          uv run python examples/governance_demo.py --no-pause
+      - name: Run Quickstart Bootstrap Contract Suite
+        run: |
+          uv run pytest tests/test_quickstart_bootstrap_contract.py -v -p no:langsmith -p no:langsmith_plugin --no-cov
+      - name: Tear down Docker Compose
+        if: always()
+        run: docker compose down -v || true

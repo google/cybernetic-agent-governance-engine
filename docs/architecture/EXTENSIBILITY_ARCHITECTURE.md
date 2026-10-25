@@ -257,7 +257,7 @@ In all cases, the runtime enforcement is identical:
 - If `h(x_next) < (1 - γ) · h(x_t)` → **BLOCK**
 - If `h(x_next) < 0` → **BLOCK** (critical boundary violation)
 
-The decay coefficient `γ`, the state key, and the minimum threshold come from the plugin's invariant and its threshold section; external ground truth comes from the `GroundTruthProvider` the plugin registers for that `invariant_id`. Healthcare and physical-AI domains cannot yet be activated (no `DomainConfig`; POAM-2026-077 in [`docs/POAM.md`](../POAM.md)).
+The decay coefficient `γ`, the state key, and the minimum threshold come from the plugin's invariant and its threshold section; external ground truth comes from the `GroundTruthProvider` the plugin registers for that `invariant_id`. Both `finance` and `healthcare` ship a complete `DomainConfig`; the `physical_ai` domain cannot yet be activated (no `DomainConfig`; POAM-2026-077 in [`docs/POAM.md`](../POAM.md)).
 
 #### Formal Mathematical Invariant & TOCTOU Resolution
 
@@ -277,7 +277,7 @@ To fully realize the multi-domain architecture, the following engineering work i
 | **CBF State Provider Interface**     | Implemented: the CBF takes the plugin's `InvariantModel.state_key`; external ground truth comes through `GroundTruthProvider` and `GroundTruthReconciler` ([`reconciliation/daemon.py`](../../src/gateway/governance/reconciliation/daemon.py)) | Real (non-simulated) ground-truth sources per domain |
 | **Domain-Specific Validators**       | Implemented for STPA: each plugin compiles its own UCA rules and contributes them via `PluginContribution.uca_rules` | Optional pre-tier validators (e.g., `MedDRACodingValidator`)  |
 | **Threshold Profile Generalization** | Implemented: domain thresholds live under `domains.<domain>` in `governance_thresholds.json`, validated against each plugin's schema at assembly | Per-profile (regional) overrides                              |
-| **Domain Activation**                | Only `finance` declares a `DomainConfig`; `CAGE_DOMAIN=healthcare` / `physical_ai` refuse to start | FTRA registry and OPA package for every domain                |
+| **Domain Activation**                | `finance` and `healthcare` declare a full `DomainConfig`; `CAGE_DOMAIN=physical_ai` refuses to start (POAM-2026-077) | FTRA registry and OPA package for every domain                |
 | **Telemetry Isolation**              | Dual Langfuse project (main / compliance)             | Configurable telemetry isolation modes per domain requirement |
 | **Network Isolation**                | Kubernetes NetworkPolicy + GKE FQDNNetworkPolicy + namespace segregation | Same mechanism, domain-specific policy templates              |
 

@@ -54,7 +54,7 @@ PlaygroundTelemetry evidence chain for Acts 2 & 3.
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
+import asyncio
 import json
 import sys
 import tempfile
@@ -173,18 +173,15 @@ def act1_concurrency_race(interactive: bool) -> bool:
     _hr()
 
     try:
-        import fakeredis  # type: ignore[import]
+        import fakeredis.aioredis as fakeredis_aio  # type: ignore[import]
     except ImportError:
         _warn("fakeredis not installed — skipping Act 1.  Run: uv add fakeredis")
         return True
 
-    from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
+    from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 
     CAP_USD = 200_000.0
     TRADE_USD = 180_000.0
-
-    fake_redis = fakeredis.FakeRedis(decode_responses=True)
-    guard = FiscalLimitGuard(fake_redis, daily_cap_usd=CAP_USD, reservation_ttl=300)
 
     agents = [
         ("trading-agent", TRADE_USD),
@@ -195,17 +192,24 @@ def act1_concurrency_race(interactive: bool) -> bool:
     _step("Firing all three agents simultaneously…")
     print()
 
-    results: dict[str, Any] = {}
+    async def _run_race() -> tuple[dict[str, Any], float, float]:
+        fake_redis = fakeredis_aio.FakeRedis(decode_responses=True)
+        guard = FiscalLimitGuard(fake_redis, daily_cap_usd=CAP_USD, reservation_ttl=300)
 
-    def _attempt(agent_id: str, amount: float) -> tuple[str, Any]:
-        token = guard.reserve(agent_id=agent_id, amount_usd=amount)
-        return agent_id, token
+        async def _attempt(agent_id: str, amount: float) -> tuple[str, Any]:
+            token = await guard.reserve(agent_id=agent_id, amount_usd=amount)
+            return agent_id, token
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        futs = {pool.submit(_attempt, aid, amt): aid for aid, amt in agents}
-        for fut in concurrent.futures.as_completed(futs):
-            aid, token = fut.result()
-            results[aid] = token
+        pairs = await asyncio.gather(*(_attempt(aid, amt) for aid, amt in agents))
+        race_results: dict[str, Any] = dict(pairs)
+        winning = next((t for t in race_results.values() if not t.rejected), None)
+        rem_before = await guard.remaining_usd()
+        if winning is not None:
+            await guard.release(winning)
+        rem_after = await guard.remaining_usd()
+        return race_results, rem_before, rem_after
+
+    results, remaining_before, remaining_after = asyncio.run(_run_race())
 
     allowed = 0
     rejected = 0
@@ -239,13 +243,9 @@ def act1_concurrency_race(interactive: bool) -> bool:
         return False
 
     # Show Saga rollback path
-    winning_token = next(t for t in results.values() if not t.rejected)
     print(
         f"\n  {BOLD('Saga rollback path')} — simulating trade failure on the winning agent:"
     )
-    remaining_before = guard.remaining_usd()
-    guard.release(winning_token)
-    remaining_after = guard.remaining_usd()
     _ok(
         f"release() restored ${TRADE_USD:,.0f}  "
         f"(remaining: ${remaining_before:,.0f} → ${remaining_after:,.0f})"
@@ -304,7 +304,9 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
             ApprovalDecision as ApprovalResumeRequest,
         )
 
-        ApprovalResumeRequest(approved=True, reviewer="lars@example.com", rationale="")
+        ApprovalResumeRequest(
+            approved=True, reviewer="operator@example.com", rationale=""
+        )
         _fail("Expected ValidationError — empty rationale should have been rejected")
         return False
     except Exception as exc:
@@ -332,7 +334,7 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
         rationale = "Trade confirmed within client IPS mandate; drawdown 0.3% < 4.5% CBF limit; approved per SR 11-7 §3.2."
         approved = True
 
-    reviewer = "lars.ahlfors@example.com"
+    reviewer = "operator@example.com"
 
     _step("Hashing rationale into evidence chain (pre-resume)…")
 

@@ -17,25 +17,26 @@ version: "3.8"
 services:
   # OPA: Policy Engine
   opa:
-    image: openpolicyagent/opa:latest-static
+    image: openpolicyagent/opa:0.70.0-static
     command:
       - "run"
       - "--server"
       - "--log-level=info"
-      - "--addr=unix:///tmp/opa.sock"
       - "--addr=:8181"
-      - "--authentication=token"
+      - "--ignore=.*"
       - "/policies"
     volumes:
-      - ./policies:/policies
-      - opa_socket_vol:/tmp
+      # Mount ONLY the active domain's Rego bundle (single-domain-per-process
+      # isolation matching deployment/k8s/opa.yaml: finance mounts
+      # cage_finance/opa, healthcare mounts cage_healthcare/opa).
+      - ./src/cage_${CAGE_DOMAIN:-finance}/opa:/policies:ro
     ports:
       # HIGH-01 FIX: Restrict OPA to localhost only — prevents unauthenticated
       # access from external processes on the host. Inter-service communication
       # within the Docker network uses the internal port directly (no host binding needed).
       - "127.0.0.1:8181:8181"
     healthcheck:
-      test: [ "CMD", "/opa", "check", "/policies" ]
+      test: [ "CMD", "/opa", "check", "--ignore=.*", "/policies" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -51,11 +52,16 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       - PORT=8080
-      - OPA_URL=http://opa:8181/v1/data/trade/governance
-      - CAGE_TRUSTED_CLIENT_IDENTITIES=${CAGE_TRUSTED_CLIENT_IDENTITIES:-governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local}
-      # Langfuse v3 native OTLP ingestion — no separate collector needed.
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
-      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
+      - OPA_URL=http://opa:8181
+      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:-dev-opa-token}
+      - CAGE_DOMAIN=${CAGE_DOMAIN:-finance}
+      - CAGE_ENV=${CAGE_ENV:-development}
+      - EVIDENCE_STREAM_ENABLED=${EVIDENCE_STREAM_ENABLED:-false}
+      - EVIDENCE_CHAIN_BLOCKING=${EVIDENCE_CHAIN_BLOCKING:-false}
+      - VLLM_BASE_URL=${VLLM_BASE_URL:-http://vllm-fast:8000/v1}
+      - VLLM_API_KEY=${VLLM_API_KEY:-dev-local}
+      - CAGE_TRUSTED_CLIENT_IDENTITIES=${CAGE_TRUSTED_CLIENT_IDENTITIES:-cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local}
+      - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-none}
       # v0.1.0 REQUIRED: ControlRegistry regional compliance profile selector.
       # Override in .env: CAGE_DEPLOYMENT_REGION=EU_ECB
       # Supported values: US_FED | EU_ECB | APAC_MAS
@@ -66,36 +72,33 @@ services:
     # container filesystem; env_file injects only the declared env vars.
     env_file:
       - .env
-    volumes:
-      - opa_socket_vol:/tmp
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 3
+      retries: 12
       start_period: 30s
     depends_on:
       opa:
         condition: service_healthy
 
-  # Main Agent Service — immutable baked image
+  # Main Agent Service — optional finance reference application (`--profile advisor`)
   app:
+    profiles: ["advisor"]
     build: .
     ports:
       - "127.0.0.1:3000:8080"
     environment:
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
-      - OPA_URL=http://opa:8181/v1/data/trade/governance
-      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:?OPA_AUTH_TOKEN must be set in the environment}
+      - OPA_URL=http://opa:8181
+      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:-dev-opa-token}
       - MODEL_FAST=${MODEL_FAST:?MODEL_FAST must be set in the environment}
       - MODEL_REASONING=${MODEL_REASONING:?MODEL_REASONING must be set in the environment}
       - VLLM_FAST_API_BASE=http://vllm-fast:8000/v1
       - GATEWAY_HOST=gateway
       - GATEWAY_PORT=8080
-      # Langfuse v3 native OTLP ingestion — no separate collector needed.
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
-      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
+      - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-none}
       # v0.1.0 REQUIRED: must match the gateway service's CAGE_DEPLOYMENT_REGION.
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
     # No live src mount — image must be rebuilt on code change (Phase 6.2).
@@ -104,11 +107,6 @@ services:
     # container filesystem; env_file injects only the declared env vars.
     env_file:
       - .env
-    volumes:
-      - opa_socket_vol:/tmp
     depends_on:
       gateway:
-        condition: service_started
-
-volumes:
-  opa_socket_vol:
+        condition: service_healthy

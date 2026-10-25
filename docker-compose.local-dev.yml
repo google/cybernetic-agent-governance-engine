@@ -30,7 +30,6 @@ services:
       # Hot-reload mounts: changes to source files are reflected immediately
       - ./src:/app/src:ro
       - ./config:/app/config:ro
-      - ./policies:/policies:ro
       - ./langgraph.json:/app/langgraph.json:ro
     env_file:
       - config/environments/local-dev.env
