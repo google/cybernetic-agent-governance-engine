@@ -337,6 +337,7 @@ def test_execute_trade_forwards_to_gateway_execute_trade_action() -> None:
         ("execute_trade", "execute_trade_action"),
         ("evaluate_policy", "evaluate_policy"),
         ("simulate_governance_check", "simulate_governance_check"),
+        ("trigger_safety_intervention", "trigger_safety_intervention"),
     ],
 )
 def test_gateway_tool_error_is_not_reported_as_success(
@@ -351,6 +352,7 @@ def test_gateway_tool_error_is_not_reported_as_success(
         "currency": "USD",
         "confidence": 0.99,
         "action": "execute_trade",
+        "reason": "drawdown breach",
     }
     with patch.object(api._gateway_client, "execute_tool", gateway):
         resp = _tools_client().post(
@@ -359,6 +361,40 @@ def test_gateway_tool_error_is_not_reported_as_success(
 
     assert resp.json()["status"] == "ERROR"
     assert gateway.await_args.args[0] == gateway_tool
+
+
+def test_trigger_safety_intervention_forwards_to_gateway() -> None:
+    from src.governed_financial_advisor.tools import api
+
+    gateway = AsyncMock(
+        return_value={"status": "SUCCESS", "output": "INTERVENTION_ACK: System Locked."}
+    )
+    with patch.object(api._gateway_client, "execute_tool", gateway):
+        resp = _tools_client().post(
+            "/tools/execute",
+            json={
+                "tool_name": "trigger_safety_intervention",
+                "params": {"reason": "circuit breaker"},
+            },
+        )
+
+    assert resp.json() == {
+        "status": "SUCCESS",
+        "output": "INTERVENTION_ACK: System Locked.",
+    }
+    assert gateway.await_args.args == (
+        "trigger_safety_intervention",
+        {"reason": "circuit breaker"},
+    )
+
+
+def test_finance_plugin_contributes_rail_provider() -> None:
+    from src.cage_finance.plugin import FinanceCagePlugin
+    from src.cage_finance.rails.provider import FinancialRailsProvider
+
+    contribution = FinanceCagePlugin().contribute()
+    assert len(contribution.rail_providers) == 1
+    assert isinstance(contribution.rail_providers[0], FinancialRailsProvider)
 
 
 def test_gateway_unreachable_is_an_error() -> None:

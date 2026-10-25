@@ -32,7 +32,6 @@ from src.gateway.observability.attributes import (
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
-from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 
 _tracer = otel_trace.get_tracer("gfa.tools")
@@ -113,8 +112,10 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
 
         elif tool == "trigger_safety_intervention":
             reason = params.get("reason", "Unknown")
-            await redis_client.set("safety_violation", reason)
-            output = "INTERVENTION_ACK: System Locked."
+            output = await _gateway_tool(
+                "trigger_safety_intervention",
+                {"reason": reason},
+            )
 
         elif tool == "verify_content_safety":
             # Forward to the gateway's verify_content_safety tool — the gateway

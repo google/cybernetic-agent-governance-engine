@@ -14,10 +14,12 @@
 
 package dosing.governance
 
+import rego.v1
+
 # Healthcare domain OPA policy stub
 # Real policy would enforce contraindications, dosing ranges, protocol adherence
 
-default allow = false
+default allow := false
 
 governed_dosing_actions := {
     "administer_dose",
@@ -28,7 +30,7 @@ governed_dosing_actions := {
     "order_controlled_substance",
 }
 
-allow {
+allow if {
     governed_dosing_actions[input.action]
     input.dose_mg > 0
     input.dose_mg < 500

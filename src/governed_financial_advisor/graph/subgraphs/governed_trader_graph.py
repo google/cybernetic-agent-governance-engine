@@ -579,6 +579,21 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
     }
 
 
+def route_entry(state: GovernedTraderState) -> str:
+    """Route on subgraph entry: run post-HITL TOCTOU gate when entering with a resolved approval."""
+    decision = state.get("approval_decision")
+    if (
+        state.get("deferred_id")
+        and isinstance(decision, dict)
+        and decision.get("approved") is True
+    ):
+        logger.info(
+            "[GovernedTrader] Entering with pre-approved deferred_id — routing to post_hitl_rehydrate."
+        )
+        return "post_hitl_rehydrate"
+    return "executor"
+
+
 def route_post_revalidation(state: GovernedTraderState) -> str:
     """Route after the slippage gate: drift_blocked if BLOCKED, else executor."""
     if state.get("post_hitl_safety_status") == "BLOCKED":
@@ -626,8 +641,13 @@ def build_governed_trader_graph() -> Any:
     builder.add_node("executor", executor_node)
     builder.add_node("tools", guarded_tool_executor_node)  # CAGE governance enforced
 
-    # Entry: the gateway, not the advisor, decides whether a human is needed.
-    builder.add_edge(START, "executor")
+    # Entry: if resumed from parent-graph HITL approval with deferred_id +
+    # approval_decision, run the post-HITL TOCTOU slippage gate before executor.
+    builder.add_conditional_edges(
+        START,
+        route_entry,
+        {"executor": "executor", "post_hitl_rehydrate": "post_hitl_rehydrate"},
+    )
 
     # After approval_node (approved path): Command(goto="post_hitl_rehydrate") routes here.
     # TOCTOU remediation chain:

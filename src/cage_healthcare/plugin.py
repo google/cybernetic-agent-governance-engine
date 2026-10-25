@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Healthcare domain capability plugin.
-
-Note what is absent: no Lua script, no fence-epoch logic, no KMS
-verification, no quota reserver, no consensus algorithm, no causal
-refutation engine. Every one of those is a single kernel copy shared
-with finance. This plugin only names things.
-
-T-D5: The complete healthcare plugin — a list of declarations.
-"""
+"""Healthcare domain capability plugin (T-D5 declarative plugin)."""
 
 from pathlib import Path
 
@@ -50,11 +42,7 @@ _CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
 class HealthcareCagePlugin(CagePlugin):
-    """Healthcare domain capability plugin.
-
-    ~40 lines. Zero Lua, zero KMS, zero fence-epoch, zero quota arithmetic.
-    The adopter question: does this read as a list of declarations?
-    """
+    """Healthcare domain capability plugin."""
 
     name = "healthcare"
     api_version = "2.0"
@@ -73,15 +61,11 @@ class HealthcareCagePlugin(CagePlugin):
             skip_epoch_seed=True,
         )
         assay_provider = SimulatedSerumAssayProvider(
-            invariant_id=barrier.invariant_id,
-            state_key=barrier.state_key,
+            invariant_id=barrier.invariant_id, state_key=barrier.state_key
         )
         return PluginContribution(
             domain=self.name,
-            tiers=(
-                DoseBarrierTier(cbf),
-                ClinicalConsensusTier(),
-            ),
+            tiers=(DoseBarrierTier(cbf), ClinicalConsensusTier()),
             invariants=(barrier,),  # declarative, no logic
             ground_truth_providers={barrier.invariant_id: assay_provider},
             registered_actions=REGISTERED_ACTIONS,

@@ -16,11 +16,7 @@
 
 # Healthcare-governed actions (T-D5)
 HEALTHCARE_GOVERNED_ACTIONS = frozenset(
-    [
-        "administer_dose",
-        "prescribe_medication",
-        "adjust_dosage",
-    ]
+    {"administer_dose", "prescribe_medication", "adjust_dosage", "dose_order"}
 )
 
 # Always convene consensus.
@@ -28,6 +24,4 @@ HIGH_STAKES_CLINICAL_ACTIONS: frozenset[str] = frozenset(
     {"administer_medication", "override_contraindication", "order_controlled_substance"}
 )
 # Equals the FTRA registry's terminals (config/ftra/terminal_registry.json).
-REGISTERED_ACTIONS = (
-    HEALTHCARE_GOVERNED_ACTIONS | HIGH_STAKES_CLINICAL_ACTIONS | {"dose_order"}
-)
+REGISTERED_ACTIONS = HEALTHCARE_GOVERNED_ACTIONS | HIGH_STAKES_CLINICAL_ACTIONS

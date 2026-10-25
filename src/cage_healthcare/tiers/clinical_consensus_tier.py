@@ -78,14 +78,7 @@ class ClinicalConsensusTier(ReadOnlyTier):
     def _reject(
         self, message: str, kind: ViolationKind = ViolationKind.HARD
     ) -> list[Violation]:
-        return [
-            Violation(
-                tier=self.tier_name,
-                code="CLINICAL_CONSENSUS_REJECTED",
-                message=message,
-                kind=kind,
-            )
-        ]
+        return [Violation(self.tier_name, "CLINICAL_CONSENSUS_REJECTED", message, kind)]
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.consensus_engine is None:

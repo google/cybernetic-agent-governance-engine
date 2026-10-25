@@ -336,3 +336,65 @@ class TestHealthcarePlugin:
             assert any(
                 "DOSE_BARRIER_VIOLAT" in v.code for v in unsafe_verify["violations"]
             )
+
+    @pytest.mark.asyncio
+    async def test_administer_dose_enforces_governance_and_seal_consumption(self):
+        """ClinicalToolProvider / administer_dose_action enforces governor, consumes seal, dispatches actuator, and settles."""
+        from unittest.mock import AsyncMock, patch
+
+        from src.cage_healthcare.tools.tool_provider import administer_dose_action
+        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+
+        governor = MagicMock()
+        governor.settle = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "src.cage_healthcare.tools.tool_provider.enforce_governance",
+                AsyncMock(return_value="seal-hc-001"),
+            ) as mock_enforce,
+            patch(
+                "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
+                AsyncMock(return_value=None),
+            ) as mock_verify_seal,
+        ):
+            res = await administer_dose_action(
+                patient_id="P001",
+                medication="vancomycin",
+                dose_mg=2.0,
+                governor=governor,
+            )
+
+        assert res["status"] == "GOVERNED"
+        assert res["patient_id"] == "P001"
+        assert res["dose_mg"] == 2.0
+        assert res.get("receipt_id") is not None
+        mock_enforce.assert_awaited_once()
+        mock_verify_seal.assert_awaited_once()
+        governor.settle.assert_awaited_once_with("seal-hc-001", executed=True)
+
+        # Replay / invalid seal blocks execution and settles with executed=False
+        governor.settle.reset_mock()
+        with (
+            patch(
+                "src.cage_healthcare.tools.tool_provider.enforce_governance",
+                AsyncMock(return_value="seal-hc-replay"),
+            ),
+            patch(
+                "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
+                AsyncMock(
+                    side_effect=SymbolicGovernorViolation(
+                        "nonce already consumed", action="administer_dose"
+                    )
+                ),
+            ),
+        ):
+            blocked = await administer_dose_action(
+                patient_id="P001",
+                medication="vancomycin",
+                dose_mg=2.0,
+                governor=governor,
+            )
+
+        assert blocked["status"] == "BLOCKED"
+        governor.settle.assert_awaited_once_with("seal-hc-replay", executed=False)

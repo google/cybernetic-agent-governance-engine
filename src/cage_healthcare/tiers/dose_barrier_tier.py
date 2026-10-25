@@ -17,11 +17,7 @@
 from typing import Any
 
 from src.cage_healthcare.constants import REGISTERED_ACTIONS
-from src.gateway.governance.contracts import (
-    CommitReceipt,
-    MutatingTier,
-    Violation,
-)
+from src.gateway.governance.contracts import CommitReceipt, MutatingTier, Violation
 from src.gateway.governance.safety.barrier_tier import (
     commit_barrier,
     confirm_barrier,
@@ -31,12 +27,7 @@ from src.gateway.governance.safety.barrier_tier import (
 
 
 class DoseBarrierTier(MutatingTier):
-    """Serum-concentration barrier tier (phase 2, order 3).
-
-    Note what is absent: no Lua script, no fence-epoch logic, no KMS call,
-    no quota arithmetic. The kernel's ControlBarrierFunction engine owns
-    all of that. This tier only names the action and delegates to the engine.
-    """
+    """Serum-concentration barrier tier (phase 2, order 3)."""
 
     def __init__(self, cbf: Any = None) -> None:  # cbf: ControlBarrierFunction
         self.cbf = cbf
@@ -56,10 +47,10 @@ class DoseBarrierTier(MutatingTier):
         from src.gateway.governance.contracts import ViolationKind
 
         return Violation(
-            tier=self.tier_name,
-            code="DOSE_BARRIER_UNCONFIGURED",
-            message="no control barrier function configured; refusing governed clinical action",
-            kind=ViolationKind.HARD,
+            self.tier_name,
+            "DOSE_BARRIER_UNCONFIGURED",
+            "no control barrier function configured; refusing governed clinical action",
+            ViolationKind.HARD,
         )
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:

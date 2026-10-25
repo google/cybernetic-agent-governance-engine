@@ -428,6 +428,26 @@ class TestRoutePostRevalidation:
         state = _base_state(post_hitl_safety_status=None)
         assert route_post_revalidation(state) == "executor"
 
+    def test_entry_with_preapproved_deferred_id_routes_to_rehydrate(self):
+        """Parent-graph HITL resumption enters with deferred_id + approved=True and must run post_hitl_rehydrate."""
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            route_entry,
+        )
+
+        state = _base_state()
+        assert route_entry(state) == "post_hitl_rehydrate"
+
+    def test_entry_without_approval_routes_to_executor(self):
+        """Normal entry (no deferred_id or unapproved) routes directly to executor."""
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            route_entry,
+        )
+
+        state = {**_base_state(), "deferred_id": None}
+        assert route_entry(state) == "executor"
+        unapproved = {**_base_state(), "approval_decision": {"approved": False}}
+        assert route_entry(unapproved) == "executor"
+
 
 # ---------------------------------------------------------------------------
 # 6. approval_node — max_slippage_pct + expires_at

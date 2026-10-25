@@ -24,9 +24,7 @@ from src.gateway.governance.contracts import GovernanceTier
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 
-def create_healthcare_tiers(
-    cbf: Any = None,
-) -> tuple[GovernanceTier, ...]:
+def create_healthcare_tiers(cbf: Any = None) -> tuple[GovernanceTier, ...]:
     """Create healthcare domain governance tiers for construction-time registration."""
     barrier = SerumConcentrationBarrier()
     engine = (
@@ -39,7 +37,4 @@ def create_healthcare_tiers(
         )
     )
 
-    return (
-        DoseBarrierTier(engine),
-        ClinicalConsensusTier(),
-    )
+    return (DoseBarrierTier(engine), ClinicalConsensusTier())

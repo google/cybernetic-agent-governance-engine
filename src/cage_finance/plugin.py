@@ -163,6 +163,8 @@ class FinanceCagePlugin(CagePlugin):
             ),
             traders=TraderRoleBindings.from_env(),
         )
+        from src.cage_finance.rails.provider import FinancialRailsProvider
+
         return PluginContribution(
             domain=self.name,
             tiers=tiers,
@@ -182,6 +184,7 @@ class FinanceCagePlugin(CagePlugin):
             background_tasks=background_tasks,
             norm_bindings=(trade_confidence,),
             server_inputs=dict.fromkeys(TRADE_ACTIONS, trade_inputs),
+            rail_providers=(FinancialRailsProvider(),),
         )
 
 
