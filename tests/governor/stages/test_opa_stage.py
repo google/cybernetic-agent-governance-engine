@@ -174,3 +174,38 @@ async def test_opa_stage_sends_the_params_once_with_the_action():
     assert client.inputs == [
         {"amount": 100, "symbol": "AAPL", "action": "execute_trade"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_opa_stage_clears_manual_review_in_post_hitl():
+    """Under Profile.POST_HITL, MANUAL_REVIEW is satisfied by the human approval being redeemed."""
+    client = MockPolicyClient("MANUAL_REVIEW")
+    stage = OpaStage(client)
+
+    from src.gateway.governance.governor.pipeline import StageContext
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 7500}, profile=Profile.POST_HITL
+    )
+    out = await stage.run(ctx)
+    assert list(out.violations) == []
+    assert out.opa_verdict == OpaVerdict.MANUAL_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_opa_stage_still_denies_on_deny_in_post_hitl():
+    """Under Profile.POST_HITL, policy drift to DENY still emits a HARD violation."""
+    client = MockPolicyClient("DENY")
+    stage = OpaStage(client)
+
+    from src.gateway.governance.governor.pipeline import StageContext
+
+    ctx = StageContext(
+        action="execute_trade", params={"amount": 15000}, profile=Profile.POST_HITL
+    )
+    out = await stage.run(ctx)
+    violations = list(out.violations)
+    assert len(violations) == 1
+    assert violations[0].code == "OPA_DENY"
+    assert violations[0].kind == ViolationKind.HARD
+    assert out.opa_verdict == OpaVerdict.DENY

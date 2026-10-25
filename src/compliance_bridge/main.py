@@ -1435,6 +1435,18 @@ async def get_aarm_conformance_report(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_defer_redis_url() -> str:
+    """Resolve the Redis URL for DEFER queue endpoints.
+
+    Preserves an explicitly empty ``REDIS_URL=""`` (so tests asserting
+    ``REDIS_URL_NOT_CONFIGURED`` receive ``""``), while falling back to
+    ``EVIDENCE_STREAM_REDIS_URL`` when ``REDIS_URL`` is unset.
+    """
+    if "REDIS_URL" in os.environ:
+        return os.environ["REDIS_URL"]
+    return os.environ.get("EVIDENCE_STREAM_REDIS_URL", "redis://localhost:6379")
+
+
 @app.get(
     "/v1/defer/pending",
     tags=["governance"],
@@ -1450,7 +1462,7 @@ async def list_defer_pending(
     Tokens are returned in TTL-ascending order (soonest-expiring first).
     DEFER tokens are stored in Redis db=1 with noeviction policy.
     """
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    redis_url = _resolve_defer_redis_url()
     # Return a lightweight stub when Redis is unavailable in non-production environments
     if not redis_url:
         return JSONResponse(
@@ -1501,7 +1513,7 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
 
         HTTP 404 if the token does not exist (never parked or already expired)
     """
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    redis_url = _resolve_defer_redis_url()
     if not redis_url:
         raise HTTPException(
             status_code=503,
@@ -1647,7 +1659,7 @@ async def defer_inject(
     injected context does not raise confidence above threshold, the token
     remains parked and a 409 Conflict is returned.
     """
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    redis_url = _resolve_defer_redis_url()
 
     try:
         from src.gateway.governance.defer_queue import get_shared_defer_queue
@@ -1864,7 +1876,7 @@ async def defer_escalate(
         404 Not Found: Token does not exist or already resolved.
         503 Service Unavailable: Redis connection failed.
     """
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    redis_url = _resolve_defer_redis_url()
 
     try:
         from src.gateway.governance.defer_queue import (

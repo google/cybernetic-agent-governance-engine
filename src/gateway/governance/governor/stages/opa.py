@@ -19,6 +19,7 @@ from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import PolicyClient, Violation, ViolationKind
 from src.gateway.governance.governor.pipeline import (
     OpaVerdict,
+    Profile,
     Stage,
     StageContext,
     StageOutput,
@@ -107,12 +108,17 @@ class OpaStage(Stage):
             )
 
         return StageOutput(
-            violations=tuple(_violations_for(verdict, raw_result)),
+            violations=tuple(_violations_for(verdict, raw_result, profile=ctx.profile)),
             opa_verdict=verdict,
         )
 
 
-def _violations_for(verdict: OpaVerdict | None, raw_result: object) -> list[Violation]:
+def _violations_for(
+    verdict: OpaVerdict | None,
+    raw_result: object,
+    *,
+    profile: Profile = Profile.FULL,
+) -> list[Violation]:
     if verdict == OpaVerdict.ALLOW:
         return []
 
@@ -127,6 +133,8 @@ def _violations_for(verdict: OpaVerdict | None, raw_result: object) -> list[Viol
         ]
 
     if verdict == OpaVerdict.MANUAL_REVIEW:
+        if profile == Profile.POST_HITL:
+            return []
         return [
             Violation(
                 tier="governance",

@@ -185,6 +185,35 @@ def generate_workflow():
     ]
 
 
+def _maybe_mint_user_token(user_id: str) -> str | None:
+    """Mint an EdDSA user OIDC JWT when CAGE_USER_OIDC_PRIVATE_KEY_PEM is configured."""
+    priv_pem = os.environ.get("CAGE_USER_OIDC_PRIVATE_KEY_PEM", "").strip()
+    if not priv_pem:
+        return None
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+
+    priv_key = serialization.load_pem_private_key(
+        priv_pem.encode("utf-8"), password=None
+    )
+    issuer = os.environ.get(
+        "CAGE_USER_OIDC_ISSUER", "https://idp.cage.internal"
+    ).strip()
+    audience = os.environ.get("CAGE_USER_OIDC_AUDIENCE", "cage-advisor").strip()
+    kid = os.environ.get("CAGE_USER_OIDC_KID", "cage-staging-user-oidc-01").strip()
+    return pyjwt.encode(
+        {
+            "iss": issuer,
+            "sub": user_id,
+            "aud": audience,
+            "exp": int(time.time()) + 300,
+        },
+        priv_key,
+        algorithm="EdDSA",
+        headers={"kid": kid},
+    )
+
+
 def query_agent(prompt: str):
     """Sends a query to the agent.
 
@@ -192,6 +221,8 @@ def query_agent(prompt: str):
     require_api_key() dependency (auth.py) does not reject the request
     with HTTP 401.  When CAGE_API_KEY is unset the header is omitted and
     the dev-mode bypass in auth.py applies (CAGE_ENV=dev + no key).
+    When CAGE_USER_OIDC_PRIVATE_KEY_PEM is set, mints a kid-bound EdDSA
+    user OIDC token for X-CAGE-User-Token (Issue #520).
     """
     backend_url = _resolve_backend_url()
     user_id = str(uuid.uuid4())
@@ -200,6 +231,9 @@ def query_agent(prompt: str):
 
     cage_api_key = os.environ.get("CAGE_API_KEY", "")
     headers = {"Authorization": f"Bearer {cage_api_key}"} if cage_api_key else {}
+    user_token = _maybe_mint_user_token(user_id)
+    if user_token:
+        headers["X-CAGE-User-Token"] = user_token
 
     max_retries = 3
     for attempt in range(max_retries):

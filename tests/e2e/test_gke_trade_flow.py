@@ -86,7 +86,11 @@ class Live:
         self, params: dict[str, Any], deferred_id: str | None = None
     ) -> str:
         """Run ``execute_trade_action`` in the gateway; return its output string."""
-        body = {**params, **({"deferred_id": deferred_id} if deferred_id else {})}
+        body = {
+            "transaction_id": str(uuid.uuid4()),
+            **params,
+            **({"deferred_id": deferred_id} if deferred_id else {}),
+        }
         resp = await self.gateway.post(
             "/tools/execute", json={"tool_name": "execute_trade_action", "params": body}
         )

@@ -263,6 +263,37 @@ def _install_otlp_error_filter() -> None:
 # its noisy retry messages suppressed.
 _install_otlp_error_filter()
 
+from opentelemetry.sdk.trace import SpanProcessor
+
+
+class RedactingSpanProcessor(SpanProcessor):
+    """Intercepts all spans and redacts PII from attributes before export."""
+
+    def __init__(self, inner):  # type: ignore[no-untyped-def]
+        self.inner = inner
+
+    def on_start(self, span, parent_context=None):  # type: ignore[no-untyped-def]
+        self.inner.on_start(span, parent_context)
+
+    def on_end(self, span):  # type: ignore[no-untyped-def]
+        # Mutate the internal _attributes of the ReadableSpan snapshot
+        attrs = getattr(span, "_attributes", None)
+        if attrs is not None:
+            target = getattr(attrs, "_dict", attrs)
+            for key, value in list(attrs.items()):
+                if isinstance(value, str):
+                    scrubbed = global_scrub(value)
+                    if scrubbed != value:
+                        target[key] = scrubbed
+        self.inner.on_end(span)
+
+    def shutdown(self):  # type: ignore[no-untyped-def]
+        self.inner.shutdown()
+
+    def force_flush(self, timeout_millis=5_000):  # type: ignore[no-untyped-def]
+        # Honour the short timeout so shutdown does not block > 5 s
+        return self.inner.force_flush(timeout_millis)
+
 
 def configure_telemetry():  # type: ignore[no-untyped-def]
     """
@@ -295,35 +326,6 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
         # Install the S3 error-downgrade filter immediately so it intercepts
         # any errors that arise during the exporter construction below.
         _install_otlp_error_filter()
-
-        from opentelemetry.sdk.trace import SpanProcessor
-
-        class RedactingSpanProcessor(SpanProcessor):
-            """Intercepts all spans and redacts PII from attributes before export."""
-
-            def __init__(self, inner):  # type: ignore[no-untyped-def]
-                self.inner = inner
-
-            def on_start(self, span, parent_context=None):  # type: ignore[no-untyped-def]
-                self.inner.on_start(span, parent_context)
-
-            def on_end(self, span):  # type: ignore[no-untyped-def]
-                # Mutate the internal _attributes of the ReadableSpan snapshot
-                attrs = getattr(span, "_attributes", None)
-                if attrs is not None:
-                    for key, value in list(attrs.items()):
-                        if isinstance(value, str):
-                            scrubbed = global_scrub(value)
-                            if scrubbed != value:
-                                attrs[key] = scrubbed
-                self.inner.on_end(span)
-
-            def shutdown(self):  # type: ignore[no-untyped-def]
-                self.inner.shutdown()
-
-            def force_flush(self, timeout_millis=5_000):  # type: ignore[no-untyped-def]
-                # Honour the short timeout so shutdown does not block > 5 s
-                return self.inner.force_flush(timeout_millis)
 
         # Import optional dependencies
         from opentelemetry import trace

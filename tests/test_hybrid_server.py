@@ -614,3 +614,29 @@ def test_uvicorn_runtime_smoke_activates_uvloop_and_httptools():
     with asyncio.Runner(loop_factory=loop_factory) as runner:
         res = runner.run(_smoke_loop())
         assert res["loop_module"].startswith("uvloop")
+
+
+def test_redacting_span_processor_scrubs_bounded_attributes():
+    """RedactingSpanProcessor.on_end scrubs PII on OpenTelemetry BoundedAttributes without raising TypeError."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from src.gateway.infrastructure.telemetry_client import RedactingSpanProcessor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(RedactingSpanProcessor(SimpleSpanProcessor(exporter)))
+    tracer = provider.get_tracer(__name__)
+
+    with tracer.start_as_current_span("test_span") as span:
+        span.set_attribute("user.email", "contact alice@example.com for details")
+        span.set_attribute("user.ssn", "SSN 123-45-6789")
+
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes)
+    assert "alice@example.com" not in attrs["user.email"]
+    assert "123-45-6789" not in attrs["user.ssn"]

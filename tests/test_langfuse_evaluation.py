@@ -400,6 +400,35 @@ def _resolve_backend_url() -> str:
     return os.environ.get("BACKEND_URL", BACKEND_URL).rstrip("/")
 
 
+def _maybe_mint_user_token(user_id: str) -> str | None:
+    """Mint an EdDSA user OIDC JWT when CAGE_USER_OIDC_PRIVATE_KEY_PEM is configured."""
+    priv_pem = os.environ.get("CAGE_USER_OIDC_PRIVATE_KEY_PEM", "").strip()
+    if not priv_pem:
+        return None
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+
+    priv_key = serialization.load_pem_private_key(
+        priv_pem.encode("utf-8"), password=None
+    )
+    issuer = os.environ.get(
+        "CAGE_USER_OIDC_ISSUER", "https://idp.cage.internal"
+    ).strip()
+    audience = os.environ.get("CAGE_USER_OIDC_AUDIENCE", "cage-advisor").strip()
+    kid = os.environ.get("CAGE_USER_OIDC_KID", "cage-staging-user-oidc-01").strip()
+    return pyjwt.encode(
+        {
+            "iss": issuer,
+            "sub": user_id,
+            "aud": audience,
+            "exp": int(time.time()) + 300,
+        },
+        priv_key,
+        algorithm="EdDSA",
+        headers={"kid": kid},
+    )
+
+
 def call_backend(query: str, session_id: str) -> str:
     """Call the governed financial advisor backend and return the response text.
 
@@ -418,6 +447,9 @@ def call_backend(query: str, session_id: str) -> str:
     cage_api_key = os.environ.get("CAGE_API_KEY", "")
     if cage_api_key:
         headers["Authorization"] = f"Bearer {cage_api_key}"
+    user_token = _maybe_mint_user_token(session_id)
+    if user_token:
+        headers["X-CAGE-User-Token"] = user_token
     try:
         resp = requests.post(
             f"{backend_url}/agent/query",
