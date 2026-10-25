@@ -192,15 +192,22 @@ class PRMRewardSchedule:
     deny: float = -1.0
 
     def __post_init__(self) -> None:
-        values = (
-            self.allow,
-            self.narrow,
-            self.require_approval,
-            self.defer,
-            self.deny,
-        )
-        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
-            raise ValueError("PRMRewardSchedule scalars must be finite numbers")
+        for field_name, v in (
+            ("allow", self.allow),
+            ("narrow", self.narrow),
+            ("require_approval", self.require_approval),
+            ("defer", self.defer),
+            ("deny", self.deny),
+        ):
+            if (
+                isinstance(v, bool)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+            ):
+                raise ValueError(
+                    f"PRMRewardSchedule.{field_name} must be a finite number "
+                    f"(PRMRewardSchedule scalars must be finite numbers), got {v!r}"
+                )
         pending_max = max(self.require_approval, self.defer)
         pending_min = min(self.require_approval, self.defer)
         if not (self.allow > self.narrow > pending_max and pending_min > self.deny):

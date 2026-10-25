@@ -850,6 +850,12 @@ def test_prm_reward_schedule_lattice_validation() -> None:
     with pytest.raises(ValueError, match="strict verdict lattice order"):
         PRMRewardSchedule(defer=-1.0, deny=-1.0)
 
+    with pytest.raises(ValueError, match="must be a finite number"):
+        PRMRewardSchedule(allow=True)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        PRMRewardSchedule(narrow=False, require_approval=-0.5, defer=-0.5, deny=-1.0)  # type: ignore[arg-type]
+
 
 @pytest.mark.asyncio
 async def test_cot_reasoning_trace_loss_masking_and_reconciled_note(

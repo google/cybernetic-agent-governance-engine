@@ -60,15 +60,25 @@ def main():
 
     # 1. Unit Tests (Universal — ISO 42001 A.9.2 continuous monitoring)
     if not run_command(
-        "pytest tests/ --maxfail=1 --disable-warnings -q",
+        [
+            "uv",
+            "run",
+            "pytest",
+            "tests/",
+            "-m",
+            "unit and local",
+            "--maxfail=1",
+            "--disable-warnings",
+            "-q",
+        ],
         "Unit Tests (Pytest — Universal ISO 42001)",
     ):
         success = False
 
     # 2. OPA Policy Checks — Universal ISO 42001 trade governance policy
-    # This is a placeholder for the actual OPA test command in your repo.
     if not run_command(
-        "opa test tests/opa/ -v", "OPA Policy Checks (Universal ISO 42001)"
+        ["opa", "test", "config/opa/", "-v"],
+        "OPA Policy Checks (Universal ISO 42001)",
     ):
         print(
             "   Note: Adjust the opa test path if your policies are stored elsewhere."
@@ -79,10 +89,12 @@ def main():
     if cage_region == "US_FED":
         print("\n--- US_FED jurisdiction-specific OPA checks (NIST SP 800-53) ---")
         if not run_command(
-            "opa test tests/opa/us_fed/ -v",
+            ["opa", "test", "compliance/postures/us_fed/opa/", "-v"],
             "OPA Policy Checks (US_FED — NIST SP 800-53)",
         ):
-            print("   Note: Create tests/opa/us_fed/ with NIST-specific Rego tests.")
+            print(
+                "   Note: Verify compliance/postures/us_fed/opa/ NIST-specific Rego tests."
+            )
             # Non-fatal until US_FED OPA test suite is created
     # 2b. EU_ECB-only OPA checks (EU AI Act / GDPR / DORA)
     elif cage_region == "EU_ECB":
@@ -90,9 +102,12 @@ def main():
             "\n--- EU_ECB jurisdiction-specific OPA checks (EU AI Act / GDPR / DORA) ---"
         )
         if not run_command(
-            "opa test tests/opa/eu_ecb/ -v", "OPA Policy Checks (EU_ECB — EU AI Act)"
+            ["opa", "test", "compliance/postures/eu_ecb/opa/", "-v"],
+            "OPA Policy Checks (EU_ECB — EU AI Act)",
         ):
-            print("   Note: Create tests/opa/eu_ecb/ with EU AI Act Rego tests.")
+            print(
+                "   Note: Create compliance/postures/eu_ecb/opa/ with EU AI Act Rego tests."
+            )
             # Non-fatal until EU_ECB OPA test suite is created
     # 2c. APAC_MAS-only OPA checks (MAS FEAT / MAS Notice 655 / MAS TRM)
     elif cage_region == "APAC_MAS":
@@ -100,22 +115,32 @@ def main():
             "\n--- APAC_MAS jurisdiction-specific OPA checks (MAS FEAT / Notice 655) ---"
         )
         if not run_command(
-            "opa test tests/opa/apac_mas/ -v", "OPA Policy Checks (APAC_MAS — MAS FEAT)"
+            ["opa", "test", "compliance/postures/apac_mas/opa/", "-v"],
+            "OPA Policy Checks (APAC_MAS — MAS FEAT)",
         ):
-            print("   Note: Create tests/opa/apac_mas/ with MAS FEAT Rego tests.")
+            print(
+                "   Note: Create compliance/postures/apac_mas/opa/ with MAS FEAT Rego tests."
+            )
             # Non-fatal until APAC_MAS OPA test suite is created
 
-    # 3. NeMo Rail Tests
+    # 3. NeMo Rail Tests (Colang syntax + action registry & gateway action tests)
     if not run_command(
-        "nemoguardrails test -c src/governed_financial_advisor/governance/nemo_config tests/nemo_tests",
+        [
+            "uv",
+            "run",
+            "pytest",
+            "tests/test_nemo_action_registry.py",
+            "tests/test_gateway_nemo_actions.py",
+            "-q",
+        ],
         "NeMo Guardrails Tests",
     ):
-        print("   Note: Adjust the nemoguardrails paths if needed.")
+        print("   Note: Adjust the NeMo test paths if needed.")
         success = False
 
     # 4. Red Team Live Run (Dry Run to preserve quota while verifying logic)
     if not run_command(
-        "python tests/red_team/adversarial_red_team.py --dry-run",
+        ["uv", "run", "python", "tests/red_team/adversarial_red_team.py", "--dry-run"],
         "Red Team Adversarial Tests (Dry Run)",
     ):
         success = False

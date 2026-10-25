@@ -88,3 +88,25 @@ class TestShellInjectionPrevention:
 
         # Redirection operators are tokenized as literals
         assert args == ["cat", "/etc/passwd", ">", "/tmp/stolen"]
+
+    def test_get_env_masks_secret_values(self, tmp_path, capsys):
+        """scripts/get_env.py masks secret values using value[:4] + '****'."""
+        import scripts.get_env as get_env
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            'GOOGLE_API_KEY="AIzaSySuperSecretKeyValue"\n'
+            "OIDC_CLIENT_SECRET=short\n"
+            "GOOGLE_PIN=abc\n"
+            "# Workload Identity comment\n",
+            encoding="utf-8",
+        )
+        rc = get_env.main(env_file)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "AIzaSySuperSecretKeyValue" not in out
+        assert "GOOGLE_API_KEY=AIza****" in out
+        assert "OIDC_CLIENT_SECRET=shor****" in out
+        assert "GOOGLE_PIN=****" in out
+        assert "# Workload Identity comment" in out
+
