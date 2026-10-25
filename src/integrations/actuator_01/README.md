@@ -163,19 +163,21 @@ All configuration is sourced from environment variables:
 Missing any required variable causes `from_env()` to raise `RuntimeError` with
 a list of missing keys.
 
-## Signed Receipts (CAGE-proposed extension)
+## Signed Receipts
 
-The partner contract does not yet define receipt signatures; this is a
-CAGE-proposed wire extension pending partner adoption and over-the-wire
-conformance testing. A response body MAY carry a detached Ed25519 signature:
+The partner response body carries a detached Ed25519 signature (either as a
+structured JWS-style object or a flat 128-character hex / base64url string
+paired with `kid` / `receipt_kid`, defaulting to
+`archytan-sandbox-receipt-2026-01` published at `GET /v1/keys/receipt-manifest`):
 
 ```json
 {"status": "accepted", "envelope_digest": "<sha256 hex>", "...": "...",
  "signature": {"alg": "EdDSA", "kid": "<key id>", "value": "<base64url>"}}
 ```
 
-The signed message is `CAGE_ACTUATION_RECEIPT_V1:` followed by the RFC 8785
-(JCS) canonical form of the body without `signature`
+The signed message is `ARCHYTAN_RECEIPT_V1:` followed by the RFC 8785
+(JCS) canonical form of the body without `signature` (and without
+`ingress_signature` when appended by the ingress proxy)
 ([`RECEIPT_SIGNATURE_DOMAIN_TAG`](constants.py)). [`verify_partner_receipt()`](receipt_verifier.py)
 resolves the public key **only by `kid`** from the independently fetched
 manifest, never from the receipt, and never raises:
@@ -187,7 +189,8 @@ manifest, never from the receipt, and never raises:
 | Malformed signature, unknown `kid`, bad signature, digest missing or mismatched | `INVALID` | Forced to `UNKNOWN` |
 
 An unauthenticated accept or reject cannot settle the action, so it is treated
-as indeterminate. When a manifest is configured the adapter advertises
+as indeterminate. When a manifest is configured, `require_signed_receipts`
+defaults to `True` and the adapter advertises
 `ActuatorCapability.SIGNED_RECEIPTS`.
 
 ## Fail-Closed Behavior

@@ -45,6 +45,7 @@ from typing import Any, Final
 from urllib.parse import quote
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.routing_seal import _strict_json
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
     NormativeBaseline,
@@ -63,6 +64,8 @@ _TIMEOUT_SECONDS: float = float(
 FINDING_CODE_ENDPOINT_ERROR: Final[str] = "ENDPOINT_ERROR"
 FINDING_CODE_MAPPING_COLLISION: Final[str] = "MAPPING_COLLISION"
 FINDING_CODE_PARSE_ERROR: Final[str] = "PARSE_ERROR"
+FINDING_CODE_STRICT_JSON_VIOLATION: Final[str] = "STRICT_JSON_VIOLATION"
+FINDING_CODE_BIND_RECEIPT: Final[str] = "PROVIDER_03_BIND_RECEIPT"
 
 
 class Provider03NormativeProvider:
@@ -185,6 +188,22 @@ class Provider03NormativeProvider:
 
         url = f"{self._endpoint}/validate"
         try:
+            try:
+                _strict_json(payload, "payload")
+            except ValueError as exc:
+                logger.error("[Provider03] Strict JSON validation failed: %s", exc)
+                return ValidationResult(
+                    admitted=False,
+                    error=f"Strict JSON violation: {exc}",
+                    findings=[
+                        {
+                            "code": FINDING_CODE_STRICT_JSON_VIOLATION,
+                            "severity": "blocked",
+                            "message": f"Payload failed strict JSON validation: {exc}",
+                        }
+                    ],
+                )
+
             # Apply caller-declared field mapping if provided
             # (e.g., finance domain maps 'amount' → 'magnitude', 'symbol' → 'context')
             action_context = payload.get("action_context")
@@ -276,9 +295,27 @@ class Provider03NormativeProvider:
             raw_verdict = data.get("verdict")
             verdict = str(raw_verdict).upper() if raw_verdict is not None else ""
             raw_findings = data.get("findings")
-            findings = raw_findings if isinstance(raw_findings, list) else []
+            findings = list(raw_findings) if isinstance(raw_findings, list) else []
+            decision_id = data.get("decision_id")
+            bind_receipt = data.get("bind_receipt")
+            bind_receipt_hash: str | None = None
+            if isinstance(bind_receipt, dict):
+                bind_receipt_hash = self.ingest_bind_receipt(bind_receipt)
 
             if verdict == "APPROVED":
+                if decision_id is not None or bind_receipt is not None:
+                    receipt_finding: dict[str, Any] = {
+                        "code": FINDING_CODE_BIND_RECEIPT,
+                        "severity": "info",
+                        "message": "Provider 03 bind receipt / decision provenance recorded",
+                    }
+                    if decision_id is not None:
+                        receipt_finding["decision_id"] = decision_id
+                    if bind_receipt is not None:
+                        receipt_finding["bind_receipt"] = bind_receipt
+                    if bind_receipt_hash is not None:
+                        receipt_finding["bind_receipt_hash"] = bind_receipt_hash
+                    findings.append(receipt_finding)
                 return ValidationResult(
                     admitted=True,
                     findings=findings,
@@ -289,16 +326,21 @@ class Provider03NormativeProvider:
                 # (FriaTier, src/gateway/governance/jurisdiction/eu_ai_act/
                 # fria_tier.py) raises HITL FRIA_EXTERNAL_HOLD instead of a
                 # HARD FRIA_REJECTED.
-                review_findings = [
-                    {
-                        "code": "provider_03.escalate",
-                        "severity": "review",
-                        "message": "Provider 03 returned ESCALATE — requires human approval",
-                        "needs_human_review": True,
-                        "provider_03_verdict": verdict,
-                        "provider_03_findings": findings,
-                    }
-                ]
+                escalate_entry: dict[str, Any] = {
+                    "code": "provider_03.escalate",
+                    "severity": "review",
+                    "message": "Provider 03 returned ESCALATE — requires human approval",
+                    "needs_human_review": True,
+                    "provider_03_verdict": verdict,
+                    "provider_03_findings": findings,
+                }
+                if decision_id is not None:
+                    escalate_entry["decision_id"] = decision_id
+                if bind_receipt is not None:
+                    escalate_entry["bind_receipt"] = bind_receipt
+                if bind_receipt_hash is not None:
+                    escalate_entry["bind_receipt_hash"] = bind_receipt_hash
+                review_findings = [escalate_entry]
                 review_findings.extend(findings)
                 return ValidationResult(
                     admitted=False,
@@ -306,6 +348,19 @@ class Provider03NormativeProvider:
                 )
             else:
                 # REJECTED or unknown → hard deny
+                if decision_id is not None or bind_receipt is not None:
+                    refusal_finding: dict[str, Any] = {
+                        "code": FINDING_CODE_BIND_RECEIPT,
+                        "severity": "blocked",
+                        "message": "Provider 03 refusal bind receipt / decision provenance recorded",
+                    }
+                    if decision_id is not None:
+                        refusal_finding["decision_id"] = decision_id
+                    if bind_receipt is not None:
+                        refusal_finding["bind_receipt"] = bind_receipt
+                    if bind_receipt_hash is not None:
+                        refusal_finding["bind_receipt_hash"] = bind_receipt_hash
+                    findings.append(refusal_finding)
                 return ValidationResult(
                     admitted=False,
                     findings=findings,
@@ -435,8 +490,9 @@ class Provider03NormativeProvider:
         This is a Provider 03-specific extension method, not part of the
         standard NormativeProvider protocol.
 
-        v3.1.0: Migrated to RFC 8785 JCS canonicalization.
+        v3.1.0: Migrated to RFC 8785 JCS canonicalization with strict JSON validation.
         """
+        _strict_json(receipt, "receipt")
         canon_bytes = jcs_canonicalize_plan(receipt)
         digest = hashlib.sha256(canon_bytes).hexdigest()
         logger.info(

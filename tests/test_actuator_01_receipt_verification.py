@@ -456,3 +456,39 @@ class TestAdapterReceiptVerification:
         assert receipt.accepted is True
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         assert receipt.verification is ReceiptVerification.VERIFIED
+
+    async def test_archytan_default_sandbox_kid_and_4xx_synthesized_session_uuid(
+        self,
+    ) -> None:
+        """Flat receipt resolves archytan-sandbox-receipt-2026-01 by default and 4xx preserves session_uuid."""
+        assert RECEIPT_SIGNATURE_DOMAIN_TAG == b"ARCHYTAN_RECEIPT_V1:"
+        resolver = _StaticResolver(
+            {"archytan-sandbox-receipt-2026-01": _PARTNER_KEY.public_key()}
+        )
+        synthesized_session = "b94f6f12-8b77-5c21-9b83-1029384756ab"
+
+        def respond(d: str):
+            base = {
+                "error": "REPLAY_DETECTED",
+                "message": "Nonce already consumed",
+                "receipt_id": "r-rej-403",
+                "session_uuid": synthesized_session,
+                "envelope_digest": d,
+            }
+            sig_hex = _PARTNER_KEY.sign(
+                b"ARCHYTAN_RECEIPT_V1:" + jcs_canonicalize_plan(base)
+            ).hex()
+            return 403, {
+                **base,
+                "signature": sig_hex,
+                "ingress_signature": "d" * 128,
+            }
+
+        receipt = await _adapter(respond, receipt_key_resolver=resolver).actuate(
+            _clearance()
+        )
+        assert receipt.accepted is False
+        assert receipt.outcome is ActuationOutcome.REJECTED
+        assert receipt.verification is ReceiptVerification.VERIFIED
+        assert receipt.session_uuid == synthesized_session
+        assert receipt.receipt_id == "r-rej-403"

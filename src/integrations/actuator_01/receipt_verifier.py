@@ -48,7 +48,11 @@ from cryptography.exceptions import InvalidSignature
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.actuation import ReceiptVerification
-from src.integrations.actuator_01.constants import RECEIPT_SIGNATURE_DOMAIN_TAG
+from src.integrations.actuator_01.constants import (
+    DEFAULT_RECEIPT_KID,
+    LEGACY_RECEIPT_SIGNATURE_DOMAIN_TAG,
+    RECEIPT_SIGNATURE_DOMAIN_TAG,
+)
 from src.integrations.trust.key_manifest import Ed25519KeyResolver
 
 logger = logging.getLogger(__name__)
@@ -108,7 +112,7 @@ async def verify_partner_receipt(
         kid_hint = (
             signature.get("kid")
             if isinstance(signature, dict)
-            else body.get("kid", "partner-receipt")
+            else (body.get("kid") or body.get("receipt_kid") or DEFAULT_RECEIPT_KID)
         )
         return ReceiptCheck(
             ReceiptVerification.UNVERIFIED,
@@ -119,6 +123,7 @@ async def verify_partner_receipt(
             ),
         )
 
+    explicit_kid: str | None = None
     if isinstance(signature, dict):
         if signature.get("alg") != "EdDSA":
             return _invalid(
@@ -142,6 +147,7 @@ async def verify_partner_receipt(
                 "RECEIPT_SIGNATURE_MALFORMED",
                 "signature value is not valid 64-byte base64url or hex",
             )
+        explicit_kid = kid
     elif isinstance(signature, str) and signature:
         signature_bytes = _decode_ed25519_sig(signature)
         if signature_bytes is None:
@@ -149,22 +155,38 @@ async def verify_partner_receipt(
                 "RECEIPT_SIGNATURE_MALFORMED",
                 "signature string is not a 64-byte Ed25519 hex or base64url value",
             )
-        kid = str(body.get("kid") or body.get("receipt_kid") or "default")
+        raw_kid = body.get("kid") or body.get("receipt_kid")
+        if isinstance(raw_kid, str) and raw_kid.strip():
+            explicit_kid = raw_kid.strip()
+            kid = explicit_kid
+        else:
+            kid = DEFAULT_RECEIPT_KID
     else:
         return _invalid("RECEIPT_SIGNATURE_MALFORMED", "signature is not an object")
 
-    try:
-        public_key = await key_resolver.get_key(kid)
-    except Exception as exc:
-        logger.error("[actuator_01/receipt] key manifest unavailable: %s", exc)
-        return ReceiptCheck(
-            ReceiptVerification.UNVERIFIED,
-            _finding(
-                "RECEIPT_KEY_MANIFEST_UNAVAILABLE",
-                "WARNING",
-                f"could not resolve kid={kid}: {type(exc).__name__}",
-            ),
-        )
+    candidate_kids = (
+        (explicit_kid,)
+        if explicit_kid is not None
+        else (DEFAULT_RECEIPT_KID, "default")
+    )
+    public_key = None
+    for candidate_kid in candidate_kids:
+        try:
+            resolved = await key_resolver.get_key(candidate_kid)
+        except Exception as exc:
+            logger.error("[actuator_01/receipt] key manifest unavailable: %s", exc)
+            return ReceiptCheck(
+                ReceiptVerification.UNVERIFIED,
+                _finding(
+                    "RECEIPT_KEY_MANIFEST_UNAVAILABLE",
+                    "WARNING",
+                    f"could not resolve kid={candidate_kid}: {type(exc).__name__}",
+                ),
+            )
+        if resolved is not None:
+            public_key = resolved
+            kid = candidate_kid
+            break
     if public_key is None:
         return _invalid("RECEIPT_UNKNOWN_KID", f"kid={kid} not in receipt key manifest")
 
@@ -181,18 +203,24 @@ async def verify_partner_receipt(
     verified_body: dict[str, Any] | None = None
     for candidate in candidate_bodies:
         try:
-            message = RECEIPT_SIGNATURE_DOMAIN_TAG + jcs_canonicalize_plan(candidate)
+            canonical_candidate = jcs_canonicalize_plan(candidate)
         except Exception as exc:
             return _invalid(
                 "RECEIPT_SIGNATURE_MALFORMED",
                 f"receipt not canonicalizable: {type(exc).__name__}",
             )
-        try:
-            public_key.verify(signature_bytes, message)
-            verified_body = candidate
+        for domain_tag in (
+            RECEIPT_SIGNATURE_DOMAIN_TAG,
+            LEGACY_RECEIPT_SIGNATURE_DOMAIN_TAG,
+        ):
+            try:
+                public_key.verify(signature_bytes, domain_tag + canonical_candidate)
+                verified_body = candidate
+                break
+            except InvalidSignature:
+                continue
+        if verified_body is not None:
             break
-        except InvalidSignature:
-            continue
 
     if verified_body is None:
         return _invalid(

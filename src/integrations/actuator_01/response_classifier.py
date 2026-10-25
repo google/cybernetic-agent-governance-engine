@@ -121,11 +121,23 @@ def _parse_body(response: httpx.Response) -> dict | None:
 
 def _extract_error(body: dict | None) -> tuple[str | None, str]:
     """Extract error_code and message from a response body."""
-    if body is None:
+    if not isinstance(body, dict):
         return None, ""
     error_code = body.get("error") or body.get("error_code")
     message = body.get("message") or body.get("error_message") or ""
     return error_code, message
+
+
+def _extract_identifiers(body: dict | None) -> tuple[str | None, str | None]:
+    """Extract receipt_id and session_uuid when present on any response body."""
+    if not isinstance(body, dict):
+        return None, None
+    receipt_id = body.get("receipt_id")
+    session_uuid = body.get("session_uuid")
+    return (
+        receipt_id if isinstance(receipt_id, str) and receipt_id else None,
+        session_uuid if isinstance(session_uuid, str) and session_uuid else None,
+    )
 
 
 def _classify_403(body: dict | None) -> ClassifiedResponse:
@@ -137,12 +149,15 @@ def _classify_403(body: dict | None) -> ClassifiedResponse:
     - Anything else → terminal (fail-closed)
     """
     error_code, message = _extract_error(body)
+    receipt_id, session_uuid = _extract_identifiers(body)
     error_code_upper = (error_code or "").upper()
 
     if error_code_upper in ("LOAD_SHED", "CAPACITY_LIMIT"):
         return ClassifiedResponse(
             category=ResponseCategory.REJECTED_RETRYABLE,
             status_code=403,
+            receipt_id=receipt_id,
+            session_uuid=session_uuid,
             raw_body=body,
             error_code=error_code,
             error_message=message or "Partner capacity-limited (load shed)",
@@ -160,6 +175,8 @@ def _classify_403(body: dict | None) -> ClassifiedResponse:
     return ClassifiedResponse(
         category=ResponseCategory.REJECTED_TERMINAL,
         status_code=403,
+        receipt_id=receipt_id,
+        session_uuid=session_uuid,
         raw_body=body,
         error_code=error_code,
         error_message=message or f"403 Forbidden: {error_code or 'unknown'}",
@@ -214,6 +231,7 @@ def _classify_200(body: dict | None) -> ClassifiedResponse:
         return ClassifiedResponse(
             category=ResponseCategory.REJECTED_TERMINAL,
             status_code=200,
+            session_uuid=session_uuid,
             raw_body=body,
             error_code="MISSING_RECEIPT_ID",
             error_message="200 OK but response body missing receipt_id",
@@ -255,6 +273,7 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
     status = response.status_code
     body = _parse_body(response)
     error_code, message = _extract_error(body)
+    receipt_id, session_uuid = _extract_identifiers(body)
 
     # ── 200 OK ────────────────────────────────────────────────────────────
     if status == 200:
@@ -281,6 +300,8 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
         result = ClassifiedResponse(
             category=ResponseCategory.REJECTED_RETRYABLE,
             status_code=status,
+            receipt_id=receipt_id,
+            session_uuid=session_uuid,
             raw_body=body,
             error_code=error_code,
             error_message=message or f"Retryable HTTP {status}",
@@ -305,6 +326,8 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
         result = ClassifiedResponse(
             category=ResponseCategory.REJECTED_TERMINAL,
             status_code=status,
+            receipt_id=receipt_id,
+            session_uuid=session_uuid,
             raw_body=body,
             error_code=error_code,
             error_message=message or f"Terminal HTTP {status}",
@@ -328,6 +351,8 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
     result = ClassifiedResponse(
         category=ResponseCategory.REJECTED_TERMINAL,
         status_code=status,
+        receipt_id=receipt_id,
+        session_uuid=session_uuid,
         raw_body=body,
         error_code=error_code or f"UNRECOGNISED_{status}",
         error_message=message or f"Unrecognised HTTP {status} — fail-closed",

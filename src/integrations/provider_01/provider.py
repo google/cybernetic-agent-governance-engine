@@ -150,18 +150,80 @@ async def _map_flowsignal_decision(
     if decision_upper == _FLOWSIGNAL_ALLOW:
         # ALLOW: admitted=True, with ConsequenceToken finding (Phase 2 ST-4)
         # Delegate to kernel minting service (relocated from this adapter)
+        import math
+
         from src.gateway.governance.consequence_token_service import (
+            FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
             mint_consequence_token_finding,
         )
 
+        params = (
+            action_payload.get("params", {})
+            if isinstance(action_payload.get("params"), dict)
+            else {}
+        )
+        raw_mag = None
+        for source in (params, action_payload):
+            if "amount" in source:
+                raw_mag = source["amount"]
+                break
+            if "magnitude" in source:
+                raw_mag = source["magnitude"]
+                break
+        if raw_mag is not None:
+            try:
+                mag_val = float(raw_mag)
+                is_valid_mag = (
+                    not isinstance(raw_mag, bool)
+                    and math.isfinite(mag_val)
+                    and mag_val > 0.0
+                )
+            except (TypeError, ValueError):
+                is_valid_mag = False
+            if not is_valid_mag:
+                return False, [
+                    {
+                        "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+                        "severity": "blocked",
+                        "message": (
+                            f"Invalid financial magnitude {raw_mag!r}: "
+                            "must be strictly positive and finite"
+                        ),
+                    }
+                ]
+
+        receipt_obj = (
+            data.get("authority_receipt")
+            if isinstance(data.get("authority_receipt"), dict)
+            else {}
+        )
+        receipt_id = str(
+            receipt_obj.get("id") or data.get("authority_receipt_id") or ""
+        ).strip()
+        record_id = str(data.get("authority_record_id") or "").strip()
+        if action_payload.get("prefer_receipt_id_for_rec") and receipt_id:
+            consumption_id = receipt_id
+        else:
+            consumption_id = record_id or receipt_id
+
+        actor_id = str(
+            action_payload.get("actor_id") or action_payload.get("operator_urn") or ""
+        )
         consequence_token_finding = await mint_consequence_token_finding(
-            actor_id=action_payload.get("actor_id", ""),
+            actor_id=actor_id,
             thread_id=action_payload.get("thread_id", ""),
-            authority_record_id=data.get("authority_record_id", ""),
+            authority_record_id=consumption_id,
             action_payload=action_payload,
             authority_state_version=data.get("authority_state_version"),
             ttl_seconds=60,
         )
+        if receipt_id:
+            consequence_token_finding["authority_receipt_id"] = receipt_id
+        mandate_id = str(
+            data.get("mandate_id") or params.get("mandate_id") or ""
+        ).strip()
+        if mandate_id:
+            consequence_token_finding["mandate_id"] = mandate_id
         return True, [consequence_token_finding]
 
     if decision_upper == _FLOWSIGNAL_REFUSE:
@@ -431,6 +493,62 @@ class FlowSignalNormativeProvider:
                     }
                 ],
             )
+
+        # Pre-flight strict JSON and positive finite magnitude validation
+        import math
+
+        from src.gateway.governance.consequence_token_service import (
+            FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+        )
+        from src.gateway.governance.routing_seal import _strict_json
+
+        try:
+            _strict_json(payload, "payload")
+        except (TypeError, ValueError) as exc:
+            return ValidationResult(
+                admitted=False,
+                error=str(exc),
+                findings=[
+                    {
+                        "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+                        "severity": "blocked",
+                        "message": str(exc),
+                    }
+                ],
+            )
+
+        params = (
+            payload.get("params", {}) if isinstance(payload.get("params"), dict) else {}
+        )
+        for source in (params, payload):
+            if "amount" in source or "magnitude" in source:
+                raw_mag = source.get("amount", source.get("magnitude"))
+                try:
+                    mag_val = float(raw_mag)
+                    valid_mag = (
+                        not isinstance(raw_mag, bool)
+                        and math.isfinite(mag_val)
+                        and mag_val > 0.0
+                    )
+                except (TypeError, ValueError):
+                    valid_mag = False
+                if not valid_mag:
+                    msg = (
+                        f"Invalid financial magnitude {raw_mag!r}: "
+                        "must be strictly positive and finite"
+                    )
+                    return ValidationResult(
+                        admitted=False,
+                        error=msg,
+                        findings=[
+                            {
+                                "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+                                "severity": "blocked",
+                                "message": msg,
+                            }
+                        ],
+                    )
+                break
 
         # Build full 37-field payload per Phase 3 v0.2 schema
         cage_payload = _build_cage_authority_request(payload)

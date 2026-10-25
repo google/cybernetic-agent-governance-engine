@@ -27,10 +27,16 @@ and the institutional warrant source for the kernel ``WarrantSource`` seam:
 
 from src.integrations.provider_05.blueprint_provider import Provider05BlueprintProvider
 from src.integrations.provider_05.client import (
+    BLUEPRINT_SCHEMA_VERSION_V03,
+    DEFAULT_V03_MAX_AGE_SECONDS,
+    KEY_SCHEMA_VERSION_V03,
+    PHYSICS_SCHEMA_VERSION_V03,
     AdmissibilityGrant,
     Provider05Client,
     RiskAcceptanceRecord,
     SubstrateAttestation,
+    VeipV03VerificationResult,
+    verify_v03_artifact,
 )
 from src.integrations.provider_05.key_provider import Provider05KeyProvider
 from src.integrations.provider_05.physics_provider import Provider05PhysicsProvider
@@ -46,6 +52,10 @@ from src.integrations.provider_05.warrant_source import (
 )
 
 __all__ = [
+    "BLUEPRINT_SCHEMA_VERSION_V03",
+    "DEFAULT_V03_MAX_AGE_SECONDS",
+    "KEY_SCHEMA_VERSION_V03",
+    "PHYSICS_SCHEMA_VERSION_V03",
     "VEIP_SANDBOX_BASE_URL",
     "VEIP_SANDBOX_ISSUER_KID",
     "VEIP_SANDBOX_ISSUER_PUBLIC_KEY_B64",
@@ -61,4 +71,6 @@ __all__ = [
     "Provider05WarrantSource",
     "RiskAcceptanceRecord",
     "SubstrateAttestation",
+    "VeipV03VerificationResult",
+    "verify_v03_artifact",
 ]

@@ -13,7 +13,9 @@
       "cloud_run_revision": "flowsignal-cage-phase3-staging-00005-8mp",
       "region": "europe-west2",
       "deployed_date": "2026-09-17",
+      "container_image_digest": "sha256:ec26099cf1ee11aa1491ef14f716acd84d87dccc0ba3c59fca0a6e0f9fc80929",
       "preflight_evidence_file": "run_live.json",
+      "preflight_evidence_sha256": "f1b81dd094a9fad8107d61996cb489b62e93302e427792bdf3c14d20277aea9d",
       "preflight_date": "2026-10-09",
       "authentication_gate_verdict": "AS_EXPECTED",
       "observed_compatibility_notes": [

@@ -59,7 +59,10 @@ from src.gateway.governance.warrant.reliance import (
     reliance_evidence,
 )
 from src.gateway.governance.warrant.trust_anchor import (
+    MANIFEST_KEY_PURPOSES,
     MANIFEST_SCHEMA_VERSION_V02,
+    MANIFEST_SCHEMA_VERSION_V03,
+    SUPPORTED_MANIFEST_SCHEMA_VERSIONS,
     KeyManifestVerificationError,
     ManifestKeyEntry,
     VerifiedKeyManifest,
@@ -69,10 +72,13 @@ from src.gateway.governance.warrant.verifier import WarrantStandingVerifier
 
 __all__ = [
     "CONTRACT_MAX_AGE_SECONDS",
+    "MANIFEST_KEY_PURPOSES",
     "MANIFEST_SCHEMA_VERSION_V02",
+    "MANIFEST_SCHEMA_VERSION_V03",
     "RELIANCE_VERIFICATION_STATUS",
     "REQUIRED_CONTEXT_KEYS",
     "SCOPE_DIMENSIONS",
+    "SUPPORTED_MANIFEST_SCHEMA_VERSIONS",
     "WARRANT_ATTESTATION_TYPE",
     "WARRANT_CONTRACT_EVIDENCE_FIELDS",
     "WARRANT_SCHEMA_VERSION_V02",

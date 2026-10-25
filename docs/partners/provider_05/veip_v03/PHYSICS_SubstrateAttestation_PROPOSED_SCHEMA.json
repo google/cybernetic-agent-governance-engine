@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SubstrateAttestation \u2014 v0.3 proposed review contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "environment",
+    "artifact_id",
+    "issuer",
+    "subject_ref",
+    "scope",
+    "issued_at",
+    "valid_from",
+    "valid_until",
+    "state_as_of",
+    "alg",
+    "kid",
+    "digest",
+    "signature",
+    "substrate_id",
+    "attestation_result",
+    "measurement_ref"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "veip-substrateattestation/0.3"
+    },
+    "environment": {
+      "const": "SANDBOX"
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issuer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "actions",
+        "actors",
+        "systems",
+        "jurisdictions"
+      ],
+      "properties": {
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "actors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "systems": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "jurisdictions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "state_as_of": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "alg": {
+      "const": "Ed25519"
+    },
+    "kid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "substrate_id": {
+      "type": "string"
+    },
+    "attestation_result": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "measurement_ref": {
+      "type": "string"
+    }
+  }
+}

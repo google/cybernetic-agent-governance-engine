@@ -171,6 +171,12 @@ class WarrantStandingVerifier:
                     RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"UNKNOWN_KID: warrant kid {warrant.kid!r} not found in verified key manifest",
                 )
+            if not key_entry.matches_purpose("WARRANT"):
+                return _ineligible(
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
+                    f"PURPOSE_MISMATCH: warrant kid {warrant.kid!r} bound to purpose "
+                    f"{key_entry.purpose!r}, expected 'WARRANT'",
+                )
             if not key_entry.is_active_at(current_time):
                 return _ineligible(
                     RelianceStatus.INELIGIBLE_AUTHENTICITY,

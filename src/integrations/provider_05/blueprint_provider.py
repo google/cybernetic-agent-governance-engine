@@ -18,6 +18,8 @@ Provider 05 Blueprint Attestation Provider (Axiom 1: Policy Legitimacy).
 Cryptographically binds Authorizing Official (AO) risk-acceptance records
 to machine-enforced governance thresholds (e.g. THR-FIN-006) and detects
 threshold drift between authorized risk acceptance and active runtime policy.
+Supports both v0.1 seeded records and VEIP v0.3 signed RiskAcceptanceRecord
+artifacts (``veip-riskacceptancerecord/0.3``).
 """
 
 from __future__ import annotations
@@ -30,7 +32,11 @@ from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     ExternalAttestation,
 )
-from src.integrations.provider_05.client import Provider05Client
+from src.integrations.provider_05.client import (
+    BLUEPRINT_SCHEMA_VERSION_V03,
+    Provider05Client,
+    verify_v03_artifact,
+)
 
 logger = logging.getLogger("cage.integrations.provider_05.blueprint")
 
@@ -70,12 +76,16 @@ class Provider05BlueprintProvider(AttestationProvider):
         """Fetch risk-acceptance attestations and verify alignment with active thresholds.
 
         Args:
-            context: Context containing optional 'threshold_id' (defaults to 'THR-FIN-006').
+            context: Context containing optional 'threshold_id' or 'artifact_id'
+                (defaults to 'THR-FIN-006') and optional VEIP v0.3 evaluation
+                fields ('now', 'action', 'jurisdiction', 'actor', 'system').
 
         Returns:
             List containing the BLUEPRINT ExternalAttestation entry.
         """
-        threshold_id = context.get("threshold_id", "THR-FIN-006")
+        threshold_id = (
+            context.get("artifact_id") or context.get("threshold_id") or "THR-FIN-006"
+        )
         record = await self._client.get_risk_acceptance(threshold_id)
 
         if record is None:
@@ -92,24 +102,73 @@ class Provider05BlueprintProvider(AttestationProvider):
                     provider_name=self.provider_name,
                     metadata={
                         "threshold_id": threshold_id,
+                        "veip_v03_status": "REJECT",
+                        "reason_code": "MISSING",
                         "error": "Record not found",
                     },
                 )
             ]
 
+        v03_meta: dict[str, Any] = {}
+        if record.is_v03 or self._client.key_manifest is not None:
+            key_manifest = await self._client.get_verified_key_manifest(
+                now=context.get("now")
+            )
+            verification = verify_v03_artifact(
+                record,
+                expected_purpose="BLUEPRINT",
+                expected_schema_version=BLUEPRINT_SCHEMA_VERSION_V03,
+                key_manifest=key_manifest,
+                context=context,
+            )
+            if not verification.accepted:
+                return [
+                    ExternalAttestation(
+                        attestation_type="BLUEPRINT",
+                        status=verification.attestation_status,
+                        receipt_id=record.receipt_id,
+                        attested_at=record.attested_at,
+                        provider_name=self.provider_name,
+                        metadata={
+                            "threshold_id": record.threshold_id,
+                            "kid": record.kid,
+                            "digest": record.digest,
+                            "veip_v03_status": verification.expected_status,
+                            "reason_code": verification.reason_code,
+                            "error": verification.reason,
+                        },
+                    )
+                ]
+            v03_meta = {
+                "kid": record.kid,
+                "digest": record.digest,
+                "veip_v03_status": verification.expected_status,
+                "reason_code": verification.reason_code,
+            }
+
         # Check for threshold drift between signed risk acceptance and active runtime value
-        active_val = self._active_thresholds.get(threshold_id)
+        active_val = self._active_thresholds.get(record.threshold_id)
         if active_val is not None and abs(active_val - record.threshold_value) > 1e-6:
             logger.error(
                 "⛔ [BLUEPRINT_DRIFT] Threshold %s drifted! Active=%s, Authorized=%s",
-                threshold_id,
+                record.threshold_id,
                 active_val,
                 record.threshold_value,
             )
             status = AttestationStatus.DRIFT_DETECTED.value
+            if v03_meta:
+                v03_meta["veip_v03_status"] = "REJECT"
+                v03_meta["reason_code"] = "DRIFT_DETECTED"
         else:
             status = AttestationStatus.VERIFIED.value
 
+        metadata: dict[str, Any] = {
+            "threshold_id": record.threshold_id,
+            "ao_signature_hash": record.ao_signature_hash,
+            "ao_name": record.ao_name,
+            "threshold_value": record.threshold_value,
+            **v03_meta,
+        }
         return [
             ExternalAttestation(
                 attestation_type="BLUEPRINT",
@@ -117,11 +176,6 @@ class Provider05BlueprintProvider(AttestationProvider):
                 receipt_id=record.receipt_id,
                 attested_at=record.attested_at,
                 provider_name=self.provider_name,
-                metadata={
-                    "threshold_id": record.threshold_id,
-                    "ao_signature_hash": record.ao_signature_hash,
-                    "ao_name": record.ao_name,
-                    "threshold_value": record.threshold_value,
-                },
+                metadata=metadata,
             )
         ]

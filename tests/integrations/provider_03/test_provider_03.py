@@ -821,3 +821,76 @@ class TestFactoryRegistration:
 
         provider = get_normative_provider("provider_03")
         assert isinstance(provider, Provider03NormativeProvider)
+
+
+class TestStrictJsonAndBindReceiptProvenance:
+    """Tests for strict JSON pre-flight enforcement and bind_receipt preservation."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_validate_fria_rejects_ieee754_unsafe_integer(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """Payload with integer > 2^53 - 1 fails closed before HTTP dispatch."""
+        from src.integrations.provider_03.provider import (
+            FINDING_CODE_STRICT_JSON_VIOLATION,
+        )
+
+        with patch("httpx.AsyncClient") as MockClient:
+            result = await adapter.validate_fria(
+                {
+                    "action": "execute_trade",
+                    "action_context": {"magnitude": (1 << 53)},
+                }
+            )
+            MockClient.assert_not_called()
+
+        assert result.admitted is False
+        assert any(
+            f["code"] == FINDING_CODE_STRICT_JSON_VIOLATION for f in result.findings
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.local
+    async def test_validate_fria_preserves_decision_id_and_bind_receipt(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """APPROVED and ESCALATE responses preserve decision_id and bind_receipt hash."""
+        from src.integrations.provider_03.provider import FINDING_CODE_BIND_RECEIPT
+
+        receipt = {"receipt_id": "vr-123", "policy_version": "2026.10"}
+        mock_response = _mock_response(
+            {
+                "verdict": "APPROVED",
+                "decision_id": "veritas-dec-001",
+                "bind_receipt": receipt,
+                "findings": [],
+            }
+        )
+
+        with patch("httpx.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.post.return_value = mock_response
+            MockClient.return_value.__aenter__.return_value = client_instance
+
+            result = await adapter.validate_fria({"action": "execute_trade"})
+
+        assert result.admitted is True
+        receipt_findings = [
+            f for f in result.findings if f["code"] == FINDING_CODE_BIND_RECEIPT
+        ]
+        assert len(receipt_findings) == 1
+        assert receipt_findings[0]["decision_id"] == "veritas-dec-001"
+        assert receipt_findings[0]["bind_receipt"] == receipt
+        assert len(receipt_findings[0]["bind_receipt_hash"]) == 64
+
+    @pytest.mark.local
+    def test_ingest_bind_receipt_rejects_non_finite_float(
+        self,
+        adapter: Provider03NormativeProvider,
+    ) -> None:
+        """ingest_bind_receipt rejects NaN / Infinity via _strict_json."""
+        with pytest.raises(ValueError, match="non-finite"):
+            adapter.ingest_bind_receipt({"receipt_id": "vr-bad", "score": float("nan")})

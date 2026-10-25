@@ -57,6 +57,7 @@ explain it in `notes` (see Q1).
 | **DP-07** | `delete` an ephemeral sandbox environment | `get_resource_predicate` | `environment_tier=SANDBOX`, `reversibility_tier` | **ALLOW** if synchronized and not load-bearing. |
 | **DP-08** | Change an IAM binding / network policy on a shared service with many transitive dependents | `query_blast_radius`, `get_topology_snapshot` | `transitive_dependency_depth`, `direct_dependents_count`, `estimated_affected_services`, `approval_tier` | **DEFER → HITL** at the returned `approval_tier`. CAGE never down-grades the approval tier the estate recommends. |
 | **DP-09** | Any mutation on a URN that is **not in the graph** | `get_resource_predicate` | — | **DENY** (fail closed). See Q2: the seam has no `NOT_FOUND` status yet. |
+| **DP-10** | `delete` an unattached block storage volume (estate-dependent outcome for the same action) | `get_resource_predicate`, `query_blast_radius` | `environment_tier`, `criticality_tier`, `reversibility_tier`, `managed_by_terraform`, `iac_drift_status`, `compensating_rollback_action` | **ALLOW** when estate context confirms an ephemeral/orphaned non-production scratch volume with a valid snapshot or `REVERSIBLE` classification; **DEFER → HITL** (or **DENY**) when estate lineage shows the unattached volume is a detached production DR volume, warm-standby disk, or compliance-retained snapshot source (`IRREVERSIBLE_TERMINAL`). |
 
 ## 5. How to respond
 

@@ -163,6 +163,16 @@ class CloudOpsResourcePredicate(BaseModel):
     evaluated_at_utc: str = Field(..., description="ISO 8601 evaluation timestamp")
 ```
 
+### 2.2 Candidate `v1.1` Seam Extensions (Post-Round-1 Alignment)
+
+To preserve strict validation of OpsCanvas's Round 1 fixture PR against [`schemas/provider_09/estate_decision_response.schema.json`](../schemas/provider_09/estate_decision_response.schema.json) (`v1.0`), the `v1.0` schema remains frozen during Round 1. Two additive candidate extensions proposed by OpsCanvas are queued for `v1.1` review:
+
+1. **Per-Field Provenance Annotations (`field_provenance`):**
+   * Annotates individual predicate fields (rather than only the whole predicate) with `source` (`"CONFIRMED" | "INFERRED" | "IMPORTED" | "UNKNOWN"`) and `observed_at_utc` (ISO 8601 timestamp).
+   * Enables OPA/FTRA policies to fail closed when safety-critical fields (`is_load_bearing`, `has_failover_redundancy`, `reversibility_tier`) are `"INFERRED"` or `"UNKNOWN"` (or older than a field-specific freshness window), while still admitting `"INFERRED"` or `"IMPORTED"` provenance on non-critical metadata.
+2. **Deployment Lineage (`deployment_lineage`):**
+   * Captures how a resource reached its live state (`repository_uri`, `commit_sha`, `ci_pipeline_run_id`, `promotion_stage`, `deployed_at_utc`), complementing `last_iac_commit_hash` for services deployed via application CI/CD pipelines alongside Terraform.
+
 ---
 
 ## 3. Four Core Touchpoints with CAGE Architecture

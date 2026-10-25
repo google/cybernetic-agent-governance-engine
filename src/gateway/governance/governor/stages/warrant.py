@@ -37,9 +37,9 @@ warrant older than ``max_age_seconds`` whose re-fetch failed (STALE).
 This is not a pre-OPA short-circuit. The stage emits only non-HARD findings,
 so the pipeline still runs every other stage: an independent HARD finding
 (OPA, STPA, FTRA, a barrier) still denies, and a warrant failure can never
-mask it. The binding's ``value`` is bound to the warrant through
-``governing_version``: the v0.1 warrant carries no value field, so a value
-change needs a new version and a re-issued warrant.
+mask it. In v0.1, the binding's ``value`` is bound to the warrant through
+``governing_version``; in v0.2, ``WarrantStandingVerifier`` also verifies
+``norm_parameters`` against ``binding.value`` directly.
 
 The stage is assembled only when some binding requires a warrant
 (``assembly.assemble_governor``); it adds no proof states of its own. Its

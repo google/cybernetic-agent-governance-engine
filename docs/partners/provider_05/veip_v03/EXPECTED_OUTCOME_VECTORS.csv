@@ -1,0 +1,30 @@
+id,evidence_class,expected_status,expected_gateway,precondition,review_status
+VERSION_MISMATCH,WARRANT,INELIGIBLE_VERSION_MISMATCH,DEFER,frozen v0.2 warrant with explicit scenario context,PROPOSED_NOT_EXECUTED
+OUT_OF_SCOPE,WARRANT,INELIGIBLE_OUT_OF_SCOPE,DEFER,frozen v0.2 warrant with explicit scenario context,PROPOSED_NOT_EXECUTED
+UNRESOLVED,WARRANT,INELIGIBLE_UNRESOLVED,DEFER,frozen v0.2 warrant with explicit scenario context,PROPOSED_NOT_EXECUTED
+POST_HITL_STEP_1,WARRANT,ELIGIBLE,ALLOW,"recheck current warrant, same identity and scope",PROPOSED_NOT_EXECUTED
+POST_HITL_STEP_2_RETAINED,WARRANT,ELIGIBLE,ALLOW,"recheck current warrant, same identity and scope",PROPOSED_NOT_EXECUTED
+BLUEPRINT_VALID,BLUEPRINT,ACCEPT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_WRONG_PURPOSE,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_WRONG_KID,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_EXPIRED,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_STALE,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_OUT_OF_SCOPE,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_BAD_SIGNATURE,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+BLUEPRINT_MISSING,BLUEPRINT,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_VALID,KEY,ACCEPT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_WRONG_PURPOSE,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_WRONG_KID,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_EXPIRED,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_STALE,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_OUT_OF_SCOPE,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_BAD_SIGNATURE,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+KEY_MISSING,KEY,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_VALID,PHYSICS,ACCEPT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_WRONG_PURPOSE,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_WRONG_KID,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_EXPIRED,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_STALE,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_OUT_OF_SCOPE,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_BAD_SIGNATURE,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED
+PHYSICS_MISSING,PHYSICS,REJECT,CAGE_MAPPING_REVIEW_REQUIRED,"distinct issuer kid and purpose, pinned root, signed JCS payload",PROPOSED_NOT_EXECUTED

@@ -234,8 +234,13 @@ async def test_live_wire_dispatch_roundtrip(
 
     assert receipt.outcome is ActuationOutcome.ACCEPTED
     assert receipt.receipt_id, "Partner receipt_id should be present on ACCEPTED"
+    assert receipt.session_uuid, "Partner session_uuid should be present on ACCEPTED"
     assert receipt.envelope_digest and len(receipt.envelope_digest) == 64
     assert receipt.timestamp_utc, "Submission timestamp_utc should be present"
+    if os.environ.get("ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL", "").strip():
+        from src.gateway.governance.execution_actuator import ReceiptVerification
+
+        assert receipt.verification is ReceiptVerification.VERIFIED
 
 
 @pytest.mark.asyncio

@@ -44,8 +44,19 @@ _ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 _RAW_KEY_LEN = 32
 _ED25519_SIG_LEN = 64
 
-#: Supported key manifest schema version.
+#: Supported key manifest schema versions.
 MANIFEST_SCHEMA_VERSION_V02 = "veip-key-manifest/0.2"
+MANIFEST_SCHEMA_VERSION_V03 = "veip-key-manifest/0.3"
+SUPPORTED_MANIFEST_SCHEMA_VERSIONS: tuple[str, ...] = (
+    MANIFEST_SCHEMA_VERSION_V02,
+    MANIFEST_SCHEMA_VERSION_V03,
+)
+MANIFEST_KEY_PURPOSES: tuple[str, ...] = (
+    "WARRANT",
+    "BLUEPRINT",
+    "KEY",
+    "PHYSICS",
+)
 
 _REQUIRED_MANIFEST_FIELDS: tuple[str, ...] = (
     "schema_version",
@@ -177,6 +188,7 @@ class ManifestKeyEntry:
     not_before: str
     not_after: str
     revoked_at: str = ""
+    purpose: str = ""
     _raw_key: bytes = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -184,6 +196,11 @@ class ManifestKeyEntry:
             raise ValueError("ManifestKeyEntry.kid must be a non-empty string")
         if self.alg != "Ed25519":
             raise ValueError(f"Unsupported key manifest algorithm: {self.alg!r}")
+        if self.purpose and self.purpose not in MANIFEST_KEY_PURPOSES:
+            raise ValueError(
+                f"Unsupported key manifest purpose: {self.purpose!r}; "
+                f"expected one of {MANIFEST_KEY_PURPOSES}"
+            )
         raw_key = _extract_ed25519_raw_public_key(self.public_key_b64u)
         _parse_utc(self.not_before)
         _parse_utc(self.not_after)
@@ -199,6 +216,12 @@ class ManifestKeyEntry:
         except ValueError:
             return False
         return nb <= now <= na
+
+    def matches_purpose(self, expected_purpose: str) -> bool:
+        """Return whether this key is bound to ``expected_purpose`` (or unbound in v0.2)."""
+        if not self.purpose:
+            return True
+        return self.purpose == expected_purpose
 
     def verify_signature(self, signature_b64u: str, payload: bytes) -> bool:
         """Verify an Ed25519 warrant signature using this issuer key."""
@@ -265,7 +288,7 @@ class VerifiedKeyManifest:
             )
 
         schema_version = raw_manifest["schema_version"]
-        if schema_version != MANIFEST_SCHEMA_VERSION_V02:
+        if schema_version not in SUPPORTED_MANIFEST_SCHEMA_VERSIONS:
             raise KeyManifestVerificationError(
                 f"Unsupported key manifest schema_version: {schema_version!r}"
             )
@@ -331,6 +354,11 @@ class VerifiedKeyManifest:
                     raise KeyManifestVerificationError(
                         "Key manifest entry must be a dict"
                     )
+                raw_purpose = str(item.get("purpose", "") or "")
+                if schema_version == MANIFEST_SCHEMA_VERSION_V03 and not raw_purpose:
+                    raise KeyManifestVerificationError(
+                        f"Key manifest v0.3 entry {item.get('kid')!r} missing required 'purpose'"
+                    )
                 entry = ManifestKeyEntry(
                     kid=str(item["kid"]),
                     alg=str(item["alg"]),
@@ -339,6 +367,7 @@ class VerifiedKeyManifest:
                     not_before=str(item["not_before"]),
                     not_after=str(item["not_after"]),
                     revoked_at=str(item.get("revoked_at", "") or ""),
+                    purpose=raw_purpose,
                 )
                 if entry.kid in parsed_keys:
                     raise KeyManifestVerificationError(
@@ -384,13 +413,23 @@ class VerifiedKeyManifest:
             return False
         return gen_dt <= now <= until_dt
 
-    def resolve_key(self, kid: str) -> ManifestKeyEntry | None:
-        """Look up a key entry by ``kid``, or ``None`` if unknown."""
-        return self.keys.get(kid)
+    def resolve_key(
+        self, kid: str, *, expected_purpose: str | None = None
+    ) -> ManifestKeyEntry | None:
+        """Look up a key entry by ``kid`` (and optional ``expected_purpose``), or ``None``."""
+        entry = self.keys.get(kid)
+        if entry is None:
+            return None
+        if expected_purpose is not None and not entry.matches_purpose(expected_purpose):
+            return None
+        return entry
 
 
 __all__ = [
+    "MANIFEST_KEY_PURPOSES",
     "MANIFEST_SCHEMA_VERSION_V02",
+    "MANIFEST_SCHEMA_VERSION_V03",
+    "SUPPORTED_MANIFEST_SCHEMA_VERSIONS",
     "KeyManifestVerificationError",
     "ManifestKeyEntry",
     "VerifiedKeyManifest",

@@ -105,7 +105,7 @@ from src.gateway.governance.warrant.model import (
     WarrantStatus,
 )
 
-#: The only verification status a v0.1 reliance record can carry.
+#: Default verification status for unsigned v0.1 reliance records (v0.2 signed warrants resolve to VERIFIED when verified against a VerifiedKeyManifest).
 RELIANCE_VERIFICATION_STATUS: str = AttestationStatus.UNVERIFIED.value
 
 #: ``ExternalAttestation.attestation_type`` of the envelope warrant entry.
