@@ -1101,8 +1101,8 @@ def _send_prompt(prompt: str) -> tuple[int, str]:
     """POST prompt to BACKEND_URL/agent/query; return (status_code, body).
 
     A fresh ``thread_id`` (UUID4) is generated per call. The backend's
-    ``QueryRequest.thread_id`` defaults to the literal string
-    ``"default_thread"`` when omitted (see
+    ``QueryRequest.thread_id`` defaults to one thread per principal when
+    omitted (see
     ``src/governed_financial_advisor/models/query.py::QueryRequest``), and the
     LangGraph checkpointer persists conversation state keyed on that thread
     ID. Reusing the default thread ID across every request in a deflection/

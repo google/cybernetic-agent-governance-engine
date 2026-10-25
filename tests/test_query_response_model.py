@@ -128,12 +128,12 @@ class TestQueryResponseModel:
         assert request.thread_id == "thread_456"
 
     def test_query_request_defaults(self) -> None:
-        """thread_id still defaults; user_id has no default (issue #516)."""
+        """thread_id is optional; user_id has no default (issue #516)."""
         request = QueryRequest(prompt="Tell me about ETFs", user_id="investor-7")
 
         assert request.prompt == "Tell me about ETFs"
         assert request.user_id == "investor-7"
-        assert request.thread_id == "default_thread"
+        assert request.thread_id is None
 
         with pytest.raises(ValidationError):
             QueryRequest(prompt="Tell me about ETFs")

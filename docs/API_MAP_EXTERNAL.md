@@ -706,7 +706,7 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 |---|---|---|
 | `prompt` | `str` | — |
 | `user_id` | `str` | Required; 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`. Asserted by the caller, not authenticated |
-| `thread_id` | `str` | Optional; defaults to `default_thread` |
+| `thread_id` | `str` | Optional; defaults to a per-principal thread. A thread another principal started is refused with HTTP 403 |
 
 ---
 
