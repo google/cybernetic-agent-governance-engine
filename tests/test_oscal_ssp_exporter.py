@@ -768,6 +768,76 @@ class TestApplyFtraComponentPatch:
         ]
         assert len(ftra_components) == 1  # exactly one, not two
 
+    def test_keeps_a_hand_maintained_statement(self, tmp_path: Path) -> None:
+        """component-definition.yaml is maintained by hand: an export keeps a
+        statement's text (it may name the domain's files, which the kernel's
+        seed text cannot) and still refreshes the machine fields."""
+        comp_file = tmp_path / "comp.yaml"
+        comp_file.write_text(_MINIMAL_COMP_DEF)
+        _apply_ftra_component_patch(comp_file, generate_ftra_component_entry())
+        doc = yaml.safe_load(comp_file.read_text())
+        _si10(_ftra(doc))["description"] = "Hand-maintained statement."
+        comp_file.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+        stamp = {"name": "last-compiled", "value": "2099-01-01T00:00:00Z"}
+        entry = generate_ftra_component_entry()
+        entry["props"] = [
+            stamp if p["name"] == "last-compiled" else p for p in entry["props"]
+        ]
+        _apply_ftra_component_patch(comp_file, entry)
+
+        ftra = _ftra(yaml.safe_load(comp_file.read_text()))
+        assert _si10(ftra)["description"] == "Hand-maintained statement."
+        assert stamp in ftra["props"]
+        # The caller's entry is not modified.
+        assert _si10(entry)["description"] != "Hand-maintained statement."
+
+    def test_seeds_a_statement_with_no_text(self, tmp_path: Path) -> None:
+        comp_file = tmp_path / "comp.yaml"
+        comp_file.write_text(_MINIMAL_COMP_DEF)
+        _apply_ftra_component_patch(comp_file, generate_ftra_component_entry())
+        doc = yaml.safe_load(comp_file.read_text())
+        del _si10(_ftra(doc))["description"]
+        comp_file.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+        entry = generate_ftra_component_entry()
+        _apply_ftra_component_patch(comp_file, entry)
+
+        seeded = _si10(_ftra(yaml.safe_load(comp_file.read_text())))["description"]
+        assert seeded == _si10(entry)["description"]
+
+    def test_export_keeps_the_committed_si10_statement(self, tmp_path: Path) -> None:
+        """Regression: an export replaced the committed SI-10 statement, which
+        names the domain's UCA rules and OPA policy files, with the kernel's
+        domain-agnostic seed text."""
+        root = Path(__file__).resolve().parents[1]
+        committed = (root / "compliance/oscal/component-definition.yaml").read_text()
+        comp_file = tmp_path / "component-definition.yaml"
+        comp_file.write_text(committed)
+        before = _si10(_ftra(yaml.safe_load(committed)))["description"]
+
+        _apply_ftra_component_patch(comp_file, generate_ftra_component_entry())
+
+        after = _si10(_ftra(yaml.safe_load(comp_file.read_text())))["description"]
+        assert after == before
+
+
+def _ftra(comp_def: dict) -> dict:
+    return next(
+        c
+        for c in comp_def["component-definition"]["components"]
+        if c["uuid"] == _FTRA_COMPONENT_UUID
+    )
+
+
+def _si10(component: dict) -> dict:
+    return next(
+        req
+        for impl in component["control-implementations"]
+        for req in impl["implemented-requirements"]
+        if req["uuid"] == _FTRA_SI10_IMPL_UUID
+    )
+
 
 # ---------------------------------------------------------------------------
 # types.py CONTROL_META completeness

@@ -67,6 +67,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
 import json
 import logging
@@ -116,15 +117,18 @@ _FTRA_SI10_IMPL_UUID = "si100001-ftra-8000-classifier00001"
 
 #: SI-10 statement for the FTRA component. FTRA validates no parameter values
 #: (docs/governance/FTRA_SCOPE.md); it names where value validation lives.
+#: This is seed text: the kernel may name no domain path (Gate G3), so it names
+#: the domain's rules generically. The committed statement in
+#: component-definition.yaml names the files, and an export keeps it
+#: (_keep_statement_text).
 _FTRA_SI10_DESCRIPTION = (
     "FTRA (Tier 0.5) classifies each tool call against the digest-covered terminal "
     "registry (src/gateway/governance/ftra/classifier.py) and routes irreversible or "
     "unregistered actions to human review; a registered terminal clears autonomously "
     "only inside its signed autonomous envelope with a known, finite, positive "
     "magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation "
-    "(SI-10) is enforced by STPA UCA rules (domain STPA UCA rules) and the "
-    "domain OPA policy (domain OPA policy); injection is "
-    "mitigated by NeMo/AGP rails generated from UCA-7 "
+    "(SI-10) is enforced by the domain STPA UCA rules and the domain OPA policy; "
+    "injection is mitigated by NeMo/AGP rails generated from UCA-7 "
     "(config/rails/generated_stpa_rails.co, config/agp/generated_semantic_policy.txt). "
     "Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews "
     "every claiming phase-2 barrier side-effect-free (Phase2Mode.PREVIEW in "
@@ -1100,12 +1104,39 @@ def _apply_component_patch(
     return True
 
 
+def _keep_statement_text(existing: dict[str, Any], entry: dict[str, Any]) -> None:
+    """Carry each statement's text in ``existing`` over to ``entry``, in place.
+
+    component-definition.yaml is maintained by hand. The exporter owns a
+    generated component's structure and machine fields (``props`` such as
+    ``last-compiled``), not its prose: the seed text it generates may name no
+    domain path (Gate G3), so overwriting a statement that names the active
+    domain's files would replace specific prose with generic text. Statements
+    are matched by implemented-requirement UUID; one with no text is seeded,
+    so deleting a ``description`` re-seeds it.
+    """
+    kept = {
+        req["uuid"]: req["description"]
+        for impl in existing.get("control-implementations") or []
+        for req in impl.get("implemented-requirements") or []
+        if req.get("uuid") and req.get("description")
+    }
+    for impl in entry.get("control-implementations") or []:
+        for req in impl.get("implemented-requirements") or []:
+            if req.get("uuid") in kept:
+                req["description"] = kept[req["uuid"]]
+
+
 def _apply_ftra_component_patch(
     comp_path: Path,
     ftra_component_entry: dict[str, Any],
     dry_run: bool = False,
 ) -> bool:
-    """Inject/replace the FTRA component in component-definition.yaml."""
+    """Inject/replace the FTRA component in component-definition.yaml.
+
+    The text of a statement already in the file is kept
+    (:func:`_keep_statement_text`); everything else is replaced.
+    """
     if not comp_path.exists():
         logger.warning("Component definition not found at %s — skipping", comp_path)
         return False
@@ -1118,6 +1149,13 @@ def _apply_ftra_component_patch(
     except (KeyError, TypeError) as exc:
         logger.error("Cannot navigate component-definition: %s", exc)
         return False
+
+    ftra_component_entry = copy.deepcopy(ftra_component_entry)
+    existing = next(
+        (c for c in components if c.get("uuid") == _FTRA_COMPONENT_UUID), None
+    )
+    if existing is not None:
+        _keep_statement_text(existing, ftra_component_entry)
 
     # Remove existing FTRA component (idempotent)
     components = [c for c in components if c.get("uuid") != _FTRA_COMPONENT_UUID]
