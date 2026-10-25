@@ -107,9 +107,9 @@ variable "hot_to_cold_move_factor" {
 }
 
 variable "password_secret_name" {
-  description = "Name of the Kubernetes Secret containing the ClickHouse password"
+  description = "Name of the Kubernetes Secret containing the ClickHouse admin password"
   type        = string
-  default     = "advisor-secrets"
+  default     = "clickhouse-admin-secret"
 }
 
 variable "password_secret_key" {

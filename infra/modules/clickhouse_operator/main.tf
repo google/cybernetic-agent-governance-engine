@@ -63,6 +63,26 @@ resource "random_password" "clickhouse" {
   special = false
 }
 
+resource "kubernetes_secret" "clickhouse_admin" {
+  metadata {
+    name      = var.password_secret_name
+    namespace = var.namespace
+    labels = {
+      app                         = "clickhouse"
+      component                   = "query-plane"
+      "cage.io/sensitivity-level" = "high"
+    }
+    annotations = {
+      "cage.io/rotation-schedule" = "90d"
+      "cage.io/rotation-owner"    = "platform-team"
+    }
+  }
+
+  data = {
+    (var.password_secret_key) = random_password.clickhouse.result
+  }
+}
+
 # Dedicated credential for the least-privilege evidence writer. Held in its own
 # Secret so the compliance bridge never receives the admin (`default`) password.
 resource "random_password" "evidence_sink" {
@@ -628,7 +648,7 @@ resource "kubernetes_stateful_set" "clickhouse" {
             name = "CLICKHOUSE_PASSWORD"
             value_from {
               secret_key_ref {
-                name = var.password_secret_name
+                name = kubernetes_secret.clickhouse_admin.metadata[0].name
                 key  = var.password_secret_key
               }
             }

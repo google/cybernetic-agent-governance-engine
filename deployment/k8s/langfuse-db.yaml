@@ -89,7 +89,7 @@ spec:
         - name: CLICKHOUSE_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: advisor-secrets
+              name: clickhouse-admin-secret
               key: CLICKHOUSE_PASSWORD
         - name: CLICKHOUSE_EVIDENCE_SINK_PASSWORD
           valueFrom:
