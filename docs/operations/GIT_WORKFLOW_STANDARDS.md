@@ -5,15 +5,15 @@
 > `hotfix/*` and `rc-v*` branch patterns are documented for reference only —
 > no production release process is currently active.
 
-**Version:** 1.3  
-**Effective:** 2026-08-05  
+**Version:** 1.4  
+**Effective:** 2026-10-25  
 **Applies to:** All contributors to `cybernetic-governance-engine`
 
-> **Release Note:** The stable `v3.0.1` tag has been pushed to origin and
-> the GitHub Release is published as Latest (prior stable: `v2.1.2`). There
+> **Release Note:** The stable `v3.3.0` tag has been pushed to origin and
+> the GitHub Release is published as Latest (prior stable: `v3.2.0`). There
 > is no `rc-v*` branch currently retained — release-candidate branches are
 > deleted once their tag is cut. All feature work branches from `main`. The
-> `pre-push` hook blocks direct pushes to `main`.
+> `pre-push` hook refuses any push to `main`, whichever branch is checked out.
 
 > **Canonical source:** [`AGENTS.md`](../../AGENTS.md) §Commit Message Standard
 > and §Branch Naming & Merge Strategy are the authoritative summaries for
@@ -54,7 +54,7 @@ prerequisites for contributing:
 |---|---|---|
 | Commit message template | `.gitmessage` (via `git config commit.template`) | Pre-fills your editor with the required format on every `git commit` |
 | `commit-msg` hook | `.git/hooks/commit-msg` | Validates the commit message before the commit is recorded |
-| `pre-push` hook | `.git/hooks/pre-push` | Blocks direct pushes to `main` |
+| `pre-push` hook | `.git/hooks/pre-push` | Refuses pushes to `main` and checks the name of every branch pushed (§1.3) |
 
 ### 1.2 What the `commit-msg` hook enforces
 
@@ -72,9 +72,22 @@ Merge commits (`Merge branch ...`) are automatically exempted from validation.
 
 ### 1.3 What the `pre-push` hook enforces
 
-The `pre-push` hook blocks direct pushes to `main`. It does **not** block
-pushes to `rc-v*` branches at the local-hook level; GitHub branch protection
-rules enforce that server-side.
+The hook reads the refs git is about to update, not the branch you have
+checked out. For each `refs/heads/*` destination:
+
+- **`main` is refused.** No push updates, creates or deletes it, whichever
+  branch is checked out: `git push origin main`, `git push origin HEAD:main`
+  and `git push origin --delete main` all fail.
+- **The remote branch name must match the CI Branch Name Validator's pattern**
+  (`.github/workflows/ci.yml`, without its `dependabot/*` case). `rc-v*`
+  (§3.1) is not in that pattern, so the hook also refuses a push that would
+  create or update a release-candidate branch.
+- **Deleting any other branch** is not name-checked, so a badly named branch
+  can still be removed.
+
+Tags and other refs are not checked: `git push origin v3.3.0` works from
+`main`, as the [release process](../../CONTRIBUTING.md#release--tagging-process)
+requires. If any ref is refused, git pushes nothing.
 
 ### 1.4 Verifying the installation
 
@@ -87,7 +100,8 @@ ls -la .git/hooks/pre-push         # should be executable
 ```
 
 If you reinstall or re-clone, re-run the script. The `.git/` directory is not
-tracked by version control.
+tracked by version control, so installed hooks are copies: re-run the script
+whenever `scripts/setup_git_hooks.sh` changes, too.
 
 ---
 
@@ -400,8 +414,9 @@ The `commit-msg` hook validates each commit as you make it.
 git push origin feat/redis-rate-limiter
 ```
 
-The `pre-push` hook blocks this if your current branch is `main`. Feature
-branch pushes proceed normally and trigger CI automatically.
+The `pre-push` hook checks the branch you push to, not the one checked out:
+this push goes through from any checkout, while a push to `main` is refused
+from any checkout. CI (`ci.yml`) runs once you open the pull request.
 
 ### Step 4 — Open a pull request
 
@@ -547,3 +562,4 @@ standard PR process and require maintainer approval.*
 | 1.1 | 2026-06-14 | Added v0.1.0 (later v2.0.0) release note; clarified `rc-v0.1.0` retained as release boundary marker; confirmed `pre-push` hook blocks `main` |
 | 1.2 | 2026-07-29 | Corrected fictional `v0.1.0`/`rc-v0.1.0` refs to actual `v2.1.0` release; noted `rc-v*` release branches are deleted after tag is cut |
 | 1.3 | 2026-08-05 | Corrected CI trigger table to match `.github/workflows/ci.yml` (CI runs on push to feature branches, not only on PRs); corrected `pre-push` hook scope (blocks `main` only — `rc-v*` is enforced server-side); updated branch table to match `AGENTS.md` canonical patterns; added full CI job table |
+| 1.4 | 2026-10-25 | `pre-push` hook checks the refs being pushed instead of the checked-out branch (§1.3): tag pushes from `main` pass, `main` is refused from any checkout, and pushed branch names are checked by their remote name (which also refuses `rc-v*`); re-run the installer when it changes (§1.4); Step 3 no longer claims a feature-branch push triggers CI; release note updated to `v3.3.0` |

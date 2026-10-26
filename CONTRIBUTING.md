@@ -31,7 +31,7 @@ bash scripts/setup_git_hooks.sh
 This installs:
 - A **commit message template** (`.gitmessage`) shown in your editor on every `git commit`
 - A **commit-msg hook** that rejects non-Conventional-Commits messages
-- A **pre-push hook** that blocks direct pushes to `main` and `rc-v*` branches
+- A **pre-push hook** that checks the refs you push, not the branch you have checked out: it refuses any push to `main` or to a branch name the CI branch validator rejects (`rc-v*` included), and lets tags through
 
 ---
 
@@ -202,7 +202,7 @@ Examples: `v3.2.0`, `v3.2.0-rc.1`, `v3.2.0-dev.1`
 | `rc-v*` | No direct push; requires PR + CI green |
 | `release/**` | No direct push; requires PR + CI green + 1 CODEOWNERS review |
 
-The local pre-push hook enforces this for `main` and the current integration branch. GitHub branch protection rules enforce it server-side.
+The local pre-push hook refuses pushes to `main`, and to `rc-v*` through its branch-name check, whichever branch is checked out. Tags pass, so step 3 of the release process works from `main`. GitHub enforces `main` server-side with a repository ruleset.
 
 ### Repository Protection Setup (Maintainer)
 

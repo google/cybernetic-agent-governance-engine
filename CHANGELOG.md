@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The pre-push hook checks the refs being pushed, not the checked-out branch** (`fix(ci)`, [`scripts/setup_git_hooks.sh`](scripts/setup_git_hooks.sh)). It refused every push while `main` was checked out, so step 3 of the release process (`git push origin vX.Y.Z`) failed from `main`. It also allowed `git push origin HEAD:main` from any other branch, and it name-checked the local branch, not the branch the push creates on the remote. It now reads the refs git is about to update from stdin. A push that updates, creates or deletes `main` is refused whichever branch is checked out, each pushed branch is held to the naming convention by its remote name, and tags and branch deletions are not name-checked. Re-run `bash scripts/setup_git_hooks.sh` to install it. Tests: [`tests/test_setup_git_hooks.py`](tests/test_setup_git_hooks.py) pushes to a local bare repository, so git runs the installed hook; 9 of its 11 cases fail against the previous hook. [`GIT_WORKFLOW_STANDARDS.md`](docs/operations/GIT_WORKFLOW_STANDARDS.md) §1.3 and [`CONTRIBUTING.md`](CONTRIBUTING.md) describe the new behaviour.
+
 ---
 
 ## [3.3.0] - 2026-10-25
