@@ -400,6 +400,7 @@ def test_working_refuter_locks_on_near_constant_trade_amounts() -> None:
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(600)
 @requires_dowhy
 def test_working_refuter_lock_rate_over_a_seed_sweep() -> None:
     """Distribution coverage for the lock: a fixed 10 x 10 grid of data and RNG seeds.
@@ -410,6 +411,11 @@ def test_working_refuter_lock_rate_over_a_seed_sweep() -> None:
     0.84x and 1.6x of the threshold, so platform-level numeric noise cannot
     flip one. The floors below leave room for that, and catch a refuter that
     stops locking.
+
+    The work is fixed, so its duration measures the runner: 14 s on an Apple
+    M-series laptop, 62 s on a CI runner, and over the suite's 120 s timeout on
+    a runner 1.8x slower, where the timeout killed the xdist worker. 600 s
+    leaves room for slow runners and still catches a hang.
     """
     locked_per_data_seed: dict[int, int] = {}
     reasons: set[str] = set()
