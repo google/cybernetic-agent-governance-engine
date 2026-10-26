@@ -75,7 +75,13 @@ dev = [
     # pyasn1 0.6.3: CVE-2026-59884/59885/59886 (DoS in BER/OID/Real decode) — fixed in 0.6.4
     "pyasn1>=0.6.4",
     # setuptools 82.0.1: CVE-2026-59890 (MANIFEST.in NFC/NFD bypass on macOS APFS) — fixed in 83.0.0
-    "setuptools>=83.0.0",
+    # setuptools 83.0.0: GHSA-xmj3-9gf7-h52w — fixed in 84.1.0
+    "setuptools>=84.1.0",
+    # filelock: GHSA-v4x8-3wr5-3wq8 (high; ReadWriteLock) and GHSA-9vhv-jxww-xfm5 /
+    # GHSA-567q-5qvw-pf92 (low; Windows) affect 3.20.4 (3.22.0) through 4.2.0 and are fixed
+    # in 4.2.1, but litellm (advisor extra) caps filelock < 4.0. 3.20.3 predates all three.
+    # Require filelock >= 4.2.1 once litellm allows 4.x.
+    "filelock==3.20.3",
 ]
 
 deployment = [
