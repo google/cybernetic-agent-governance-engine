@@ -57,7 +57,7 @@ import json
 import logging
 import math
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -161,6 +161,16 @@ PLACEBO_NUM_SIMULATIONS: int = 50
 # spread is at most this fraction of the effect scale (the larger of beta and
 # the largest |effect|) have zero spread up to floating-point noise.
 _PLACEBO_DEGENERATE_RTOL: float = 1e-9
+# Phase 1 numerical trust. Numerical tolerance, not a policy threshold: phase 1
+# refuses a regression whose rounding-error bound (_least_squares_error_bound)
+# exceeds this, before fitting it. Above it, correct IEEE-754 platforms may
+# return materially different coefficients: an exactly rank-deficient design
+# (a constant treatment) fitted a slope of +0.10 on macOS arm64 and -6.5e11 on
+# Linux x86_64. 1e-6 is about the resolution decisions are taken at: on the
+# synthetic telemetry it bounds the trip point's rounding error at about one
+# cent of $9,144. A well-posed fit sits far below it (about 1e-14 on the
+# synthetic telemetry).
+_LSQ_ERROR_BOUND_MAX: float = 1e-6
 
 CAUSAL_GATEKEEPER_STRICT_MODE: bool = (
     os.environ.get("CAUSAL_GATEKEEPER_STRICT_MODE", "false").lower() == "true"
@@ -338,6 +348,12 @@ REASON_INCOMPLETE_SPEC = "incomplete_spec"
 REASON_RISK_BOUNDARY = "risk_boundary"
 REASON_CHECK_ERROR = "check_error"
 REASON_INSUFFICIENT_SAMPLES = "insufficient_samples"
+
+# Phase-1 (statistical kernel) reason for an untrusted WorldModelVerdict,
+# besides the slope guard's ``negative_or_zero_causal_slope`` and
+# ``non_finite_causal_slope``: the regression is too ill-conditioned for its
+# coefficients to be reproducible (see _least_squares_error_bound).
+REASON_DESIGN_ILL_CONDITIONED = "design_ill_conditioned"
 
 # Phase-2 (placebo refutation) reasons for an untrusted WorldModelVerdict.
 REASON_PLACEBO_RESULT_INVALID = "placebo_result_invalid"
@@ -1047,6 +1063,70 @@ def _is_finite_real(value: object) -> TypeGuard[float]:
     )
 
 
+def _least_squares_error_bound(
+    frame: pd.DataFrame,
+    treatment: str,
+    outcome: str,
+    adjustment: Sequence[str],
+) -> float:
+    """Rounding-error bound of the phase-1 regression, computed before it is fitted.
+
+    The regression is the one ``backdoor.linear_regression`` fits: ``outcome``
+    on an intercept, the (already normalised) ``treatment`` and the backdoor
+    ``adjustment`` set, categorical covariates one-hot encoded with the first
+    level dropped. Returns the bound the LAPACK Users' Guide (section 4.5)
+    gives for an SVD-based least-squares solve, valid on any IEEE-754
+    platform::
+
+        ||x_hat - x|| / ||x||  <=  eps * (2 * kappa / cos(theta)
+                                          + kappa**2 * tan(theta))
+
+    ``kappa`` is the design's condition number and ``theta`` the angle between
+    the outcome and the design's column space. Because of the ``kappa**2``
+    term, residual noise amplifies ill-conditioning: neither a variance cutoff
+    on the treatment nor a condition-number cutoff alone bounds the error. A
+    rank-deficient design (a constant treatment, or one collinear with a
+    covariate) has ``kappa >= 1 / eps``. Returns ``inf`` for a non-numeric or
+    non-finite value, or for no more rows than coefficients, so the caller
+    fails closed.
+    """
+    covariates = [
+        c for c in adjustment if c in frame.columns and c not in (treatment, outcome)
+    ]
+    try:
+        parts = [frame[[treatment]].astype(float)]
+        if covariates:
+            parts.append(
+                pd.get_dummies(frame[covariates], drop_first=True, dtype=float)
+            )
+        regressors = pd.concat(parts, axis=1).to_numpy(dtype=float)
+        response = frame[outcome].to_numpy(dtype=float)
+    except (TypeError, ValueError):
+        return math.inf
+    design = np.column_stack([np.ones(len(regressors)), regressors])
+    if design.shape[0] <= design.shape[1]:
+        return math.inf
+    if not (np.isfinite(design).all() and np.isfinite(response).all()):
+        return math.inf
+
+    eps = float(np.finfo(np.float64).eps)
+    try:
+        solution, _, _, singular = np.linalg.lstsq(design, response, rcond=None)
+    except np.linalg.LinAlgError:
+        return math.inf
+    if not singular[0] > 0:
+        return math.inf
+    rcond = max(float(singular[-1] / singular[0]), eps)
+    response_norm = float(np.linalg.norm(response))
+    sin_t = (
+        float(np.linalg.norm(response - design @ solution)) / response_norm
+        if response_norm > 0
+        else 0.0
+    )
+    cos_t = max(math.sqrt(max(0.0, (1.0 - sin_t) * (1.0 + sin_t))), eps)
+    return eps * (2.0 / (rcond * cos_t) + (sin_t / cos_t) / rcond**2)
+
+
 def validate_world_model(
     graph_dot: str,
     treatment_col: str,
@@ -1139,6 +1219,31 @@ def validate_world_model(
             graph=causal_graph,
         )
         identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
+
+        # Numerical trust: refuse, before fitting, a regression whose
+        # coefficients rounding alone could move by more than
+        # _LSQ_ERROR_BOUND_MAX. Its slope would depend on the platform.
+        error_bound = _least_squares_error_bound(
+            frame,
+            treatment,
+            outcome,
+            identified_estimand.get_backdoor_variables() or [],
+        )
+        if not error_bound <= _LSQ_ERROR_BOUND_MAX:
+            logger.warning(
+                "[%s] CAUSAL LOCK: the regression's rounding-error bound %.3g "
+                "exceeds %.0e (rank-deficient or ill-conditioned design) — "
+                "untrustworthy world-model.",
+                GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                error_bound,
+                _LSQ_ERROR_BOUND_MAX,
+            )
+            mrm_span.set_attribute("causal.lock_reason", REASON_DESIGN_ILL_CONDITIONED)
+            if math.isfinite(error_bound):
+                mrm_span.set_attribute("causal.lsq_error_bound", error_bound)
+            return WorldModelVerdict(False, None, REASON_DESIGN_ILL_CONDITIONED)
+        mrm_span.set_attribute("causal.lsq_error_bound", error_bound)
+
         estimate = model.estimate_effect(
             identified_estimand, method_name="backdoor.linear_regression"
         )

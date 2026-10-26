@@ -77,8 +77,8 @@ class _FakeDoWhy:
         fake = self
 
         class _Model:
-            def identify_effect(self, proceed_when_unidentifiable: bool = True) -> str:
-                return "estimand"
+            def identify_effect(self, proceed_when_unidentifiable: bool = True) -> Any:
+                return SimpleNamespace(get_backdoor_variables=lambda: [])
 
             def estimate_effect(self, _estimand: Any, method_name: str) -> Any:
                 if fake.raise_on_estimate:

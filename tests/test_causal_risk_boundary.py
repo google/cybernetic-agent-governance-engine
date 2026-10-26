@@ -47,7 +47,7 @@ from src.cage_finance.tiers.causal_tier import (
 )
 from src.gateway.governance.causal import gatekeeper as gk_mod
 from src.gateway.governance.causal.gatekeeper import (
-    REASON_PLACEBO_DEGENERATE,
+    REASON_DESIGN_ILL_CONDITIONED,
     REASON_TRUSTED,
     CausalGatekeeper,
     _spec_fingerprint,
@@ -223,7 +223,7 @@ def _constant_treatment() -> pd.DataFrame:
     ("frame_factory", "reason"),
     [
         (generate_mock_telemetry, REASON_TRUSTED),
-        (_constant_treatment, REASON_PLACEBO_DEGENERATE),
+        (_constant_treatment, REASON_DESIGN_ILL_CONDITIONED),
     ],
 )
 async def test_process_pool_path_matches_in_thread_path(
@@ -249,7 +249,10 @@ async def test_process_pool_path_matches_in_thread_path(
     assert in_thread.reason == reason
     assert snapshot.verdict.trusted == in_thread.trusted
     assert snapshot.verdict.reason == in_thread.reason
-    assert snapshot.verdict.beta == pytest.approx(in_thread.beta, rel=1e-12)
+    if in_thread.beta is None:  # refused before the fit: no slope to compare
+        assert snapshot.verdict.beta is None
+    else:
+        assert snapshot.verdict.beta == pytest.approx(in_thread.beta, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------

@@ -111,7 +111,7 @@ class _StableDoWhy:
         self.n = len(data)
 
     def identify_effect(self, proceed_when_unidentifiable: bool = True) -> Any:
-        return object()
+        return SimpleNamespace(get_backdoor_variables=lambda: [])
 
     def estimate_effect(self, estimand: Any, method_name: str) -> Any:
         return SimpleNamespace(value=1e-5)

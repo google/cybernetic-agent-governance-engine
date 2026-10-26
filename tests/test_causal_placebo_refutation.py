@@ -48,6 +48,7 @@ from src.cage_finance.tiers.causal_tier import (
 )
 from src.gateway.governance.causal import gatekeeper as gk_mod
 from src.gateway.governance.causal.gatekeeper import (
+    REASON_DESIGN_ILL_CONDITIONED,
     REASON_PLACEBO_DEGENERATE,
     REASON_PLACEBO_EFFECT_MAGNITUDE,
     REASON_PLACEBO_P_VALUE,
@@ -143,19 +144,79 @@ def test_degenerate_default_placebo_is_refused_not_trusted(
 
 
 @requires_dowhy
-def test_constant_treatment_column_is_refused_as_degenerate() -> None:
-    """A constant treatment passes phase 1 with a spurious slope; phase 2 refuses.
+@pytest.mark.parametrize("amount", [0.0, 5_000.0, 2.5e9])
+def test_constant_treatment_is_refused_before_the_fit(amount: float) -> None:
+    """A constant treatment makes the regression rank-deficient; phase 1 refuses it.
 
-    The rank-deficient fit splits the intercept into a positive "beta", and a
-    permutation of a constant column is the same column, so every placebo
-    effect is identical.
+    The slope fitted to a rank-deficient design is rounding noise. For the
+    $5,000 frame it was +0.10 on macOS arm64 and -6.5e11 on Linux x86_64, so
+    which later guard refused the frame depended on the platform. The design
+    is now refused before it is fitted, with the same verdict everywhere.
     """
     telemetry = generate_mock_telemetry()
-    telemetry["trade_amount"] = 5_000.0
-    verdict = _validate(telemetry)
-    assert verdict.beta is not None and verdict.beta > 0  # phase 1 passed
-    assert verdict.trusted is False
-    assert verdict.reason == REASON_PLACEBO_DEGENERATE
+    telemetry["trade_amount"] = amount
+    assert _validate(telemetry) == WorldModelVerdict(
+        False, None, REASON_DESIGN_ILL_CONDITIONED
+    )
+
+
+@requires_dowhy
+def test_treatment_collinear_with_a_covariate_is_refused_before_the_fit() -> None:
+    """Rank deficiency through the adjustment set, not the intercept, is refused too."""
+    telemetry = generate_mock_telemetry()
+    telemetry["trade_amount"] = telemetry["market_volatility"] * 20_000.0
+    assert _validate(telemetry) == WorldModelVerdict(
+        False, None, REASON_DESIGN_ILL_CONDITIONED
+    )
+
+
+def _error_bound(telemetry: pd.DataFrame) -> float:
+    frame = telemetry.copy()
+    frame["trade_amount"] = frame["trade_amount"] / gk_mod.CAUSAL_NORMALIZATION_SCALE
+    return gk_mod._least_squares_error_bound(
+        frame, "trade_amount", "risk_score", ["market_volatility"]
+    )
+
+
+def test_tolerance_separates_sound_fits_from_near_degenerate_ones() -> None:
+    """The tolerance sits between numerically sound fits and near-degenerate ones.
+
+    Amounts with a $1 spread around $5,000 fit accurately (a bound near 1e-8):
+    whether to trust them is phase 2's statistical question, and phase 2
+    refuses them (``test_working_refuter_locks_on_near_constant_trade_amounts``).
+    Amounts recorded to the cent around $5,000 are not exactly constant, but
+    rounding alone could move their coefficients by more than the tolerance.
+    """
+    limit = gk_mod._LSQ_ERROR_BOUND_MAX
+    assert _error_bound(generate_mock_telemetry()) < limit * 1e-6
+    assert _error_bound(_near_constant_amount_telemetry(0)) < limit / 50
+    to_the_cent = generate_mock_telemetry()
+    rng = np.random.default_rng(2)
+    to_the_cent["trade_amount"] = 5_000.0 + rng.normal(
+        0.0, 0.01, len(to_the_cent)
+    ).round(2)
+    assert _error_bound(to_the_cent) > limit * 10
+
+
+def test_error_bound_of_an_exact_perfectly_conditioned_fit_is_two_eps() -> None:
+    """Pins the bound's formula: kappa = 1 and theta = 0 leave eps * 2."""
+    frame = pd.DataFrame({"t": [1.0, -1.0] * 4, "y": [5.0, 1.0] * 4})  # y = 3 + 2t
+    assert gk_mod._least_squares_error_bound(frame, "t", "y", []) == pytest.approx(
+        2 * np.finfo(np.float64).eps
+    )
+
+
+@pytest.mark.parametrize("column", ["t", "v", "y"])
+def test_error_bound_fails_closed_on_a_non_finite_value(column: str) -> None:
+    frame = pd.DataFrame(
+        {
+            "t": [0.1, 0.4, 0.2, 0.8, 0.5],
+            "v": [0.3, 0.1, 0.9, 0.2, 0.6],
+            "y": [0.2, 0.5, 0.4, 0.9, 0.6],
+        }
+    )
+    frame.loc[2, column] = math.nan
+    assert gk_mod._least_squares_error_bound(frame, "t", "y", ["v"]) == math.inf
 
 
 @pytest.mark.parametrize(
