@@ -750,7 +750,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Single Committing Trade Run (Phase 0)
+## v3.2.0 — Single Committing Trade Run (Phase 0)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -760,7 +760,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Structural POST_HITL, FTRA Provenance, Conditional FTRA (Phase 1)
+## v3.2.0 — Structural POST_HITL, FTRA Provenance, Conditional FTRA (Phase 1)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -773,7 +773,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Phase-2 Barrier Preview Before Human Approval (Phase 2)
+## v3.2.0 — Phase-2 Barrier Preview Before Human Approval (Phase 2)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -784,7 +784,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — PAUSE Verdict and Pause Primitive Removed (Phase 4)
+## v3.2.0 — PAUSE Verdict and Pause Primitive Removed (Phase 4)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -796,7 +796,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Gateway Surface Cleanup (Phase 5)
+## v3.2.0 — Gateway Surface Cleanup (Phase 5)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -811,7 +811,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — FRIA Wired Only Under EU_ECB; Confidence Band Renamed (Phase 6)
+## v3.2.0 — FRIA Wired Only Under EU_ECB; Confidence Band Renamed (Phase 6)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -824,7 +824,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — One Enforcement Point per Rule; Read-Only / Mutating Tier Split (Phase 7)
+## v3.2.0 — One Enforcement Point per Rule; Read-Only / Mutating Tier Split (Phase 7)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -839,7 +839,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Settlement-Aware Debit Ledger and Discrepancy Floor (Review Round 2)
+## v3.2.0 — Settlement-Aware Debit Ledger and Discrepancy Floor (Review Round 2)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -853,7 +853,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Warrant Reliance Gate (VEIP Phase 2, PR 3)
+## v3.2.0 — Warrant Reliance Gate (VEIP Phase 2, PR 3)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -863,7 +863,7 @@ vector and a deprecation window would have preserved it.
 | **WR-4** | Finance plugin | `TradeConfidenceTier(norm: NormBinding)` (was a float) and `create_finance_tiers(trade_confidence: NormBinding \| None)` (was `min_trade_confidence: float`). `FinanceCagePlugin` contributes the same binding to the tier and to `norm_bindings`. | One source for the enforced value and the value the warrant refers to. | `TradeConfidenceTier(0.97)` raises `ValueError`; `create_finance_tiers(min_trade_confidence=...)` raises `TypeError`. |
 | **WR-5** | Formal model | `proof/model.py`: `VIOLATION_KINDS` gains `RELIANCE_INELIGIBLE`; `verdict_of` defers it after HARD; `pending_approval_outcome` requires `awaits_approval(phase1)`; new `warranted_assembly_admissible` and claim 12. `POST_HITL_READ_ONLY_STAGES` / `POST_HITL_READ_ONLY_TIERS` are `{"opa", "warrant"}` (named `WARRANT_TIER`, outside `TIERS`), with claim 13 (`post_hitl_rechecks_warrant`). | Parity tests pin the runtime to the model; a warrant revoked after approval must be caught before execution. | Callers of `pending_approval_outcome` with a phase 1 holding `RELIANCE_INELIGIBLE` get `ValueError`. |
 
-## Unreleased — Post-HITL Approval Spent Only by a Sealed Run; Warrant Failure Defers on Every Path (2026-10-07)
+## v3.2.0 — Post-HITL Approval Spent Only by a Sealed Run; Warrant Failure Defers on Every Path (2026-10-07)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -872,7 +872,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Revocable Read-Only Tiers Re-Run After Approval; Every Trade Action Held to the RBAC Ladder (GHSA-f6xq-23f7-9grm)
+## v3.3.0 — Revocable Read-Only Tiers Re-Run After Approval; Every Trade Action Held to the RBAC Ladder (GHSA-f6xq-23f7-9grm)
 
 | Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
 |---|---|---|---|---|
@@ -886,5 +886,5 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-**Last updated:** 2026-10-25 (GHSA-f6xq-23f7-9grm GH-1–GH-7)
+**Last updated:** 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
 
