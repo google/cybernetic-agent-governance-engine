@@ -1,6 +1,7 @@
 # CAGE v3.x Breaking Changes
 
-> **Status:** Released. Covers the v3 line — v3.0.1 (2026-09-07) and v3.1.0 (2026-09-22).
+> **Status:** Released. Covers v3.0.1 (2026-09-07) through v4.0.0 (2026-10-26). v4.0.0's breaking changes
+> (CT-1 to CT-6) are recorded here too: the file keeps its v3 name because the published advisory links to it.
 > The v3.1.0 clean breaks are collected in
 > [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) at the end of this document.
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. The sections below
@@ -886,7 +887,7 @@ vector and a deprecation window would have preserved it.
 
 ---
 
-## Unreleased — Causal Tier Refusal Paths Made Operative
+## v4.0.0 — Causal Tier Refusal Paths Made Operative (GHSA-c8pw-f3g3-xg7c)
 
 Security fix (advisory GHSA-c8pw-f3g3-xg7c; POAM-2026-114). No release has enforced a working causal boundary. In v3.0.0–v3.3.0 neither refusal path of the finance causal tier could refuse once its telemetry gates passed: the marginal risk boundary tripped 10,000× too high, and the placebo refutation could not fail.
 
@@ -901,5 +902,5 @@ Security fix (advisory GHSA-c8pw-f3g3-xg7c; POAM-2026-114). No release has enfor
 
 ---
 
-**Last updated:** 2026-10-26 (Unreleased: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
+**Last updated:** 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
 

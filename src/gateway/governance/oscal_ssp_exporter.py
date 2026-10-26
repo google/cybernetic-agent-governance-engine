@@ -704,7 +704,7 @@ def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
     metadata = {
         "title": f"CAGE System Security Plan — {region}",
         "last-modified": _now_iso(),
-        "version": "3.3.0",
+        "version": "4.0.0",
         "oscal-version": "1.0.4",
         "props": props,
         "assurance-posture": posture.model_dump(mode="json"),
