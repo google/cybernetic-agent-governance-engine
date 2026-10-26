@@ -45,7 +45,9 @@ class QueryRequest(BaseModel):
         pattern=PRINCIPAL_PATTERN,
         description="End-user principal asserted by the caller; not authenticated.",
     )
-    thread_id: str = "default_thread"
+    # A thread belongs to the principal whose turn started it; omitted, each
+    # principal gets its own default thread.
+    thread_id: str | None = None
 
 
 class QueryResponse(BaseModel):

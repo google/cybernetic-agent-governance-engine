@@ -49,6 +49,7 @@ from typing import Any
 import jwt as pyjwt
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from src.gateway.governance.env_posture import env_flag, is_enforcing
 from src.governed_financial_advisor.models.principal import (
@@ -340,6 +341,25 @@ def resolve_request_principal(
         )
 
     return PrincipalIdentity(user_id=asserted_user_id, verified=False)
+
+
+async def require_thread_owner(graph: Any, thread_id: str, user_id: str) -> None:
+    """Refuse a turn on a checkpointed thread that another principal started.
+
+    The checkpointer keys a conversation by the caller-chosen ``thread_id``
+    alone, so without this check any caller could read another user's history
+    and append to it. The checkpoint's ``user_id`` is the principal whose turn
+    created it. A graph without a checkpointer keeps no history.
+
+    Raises:
+        PermissionError: the thread belongs to a different principal.
+    """
+    if not isinstance(getattr(graph, "checkpointer", None), BaseCheckpointSaver):
+        return
+    snapshot = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    owner = (snapshot.values or {}).get("user_id")
+    if owner and owner != user_id:
+        raise PermissionError("thread_id belongs to another principal")
 
 
 async def require_api_key(

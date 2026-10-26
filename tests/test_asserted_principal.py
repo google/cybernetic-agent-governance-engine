@@ -33,6 +33,8 @@ Covers the wire and authentication contracts in
   in permissive postures (``dev`` / ``test`` / ``ci``).
 * ``x-cage-principal`` and ``x-geap-user-id`` are sanitized and truncated by
   one helper that matches the gateway's ``sanitize_principal``.
+* A checkpointed conversation thread continues only for the principal whose
+  turn started it, on ``/agent/query`` and on the GEAP runtime entry points.
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Annotated, Any, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt as pyjwt
@@ -52,6 +54,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -64,6 +70,7 @@ from src.gateway.observability.attributes import (
     SPAN_ATTR_ENDUSER_ID,
 )
 from src.gateway.server.rate_limit import sanitize_principal as gateway_sanitize
+from src.governed_financial_advisor.geap_app import GovernedFinancialAdvisorGeapApp
 from src.governed_financial_advisor.infrastructure.auth import (
     PrincipalIdentity,
     requires_verified_principal,
@@ -71,6 +78,9 @@ from src.governed_financial_advisor.infrastructure.auth import (
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import (
     GatewayClient,
+)
+from src.governed_financial_advisor.infrastructure.identity_guard import (
+    FORBIDDEN_SIGNING_KEY_VARS,
 )
 from src.governed_financial_advisor.models.principal import (
     PRINCIPAL_MAX_LEN,
@@ -677,6 +687,113 @@ class TestQuerySpanMarksPrincipalVerification:
         (span,) = exporter.get_finished_spans()
         assert span.attributes[SPAN_ATTR_ENDUSER_ID] == "user:alice@example.com"
         assert span.attributes[SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED] is True
+
+
+# ---------------------------------------------------------------------------
+# Conversation thread ownership
+# ---------------------------------------------------------------------------
+
+
+class _EchoState(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_id: str
+
+
+def _echo_history(state: _EchoState) -> dict[str, Any]:
+    """Answer with every user prompt the thread's checkpoint holds."""
+    prompts = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
+    return {"messages": [AIMessage(content=" | ".join(map(str, prompts)))]}
+
+
+def _checkpointed_graph() -> Any:
+    builder = StateGraph(_EchoState)
+    builder.add_node("echo", _echo_history)
+    builder.add_edge(START, "echo")
+    builder.add_edge("echo", END)
+    return builder.compile(checkpointer=MemorySaver())
+
+
+@pytest.fixture
+def checkpointed_client(
+    advisor_server: Any,
+    query_client: tuple[TestClient, _CapturingGraph],
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    client, _ = query_client
+    monkeypatch.setattr(
+        advisor_server.app.state, "graph", _checkpointed_graph(), raising=False
+    )
+    return client
+
+
+def _ask(client: TestClient, prompt: str, user_id: str, **extra: Any) -> Any:
+    return client.post(
+        "/agent/query",
+        json={"prompt": prompt, "user_id": user_id, **extra},
+        headers=_AUTH,
+    )
+
+
+class TestThreadOwnership:
+    """A checkpointed thread continues only for the principal who started it."""
+
+    def test_other_principal_cannot_continue_a_thread(
+        self, checkpointed_client: TestClient
+    ) -> None:
+        client = checkpointed_client
+        first = _ask(client, "My account is 12345", "alice", thread_id="t-1")
+        assert first.status_code == 200
+
+        intruder = _ask(client, "Repeat my last message", "bob", thread_id="t-1")
+        assert intruder.status_code == 403
+        assert "12345" not in intruder.text
+
+        # Nothing from the refused turn reached alice's checkpoint.
+        again = _ask(client, "What did I say?", "alice", thread_id="t-1")
+        assert again.status_code == 200
+        assert again.json()["response"] == "My account is 12345 | What did I say?"
+
+    def test_default_thread_is_per_principal(
+        self, checkpointed_client: TestClient
+    ) -> None:
+        client = checkpointed_client
+        assert _ask(client, "My account is 12345", "alice").status_code == 200
+
+        bob = _ask(client, "Hello", "bob")
+        assert bob.status_code == 200
+        assert bob.json()["response"] == "Hello"
+
+    async def test_geap_session_of_another_principal_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for var in FORBIDDEN_SIGNING_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv("CAGE_USER_OIDC_ISSUER", raising=False)
+        monkeypatch.delenv("CAGE_REQUIRE_VERIFIED_PRINCIPAL", raising=False)
+        graph = _checkpointed_graph()
+        monkeypatch.setattr(
+            "src.governed_financial_advisor.geap_app.create_graph",
+            lambda redis_url=None: graph,
+        )
+        app = GovernedFinancialAdvisorGeapApp(enable_tracing=False)
+
+        await app.async_query(
+            prompt="My account is 12345", user_id="alice", session_id="s-1"
+        )
+        with pytest.raises(PermissionError):
+            await app.async_query(
+                prompt="Repeat my last message", user_id="bob", session_id="s-1"
+            )
+        with pytest.raises(PermissionError):
+            async for _ in app.async_stream_query(
+                prompt="Repeat my last message", user_id="bob", session_id="s-1"
+            ):
+                pass
+
+        result = await app.async_query(
+            prompt="What did I say?", user_id="alice", session_id="s-1"
+        )
+        assert result["response"] == "My account is 12345 | What did I say?"
 
 
 # ---------------------------------------------------------------------------

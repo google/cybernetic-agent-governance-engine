@@ -49,6 +49,7 @@ from src.governed_financial_advisor.graph.nodes.approval_contract import (
     ApprovalDecision,
 )
 from src.governed_financial_advisor.infrastructure.auth import (
+    require_thread_owner,
     requires_verified_principal,
     resolve_request_principal,
     verify_user_oidc_token,
@@ -315,6 +316,7 @@ class GovernedFinancialAdvisorGeapApp:
         guard_result = self.guard_preloaded_memories(preloaded_memories)
         safe_memories = [str(m) for m in guard_result.sanitized_events]
         thread_id = session_id or f"geap_session_{effective_user_id}"
+        await require_thread_owner(graph, thread_id, effective_user_id)
 
         token = user_context.set(effective_user_id)
         verified_token = principal_verified_context.set(is_verified)
@@ -384,6 +386,7 @@ class GovernedFinancialAdvisorGeapApp:
         guard_result = self.guard_preloaded_memories(preloaded_memories)
         safe_memories = [str(m) for m in guard_result.sanitized_events]
         thread_id = session_id or f"geap_session_{effective_user_id}"
+        await require_thread_owner(graph, thread_id, effective_user_id)
 
         token = user_context.set(effective_user_id)
         verified_token = principal_verified_context.set(is_verified)
@@ -548,6 +551,8 @@ def create_geap_runtime_router(
             result = method(**input_kwargs)
             if inspect.isawaitable(result):
                 result = await result
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
         except (ValueError, TypeError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         finally:

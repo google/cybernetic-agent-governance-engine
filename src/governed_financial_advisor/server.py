@@ -63,6 +63,7 @@ from src.gateway.observability.attributes import (
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
     require_api_key,
+    require_thread_owner,
     resolve_request_principal,
 )
 from src.governed_financial_advisor.models.query import QueryRequest, QueryResponse
@@ -280,6 +281,13 @@ async def query_agent(  # type: ignore[no-untyped-def]
       - CAGE_SEAL_ENFORCEMENT inconsistency between HTTP layer and graph layer
     """
     principal = resolve_request_principal(request, req.user_id)
+    thread_id = req.thread_id or f"advisor_session_{principal.user_id}"
+    try:
+        await require_thread_owner(
+            request.app.state.graph, thread_id, principal.user_id
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     token = user_context.set(principal.user_id)
     verified_token = principal_verified_context.set(principal.verified)
     try:
@@ -293,7 +301,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
             current_span.set_attribute(
                 SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, principal.verified
             )
-            current_span.set_attribute("thread.id", req.thread_id)
+            current_span.set_attribute("thread.id", thread_id)
             current_span.set_attribute(OBSERVATION_TYPE, "generation")
             current_span.set_attribute("gen_ai.operation.name", "chat")
             current_span.set_attribute(
@@ -366,7 +374,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
                     {"messages": [("user", req.prompt)], "user_id": principal.user_id},
                     {
                         "recursion_limit": 100,
-                        "configurable": {"thread_id": req.thread_id},
+                        "configurable": {"thread_id": thread_id},
                     },
                 ),
                 timeout=_GRAPH_TIMEOUT_SECONDS,

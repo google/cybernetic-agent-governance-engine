@@ -1015,7 +1015,7 @@ Request body for `POST /agent/query`.
 |---|---|---|---|
 | `prompt` | `string` | Yes | — |
 | `user_id` | `string` | Yes | 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`. Asserted by the caller, not authenticated |
-| `thread_id` | `string` | No | Defaults to `default_thread` |
+| `thread_id` | `string` | No | Defaults to a per-principal thread. A thread another principal started is refused with HTTP 403 |
 
 ---
 
