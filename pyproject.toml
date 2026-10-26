@@ -41,26 +41,32 @@ dependencies = [
 requires-python = ">=3.10,<3.13"
 
 [dependency-groups]
-dev = [
-    "freezegun>=1.5.0",
+# test: the test runner and fixtures. CI's hermetic job installs only this group
+# with the gateway and compliance extras, so every package it runs is pinned by
+# uv.lock. dev includes it.
+test = [
     "pytest>=8.3.2",
     "pytest-asyncio>=0.23.7",
-    "nest-asyncio>=1.6.0",
-    "respx>=0.22.0",
-    "scikit-learn>=1.4.0",
-    "pandas>=2.2.0",
-    "pip-licenses>=5.0.0",
-    "pip-audit>=2.10.0",
-    "fakeredis[lua]>=2.35.1",
-    "pytest-timeout>=2.4.0",
-    "bcrypt>=5.0.0",
-    # kfp: Kubeflow Pipelines SDK — required by test_pipeline_compilation.py
-    "kfp>=2.0,<3.0",
     # pytest-xdist: parallel test execution — splits the 2259-test suite across
     # CPU cores, reducing wall-clock time proportional to core count.
     # --dist=loadfile keeps all tests from one module on the same worker so that
     # module-level monkeypatches and singletons are not shared across processes.
     "pytest-xdist>=3.5.0",
+    "pytest-timeout>=2.4.0",
+    "fakeredis[lua]>=2.35.1",
+    "respx>=0.22.0",
+    "freezegun>=1.5.0",
+    "pandas>=2.2.0",
+]
+dev = [
+    { include-group = "test" },
+    "nest-asyncio>=1.6.0",
+    "scikit-learn>=1.4.0",
+    "pip-licenses>=5.0.0",
+    "pip-audit>=2.10.0",
+    "bcrypt>=5.0.0",
+    # kfp: Kubeflow Pipelines SDK — required by test_pipeline_compilation.py
+    "kfp>=2.0,<3.0",
     # pytest-randomly: randomizes test order to detect hidden test-order dependencies.
     # Run with --randomly-seed=last to reproduce a failure.
     # NOT added to pytest.ini addopts — keep random order opt-in so CI failures

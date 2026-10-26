@@ -25,6 +25,7 @@ on:
       - 'tests/test_routing_seal.py'
       - 'tests/test_governance_*.py'
       - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/test-hermetic.yml'
   push:
     branches: [main]
@@ -53,34 +54,44 @@ jobs:
           python-version: '3.11'
 
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
-      - name: Install ONLY core governance dependencies (no ML)
-        run: |
-          # Install ONLY [gateway] and [compliance_bridge] extras
-          # Explicitly EXCLUDE [advisor] which pulls sentence-transformers
-          uv pip install --system -e ".[gateway,compliance_bridge]"
-          uv pip install --system pytest pytest-asyncio pytest-xdist pytest-timeout "fakeredis[lua]" respx httpx pandas freezegun
+      # Every package comes from uv.lock: --frozen installs the locked versions
+      # without re-resolving, and uv sync refuses an extra or group that
+      # pyproject.toml does not define. Only the gateway and compliance extras
+      # and the test group are installed, not the advisor extra or the dev group.
+      # No extra or group in uv.lock pulls an ML framework today; the next step
+      # keeps it that way for this environment.
+      - name: Install core governance dependencies from uv.lock (no ML)
+        run: uv sync --frozen --no-default-groups --group test --extra gateway --extra compliance
 
-      - name: Verify ML packages are NOT installed
+      - name: Verify the environment holds what this job claims
         run: |
-          echo "::group::Verify torch is NOT installed"
-          if python -c "import torch" 2>/dev/null; then
-            echo "❌ FAIL: torch is installed (should be absent in hermetic mode)"
-            exit 1
-          fi
-          echo "✅ PASS: torch is NOT installed"
-          echo "::endgroup::"
+          uv run --frozen --no-sync python - <<'EOF'
+          import importlib.util
+          import os
+          import pathlib
+          import sys
 
-          echo "::group::Verify sentence-transformers is NOT installed"
-          if python -c "import sentence_transformers" 2>/dev/null; then
-            echo "❌ FAIL: sentence-transformers is installed (should be absent in hermetic mode)"
-            exit 1
-          fi
-          echo "✅ PASS: sentence-transformers is NOT installed"
-          echo "::endgroup::"
+          venv = pathlib.Path(os.environ.get("UV_PROJECT_ENVIRONMENT", ".venv")).resolve()
+          if pathlib.Path(sys.prefix).resolve() != venv:
+              sys.exit(f"FAIL: running in {sys.prefix}, not the locked environment {venv}")
+
+          ml = ["torch", "sentence_transformers", "transformers", "tensorflow", "jax"]
+          installed = [name for name in ml if importlib.util.find_spec(name)]
+          if installed:
+              sys.exit(f"FAIL: ML packages installed in hermetic mode: {installed}")
+
+          # dowhy comes from the compliance extra; fakeredis and pytest_asyncio
+          # from the test group. Their absence means the install was not what
+          # this job claims.
+          expected = ["dowhy", "fakeredis", "pytest_asyncio"]
+          missing = [name for name in expected if not importlib.util.find_spec(name)]
+          if missing:
+              sys.exit(f"FAIL: expected packages missing: {missing}")
+
+          print(f"PASS: {venv} has no {', '.join(ml)}; has {', '.join(expected)}")
+          EOF
 
       - name: Run hermetic governance pipeline tests
         env:
@@ -88,7 +99,7 @@ jobs:
         run: |
           # Run core governance tests WITHOUT any ML dependencies
           # This proves Stage 2.5 is truly optional
-          pytest \
+          uv run --frozen --no-sync pytest \
             tests/test_cbf_*.py \
             tests/test_symbolic_governor*.py \
             tests/test_routing_seal*.py \
@@ -103,7 +114,7 @@ jobs:
       - name: Verify governance imports work without ML
         run: |
           # Ensure core governance modules import cleanly without torch/transformers
-          python -c "
+          uv run --frozen --no-sync python -c "
           from src.gateway.governance.governor.governor import SymbolicGovernor
           from src.gateway.governance.governor.assembly import assemble_governor
           from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction

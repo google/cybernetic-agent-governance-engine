@@ -1118,6 +1118,16 @@ dev = [
     { name = "scikit-learn", marker = "python_full_version >= '3.11'" },
     { name = "setuptools", marker = "python_full_version >= '3.11'" },
 ]
+test = [
+    { name = "fakeredis", extra = ["lua"], marker = "python_full_version >= '3.11'" },
+    { name = "freezegun", marker = "python_full_version >= '3.11'" },
+    { name = "pandas", marker = "python_full_version >= '3.11'" },
+    { name = "pytest", marker = "python_full_version >= '3.11'" },
+    { name = "pytest-asyncio", marker = "python_full_version >= '3.11'" },
+    { name = "pytest-timeout", marker = "python_full_version >= '3.11'" },
+    { name = "pytest-xdist", marker = "python_full_version >= '3.11'" },
+    { name = "respx", marker = "python_full_version >= '3.11'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1211,6 +1221,16 @@ dev = [
     { name = "respx", specifier = ">=0.22.0" },
     { name = "scikit-learn", specifier = ">=1.4.0" },
     { name = "setuptools", specifier = ">=84.1.0" },
+]
+test = [
+    { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.1" },
+    { name = "freezegun", specifier = ">=1.5.0" },
+    { name = "pandas", specifier = ">=2.2.0" },
+    { name = "pytest", specifier = ">=8.3.2" },
+    { name = "pytest-asyncio", specifier = ">=0.23.7" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "pytest-xdist", specifier = ">=3.5.0" },
+    { name = "respx", specifier = ">=0.22.0" },
 ]
 
 [[package]]
