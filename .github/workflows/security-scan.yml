@@ -362,6 +362,12 @@ jobs:
             exit 1
           }
 
+      # `uv lock --check` does not report yanked releases, and a release yanked
+      # after it was locked stays pinned until upgraded (scs 3.3.0 sat in the
+      # lock that way). The daily schedule catches yanks that happen later.
+      - name: Refuse yanked releases in uv.lock
+        run: python scripts/check_locked_yanks.py uv.lock
+
       - name: Check for dependency lockfile
         run: |
           if [ ! -f "requirements.txt" ] && \
