@@ -161,15 +161,21 @@ PLACEBO_NUM_SIMULATIONS: int = 50
 # spread is at most this fraction of the effect scale (the larger of beta and
 # the largest |effect|) have zero spread up to floating-point noise.
 _PLACEBO_DEGENERATE_RTOL: float = 1e-9
-# Phase 1 numerical trust. Numerical tolerance, not a policy threshold: phase 1
-# refuses a regression whose rounding-error bound (_least_squares_error_bound)
-# exceeds this, before fitting it. Above it, correct IEEE-754 platforms may
-# return materially different coefficients: an exactly rank-deficient design
-# (a constant treatment) fitted a slope of +0.10 on macOS arm64 and -6.5e11 on
-# Linux x86_64. 1e-6 is about the resolution decisions are taken at: on the
-# synthetic telemetry it bounds the trip point's rounding error at about one
-# cent of $9,144. A well-posed fit sits far below it (about 1e-14 on the
-# synthetic telemetry).
+# Phase 1 numerical trust. A numerical tolerance, not a policy threshold, and
+# domain-agnostic by construction: phase 1 refuses, before fitting, a
+# regression whose relative rounding-error bound (_least_squares_error_bound)
+# exceeds it. At 1e-6 the coefficients agree to about six significant figures
+# on every correct IEEE-754 platform, a floor for any decision derived from a
+# fit, whatever the domain's units. The bound is normwise: a coefficient much
+# smaller than the coefficient vector's norm is good to 1e-6 of that norm, not
+# to six figures of itself. Above the bound, platforms may return materially
+# different coefficients: an exactly rank-deficient design (a constant
+# treatment) fitted a slope of +0.10 on macOS arm64 and -6.5e11 on Linux
+# x86_64. Sanity check in one domain: on the finance synthetic telemetry the
+# tolerance would cap the trip point's rounding error at about one cent of
+# $9,144 (its actual bound is about 1e-14). The value comes from this
+# reasoning, not from an empirical boundary: no frame has been measured with a
+# bound between 1e-8 and 5e-5.
 _LSQ_ERROR_BOUND_MAX: float = 1e-6
 
 CAUSAL_GATEKEEPER_STRICT_MODE: bool = (
