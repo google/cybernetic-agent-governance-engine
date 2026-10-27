@@ -31,11 +31,12 @@
 | Allow force pushes | ❌ Disabled | Protects immutable audit trail on `main` |
 | Allow deletions | ❌ Disabled | `main` must not be deleted |
 
-> **One maintainer (POAM-2026-115):** the approval rule cannot be met for the maintainer's own
-> pull requests, so each of their merges is an admin bypass, which also lifts the required
-> status checks. Before every such merge, run `scripts/check_pr_mergeable.sh <pr> --comment`:
-> it verifies each required check on the exact head SHA and posts the result on the pull
-> request. It restores check enforcement only; nothing replaces the independent review.
+> **Two rulesets on `main` (POAM-2026-115):** ruleset 19769096 holds the review rule, which
+> cannot be met for the maintainer's own pull requests, so each of their merges is an admin
+> bypass of that rule. The six required status checks are in ruleset 25966171, which has no
+> bypass actor, so no merge skips them. The one exception, an advisory fix landed from a
+> private fork, is described in [`SECURITY.md`](../SECURITY.md). Before each merge, run
+> `scripts/check_pr_mergeable.sh <pr> --comment` as a double-check and record.
 
 **Settings → General → Pull Requests** (repository-level, not branch-protection-rule):
 
@@ -104,18 +105,17 @@ match what appears in the GitHub Actions run UI (copy from a recent run if unsur
 
 ## 4. Tag Protection — Release Tags
 
-**Settings → Tags → Protected tags → Add rule**
+Tag ruleset 25965917, "Protect release tags" (**Settings → Rules → Rulesets**):
 
-Create one rule per pattern:
-
-| Tag pattern | Who can create | Rationale |
+| Setting | Value | Rationale |
 |---|---|---|
-| `v*-ref` | Maintainer only | Triggers `publish-release` job in `ref_impl_signoff.yml` |
-| `v*-cage-*` | Maintainer only | Triggers `publish-release` job in `ref_impl_signoff.yml` |
-| `v[0-9]*` | Maintainer only | Protects all semver release tags |
+| Target | Tags matching `refs/tags/v*` and `refs/tags/client-v*` | Every release tag, including the `client-v*` SDK releases |
+| Restrict deletions | ✅ Enabled | A published release tag must not disappear |
+| Restrict updates | ✅ Enabled | A published release tag must not move, not even by fast-forward |
+| Block force pushes | ✅ Enabled | |
+| Bypass list | None | Changing a release tag means editing or disabling the ruleset, which ruleset history records (POAM-2026-116) |
 
-> **How to add:** Settings → Tags → Add rule → enter pattern → select
-> "Restrict tag creation" → add maintainer handle.
+Tag creation is not restricted; only admins have write access.
 
 ---
 

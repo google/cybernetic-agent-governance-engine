@@ -62,6 +62,25 @@ We follow a **coordinated disclosure** model:
 5. You may publicly disclose the vulnerability after the fix is released, or
    after 90 days from the initial report — whichever comes first.
 
+## Landing an Advisory Fix (Maintainers)
+
+An advisory's fix lands from GitHub's temporary private fork, where GitHub
+Actions does not run. Ruleset 25966171 requires six status checks on `main`
+and has no bypass actor, so it blocks that merge. Do not add a bypass actor.
+For that one merge:
+
+1. Run the test suite on the frozen fix commit and record the result in the
+   advisory's release record, since the private fork gets no CI.
+2. Disable the checks ruleset:
+   `gh api -X PUT repos/google/cybernetic-agent-governance-engine/rulesets/25966171 -f enforcement=disabled`
+3. Merge the advisory's pull request, then re-enable the ruleset at once:
+   `gh api -X PUT repos/google/cybernetic-agent-governance-engine/rulesets/25966171 -f enforcement=active`
+4. Record both ruleset-history entries
+   (`gh api repos/google/cybernetic-agent-governance-engine/rulesets/25966171/history`)
+   and the merge commit in the advisory's release record.
+5. Watch the first CI run on `main` for the landed commit, and fix forward if
+   it fails.
+
 ## Scope
 
 The following are **in scope** for security reports:

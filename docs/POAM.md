@@ -85,7 +85,8 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-100 | SI-10 / AU-10 | Evidence data integrity: the `PIISanitizer` SWIFT/BIC pattern matched any eight- or eleven-character upper-case token, so governance verdicts and states such as `APPROVED`, `REJECTED` and `ESCALATE` were redacted to `[REDACTED_SWIFT]` before hashing in the evidence stream. Records lost their verdicts, and events differing only in such a word produced identical payloads. Remediated in code on `fix/pii-swift-false-positive`: a BIC is redacted only with a contextual cue (`BIC`/`SWIFT` label or BIC/SWIFT dict key) and a valid ISO 3166-1 alpha-2 country code ([`pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py)); property test over all upper-case literals in `src/` ([`test_pii_sanitizer_bic.py`](../tests/test_pii_sanitizer_bic.py)). Records written before the fix stay verifiable but keep the redaction. See [`EVIDENCE_CHAIN.md` §4.4](architecture/EVIDENCE_CHAIN.md). Remains Open pending merge SHA | High | 2026-10-15 |
 | POAM-2026-101 | RA-5 / SI-2 | `python:3.12-slim-bookworm` OS-package CVEs with no Debian fix kept the SBOM/CVE gate red: util-linux CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410, OpenSSL CVE-2026-84782, and 39 `linux-libc-dev` kernel-header CVEs; `.trivyignore` held expired suppressions (review dates 2026-09-05, 2026-09-08). Remediated on `fix/ci-test-errors`: advisor, gateway and compliance-bridge images are two-stage builds on a digest-pinned Wolfi base with no compiler or util-linux at runtime, and `.trivyignore` is empty. Cloud Build verification on 2026-10-05 ([`cloudbuild.verify.yaml`](../deployment/docker/cloudbuild.verify.yaml), builds `575e3466`, `3e268752`, `1df4fe5d`) found 0 HIGH/CRITICAL and 0 suppressed findings. Remains Open pending merge SHA and green SBOM/CVE legs on `main` | Moderate | 2026-11-15 |
 | POAM-2026-114 | SI-10 / CA-7 / `CTRL_MRM_004` / `CTRL_TEL_003` | Finance causal tier: neither refusal path operated in v3.0.0–v3.3.0. The marginal risk boundary divided a per-dollar β by `normalization_scale` a second time (trips at ≈ $91.4M instead of ≈ $9,144 on the synthetic telemetry), and the placebo refutation used dowhy's N(0, 0) default placebo and read a missing or NaN p-value as a pass, so phase 2 always trusted the world model. Remediation implemented; closes with the fix release and its security advisory | Moderate | With the fix release |
-| POAM-2026-115 | AC-5 / CM-3 / CM-5 | `main`'s ruleset requires one approving review, but the project has one maintainer and GitHub does not let an author approve their own pull request, so each of the maintainer's merges is an admin bypass. Measured with the ruleset rule-suites API, which reaches back 30 days: of the 214 pushes to `main` from 2026-09-27 to 2026-10-26, 209 bypassed the ruleset, including all 31 since the last passing push (`866d176c`, 2026-10-22); the 5 that passed were other authors' pull requests that the maintainer approved. A bypass also lifts enforcement of the required status checks, and `gh pr checks` cannot stand in for it: on #546 it omitted the required "OPA Rego Policy Lint and Test" check. Compensating control for CM-3/CM-5: [`check_pr_mergeable.sh`](../scripts/check_pr_mergeable.sh) verifies every required check on the exact head SHA before each bypassed merge and posts the result on the pull request. AC-5 has no compensating control: no script supplies an independent reviewer | Moderate | On second maintainer onboarding |
+| POAM-2026-115 | AC-5 | `main`'s review rule requires one approving review, but the project has one maintainer and GitHub does not let an author approve their own pull request, so each of the maintainer's merges bypasses that rule as a repository admin. Until 2026-10-27 the bypass also skipped the required status checks: GitHub's rule-suite log shows that 163 of the 215 pushes to `main` from 2026-09-27 to 2026-10-27 went in with required checks not passing, at least 35 of them with a check reported as failing. The checks now sit in ruleset 25966171, which has no bypass actor, so CM-3 and CM-5 are no longer in scope (detail section). AC-5 has no compensating control: no configuration or script supplies an independent reviewer | Moderate | On second maintainer onboarding |
+| POAM-2026-116 | SI-7 / CM-5 | No release tag was protected. Ruleset 19769024 ("Restrict tag creation to maintainer") targeted the branch patterns `refs/heads/v*-ref` and `refs/heads/v*-cage-*`, so no rule applied to any tag, including `v4.0.0`, which GHSA-c8pw-f3g3-xg7c, the v4.0.0 release notes and the archived evidence bundles point at. Remediated on 2026-10-27: tag ruleset 25965917 blocks deleting, updating or force-moving `refs/tags/v*` and `refs/tags/client-v*`, with no bypass actor, and was verified over the wire the same day. Remains Open until marked Closed in a follow-up | Moderate | 2026-10-30 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -525,52 +526,74 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
 
+### POAM-2026-116: Release Tags Were Not Protected
+
+**Control:** NIST SI-7 (Software, Firmware, and Information Integrity), CM-5 (Access Restrictions for Change)
+**Risk Level:** Moderate
+**Status:** Open — remediated and verified on 2026-10-27; to be marked Closed in a follow-up
+**Date Opened:** 2026-10-27
+**Target Closure:** 2026-10-30
+
+**Description:**
+No ruleset protected any tag. Ruleset 19769024, named "Restrict tag creation to maintainer", targeted branches: its conditions were `refs/heads/v*-ref` and `refs/heads/v*-cage-*`, so its deletion, non-fast-forward and creation rules applied to no tag. Any account with write access could move or delete a release tag, including `v4.0.0`: the version GHSA-c8pw-f3g3-xg7c names as patched, and the tag the v4.0.0 release notes and the archived evidence bundles point at. `.github/branch-protection-rules.md` §4 described tag protection as configured.
+
+**Remediation (2026-10-27):**
+1. Tag ruleset 25965917 ("Protect release tags"): target `tag`; include `refs/tags/v*` and `refs/tags/client-v*`, which covers all 10 existing tags; rules `deletion`, `update` and `non_fast_forward`; no bypass actor. Changing a release tag now means editing or disabling the ruleset, which ruleset history records. Creating tags is not restricted; only admins have write access.
+2. Ruleset 19769024 set to `disabled`. It protected nothing, and its name said otherwise.
+3. `.github/branch-protection-rules.md` §4 now describes the tag ruleset.
+
+**Verification (2026-10-27, over the wire):**
+A probe tag, `v0-ruleset-probe-20261027`, was created, which the ruleset allows. GitHub then refused to delete it (`GH013 … Cannot delete this tag`) and to move it to another commit (`GH013 … Cannot update this protected ref`), and the rule-suite log records `deletion=fail` and `update=fail` against ruleset 25965917. The move was a fast-forward, so `non_fast_forward` alone would not have refused it; the `update` rule did. The probe was removed by excluding it, deleting it and restoring the ruleset, which left three entries in the ruleset's history. `v4.0.0` still resolves to tag object `64d9a2bc` and commit `8caa7eaf`.
+
 ### POAM-2026-115: Review Rule on `main` Cannot Be Met With One Maintainer
 
-**Control:** NIST AC-5 (Separation of Duties), CM-3 (Configuration Change Control), CM-5 (Access Restrictions for Change)
+**Control:** NIST AC-5 (Separation of Duties). CM-3 (Configuration Change Control) and CM-5 (Access Restrictions for Change) were in scope until 2026-10-27; see *Resolved scope* below.
 **Risk Level:** Moderate
-**Status:** Open — compensating control in place for CM-3 and CM-5 only; none for AC-5
-**Date Opened:** 2026-10-27
+**Status:** Open — no compensating control for AC-5
+**Date Opened:** 2026-10-27 (amended the same day)
 **Target Closure:** On second maintainer onboarding
 
 **Description:**
-Ruleset 19769096 ("Protect main branch") targets `refs/heads/main` with two rules. `pull_request` requires one approving review (`require_code_owner_review: false`, `dismiss_stale_reviews_on_push: true`). `required_status_checks` requires six checks, with `strict_required_status_checks_policy: false`: Lint; AI 600-1 Unit Tests; OPA Rego Policy Lint and Test; Secret Scanning (Gitleaks); license-check; and Pytest Logic Tests, pinned to the GitHub Actions app. The ruleset's one bypass actor is the repository admin role, in mode `always`.
+Ruleset 19769096 ("Protect main branch") requires one approving review on `refs/heads/main` (`require_code_owner_review: false`, `dismiss_stale_reviews_on_push: true`). Its one bypass actor is the repository admin role, in mode `always`. The project has one maintainer, and GitHub does not let an author approve their own pull request, so none of the maintainer's own pull requests can meet the rule, and each is merged as an admin bypass. Pull requests by other authors can meet it: in the period measured below, 5 did, each approved by the maintainer.
 
-The project has one maintainer, and GitHub does not let an author approve their own pull request. None of the maintainer's own pull requests can meet the review rule, so each is merged as an admin bypass. The bypass lifts the required checks as well as the review, and nothing then enforces that the checks passed on the merged commit.
-
-Measured on 2026-10-27 with GitHub's ruleset insights, deduplicated by rule-suite id (the paginated output repeats entries):
-
-| Pushes to `main`, 2026-09-27 to 2026-10-26 | Count |
-|---|---|
-| Total | 214 |
-| Bypassed the ruleset | 209 |
-| Passed | 5: #455, #485 and #510 (Dependabot), #469 and #484 (external contributors), each approved by the maintainer |
-
-All 31 pushes since the last passing one (`866d176c`, #510, 2026-10-22) bypassed the ruleset, including the v4.0.0 release (#551). The API reaches back 30 days, so earlier merges cannot be counted this way. To re-run the count (this needs admin access, and the window moves with the date of the query):
-
-```bash
-gh api --paginate "repos/google/cybernetic-agent-governance-engine/rulesets/rule-suites?ref=refs/heads/main&time_period=month&per_page=100" \
-  --jq '.[] | [.id, .result] | @tsv' | sort -u | cut -f2 | sort | uniq -c
-```
-
-`gh pr checks` is not a safe stand-in for the lifted enforcement. On #546 it listed 48 of the PR's 50 check-runs and left out the required "OPA Rego Policy Lint and Test" check. The merges of #550 and #551 were still decided from it; a check through the REST check-runs API on 2026-10-27 found all six required checks successful on both merged heads.
+Since 2026-10-27 the six required status checks (Lint; AI 600-1 Unit Tests; OPA Rego Policy Lint and Test; Secret Scanning (Gitleaks); license-check; and Pytest Logic Tests, pinned to the GitHub Actions app) are in ruleset 25966171 ("Require status checks on main"), which has no bypass actor, so an admin merge skips only the review. The one exception is an advisory fix landed from a private fork, where Actions does not run: the ruleset is disabled for that single merge and re-enabled, and its history records both edits ([`SECURITY.md`](../SECURITY.md)). [`check_pr_mergeable.sh`](../scripts/check_pr_mergeable.sh) still verifies the required checks on the exact head SHA before each merge and posts the result on the pull request.
 
 `.github/branch-protection-rules.md` stated that code-owner review was enabled. The live rule does not require it, and one maintainer could not satisfy it. The change that opened this entry corrected the document.
 
-**Compensating control (CM-3 and CM-5 only):**
-[`scripts/check_pr_mergeable.sh`](../scripts/check_pr_mergeable.sh), run with `--comment` before every bypassed merge:
-1. takes the required checks from GitHub's own evaluation of the rules for the pull request's base branch (`GET /repos/{owner}/{repo}/rules/branches/{branch}`), plus any classic branch protection, so it follows the live ruleset rather than a copied list;
-2. verifies each on the exact head SHA through the REST check-runs and commit-status APIs. Every reporting source must be `success`: the newest check-run in each check suite, and the commit status. Neutral, skipped and unfinished results fail, and a check pinned to an app counts only that app's check-runs;
-3. exits 2 if it finds no required check or any API call fails, so an empty or unreadable rule set never reads as a pass;
-4. posts its result table on the pull request as the pre-merge record, and prints the merge command pinned with `--match-head-commit`.
+**Resolved scope (CM-3, CM-5), until 2026-10-27:**
+Both rules sat in ruleset 19769096, so the admin bypass also skipped the required checks. The first version of this entry said the bypass "lifts enforcement" of the checks, which implied they had passed and were merely unenforced. GitHub's rule-suite log, which records each rule's own result for every push, shows otherwise:
 
-The control is procedural. GitHub does not stop an admin merge that skips the script, so each merge's evidence is the comment on its pull request. The script does nothing for AC-5: no script supplies an independent reviewer, so AC-5 has no compensating control.
+| Pushes to `main`, 2026-09-27 to 2026-10-27 | Count |
+|---|---|
+| Passed both rules: other authors' pull requests #455, #469, #484, #485 and #510 | 5 |
+| Bypassed the review only; required checks passed | 47 |
+| Bypassed with required checks not passing at push time | 163 |
+
+The 163 are 157 merges of the maintainer's pull requests, 2 approved pull requests by other authors (#479, #483), 2 direct pushes and 2 advisory merges. At least 35 went in with a required check reported as failing: Lint on all 35, and on 16 of them, all before 2026-10-06, also the region-matrix Pytest jobs that #407 replaced. The rest had required checks still running or not yet reported.
+
+From 2026-10-05 13:45 EDT the ruleset required a "Pytest Logic Tests" check that CI did not emit until #407 merged on 2026-10-06 at 09:22. Two pushes fell in that window: a direct push, which had no checks at all, and #407 itself, whose Lint check failed. Neither went in failing because of the missing check.
+
+`gh pr checks` was no safe substitute: on #546 it listed 48 of the PR's 50 check-runs and left out the required "OPA Rego Policy Lint and Test" check. The merges of #550 and #551 were still decided from it; a check through the REST check-runs API on 2026-10-27 found all six required checks successful on both merged heads.
+
+To re-run the counts (this needs admin access, and the window moves with the date of the query):
+
+```bash
+R=google/cybernetic-agent-governance-engine
+gh api --paginate "repos/$R/rulesets/rule-suites?ref=refs/heads/main&time_period=month&per_page=100" \
+  --jq '.[] | [.id, .result] | @tsv' | sort -u > suites.tsv
+cut -f2 suites.tsv | sort | uniq -c
+cut -f1 suites.tsv | while read -r id; do
+  gh api "repos/$R/rulesets/rule-suites/$id" \
+    --jq '[.result, (.rule_evaluations[] | select(.rule_type == "required_status_checks") | .result)] | @tsv'
+done | sort | uniq -c
+```
 
 **Milestones:**
-1. **2026-10-27:** the script lands with this entry, with hermetic tests in [`test_check_pr_mergeable.py`](../tests/test_check_pr_mergeable.py). Its first run is on its own pull request.
-2. **On second maintainer onboarding:** a second maintainer reviews the first maintainer's pull requests.
+1. **2026-10-27:** [`check_pr_mergeable.sh`](../scripts/check_pr_mergeable.sh) landed in `2d65e15c` (#552), with hermetic tests in [`test_check_pr_mergeable.py`](../tests/test_check_pr_mergeable.py).
+2. **2026-10-27:** the required checks moved to ruleset 25966171, which has no bypass actor; ruleset 19769096 keeps only the review rule.
+3. **On second maintainer onboarding:** a second maintainer reviews the first maintainer's pull requests.
 
-**Closure criteria:** after a second maintainer is onboarded, five consecutive merges to `main` recorded as `pass`, not `bypass`, in the rule-suites log, including pull requests the original maintainer authored. Merges of other authors' pull requests alone do not count, because one maintainer can already approve those.
+**Closure criteria:** Five consecutive merges to `main` recorded as `pass` in the rule-suites log, beginning after a second maintainer is onboarded, of which at least three are pull requests authored by the original maintainer and approved by the second. This criterion decides when the item closes, not when merging is allowed.
 
 ### POAM-2026-114: Causal Tier Refusal Paths Never Operated (Finance)
 

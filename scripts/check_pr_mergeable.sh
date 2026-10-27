@@ -17,12 +17,13 @@
 #
 # Why this exists
 # ---------------
-# The project has one maintainer, and GitHub does not let an author approve
-# their own pull request, so each of the maintainer's merges to `main` is an
-# admin bypass of the branch ruleset (POAM-2026-115). The bypass skips the
-# required status checks as well as the review. Running this script before
-# every bypassed merge puts the check half back, by procedure rather than by
-# GitHub: it is the compensating control for CM-3 and CM-5. It does nothing
+# Until 2026-10-27 the required status checks on `main` shared a ruleset with
+# the review rule, and the maintainer's admin merges bypassed both: GitHub's
+# rule-suite log shows 163 of 215 pushes went in with required checks not
+# passing (POAM-2026-115). The checks now sit in ruleset 25966171, which has
+# no bypass actor, so GitHub enforces them. This script is the pre-merge
+# double-check and record: it verifies the same required checks on the exact
+# head SHA and, with --comment, posts the result on the PR. It does nothing
 # for AC-5; no script supplies an independent reviewer.
 #
 # `gh pr checks` is not a substitute. On PR #546 it listed 48 of the PR's 50
@@ -238,8 +239,8 @@ elif [ "$REVIEW" = "APPROVED" ]; then
   echo "Merge, pinned to the verified SHA:"
   echo "  gh pr merge $PR --repo $REPO --squash --match-head-commit $SHA"
 else
-  echo "No approving review, so the merge needs --admin, which bypasses the ruleset"
-  echo "(POAM-2026-115). Merge, pinned to the verified SHA:"
+  echo "No approving review, so the merge needs --admin, which bypasses the review"
+  echo "rule (POAM-2026-115). Merge, pinned to the verified SHA:"
   echo "  gh pr merge $PR --repo $REPO --squash --admin --match-head-commit $SHA"
   [ "$POST_COMMENT" -eq 1 ] || echo "Run again with --comment first, to record this result on the PR."
 fi

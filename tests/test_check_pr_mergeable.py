@@ -14,10 +14,10 @@
 
 """``scripts/check_pr_mergeable.sh``, the pre-merge check for POAM-2026-115.
 
-While the maintainer's merges to ``main`` bypass the ruleset, this script is
-all that stands in for required-check enforcement (CM-3/CM-5). These tests pin
-its fail-closed behaviour: a missing, pending, shadowed or unreadable check
-must never come back as mergeable.
+GitHub enforces the required checks on ``main`` (ruleset 25966171, no bypass
+actor); this script double-checks them on the exact head SHA and records the
+result on the PR. These tests pin its fail-closed behaviour: a missing,
+pending, shadowed or unreadable check must never come back as mergeable.
 
 A stub ``gh`` on ``PATH`` serves canned API responses and records each call.
 ``--jq`` filters go through the real ``jq``, so the script's own filters run

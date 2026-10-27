@@ -11,7 +11,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **A pre-merge check of every required status check, and POAM-2026-115 for the review rule one maintainer cannot meet** (`feat(compliance)`, [`check_pr_mergeable.sh`](scripts/check_pr_mergeable.sh), [`POAM.md`](docs/POAM.md)). `main`'s ruleset requires an approving review, and GitHub does not let an author approve their own pull request, so each of the maintainer's merges is an admin bypass that also lifts the required status checks: 209 of the 214 pushes to `main` from 2026-09-27 to 2026-10-26 bypassed the ruleset. The script reads the required checks GitHub applies to the base branch, verifies each on the exact head SHA through the REST check-runs and commit-status APIs, fails closed on an empty rule set or any API error, and posts the result on the pull request. It is the compensating control for CM-3 and CM-5; AC-5 (separation of duties) has none until a second maintainer is onboarded. `.github/branch-protection-rules.md` no longer claims that code-owner review is enabled.
+- **A pre-merge double-check of every required status check** (`feat(compliance)`, [`check_pr_mergeable.sh`](scripts/check_pr_mergeable.sh)). The script reads the required checks GitHub applies to the base branch, verifies each on the exact head SHA through the REST check-runs and commit-status APIs, fails closed on an empty rule set or any API error, and posts the result on the pull request.
+
+### Security
+
+- **Required status checks on `main` can no longer be bypassed, and release tags can no longer be moved or deleted** (repository rulesets; POAM-2026-115 and POAM-2026-116 in [`POAM.md`](docs/POAM.md)). The checks moved out of the review ruleset into ruleset 25966171, which has no bypass actor. Before that, the maintainer's admin merges bypassed both rules, and 163 of the 215 pushes to `main` from 2026-09-27 to 2026-10-27 went in with required checks not passing. The one exception is an advisory fix landed from a private fork, where Actions does not run: the ruleset is disabled for that merge and re-enabled, as [`SECURITY.md`](SECURITY.md) describes. Tag ruleset 25965917 protects every `v*` and `client-v*` tag, including `v4.0.0`, with no bypass actor; no tag was protected before. POAM-2026-115 now covers only AC-5, since one maintainer cannot approve their own pull requests. `.github/branch-protection-rules.md` no longer claims that code-owner review is enabled, and its tag section describes the new ruleset.
 
 ---
 
