@@ -434,6 +434,24 @@ def test_any_api_failure_exits_2(gh: Gh, key: str) -> None:
     assert "every required check passed" not in result.stdout
 
 
+def test_rules_failure_is_not_masked_by_classic_protection(gh: Gh) -> None:
+    # Classic protection alone would still yield a non-empty, all-green list.
+    classic = {
+        "enabled": True,
+        "required_status_checks": {
+            "enforcement_level": "everyone",
+            "contexts": ["legacy-ci"],
+            "checks": [],
+        },
+    }
+    runs = [*green_runs(), check_run(401, "legacy-ci", suite=6)]
+    f = fixture(classic=classic, runs=runs)
+    f[RULES_KEY] = {"_fail": 502}
+    result = gh.run(f, "12", "--repo", REPO)
+    assert result.returncode == 2
+    assert "could not read the rules for 'main'" in result.stderr
+
+
 def test_comment_posts_the_report(gh: Gh) -> None:
     result = gh.run(fixture(), "12", "--repo", REPO, "--comment")
     assert result.returncode == 0, result.stderr
