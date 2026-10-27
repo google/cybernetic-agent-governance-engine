@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A pre-merge check of every required status check, and POAM-2026-115 for the review rule one maintainer cannot meet** (`feat(compliance)`, [`check_pr_mergeable.sh`](scripts/check_pr_mergeable.sh), [`POAM.md`](docs/POAM.md)). `main`'s ruleset requires an approving review, and GitHub does not let an author approve their own pull request, so each of the maintainer's merges is an admin bypass that also lifts the required status checks: 209 of the 214 pushes to `main` from 2026-09-27 to 2026-10-26 bypassed the ruleset. The script reads the required checks GitHub applies to the base branch, verifies each on the exact head SHA through the REST check-runs and commit-status APIs, fails closed on an empty rule set or any API error, and posts the result on the pull request. It is the compensating control for CM-3 and CM-5; AC-5 (separation of duties) has none until a second maintainer is onboarded. `.github/branch-protection-rules.md` no longer claims that code-owner review is enabled.
+
 ---
 
 ## [4.0.0] - 2026-10-26

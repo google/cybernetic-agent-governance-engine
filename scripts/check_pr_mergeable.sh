@@ -25,9 +25,9 @@
 # GitHub: it is the compensating control for CM-3 and CM-5. It does nothing
 # for AC-5; no script supplies an independent reviewer.
 #
-# `gh pr checks` is not a substitute. On PR #546 it listed 48 of the head
-# commit's 50 check-runs and left out the required "OPA Rego Policy Lint and
-# Test" check, so a merge decision must not rest on it.
+# `gh pr checks` is not a substitute. On PR #546 it listed 48 of the PR's 50
+# check-runs and left out the required "OPA Rego Policy Lint and Test" check,
+# so a merge decision must not rest on it.
 #
 # What it does
 # ------------

@@ -20,9 +20,9 @@
 | Setting | Value | Rationale |
 |---|---|---|
 | Require a pull request before merging | ✅ Enabled | No direct push to `main`; server-side equivalent of the local pre-push hook |
-| Required number of approvals before merging | **1** | Single-maintainer model; CODEOWNERS designates the reviewer |
+| Required number of approvals before merging | **1** | Cannot be met for the maintainer's own pull requests while the project has one maintainer: GitHub does not let an author approve their own pull request, so each such merge is an admin bypass (POAM-2026-115) |
 | Dismiss stale pull request approvals when new commits are pushed | ✅ Enabled | Prevents approval-then-sneak-commit pattern |
-| Require review from Code Owners | ✅ Enabled | Activates `.github/CODEOWNERS`; without this, CODEOWNERS is advisory only |
+| Require review from Code Owners | ❌ Disabled | The maintainer is the only code owner and cannot approve their own pull requests, so the rule could never be met. `.github/CODEOWNERS` stays advisory until a second maintainer is onboarded (POAM-2026-115) |
 | Require status checks to pass before merging | ✅ Enabled | See §3 for the required check list |
 | Require branches to be up to date before merging | ✅ Enabled | Prevents stale-branch merges that pass CI on an outdated base |
 | Require conversation resolution before merging | ✅ Enabled | Ensures all review comments are addressed before merge |
@@ -30,6 +30,12 @@
 | Restrict who can push to matching branches | ✅ Enabled | Add `@lahlfors` only |
 | Allow force pushes | ❌ Disabled | Protects immutable audit trail on `main` |
 | Allow deletions | ❌ Disabled | `main` must not be deleted |
+
+> **One maintainer (POAM-2026-115):** the approval rule cannot be met for the maintainer's own
+> pull requests, so each of their merges is an admin bypass, which also lifts the required
+> status checks. Before every such merge, run `scripts/check_pr_mergeable.sh <pr> --comment`:
+> it verifies each required check on the exact head SHA and posts the result on the pull
+> request. It restores check enforcement only; nothing replaces the independent review.
 
 **Settings → General → Pull Requests** (repository-level, not branch-protection-rule):
 
@@ -51,7 +57,7 @@
 |---|---|---|
 | Require a pull request before merging | ✅ Enabled | Release branches are integration points; no direct push |
 | Required number of approvals | **1** | Maintainer review required |
-| Require review from Code Owners | ✅ Enabled | |
+| Require review from Code Owners | ❌ Disabled | As for `main` (§1) |
 | Require status checks to pass | ✅ Enabled | Same check list as `main` (§3) |
 | Require branches to be up to date | ✅ Enabled | |
 | Allow force pushes | ❌ Disabled | |
@@ -165,7 +171,7 @@ After applying all settings above, verify with a test PR:
 
 - [ ] Open a PR from a feature branch to `main`
 - [ ] Confirm all required status checks appear and must pass before merge is enabled
-- [ ] Confirm "Review required" badge appears and is satisfied only by the CODEOWNERS reviewer
+- [ ] Confirm the "Review required" badge appears (code-owner review stays disabled while the project has one maintainer; see §1)
 - [ ] Confirm direct push to `main` is rejected: `git push origin HEAD:main` should fail with `remote: error: GH006`
 - [ ] Confirm a `v0.0.1-ref` tag push triggers the `publish-release` job and creates a GitHub Release
 - [ ] Confirm a `v0.0.1-ref` tag push from a non-maintainer account is rejected
@@ -176,7 +182,7 @@ After applying all settings above, verify with a test PR:
 
 | Code-level enforcement | GitHub UI setting that activates it |
 |---|---|
-| `.github/CODEOWNERS` | §1 → "Require review from Code Owners" |
+| `.github/CODEOWNERS` | None while the project has one maintainer: §1 leaves "Require review from Code Owners" disabled, so the file is advisory (POAM-2026-115) |
 | `ref_impl_signoff.yml` `ci-gate` job | §3 → Required status check: `CI Gate — Lint & Tests` |
 | `security-scan.yml` `secret-scan` job | §3 → Required status check: `Secret Scanning (Gitleaks)` |
 | `license_guard.yml` `license-check` job | §3 → Required status check: `License Guard / license-check` |
