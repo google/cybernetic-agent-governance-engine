@@ -34,17 +34,16 @@ terraform {
     }
   }
 
-  # Store Terraform state in GCS bucket.
-  # Activate by setting TF_BACKEND_BUCKET before running terraform init:
-  #   export TF_BACKEND_BUCKET="${PROJECT_ID}-tfstate"
-  #   terraform init -backend-config="bucket=${TF_BACKEND_BUCKET}"
-  # D-03 remediation: backend is declared; bucket name is injected at init time
-  # via -backend-config to avoid committing project-specific values.
-  backend "gcs" {
-    prefix = "cage/gcp-gke"
-    # bucket is supplied via: terraform init -backend-config="bucket=<PROJECT>-tfstate"
-    # or TF_CLI_ARGS_init="-backend-config=bucket=<PROJECT>-tfstate"
-  }
+  # Terraform state lives in GCS, one state per cluster:
+  #   gs://<bucket>/cage/gcp-gke/<cluster_name>/default.tfstate
+  # Neither bucket nor prefix is committed (D-03). deploy_all.sh supplies both
+  # at init: the bucket is <project>-tfstate (or TF_BACKEND_BUCKET), and the
+  # prefix is keyed on the cluster_name the tfvars file sets, so one
+  # environment can never plan against another environment's state. By hand:
+  #   terraform init -reconfigure \
+  #     -backend-config="bucket=<project>-tfstate" \
+  #     -backend-config="prefix=cage/gcp-gke/<cluster_name>"
+  backend "gcs" {}
 }
 
 # ─── Data Sources ─────────────────────────────────────────────────────────────

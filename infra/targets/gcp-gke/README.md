@@ -21,10 +21,13 @@ Provisions a complete GKE cluster with GCP-optimized settings and security postu
 # Or manually
 cd infra/targets/gcp-gke
 
-# First time: Enable GCS backend (optional)
+# First time: create the state bucket
 # gsutil mb -p YOUR_PROJECT gs://YOUR_PROJECT-tfstate
 
-terraform init
+# One state per cluster: the prefix names the cluster dev.tfvars sets
+terraform init -reconfigure \
+  -backend-config="bucket=YOUR_PROJECT-tfstate" \
+  -backend-config="prefix=cage/gcp-gke/cage-dev"
 terraform apply -var-file=dev.tfvars \
   -var="minio_root_password=SecurePassword123"
 ```

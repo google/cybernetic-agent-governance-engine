@@ -110,18 +110,44 @@ _read_env_var() {
   printf '%s' "$value"
 }
 
+# Resolve a Terraform variable from command-line arguments the way terraform
+# does: -var and -var-file are applied in order and the last one wins. The
+# gcp-gke target names its remote state after the effective cluster_name, so
+# this must agree with terraform about which value is in effect.
+# Usage: _effective_tf_var NAME ARG...   (prints the value, or nothing)
+_effective_tf_var() {
+  local name="$1" value="" arg file found expect_var=false
+  shift
+  for arg in "$@"; do
+    if [[ "$expect_var" == true ]]; then
+      expect_var=false
+      [[ "$arg" == "$name="* ]] && value="${arg#"$name="}"
+      continue
+    fi
+    case "$arg" in
+      -var) expect_var=true ;;
+      "-var=$name="*) value="${arg#"-var=$name="}" ;;
+      -var-file=*)
+        file="${arg#-var-file=}"
+        found=$(sed -nE "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\1/p" "$file" | tail -n 1)
+        [[ -n "$found" ]] && value="$found"
+        ;;
+    esac
+  done
+  printf '%s' "$value"
+}
+
 load_env() {
   if [[ -f "$REPO_ROOT/.env" ]]; then
     info "Loading environment from .env (selective export — H-16)"
 
     # ── Non-secret infrastructure variables (safe to export broadly) ──────
-    local _env _cluster _namespace _registry _storage _cold_tier
+    local _env _namespace _registry _storage _cold_tier
     local _vllm_reasoning _vllm_fast _vllm_gateway _opa _redis _s3_ep _s3_bkt
     local _model_reasoning _model_fast _model_consensus
     local _project _region
 
     _env=$(_read_env_var ENVIRONMENT)
-    _cluster=$(_read_env_var K8S_CLUSTER_NAME)
     _namespace=$(_read_env_var K8S_NAMESPACE)
     _registry=$(_read_env_var REGISTRY_URL)
     _storage=$(_read_env_var STORAGE_BACKEND)
@@ -146,7 +172,6 @@ load_env() {
     _region=$(_read_env_var GOOGLE_CLOUD_LOCATION)
 
     [[ -n "$_env" ]]            && export TF_VAR_environment="$_env"
-    [[ -n "$_cluster" ]]        && export TF_VAR_cluster_name="$_cluster"
     [[ -n "$_namespace" ]]      && export TF_VAR_namespace="$_namespace"
     [[ -n "$_registry" ]]       && export TF_VAR_registry_url="$_registry"
     [[ -n "$_storage" ]]        && export TF_VAR_storage_backend="$_storage"
@@ -334,6 +359,11 @@ deploy_terraform_target() {
   if [[ -f "$var_file" ]]; then
     tf_args+=("-var-file=$var_file")
     info "Using var file: $var_file"
+  elif [[ "$target" == "gcp-gke" ]]; then
+    # A gcp-gke environment is defined by its tfvars file, which names its
+    # cluster. Never fall back to defaults.
+    error "Var file not found: $var_file"
+    exit 1
   else
     warn "Var file not found: $var_file (will use defaults)"
   fi
@@ -342,6 +372,7 @@ deploy_terraform_target() {
   local kubeconfig_path=""
   local kubeconfig_context=""
   local verify_e2e=false
+  local _vf=""
   
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -350,7 +381,14 @@ deploy_terraform_target() {
         shift
         ;;
       --var-file=*)
-        tf_args+=("-var-file=${1#--var-file=}")
+        # terraform runs with -chdir="$tf_dir", which resolves a relative path
+        # against $tf_dir rather than the repository root. Pin it first.
+        _vf="${1#--var-file=}"
+        if [[ ! -f "$_vf" ]]; then
+          error "Var file not found: $_vf"
+          exit 1
+        fi
+        tf_args+=("-var-file=$(cd "$(dirname "$_vf")" && pwd)/$(basename "$_vf")")
         shift
         ;;
       --var)
@@ -390,9 +428,44 @@ deploy_terraform_target() {
     info "Using Kubernetes backend (state stored in cluster)"
     info "Ensure 'terraform-state' namespace exists: kubectl create namespace terraform-state"
   elif [[ "$target" == "gcp-gke" ]]; then
-    # GCS backend configuration commented in providers.tf
-    info "GCS backend configuration in providers.tf (optional)"
-    info "Uncomment backend block to use remote state"
+    # Remote state in GCS, one state per cluster. main.tf declares the backend
+    # without bucket or prefix; both are supplied here. Keying the state on the
+    # effective cluster_name means a run can only plan against the state of the
+    # cluster it names, so deploying one environment can never rename,
+    # reconfigure or replace another environment's cluster.
+    if ! command -v gcloud >/dev/null 2>&1; then
+      error "gcloud is required for the gcp-gke target"
+      exit 1
+    fi
+    local _cluster _project _bucket
+    _cluster=$(_effective_tf_var cluster_name "${tf_args[@]}")
+    if [[ -z "$_cluster" ]]; then
+      error "No cluster_name set by $var_file or --var; refusing to choose a cluster."
+      exit 1
+    fi
+    _project=$(_effective_tf_var project_id "${tf_args[@]}")
+    _project="${_project:-${TF_VAR_project_id:-}}"
+    _bucket="${TF_BACKEND_BUCKET:-${_project:+${_project}-tfstate}}"
+    if [[ -z "$_bucket" ]]; then
+      error "Cannot name the state bucket: set GOOGLE_CLOUD_PROJECT in .env"
+      error "  (bucket <project>-tfstate) or export TF_BACKEND_BUCKET."
+      exit 1
+    fi
+    # Fail closed while the pre-isolation shared state file still exists.
+    if gcloud storage ls "gs://${_bucket}/cage/gcp-gke/default.tfstate" >/dev/null 2>&1; then
+      error "Legacy shared state found: gs://${_bucket}/cage/gcp-gke/default.tfstate"
+      error "  Every gcp-gke environment used to share this file. Move it to the"
+      error "  prefix of the cluster it manages, then remove the old object:"
+      error "    terraform -chdir=$tf_dir init -reconfigure -backend-config=bucket=${_bucket} -backend-config=prefix=cage/gcp-gke"
+      error "    terraform -chdir=$tf_dir output -raw cluster_name"
+      error "    terraform -chdir=$tf_dir init -migrate-state -backend-config=bucket=${_bucket} -backend-config=prefix=cage/gcp-gke/<that cluster_name>"
+      error "    gcloud storage rm gs://${_bucket}/cage/gcp-gke/default.tfstate"
+      exit 1
+    fi
+    # -reconfigure: switching clusters from one checkout must select the other
+    # cluster's state, never offer to copy this one's state into it.
+    backend_config_args+=("-reconfigure" "-backend-config=bucket=${_bucket}" "-backend-config=prefix=cage/gcp-gke/${_cluster}")
+    info "Remote state: gs://${_bucket}/cage/gcp-gke/${_cluster}/"
   fi
 
   # ── Auto-generate terraform.auto.tfvars from .env (gitignored) ───────────

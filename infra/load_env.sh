@@ -123,9 +123,6 @@ while IFS= read -r line || [ -n "$line" ]; do
                 ;;
             
             # Kubernetes configuration
-            K8S_CLUSTER_NAME)
-                export TF_VAR_cluster_name="$var_value"
-                ;;
             K8S_NAMESPACE)
                 export TF_VAR_namespace="$var_value"
                 ;;

@@ -214,7 +214,6 @@ The following `.env` variables are automatically mapped to Terraform variables:
 | .env Variable | Terraform Variable | Description |
 |---------------|-------------------|-------------|
 | `ENVIRONMENT` | `environment` | Environment (dev/staging/prod) |
-| `K8S_CLUSTER_NAME` | `cluster_name` | Kubernetes cluster name |
 | `K8S_NAMESPACE` | `namespace` | Kubernetes namespace |
 | `REGISTRY_URL` | `registry_url` | Container registry URL |
 | `STORAGE_BACKEND` | `storage_backend` | Storage backend (s3/gcs/local) |

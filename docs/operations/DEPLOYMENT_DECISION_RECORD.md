@@ -63,7 +63,7 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
 
 | Target | Backend | Location |
 |--------|---------|----------|
-| `gcp-gke` | GCS (optional; configured in `providers.tf`) | `YOUR_PROJECT-tfstate/cage/gcp-gke` |
+| `gcp-gke` | GCS (declared in `main.tf`; bucket and prefix supplied by `deploy_all.sh`) | `YOUR_PROJECT-tfstate/cage/gcp-gke/<cluster_name>` |
 | `agnostic` | Kubernetes Secret | `terraform-state` namespace |
 
 ---

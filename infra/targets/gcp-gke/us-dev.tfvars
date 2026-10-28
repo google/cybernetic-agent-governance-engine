@@ -57,10 +57,10 @@ region = "us-central1"
 zone   = "us-central1-a"
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
-# cluster_name MUST match the existing GKE cluster in Terraform state ("cage-dev").
-# Changing this value forces a destroy+recreate of the cluster — explicitly
-# prohibited by the "no GKE hardware changes" constraint.
-# The existing cluster was provisioned by dev.tfvars as "cage-dev"; keep it.
+# Same cluster as dev.tfvars ("cage-dev"), in its US_FED posture. deploy_all.sh
+# keys remote state on cluster_name, so the two files share one state. Renaming
+# it here would start a new, empty state for a new cluster; cage-dev would be
+# left untouched.
 cluster_name = "cage-dev"
 environment  = "dev"
 namespace    = "governance-stack"

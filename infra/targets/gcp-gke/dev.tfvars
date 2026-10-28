@@ -8,7 +8,10 @@
 zone       = "us-central1-a" # Current cluster location
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
-environment = "dev"
+# deploy_all.sh keys remote state on cluster_name. us-dev.tfvars names the
+# same cluster on purpose (its US_FED posture), so the two share one state.
+cluster_name = "cage-dev"
+environment  = "dev"
 
 # Matches existing governance-cluster to prevent replacement
 pod_cidr               = "10.100.0.0/14"

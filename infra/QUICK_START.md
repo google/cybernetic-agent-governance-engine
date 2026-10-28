@@ -230,10 +230,11 @@ make build-bg
 cd infra/targets/agnostic
 terraform init -backend-config="config_path=~/.kube/config"
 
-# GCP target (GCS backend)
+# GCP target (GCS backend): one state per cluster, named by the tfvars file
 cd infra/targets/gcp-gke
-terraform init \
-  -backend-config="bucket=${GOOGLE_CLOUD_PROJECT}-tfstate"
+terraform init -reconfigure \
+  -backend-config="bucket=${GOOGLE_CLOUD_PROJECT}-tfstate" \
+  -backend-config="prefix=cage/gcp-gke/cage-dev"   # cluster_name in dev.tfvars
 ```
 
 ### Plan
