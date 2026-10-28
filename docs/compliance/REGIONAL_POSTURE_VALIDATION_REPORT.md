@@ -1,5 +1,7 @@
 # Regional Posture Validation Report
 
+> **Note (2026-10-28):** The composition claim in §3 is false, and the executive summary and conclusion repeat it. See POAM-2026-121 in [`POAM.md`](../POAM.md).
+
 **Date:** 2026-09-04  
 **CAGE Version:** v3.0.1 (post-consolidation)  
 **Validator:** Automated Test Suite + Manual Verification  
@@ -188,7 +190,7 @@ uv run python scripts/verify_langfuse_posture.py --dry-run --posture development
 
 ## 3. Plugin × Region Composition Matrix
 
-> **Note (2026-10-28):** None of the 12 hashes in this section reproduces by the method it describes, at the commit that introduced them or at `main`, and `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, contrary to the independence guarantee below. The section is kept as published. See POAM-2026-121 in [`POAM.md`](../POAM.md).
+> **Do not rely on this section (2026-10-28).** Its independence claim is false: `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, and the registry logs the collision. The hashes below were computed by the documented method on `3b69207c`, the parent of the commit that published them, and match no tree that contains this report. The section is kept as published pending correction or withdrawal under POAM-2026-121 in [`POAM.md`](../POAM.md).
 
 Per [`plans/post_consolidation_roadmap.md`](../../plans/post_consolidation_roadmap.md#533-c2--regional-compliance-posture-validation), CAGE claims that domain plugins and jurisdictional postures compose independently. This is validated through the following matrix:
 
