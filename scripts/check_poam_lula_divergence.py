@@ -102,6 +102,11 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_envelope_transport.py",
         "tests/governor/test_warrant_reliance_e2e.py",
     ),
+    # A content-safety check that reaches no verdict refuses with a reason code.
+    "POAM-2026-124": (
+        "tests/test_content_safety_no_verdict.py",
+        "tests/test_inference_backend_none.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
