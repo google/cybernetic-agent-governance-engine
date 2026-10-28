@@ -72,7 +72,7 @@ This starts:
 
 ```bash
 curl http://localhost:8080/health
-# Expected: {"status": "ok", "mode": "mcp-tool-server", "nemo": "active"}
+# Expected: {"status":"ok","mode":"mcp-tool-server","nemo":"active"}
 # (a static liveness response; it does not probe NeMo or OPA)
 
 # A gated route without an identity header is refused
@@ -104,6 +104,8 @@ The demo runs in-process with no external services. It uses `fakeredis`, does no
 | 3 | SHA-256 tamper-evident evidence chain verification | Records written by Acts 1–2; payloads are opaque to the verifier |
 
 The mechanisms are domain-neutral, but the demo uses finance components to make them concrete. Another domain supplies its own guard and quantities, and the enforcement path stays the same.
+
+> **The output ends with OpenTelemetry span JSON.** This is expected. [`tracing_setup.py`](../src/gateway/tracing_setup.py) registers a console span exporter alongside any OTLP exporter, so finished spans print after the PASS summary. The §8a playground does the same.
 
 ## 5. Observability dashboard (optional, not part of the Compose stack)
 
