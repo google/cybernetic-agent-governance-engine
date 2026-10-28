@@ -685,6 +685,12 @@ class PluginContribution:
         server_inputs: Per-action resolvers for params that only the gateway
             may supply (:class:`ServerInputResolver`); an action has at most
             one across contributions.
+        required_tiers: ``tier_name`` of every tier in ``tiers`` this domain
+            cannot be governed without. ``assemble_governor()`` rejects a name
+            the contribution does not contribute; ``assert_production_posture()``
+            refuses to start an enforcing posture in which any of them is not
+            enabled (``GovernorComponents.disabled_tiers``). A tier that is
+            switched off therefore never reads as a tier that was consulted.
     """
 
     domain: str
@@ -708,6 +714,7 @@ class PluginContribution:
     rail_providers: tuple[Any, ...] = ()
     norm_bindings: tuple[NormBinding, ...] = ()
     server_inputs: Mapping[str, ServerInputResolver] = field(default_factory=dict)
+    required_tiers: frozenset[str] = frozenset()
 
 
 @runtime_checkable

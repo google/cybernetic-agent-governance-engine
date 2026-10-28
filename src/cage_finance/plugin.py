@@ -56,6 +56,14 @@ FINANCE_EXECUTION_VERBS: frozenset[str] = frozenset(
     {"buy", "sell", "trade", "transfer", "execute_trade"}
 )
 
+# Every finance tier. An enforcing posture refuses to start if any of them is
+# not enabled (posture check ``required_tiers``); listed explicitly so that
+# dropping a tier from ``create_finance_tiers`` fails assembly instead of
+# silently shrinking this set.
+FINANCE_REQUIRED_TIERS: frozenset[str] = frozenset(
+    {"trade_confidence", "bounding", "cbf", "fiscal", "consensus", "causal"}
+)
+
 
 class FinanceCagePlugin(CagePlugin):
     """The finance domain capability plugin."""
@@ -185,6 +193,7 @@ class FinanceCagePlugin(CagePlugin):
             norm_bindings=(trade_confidence,),
             server_inputs=dict.fromkeys(TRADE_ACTIONS, trade_inputs),
             rail_providers=(FinancialRailsProvider(),),
+            required_tiers=FINANCE_REQUIRED_TIERS,
         )
 
 

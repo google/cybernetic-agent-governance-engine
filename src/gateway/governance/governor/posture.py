@@ -24,6 +24,10 @@ CRITICAL and startup continues.
 
 Checks:
 
+* ``required_tiers``: every tier a domain names in
+  ``PluginContribution.required_tiers`` is enabled. A disabled tier examined
+  no evidence, so an enforcing posture refuses to start without it rather
+  than run with that tier's verdict silently absent.
 * ``tier_runtime_requirements``: every module a tier (domain or
   jurisdiction) declares in ``runtime_requirements`` imports (e.g.
   ``dowhy`` for a causal tier).
@@ -183,7 +187,24 @@ def _check_governance_salt(components: GovernorComponents) -> None:
         )
 
 
+def _check_required_tiers(components: GovernorComponents) -> None:
+    disabled = {d.tier_name: d.reason for d in components.disabled_tiers}
+    enabled = {t.tier_name for t in components.plugin_tiers}
+    unmet: list[str] = []
+    for name in sorted(components.required_tiers):
+        if name in disabled:
+            unmet.append(f"{name!r} is disabled ({disabled[name]})")
+        elif name not in enabled:
+            unmet.append(f"{name!r} is not assembled")
+    if unmet:
+        raise RuntimeError(
+            "required tiers are not enabled, so their verdicts would be missing "
+            "rather than examined: " + "; ".join(unmet)
+        )
+
+
 CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
+    ("required_tiers", _check_required_tiers),
     ("tier_runtime_requirements", _check_tier_runtime_requirements),
     ("jurisdiction_requirements", _check_jurisdiction_requirements),
     ("kms_signing_mode", _check_kms_signing_mode),
