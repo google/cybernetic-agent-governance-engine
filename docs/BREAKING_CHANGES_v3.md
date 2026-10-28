@@ -2,6 +2,7 @@
 
 > **Status:** Released. Covers v3.0.1 (2026-09-07) through v4.0.0 (2026-10-26). v4.0.0's breaking changes
 > (CT-1 to CT-6) are recorded here too: the file keeps its v3 name because the published advisory links to it.
+> The next major version's breaking changes (IB-1 to IB-3, unreleased) are recorded at the end.
 > The v3.1.0 clean breaks are collected in
 > [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) at the end of this document.
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. The sections below
@@ -900,7 +901,21 @@ Security fix (advisory GHSA-c8pw-f3g3-xg7c; POAM-2026-114). No release has enfor
 | **CT-5** | Cache key | The spec fingerprint in `causal_wm:{spec_fingerprint}:…` includes `normalization_scale`. | A cached β is only meaningful in its unit. | Verdicts cached before the upgrade are not read; each key is recomputed once (entries expire after `causal.cache_ttl_seconds`). |
 | **CT-6** | Numerical trust | Before fitting, phase 1 bounds the regression's rounding error (`_least_squares_error_bound` in [`gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py), the LAPACK least-squares bound) and refuses the world model when it exceeds `_LSQ_ERROR_BOUND_MAX` = 1e-6: `design_ill_conditioned`, with no β. | Above the bound, correct platforms return materially different coefficients: a constant treatment fitted +0.10 on macOS arm64 and −6.5e11 on Linux x86_64, so which guard refused it depended on the platform. | A constant treatment, or one collinear (or nearly so) with a covariate, is refused with `design_ill_conditioned` instead of a slope or placebo reason. Well-conditioned telemetry (a bound near 1e-14 on the synthetic frame) is unaffected. |
 
+## Unreleased (next major) — Inference Backend and Content-Safety Refusals
+
+These ship with `CAGE_INFERENCE_BACKEND` and the POAM-2026-124 fix, and make the next release a major version (v5.0.0).
+
+**Why a major version two days after 4.0.0.** 4.0.0 made it a rule that breaking changes ship only in a major version. IB-1 removes a default that no document mentioned, so it could be argued to sit outside the documented surface. It is marked breaking anyway, with IB-2 and IB-3. An undocumented default is not an unused one: the repository has 13 forks, and IB-2 refuses consensus results that passed before. Under-marking costs someone a silent breakage; over-marking costs a version number. A fast major for removing an undocumented fallback is that rule being applied, not instability.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **IB-1** | Inference proxy | [`_resolve_backend_url()`](../src/gateway/server/inference_proxy.py) has no default URL. With no `VLLM_BASE_URL` (or `VLLM_FAST_API_BASE` / `VLLM_REASONING_API_BASE`) it raises, and the proxy answers 503 `INFERENCE_BACKEND_URL_MISSING` and rolls back the quota step. Under `CAGE_INFERENCE_BACKEND=none` the proxy answers 503 `INFERENCE_BACKEND_NONE` before anything else. | A missing endpoint forwarded prompts to whatever listened on `localhost:8000`. The MCP server already refused to start without `VLLM_BASE_URL`; the proxy now agrees with it. | A deployment that relied on the default gets 503 on every chat completion. Set the URL explicitly. |
+| **IB-2** | Consensus admission | [`consensus_admits()`](../src/gateway/governance/consensus/engine.py) is the one admit mapping, used by the finance, healthcare and physical-AI tiers: only `APPROVE`, `APPROVED` or `SKIPPED` in `status` admits, and never a result that carries a `reason_code`. [`consensus_violation_code()`](../src/gateway/governance/consensus/engine.py) records the kernel's code over the domain default. | Three copies of the mapping let any domain turn a refusal into an admit. The no-backend DENY (`CONSENSUS_NO_INFERENCE_BACKEND`) has to stay a refusal in every domain. | A consensus engine that returns `decision` without `status` (`{"decision": "APPROVE"}`) is refused by finance, which used to fall back to `decision`; healthcare and physical-AI already required `status`. A refusal that carries a kernel reason code records it as the violation code instead of `CONSENSUS_REJECTED`, `CLINICAL_CONSENSUS_REJECTED` or `PHYSICAL_SAFETY_CONSENSUS_REJECTED`. |
+| **IB-3** | Content-safety outputs | [`verify_content_safety`](../src/gateway/server/mcp_tool_server.py) returns `SAFE` only for a rail verdict, and otherwise `BLOCKED: <reason>`, where a no-verdict reason leads with a code from [`content_safety.py`](../src/gateway/governance/content_safety.py). The NeMo rail functions in [`manager.py`](../src/integrations/nemo/manager.py) refuse on "No main flow found" and lead their refusal reasons with a code (`CONTENT_SAFETY_ERROR: Validation failed due to internal governance error.`). The advisor records `cage.verdict = BLOCKED` for anything but an exact `SAFE`. | POAM-2026-124: a check that reached no verdict was reported as passed. | Absent rails answer `BLOCKED: CONTENT_SAFETY_RAILS_UNAVAILABLE: …` instead of `ERROR: NeMo rails not initialised.`. A check that raises answers `BLOCKED: CONTENT_SAFETY_ERROR: …` instead of failing the tool call. A rails config with no main flow refuses where it passed. Callers that match the old reason strings exactly need updating. |
+
+Explicitly unchanged: unset `CAGE_INFERENCE_BACKEND` keeps the startup behaviour from before the setting existed; consensus below its threshold still skips; no infrastructure profile changes.
+
 ---
 
-**Last updated:** 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
+**Last updated:** 2026-10-28 (unreleased next major: inference backend and content-safety refusals IB-1–IB-3); 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
 

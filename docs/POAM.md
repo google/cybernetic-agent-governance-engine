@@ -95,6 +95,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-122 | SA-11 | Region pinning in the test suite is asymmetric. 57 tests are marked `eu_ecb` (48 of them in the required Pytest Logic Tests job), 23 `us_fed` (18) and 13 `apac_mas` (7), from 27, 4 and 4 marker uses, yet US_FED is the posture of the reference staging deployment and the one carrying the NIST SP 800-53 surface. The other ~9,000 tests run under the US_FED session default set in [`tests/conftest.py`](../tests/conftest.py), so US_FED is exercised broadly but pinned narrowly: an unmarked test that asserts US_FED behaviour depends on that default. Recorded, not swept | Low | 2026-12-31 |
 | POAM-2026-123 | CM-6 / SI-7 | A domain plugin's compliance overlay can redefine a kernel control, including one a jurisdictional tier enforces on. [`ControlRegistry`](../src/gateway/governance/constants.py) applies overlays over the kernel baseline with `dict.update` and only logs a WARNING on a collision. With the kernel baseline alone, the EU_ECB FRIA tier denies `execute_trade` (`FRIA_ASSESSMENT_STALE`) without consulting the provider. With a test overlay that defines `CTRL_FRIA_006` and a fresh artefact, the Art. 27(2) staleness gate passes and the provider decides (verified). `cage_finance` redefines `CTRL_FTRA_001` today, which nothing reads at runtime. Governor assembly fails closed on a slot collision; the registry does not (detail section) | High | 2026-11-30 |
 | POAM-2026-124 | SI-10 / AU-3 | Content-safety checks that did not run are reported as passed. With no NeMo rails, the gateway's `verify_content_safety` answers `"ERROR: NeMo rails not initialised."`, and the advisor returns that as `SUCCESS` with `cage.verdict = SAFE`. When NeMo raises "No main flow found", the tool answers `"SAFE"`. Both were verified hermetically. The control itself operates: the shipped Colang 2.x rails blocked four must-block inputs and passed a benign one. Today the first path needs a failed `nemoguardrails` import, and the second a rails config with no main flow. Under the planned `CAGE_INFERENCE_BACKEND=none`, which builds no rails, the first would fire on every call. Remediated on `feat/inference-backend-none`: every path that reaches no verdict refuses with a reason code, the advisor records only an exact `SAFE` as safe, and a recorded mutation check shows each path's test fails when the path is reverted. Closes at merge (detail section) | High | 2026-11-30 |
+| POAM-2026-125 | SI-15 / SI-10 | A degenerate semantic-judge answer is read as `SAFE`. `validate_output_semantics()` asks the model to answer `SAFE` or `UNSAFE:<reason>`, then returns safe for an empty answer and for any answer that does not start with `UNSAFE`. A verdict in prose, a reasoning block with no verdict, or a truncated reply passes the advisor graph's output rail (verified hermetically 2026-10-28). Distinct from POAM-2026-124, whose paths reach no verdict: here the model answers and the answer is misread. Same defect shape as POAM-2026-124's advisor label (`startswith("BLOCKED")`): model free-text parsed as safe unless it says otherwise (detail section) | High | 2026-11-30 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -533,6 +534,47 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
+
+### POAM-2026-125: Degenerate Semantic-Judge Answers Are Read as SAFE
+
+**Control:** NIST SI-15 (Information Output Filtering), SI-10 (Information Input Validation)
+**Risk Level:** High
+**Status:** Open — recorded; remediation not started
+**Date Opened:** 2026-10-28
+**Target Closure:** 2026-11-30
+
+**Description:**
+The advisor graph's output rail (`nemo_output_rail_node`, built by [`create_nemo_output_rail_node()`](../src/gateway/governance/langgraph_harness/nemo_node_factory.py)) calls [`validate_output_semantics()`](../src/integrations/nemo/manager.py) on every model answer after PII masking. The function asks the NeMo-backed model to reply with one line, `SAFE` or `UNSAFE:<reason>`, and reads the reply leniently:
+- an empty reply is safe (`SAFE_EMPTY_RESPONSE`);
+- any reply that does not start with `UNSAFE`, in any case, is safe.
+
+So a working model whose answer is degenerate, or does not follow the format, passes the output through.
+
+**Verified hermetically on 2026-10-28**, with the real function and mocked rails:
+
+| Model reply | Read as |
+|---|---|
+| (empty) | safe |
+| `I think this output is unsafe: it fabricates SEC Rule 99z.` | safe |
+| `The output contains harmful advice.` | safe |
+| `<think>analysing</think>` | safe |
+| `SAFE` | safe |
+| `Unsafe — hallucinated citation` | refused |
+| `UNSAFE: fabricated regulation` | refused |
+
+**How this differs from POAM-2026-124.** POAM-2026-124's paths reach no verdict: rails absent, "No main flow found", errors. Here the rails run and the model answers, and the answer is misread.
+
+**The defect class: model free-text parsed as safe unless it says otherwise.** Two instances are known:
+- The advisor labelled any tool output that did not start with `BLOCKED` as `SAFE`, including the gateway's error string (POAM-2026-124, path 1). The inference-backend change fixes it: only an exact `SAFE` is safe.
+- `validate_output_semantics()` reads any reply that does not start with `UNSAFE` as safe. This entry; open.
+
+Two instances make a pattern worth naming. No sweep for a third has been done.
+
+**Contrast.** The consensus critics already parse strictly: `_parse_critic_vote()` in [`engine.py`](../src/gateway/governance/consensus/engine.py) returns `ERROR` for an empty, unparseable or reasoning-only reply, and the gate never admits on `ERROR`.
+
+**Remediation:**
+1. Read the judge strictly: safe only on a conforming `SAFE` verdict (an exact first line, or a structured response format like the consensus critics'). An empty or non-conforming reply refuses with its own reason code.
+2. Add a test for each degenerate form above, with a recorded mutation check: restoring the `startswith("UNSAFE")` reading turns it red.
 
 ### POAM-2026-124: Content-Safety Checks That Did Not Run Are Reported as Passed
 
