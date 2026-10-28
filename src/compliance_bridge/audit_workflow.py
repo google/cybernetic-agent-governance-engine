@@ -25,9 +25,13 @@ Steps:
   3. Ingest findings as compliance scores into the dedicated Langfuse
      compliance project (separate from application performance metrics)
   4. Filter FAIL findings for CRITICAL_CONTROLS → notify_critical_failure()
-  5. (Conditional) If critical failures AND VLLM_BASE_URL is set →
+  5. (Conditional) If critical failures AND a model backend is configured →
      call vLLM via openai Python SDK → notify_remediation()
-     All Step 5 errors are non-fatal (wrapped in try/except).
+     All Step 5 errors are non-fatal (wrapped in try/except). The advisory
+     is never skipped silently: ``advisor_status`` records NOT_REQUIRED (no
+     critical alert), NOT_PERFORMED with INFERENCE_BACKEND_NONE
+     (CAGE_INFERENCE_BACKEND=none), ERROR with INFERENCE_BACKEND_URL_MISSING
+     (no VLLM_BASE_URL), or the outcome of an attempt.
   6. Generate AARM Conformance Report Card and serialize to GCS/S3
      (<audit_id>/aarm_conformance.json) — auto-runs on every Lula scheduled
      audit; also available on-demand via GET /v1/aarm/conformance-report.
@@ -51,6 +55,12 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from src.gateway.governance.inference_backend import (
+    INFERENCE_BACKEND_NONE,
+    INFERENCE_BACKEND_URL_MISSING,
+    inference_disabled,
+)
 
 
 def _ensure_uuid(s: str) -> str:
@@ -659,6 +669,43 @@ async def _step5_one_control(
     }
 
 
+# Step 5 advisory status: every outcome is recorded, never a silent skip.
+ADVISOR_PERFORMED = "PERFORMED"  # at least one advisory was generated
+ADVISOR_FAILED = "FAILED"  # attempted, none generated
+ADVISOR_NOT_REQUIRED = "NOT_REQUIRED"  # no critical alert to advise on
+ADVISOR_NOT_PERFORMED = "NOT_PERFORMED"  # no model, by design
+ADVISOR_ERROR = "ERROR"  # a backend is required but not configured
+ADVISOR_PENDING = "PENDING"  # scheduled in the background
+
+
+def _advisory_disposition(alerted: bool, alert_targets: list[str]) -> dict | None:
+    """Return the Step 5 result when no advisory will be generated, else None."""
+    base: dict[str, Any] = {
+        "remediation_sent": False,
+        "remediation_text": None,
+        "advisor_error": None,
+        "advisor_reason_code": None,
+        "trace_ids_sampled": [],
+        "per_control": [],
+    }
+    if not alerted or not alert_targets:
+        return {**base, "advisor_status": ADVISOR_NOT_REQUIRED}
+    if inference_disabled():
+        return {
+            **base,
+            "advisor_status": ADVISOR_NOT_PERFORMED,
+            "advisor_reason_code": INFERENCE_BACKEND_NONE,
+        }
+    if not os.environ.get("VLLM_BASE_URL"):
+        return {
+            **base,
+            "advisor_status": ADVISOR_ERROR,
+            "advisor_reason_code": INFERENCE_BACKEND_URL_MISSING,
+            "advisor_error": "VLLM_BASE_URL not configured",
+        }
+    return None
+
+
 async def _step5_remediation_advisor(
     alerted: bool,
     alert_targets: list[str],
@@ -672,33 +719,22 @@ async def _step5_remediation_advisor(
       remediation_sent (bool)       — True if ≥1 advisory succeeded
       remediation_text (str|None)   — advisory for the first target (backward compat)
       advisor_error (str|None)      — first error if all failed
+      advisor_status (str)          — PERFORMED, FAILED, NOT_REQUIRED,
+                                      NOT_PERFORMED or ERROR
+      advisor_reason_code (str|None) — why no advisory was attempted
       trace_ids_sampled (list[str]) — traces sampled for the first target
       per_control (list[dict])      — per-control result dicts
     """
-    if not alerted or not alert_targets:
-        logger.info(
-            "[audit_workflow] No critical alert — skipping remediation advisory."
-        )
-        return {
-            "remediation_sent": False,
-            "remediation_text": None,
-            "advisor_error": None,
-            "trace_ids_sampled": [],
-            "per_control": [],
-        }
-
-    vllm_base = os.environ.get("VLLM_BASE_URL")
-    if not vllm_base:
+    disposition = _advisory_disposition(alerted, alert_targets)
+    if disposition is not None:
         logger.warning(
-            "[audit_workflow] VLLM_BASE_URL not set — skipping LLM advisory."
+            "[audit_workflow] Remediation advisory not attempted: %s (%s)",
+            disposition["advisor_status"],
+            disposition["advisor_reason_code"] or "no critical alert",
         )
-        return {
-            "remediation_sent": False,
-            "remediation_text": None,
-            "advisor_error": "VLLM_BASE_URL not configured",
-            "trace_ids_sampled": [],
-            "per_control": [],
-        }
+        return disposition
+
+    vllm_base = os.environ["VLLM_BASE_URL"]
 
     model_name = (
         os.environ.get("REMEDIATION_MODEL")
@@ -750,6 +786,8 @@ async def _step5_remediation_advisor(
         "remediation_sent": any_sent,
         "remediation_text": first_ok["remediation_text"] if first_ok else None,
         "advisor_error": None if any_sent else first_err,
+        "advisor_status": ADVISOR_PERFORMED if any_sent else ADVISOR_FAILED,
+        "advisor_reason_code": None,
         "trace_ids_sampled": first_ok["trace_ids_sampled"] if first_ok else [],
         "per_control": per_control,
     }
@@ -776,6 +814,8 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
           "remediation_sent":     bool,
           "remediation_text":     str | None,
           "advisor_error":        str | None,
+          "advisor_status":       str,          # Step 5 outcome, or PENDING
+          "advisor_reason_code":  str | None,   # why no advisory was attempted
           "chain_root":           str,          # SHA-256 root of the Context Accumulator
           "chain_length":         int,          # number of chained nodes
           "chain_integrity_valid": bool,        # post-seal integrity check
@@ -1006,9 +1046,13 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
             exc,
         )
 
-    # Schedule remaining background tasks (Steps 3c and 5) concurrently (non-blocking)
+    # Schedule remaining background tasks (Steps 3c and 5) concurrently (non-blocking).
+    # When no advisory will be generated (no alert, no backend, no URL) the
+    # outcome is known now and recorded in the response instead.
+    advisory = _advisory_disposition(alerted, alert_targets)
     asyncio.create_task(_step3c_eval_dataset_bg())
-    asyncio.create_task(_step5_bg())
+    if advisory is None:
+        asyncio.create_task(_step5_bg())
 
     logger.info(
         "[audit_workflow] Audit complete (Steps 3c/5 running in background): "
@@ -1028,10 +1072,12 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
         "ingested": ingested,
         "alerted": alerted,
         "alert_targets": alert_targets,
-        # Step 5 runs in background — remediation fields reflect deferred state
+        # Step 5 runs in background (PENDING) unless its outcome is known now
         "remediation_sent": False,
         "remediation_text": None,
-        "advisor_error": None,
+        "advisor_error": advisory["advisor_error"] if advisory else None,
+        "advisor_status": (advisory["advisor_status"] if advisory else ADVISOR_PENDING),
+        "advisor_reason_code": advisory["advisor_reason_code"] if advisory else None,
         "chain_root": chain_root,
         "chain_length": chain_length,
         "chain_integrity_valid": chain_integrity_valid,

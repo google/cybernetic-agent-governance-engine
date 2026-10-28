@@ -1189,6 +1189,8 @@ async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None
             "remediation_sent": result["remediation_sent"],
             "remediation_text": result["remediation_text"],
             "advisor_error": result["advisor_error"],
+            "advisor_status": result.get("advisor_status"),
+            "advisor_reason_code": result.get("advisor_reason_code"),
             "remediation_per_control": result.get("per_control", []),
             # CAGE v0.1.0 AARM fields
             "chain_root": result.get("chain_root"),
@@ -1281,6 +1283,8 @@ async def audit_ingest(
             "remediation_sent": result["remediation_sent"],
             "remediation_text": result["remediation_text"],
             "advisor_error": result["advisor_error"],
+            "advisor_status": result.get("advisor_status"),
+            "advisor_reason_code": result.get("advisor_reason_code"),
             # Per-control advisory breakdown (Service Group 3.1). Empty list when
             # no LLM advisory was generated (VLLM_BASE_URL unset, etc.).
             "remediation_per_control": result.get("per_control", []),

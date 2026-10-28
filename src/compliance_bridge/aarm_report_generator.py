@@ -26,9 +26,10 @@ Concurrency design (Q4 architectural decision, CAGE v0.1.0):
   pattern of _step5_remediation_advisor in audit_workflow.py.
 
 Non-fatal design:
-  If VLLM_BASE_URL is not set, or if any individual vLLM call fails, the generator
-  falls back to a deterministic template-based narrative. The AARM report card is
-  always produced; prose enrichment is best-effort.
+  If VLLM_BASE_URL is not set, CAGE_INFERENCE_BACKEND=none, or any individual
+  vLLM call fails, the generator falls back to a deterministic template-based
+  narrative, and logs why. The AARM report card is always produced; prose
+  enrichment is best-effort.
 
 ISO 42001 mapping: A.5.3 (Logging and Monitoring) — narrative generation creates
 human-readable audit evidence supporting the machine-readable OSCAL findings.
@@ -39,6 +40,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+
+from src.gateway.governance.inference_backend import (
+    INFERENCE_BACKEND_NONE,
+    INFERENCE_BACKEND_URL_MISSING,
+    inference_disabled,
+)
 
 from .aarm_mapper import (
     AARM_THREAT_VECTORS,
@@ -233,10 +240,13 @@ async def enrich_report_with_narratives(
         or "default"
     )
 
-    if not vllm_base:
+    if inference_disabled() or not vllm_base:
         logger.info(
-            "[aarm_report_generator] VLLM_BASE_URL not set — "
-            "using deterministic template narratives for all vectors"
+            "[aarm_report_generator] %s — using deterministic template "
+            "narratives for all vectors",
+            INFERENCE_BACKEND_NONE
+            if inference_disabled()
+            else INFERENCE_BACKEND_URL_MISSING,
         )
         return {r.vector_id: _template_narrative(r) for r in report.vectors}
 
