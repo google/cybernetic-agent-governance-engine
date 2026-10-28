@@ -188,6 +188,8 @@ uv run python scripts/verify_langfuse_posture.py --dry-run --posture development
 
 ## 3. Plugin × Region Composition Matrix
 
+> **Note (2026-10-28):** None of the 12 hashes in this section reproduces by the method it describes, at the commit that introduced them or at `main`, and `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, contrary to the independence guarantee below. The section is kept as published. See POAM-2026-121 in [`POAM.md`](../POAM.md).
+
 Per [`plans/post_consolidation_roadmap.md`](../../plans/post_consolidation_roadmap.md#533-c2--regional-compliance-posture-validation), CAGE claims that domain plugins and jurisdictional postures compose independently. This is validated through the following matrix:
 
 | Plugin Configuration | US_FED | EU_ECB | APAC_MAS |

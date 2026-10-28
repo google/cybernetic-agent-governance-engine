@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-10-27
+**Last Updated:** 2026-10-28
 
 ---
 
@@ -91,6 +91,8 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-118 | SI-10 / CA-7 / `CTRL_MRM_004` | An enforcing posture can be configured to run the causal tier on synthetic telemetry, and today an accident is all that stops it. [`get_telemetry_provider()`](../src/gateway/governance/telemetry_provider.py) refuses `CAGE_TELEMETRY_PROVIDER=mock` only when `CAGE_ENV` is `prod` or `production`. [`is_enforcing()`](../src/gateway/governance/env_posture.py) also treats `staging` and `local` as enforcing, and no other code path rejects `mock`. `MockTelemetryProvider` generates its outcome from the formula the model is calibrated on (POAM-2026-094). A staging or local deployment set to `mock` would therefore validate the world model against itself, against POAM-2026-088's rule that enforcing postures never substitute synthetic data. While POAM-2026-117 is open, that deployment would also enforce from POAM-2026-117's invented baseline. The shipped manifests set `remote`. What refuses the path today is that `MockTelemetryProvider` emits no timestamp column and the freshness check fails closed without one (`stale_telemetry`). Adding a timestamp column, the obvious fix for anyone trying to use the mock, would arm it. Remediation: select on `is_enforcing()` instead of the environment name | Moderate | 2026-11-15 |
 | POAM-2026-119 | CA-5 / CA-7 | 13 identifiers this document cites as commits name no object in the repository, so no assessor can check them against `main`. Six are pre-squash branch commits, each mapped to the squash commit on `main` that carries it. Seven resolve nowhere (not on `main` or GitHub, nor in the maintainer's clones, private refs or offsite bundle), including the only commit POAM-2026-011's closure cites. Gate G9 does not check commit citations. Recorded now; the repair follows the commit-citation check (detail section) | Moderate | 2026-11-15 |
 | POAM-2026-120 | SA-11 / CM-4 / CA-7 | Closed controls are not guarded by tests that fail when the control stops operating. POAM-2026-023's fix removed the serialization POAM-2026-070's control depended on, and for a month every test passed and the POA&M/Lula drift checker still counted POAM-2026-070 as covered, by Lula files whose names match its control IDs and which never mention the CBF. On 2026-10-27, 34 of the 80 closed entries cited no test, and the drift checker's 52 "covered" entries rest on the same file-name match, never checked against what the files assert. Remediation: a forward closure requirement plus a backfill of High entries only (detail section) | Moderate | 2026-12-31 |
+| POAM-2026-121 | CA-2 / CA-7 / SA-11 | The plugin × region composition claim does not reproduce and is not guarded. None of the 12 hashes pinned in §3 of the [Regional Posture Validation Report](compliance/REGIONAL_POSTURE_VALIDATION_REPORT.md) reproduces by the method it documents, at `main` or at the commit that introduced them, and its independence guarantee did not hold when written: `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, which the registry logs as a control mapping collision. No test checks the matrix or the guarantee, and neither workflow that exists to check the postures (`regional-posture.yml`, `compliance-matrix.yml`) can fail the build. Remediation: decide whether a plugin may redefine a kernel control, then script, regenerate and test the matrix (detail section) | Moderate | 2026-12-31 |
+| POAM-2026-122 | SA-11 | Region pinning in the test suite is asymmetric. 57 tests are marked `eu_ecb` (48 of them in the required Pytest Logic Tests job), 23 `us_fed` (18) and 13 `apac_mas` (7), from 27, 4 and 4 marker uses, yet US_FED is the posture of the reference staging deployment and the one carrying the NIST SP 800-53 surface. The other ~9,000 tests run under the US_FED session default set in [`tests/conftest.py`](../tests/conftest.py), so US_FED is exercised broadly but pinned narrowly: an unmarked test that asserts US_FED behaviour depends on that default. Recorded, not swept | Low | 2026-12-31 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -529,6 +531,31 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
+
+### POAM-2026-121: Composition Claim Does Not Reproduce and Is Not Guarded
+
+**Control:** NIST CA-2 (Control Assessments), CA-7 (Continuous Monitoring), SA-11 (Developer Testing and Evaluation)
+**Risk Level:** Moderate
+**Status:** Open — recorded; remediation not started
+**Date Opened:** 2026-10-28
+**Target Closure:** 2026-12-31
+
+**Description:**
+§3 of the [Regional Posture Validation Report](compliance/REGIONAL_POSTURE_VALIDATION_REPORT.md) is the evidence for the claim that domain plugins and jurisdictional postures compose independently. For 12 cells (no plugin, `cage_finance`, `cage_healthcare` and both, in each of US_FED, EU_ECB and APAC_MAS) it pins a control count and an RFC 8785 JCS SHA-256 hash, states an "Independence Guarantee" that the plugins add controls "without colliding on common controls", and concludes that all 12 cells "validate successfully and deterministically". On 2026-10-28 the method it documents was rerun: register each plugin's overlay directory with `register_overlay_dir()`, call `ControlRegistry.reconfigure()` for the region, and read the registry's `active_hash`.
+
+- **None of the 12 hashes reproduces**: not at `2ef4f013` (`main` on 2026-10-28), not at the commit that introduced the table (`2889b955`), and not at the report's last commit (`f2363d07`). That holds whether the hash is the registry's `active_hash` over the merged profile or a hash over the control mappings alone, and the order in which the plugins register changes no result. The control counts match at both report commits. At `main` 6 of the 12 differ, because #378 moved `CTRL_MRM_004` out of `cage_finance`'s overlays into the kernel baselines; since then `cage_finance` adds no control in any region, and its EU_ECB and APAC_MAS cells hash identically to the no-plugin cells.
+- **The independence guarantee did not hold when it was written.** At both report commits and at `main`, [`cage_finance`'s US_FED overlay](../src/cage_finance/config/compliance/US_FED_OVERLAY.json) redefines the kernel's `CTRL_FTRA_001`; at `main` its description, internal ID, primary framework, legacy citation and co-frameworks all differ from the kernel's. The registry logs a "Control mapping collision" for it whenever it loads that cell. Control counts cannot show an override: at the report commits the same overlay also added `CTRL_MRM_004`, so the cell still counted one control above the no-plugin cell. Nothing records whether the override is intended, so either the guarantee or the overlay is wrong as written.
+- **No test checks the claim.** The 12 hashes appear nowhere else in the repository. Tests guard parts of the overlay machinery: [`test_regional_overlay_merge.py`](../tests/test_regional_overlay_merge.py) checks that each region's merged hash is a deterministic SHA-256, [`test_kernel_control_profile_contract.py`](../tests/test_kernel_control_profile_contract.py) (#378) that every control the kernel resolves strictly is in every kernel baseline, and [`test_composition_root.py`](../tests/governor/test_composition_root.py) that bootstrap registers the domain overlays. None pins what a cell contains, and none fails when a plugin overlay redefines a kernel control.
+
+The claim is also unguarded at a second level: the two workflows that exist to check the postures cannot fail the build. [`regional-posture.yml`](../.github/workflows/regional-posture.yml) runs the region-marked tests under each posture, but it is not a required check, it runs only on pushes to `main` (after merge) or by manual dispatch, its path filter leaves out the plugins' overlay directories, and its EU_ECB and APAC_MAS legs are `continue-on-error`. The test step of [`compliance-matrix.yml`](../.github/workflows/compliance-matrix.yml), two environments by three regions, is `continue-on-error` too. A workflow that cannot fail is telemetry, not a test. The hermetic region-marked tests also run in the required Pytest Logic Tests job, pinned to their regions, and can fail the build there, but none of them inspects a plugin × region cell.
+
+**Remediation:**
+1. Record whether a plugin overlay may redefine a kernel control. If it may, restate the guarantee and declare `CTRL_FTRA_001` an intended override; if not, change the overlay.
+2. Commit the method as a script, regenerate §3 from it at a stated commit, and report each cell's control set and the kernel controls each plugin overrides alongside its hash.
+3. Extend the existing overlay tests, in the required job, so that a change to a cell's control set or to the kernel controls a plugin overrides fails until §3 is regenerated.
+4. Make `regional-posture.yml` able to fail (a pull-request trigger, the overlay paths, no `continue-on-error`, required), or describe it as telemetry wherever it is cited as a check.
+
+Until then, §3 of the report carries a note pointing here.
 
 ### POAM-2026-120: Closed Controls Without a Guarding Test
 
