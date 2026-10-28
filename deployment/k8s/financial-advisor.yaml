@@ -69,6 +69,8 @@ spec:
             # absent (dev cluster only). Must be "production" in prod.
             - name: CAGE_DOMAIN  # exactly one domain per process
               value: "finance"
+            - name: SERVICE_NAME  # log/trace service label (the kernel default is neutral)
+              value: "financial-advisor"
             - name: CAGE_ENV
               value: "development"
             # CAGE_DEPLOYMENT_REGION activates the correct jurisdictional control

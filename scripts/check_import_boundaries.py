@@ -94,6 +94,7 @@ FORBIDDEN_DOMAIN_LITERALS = frozenset(
         "Execution Quant",
         "administer_medication",
         "move_effector",
+        "financial-advisor",
     }
 )
 

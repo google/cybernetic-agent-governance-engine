@@ -50,8 +50,9 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       - PORT=8080
+      - SERVICE_NAME=hybrid-gateway
       - OPA_URL=http://opa:8181
-      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:-dev-opa-token}
+      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:?OPA_AUTH_TOKEN must be set in .env}
       - CAGE_DOMAIN=${CAGE_DOMAIN:-finance}
       - CAGE_ENV=${CAGE_ENV:-development}
       - EVIDENCE_STREAM_ENABLED=${EVIDENCE_STREAM_ENABLED:-false}
@@ -87,10 +88,11 @@ services:
     ports:
       - "127.0.0.1:3000:8080"
     environment:
+      - SERVICE_NAME=financial-advisor
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
       - OPA_URL=http://opa:8181
-      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:-dev-opa-token}
+      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:?OPA_AUTH_TOKEN must be set in .env}
       - MODEL_FAST=${MODEL_FAST:?MODEL_FAST must be set in the environment}
       - MODEL_REASONING=${MODEL_REASONING:?MODEL_REASONING must be set in the environment}
       - VLLM_FAST_API_BASE=http://vllm-fast:8000/v1

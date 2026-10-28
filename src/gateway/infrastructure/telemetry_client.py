@@ -68,7 +68,7 @@ class ServiceContextFilter(logging.Filter):
 
     def filter(self, record):  # type: ignore[no-untyped-def]
         record.serviceContext = {
-            "service": os.getenv("SERVICE_NAME", "financial-advisor"),
+            "service": os.getenv("SERVICE_NAME", "cage"),
             "version": os.getenv("DEPLOY_TIMESTAMP", "unknown"),
         }
         return True
@@ -381,7 +381,7 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
         # Configure Resource
         resource = Resource.create(
             {
-                "service.name": os.getenv("SERVICE_NAME", "financial-advisor"),
+                "service.name": os.getenv("SERVICE_NAME", "cage"),
                 "service.version": os.getenv("DEPLOY_TIMESTAMP", "unknown"),
             }
         )

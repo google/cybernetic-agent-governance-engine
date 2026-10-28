@@ -135,7 +135,7 @@ _MIN_CASH: float = _FINANCE["cbf"]["min_cash_balance"]  # 1000.0
 # Load the real generated validator (compiled from stpa_control_structure.yaml)
 # ---------------------------------------------------------------------------
 try:
-    from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
+    from src.cage_finance.stpa import GeneratedSTPAValidator
 
     _VALIDATOR = GeneratedSTPAValidator()
     _VALIDATOR_AVAILABLE = True
@@ -148,12 +148,12 @@ except Exception as _exc:
 # Load the compiled Saga nodes (generated from stpa_control_structure.yaml)
 # ---------------------------------------------------------------------------
 try:
-    from src.gateway.governance.generated_saga_nodes import (
+    from src.cage_finance.stpa import (
         forward_execute_trade_node_uca_4,
         compensate_reverse_trade_node_uca_4,
         saga_router_node,
     )
-    from src.governed_financial_advisor.utils.langfuse_utils import SagaCallbackHandler
+    from src.gateway.observability.langfuse_utils import SagaCallbackHandler
 
     _SAGA_AVAILABLE = True
 except Exception as _exc:
@@ -396,7 +396,7 @@ _SCENARIOS: list[AttackScenario] = [
 
 
 # ---------------------------------------------------------------------------
-# Saga chaos scenarios (D & E) — exercise generated_saga_nodes.py directly
+# Saga chaos scenarios (D & E) — exercise src/cage_finance/stpa/saga_nodes.py directly
 # ---------------------------------------------------------------------------
 
 
@@ -569,7 +569,9 @@ def _run_scenario(
     # ── Tier 0: STPA Python Validator ────────────────────────────────────────
     tier_name = "GeneratedSTPAValidator  [compiled from stpa_control_structure.yaml]"
     if _VALIDATOR_AVAILABLE:
-        stpa_viols = _VALIDATOR.validate_generated(s.action, s.params)
+        stpa_viols = [
+            v.message for v in _VALIDATOR.validate_generated(s.action, s.params)
+        ]
     else:
         stpa_viols = [
             f"Validator unavailable ({_VALIDATOR_LOAD_ERR}) — failing closed."
