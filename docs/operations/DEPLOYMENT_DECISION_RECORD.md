@@ -220,6 +220,9 @@ portability across cloud providers.
 
 ## ADR-003: Region-Gated Compliance Hardening via `CAGE_DEPLOYMENT_REGION`
 
+> **Amended by ADR-005 (2026-10-28):** the jurisdiction is read from the
+> profile's `cage_deployment_region`; `CAGE_DEPLOYMENT_REGION` is the fallback.
+
 **Date:** 2026-04-01  
 **Status:** Accepted
 
@@ -313,3 +316,30 @@ testing full security posture at dev-scale cost, blocking POAM-024 (ISO 42001
 - `enable_nist_compliance` no longer implies high availability
 - Prod retains exact same behavior (`enable_high_availability=true` by construction)
 - Dev gains explicit HA control (currently false, can be overridden for testing)
+
+---
+
+## ADR-005: Profiles Define Posture
+
+**Date:** 2026-10-28
+**Status:** Accepted
+
+**Context:** `deploy_all.sh` chose the banner and `enable_nist_compliance` from
+the `--env` *name* (`prod`, `staging`, anything else treated as dev) and the
+jurisdiction from `CAGE_DEPLOYMENT_REGION`. Terraform applied the profile file's
+own `environment` and `cage_deployment_region`, because a `-var-file` value
+overrides `TF_VAR_*`. The two could disagree: `--env staging` without
+`CAGE_DEPLOYMENT_REGION` skipped NIST hardening although `staging.tfvars`
+declares `US_FED`, and `--env eu-prod` printed "DEV MODE" for a production
+profile.
+
+**Decision:** `deploy_all.sh` reads the tier and jurisdiction from the effective
+terraform inputs: the profile plus `--var-file` / `--var`, last value wins.
+`CAGE_DEPLOYMENT_REGION` is a fallback when no profile sets a jurisdiction, and
+is ignored with a warning when it disagrees. The NIST gate is unchanged from
+ADR-003 (prod or staging tier, `US_FED`). The flag is injected ahead of the
+profile, so an explicit `enable_nist_compliance` in a profile still wins.
+
+**Consequences:** the banner and the NIST flag describe what terraform applies.
+The documented commands, including the regional overlays on `--env prod`, are
+unchanged. `tests/test_gke_state_isolation.py` pins the behaviour.

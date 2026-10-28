@@ -146,7 +146,7 @@ def _validate_langfuse_credentials() -> None:
         f"Langfuse compliance credentials not configured — audit metrics will not be "
         f"recorded.  Missing: {', '.join(missing)}.  "
         f"(LANGFUSE_HOST defaults to https://cloud.langfuse.com if unset.)  "
-        f"Set these env vars in prod.tfvars / K8s Secret 'advisor-secrets'. "
+        f"Set these env vars through the K8s Secret 'advisor-secrets'. "
         f"(POAM-018 / AU-9 / ISO 42001 §A.9.4)"
     )
 

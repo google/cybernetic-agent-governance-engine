@@ -113,7 +113,7 @@ def deploy(tmp_path: pathlib.Path):
     log = tmp_path / "calls.log"
 
     def run(
-        *args: str, legacy_state: bool = False
+        *args: str, legacy_state: bool = False, extra_env: dict[str, str] | None = None
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         log.write_text("")
         env = {
@@ -122,6 +122,7 @@ def deploy(tmp_path: pathlib.Path):
             "STUB_LOG": str(log),
             "LEGACY_STATE": "1" if legacy_state else "0",
             "TF_VAR_project_id": "proj-x",
+            **(extra_env or {}),
         }
         result = subprocess.run(
             [
@@ -206,3 +207,73 @@ def test_unknown_environment_fails_closed(deploy) -> None:
     assert result.returncode != 0
     assert "Var file not found" in result.stderr
     assert not [c for c in calls if c.startswith("terraform ")]
+
+
+def _plan_args(calls: list[str]) -> str:
+    plans = [c for c in calls if c.startswith("terraform ") and " plan " in c]
+    assert len(plans) == 1, calls
+    return plans[0]
+
+
+@pytest.mark.parametrize(
+    ("args", "banner", "nist"),
+    [
+        (("--env", "staging"), "STAGING MODE", "true"),
+        (("--env", "prod"), "PROD MODE", "true"),
+        (("--env", "eu-prod"), "PROD MODE", "false"),
+        (("--env", "apac-prod"), "PROD MODE", "false"),
+        (("--env", "us-dev"), "DEV MODE", "false"),
+        (("--env", "dev"), "DEV MODE", "false"),
+        # The documented regional overlay keeps working: tier from prod.tfvars,
+        # jurisdiction from the EU overlay.
+        (
+            ("--env", "prod", "--var-file=infra/targets/gcp-gke/eu-prod.tfvars"),
+            "PROD MODE",
+            "false",
+        ),
+    ],
+)
+def test_posture_comes_from_the_profile(
+    deploy, args: tuple[str, ...], banner: str, nist: str
+) -> None:
+    """Tier and jurisdiction are read from the profile, not from the --env name.
+
+    staging.tfvars and prod.tfvars declare US_FED, so they get NIST hardening
+    with no CAGE_DEPLOYMENT_REGION set; eu-prod is a production profile.
+    """
+    root, run = deploy
+    result, calls = run(*args)
+    assert result.returncode == 0, result.stderr
+    assert banner in result.stdout
+    plan = _plan_args(calls)
+    flag = f"-var=enable_nist_compliance={nist}"
+    assert flag in plan
+    # Injected ahead of the profile, so an explicit setting in it still wins.
+    profile = (root / "infra" / "targets" / "gcp-gke" / f"{args[1]}.tfvars").resolve()
+    assert plan.index(flag) < plan.index(f"-var-file={profile}")
+
+
+def test_region_variable_cannot_override_the_profile(deploy) -> None:
+    _, run = deploy
+    result, calls = run(
+        "--env", "eu-prod", extra_env={"CAGE_DEPLOYMENT_REGION": "US_FED"}
+    )
+    assert result.returncode == 0, result.stderr
+    assert "CAGE_DEPLOYMENT_REGION=US_FED ignored" in result.stdout
+    assert "-var=enable_nist_compliance=false" in _plan_args(calls)
+
+
+def test_region_variable_is_the_fallback_without_a_profile_region(deploy) -> None:
+    """dev.tfvars sets no jurisdiction, so CAGE_DEPLOYMENT_REGION still decides."""
+    _, run = deploy
+    result, calls = run(
+        "--env",
+        "dev",
+        "--var",
+        "environment=staging",
+        extra_env={"CAGE_DEPLOYMENT_REGION": "US_FED"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "STAGING MODE" in result.stdout
+    assert "ignored" not in result.stdout
+    assert "-var=enable_nist_compliance=true" in _plan_args(calls)
