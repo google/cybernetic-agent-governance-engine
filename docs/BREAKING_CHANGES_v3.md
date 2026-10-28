@@ -2,7 +2,7 @@
 
 > **Status:** Released. Covers v3.0.1 (2026-09-07) through v4.0.0 (2026-10-26). v4.0.0's breaking changes
 > (CT-1 to CT-6) are recorded here too: the file keeps its v3 name because the published advisory links to it.
-> The next major version's breaking changes (IB-1 to IB-3, unreleased) are recorded at the end.
+> The next major version's breaking changes (IB-1 to IB-3 and CP-1, unreleased) are recorded at the end.
 > The v3.1.0 clean breaks are collected in
 > [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) at the end of this document.
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. The sections below
@@ -915,7 +915,15 @@ These ship with `CAGE_INFERENCE_BACKEND` and the POAM-2026-124 fix, and make the
 
 Explicitly unchanged: unset `CAGE_INFERENCE_BACKEND` keeps the startup behaviour from before the setting existed; consensus below its threshold still skips; no infrastructure profile changes.
 
+## Unreleased (next major) — Control-Plane Access
+
+This ships with the POAM-2026-126 fix, in the same next major (v5.0.0). It changes the deploy contract, not an API: a plan that used to succeed now stops with a message until the operator names who may reach the control plane.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **CP-1** | GKE control-plane access | Whenever a compliance posture is active, `authorized_networks` must hold at least one CIDR and no /0, or [`main.tf`](../infra/targets/gcp-gke/main.tf) refuses the plan. [`staging.tfvars`](../infra/targets/gcp-gke/staging.tfvars) no longer sets the list: supply it with `TF_VAR_authorized_networks` or a `--var-file` after the profile. | An empty list made the cluster module emit no allowlist, so GKE accepted any address, and staging shipped `0.0.0.0/0` under a header claiming VPN scope (POAM-2026-126). A plan-time refusal turns that claim into a check. | `terraform plan` stops with `[POAM-2026-126]`. Nothing is applied, so no half-built cluster is left behind. A fork whose enforcing profile authorizes a /0 sees the same refusal. |
+
 ---
 
-**Last updated:** 2026-10-28 (unreleased next major: inference backend and content-safety refusals IB-1–IB-3); 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
+**Last updated:** 2026-10-28 (unreleased next major: inference backend and content-safety refusals IB-1–IB-3; control-plane access CP-1); 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
 
