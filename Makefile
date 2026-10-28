@@ -132,17 +132,10 @@ security:
 	@uv run --with semgrep semgrep scan --config=auto --error src/
 	@echo "✅ Security scans completed."
 
-## Run documentation integrity gates (mirrors CI gate G9)
+## Run documentation integrity gates (mirrors CI gate G9; scope is DOC_SCOPE in the script)
 docs-check:
 	@echo "==> Checking documentation references (broken links, dangling paths, stale symbols)..."
-	@uv run python scripts/check_doc_references.py \
-		--path README.md \
-		--path AGENTS.md \
-		--path COMPLIANCE.md \
-		--path SECURITY.md \
-		--path CONTRIBUTING.md \
-		--path docs/architecture \
-		--path compliance
+	@uv run python scripts/check_doc_references.py
 	@echo "==> Checking vendor brand leakage into executable code..."
 	@uv run python scripts/check_vendor_brands.py --verbose
 	@echo "==> Checking domain literal leakage into kernel/integrations..."

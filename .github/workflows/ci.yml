@@ -206,6 +206,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history: G9 verifies revision-pinned paths (`<sha>^:<path>`) against
+          # git history and fails closed in a shallow clone.
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
@@ -256,18 +259,13 @@ jobs:
         # Docs drift silently: a renamed module leaves the prose pointing at a file that
         # no longer exists. This gate fails the build on broken links, dangling file
         # paths, and stale Python symbol references.
-        # Scoped to the reconciled tree; docs/partners/** carries a known backlog and is
-        # excluded until it reaches zero. CHANGELOG.md is excluded by design — a
-        # changelog must be free to name paths that were removed.
+        # The scope is DOC_SCOPE in the script, its only copy; it includes docs/POAM.md.
+        # docs/partners/** carries a known backlog and is excluded until it reaches zero.
+        # CHANGELOG.md is excluded by design — a changelog must be free to name paths
+        # that were removed. Other in-scope documents cite a removed path pinned to a
+        # mainline commit (`<sha>^:<path>`), which this gate verifies against history.
         run: |
-          uv run python scripts/check_doc_references.py \
-            --path README.md \
-            --path AGENTS.md \
-            --path COMPLIANCE.md \
-            --path SECURITY.md \
-            --path CONTRIBUTING.md \
-            --path docs/architecture \
-            --path compliance
+          uv run python scripts/check_doc_references.py
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

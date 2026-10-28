@@ -19,6 +19,16 @@ Validates that Markdown documentation files do not contain broken links,
 dangling file paths, or outdated Python symbol references with respect to
 the live repository tree.
 
+Paths removed from HEAD are cited pinned to a commit where they existed, in
+git's own revision syntax: `<sha>:<path>` or `<sha>^:<path>`. A pinned path is
+verified against history: the commit must exist and be an ancestor of HEAD, and
+the path must exist in that commit. Verification needs full history and fails
+closed in a shallow clone (CI checks out with fetch-depth: 0). Pins break if
+history is rewritten; whoever rewrites `main` owns re-pinning them.
+
+The label of a Markdown link with a local target is display text: the target is
+the reference, and it is what gets verified.
+
 Usage:
     uv run --active python scripts/check_doc_references.py
     uv run --active python scripts/check_doc_references.py --output /tmp/doc_references_report.txt
@@ -29,29 +39,41 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path.cwd().resolve()
 
-# Directories and root files to scan by default (mirrors Gate G9 in CI and Makefile docs-check;
-# CHANGELOG.md and docs/partners/** are outside the gate's scope by design).
-DOC_ROOTS = [
-    REPO_ROOT / "README.md",
-    REPO_ROOT / "AGENTS.md",
-    REPO_ROOT / "COMPLIANCE.md",
-    REPO_ROOT / "SECURITY.md",
-    REPO_ROOT / "CONTRIBUTING.md",
-    REPO_ROOT / "docs" / "architecture",
-    REPO_ROOT / "compliance",
-]
+# The gate's scope, and the only copy of it: CI gate G9 and `make docs-check`
+# run this script without --path. CHANGELOG.md and docs/partners/** are outside
+# the scope by design (a changelog must be free to name removed paths; the
+# partner tree carries a known backlog).
+DOC_SCOPE = (
+    "README.md",
+    "AGENTS.md",
+    "COMPLIANCE.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/POAM.md",
+    "docs/architecture",
+    "compliance",
+)
+DOC_ROOTS = [REPO_ROOT / entry for entry in DOC_SCOPE]
 
 # Markdown link: [text](target)
 MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 # Inline code backticks: `code`
 INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
+# Revision-pinned path: `<sha>:<path>` or `<sha>^:<path>`
+PINNED_PATH_PATTERN = re.compile(
+    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>[A-Za-z0-9_][A-Za-z0-9_./-]*)$"
+)
+GIT_TIMEOUT_SECONDS = 30
 
 # Concrete file extensions to check
 CONCRETE_EXTENSIONS = {
@@ -66,6 +88,7 @@ CONCRETE_EXTENSIONS = {
     ".co",
     ".sql",
     ".proto",
+    ".tf",
 }
 
 # Literal words or tokens to ignore
@@ -175,7 +198,6 @@ KNOWN_DOCUMENTED_GAPS = {
     "src/gateway/governance/region_utils.py",
     "test_results/final_summary_20260603T104718.json",
     "src/protos/gateway.js",
-    "tests/test_ftra_reachability.py",
     "tests/test_fiscal_limit_guard.py",
     "tests/test_agw_envelope.py",
     "tests/red_team/README.md",
@@ -232,8 +254,6 @@ KNOWN_DOCUMENTED_GAPS = {
     "docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md",
     "docs/MIGRATION_GUIDE_v3.md",
     "docs/whitepapers/CAGE_TECHNICAL_PREPRINT.md",
-    "tests/test_reconciliation_daemon.py",
-    "tests/test_dual_schema_verification.py",
     "/tmp/benign_dataset.json",
     "/tmp/adversarial_dataset.json",
     "tests/governance/test_ir_drill.py",
@@ -446,6 +466,56 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
     return False, f"Target path '{clean_target}' does not exist on disk"
 
 
+def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
+    """Run git with a fixed argument list (no shell) in *repo_root*."""
+    git = shutil.which("git")
+    if git is None:
+        return False, "git is not installed"
+    try:
+        result = subprocess.run(
+            [git, *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as err:
+        return False, str(err)
+    return result.returncode == 0, result.stdout.strip()
+
+
+@functools.lru_cache(maxsize=8)
+def _history_unavailable(repo_root: Path) -> str:
+    """Return why pinned paths cannot be verified in *repo_root*, or "" if they can."""
+    if shutil.which("git") is None:
+        return "git is not installed, so pinned paths cannot be verified"
+    ok, out = _git(repo_root, "rev-parse", "--is-shallow-repository")
+    if not ok:
+        return "not a git repository, so pinned paths cannot be verified"
+    if out == "true":
+        return (
+            "shallow clone: pinned paths need full history "
+            "(git fetch --unshallow; in CI, actions/checkout fetch-depth: 0)"
+        )
+    return ""
+
+
+def verify_pinned_path(commit: str, parent: str, path: str) -> tuple[bool, str]:
+    """Verify `<commit>[^]:<path>`: an ancestor of HEAD whose tree holds *path*."""
+    unavailable = _history_unavailable(REPO_ROOT)
+    if unavailable:
+        return False, unavailable
+    if not _git(REPO_ROOT, "cat-file", "-e", f"{commit}^{{commit}}")[0]:
+        return False, f"'{commit}' is not a commit in this repository"
+    if not _git(REPO_ROOT, "merge-base", "--is-ancestor", commit, "HEAD")[0]:
+        return False, f"commit '{commit}' is not an ancestor of HEAD"
+    revision = f"{commit}{parent}"
+    if not _git(REPO_ROOT, "cat-file", "-e", f"{revision}:{path}")[0]:
+        return False, f"'{path}' does not exist at {revision}"
+    return True, ""
+
+
 def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
     """Verify qualified module.Symbol references (e.g. src.gateway.symbolic_governor.SymbolicGovernor)."""
     clean_sym = symbol_str.strip()
@@ -522,8 +592,9 @@ def audit_markdown_file(path: Path) -> list[Issue]:
 
     for line_idx, line in enumerate(lines, start=1):
         # 1. Standard Markdown links: [Text](target)
-        for _, link_target in MD_LINK_PATTERN.findall(line):
-            link_target = link_target.strip()
+        local_link_labels: list[tuple[int, int]] = []
+        for link in MD_LINK_PATTERN.finditer(line):
+            link_target = link.group(2).strip()
             if (
                 link_target.startswith(("http://", "https://", "mailto:"))
                 or link_target.startswith("#")
@@ -531,6 +602,8 @@ def audit_markdown_file(path: Path) -> list[Issue]:
             ):
                 continue
 
+            # The target is the reference; the label is display text.
+            local_link_labels.append(link.span(1))
             valid, reason = verify_file_path(path.parent, link_target)
             if not valid:
                 issues.append(
@@ -538,8 +611,13 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                 )
 
         # 2. Inline code backticks: `target`
-        for code_snippet in INLINE_CODE_PATTERN.findall(line):
-            code_snippet = code_snippet.strip()
+        for code_match in INLINE_CODE_PATTERN.finditer(line):
+            if any(
+                start <= code_match.start() and code_match.end() <= end
+                for start, end in local_link_labels
+            ):
+                continue
+            code_snippet = code_match.group(1).strip()
 
             if (
                 not code_snippet
@@ -547,6 +625,17 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                 or " " in code_snippet
                 or is_template_or_pattern(code_snippet)
             ):
+                continue
+
+            pinned = PINNED_PATH_PATTERN.match(code_snippet)
+            if pinned:
+                valid, reason = verify_pinned_path(
+                    pinned["commit"], pinned["parent"], pinned["path"]
+                )
+                if not valid:
+                    issues.append(
+                        Issue(path, line_idx, "Pinned Path", code_snippet, reason)
+                    )
                 continue
 
             has_ext = any(code_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS)

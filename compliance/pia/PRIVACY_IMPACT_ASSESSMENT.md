@@ -252,7 +252,7 @@ The 15 PII entity types enumerated in §2.2 are subject to NeMo Guardrails detec
 **GCP IAM:**
 
 - Workload Identity Federation (WIF) for GKE-to-GCP service authentication
-- Least-privilege IAM bindings per service (see `deployment/terraform/iam_least_privilege.tf`)
+- Least-privilege IAM bindings per service (see `infra/targets/gcp-gke/iam.tf`)
 - Broad IAM roles (`roles/editor`) identified as gap in POAM-002 — remediation in progress
 
 **OPA Policy Enforcement:**
