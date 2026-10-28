@@ -24,6 +24,7 @@ governance pipeline. These tests run the playground the way the guide does.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import pathlib
 import subprocess
@@ -104,3 +105,86 @@ def test_no_tier_names_a_component_it_did_not_call() -> None:
         assert "EMULATED" in tiers[tier] or "SIMULATED" in tiers[tier], tiers[tier]
     assert "OPA Rego Policy" not in result.stdout
     assert "[OPA]" not in result.stdout
+
+
+def _scenario_f_params() -> dict:
+    """Scenario F's payload, read from the playground itself rather than copied."""
+    spec = importlib.util.spec_from_file_location("chaos_agent_playground", _PLAYGROUND)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses resolve the playground's annotations through sys.modules.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    (baseline,) = [s for s in module._SCENARIOS if s.id == "F"]
+    return dict(baseline.params)
+
+
+def _tier0_codes(params: dict) -> set[str]:
+    from src.cage_finance.stpa import GeneratedSTPAValidator
+
+    return {
+        v.code
+        for v in GeneratedSTPAValidator().validate_generated("execute_trade", params)
+    }
+
+
+def _threshold(name: str) -> float:
+    from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
+    return float(THRESHOLDS.resolve(f"domains.finance.stpa.{name}"))
+
+
+def _at_and_past(field: str) -> tuple[dict, dict, str]:
+    """F moved onto one Tier 0 boundary, then just past it, with the rule that trips."""
+    f = _scenario_f_params()
+    if field == "latency_ms":
+        limit = _threshold("max_latency_ms")
+        return (
+            {**f, "latency_ms": limit},
+            {**f, "latency_ms": limit + 0.01},
+            "STPA_UCA_UCA_2",
+        )
+    if field == "drawdown":
+        limit = _threshold("uca5_drawdown_threshold_pct")
+        return (
+            {**f, "drawdown": limit},
+            {**f, "drawdown": limit + 0.01},
+            "STPA_UCA_UCA_5",
+        )
+    if field == "order_size":
+        limit = _threshold("uca6_max_order_volume_fraction") * f["daily_vol"]
+        return (
+            {**f, "order_size": limit},
+            {**f, "order_size": limit * 1.001},
+            "STPA_UCA_UCA_6",
+        )
+    if field == "risk_assessed":
+        return f, {**f, "risk_assessed": False}, "STPA_UCA_UCA_8"
+    if field == "compliance_checked":
+        return f, {**f, "compliance_checked": False}, "STPA_UCA_UCA_9"
+    raise AssertionError(field)
+
+
+def test_scenario_f_passes_every_tier0_rule_it_is_subject_to() -> None:
+    assert _tier0_codes(_scenario_f_params()) == set()
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["latency_ms", "drawdown", "order_size", "risk_assessed", "compliance_checked"],
+)
+def test_scenario_f_allow_is_load_bearing(field: str) -> None:
+    """Each Tier 0 rule F is subject to allows F at its boundary and denies just past it.
+
+    An ALLOW that passed because the payload avoided a check would look the
+    same from outside as one the tier evaluated. Moving F across each
+    boundary shows every rule that applies to a BUY ``execute_trade`` was
+    evaluated: UCA-2 (latency), UCA-5 (drawdown), UCA-6 (order size against
+    daily volume), UCA-8 (risk assessed) and UCA-9 (compliance checked).
+    """
+    at_boundary, past_boundary, code = _at_and_past(field)
+    assert _tier0_codes(at_boundary) == set()
+    assert _tier0_codes(past_boundary) == {code}
