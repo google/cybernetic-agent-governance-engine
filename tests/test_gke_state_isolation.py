@@ -62,7 +62,9 @@ exit 0
 
 
 def _tfvars_files() -> list[pathlib.Path]:
-    return sorted(p for p in _GKE_DIR.glob("*.tfvars") if not p.name.endswith(".auto.tfvars"))
+    return sorted(
+        p for p in _GKE_DIR.glob("*.tfvars") if not p.name.endswith(".auto.tfvars")
+    )
 
 
 def test_every_environment_names_its_cluster() -> None:
@@ -83,7 +85,9 @@ def test_cluster_names_are_not_shared_by_accident() -> None:
 
 
 def test_backend_block_commits_no_shared_prefix() -> None:
-    block = re.search(r'backend\s+"gcs"\s*\{([^}]*)\}', (_GKE_DIR / "main.tf").read_text())
+    block = re.search(
+        r'backend\s+"gcs"\s*\{([^}]*)\}', (_GKE_DIR / "main.tf").read_text()
+    )
     assert block is not None, "gcs backend block not found in main.tf"
     assert "prefix" not in re.sub(r"#.*", "", block.group(1))
 
@@ -95,7 +99,9 @@ def deploy(tmp_path: pathlib.Path):
     shutil.copytree(
         _GKE_DIR,
         root / "infra" / "targets" / "gcp-gke",
-        ignore=shutil.ignore_patterns(".terraform", "*.tfstate*", "*.auto.tfvars", "tfplan"),
+        ignore=shutil.ignore_patterns(
+            ".terraform", "*.tfstate*", "*.auto.tfvars", "tfplan"
+        ),
     )
     shutil.copy2(_REPO_ROOT / "deploy_all.sh", root / "deploy_all.sh")
     stubs = tmp_path / "bin"
@@ -106,7 +112,9 @@ def deploy(tmp_path: pathlib.Path):
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "calls.log"
 
-    def run(*args: str, legacy_state: bool = False) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    def run(
+        *args: str, legacy_state: bool = False
+    ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         log.write_text("")
         env = {
             "PATH": f"{stubs}{os.pathsep}/usr/bin{os.pathsep}/bin",
@@ -116,7 +124,15 @@ def deploy(tmp_path: pathlib.Path):
             "TF_VAR_project_id": "proj-x",
         }
         result = subprocess.run(
-            ["bash", str(root / "deploy_all.sh"), "--target", "gcp-gke", *args, "--skip-build", "--auto-approve"],
+            [
+                "bash",
+                str(root / "deploy_all.sh"),
+                "--target",
+                "gcp-gke",
+                *args,
+                "--skip-build",
+                "--auto-approve",
+            ],
             cwd=root,
             env=env,
             stdin=subprocess.DEVNULL,
@@ -152,12 +168,18 @@ def test_environments_never_share_a_prefix(deploy) -> None:
         result, calls = run("--env", env)
         assert result.returncode == 0, result.stderr
         prefixes.add(re.search(r"prefix=(\S+)", _init_args(calls)).group(1))
-    assert prefixes == {"cage/gcp-gke/cage-dev", "cage/gcp-gke/cage-staging", "cage/gcp-gke/cage-prod"}
+    assert prefixes == {
+        "cage/gcp-gke/cage-dev",
+        "cage/gcp-gke/cage-staging",
+        "cage/gcp-gke/cage-prod",
+    }
 
 
 def test_regional_overlay_and_cli_override_select_their_own_state(deploy) -> None:
     root, run = deploy
-    result, calls = run("--env", "prod", "--var-file=infra/targets/gcp-gke/eu-prod.tfvars")
+    result, calls = run(
+        "--env", "prod", "--var-file=infra/targets/gcp-gke/eu-prod.tfvars"
+    )
     assert result.returncode == 0, result.stderr
     assert "prefix=cage/gcp-gke/cage-eu-prod" in _init_args(calls)
     # terraform runs with -chdir, so the overlay must reach it as an absolute path
