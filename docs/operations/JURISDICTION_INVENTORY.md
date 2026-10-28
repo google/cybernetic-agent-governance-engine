@@ -88,6 +88,7 @@ Read at `d830249c`; nothing was planned.
 - **Where the binding is.** No location is derived from `CAGE_DEPLOYMENT_REGION`, and none is a literal. Jurisdiction is bound to geography only through preconditions.
 - **Every tier.** None of the preconditions depends on the environment, so `EU_ECB` outside `europe-*` fails at plan in dev and staging as well as prod.
 - **Deliberate.** The binding cites GDPR Art. 44 and MAS TRM §4.2 (DEP-10).
+- **Decided 2026-10-28: postures stay bound to their geography.** Residency is enforced in every tier, dev included, with no bypass. Assessing a posture therefore needs capacity in its region, and the GKE guide states this as a feature.
 - **At runtime,** the evidence cold store refuses a location its jurisdiction doesn't allow ([`residency.py`](../../src/gateway/governance/evidence/residency.py), [`residency.json`](../../config/compliance/residency.json); read).
 - **Elsewhere.** OPA has no residency assertion (verified, grep). The two APAC Lula manifests check `asia-southeast1` through their status endpoints.
 
@@ -127,7 +128,7 @@ Read at `211f7155`, with routing verified by stubbing the model client. Every ro
 |---|---|---|---|---|
 | Agent execution (tool calls) | `VLLM_FAST_API_BASE`, `MODEL_FAST`: Qwen2.5-1.5B-Instruct on `vllm-service` | agent | a proposal, gated by the gateway | node build raises |
 | Agent reasoning | `VLLM_REASONING_API_BASE`, `MODEL_REASONING`: DeepSeek-R1-Distill-Llama-8B on `vllm-reasoning` | agent | a plan, dry-run by the gateway | the supervisor silently uses a mock model; other nodes raise |
-| Graph input and output rails (advisor process) | the advisor's `MODEL_FAST` on `VLLM_FAST_API_BASE`: the agent's execution model | agent environment | a verdict | `none`: refuse. Judge failure: refuse on input; the output rail reads as safe (POAM-2026-125) |
+| Graph input and output rails (advisor process) | the advisor's `MODEL_FAST` on `VLLM_FAST_API_BASE`: the agent's execution model | agent environment | a verdict | input: refuse on `none` or judge failure. Output: has never put its question to a model, and always reads safe (POAM-2026-125) |
 | Gateway rails and `verify_content_safety` | `GUARDRAILS_MODEL_NAME` = `served_model_fast`, on `vllm-service` | gateway | a verdict | refuse (POAM-2026-124 fix) |
 | Consensus critics | `CONSENSUS_<ROLE>_URL`, else the routed endpoint, else `VLLM_BASE_URL` (POAM-2026-127); model `CONSENSUS_<ROLE>_MODEL`, else `MODEL_*`, else `gemini-2.5-pro` | gateway | a verdict, parsed strictly | `none`: DENY at or above the threshold. No endpoint: ERROR, so escalate |
 | Compliance-bridge advisory and AARM narratives | `VLLM_BASE_URL`, `REMEDIATION_MODEL` = `served_model_fast` | bridge | a governance artifact, unparsed | `NOT_PERFORMED` or a template |
@@ -148,10 +149,11 @@ Each has a one-line POA&M entry except the stale numbers. Several are one class:
 - **Placeholder image digests (POAM-2026-131).** Every profile except staging inherits `sha256:e3b0c442…`, the hash of empty input. That includes the three Binary-Authorization-enforcing prod profiles (verified).
 - **No L4 in one EU zone (POAM-2026-132).** `europe-west1-d` offers neither L4 nor `g2-standard-8`, but `eu-dev` and `eu-prod` list it for their GPU pools. `europe-west1-b` and `-c` offer both (verified, Compute API). Node-pool creation failing is inferred.
 - **The documented required-check lists disagree with the ruleset (POAM-2026-133).** See section 6.
-- **Critics on gcp-gke request a model no pool serves (POAM-2026-134).** The gateway pod has no `MODEL_*`, so both critics ask for `gemini-2.5-pro`, and every triggered consensus escalates. The 404 is inferred. `MODEL_CONSENSUS` is never read.
+- **Consensus on gcp-gke has never produced an automated verdict (POAM-2026-134).** The gateway pod has no `MODEL_*`, so both critics ask for `gemini-2.5-pro`, and every triggered consensus escalates. The 404 is inferred. The critics' prompt format also disagrees with their parser. `MODEL_CONSENSUS` and `CONSENSUS_<ROLE>_*` are set by no surface.
 - **The default advisor runtime (GEAP) can't call a model (POAM-2026-135).** It has no `OPENAI_API_KEY`, and its endpoints are cluster-local names (verified for the key; reachability open).
 - **Declared, never read (POAM-2026-136).** `vllm_fast_url`, `vllm_reasoning_url` and `vllm_gateway_url` are declared in `variables.tf` and filled by `deploy_all.sh`, but nothing reads them.
-- **AARM narratives carry no provenance (POAM-2026-137).** The prompt tells the model not to disclose that a model wrote them, and the report doesn't distinguish model text from template text.
+- **Model output enters compliance records with its provenance suppressed (POAM-2026-137).** The remediation advisory is scored as a completed control in the compliance trace, and AARM narratives are written by a model told not to say so.
+- **Correlated blind spots between judges and the agent can't be measured on any shipped surface (POAM-2026-139).** See section 7.
 - **The advisor's supervisor falls back silently to a mock model (POAM-2026-138)** when its reasoning endpoint is unset or contains "mock"; other nodes raise (read).
 - **Stale numbers.**
   - Three places say 31 Lula manifests.
@@ -161,5 +163,4 @@ Each has a one-line POA&M entry except the stale numbers. Several are one class:
 
 1. Which HITL SLA do DORA and MAS FEAT actually require, if either sets one?
 2. Are the unread regional sections (`tier1_keywords`, `fria.*`, `feat.*`, `governance_controls.*`) meant to be loaded?
-3. Should staging postures float free of geography? That would need the preconditions in section 4 gated by tier, and a statement that staging never holds regulated data.
-4. Does any caller outside the repository use the standalone `nemo-guardrails` deployment? None inside it does.
+3. Does any caller outside the repository use the standalone `nemo-guardrails` deployment? None inside it does.
