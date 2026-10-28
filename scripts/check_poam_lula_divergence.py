@@ -68,6 +68,13 @@ NON_TESTABLE_CONTROLS = {
 # (e.g. SC-23) is Lula-testable for mesh/session findings. Fail-closed: a
 # finding is uncovered if any listed evidence file does not exist.
 CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
+    # CBF commit path: reconciled balance and fence-epoch check enforced on the
+    # atomic commit. lula-validation-sc4/si2.yaml matched these by control ID
+    # only; neither observes the CBF.
+    "POAM-2026-023": ("tests/cage_finance/test_cbf_reconciliation.py",),
+    "POAM-2026-069": ("tests/cage_finance/test_cbf_reconciliation.py",),
+    # Concurrent trades admissible alone but not together admit exactly one.
+    "POAM-2026-070": ("tests/test_cbf_settlement_ledger.py",),
     # Settlement-aware CBF debit ledger + discrepancy floor (ADR-010).
     "POAM-2026-087": (
         "tests/test_cbf_settlement_ledger.py",

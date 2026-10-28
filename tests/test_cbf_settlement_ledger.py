@@ -30,8 +30,10 @@ stops being outstanding, and that every disagreement fails closed:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
+import inspect
 import json
 import math
 import time
@@ -546,6 +548,77 @@ async def test_lagging_ledger_blocks_double_spend(
         assert not still_denied
         ok, reason, _ = await world.commit(_max_admissible(INITIAL - 40_000.0) - 1.0)
         assert ok, reason
+
+
+class _YieldingRedis:
+    """Proxy an async Redis client so every call yields before and after it runs.
+
+    Over a network each Redis round trip lets the event loop run other requests;
+    fakeredis does not. Yielding on every call makes a check-then-write window that
+    spans Redis calls show up deterministically instead of by timing.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        async def call(*args: Any, **kwargs: Any) -> Any:
+            await asyncio.sleep(0)
+            result = attr(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            await asyncio.sleep(0)
+            return result
+
+        return call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instances", [1, 2], ids=["one-cbf", "two-cbfs"])
+async def test_concurrent_trades_over_the_limit_admit_one(
+    monkeypatch: pytest.MonkeyPatch, instances: int
+) -> None:
+    """POAM-2026-070: two concurrent trades, each admissible alone, not together.
+
+    From #102 until #256 the debit ledger was read before the Lua hop and written
+    after it, so two such trades both committed when they arrived together, and
+    every test still passed. ``two-cbfs`` stands in for two gateway replicas
+    sharing one Redis.
+    """
+    world = _build_world(monkeypatch, custodian_lag_s=3_600.0)
+    world.async_redis = _YieldingRedis(world.async_redis)
+    cbfs = [world.cbf]
+    if instances == 2:
+        replica = ControlBarrierFunction(
+            invariant=CashBarrier(gamma=GAMMA),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
+        replica.tracer = None
+        cbfs.append(replica)
+    alone = _max_admissible(INITIAL)  # admissible from the reconciled balance
+    after_one = alone / (1 + GAMMA)  # admissible once one such trade is netted
+    cost = (alone + after_one) / 2  # one trade fits, two do not
+
+    with world.live():
+        assert world.reconcile() is not None
+        results = await asyncio.gather(
+            *(
+                cbf.atomic_verify_and_commit(
+                    ACTION, {"amount": cost}, debit_id=uuid.uuid4().hex
+                )
+                for cbf in (cbfs[0], cbfs[-1])
+            )
+        )
+
+    assert [ok for ok, _, _ in results].count(True) == 1, results
+    refusal = next(reason for ok, reason, _ in results if not ok)
+    assert refusal.startswith("UNSAFE"), refusal
+    assert world.total() == pytest.approx(cost)
 
 
 @pytest.mark.asyncio
