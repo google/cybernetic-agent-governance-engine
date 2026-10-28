@@ -44,19 +44,26 @@ Scenarios:
     C  Prompt injection + compliance bypass
     D  Saga rollback — credit-leg failure after successful debit (UCA-4)
     E  Saga ghost-state — OOM crash between PENDING and COMPLETED (UCA-4)
+    F  Baseline — a compliant trade (expected ALLOW)
 
 Architecture:
-    Each scenario drives a 3-tier check pipeline mirroring SymbolicGovernor:
+    One tier is real and four are emulations written in this file. The
+    playground never calls the governor, OPA, consensus, CBF or a model.
 
-    Tier 0 ─ GeneratedSTPAValidator (Python, compiled from YAML)
-    Tier 1 ─ Confidence threshold (SR 11-7)
-    Tier 2 ─ OPA Rego emulator (mirrors generated_stpa_policy.rego)
-    Tier 3 ─ Tier-1 keyword prompt injection scan
-    Tier 4 ─ Cilium L7 egress simulation (network layer)
+    Tier 0 ─ REAL: GeneratedSTPAValidator, the finance plugin's validator
+             (compiled from config/stpa_control_structure.yaml)
+    Tier 1 ─ EMULATED: confidence threshold check
+    Tier 2 ─ EMULATED: STPA Rego rules re-implemented in Python
+             (mirrors generated_stpa_policy.rego; OPA is not called)
+    Tier 3 ─ EMULATED: keyword scan (the gateway's injection detector is
+             not called)
+    Tier 4 ─ SIMULATED: Cilium L7 egress allowlist (no network policy is
+             evaluated)
 
-    The first blocking tier short-circuits execution — the action is never
-    dispatched to the tool. All decisions are emitted as structured log lines
-    in the same format as the live OTel spans.
+    The first blocking tier is reported as the verdict's tier, and the
+    action is never dispatched to a tool. Decisions are printed as local
+    log lines, not gateway spans. Scenario F is a compliant baseline, so
+    the real tier shows an ALLOW as well as DENYs.
 """
 
 from __future__ import annotations
@@ -178,14 +185,16 @@ def _opa_emulate(action: str, params: dict[str, Any]) -> tuple[str, list[str]]:
 
     # --- UCA-1: write_db without approval token ---
     if action == "write_db" and not params.get("approval_token"):
-        violations.append("UCA-1 [OPA]: write_db requires a signed approval_token.")
+        violations.append(
+            "UCA-1 [OPA emulator]: write_db requires a signed approval_token."
+        )
 
     # --- UCA-2: stale market data ---
     if action == "execute_trade":
         lat = params.get("latency_ms")
         if lat is not None and float(lat) > _MAX_LATENCY_MS:
             violations.append(
-                f"UCA-2 [OPA]: Market data latency {lat}ms > {_MAX_LATENCY_MS}ms threshold."
+                f"UCA-2 [OPA emulator]: Market data latency {lat}ms > {_MAX_LATENCY_MS}ms threshold."
             )
 
     # --- UCA-5: drawdown exceeded ---
@@ -193,7 +202,7 @@ def _opa_emulate(action: str, params: dict[str, Any]) -> tuple[str, list[str]]:
         dd = params.get("drawdown")
         if dd is not None and float(dd) > _DRAWDOWN_LIMIT:
             violations.append(
-                f"UCA-5 [OPA]: Drawdown {dd}% > {_DRAWDOWN_LIMIT}% limit — buy blocked."
+                f"UCA-5 [OPA emulator]: Drawdown {dd}% > {_DRAWDOWN_LIMIT}% limit — buy blocked."
             )
 
     # --- UCA-7: prompt injection score ---
@@ -201,26 +210,28 @@ def _opa_emulate(action: str, params: dict[str, Any]) -> tuple[str, list[str]]:
         score = params.get("semantic_score", 0.0)
         if float(score) > 0.85:
             violations.append(
-                f"UCA-7 [OPA]: Prompt injection score {score} > 0.85 threshold."
+                f"UCA-7 [OPA emulator]: Prompt injection score {score} > 0.85 threshold."
             )
 
     # --- UCA-8: trade before risk assessment ---
     if action == "execute_trade" and params.get("risk_assessed") is False:
         violations.append(
-            "UCA-8 [OPA]: Trade attempted before risk assessment completed."
+            "UCA-8 [OPA emulator]: Trade attempted before risk assessment completed."
         )
 
     # --- UCA-9: compliance check bypassed ---
     if action == "execute_trade" and params.get("compliance_checked") is False:
         violations.append(
-            "UCA-9 [OPA]: Trade attempted with compliance check bypassed."
+            "UCA-9 [OPA emulator]: Trade attempted with compliance check bypassed."
         )
 
     # --- RBAC: role check ---
     role = params.get("role", "analyst")
     allowed_roles = {"admin", "trader", "analyst"}
     if role not in allowed_roles:
-        violations.append(f"RBAC [OPA]: Role '{role}' not authorised for {action}.")
+        violations.append(
+            f"RBAC [OPA emulator]: Role '{role}' not authorised for {action}."
+        )
 
     decision = "DENY" if violations else "ALLOW"
     return decision, violations
@@ -301,6 +312,7 @@ class AttackScenario:
     network_dest: str = ""
     source_label: str = "role=sovereign-agent"
     network_port: int = 443
+    expect_blocked: bool = True
 
 
 _SCENARIOS: list[AttackScenario] = [
@@ -325,6 +337,8 @@ _SCENARIOS: list[AttackScenario] = [
             "side": "BUY",
             "latency_ms": 340.0,  # UCA-2 trigger: > 200ms
             "drawdown": 6.2,  # UCA-5 trigger: > 4.5%
+            "order_size": 50_000.0,  # UCA-6: 0.02% of daily volume, within limit
+            "daily_vol": 250_000_000.0,
             "confidence": 0.87,  # SR 26-2 §IV.B trigger: < 0.95
             "risk_assessed": True,
             "compliance_checked": True,
@@ -384,6 +398,8 @@ _SCENARIOS: list[AttackScenario] = [
             "side": "SELL",
             "latency_ms": 45.0,
             "drawdown": 1.2,
+            "order_size": 200_000.0,  # UCA-6: 0.08% of daily volume, within limit
+            "daily_vol": 250_000_000.0,
             "confidence": 0.98,
             "risk_assessed": False,  # UCA-8 trigger
             "compliance_checked": False,  # UCA-9 trigger
@@ -391,6 +407,32 @@ _SCENARIOS: list[AttackScenario] = [
         },
         network_dest="api.openai.com",
         source_label="app=governed-financial-advisor",
+    ),
+    AttackScenario(
+        id="F",
+        title="Baseline — Compliant Trade (expected ALLOW)",
+        description=(
+            "A routine BUY inside every limit: fresh market data (45ms), a 1.2%\n"
+            "  drawdown, confidence 0.98, risk and compliance checked, and an order\n"
+            "  of 0.02% of daily volume. The real Tier 0 validator allows the same\n"
+            "  action it denies in Scenario A."
+        ),
+        attacker_prompt="Buy 50000 shares of NVDA at market for the quarterly rebalance.",
+        action="execute_trade",
+        params={
+            "symbol": "NVDA",
+            "amount": 50_000.0,
+            "side": "BUY",
+            "latency_ms": 45.0,
+            "drawdown": 1.2,
+            "order_size": 50_000.0,
+            "daily_vol": 250_000_000.0,
+            "confidence": 0.98,
+            "risk_assessed": True,
+            "compliance_checked": True,
+            "role": "trader",
+        },
+        expect_blocked=False,
     ),
 ]
 
@@ -567,7 +609,10 @@ def _run_scenario(
     _span_wrapper = _span_ctx.__enter__() if _span_ctx else None
 
     # ── Tier 0: STPA Python Validator ────────────────────────────────────────
-    tier_name = "GeneratedSTPAValidator  [compiled from stpa_control_structure.yaml]"
+    tier_name = (
+        "REAL · GeneratedSTPAValidator  "
+        "[the finance plugin's validator, compiled from stpa_control_structure.yaml]"
+    )
     if _VALIDATOR_AVAILABLE:
         stpa_viols = [
             v.message for v in _VALIDATOR.validate_generated(s.action, s.params)
@@ -597,12 +642,13 @@ def _run_scenario(
                 f"SR 26-2 §IV.B: agentic model confidence {conf} < {_MIN_CONFIDENCE} minimum."
             )
     tier_name = (
-        "Agentic Confidence Threshold  [SR 26-2 §IV.B / governance_thresholds.json]"
+        "EMULATED · confidence threshold  "
+        "[this file's check; the governor's confidence stage is not called]"
     )
     if sr_viols:
         _tier_header(1, tier_name, "BLOCKED")
         for v in sr_viols:
-            _finding("Confidence", v, is_block=True)
+            _finding("Confidence (emulated)", v, is_block=True)
         all_violations.extend(sr_viols)
         if blocking_tier is None:
             blocking_tier = 1
@@ -614,11 +660,14 @@ def _run_scenario(
 
     # ── Tier 2: OPA Rego Emulator ─────────────────────────────────────────────
     opa_decision, opa_viols = _opa_emulate(s.action, s.params)
-    tier_name = "OPA Rego Policy  [generated_stpa_policy.rego · stpa.generated]"
+    tier_name = (
+        "EMULATED · STPA Rego rules re-implemented in Python  "
+        "[mirrors generated_stpa_policy.rego; OPA is not called]"
+    )
     if opa_viols:
         _tier_header(2, tier_name, f"DENY ({len(opa_viols)} rule(s))")
         for v in opa_viols:
-            _finding("OPA", v, is_block=True)
+            _finding("OPA emulator", v, is_block=True)
         all_violations.extend(opa_viols)
         if blocking_tier is None:
             blocking_tier = 2
@@ -629,11 +678,16 @@ def _run_scenario(
 
     # ── Tier 3: Prompt Injection Scanner ─────────────────────────────────────
     inj_hits = _scan_prompt_injection(s.attacker_prompt)
-    tier_name = "Tier-1 Keyword Scanner  [governance_thresholds.json · tier1_keywords]"
+    tier_name = (
+        "EMULATED · keyword scan  "
+        "[tier1_keywords; the gateway's injection detector is not called]"
+    )
     if inj_hits:
         _tier_header(3, tier_name, "BLOCKED")
         _finding(
-            "InjectionScan", f"Matched keywords: {RED(str(inj_hits))}", is_block=True
+            "Keyword scan (emulated)",
+            f"Matched keywords: {RED(str(inj_hits))}",
+            is_block=True,
         )
         all_violations.append(f"Prompt injection: {inj_hits}")
         if blocking_tier is None:
@@ -644,14 +698,17 @@ def _run_scenario(
     tier_results.append({"tier": 3, "violations": inj_hits})
 
     # ── Tier 4: Cilium L7 Egress Simulation ──────────────────────────────────
-    tier_name = "Cilium L7 Egress  [cilium-egress-lockdown.yaml · CiliumNetworkPolicy]"
+    tier_name = (
+        "SIMULATED · Cilium L7 egress allowlist  "
+        "[mirrors cilium-egress-lockdown.yaml; no network policy is evaluated]"
+    )
     if s.network_dest:
         allowed, cilium_reason = _cilium_check(
             s.source_label, s.network_dest, s.network_port
         )
         if not allowed:
             _tier_header(4, tier_name, "DENY — PACKET DROPPED")
-            _finding("CiliumL7", cilium_reason, is_block=True)
+            _finding("Cilium (simulated)", cilium_reason, is_block=True)
             all_violations.append(cilium_reason)
             if blocking_tier is None:
                 blocking_tier = 4
@@ -692,10 +749,11 @@ def _run_scenario(
         for v in all_violations:
             print(f"  {RED('✗')}  {v}")
         print()
-        print(f"  {DIM('OTel span attributes emitted:')}")
+        print(f"  {DIM('Span attributes (local playground log, not gateway spans):')}")
         _log(
             f"cage.governance.decision=BLOCKED  cage.governance.blocking_tier={blocking_tier}"
         )
+        _log("cage.playground.real_tiers=0  cage.playground.emulated_tiers=1,2,3,4")
         _log(f"nist.control_id=SC-4,A.8.4  iso42001.control_id=A.8.4")
         _log(f"cage.governance.violation_count={len(all_violations)}")
         if record_hash:
@@ -715,6 +773,7 @@ def _run_scenario(
         "scenario": s.id,
         "action": s.action,
         "blocked": bool(all_violations),
+        "expect_blocked": s.expect_blocked,
         "blocking_tier": blocking_tier,
         "violation_count": len(all_violations),
         "elapsed_ms": elapsed_ms,
@@ -870,10 +929,18 @@ def _print_summary(results: list[dict], tel: Optional[object] = None) -> None:
         )
     _bar()
     blocked_count = sum(1 for r in results if r["blocked"])
+    as_expected = all(r["blocked"] == r.get("expect_blocked", True) for r in results)
     print(
         f"\n  {BOLD('Result:')}  "
         f"{RED(str(blocked_count))} / {len(results)} scenarios blocked  "
-        f"{'— ' + GREEN('governance pipeline operational ✓') if blocked_count == len(results) else RED('⚠ some scenarios passed unexpectedly')}"
+        f"{'— ' + GREEN('every scenario matched its expected verdict ✓') if as_expected else RED('⚠ a scenario did not match its expected verdict')}"
+    )
+    print(
+        DIM(
+            "  Tier 0 is the finance plugin's real GeneratedSTPAValidator. Tiers 1–4 are\n"
+            "  emulations in this file: the governor, OPA, the gateway's injection\n"
+            "  detector and Cilium are not called."
+        )
     )
 
     # ── Evidence chain section ────────────────────────────────────────────────
@@ -916,7 +983,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--scenario",
-        choices=["A", "B", "C", "D", "E"],
+        choices=["A", "B", "C", "D", "E", "F"],
         help="Run a single scenario (default: all)",
     )
     parser.add_argument(
@@ -937,7 +1004,9 @@ def main() -> int:
     print(
         MAGENTA("║")
         + DIM(
-            "   Adversarial Governance Demo · STPA + OPA + Cilium L7".center(_WIDTH - 2)
+            "   Governance Playground · real STPA tier · emulated OPA + Cilium".center(
+                _WIDTH - 2
+            )
         )
         + MAGENTA("║")
     )
@@ -1023,9 +1092,13 @@ def main() -> int:
         )
         print()
 
-    all_gov_blocked = all(r["blocked"] for r in results) if results else True
+    all_gov_as_expected = (
+        all(r["blocked"] == r.get("expect_blocked", True) for r in results)
+        if results
+        else True
+    )
     all_saga_ok = all(r["passed"] for r in saga_results) if saga_results else True
-    return 0 if (all_gov_blocked and all_saga_ok) else 1
+    return 0 if (all_gov_as_expected and all_saga_ok) else 1
 
 
 if __name__ == "__main__":

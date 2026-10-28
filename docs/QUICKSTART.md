@@ -151,7 +151,8 @@ Each plugin must declare a `DomainConfig`: its FTRA terminal registry, an option
 **Package:** [`src/cage_finance/`](../src/cage_finance/) · **Status:** example domain, not a turnkey trading system
 
 ```bash
-# In-process scenario run (no Docker, no gateway, no API key)
+# In-process scenario run (no Docker, no gateway, no API key). Tier 0 is the real
+# STPA validator; Tiers 1–4 are emulations (see examples/README.md).
 uv run python examples/chaos_agent_playground.py --scenario A
 
 # Or boot OPA + Gateway with ONLY the finance policy bundle mounted

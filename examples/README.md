@@ -15,20 +15,20 @@
 
 ## What It Does
 
-Runs three adversarial attack scenarios through the **real** CAGE governance pipeline — no Kubernetes, no external services, no LLM calls required. Every governance layer executes its actual logic:
+Runs three adversarial scenarios and one compliant baseline. **Only Tier 0 is real**: the finance plugin's `GeneratedSTPAValidator`, which allows Scenario F and denies Scenario A on the same code path. **Tiers 1–4 are emulations written in the example.** It never calls the governor, OPA, consensus, CBF, the gateway's injection detector, Cilium or a model. No Kubernetes, external services or LLM calls are needed.
 
 | Tier | Layer | Implementation |
 |------|-------|---------------|
-| 0 | STPA Python Validator | `GeneratedSTPAValidator` — compiled from `config/stpa_control_structure.yaml` |
-| 1 | Agentic Confidence Threshold | SR 26-2 §IV.B check against `governance_thresholds.json` |
-| 2 | OPA Rego Emulator | Mirrors `config/opa/generated_stpa_policy.rego` logic inline |
-| 3 | Prompt Injection Scanner | Tier-1 keywords from `governance_thresholds.json` |
-| 4 | Cilium L7 Egress | Emulates `deployment/k8s/cilium/egress-lockdown.yaml` FQDN rules |
+| 0 | STPA Python Validator | **Real:** `GeneratedSTPAValidator`, compiled from `config/stpa_control_structure.yaml` |
+| 1 | Confidence threshold | **Emulated:** the example's own check against `governance_thresholds.json`; the governor's confidence stage is not called |
+| 2 | STPA Rego rules | **Emulated:** a Python re-implementation of `config/opa/generated_stpa_policy.rego`; OPA is not called |
+| 3 | Keyword scan | **Emulated:** Tier-1 keywords from `governance_thresholds.json`; the gateway's injection detector is not called |
+| 4 | Cilium L7 egress | **Simulated:** mirrors the FQDN rules in `deployment/k8s/cilium/egress-lockdown.yaml`; no network policy is evaluated |
 
 ## Quick Start
 
 ```bash
-# All 3 scenarios, interactive (pause between each)
+# All scenarios, interactive (pause between each)
 uv run python examples/chaos_agent_playground.py
 
 # Batch / non-interactive (CI / README demos)
@@ -38,6 +38,7 @@ uv run python examples/chaos_agent_playground.py --no-pause
 uv run python examples/chaos_agent_playground.py --scenario A
 uv run python examples/chaos_agent_playground.py --scenario B
 uv run python examples/chaos_agent_playground.py --scenario C
+uv run python examples/chaos_agent_playground.py --scenario F   # compliant baseline, expected ALLOW
 ```
 
 ## Attack Scenarios
@@ -57,14 +58,14 @@ uv run python examples/chaos_agent_playground.py --scenario C
 An LLM agent receives a market manipulation prompt instructing it to execute a large `NVDA` BUY order during a gas spike. The payload carries:
 
 - **340 ms latency** (UCA-2 threshold: 200 ms) → STPA Tier-0 block
-- **6.2% daily drawdown** (UCA-5 threshold: 4.5%) → STPA + OPA block
-- **0.87 confidence** (SR 26-2 §IV.B threshold: 0.95) → Tier-1 block
+- **6.2% daily drawdown** (UCA-5 threshold: 4.5%) → STPA Tier-0 block (the OPA emulator flags it too)
+- **0.87 confidence** (SR 26-2 §IV.B threshold: 0.95) → Tier-1 block (emulated)
 
 ```
-🔴 Tier 0 · GeneratedSTPAValidator        BLOCKED
+🔴 Tier 0 · REAL · GeneratedSTPAValidator        BLOCKED
    ✗ STPA UCA-2: latency 340ms > 200ms
    ✗ STPA UCA-5: drawdown 6.2% > 4.5%
-🔴 Tier 1 · Agentic Confidence Threshold   BLOCKED
+🔴 Tier 1 · EMULATED · confidence threshold      BLOCKED
    ✗ SR 26-2 §IV.B: agentic model confidence 0.87 < 0.95
 ```
 
@@ -73,11 +74,11 @@ An LLM agent receives a market manipulation prompt instructing it to execute a l
 A compromised pod attempts to write raw client PII (SSN, account number) to the database without a signed approval token, then tries to open an egress connection to `malicious-exfil.attacker.io`:
 
 ```
-🔴 Tier 0 · GeneratedSTPAValidator        BLOCKED
+🔴 Tier 0 · REAL · GeneratedSTPAValidator        BLOCKED
    ✗ STPA UCA-1: write_db requires approval_token
-🔴 Tier 2 · OPA Rego Policy               DENY
-   ✗ OPA UCA-1: write_db requires signed approval_token
-🔴 Tier 4 · Cilium L7 Egress              DENY — PACKET DROPPED
+🔴 Tier 2 · EMULATED · STPA Rego rules (Python) DENY
+   ✗ OPA emulator UCA-1: write_db requires signed approval_token
+🔴 Tier 4 · SIMULATED · Cilium L7 egress       DENY — PACKET DROPPED
    ✗ CiliumPolicy: 'malicious-exfil.attacker.io' not in allowlist
 ```
 
@@ -86,13 +87,24 @@ A compromised pod attempts to write raw client PII (SSN, account number) to the 
 Multi-vector attack: Tier-1 keyword injection (`SYSTEM OVERRIDE`, `DISABLE GUARDRAILS`) combined with `compliance_checked=False` and `risk_assessed=False`:
 
 ```
-🔴 Tier 0 · GeneratedSTPAValidator        BLOCKED
+🔴 Tier 0 · REAL · GeneratedSTPAValidator        BLOCKED
    ✗ UCA-8: trade before risk assessment
    ✗ UCA-9: compliance check bypassed
-🔴 Tier 2 · OPA Rego Policy               DENY (2 rules)
-🔴 Tier 3 · Tier-1 Keyword Scanner        BLOCKED
+🔴 Tier 2 · EMULATED · STPA Rego rules (Python) DENY (2 rules)
+🔴 Tier 3 · EMULATED · keyword scan            BLOCKED
    ✗ Matched: ['SYSTEM OVERRIDE', 'DISABLE GUARDRAILS']
 ```
+
+### Scenario F — Baseline: a compliant trade *(Domain Plugin Example: Finance)*
+
+The same `NVDA` BUY as Scenario A, but inside every limit: 45 ms latency, a 1.2% drawdown, 0.98 confidence, risk and compliance checked, and an order of 0.02% of daily volume. The real Tier 0 validator allows it:
+
+```
+🔵 Tier 0 · REAL · GeneratedSTPAValidator        PASS
+██  ACTION APPROVED
+```
+
+Every trade payload carries `order_size` and `daily_vol`. Without them, UCA-6 (order size against daily volume) refuses every trade, whatever the other inputs.
 
 ## Architecture Notes
 
