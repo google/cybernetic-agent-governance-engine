@@ -17,9 +17,9 @@
 A content-safety check either reaches a verdict or it does not. Only the
 exact :data:`SAFE_VERDICT` means the semantic rails ran and passed the text.
 Every path that reaches no verdict (rails absent, NeMo raising "No main flow
-found", any other error) is reported as blocked with a reason code, never as
-safe. The codes let the evidence chain tell "a rail blocked this" apart from
-"nothing could check this".
+found", any other error, or no inference backend) is reported as blocked
+with a reason code, never as safe. The codes let the evidence chain tell
+"a rail blocked this" apart from "nothing could check this".
 
 The gateway's ``verify_content_safety`` tool, the semantic rail provider and
 the advisor all read this one vocabulary.
@@ -38,6 +38,8 @@ CONTENT_SAFETY_RAILS_UNAVAILABLE: Final[str] = "CONTENT_SAFETY_RAILS_UNAVAILABLE
 CONTENT_SAFETY_NO_MAIN_FLOW: Final[str] = "CONTENT_SAFETY_NO_MAIN_FLOW"
 # Any other error while checking.
 CONTENT_SAFETY_ERROR: Final[str] = "CONTENT_SAFETY_ERROR"
+# CAGE_INFERENCE_BACKEND=none: no rails are built, by design.
+CONTENT_SAFETY_NO_INFERENCE_BACKEND: Final[str] = "CONTENT_SAFETY_NO_INFERENCE_BACKEND"
 
 
 def refusal_reason(code: str, detail: str) -> str:

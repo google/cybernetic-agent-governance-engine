@@ -102,6 +102,16 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     loop_lag_task: asyncio.Task[None] | None = None
 
     try:
+        # ── Inference backend (CAGE_INFERENCE_BACKEND) ──────────────────────
+        # An unknown value fails startup here, before anything connects.
+        from src.gateway.governance.inference_backend import (
+            InferenceBackend,
+            require_backend_settings,
+            resolve_inference_backend,
+        )
+
+        inference_backend = resolve_inference_backend()
+
         # ── Evidence Stream Precondition Check (R-06) ──────────────────────────
         # Fail fast if EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
         # This invalid configuration would cause all seal issuances to fail at runtime.
@@ -128,18 +138,33 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         evidence_sink = await start_evidence_sink()
 
         # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
-        from src.gateway.governance.semantic_rail_factory import (
-            initialize_semantic_rails as initialize_rails,
-        )
+        # Under ``none`` no rails are built: NeMo is off and visible, and
+        # content safety refuses with a reason code. An explicit ``vllm`` /
+        # ``external`` needs its URL and key now, not at first use. Unset
+        # keeps the behaviour from before the setting existed.
+        if inference_backend is InferenceBackend.NONE:
+            logger.warning("CAGE_INFERENCE_BACKEND=none: no model; NeMo rails are off.")
+            nemo_rails = None
+        else:
+            if inference_backend is not None:
+                from src.gateway.infrastructure.config_manager import (
+                    config_manager,
+                )
 
-        logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
-        nemo_rails = initialize_rails()
+                require_backend_settings(config_manager.get)
+            from src.gateway.governance.semantic_rail_factory import (
+                initialize_semantic_rails as initialize_rails,
+            )
+
+            logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
+            nemo_rails = initialize_rails()
 
         # Store on root and sub-app states
         app.state.nemo_rails = nemo_rails
         inference_app.state.nemo_rails = nemo_rails
         mcp_app.state.nemo_rails = nemo_rails
-        logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
+        if nemo_rails is not None:
+            logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
 
         # ── Pre-warm Token Quota Proxy, UCA Logger, and shared DeferQueue ──────
         try:

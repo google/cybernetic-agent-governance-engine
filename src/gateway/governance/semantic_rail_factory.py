@@ -26,16 +26,47 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.gateway.governance.content_safety import (
+    CONTENT_SAFETY_NO_INFERENCE_BACKEND,
+)
+from src.gateway.governance.inference_backend import (
+    InferenceBackendUnavailable,
+    inference_disabled,
+)
+
+
+def _refuse_without_backend() -> None:
+    """Build no rails under ``CAGE_INFERENCE_BACKEND=none``.
+
+    NeMo is off under ``none``, never on and partial: every caller that
+    asks for rails gets a refusal it reports with the reason code.
+    """
+    if inference_disabled():
+        raise InferenceBackendUnavailable(
+            CONTENT_SAFETY_NO_INFERENCE_BACKEND,
+            "CAGE_INFERENCE_BACKEND=none: no semantic rails are built.",
+        )
+
 
 def initialize_semantic_rails() -> Any:
-    """Initialize and return the runtime semantic rail engine instance."""
+    """Initialize and return the runtime semantic rail engine instance.
+
+    Raises:
+        InferenceBackendUnavailable: under ``CAGE_INFERENCE_BACKEND=none``.
+    """
+    _refuse_without_backend()
     from src.integrations.nemo.manager import initialize_rails
 
     return initialize_rails()
 
 
 def create_semantic_rail_manager(config_path: str = "config/rails") -> Any:
-    """Create a semantic rail manager from *config_path*."""
+    """Create a semantic rail manager from *config_path*.
+
+    Raises:
+        InferenceBackendUnavailable: under ``CAGE_INFERENCE_BACKEND=none``.
+    """
+    _refuse_without_backend()
     from src.integrations.nemo.manager import create_nemo_manager
 
     return create_nemo_manager(config_path)

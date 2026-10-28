@@ -59,6 +59,7 @@ from opentelemetry import trace
 
 from src.gateway.governance.content_safety import (
     CONTENT_SAFETY_ERROR,
+    CONTENT_SAFETY_NO_INFERENCE_BACKEND,
     CONTENT_SAFETY_RAILS_UNAVAILABLE,
     SAFE_VERDICT,
     blocked_verdict,
@@ -66,6 +67,12 @@ from src.gateway.governance.content_safety import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.governor import SymbolicGovernor
+from src.gateway.governance.inference_backend import (
+    InferenceBackend,
+    inference_disabled,
+    require_backend_settings,
+    resolve_inference_backend,
+)
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.observability.mcp_tracing import patch_mcp_tools
@@ -241,21 +248,22 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # 2. Governance threshold validation (Phase 2.2) — aborts if schema invalid
     load_and_validate_thresholds()
 
-    # 3. Env guards
+    # 3. Inference backend (CAGE_INFERENCE_BACKEND). An unknown value fails
+    #    startup. Under ``none`` no model settings are needed and no NeMo
+    #    rails are built, so content safety refuses with a reason code.
+    #    Otherwise a backend is required, as before the setting existed.
     logger.info("🚀 CAGE MCP Tool Server Starting...")
-    vllm_base = config_manager.get("VLLM_BASE_URL")
-    if not vllm_base:
-        raise RuntimeError(
-            "VLLM_BASE_URL must be set — no localhost fallback in production."
+    if resolve_inference_backend() is InferenceBackend.NONE:
+        logger.warning(
+            "CAGE_INFERENCE_BACKEND=none: no model; NeMo rails are off and "
+            "content safety refuses (%s).",
+            CONTENT_SAFETY_NO_INFERENCE_BACKEND,
         )
-    vllm_api_key = config_manager.get("VLLM_API_KEY")
-    if not vllm_api_key:
-        raise RuntimeError(
-            "VLLM_API_KEY must be set — no 'EMPTY' fallback in production."
-        )
-
-    # 4. Initialise NeMo rails and store on app state
-    app.state.nemo_rails = initialize_rails()
+        app.state.nemo_rails = None
+    else:
+        require_backend_settings(config_manager.get)
+        # 4. Initialise NeMo rails and store on app state
+        app.state.nemo_rails = initialize_rails()
 
     # 5. Start consensus background audit worker (Phase 4.4)
     from src.gateway.governance.consensus import _background_audit_worker
@@ -536,13 +544,21 @@ async def verify_content_safety(text: str) -> str:
     """Verify safety of a given text using NeMo Guardrails.
 
     Returns ``SAFE`` only when the rails ran and passed the text. Every
-    other outcome, including absent rails and a check that raises, is
-    ``BLOCKED: <reason>`` with a reason code (POAM-2026-124).
+    other outcome, including absent rails, a check that raises and
+    ``CAGE_INFERENCE_BACKEND=none``, is ``BLOCKED: <reason>`` with a
+    reason code (POAM-2026-124).
     """
     from src.gateway.governance.semantic_rail_factory import (
         validate_with_semantic_rail as validate_with_nemo,
     )
 
+    if inference_disabled():
+        return blocked_verdict(
+            refusal_reason(
+                CONTENT_SAFETY_NO_INFERENCE_BACKEND,
+                "CAGE_INFERENCE_BACKEND=none: no semantic rails are built.",
+            )
+        )
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
         return blocked_verdict(
@@ -700,7 +716,8 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
 @app.get("/health")
 async def health_check():  # type: ignore[no-untyped-def]
-    return {"status": "ok", "mode": "mcp-tool-server", "nemo": "active"}
+    nemo = "off" if getattr(app.state, "nemo_rails", None) is None else "active"
+    return {"status": "ok", "mode": "mcp-tool-server", "nemo": nemo}
 
 
 # ---------------------------------------------------------------------------
