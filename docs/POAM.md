@@ -94,7 +94,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-121 | CA-2 / CA-7 | §3 of the [Regional Posture Validation Report](compliance/REGIONAL_POSTURE_VALIDATION_REPORT.md), a published compliance validation report, makes a false claim. It says domain plugins and jurisdictional postures compose independently, "without colliding on common controls". That was false when written: `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, and the registry logs the collision. The 12 pinned hashes are real but stale. They reproduce exactly, by the documented method, on the parent of the commit that published them (`3b69207c`), and that commit changed every kernel baseline. Independence is not merely unproven: POAM-2026-123 shows a plugin overlay changing a jurisdictional tier's verdict. The claim is therefore withdrawn as an aspiration, not proven as a property (detail section) | High | 2026-11-15 |
 | POAM-2026-122 | SA-11 | Region pinning in the test suite is asymmetric. 57 tests are marked `eu_ecb` (48 of them in the required Pytest Logic Tests job), 23 `us_fed` (18) and 13 `apac_mas` (7), from 27, 4 and 4 marker uses, yet US_FED is the posture of the reference staging deployment and the one carrying the NIST SP 800-53 surface. The other ~9,000 tests run under the US_FED session default set in [`tests/conftest.py`](../tests/conftest.py), so US_FED is exercised broadly but pinned narrowly: an unmarked test that asserts US_FED behaviour depends on that default. Recorded, not swept | Low | 2026-12-31 |
 | POAM-2026-123 | CM-6 / SI-7 | A domain plugin's compliance overlay can redefine a kernel control, including one a jurisdictional tier enforces on. [`ControlRegistry`](../src/gateway/governance/constants.py) applies overlays over the kernel baseline with `dict.update` and only logs a WARNING on a collision. With the kernel baseline alone, the EU_ECB FRIA tier denies `execute_trade` (`FRIA_ASSESSMENT_STALE`) without consulting the provider. With a test overlay that defines `CTRL_FRIA_006` and a fresh artefact, the Art. 27(2) staleness gate passes and the provider decides (verified). `cage_finance` redefines `CTRL_FTRA_001` today, which nothing reads at runtime. Governor assembly fails closed on a slot collision; the registry does not (detail section) | High | 2026-11-30 |
-| POAM-2026-125 | SI-15 / SI-10 | A degenerate semantic-judge answer is read as `SAFE`. `validate_output_semantics()` asks the model to answer `SAFE` or `UNSAFE:<reason>`, then returns safe for an empty answer and for any answer that does not start with `UNSAFE`. A verdict in prose, a reasoning block with no verdict, or a truncated reply passes the advisor graph's output rail (verified hermetically 2026-10-28). Distinct from POAM-2026-124, whose paths reach no verdict: here the model answers and the answer is misread. Same defect shape as POAM-2026-124's advisor label (`startswith("BLOCKED")`): model free-text parsed as safe unless it says otherwise (detail section) | High | 2026-11-30 |
+| POAM-2026-125 | SI-15 / SI-10 | The output-safety check does not function against reasoning models. `validate_output_semantics()` read any judge reply that did not start with `UNSAFE` as safe. A reasoning model writes its trace before its verdict, so its correct `UNSAFE` was read as `SAFE`, in normal operation and without adversarial input; empty and prose replies from any model passed too (verified hermetically 2026-10-28). Present since `6012f067` (2026-06-03): v2.0.0 through v4.0.0. Distinct from POAM-2026-124, which needs a degraded deployment: this fires with a working model. Same defect shape as POAM-2026-124's advisor label: model free-text parsed as safe unless it says otherwise. Remediated on `fix/output-judge-strict-parse`: the reply is parsed strictly, and a recorded mutation check shows the tests fail when the lenient parse is restored. Closes at merge; an advisory follows the fix (detail section) | High | 2026-11-30 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -535,46 +535,49 @@ The SBOM/CVE Trivy scan ([`sbom.yml`](../.github/workflows/sbom.yml)) failed on 
 **Remaining Closure Criteria:**
 1. Merge `fix/ci-test-errors`. Record the merge commit SHA, and the date all three SBOM/CVE legs pass on `main`, here.
 
-### POAM-2026-125: Degenerate Semantic-Judge Answers Are Read as SAFE
+### POAM-2026-125: The Output-Safety Check Does Not Function Against Reasoning Models
 
 **Control:** NIST SI-15 (Information Output Filtering), SI-10 (Information Input Validation)
 **Risk Level:** High
-**Status:** Open — recorded; remediation not started
+**Status:** Open — remediated on `fix/output-judge-strict-parse`; closes at merge
 **Date Opened:** 2026-10-28
 **Target Closure:** 2026-11-30
 
 **Description:**
-The advisor graph's output rail (`nemo_output_rail_node`, built by [`create_nemo_output_rail_node()`](../src/gateway/governance/langgraph_harness/nemo_node_factory.py)) calls [`validate_output_semantics()`](../src/integrations/nemo/manager.py) on every model answer after PII masking. The function asks the NeMo-backed model to reply with one line, `SAFE` or `UNSAFE:<reason>`, and reads the reply leniently:
-- an empty reply is safe (`SAFE_EMPTY_RESPONSE`);
-- any reply that does not start with `UNSAFE`, in any case, is safe.
+The advisor graph's output rail (`nemo_output_rail_node`, built by [`create_nemo_output_rail_node()`](../src/gateway/governance/langgraph_harness/nemo_node_factory.py)) calls [`validate_output_semantics()`](../src/integrations/nemo/manager.py) on every model answer after PII masking. The function asks the NeMo-backed model to reply with one line, `SAFE` or `UNSAFE:<reason>`. Until the fix it read the reply leniently: an empty reply was safe (`SAFE_EMPTY_RESPONSE`), and so was any reply that did not start with `UNSAFE`, in any case.
 
-So a working model whose answer is degenerate, or does not follow the format, passes the output through.
+**Reasoning models defeat it by default (verified hermetically on 2026-10-28,** with the real function and mocked rails):
 
-**Verified hermetically on 2026-10-28**, with the real function and mocked rails:
+| Judge reply | Read as |
+|---|---|
+| `<think>…cites SEC Rule 99z, which does not exist.</think>` then `UNSAFE: fabricated regulation` | safe |
+| `…cites SEC Rule 99z, which does not exist.` `</think>` then `UNSAFE: fabricated regulation` (a chat template that opens the trace) | safe |
+| `<think>Checked; nothing harmful.</think>` then `SAFE` | safe |
 
-| Model reply | Read as |
+A model that writes its reasoning before its verdict defeats the check on every answer: its correct `UNSAFE` is read as `SAFE`. That is the normal output shape of a reasoning model, not an adversarial input. Nothing strips the trace before the parse (read): the NeMo vLLM client reads `message.content` as it is, the vLLM module sets no reasoning parser, and NeMo 0.23 puts a separately returned reasoning trace back in front of the answer as `<think>…</think>`. The rails config's fallback model, DeepSeek-R1-Distill-Llama-8B, is a reasoning model; the vLLM module's default, Qwen2.5-1.5B-Instruct, is not (read). So the check failed on every deployment whose rails use a reasoning model, and on prose replies from any model:
+
+| Judge reply | Read as |
 |---|---|
 | (empty) | safe |
 | `I think this output is unsafe: it fabricates SEC Rule 99z.` | safe |
 | `The output contains harmful advice.` | safe |
 | `<think>analysing</think>` | safe |
-| `SAFE` | safe |
 | `Unsafe — hallucinated citation` | refused |
 | `UNSAFE: fabricated regulation` | refused |
 
-**How this differs from POAM-2026-124.** POAM-2026-124's paths reach no verdict: rails absent, "No main flow found", errors. Here the rails run and the model answers, and the answer is misread.
+**Reachability, compared with POAM-2026-124.** POAM-2026-124 needs a degraded deployment: rails are absent only when `nemoguardrails` fails to import, and the shipped Colang 2.x config does not raise "No main flow found". This entry fires in normal operation with a working model. Of the two, it is the one shaped like a security advisory: a fail-open in a content-safety verdict path, reachable by anyone running the advisor with a reasoning model, and present since `6012f067` (2026-06-03), in every release from v2.0.0 through v4.0.0 (verified with `git tag --contains`).
 
 **The defect class: model free-text parsed as safe unless it says otherwise.** Two instances are known:
-- The advisor labelled any tool output that did not start with `BLOCKED` as `SAFE`, including the gateway's error string (POAM-2026-124, path 1). The inference-backend change fixes it: only an exact `SAFE` is safe.
-- `validate_output_semantics()` reads any reply that does not start with `UNSAFE` as safe. This entry; open.
+- The advisor labelled any tool output that did not start with `BLOCKED` as `SAFE`, including the gateway's error string (POAM-2026-124, path 1). Fixed in #566: only an exact `SAFE` is safe.
+- `validate_output_semantics()` read any reply that did not start with `UNSAFE` as safe. This entry.
 
 Two instances make a pattern worth naming. No sweep for a third has been done.
 
-**Contrast.** The consensus critics already parse strictly: `_parse_critic_vote()` in [`engine.py`](../src/gateway/governance/consensus/engine.py) returns `ERROR` for an empty, unparseable or reasoning-only reply, and the gate never admits on `ERROR`.
+**Remediation (on `fix/output-judge-strict-parse`):**
+1. `_parse_judge_verdict()` in [`manager.py`](../src/integrations/nemo/manager.py) reads the verdict after the last `</think>`, as the consensus critics' `_parse_critic_vote()` in [`engine.py`](../src/gateway/governance/consensus/engine.py) already parses strictly. A first line starting with `UNSAFE` refuses; only a lone `SAFE` passes; anything else refuses with `CONTENT_SAFETY_UNPARSEABLE_VERDICT`.
+2. [`test_output_judge_strict_parse.py`](../tests/test_output_judge_strict_parse.py) covers each reply above and the advisor graph's output rail. In the recorded mutation check, restoring the lenient parse turns them red.
 
-**Remediation:**
-1. Read the judge strictly: safe only on a conforming `SAFE` verdict (an exact first line, or a structured response format like the consensus critics'). An empty or non-conforming reply refuses with its own reason code.
-2. Add a test for each degenerate form above, with a recorded mutation check: restoring the `startswith("UNSAFE")` reading turns it red.
+**Advisory.** Planned after the fix ships, not before: no advisory is published for an unfixed defect. Affected: v2.0.0 through v4.0.0.
 
 ### POAM-2026-124: Content-Safety Checks That Did Not Run Are Reported as Passed
 
