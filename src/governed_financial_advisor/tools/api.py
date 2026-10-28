@@ -23,6 +23,7 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.cage_finance.models.trade_order import TradeOrder
+from src.gateway.governance.content_safety import is_safe_verdict
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
@@ -129,10 +130,13 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     "verify_content_safety",
                     {"text": params.get("text", "")},
                 )
-                if str(output).startswith("BLOCKED"):
-                    span.set_attribute("cage.verdict", "BLOCKED")
-                else:
+                # Only the exact SAFE verdict is safe. An error string or
+                # any other output is a check that did not pass
+                # (POAM-2026-124).
+                if is_safe_verdict(output):
                     span.set_attribute("cage.verdict", "SAFE")
+                else:
+                    span.set_attribute("cage.verdict", "BLOCKED")
 
         elif tool == "evaluate_policy":
             # OPA evaluation runs against the gateway's OPA client.

@@ -42,6 +42,12 @@ except ImportError:
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from src.gateway.governance.content_safety import (
+    CONTENT_SAFETY_ERROR,
+    CONTENT_SAFETY_NO_MAIN_FLOW,
+    CONTENT_SAFETY_RAILS_UNAVAILABLE,
+    refusal_reason,
+)
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.observability.attributes import (
@@ -167,9 +173,8 @@ def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
         # The installed NeMo version's library Colang 2.x files (core, timing)
         # contain a syntax error at runtime (lark.UnexpectedToken line 12).
         # Rather than crash the pod, fall back to a minimal YAML-only config
-        # with no Colang flows.  All requests will pass through via the
-        # "No main flow found" guard in validate_with_nemo(); OPA + STPA
-        # remain authoritative for safety enforcement.
+        # with no Colang flows. The stub is tagged is_transparent_fallback
+        # below, and every content-safety check rejects it (fail closed).
         logger.warning(
             "⚠️ NeMo RailsConfig parse failed (%s) — using minimal fallback config. "
             "NeMo semantic rails disabled; OPA/STPA remain active.",
@@ -375,6 +380,29 @@ _deterministic_verdict: _ContextVar[bool] = _ContextVar(
     "_nemo_deterministic_verdict", default=False
 )
 
+# ---------------------------------------------------------------------------
+# No-verdict refusals (POAM-2026-124)
+# ---------------------------------------------------------------------------
+# A check that reaches no verdict is a refusal, never a pass. OPA and STPA
+# check actions, not content, so no other tier covers text these rails did
+# not check.
+
+_RAILS_ABSENT_REASON = refusal_reason(
+    CONTENT_SAFETY_RAILS_UNAVAILABLE,
+    "NeMo rails are not initialised; no content-safety verdict was reached.",
+)
+_NO_MAIN_FLOW_REASON = refusal_reason(
+    CONTENT_SAFETY_NO_MAIN_FLOW,
+    "NeMo has no main flow; no content-safety verdict was reached.",
+)
+
+
+def _mark_no_verdict(span: Any, governance_state: str) -> None:
+    """Mark *span* as a refusal that reached no content-safety verdict."""
+    span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "BLOCKED")
+    span.set_attribute(OBSERVATION_METADATA_GOVERNANCE_STATE, governance_state)
+    span.set_status(Status(StatusCode.ERROR))
+
 
 async def validate_with_nemo(
     user_input: str,
@@ -442,7 +470,10 @@ async def validate_with_nemo(
                 streaming_handler_var.reset(token)
             return (
                 False,
-                "NeMo guardrails unavailable — request rejected",
+                refusal_reason(
+                    CONTENT_SAFETY_RAILS_UNAVAILABLE,
+                    "NeMo guardrails unavailable — request rejected",
+                ),
                 False,  # circuit-breaker: not a stage-based deterministic verdict
             )
 
@@ -461,6 +492,13 @@ async def validate_with_nemo(
                 "STPA Violation UCA-7: Request contains systemic bypass attempt.",
                 True,  # _detect_bypass is a deterministic structural check
             )
+
+        if rails is None:
+            logger.error("validate_with_nemo: no NeMo rails — blocking (no verdict).")
+            _mark_no_verdict(span, CONTENT_SAFETY_RAILS_UNAVAILABLE)
+            if token is not None:
+                streaming_handler_var.reset(token)
+            return False, _RAILS_ABSENT_REASON, False
 
         try:
             span.set_attribute(OBSERVATION_TYPE, "span")
@@ -521,29 +559,30 @@ async def validate_with_nemo(
         except Exception as exc:
             exc_str = str(exc)
             if "No main flow found" in exc_str:
-                # Colang 2.x runtime has no main flow registered (standard library
-                # imports conflicted).  This is a NeMo config limitation, not a
-                # safety failure.  Downstream OPA + STPA checks still protect the
-                # request — treat as pass-through (safe) and log a warning.
-                logger.warning(
-                    "NeMo has no main flow — passing through (OPA/STPA still active): %s",
-                    exc_str,
+                # Colang 2.x runtime has no main flow registered, so the rails
+                # ran no flow and reached no verdict: refuse (POAM-2026-124).
+                logger.error(
+                    "NeMo has no main flow — blocking (no verdict): %s", exc_str
                 )
-                span.set_attribute("guardrails.outcome", "BYPASSED_NO_MAIN_FLOW")
+                span.set_attribute("guardrails.outcome", "BLOCKED_NO_MAIN_FLOW")
                 # Stamp Langfuse so auditors can filter by this degraded state
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "DEGRADED_NO_MAIN_FLOW",
-                )
+                _mark_no_verdict(span, "DEGRADED_NO_MAIN_FLOW")
                 span.set_attribute(
                     OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
                 )
                 span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
-                return True, "", False
+                return False, _NO_MAIN_FLOW_REASON, False
             logger.error("NeMo Validation Error: %s", exc)
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR))
-            return False, "Validation failed due to internal governance error.", False
+            return (
+                False,
+                refusal_reason(
+                    CONTENT_SAFETY_ERROR,
+                    "Validation failed due to internal governance error.",
+                ),
+                False,
+            )
         finally:
             if token is not None:
                 streaming_handler_var.reset(token)
@@ -680,8 +719,16 @@ async def verify_input(
             span.set_status(Status(StatusCode.ERROR))
             return SafetyResult(
                 is_safe=False,
-                reason="NeMo guardrails unavailable — request rejected",
+                reason=refusal_reason(
+                    CONTENT_SAFETY_RAILS_UNAVAILABLE,
+                    "NeMo guardrails unavailable — request rejected",
+                ),
             )
+
+        if rails is None:
+            logger.error("verify_input: no NeMo rails — blocking (no verdict).")
+            _mark_no_verdict(span, CONTENT_SAFETY_RAILS_UNAVAILABLE)
+            return SafetyResult(is_safe=False, reason=_RAILS_ABSENT_REASON)
 
         try:
             res = await rails.generate_async(
@@ -704,26 +751,26 @@ async def verify_input(
         except Exception as exc:
             exc_str = str(exc)
             if "No main flow found" in exc_str:
-                logger.warning(
-                    "NeMo has no main flow — passing through verify_input (OPA/STPA still active): %s",
+                logger.error(
+                    "NeMo has no main flow — blocking verify_input (no verdict): %s",
                     exc_str,
                 )
                 # Stamp Langfuse so auditors can filter by this degraded state
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "DEGRADED_NO_MAIN_FLOW",
-                )
+                _mark_no_verdict(span, "DEGRADED_NO_MAIN_FLOW")
                 span.set_attribute(
                     OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
                 )
                 span.set_attribute(OBSERVATION_METADATA_ISO_CONTROL, "A.5.2")
-                return SafetyResult(is_safe=True)
+                return SafetyResult(is_safe=False, reason=_NO_MAIN_FLOW_REASON)
             logger.error("NeMo Input Verification Error: %s", exc)
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR))
             return SafetyResult(
                 is_safe=False,
-                reason="Validation failed due to internal governance error.",
+                reason=refusal_reason(
+                    CONTENT_SAFETY_ERROR,
+                    "Validation failed due to internal governance error.",
+                ),
             )
 
 
@@ -823,7 +870,16 @@ async def validate_output_semantics(
                 "CIRCUIT_OPEN_REJECTED",
             )
             span.set_status(Status(StatusCode.ERROR))
-            return False, "NeMo output validation unavailable"
+            return False, refusal_reason(
+                CONTENT_SAFETY_RAILS_UNAVAILABLE, "NeMo output validation unavailable"
+            )
+
+        if rails is None:
+            logger.error(
+                "validate_output_semantics: no NeMo rails — blocking (no verdict)."
+            )
+            _mark_no_verdict(span, CONTENT_SAFETY_RAILS_UNAVAILABLE)
+            return False, _RAILS_ABSENT_REASON
 
         try:
             # Use a two-message conversation: system prompt + the output to evaluate.
@@ -878,20 +934,19 @@ async def validate_output_semantics(
         except Exception as exc:
             exc_str = str(exc)
             if "No main flow found" in exc_str:
-                # Colang 2.x runtime has no main flow — pass through with warning.
-                logger.warning(
+                # Colang 2.x runtime has no main flow — no verdict, so block.
+                logger.error(
                     "validate_output_semantics: NeMo has no main flow — "
-                    "passing through (OPA/STPA still active): %s",
+                    "blocking (no verdict): %s",
                     exc_str,
                 )
-                span.set_attribute(
-                    OBSERVATION_METADATA_GOVERNANCE_STATE,
-                    "DEGRADED_NO_MAIN_FLOW",
-                )
-                span.set_attribute("output.semantic_safe", True)
-                return True, ""
+                _mark_no_verdict(span, "DEGRADED_NO_MAIN_FLOW")
+                span.set_attribute("output.semantic_safe", False)
+                return False, _NO_MAIN_FLOW_REASON
 
             logger.error("validate_output_semantics: NeMo error: %s", exc)
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR))
-            return False, "NeMo output validation unavailable"
+            return False, refusal_reason(
+                CONTENT_SAFETY_ERROR, "NeMo output validation unavailable"
+            )

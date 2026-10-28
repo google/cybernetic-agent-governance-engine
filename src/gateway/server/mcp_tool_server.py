@@ -57,6 +57,13 @@ sys.path.append(".")
 
 from opentelemetry import trace
 
+from src.gateway.governance.content_safety import (
+    CONTENT_SAFETY_ERROR,
+    CONTENT_SAFETY_RAILS_UNAVAILABLE,
+    SAFE_VERDICT,
+    blocked_verdict,
+    refusal_reason,
+)
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
@@ -526,16 +533,31 @@ async def trigger_safety_intervention(reason: str = "Unknown") -> str:
 
 @mcp.tool()
 async def verify_content_safety(text: str) -> str:
-    """Verify safety of a given text using NeMo Guardrails."""
+    """Verify safety of a given text using NeMo Guardrails.
+
+    Returns ``SAFE`` only when the rails ran and passed the text. Every
+    other outcome, including absent rails and a check that raises, is
+    ``BLOCKED: <reason>`` with a reason code (POAM-2026-124).
+    """
     from src.gateway.governance.semantic_rail_factory import (
         validate_with_semantic_rail as validate_with_nemo,
     )
 
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
-        return "ERROR: NeMo rails not initialised."
-    is_safe, response, _deterministic = await validate_with_nemo(text, rails)
-    return "SAFE" if is_safe else f"BLOCKED: {response}"
+        return blocked_verdict(
+            refusal_reason(
+                CONTENT_SAFETY_RAILS_UNAVAILABLE, "NeMo rails are not initialised."
+            )
+        )
+    try:
+        is_safe, response, _deterministic = await validate_with_nemo(text, rails)
+    except Exception as exc:
+        logger.error("verify_content_safety: rail check raised — blocking: %s", exc)
+        return blocked_verdict(
+            refusal_reason(CONTENT_SAFETY_ERROR, "the rail check raised an error.")
+        )
+    return SAFE_VERDICT if is_safe is True else blocked_verdict(response)
 
 
 # ---------------------------------------------------------------------------
