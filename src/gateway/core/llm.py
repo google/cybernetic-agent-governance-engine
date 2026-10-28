@@ -27,6 +27,29 @@ from src.gateway.infrastructure.telemetry_client import (
 logger = logging.getLogger(__name__)
 
 
+class InferenceEndpointMissing(RuntimeError):
+    """No endpoint is configured for a route (POAM-2026-127).
+
+    Raised instead of building a client with no base URL: the OpenAI SDK then
+    targets its public default, sending the operator's key and the prompt to a
+    third party.
+    """
+
+    reason_code = "INFERENCE_BACKEND_URL_MISSING"
+
+
+def _route_client(routed_base: str | None) -> AsyncOpenAI | None:
+    """A client for the routed endpoint, else ``VLLM_BASE_URL``, else none.
+
+    The same order the inference proxy and the NeMo client use. Never
+    ``AsyncOpenAI(base_url=None)``, which means ``https://api.openai.com/v1``.
+    """
+    base = routed_base or Config.VLLM_BASE_URL
+    if not base:
+        return None
+    return AsyncOpenAI(base_url=base, api_key=Config.VLLM_API_KEY or "EMPTY")
+
+
 class GatewayClient:
     def __init__(self):  # type: ignore[no-untyped-def]
         # Mode 1: Kubernetes Inference Gateway (Unified Endpoint) - Production
@@ -44,16 +67,11 @@ class GatewayClient:
             # Mode 2: Local / Direct Split-Brain (Dev/Test)
             logger.info("🔧 Using Local Split-Brain Mode (Direct Connection)")
             self.mode = "local"
-            # Node A: The Brain
-            self.reasoning_client = AsyncOpenAI(
-                base_url=Config.VLLM_REASONING_API_BASE,
-                api_key=Config.VLLM_API_KEY or "EMPTY",
-            )
+            # Node A: The Brain. None when no endpoint is configured; generate()
+            # then refuses rather than reaching the SDK's public default.
+            self.reasoning_client = _route_client(Config.VLLM_REASONING_API_BASE)
             # Node B: The Police
-            self.governance_client = AsyncOpenAI(
-                base_url=Config.VLLM_FAST_API_BASE,
-                api_key=Config.VLLM_API_KEY or "EMPTY",
-            )
+            self.governance_client = _route_client(Config.VLLM_FAST_API_BASE)
 
     def _get_route(self, mode: str):  # type: ignore[no-untyped-def]
         """
@@ -83,6 +101,12 @@ class GatewayClient:
         **kwargs,  # type: ignore[assignment]
     ) -> str:
         client, model = self._get_route(mode)
+        if client is None:
+            raise InferenceEndpointMissing(
+                f"{InferenceEndpointMissing.reason_code}: no inference endpoint is "
+                f"configured for mode '{mode}'; set VLLM_BASE_URL or the routed "
+                "VLLM_*_API_BASE"
+            )
 
         # Use GenAI Span for Langfuse/OTLP Tracing
         with genai_span(
