@@ -91,7 +91,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-118 | SI-10 / CA-7 / `CTRL_MRM_004` | An enforcing posture can be configured to run the causal tier on synthetic telemetry, and today an accident is all that stops it. [`get_telemetry_provider()`](../src/gateway/governance/telemetry_provider.py) refuses `CAGE_TELEMETRY_PROVIDER=mock` only when `CAGE_ENV` is `prod` or `production`. [`is_enforcing()`](../src/gateway/governance/env_posture.py) also treats `staging` and `local` as enforcing, and no other code path rejects `mock`. `MockTelemetryProvider` generates its outcome from the formula the model is calibrated on (POAM-2026-094). A staging or local deployment set to `mock` would therefore validate the world model against itself, against POAM-2026-088's rule that enforcing postures never substitute synthetic data. While POAM-2026-117 is open, that deployment would also enforce from POAM-2026-117's invented baseline. The shipped manifests set `remote`. What refuses the path today is that `MockTelemetryProvider` emits no timestamp column and the freshness check fails closed without one (`stale_telemetry`). Adding a timestamp column, the obvious fix for anyone trying to use the mock, would arm it. Remediation: select on `is_enforcing()` instead of the environment name | Moderate | 2026-11-15 |
 | POAM-2026-119 | CA-5 / CA-7 | 13 identifiers this document cites as commits name no object in the repository, so no assessor can check them against `main`. Six are pre-squash branch commits, each mapped to the squash commit on `main` that carries it. Seven resolve nowhere (not on `main` or GitHub, nor in the maintainer's clones, private refs or offsite bundle), including the only commit POAM-2026-011's closure cites. Gate G9 does not check commit citations. Recorded now; the repair follows the commit-citation check (detail section) | Moderate | 2026-11-15 |
 | POAM-2026-120 | SA-11 / CM-4 / CA-7 | Closed controls are not guarded by tests that fail when the control stops operating. POAM-2026-023's fix removed the serialization POAM-2026-070's control depended on, and for a month every test passed and the POA&M/Lula drift checker still counted POAM-2026-070 as covered, by Lula files whose names match its control IDs and which never mention the CBF. On 2026-10-27, 34 of the 80 closed entries cited no test, and the drift checker's 52 "covered" entries rest on the same file-name match, never checked against what the files assert. Remediation: a forward closure requirement plus a backfill of High entries only (detail section) | Moderate | 2026-12-31 |
-| POAM-2026-121 | CA-2 / CA-7 | §3 of the [Regional Posture Validation Report](compliance/REGIONAL_POSTURE_VALIDATION_REPORT.md), a published compliance validation report, makes a false claim. It says domain plugins and jurisdictional postures compose independently, "without colliding on common controls". That was false when written: `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, and the registry logs the collision. The 12 pinned hashes are real but stale. They reproduce exactly, by the documented method, on the parent of the commit that published them (`3b69207c`), and that commit changed every kernel baseline. Remediation: decide whether independence is a property CAGE has, then correct or withdraw §3 (detail section) | High | 2026-11-15 |
+| POAM-2026-121 | CA-2 / CA-7 | §3 of the [Regional Posture Validation Report](compliance/REGIONAL_POSTURE_VALIDATION_REPORT.md), a published compliance validation report, makes a false claim. It says domain plugins and jurisdictional postures compose independently, "without colliding on common controls". That was false when written: `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, and the registry logs the collision. The 12 pinned hashes are real but stale. They reproduce exactly, by the documented method, on the parent of the commit that published them (`3b69207c`), and that commit changed every kernel baseline. Independence is not merely unproven: POAM-2026-123 shows a plugin overlay changing a jurisdictional tier's verdict. The claim is therefore withdrawn as an aspiration, not proven as a property (detail section) | High | 2026-11-15 |
 | POAM-2026-122 | SA-11 | Region pinning in the test suite is asymmetric. 57 tests are marked `eu_ecb` (48 of them in the required Pytest Logic Tests job), 23 `us_fed` (18) and 13 `apac_mas` (7), from 27, 4 and 4 marker uses, yet US_FED is the posture of the reference staging deployment and the one carrying the NIST SP 800-53 surface. The other ~9,000 tests run under the US_FED session default set in [`tests/conftest.py`](../tests/conftest.py), so US_FED is exercised broadly but pinned narrowly: an unmarked test that asserts US_FED behaviour depends on that default. Recorded, not swept | Low | 2026-12-31 |
 | POAM-2026-123 | CM-6 / SI-7 | A domain plugin's compliance overlay can redefine a kernel control, including one a jurisdictional tier enforces on. [`ControlRegistry`](../src/gateway/governance/constants.py) applies overlays over the kernel baseline with `dict.update` and only logs a WARNING on a collision. With the kernel baseline alone, the EU_ECB FRIA tier denies `execute_trade` (`FRIA_ASSESSMENT_STALE`) without consulting the provider. With a test overlay that defines `CTRL_FRIA_006` and a fresh artefact, the Art. 27(2) staleness gate passes and the provider decides (verified). `cage_finance` redefines `CTRL_FTRA_001` today, which nothing reads at runtime. Governor assembly fails closed on a slot collision; the registry does not (detail section) | High | 2026-11-30 |
 | POAM-2026-124 | SI-10 / AU-3 | Content-safety checks that did not run are reported as passed. With no NeMo rails, the gateway's `verify_content_safety` answers `"ERROR: NeMo rails not initialised."`, and the advisor returns that as `SUCCESS` with `cage.verdict = SAFE`. When NeMo raises "No main flow found", the tool answers `"SAFE"`. Both were verified hermetically. The control itself operates: the shipped Colang 2.x rails blocked four must-block inputs and passed a benign one. Today the first path needs a failed `nemoguardrails` import, and the second a rails config with no main flow. Under the planned `CAGE_INFERENCE_BACKEND=none`, which builds no rails, the first would fire on every call. The fix lands in that kernel change, before `none` exists (detail section) | High | 2026-11-30 |
@@ -594,7 +594,7 @@ The kernel treats the equivalent conflict as fatal elsewhere: [`assemble_governo
 
 **Control:** NIST CA-2 (Control Assessments), CA-7 (Continuous Monitoring)
 **Risk Level:** High
-**Status:** Open — §3 and the report's head carry do-not-rely notes; correction or withdrawal not started
+**Status:** Open — decided 2026-10-28: the claim is withdrawn, not proven. §3 and the report's head carry do-not-rely notes until the withdrawal is applied
 **Date Opened:** 2026-10-28
 **Target Closure:** 2026-11-15
 
@@ -618,7 +618,12 @@ The [Regional Posture Validation Report](compliance/REGIONAL_POSTURE_VALIDATION_
 
 The table has therefore never described a tree that contains it. That part is a recoverable error, not a fabrication.
 
-**What the override changes at runtime.** The registry serves the overlay's definition (verified). But no runtime path reads that mapping's content (read): FTRA violations carry no control-ID prefix for `_control_payload()` to resolve, and deferrals record only the ID. FTRA's allow, deny and defer behaviour is therefore unaffected. The mechanism that permits the override is a kernel defect in its own right, recorded as POAM-2026-123.
+**What the `CTRL_FTRA_001` override changes at runtime.** The registry serves the overlay's definition (verified). But no runtime path reads that mapping's content (read): FTRA violations carry no control-ID prefix for `_control_payload()` to resolve, and deferrals record only the ID. FTRA's allow, deny and defer behaviour is therefore unaffected. The mechanism that permits the override is a kernel defect in its own right, recorded as POAM-2026-123.
+
+**What this settles.**
+- Independence is not merely unproven: it is violated today in a path that changes a tier's verdict.
+- A plugin overlay that defines `CTRL_FRIA_006` moves the EU_ECB FRIA tier past its Art. 27(2) staleness gate. A hard denial becomes a provider consultation (POAM-2026-123, verified).
+- Independence is therefore an aspiration the report stated, not a property CAGE has. The claim is withdrawn rather than proven.
 
 **Nothing would have caught this.**
 - No test pins a cell or fails on a collision.
@@ -627,13 +632,17 @@ The table has therefore never described a tree that contains it. That part is a 
   - The test step of [`compliance-matrix.yml`](../.github/workflows/compliance-matrix.yml) is `continue-on-error`.
 
 **Remediation:**
-1. Decide whether independence is a property CAGE has or an aspiration it stated. That turns on POAM-2026-123: whether a plugin overlay may redefine a kernel control at all, and if so, how.
-2. Correct §3 to what is true, or withdraw it, together with the executive summary and conclusion that repeat it. If hashes are kept, regenerate them from a committed script at a stated commit, listing each cell's control set and any kernel control a plugin redefines.
-3. Only if independence is a property:
-   - guard it with a test in the required job that fails on a collision;
-   - make `regional-posture.yml` able to fail, or describe it as telemetry wherever it is cited as a check.
+1. Withdraw the independence claim in the report.
+   - Withdraw §3's "Independence Guarantee" and "Key Finding".
+   - Withdraw the executive summary's "confirming independent composability of domain plugins and jurisdictional overlays".
+   - Withdraw the conclusion's "true composability".
+   - Keep the cell table only as a description of the matrix, not as evidence of independence. If it stays, regenerate it from a committed script at a stated commit, listing each cell's control set and any kernel control a plugin redefines.
+2. Restate independence as a property only after both of these hold:
+   - POAM-2026-123's fix makes a plugin overlay that redefines a kernel control fail closed;
+   - a test in the required job fails on a collision.
+3. Make `regional-posture.yml` able to fail, or describe it as telemetry wherever it is cited as a check.
 
-Until then, §3 and the head of the report tell readers not to rely on the claim.
+Until the withdrawal is applied, §3 and the head of the report tell readers not to rely on the claim.
 
 ### POAM-2026-120: Closed Controls Without a Guarding Test
 
