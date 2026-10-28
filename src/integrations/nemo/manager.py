@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 try:
@@ -46,6 +47,7 @@ from src.gateway.governance.content_safety import (
     CONTENT_SAFETY_ERROR,
     CONTENT_SAFETY_NO_MAIN_FLOW,
     CONTENT_SAFETY_RAILS_UNAVAILABLE,
+    CONTENT_SAFETY_UNPARSEABLE_VERDICT,
     refusal_reason,
 )
 from src.gateway.governance.iso_control import stamp_iso_control
@@ -822,6 +824,39 @@ _SEMANTIC_SAFETY_SYSTEM_PROMPT = (
 )
 
 
+_JUDGE_TRACE_END_RE = re.compile(r"</think>", re.IGNORECASE)
+
+
+def _parse_judge_verdict(reply: str) -> tuple[str, str]:
+    """Parse the output-safety judge's reply strictly (POAM-2026-125).
+
+    The judge is asked for one line, ``SAFE`` or ``UNSAFE:<reason>``. A
+    reasoning model writes its trace first, as ``<think>…</think>`` or, when
+    its chat template opens the trace, as text ending in ``</think>``. The
+    verdict is whatever follows the last ``</think>``.
+
+    Returns ``("UNSAFE", reason)`` when the verdict's first line starts with
+    ``UNSAFE``, ``("SAFE", "")`` only when the verdict is that one word on
+    one line, and ``("UNPARSEABLE", detail)`` for anything else: an empty
+    reply, prose, more than one line, or a trace with nothing after it. Free
+    text is never read as safe unless it says otherwise.
+    """
+    text = reply or ""
+    trace_ends = list(_JUDGE_TRACE_END_RE.finditer(text))
+    if trace_ends:
+        text = text[trace_ends[-1].end() :]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "UNPARSEABLE", "the reply holds no verdict"
+    first = lines[0]
+    if first.upper().startswith("UNSAFE"):
+        reason = first[len("UNSAFE") :].lstrip(" :-\u2014").strip()
+        return "UNSAFE", reason or first
+    if len(lines) == 1 and first.upper().rstrip(".") == "SAFE":
+        return "SAFE", ""
+    return "UNPARSEABLE", "the reply is not a single SAFE or UNSAFE verdict"
+
+
 async def validate_output_semantics(
     rails: LLMRails,
     output_text: str,
@@ -891,45 +926,36 @@ async def validate_output_semantics(
                 ],
             )
 
-            verdict_raw = _extract_bot_response(res).strip()
+            verdict, detail = _parse_judge_verdict(_extract_bot_response(res))
 
-            if not verdict_raw:
-                # Empty response — treat as safe (NeMo passed through without intervention).
-                span.set_attribute("output.semantic_verdict", "SAFE_EMPTY_RESPONSE")
-                span.set_attribute("output.semantic_safe", True)
-                stamp_iso_control(
-                    span, ingress_stage=3, control="A.6.1.2", outcome="PASS"
-                )
-                return True, ""
-
-            verdict_upper = verdict_raw.upper()
-
-            if verdict_upper.startswith("UNSAFE"):
-                # Extract the reason after "UNSAFE:" if present.
-                reason = (
-                    verdict_raw[len("UNSAFE:") :].strip()
-                    if ":" in verdict_raw
-                    else verdict_raw
-                )
+            if verdict == "UNSAFE":
                 logger.warning(
                     "validate_output_semantics: output flagged as UNSAFE — reason: %s",
-                    reason,
+                    detail,
                 )
                 span.set_attribute("output.semantic_verdict", "UNSAFE")
                 span.set_attribute("output.semantic_safe", False)
-                span.set_attribute("output.semantic_reason", reason)
+                span.set_attribute("output.semantic_reason", detail)
                 stamp_iso_control(
                     span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
                 )
-                return False, reason
-            else:
-                # "SAFE" or any non-UNSAFE response — treat as safe.
+                return False, detail
+            if verdict == "SAFE":
                 span.set_attribute("output.semantic_verdict", "SAFE")
                 span.set_attribute("output.semantic_safe", True)
                 stamp_iso_control(
                     span, ingress_stage=3, control="A.6.1.2", outcome="PASS"
                 )
                 return True, ""
+            # The judge answered, but not with a verdict (POAM-2026-125).
+            logger.error(
+                "validate_output_semantics: judge reply is not a verdict — blocking: %s",
+                detail,
+            )
+            _mark_no_verdict(span, CONTENT_SAFETY_UNPARSEABLE_VERDICT)
+            span.set_attribute("output.semantic_verdict", "UNPARSEABLE")
+            span.set_attribute("output.semantic_safe", False)
+            return False, refusal_reason(CONTENT_SAFETY_UNPARSEABLE_VERDICT, detail)
 
         except Exception as exc:
             exc_str = str(exc)

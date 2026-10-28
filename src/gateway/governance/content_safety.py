@@ -17,8 +17,8 @@
 A content-safety check either reaches a verdict or it does not. Only the
 exact :data:`SAFE_VERDICT` means the semantic rails ran and passed the text.
 Every path that reaches no verdict (rails absent, NeMo raising "No main flow
-found", any other error, or no inference backend) is reported as blocked
-with a reason code, never as safe. The codes let the evidence chain tell
+found", a judge reply that is not a verdict, any other error, or no inference
+backend) is reported as blocked with a reason code, never as safe. The codes let the evidence chain tell
 "a rail blocked this" apart from "nothing could check this".
 
 The gateway's ``verify_content_safety`` tool, the semantic rail provider and
@@ -36,6 +36,9 @@ BLOCKED_PREFIX: Final[str] = "BLOCKED"
 CONTENT_SAFETY_RAILS_UNAVAILABLE: Final[str] = "CONTENT_SAFETY_RAILS_UNAVAILABLE"
 # NeMo raised "No main flow found": the rails ran no flow, so no verdict exists.
 CONTENT_SAFETY_NO_MAIN_FLOW: Final[str] = "CONTENT_SAFETY_NO_MAIN_FLOW"
+# The judge answered, but not with a verdict: an empty reply, prose, more than
+# one line, or a reasoning trace with nothing after it (POAM-2026-125).
+CONTENT_SAFETY_UNPARSEABLE_VERDICT: Final[str] = "CONTENT_SAFETY_UNPARSEABLE_VERDICT"
 # Any other error while checking.
 CONTENT_SAFETY_ERROR: Final[str] = "CONTENT_SAFETY_ERROR"
 # CAGE_INFERENCE_BACKEND=none: no rails are built, by design.
