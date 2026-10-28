@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: "3.8"
-
 services:
   # OPA: Policy Engine
   opa:
@@ -89,7 +87,7 @@ services:
     ports:
       - "127.0.0.1:3000:8080"
     environment:
-      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
       - OPA_URL=http://opa:8181
       - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:-dev-opa-token}
