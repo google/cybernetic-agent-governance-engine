@@ -34,7 +34,7 @@
 #   - enable_cmek=true (requires KMS key — set kms_key_id in terraform.auto.tfvars)
 #   - enable_pod_security_standards=true (restricted)
 #   - enable_private_nodes=true
-#   - Authorized networks scoped to corporate VPN CIDR (NOT 0.0.0.0/0)
+#   - Authorized networks: operator CIDRs only, never 0.0.0.0/0 (the plan refuses it, POAM-2026-126)
 #   - enable_deletion_protection=false (ephemeral — can be destroyed)
 #
 # What this proves:
@@ -80,7 +80,7 @@ master_ipv4_cidr_block = "172.16.0.16/28"
 #   - CMEK: encrypt etcd database and persistent volumes with customer-managed key
 #   - Pod Security Standards: enforce "restricted" policy at namespace admission
 #   - Private nodes: no external IPs on node VMs (use Cloud NAT for egress)
-#   - Authorized networks: restrict master endpoint access to corporate VPN CIDR
+#   - Authorized networks: restrict control-plane access to operator CIDRs (VPN range or deployer egress)
 
 # enable_nist_compliance MUST be explicitly true here to activate Redis replication,
 # replica scale-out, PDBs, and NIST SP 800-53 control gates. This is injected
@@ -104,7 +104,7 @@ enable_audit_logging           = true
 enable_cmek                    = true
 enable_pod_security_standards  = true
 pod_security_level             = "restricted"
-enable_private_master_endpoint = false # Authorized networks restricted via VPN CIDR
+enable_private_master_endpoint = false # public endpoint, limited to authorized_networks (see below)
 enable_private_nodes           = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
 
 # §1.1 & §5.3: GKE Dataplane V2 + FQDN network policy enabled in every posture.
@@ -112,14 +112,14 @@ enable_dataplane_v2        = true
 enable_fqdn_network_policy = true
 
 
-# Authorized networks: Allow all for initial staging deployment
-# Can be restricted later once cluster is operational
-authorized_networks = [
-  {
-    cidr         = "0.0.0.0/0"
-    display_name = "All (Initial Staging Deployment)"
-  }
-]
+# Authorized networks: who may reach the control plane. Deliberately not set here,
+# so no operator address is committed and nothing in this file can override yours.
+# Supply them with TF_VAR_authorized_networks or a --var-file after this profile:
+#   export TF_VAR_authorized_networks='[{cidr="203.0.113.10/32",display_name="deployer egress"}]'
+# Terraform's kubernetes and helm providers use the public endpoint, so the machine
+# running terraform must be on the list. The plan refuses an empty list or a /0
+# while compliance is active (POAM-2026-126). The cluster's own node, Pod and
+# Service ranges can always reach the control plane.
 
 # ─── Cost Optimization (Staging: Dev-Scale Hardware) ──────────────────────────
 

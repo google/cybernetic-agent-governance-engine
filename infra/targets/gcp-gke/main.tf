@@ -1117,3 +1117,29 @@ resource "terraform_data" "poam_019_compliance_key_guard" {
     }
   }
 }
+
+# POAM-2026-126 (AC-3 / SC-7): an enforcing posture must name who may reach the
+# control plane. With an empty list the cluster module emits no authorized-networks
+# block, so GKE leaves its allowlist off and the endpoint accepts any address; a /0
+# entry does the same explicitly. staging.tfvars shipped 0.0.0.0/0 under a header
+# that claimed VPN scope, and nothing read the list. The cluster's own node, Pod and
+# Service ranges can always reach the control plane, whatever this list says.
+resource "terraform_data" "control_plane_access_guard" {
+  lifecycle {
+    precondition {
+      condition = !local.any_compliance_active || (
+        length(var.authorized_networks) > 0 &&
+        alltrue([for n in var.authorized_networks : !endswith(n.cidr, "/0")])
+      )
+      error_message = <<-EOT
+        [POAM-2026-126] AC-3 control-plane access: with a compliance posture active,
+        authorized_networks must hold at least one operator CIDR and no /0.
+        An empty list leaves GKE's allowlist off, so the control plane would accept
+        any address. Supply your VPN range or the deploying machine's egress /32 with
+        TF_VAR_authorized_networks or a --var-file after the profile, never in a
+        committed profile. Terraform's kubernetes and helm providers use the public
+        endpoint, so the machine running terraform must be on the list.
+      EOT
+    }
+  }
+}
