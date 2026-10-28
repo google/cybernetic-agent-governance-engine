@@ -47,11 +47,11 @@ for end-to-end deployment.
 ### ✅ Approved Methods for GKE
 
 ```bash
-# Full deployment to GKE dev
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
+# Full deployment to GKE staging (the maintained GKE profile)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve
 
-# Full deployment to GKE dev (background — survives terminal closure)
-make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+# Full deployment to GKE staging (background — survives terminal closure)
+make deploy-bg TARGET=gcp-gke ENV=staging EXTRA_ARGS="--var project_id=<PROJECT_ID> --auto-approve"
 
 # Direct Cloud Build submit (single service via generic template + dedicated SA)
 gcloud builds submit \
@@ -160,7 +160,7 @@ for automated validation workflow.
 | `gcp-gke` | `prod` | US_FED | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars` |
 | `gcp-gke` | `prod` | EU_ECB | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/eu-prod.tfvars` |
 | `gcp-gke` | `prod` | APAC_MAS | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/apac-prod.tfvars` |
-| `gcp-gke` | `dev` | Any | `CAGE_DEPLOYMENT_REGION=<REGION> ./deploy_all.sh --target gcp-gke --env dev --auto-approve` |
+| `gcp-gke` | `staging` | Any | `CAGE_DEPLOYMENT_REGION=<REGION> ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
 | `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
 
 ---
@@ -197,7 +197,7 @@ For long-running deployments that must survive terminal/tool closure, use the
 
 ```bash
 # Launch full deployment in background
-make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+make deploy-bg TARGET=gcp-gke ENV=staging EXTRA_ARGS="--var project_id=<PROJECT_ID> --auto-approve"
 
 # Launch image builds only (no Terraform)
 make build-bg

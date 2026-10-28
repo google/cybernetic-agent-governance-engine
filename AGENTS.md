@@ -137,10 +137,9 @@ Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) mu
 
 Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEPLOYMENT_RULES.md). Summary:
 
-- **GKE targets — Cloud Build only. No exceptions.** Never use local Docker daemon (`docker build` / `docker-compose`) for GKE images to avoid ARM64 vs. x86 architecture-mismatch crashes:
+- **GKE targets — Cloud Build only. No exceptions.** Never use local Docker daemon (`docker build` / `docker-compose`) for GKE images to avoid ARM64 vs. x86 architecture-mismatch crashes. `staging` is the maintained GKE profile:
   ```bash
-  ./deploy_all.sh --target gcp-gke --env dev
-  ./deploy_all.sh --target gcp-gke --env prod
+  ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
   gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
     --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
   ```
