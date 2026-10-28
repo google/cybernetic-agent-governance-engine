@@ -45,7 +45,7 @@ _CLUSTER_NAME = re.compile(r'^\s*cluster_name\s*=\s*"([^"]*)"', re.MULTILINE)
 
 # Files that are deliberately two postures of one cluster. They share its state,
 # so adding an entry here is a decision about state, not a convenience.
-_SHARED_CLUSTERS = {"cage-dev": {"dev.tfvars", "us-dev.tfvars"}}
+_SHARED_CLUSTERS: dict[str, set[str]] = {}
 
 _TERRAFORM_STUB = """#!/bin/sh
 echo "terraform $*" >> "$STUB_LOG"
@@ -113,7 +113,7 @@ def deploy(tmp_path: pathlib.Path):
     log = tmp_path / "calls.log"
 
     def run(
-        *args: str, legacy_state: bool = False
+        *args: str, legacy_state: bool = False, extra_env: dict[str, str] | None = None
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         log.write_text("")
         env = {
@@ -122,6 +122,7 @@ def deploy(tmp_path: pathlib.Path):
             "STUB_LOG": str(log),
             "LEGACY_STATE": "1" if legacy_state else "0",
             "TF_VAR_project_id": "proj-x",
+            **(extra_env or {}),
         }
         result = subprocess.run(
             [
@@ -151,50 +152,52 @@ def _init_args(calls: list[str]) -> str:
     return inits[0]
 
 
-def test_dev_gets_its_own_state_and_a_bucket(deploy) -> None:
+def _plan_args(calls: list[str]) -> str:
+    plans = [c for c in calls if c.startswith("terraform ") and " plan " in c]
+    assert len(plans) == 1, calls
+    return plans[0]
+
+
+def test_an_environment_gets_its_own_state_and_a_bucket(deploy) -> None:
     _, run = deploy
-    result, calls = run("--env", "dev")
+    result, calls = run("--env", "us-dev", "--var", "project_id=proj-x")
     assert result.returncode == 0, result.stderr
     init = _init_args(calls)
     assert "-reconfigure" in init
     assert "-backend-config=bucket=proj-x-tfstate" in init
-    assert "-backend-config=prefix=cage/gcp-gke/cage-dev" in init
+    assert "-backend-config=prefix=cage/gcp-gke/cage-us-dev" in init
 
 
 def test_environments_never_share_a_prefix(deploy) -> None:
     _, run = deploy
-    prefixes = set()
-    for env in ("dev", "staging", "prod"):
-        result, calls = run("--env", env)
+    expected, prefixes = set(), set()
+    for path in _tfvars_files():
+        expected.add(f"cage/gcp-gke/{_CLUSTER_NAME.findall(path.read_text())[-1]}")
+        result, calls = run("--env", path.stem)
         assert result.returncode == 0, result.stderr
         prefixes.add(re.search(r"prefix=(\S+)", _init_args(calls)).group(1))
-    assert prefixes == {
-        "cage/gcp-gke/cage-dev",
-        "cage/gcp-gke/cage-staging",
-        "cage/gcp-gke/cage-prod",
-    }
+    assert prefixes == expected
+    assert len(prefixes) == len(_tfvars_files())
 
 
-def test_regional_overlay_and_cli_override_select_their_own_state(deploy) -> None:
+def test_layered_var_file_and_cli_override_select_their_own_state(deploy) -> None:
     root, run = deploy
-    result, calls = run(
-        "--env", "prod", "--var-file=infra/targets/gcp-gke/eu-prod.tfvars"
-    )
+    overlay = root / "overlay.tfvars"
+    overlay.write_text('cluster_name = "cage-overlay"\n')
+    result, calls = run("--env", "staging", "--var-file=overlay.tfvars")
     assert result.returncode == 0, result.stderr
-    assert "prefix=cage/gcp-gke/cage-eu-prod" in _init_args(calls)
+    assert "prefix=cage/gcp-gke/cage-overlay" in _init_args(calls)
     # terraform runs with -chdir, so the overlay must reach it as an absolute path
-    overlay = root / "infra" / "targets" / "gcp-gke" / "eu-prod.tfvars"
-    plan = next(c for c in calls if " plan " in c)
-    assert f"-var-file={overlay.resolve()}" in plan
+    assert f"-var-file={overlay.resolve()}" in _plan_args(calls)
 
-    result, calls = run("--env", "dev", "--var", "cluster_name=cage-x")
+    result, calls = run("--env", "us-dev", "--var", "cluster_name=cage-x")
     assert result.returncode == 0, result.stderr
     assert "prefix=cage/gcp-gke/cage-x" in _init_args(calls)
 
 
 def test_legacy_shared_state_blocks_before_init(deploy) -> None:
     _, run = deploy
-    result, calls = run("--env", "dev", legacy_state=True)
+    result, calls = run("--env", "us-dev", legacy_state=True)
     assert result.returncode != 0
     assert "Legacy shared state found" in result.stderr
     assert not [c for c in calls if c.startswith("terraform ")]
@@ -205,4 +208,56 @@ def test_unknown_environment_fails_closed(deploy) -> None:
     result, calls = run("--env", "nonexistent")
     assert result.returncode != 0
     assert "Var file not found" in result.stderr
+    # The refusal names the profiles that do exist.
+    assert "staging" in result.stderr
     assert not [c for c in calls if c.startswith("terraform ")]
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_removed_profiles_fail_closed(deploy, env: str) -> None:
+    """The unused dev and prod profiles are gone; naming them deploys nothing."""
+    assert not (_GKE_DIR / f"{env}.tfvars").exists()
+    _, run = deploy
+    result, calls = run("--env", env)
+    assert result.returncode != 0
+    assert "Var file not found" in result.stderr
+    assert not [c for c in calls if c.startswith("terraform ")]
+
+
+@pytest.mark.parametrize(
+    ("env", "banner", "nist"),
+    [
+        ("staging", "STAGING MODE", "true"),
+        ("us-dev", "DEV MODE", "false"),
+        ("eu-prod", "PROD MODE", "false"),
+        ("apac-prod", "PROD MODE", "false"),
+    ],
+)
+def test_posture_comes_from_the_profile(
+    deploy, env: str, banner: str, nist: str
+) -> None:
+    """Tier and jurisdiction are read from the profile, not from the --env name.
+
+    staging.tfvars declares US_FED, so it gets NIST hardening with no
+    CAGE_DEPLOYMENT_REGION set; eu-prod is a production profile, not "dev".
+    """
+    root, run = deploy
+    result, calls = run("--env", env)
+    assert result.returncode == 0, result.stderr
+    assert banner in result.stdout
+    plan = _plan_args(calls)
+    flag = f"-var=enable_nist_compliance={nist}"
+    assert flag in plan
+    # Injected ahead of the profile, so an explicit setting in it still wins.
+    profile = (root / "infra" / "targets" / "gcp-gke" / f"{env}.tfvars").resolve()
+    assert plan.index(flag) < plan.index(f"-var-file={profile}")
+
+
+def test_region_variable_cannot_override_the_profile(deploy) -> None:
+    _, run = deploy
+    result, calls = run(
+        "--env", "eu-prod", extra_env={"CAGE_DEPLOYMENT_REGION": "US_FED"}
+    )
+    assert result.returncode == 0, result.stderr
+    assert "CAGE_DEPLOYMENT_REGION=US_FED ignored" in result.stdout
+    assert "-var=enable_nist_compliance=false" in _plan_args(calls)

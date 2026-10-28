@@ -12,11 +12,11 @@ Provisions a complete GKE cluster with GCP-optimized settings and security postu
 4. **kubectl** installed
 5. **uv** (Python package manager)
 
-### Deploy to Dev
+### Deploy to Staging
 
 ```bash
 # From repository root
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
+./deploy_all.sh --target gcp-gke --env staging --var project_id=YOUR_PROJECT
 
 # Or manually
 cd infra/targets/gcp-gke
@@ -24,23 +24,25 @@ cd infra/targets/gcp-gke
 # First time: create the state bucket
 # gsutil mb -p YOUR_PROJECT gs://YOUR_PROJECT-tfstate
 
-# One state per cluster: the prefix names the cluster dev.tfvars sets
+# One state per cluster: the prefix names the cluster staging.tfvars sets
 terraform init -reconfigure \
   -backend-config="bucket=YOUR_PROJECT-tfstate" \
-  -backend-config="prefix=cage/gcp-gke/cage-dev"
-terraform apply -var-file=dev.tfvars \
+  -backend-config="prefix=cage/gcp-gke/cage-staging"
+terraform apply -var-file=staging.tfvars \
+  -var="project_id=YOUR_PROJECT" \
   -var="minio_root_password=SecurePassword123"
 ```
 
-### Deploy to Prod
+### Deploy to Regional Production
 
 ```bash
-./deploy_all.sh --target gcp-gke --env prod
+./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=YOUR_PROJECT
 
-# Or manually (review plan first!)
+# Or manually (review plan first!), after terraform init with
+# -backend-config="prefix=cage/gcp-gke/cage-eu-prod"
 cd infra/targets/gcp-gke
-terraform plan -var-file=prod.tfvars
-terraform apply -var-file=prod.tfvars
+terraform plan -var-file=eu-prod.tfvars -var="project_id=YOUR_PROJECT" -out=tfplan
+terraform apply tfplan
 ```
 
 ## What Gets Provisioned
@@ -104,16 +106,16 @@ You can test NIST controls one at a time:
 
 ```bash
 # Test binary authorization
-terraform apply -var-file=dev.tfvars \
+terraform apply -var-file=staging.tfvars \
   -var="enable_binary_authorization=true"
 
 # Test private cluster
-terraform apply -var-file=dev.tfvars \
+terraform apply -var-file=staging.tfvars \
   -var="enable_nist_compliance=true" \
   -var="authorized_networks=[{cidr=\"YOUR_IP/32\",display_name=\"My IP\"}]"
 
 # Test audit logging
-terraform apply -var-file=dev.tfvars \
+terraform apply -var-file=staging.tfvars \
   -var="enable_audit_logging=true"
 ```
 

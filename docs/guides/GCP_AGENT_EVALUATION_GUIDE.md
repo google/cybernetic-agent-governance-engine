@@ -58,7 +58,7 @@ Do not use for local development containers or out of scope infrastructure chang
 
 ## Workflow Steps
 1. Verify repository import boundaries with `uv run python scripts/check_import_boundaries.py`.
-2. Submit Cloud Build deployment via `./deploy_all.sh --target gcp-gke --env prod`.
+2. Submit Cloud Build deployment via `./deploy_all.sh --target gcp-gke --env staging`.
 3. Verify health endpoint and emit signed certification receipt.
 
 ## Error Recovery & Fallback
@@ -143,7 +143,7 @@ cat << 'EOF' > /tmp/cage-gcp-eval-demo/anchors.json
         {
           "step_index": 2,
           "source": "agent",
-          "tool_calls": [{"name": "run_command", "arguments": {"command": "./deploy_all.sh --target gcp-gke --env prod"}}],
+          "tool_calls": [{"name": "run_command", "arguments": {"command": "./deploy_all.sh --target gcp-gke --env staging"}}],
           "observation": "Build succeeded"
         }
       ],
@@ -235,7 +235,7 @@ def run_agent(prompt: str, workspace: RolloutWorkspaceContext) -> dict:
                             {
                                 "function_call": {
                                     "name": "run_command",
-                                    "args": {"command": "./deploy_all.sh --target gcp-gke --env prod"},
+                                    "args": {"command": "./deploy_all.sh --target gcp-gke --env staging"},
                                 }
                             },
                             {"function_response": {"response": {"status": "ok"}}},
@@ -328,7 +328,7 @@ class CompiledLangGraphMock:
                             {
                                 "id": "call_2",
                                 "name": "run_command",
-                                "args": {"command": "./deploy_all.sh --target gcp-gke --env prod"},
+                                "args": {"command": "./deploy_all.sh --target gcp-gke --env staging"},
                             },
                         ],
                         "usage_metadata": {"input_tokens": 180, "output_tokens": 45},

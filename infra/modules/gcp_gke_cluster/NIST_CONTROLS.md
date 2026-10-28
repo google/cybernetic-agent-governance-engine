@@ -154,17 +154,17 @@ Requires: Cloud KMS key created in target with region matching `cage_deployment_
 # Test binary authorization (universal ISO 42001 A.5.2)
 cd infra/targets/gcp-gke
 terraform apply \
-  -var-file=dev.tfvars \
+  -var-file=us-dev.tfvars \
   -var="enable_binary_authorization=true"
 
 # Test audit logging (universal ISO 42001 A.5.3)
 terraform apply \
-  -var-file=dev.tfvars \
+  -var-file=us-dev.tfvars \
   -var="enable_audit_logging=true"
 
 # Test full US_FED NIST compliance
 terraform apply \
-  -var-file=prod.tfvars  # cage_deployment_region=US_FED, all NIST flags enabled
+  -var-file=staging.tfvars -var=enable_nist_compliance=true  # US_FED, full security posture
 
 # Test EU_ECB compliance
 terraform apply \

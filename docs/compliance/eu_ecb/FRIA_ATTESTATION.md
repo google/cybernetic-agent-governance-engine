@@ -162,7 +162,7 @@ The `fria` tier calls the deployment's `NormativeProvider` (`CAGE_NORMATIVE_PROV
 
 1. Obtain external provider API key from external provider team (contact: [TBD])
 2. Store API key in GCP Secret Manager: `gcloud secrets create cage-normative-provider-api-key --data-file=-`
-3. Add to EU_ECB `prod.tfvars`:
+3. Add to `eu-prod.tfvars`:
    ```hcl
    cage_normative_provider         = "provider_01"
    cage_normative_endpoint         = "https://api.example.com/normative/v1"

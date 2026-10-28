@@ -196,8 +196,8 @@ Create or update `.roo/mcp.json` in the repository root:
 {
   "args": [
     "--target", "gcp-gke",
-    "--env", "prod",
-    "--var-file=infra/targets/gcp-gke/prod.tfvars",
+    "--env", "eu-prod",
+    "--var", "project_id=<PROJECT_ID>",
     "--auto-approve"
   ]
 }

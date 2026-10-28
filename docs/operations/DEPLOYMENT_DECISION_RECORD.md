@@ -44,9 +44,8 @@ removed on 2026-03-15.
 ```bash
 # Approved commands — see DEPLOYMENT_RULES.md for the full matrix
 ./deploy_all.sh --target agnostic --env dev
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
-CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/prod.tfvars
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
+./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<PROJECT_ID>
 ```
 
 `deploy_all.sh` performs the following steps in order:
@@ -220,6 +219,10 @@ portability across cloud providers.
 
 ## ADR-003: Region-Gated Compliance Hardening via `CAGE_DEPLOYMENT_REGION`
 
+> **Amended by ADR-005 (2026-10-28):** the jurisdiction is now read from the
+> profile's `cage_deployment_region`, and `prod.tfvars` / `--env prod` no longer
+> exist for gcp-gke. The commands below record the decision as taken.
+
 **Date:** 2026-04-01  
 **Status:** Accepted
 
@@ -313,3 +316,44 @@ testing full security posture at dev-scale cost, blocking POAM-024 (ISO 42001
 - `enable_nist_compliance` no longer implies high availability
 - Prod retains exact same behavior (`enable_high_availability=true` by construction)
 - Dev gains explicit HA control (currently false, can be overridden for testing)
+
+---
+
+## ADR-005: Profiles Define Posture; Remove the Unused `dev` and `prod` GKE Profiles
+
+**Date:** 2026-10-28
+**Status:** Accepted
+
+**Context:** `deploy_all.sh` chose the banner and `enable_nist_compliance` from
+the `--env` *name* (`prod`, `staging`, anything else treated as dev) and the
+jurisdiction from `CAGE_DEPLOYMENT_REGION`, while terraform applied the profile
+file's own `environment` and `cage_deployment_region`. The two could disagree:
+`--env eu-prod` printed "DEV MODE", and `--env staging` without
+`CAGE_DEPLOYMENT_REGION` skipped NIST hardening although `staging.tfvars`
+declares `US_FED`. The regional production examples layered `eu-prod.tfvars`
+and `apac-prod.tfvars` onto `--env prod`. Separately, `dev.tfvars` and
+`prod.tfvars` had no users: staging is the only profile run, `eu-prod` and
+`apac-prod` are standalone-complete, and before per-cluster state (#558) the
+`--env dev` path planned against the staging cluster's state.
+
+**Decision:**
+- A gcp-gke environment is defined entirely by its tfvars file. `deploy_all.sh`
+  reads the tier and jurisdiction from the effective inputs (profile plus
+  `--var-file` / `--var`, last value wins); `--env` only selects the file.
+  `CAGE_DEPLOYMENT_REGION` is a fallback when a profile sets no jurisdiction,
+  and is ignored with a warning when it disagrees.
+- NIST hardening stays gated as in ADR-003: prod or staging tier and
+  `cage_deployment_region == "US_FED"`. It is injected ahead of the profile, so
+  an explicit `enable_nist_compliance` in a profile still wins.
+- `infra/targets/gcp-gke/dev.tfvars` and `prod.tfvars` are removed. `us-dev`
+  gets its own cluster name, `cage-us-dev`; it shared `cage-dev` only as the
+  US_FED posture of the `dev.tfvars` cluster.
+
+**Consequences:**
+- gcp-gke profiles: `staging`, `us-dev`, `eu-dev`, `apac-dev`, `eu-prod`,
+  `apac-prod`. `--env dev` and `--env prod` fail closed for gcp-gke ("Var file
+  not found", with the available profiles listed); the agnostic target keeps
+  its `dev` and `prod` profiles.
+- There is no US_FED production profile; `staging` is the US_FED profile.
+- `tests/test_gke_state_isolation.py` pins the posture derivation and the
+  removal.

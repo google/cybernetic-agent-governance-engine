@@ -23,7 +23,7 @@ variable "project_id" {
 # explicitly set region/zone via a jurisdiction-specific tfvars file.
 # R-3, R-4, R-7: data residency must be enforced at the Terraform layer.
 variable "region" {
-  description = "GCP region — must be set explicitly via a jurisdiction-specific tfvars file (e.g. eu-prod.tfvars, apac-prod.tfvars, prod.tfvars). No default: omitting this causes a Terraform plan error rather than silently deploying to us-central1."
+  description = "GCP region — must be set explicitly via a jurisdiction-specific tfvars file (e.g. staging.tfvars, eu-prod.tfvars, apac-prod.tfvars). No default: omitting this causes a Terraform plan error rather than silently deploying to us-central1."
   type        = string
 }
 
@@ -1043,7 +1043,7 @@ variable "service_cidr" { default = "10.104.0.0/20" }
 # mismatches at plan time rather than at runtime.
 # R-7: deployment scripts must propagate CAGE_DEPLOYMENT_REGION explicitly.
 variable "cage_deployment_region" {
-  description = "CAGE deployment region compliance profile. Must be one of: US_FED, EU_ECB, APAC_MAS. No default — must be set explicitly in a jurisdiction-specific tfvars file (prod.tfvars, eu-prod.tfvars, apac-prod.tfvars)."
+  description = "CAGE deployment region compliance profile. Must be one of: US_FED, EU_ECB, APAC_MAS. No default — must be set explicitly in a jurisdiction-specific tfvars file (e.g. staging.tfvars, eu-prod.tfvars, apac-prod.tfvars)."
   type        = string
 
   validation {

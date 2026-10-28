@@ -84,8 +84,8 @@ For managing multiple environments (dev/staging/prod):
 cd infra/targets/gcp-gke
 
 # Use pre-configured environment files
-terraform plan -var-file="dev.tfvars"     # Development
-terraform plan -var-file="prod.tfvars"    # Production
+terraform plan -var-file="us-dev.tfvars"   # Development (US_FED)
+terraform plan -var-file="eu-prod.tfvars"  # Production (EU_ECB)
 
 # Or create custom ones
 terraform plan -var-file="my-custom.tfvars"
@@ -146,18 +146,17 @@ langfuse_secret_key = "sk-lf-xxx"
 #### -var-file Method
 
 ```bash
-# dev.tfvars
+# a dev profile (e.g. us-dev.tfvars)
 environment = "dev"
 enable_nist_compliance = false
 primary_node_pool_min_count = 1
 
-# prod.tfvars
+# a prod profile (e.g. eu-prod.tfvars)
 environment = "prod"
-enable_nist_compliance = true
 primary_node_pool_min_count = 3
 
 # Usage:
-terraform apply -var-file="prod.tfvars"
+terraform apply -var-file="eu-prod.tfvars"
 ```
 
 **When to use:**
@@ -418,14 +417,14 @@ terraform apply
 # Directory structure:
 # infra/targets/gcp-gke/
 #   ├── terraform.auto.tfvars      # Secrets (gitignored)
-#   ├── dev.tfvars                 # Dev config (version controlled)
-#   └── prod.tfvars                # Prod config (version controlled)
+#   ├── staging.tfvars             # US_FED staging profile (version controlled)
+#   └── eu-prod.tfvars             # EU_ECB production profile (version controlled)
 
-# Deploy to dev
-terraform apply -var-file="dev.tfvars"
+# Deploy staging
+terraform apply -var-file="staging.tfvars"
 
-# Deploy to prod
-terraform apply -var-file="prod.tfvars"
+# Deploy EU production
+terraform apply -var-file="eu-prod.tfvars"
 ```
 
 ### CI/CD Pipeline
@@ -456,7 +455,7 @@ jobs:
         run: |
           cd infra/targets/gcp-gke
           terraform init
-          terraform apply -auto-approve -var-file="prod.tfvars"
+          terraform apply -auto-approve -var-file="eu-prod.tfvars"
 ```
 
 ---

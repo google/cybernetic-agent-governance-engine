@@ -28,8 +28,9 @@ infra/
     └── gcp-gke/                    # Google Cloud GKE
         ├── main.tf                # GKE deployment
         ├── variables.tf           # Configurable parameters
-        ├── dev.tfvars             # Development configuration
-        ├── prod.tfvars            # Production configuration
+        ├── staging.tfvars         # US_FED staging profile
+        ├── us-dev.tfvars, eu-dev.tfvars, apac-dev.tfvars  # Regional dev profiles
+        ├── eu-prod.tfvars, apac-prod.tfvars  # Regional production profiles
         └── terraform.auto.tfvars.example  # Template for local overrides
 ```
 
@@ -50,8 +51,8 @@ The simplest method - automatically loads `.env` and runs Terraform:
 # Deploy to local k3s/kind cluster
 ./deploy_all.sh --target agnostic --env dev
 
-# Deploy to GCP GKE
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
+# Deploy to GCP GKE (US_FED staging profile)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 ```
 
 **What it does:**
@@ -69,7 +70,7 @@ If you prefer to run Terraform directly:
 source ./infra/load_env.sh
 
 # 2. Navigate to target
-cd infra/targets/gcp-gke  # or infra/targets/agnostic
+cd infra/targets/agnostic  # gcp-gke profiles and state backend: targets/gcp-gke/README.md
 
 # 3. Initialize Terraform
 terraform init
@@ -122,7 +123,7 @@ Provision and deploy to Google Kubernetes Engine:
 **Configuration:**
 ```bash
 cd infra/targets/gcp-gke
-terraform apply -var-file="dev.tfvars"
+terraform apply -var-file="staging.tfvars"
 ```
 
 See [`targets/gcp-gke/README.md`](targets/gcp-gke/README.md) for details.
@@ -311,10 +312,10 @@ terraform refresh -var-file="dev.tfvars"
 ```bash
 # Destroy specific target
 cd infra/targets/gcp-gke
-terraform destroy -var-file="dev.tfvars"
+terraform destroy -var-file="staging.tfvars"
 
 # Preview destruction
-terraform plan -destroy -var-file="dev.tfvars"
+terraform plan -destroy -var-file="staging.tfvars"
 ```
 
 **⚠️ Warning:** This will delete:

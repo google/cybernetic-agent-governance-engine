@@ -57,11 +57,7 @@ region = "us-central1"
 zone   = "us-central1-a"
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
-# Same cluster as dev.tfvars ("cage-dev"), in its US_FED posture. deploy_all.sh
-# keys remote state on cluster_name, so the two files share one state. Renaming
-# it here would start a new, empty state for a new cluster; cage-dev would be
-# left untouched.
-cluster_name = "cage-dev"
+cluster_name = "cage-us-dev"
 environment  = "dev"
 namespace    = "governance-stack"
 
@@ -107,9 +103,7 @@ authorized_networks = [
   }
 ]
 
-# ─── Node Pool Configuration (NO hardware changes — matches existing cluster) ──
-# These values are intentionally identical to dev.tfvars to prevent GKE node
-# pool replacement on existing infrastructure.  Change only in a new cluster.
+# ─── Node Pool Configuration ──────────────────────────────────────────────────
 primary_node_pool_machine_type  = "e2-standard-4"
 primary_node_pool_min_count     = 1
 primary_node_pool_max_count     = 5

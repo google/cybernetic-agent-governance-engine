@@ -35,7 +35,7 @@ CAGE uses asymmetric public-key cryptography for evidence non-repudiation. When 
 2. **Publish New Public Key to JWKS:**
    The gateway automatically exposes all active public keys under its `/v1/jwks` endpoint. The new key version is added to the JWKS set while the previous version remains listed for verification of in-flight evidence.
 3. **Promote New Key Version for Signing:**
-   Update the `KMS_GOVERNANCE_KEY` environment variable in the Terraform variables (`dev.tfvars` / `prod.tfvars`) and trigger deployment via Cloud Build:
+   Update the `KMS_GOVERNANCE_KEY` environment variable in the Terraform variables (the deployment's profile, e.g. `staging.tfvars`) and trigger deployment via Cloud Build:
    ```bash
    # Update terraform variable:
    # kms_governance_key = "projects/PROJECT_ID/locations/us-central1/keyRings/governance-keyring/cryptoKeys/governance-signer/cryptoKeyVersions/2"

@@ -286,17 +286,17 @@ Test one control at a time before enabling full compliance:
 
 ```bash
 # Step 1: Binary authorization (ISO 42001 A.5.2)
-terraform apply -var-file=dev.tfvars \
+terraform apply -var-file=us-dev.tfvars \
   -var="enable_binary_authorization=true"
 
 # Step 2: Add audit logging (ISO 42001 A.5.3)
-terraform apply -var-file=dev.tfvars \
+terraform apply -var-file=us-dev.tfvars \
   -var="enable_binary_authorization=true" \
   -var="enable_audit_logging=true"
 
 # Step 3: Full US_FED NIST compliance
-terraform apply -var-file=prod.tfvars
-# (prod.tfvars sets cage_deployment_region=US_FED + all NIST flags)
+terraform apply -var-file=staging.tfvars -var=enable_nist_compliance=true
+# (staging.tfvars sets cage_deployment_region=US_FED and the full security flags)
 ```
 
 ---

@@ -25,8 +25,7 @@
 # Universal baseline: ISO 42001 (always active for all regions)
 #
 # Activate:
-#   CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
-#     --var-file=infra/targets/gcp-gke/apac-prod.tfvars
+#   ./deploy_all.sh --target gcp-gke --env apac-prod --var project_id=<PROJECT_ID>
 #
 # Data residency: asia-southeast1 (Singapore) — MAS TRM Guidelines §4.2.
 # The Terraform precondition on the langfuse_events bucket (DEP-10) validates

@@ -1109,7 +1109,9 @@ resource "terraform_data" "poam_019_compliance_key_guard" {
         An empty or identical compliance key silently collapses the dual-project
         architecture, defeating evidentiary independence for NIST SP 800-53 AU-9.
         Remediation: Set langfuse_compliance_public_key and langfuse_compliance_secret_key
-        to valid cage-compliance Langfuse project credentials in prod.tfvars.
+        to valid cage-compliance Langfuse project credentials through TF_VAR_* or
+        terraform.auto.tfvars (deploy_all.sh maps LANGFUSE_COMPLIANCE_* from .env),
+        never a committed tfvars file.
         See docs/POAM_US_FED.md#POAM-019.
       EOT
     }

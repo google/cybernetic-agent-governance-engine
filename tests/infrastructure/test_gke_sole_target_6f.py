@@ -35,6 +35,16 @@ GKE_CLUSTER_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gcp_gke_cluster"
 GATEWAY_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gateway"
 VLLM_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "vllm_inference"
 GKE_TARGET_DIR = REPO_ROOT / "infra" / "targets" / "gcp-gke"
+# Every gcp-gke profile: (file, tier, regional cluster). Kept complete by
+# test_every_gke_profile_has_posture_settings.
+GKE_PROFILE_POSTURES = [
+    ("us-dev.tfvars", "dev", False),
+    ("eu-dev.tfvars", "dev", False),
+    ("apac-dev.tfvars", "dev", False),
+    ("staging.tfvars", "staging", False),
+    ("eu-prod.tfvars", "prod", True),
+    ("apac-prod.tfvars", "prod", True),
+]
 K8S_DIR = REPO_ROOT / "deployment" / "k8s"
 CILIUM_DIR = K8S_DIR / "cilium"
 OSCAL_SSP_PATH = REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
@@ -139,18 +149,16 @@ class TestPostureMatrixAndTopology:
             in vars_tf
         )
 
+    def test_every_gke_profile_has_posture_settings(self) -> None:
+        on_disk = {
+            p.name
+            for p in GKE_TARGET_DIR.glob("*.tfvars")
+            if not p.name.endswith(".auto.tfvars")
+        }
+        assert on_disk == {name for name, _, _ in GKE_PROFILE_POSTURES}
+
     @pytest.mark.parametrize(
-        "tfvars_name,expected_env,expected_regional",
-        [
-            ("dev.tfvars", "dev", False),
-            ("us-dev.tfvars", "dev", False),
-            ("eu-dev.tfvars", "dev", False),
-            ("apac-dev.tfvars", "dev", False),
-            ("staging.tfvars", "staging", False),
-            ("prod.tfvars", "prod", True),
-            ("eu-prod.tfvars", "prod", True),
-            ("apac-prod.tfvars", "prod", True),
-        ],
+        "tfvars_name,expected_env,expected_regional", GKE_PROFILE_POSTURES
     )
     def test_tfvars_posture_settings(
         self, tfvars_name: str, expected_env: str, expected_regional: bool
@@ -272,11 +280,18 @@ class TestNodePoolsAndAntiSpotAffinity:
         assert "enable_general_spot_node_pool" in vars_tf
 
         staging_tfvars = (GKE_TARGET_DIR / "staging.tfvars").read_text(encoding="utf-8")
-        prod_tfvars = (GKE_TARGET_DIR / "prod.tfvars").read_text(encoding="utf-8")
-        dev_tfvars = (GKE_TARGET_DIR / "dev.tfvars").read_text(encoding="utf-8")
         assert re.search(r"enable_general_spot_node_pool\s*=\s*true", staging_tfvars)
-        assert re.search(r"enable_general_spot_node_pool\s*=\s*false", prod_tfvars)
-        assert re.search(r"enable_general_spot_node_pool\s*=\s*false", dev_tfvars)
+        for name, tier, _ in GKE_PROFILE_POSTURES:
+            if name == "staging.tfvars":
+                continue
+            text = (GKE_TARGET_DIR / name).read_text(encoding="utf-8")
+            assert not re.search(r"enable_general_spot_node_pool\s*=\s*true", text), (
+                name
+            )
+            if tier == "prod":
+                assert re.search(r"enable_general_spot_node_pool\s*=\s*false", text), (
+                    name
+                )
 
     def test_governance_workloads_have_anti_spot_node_affinity(self) -> None:
         # 1. Gateway Deployment
@@ -1013,16 +1028,7 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
         assert 'variable "served_model_fast"' in gke_vars
         assert 'variable "served_model_reasoning"' in gke_vars
 
-        for tfvars_name in (
-            "dev.tfvars",
-            "staging.tfvars",
-            "prod.tfvars",
-            "us-dev.tfvars",
-            "eu-dev.tfvars",
-            "eu-prod.tfvars",
-            "apac-dev.tfvars",
-            "apac-prod.tfvars",
-        ):
+        for tfvars_name, _, _ in GKE_PROFILE_POSTURES:
             tfvars_text = (GKE_TARGET_DIR / tfvars_name).read_text(encoding="utf-8")
             assert 'model_fast             = "gs://' in tfvars_text, (
                 f"{tfvars_name} must set model_fast to a gs:// path in the model bucket"

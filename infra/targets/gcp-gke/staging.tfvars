@@ -61,7 +61,7 @@ cage_deployment_region = "US_FED"
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
 environment  = "staging"
-cluster_name = "cage-staging" # Distinct from cage-dev / cage-prod
+cluster_name = "cage-staging" # Distinct from every other profile's cluster
 namespace    = "governance-stack"
 
 # Non-overlapping CIDR ranges — avoid collision with dev/prod clusters

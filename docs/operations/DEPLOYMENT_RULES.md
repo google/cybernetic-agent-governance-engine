@@ -98,7 +98,7 @@ Environments:
 
 Options:
   --auto-approve          Skip Terraform confirmation prompts
-  --var-file=PATH         Additional .tfvars file (e.g. prod.tfvars)
+  --var-file=PATH         Additional .tfvars file, layered after the profile
   --skip-build            Skip container image builds (Cloud Build step)
   --kubeconfig=PATH       Kubeconfig path (agnostic target only)
   --var KEY=VALUE         Override any Terraform variable
@@ -143,24 +143,28 @@ for automated validation workflow.
 
 ## Deployment Target Matrix
 
-> **Jurisdiction prerequisite:** Set `CAGE_DEPLOYMENT_REGION` in `.env` (or as
-> an environment variable) before running any `prod` deployment. The script
-> propagates it to `TF_VAR_cage_deployment_region`. The `--env prod` flag
-> activates ISO 42001 baseline hardening; NIST SP 800-53 hardening
-> (`enable_nist_compliance`) is additionally activated only for `US_FED`.
+> **Jurisdiction comes from the profile.** Each gcp-gke profile
+> (`infra/targets/gcp-gke/<env>.tfvars`) sets its tier (`environment`) and its
+> jurisdiction (`cage_deployment_region`), and `deploy_all.sh` reads both from
+> it. `prod` and `staging` activate ISO 42001 baseline hardening; NIST SP 800-53
+> hardening (`enable_nist_compliance`) is additionally activated only for
+> `US_FED`. A `CAGE_DEPLOYMENT_REGION` in `.env` that disagrees with the profile
+> is ignored with a warning.
 
-| `CAGE_DEPLOYMENT_REGION` | `--var-file` | GCP region |
-|--------------------------|-------------|------------|
-| `US_FED` | `infra/targets/gcp-gke/prod.tfvars` | `us-central1` |
-| `EU_ECB` | `infra/targets/gcp-gke/eu-prod.tfvars` | `europe-west1` |
-| `APAC_MAS` | `infra/targets/gcp-gke/apac-prod.tfvars` | `asia-southeast1` |
+| Profile (`--env`) | Tier | `cage_deployment_region` | GCP region |
+|-------------------|------|--------------------------|------------|
+| `staging` | staging | `US_FED` | `us-central1` |
+| `us-dev` | dev | `US_FED` | `us-central1` |
+| `eu-dev` | dev | `EU_ECB` | `europe-west1` |
+| `apac-dev` | dev | `APAC_MAS` | `asia-southeast1` |
+| `eu-prod` | prod | `EU_ECB` | `europe-west1` |
+| `apac-prod` | prod | `APAC_MAS` | `asia-southeast1` |
 
 | Target | Env | Jurisdiction | Command |
 |--------|-----|-------------|---------|
-| `gcp-gke` | `prod` | US_FED | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars` |
-| `gcp-gke` | `prod` | EU_ECB | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/eu-prod.tfvars` |
-| `gcp-gke` | `prod` | APAC_MAS | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/apac-prod.tfvars` |
-| `gcp-gke` | `staging` | Any | `CAGE_DEPLOYMENT_REGION=<REGION> ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
+| `gcp-gke` | `staging` | US_FED | `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>` |
+| `gcp-gke` | `eu-prod` | EU_ECB | `./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<PROJECT_ID>` |
+| `gcp-gke` | `apac-prod` | APAC_MAS | `./deploy_all.sh --target gcp-gke --env apac-prod --var project_id=<PROJECT_ID>` |
 | `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
 
 ---

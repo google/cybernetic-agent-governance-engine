@@ -299,8 +299,8 @@ recovery:
 # to the 35-minute execute_command cap in the Roo/VS Code environment.
 #
 # Usage:
-#   make deploy-bg TARGET=gcp-gke ENV=dev [EXTRA_ARGS="--auto-approve"]
-#   make deploy-bg TARGET=gcp-gke ENV=prod EXTRA_ARGS="--auto-approve --var-file=infra/targets/gcp-gke/prod.tfvars"
+#   make deploy-bg TARGET=gcp-gke ENV=staging EXTRA_ARGS="--var project_id=<PROJECT_ID> --auto-approve"
+#   make deploy-bg TARGET=gcp-gke ENV=eu-prod EXTRA_ARGS="--var project_id=<PROJECT_ID> --auto-approve"
 #   make build-bg
 #   make deploy-status
 #   make deploy-logs
@@ -313,7 +313,7 @@ EXTRA_ARGS ?=
 
 ## Launch deploy_all.sh in the background (detached, survives tool timeout).
 ## Set TARGET, ENV, and EXTRA_ARGS as needed.
-## Example: make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+## Example: make deploy-bg TARGET=gcp-gke ENV=staging EXTRA_ARGS="--var project_id=<PROJECT_ID> --auto-approve"
 deploy-bg: scripts/deploy_bg.sh
 	@chmod +x scripts/deploy_bg.sh
 	@bash scripts/deploy_bg.sh --target $(TARGET) --env $(ENV) $(EXTRA_ARGS)

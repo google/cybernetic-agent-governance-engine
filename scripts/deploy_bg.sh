@@ -166,7 +166,7 @@ launch_background() {
     if [[ "$has_target" == "false" ]]; then
       error "Missing required --target flag."
       echo ""
-      echo "Usage: $0 --target <agnostic|gcp-gke> --env <dev|prod> [OPTIONS]"
+      echo "Usage: $0 --target <agnostic|gcp-gke> --env <profile> [OPTIONS]"
       echo "       $0 --build-only"
       echo "       $0 --status"
       echo "       $0 --logs"
@@ -254,7 +254,7 @@ main() {
   if [[ $# -eq 0 ]]; then
     error "No arguments provided."
     echo ""
-    echo "Usage: $0 --target <agnostic|gcp-gke> --env <dev|prod> [OPTIONS]"
+    echo "Usage: $0 --target <agnostic|gcp-gke> --env <profile> [OPTIONS]"
     echo "       $0 --build-only"
     echo "       $0 --status"
     echo "       $0 --logs"

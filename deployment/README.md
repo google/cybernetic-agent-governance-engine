@@ -59,20 +59,14 @@ CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 # Cloud-agnostic target (k3s, EKS, AKS, any Kubernetes ≥ 1.24)
 ./deploy_all.sh --target agnostic --env dev
 
-# GCP GKE — dev
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
-
-# GCP GKE — US_FED production (ISO 42001 + NIST SP 800-53)
-CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/prod.tfvars
+# GCP GKE — US_FED staging (full security posture at dev-scale cost)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 
 # GCP GKE — EU_ECB production (ISO 42001 + EU AI Act / GDPR / DORA)
-CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/eu-prod.tfvars
+./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<PROJECT_ID>
 
 # GCP GKE — APAC_MAS production (ISO 42001 + MAS FEAT / Notice 655 / TRM)
-CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/apac-prod.tfvars
+./deploy_all.sh --target gcp-gke --env apac-prod --var project_id=<PROJECT_ID>
 ```
 
 **Options:**
@@ -80,7 +74,7 @@ CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
 | Flag | Description |
 |------|-------------|
 | `--target agnostic\|gcp-gke` | Infrastructure target (required) |
-| `--env dev\|prod` | Deployment tier (default: `dev`) |
+| `--env <profile>` | Profile `infra/targets/<target>/<profile>.tfvars`, which sets tier and jurisdiction (agnostic: `dev`, `prod`; gcp-gke: `staging`, `us-dev`, `eu-dev`, `apac-dev`, `eu-prod`, `apac-prod`). Default: `dev` |
 | `--auto-approve` | Skip Terraform confirmation prompt |
 | `--var-file=PATH` | Additional `.tfvars` file |
 | `--var KEY=VALUE` | Override any Terraform variable |
@@ -98,7 +92,7 @@ The script:
 
 ```bash
 # Launch deploy_all.sh detached — survives terminal/tool closure
-make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+make deploy-bg TARGET=gcp-gke ENV=staging EXTRA_ARGS="--var project_id=<PROJECT_ID> --auto-approve"
 
 # Build images only (background)
 make build-bg
@@ -399,14 +393,13 @@ kubectl apply -f deployment/k8s/nemo-rails-configmap.yaml
 Active IaC is in `infra/`. The old `deployment/terraform/` directory was removed 2026-03-15.
 
 ```bash
-# Minimal manual apply (GCP target)
+# Minimal manual apply (GCP target): one state per cluster, named by the profile
 cd infra/targets/gcp-gke
-terraform init
-terraform apply -var-file=dev.tfvars
-
-# Regional production
-cd infra/targets/gcp-gke
-CAGE_DEPLOYMENT_REGION=US_FED terraform apply -var-file=prod.tfvars
+terraform init -reconfigure \
+  -backend-config="bucket=<PROJECT_ID>-tfstate" \
+  -backend-config="prefix=cage/gcp-gke/cage-staging"
+terraform plan -var-file=staging.tfvars -var=project_id=<PROJECT_ID> -out=tfplan
+terraform apply tfplan
 ```
 
 ---

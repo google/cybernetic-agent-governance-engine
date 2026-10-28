@@ -25,8 +25,7 @@
 # Universal baseline: ISO 42001 (always active for all regions)
 #
 # Activate:
-#   CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
-#     --var-file=infra/targets/gcp-gke/eu-prod.tfvars
+#   ./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<PROJECT_ID>
 #
 # Data residency: europe-west1 (Belgium, EEA) — GDPR Art. 44 compliance.
 # The Terraform precondition on the langfuse_events bucket (DEP-10) validates

@@ -169,7 +169,7 @@ VLLM_GATEWAY_URL=http://<GATEWAY_IP>/v1
 Then, redeploy the application stack using the deployment script. `deploy_all.sh` reads `VLLM_GATEWAY_URL` from `.env` and passes it to Terraform (`vllm_gateway_url`), which injects it into the gateway and advisor containers.
 
 ```bash
-./deploy_all.sh --target gcp-gke --env dev
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 ```
 
 Once this variable is set, `GatewayClient` automatically switches to **Gateway Mode**, routing all LLM requests through this single endpoint.

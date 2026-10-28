@@ -141,20 +141,14 @@ gcloud services enable \
 ### 4. Deploy
 
 ```bash
-# Dev (fast iteration — reduced security posture)
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
-
-# US_FED production (ISO 42001 + NIST SP 800-53)
-CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/prod.tfvars
+# US_FED staging (full security posture at dev-scale cost)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<YOUR_GCP_PROJECT_ID>
 
 # EU_ECB production (ISO 42001 + EU AI Act / GDPR / DORA)
-CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/eu-prod.tfvars
+./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<YOUR_GCP_PROJECT_ID>
 
 # APAC_MAS production (ISO 42001 + MAS FEAT / Notice 655 / TRM)
-CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
-  --var-file=infra/targets/gcp-gke/apac-prod.tfvars
+./deploy_all.sh --target gcp-gke --env apac-prod --var project_id=<YOUR_GCP_PROJECT_ID>
 ```
 
 **What this provisions:**
@@ -197,7 +191,7 @@ curl http://localhost:18080/health
 
 ```bash
 cd infra/targets/gcp-gke
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=staging.tfvars -var=project_id=<YOUR_GCP_PROJECT_ID>
 ```
 
 ---
@@ -208,7 +202,7 @@ terraform destroy -var-file=dev.tfvars -auto-approve
 
 ```bash
 # Launch fully detached
-make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+make deploy-bg TARGET=gcp-gke ENV=staging EXTRA_ARGS="--var project_id=<YOUR_GCP_PROJECT_ID> --auto-approve"
 
 # Monitor
 make deploy-status     # summary + last 20 lines
@@ -234,16 +228,17 @@ terraform init -backend-config="config_path=~/.kube/config"
 cd infra/targets/gcp-gke
 terraform init -reconfigure \
   -backend-config="bucket=${GOOGLE_CLOUD_PROJECT}-tfstate" \
-  -backend-config="prefix=cage/gcp-gke/cage-dev"   # cluster_name in dev.tfvars
+  -backend-config="prefix=cage/gcp-gke/cage-staging"   # cluster_name in staging.tfvars
 ```
 
 ### Plan
 
 ```bash
-terraform plan -var-file=dev.tfvars
+# GCP target; the agnostic target uses dev.tfvars or prod.tfvars
+terraform plan -var-file=staging.tfvars -var=project_id=<YOUR_GCP_PROJECT_ID>
 
 # Override specific variables
-terraform plan -var-file=dev.tfvars \
+terraform plan -var-file=staging.tfvars -var=project_id=<YOUR_GCP_PROJECT_ID> \
   -var="enable_gpu_node_pool=false"
 ```
 
@@ -251,16 +246,17 @@ terraform plan -var-file=dev.tfvars \
 
 ```bash
 # Interactive (prompts for confirmation)
-terraform apply -var-file=dev.tfvars
+terraform apply -var-file=staging.tfvars -var=project_id=<YOUR_GCP_PROJECT_ID>
 
-# Non-interactive
-terraform apply -var-file=dev.tfvars -auto-approve
+# Non-interactive: apply exactly the plan you reviewed
+terraform plan -var-file=staging.tfvars -var=project_id=<YOUR_GCP_PROJECT_ID> -out=tfplan
+terraform apply tfplan
 ```
 
 ### Destroy
 
 ```bash
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=staging.tfvars -var=project_id=<YOUR_GCP_PROJECT_ID>
 ```
 
 ---
@@ -308,14 +304,14 @@ terraform destroy -var-file=dev.tfvars -auto-approve
 
 ```bash
 cd infra/targets/gcp-gke
-terraform apply -var-file=dev.tfvars \
+terraform apply -var-file=staging.tfvars \
   -var="enable_binary_authorization=true"
 ```
 
 ### Private cluster with authorized networks (GCP only, US_FED)
 
 ```bash
-terraform apply -var-file=prod.tfvars \
+terraform apply -var-file=staging.tfvars \
   -var="enable_nist_compliance=true" \
   -var='authorized_networks=[{"cidr":"<YOUR_IP>/32","display_name":"My IP"}]'
 ```
@@ -324,8 +320,8 @@ terraform apply -var-file=prod.tfvars \
 
 ```bash
 # Already enforced at namespace level by pod-security-admission.yaml
-# For the Terraform namespace module:
-terraform apply -var-file=dev.tfvars \
+# For the Terraform namespace module (gcp-gke shown; agnostic: dev.tfvars):
+terraform apply -var-file=staging.tfvars \
   -var="enable_pod_security_standards=true" \
   -var="pod_security_level=restricted"
 ```

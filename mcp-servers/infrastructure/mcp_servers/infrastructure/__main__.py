@@ -89,8 +89,21 @@ async def list_tools() -> list[Tool]:
                     },
                     "environment": {
                         "type": "string",
-                        "description": "Deployment environment",
-                        "enum": ["dev", "prod"],
+                        "description": (
+                            "Deployment environment: the profile infra/targets/<target>/"
+                            "<profile>.tfvars (agnostic: dev, prod; gcp-gke: "
+                            "staging, us-dev, eu-dev, apac-dev, eu-prod, apac-prod)"
+                        ),
+                        "enum": [
+                            "dev",
+                            "prod",
+                            "staging",
+                            "us-dev",
+                            "eu-dev",
+                            "apac-dev",
+                            "eu-prod",
+                            "apac-prod",
+                        ],
                         "default": "dev",
                     },
                     "dry_run": {
@@ -115,8 +128,21 @@ async def list_tools() -> list[Tool]:
                     },
                     "environment": {
                         "type": "string",
-                        "description": "Environment to check",
-                        "enum": ["dev", "prod"],
+                        "description": (
+                            "Environment to check: the profile infra/targets/<target>/"
+                            "<profile>.tfvars (agnostic: dev, prod; gcp-gke: "
+                            "staging, us-dev, eu-dev, apac-dev, eu-prod, apac-prod)"
+                        ),
+                        "enum": [
+                            "dev",
+                            "prod",
+                            "staging",
+                            "us-dev",
+                            "eu-dev",
+                            "apac-dev",
+                            "eu-prod",
+                            "apac-prod",
+                        ],
                         "default": "dev",
                     },
                 },

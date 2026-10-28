@@ -45,9 +45,11 @@ ${BOLD}Targets${RESET}
   gcp-gke      Provision and deploy to Google Cloud GKE cluster
 
 ${BOLD}Environments${RESET}
-  dev          Development (fast iteration, minimal security)
-  prod         Production (ISO 42001 baseline hardening + jurisdictional compliance
-               posture controlled by CAGE_DEPLOYMENT_REGION and --var-file)
+  --env names a profile: infra/targets/TARGET/ENV.tfvars. The profile sets the
+  tier (environment = dev | staging | prod) and the jurisdiction
+  (cage_deployment_region); the banner and NIST hardening follow from them.
+  agnostic     dev, prod
+  gcp-gke      staging, us-dev, eu-dev, apac-dev, eu-prod, apac-prod
 
 ${BOLD}Options${RESET}
   --auto-approve          Skip Terraform confirmation prompts
@@ -63,23 +65,17 @@ ${BOLD}Examples${RESET}
   # Deploy to local k3s cluster
   ./deploy_all.sh --target agnostic --env dev
 
-  # Deploy to GCP GKE (dev mode - fast iteration)
-  ./deploy_all.sh --target gcp-gke --env dev --auto-approve
-
-  # Deploy to GCP GKE (US_FED prod — ISO 42001 + NIST SP 800-53 hardening)
-  CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
-    --var-file=infra/targets/gcp-gke/prod.tfvars
+  # Deploy to GCP GKE (US_FED staging — full security posture, dev-scale cost)
+  ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 
   # Deploy to GCP GKE (EU_ECB prod — ISO 42001 + EU AI Act / GDPR / DORA)
-  CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
-    --var-file=infra/targets/gcp-gke/eu-prod.tfvars
+  ./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<PROJECT_ID>
 
   # Deploy to GCP GKE (APAC_MAS prod — ISO 42001 + MAS FEAT / Notice 655 / TRM)
-  CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
-    --var-file=infra/targets/gcp-gke/apac-prod.tfvars
+  ./deploy_all.sh --target gcp-gke --env apac-prod --var project_id=<PROJECT_ID>
 
   # Override specific variables
-  ./deploy_all.sh --target gcp-gke --env dev \
+  ./deploy_all.sh --target gcp-gke --env us-dev \
     --var project_id=my-test-project \
     --var gpu_type=nvidia-t4
 
@@ -165,7 +161,7 @@ load_env() {
     # DEP-22: Propagate GOOGLE_CLOUD_PROJECT → TF_VAR_project_id.
     # variables.tf declares project_id with no default (DEP-08 data-residency
     # guard). Without this mapping the chain relies solely on terraform.auto.tfvars
-    # or dev.tfvars, breaking programmatic use (e.g. CI without a tfvars file).
+    # or the profile's tfvars, breaking programmatic use (e.g. CI without a tfvars file).
     _project=$(_read_env_var GOOGLE_CLOUD_PROJECT)
     # DEP-22: Propagate GOOGLE_CLOUD_LOCATION → TF_VAR_region.
     # Same rationale as project_id — region has no default in variables.tf.
@@ -301,58 +297,6 @@ deploy_terraform_target() {
   # Load environment variables
   load_env
   
-  # DEP-01: Gate enable_nist_compliance on CAGE_DEPLOYMENT_REGION, not just --env prod.
-  # A prod deployment to EU_ECB or APAC_MAS must NOT activate NIST-specific
-  # infrastructure hardening (SC-7, AC-3, deletion protection, Redis replication).
-  # ISO 42001 baseline hardening is always active in prod regardless of region.
-  # R-2: NIST SP 800-53 logic MUST be gated on CAGE_DEPLOYMENT_REGION == "US_FED".
-  #
-  # POAM-024 (closed 2026-08-29): Staging tier provisioned — full security posture
-  # at dev-scale cost. Staging behaves like prod for compliance flag injection but
-  # uses enable_high_availability=false and enable_deletion_protection=false.
-  _cage_region="${CAGE_DEPLOYMENT_REGION:-${TF_VAR_cage_deployment_region:-}}"
-
-  # Set environment-specific banners and compliance flags
-  if [[ "$env" == "prod" ]]; then
-    echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${GREEN}║  🔒  PROD MODE: ISO 42001 baseline hardening enabled.            ║${RESET}"
-    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
-    echo ""
-    # DEP-01: Only activate NIST-specific hardening for US_FED deployments.
-    if [[ "$_cage_region" == "US_FED" ]]; then
-      info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
-      tf_args+=("-var=enable_nist_compliance=true")
-    else
-      info "CAGE_DEPLOYMENT_REGION=${_cage_region:-unset} — NIST hardening suppressed (not US_FED)"
-      tf_args+=("-var=enable_nist_compliance=false")
-    fi
-  elif [[ "$env" == "staging" ]]; then
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║  🧪  STAGING MODE: Full security posture at dev-scale cost.      ║${RESET}"
-    echo -e "${CYAN}║      Ephemeral validation tier — provision, test, destroy.       ║${RESET}"
-    echo -e "${CYAN}║      POAM-024: CA-2 pre-production validation satisfied.         ║${RESET}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
-    echo ""
-    # Staging mirrors prod compliance logic but at 1-replica scale
-    if [[ "$_cage_region" == "US_FED" ]]; then
-      info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
-      tf_args+=("-var=enable_nist_compliance=true")
-    else
-      info "CAGE_DEPLOYMENT_REGION=${_cage_region:-unset} — NIST hardening suppressed (not US_FED)"
-      tf_args+=("-var=enable_nist_compliance=false")
-    fi
-  else
-    echo ""
-    echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${YELLOW}║  ⚠️   DEV MODE: Reduced security posture.                        ║${RESET}"
-    echo -e "${YELLOW}║      DO NOT use in production.                                   ║${RESET}"
-    echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════════╝${RESET}"
-    echo ""
-    tf_args+=("-var=enable_nist_compliance=false")
-  fi
-  
   info "Target directory: $tf_dir"
   
   # Load environment-specific var file
@@ -363,6 +307,11 @@ deploy_terraform_target() {
     # A gcp-gke environment is defined by its tfvars file, which names its
     # cluster. Never fall back to defaults.
     error "Var file not found: $var_file"
+    local _p _profiles=""
+    for _p in "$tf_dir"/*.tfvars; do
+      [[ -e "$_p" && "$_p" != *.auto.tfvars ]] && _profiles+=" $(basename "$_p" .tfvars)"
+    done
+    error "  Available gcp-gke profiles:${_profiles:- none}"
     exit 1
   else
     warn "Var file not found: $var_file (will use defaults)"
@@ -414,6 +363,72 @@ deploy_terraform_target() {
         ;;
     esac
   done
+  
+  # Posture comes from the profile, not from the --env name: the tier is the
+  # profile's `environment` and the jurisdiction its `cage_deployment_region`,
+  # after --var-file / --var overrides (last value wins). The banner and the
+  # NIST flag therefore describe what terraform will apply; --env only selects
+  # the file.
+  #
+  # DEP-01: Gate enable_nist_compliance on the jurisdiction, not on the tier.
+  # A prod deployment to EU_ECB or APAC_MAS must NOT activate NIST-specific
+  # infrastructure hardening (SC-7, AC-3, deletion protection, Redis replication).
+  # ISO 42001 baseline hardening is always active in prod regardless of region.
+  # R-2: NIST SP 800-53 logic MUST be gated on cage_deployment_region == "US_FED".
+  #
+  # POAM-024 (closed 2026-08-29): Staging tier provisioned — full security posture
+  # at dev-scale cost. Staging behaves like prod for compliance flag injection but
+  # uses enable_high_availability=false and enable_deletion_protection=false.
+  local _tier _region _region_env _nist=false
+  _tier=$(_effective_tf_var environment ${tf_args[@]+"${tf_args[@]}"})
+  _tier="${_tier:-$env}"
+  _region=$(_effective_tf_var cage_deployment_region ${tf_args[@]+"${tf_args[@]}"})
+  _region_env="${CAGE_DEPLOYMENT_REGION:-${TF_VAR_cage_deployment_region:-}}"
+  if [[ -n "$_region" && -n "$_region_env" && "$_region" != "$_region_env" ]]; then
+    warn "CAGE_DEPLOYMENT_REGION=$_region_env ignored: the profile sets cage_deployment_region=$_region"
+  fi
+  _region="${_region:-$_region_env}"
+
+  # Set tier-specific banners and compliance flags
+  if [[ "$_tier" == "prod" ]]; then
+    echo ""
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${GREEN}║  🔒  PROD MODE: ISO 42001 baseline hardening enabled.            ║${RESET}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    # DEP-01: Only activate NIST-specific hardening for US_FED deployments.
+    if [[ "$_region" == "US_FED" ]]; then
+      info "cage_deployment_region=US_FED — activating NIST SP 800-53 hardening"
+      _nist=true
+    else
+      info "cage_deployment_region=${_region:-unset} — NIST hardening suppressed (not US_FED)"
+    fi
+  elif [[ "$_tier" == "staging" ]]; then
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  🧪  STAGING MODE: Full security posture at dev-scale cost.      ║${RESET}"
+    echo -e "${CYAN}║      Ephemeral validation tier — provision, test, destroy.       ║${RESET}"
+    echo -e "${CYAN}║      POAM-024: CA-2 pre-production validation satisfied.         ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    # Staging mirrors prod compliance logic but at 1-replica scale
+    if [[ "$_region" == "US_FED" ]]; then
+      info "cage_deployment_region=US_FED — activating NIST SP 800-53 hardening"
+      _nist=true
+    else
+      info "cage_deployment_region=${_region:-unset} — NIST hardening suppressed (not US_FED)"
+    fi
+  else
+    echo ""
+    echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${YELLOW}║  ⚠️   DEV MODE: Reduced security posture.                        ║${RESET}"
+    echo -e "${YELLOW}║      DO NOT use in production.                                   ║${RESET}"
+    echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+  fi
+  # Prepended, so an explicit enable_nist_compliance in the profile or on the
+  # command line still wins: terraform keeps the last value it is given.
+  tf_args=("-var=enable_nist_compliance=$_nist" ${tf_args[@]+"${tf_args[@]}"})
   
   # Target-specific backend configuration
   if [[ "$target" == "agnostic" ]]; then

@@ -58,7 +58,7 @@ docker compose -f docker-compose.dev.yml up
 **Use case:** Provision a complete GKE cluster with GPU support.
 
 ```bash
-./deploy_all.sh --target gcp-gke --env dev \
+./deploy_all.sh --target gcp-gke --env staging \
   --var project_id=<YOUR_GCP_PROJECT_ID> \
   --var minio_root_password=<YOUR_MINIO_PASSWORD> \
   --auto-approve
@@ -84,11 +84,11 @@ docker compose -f docker-compose.dev.yml up
 # Deploy to agnostic target (dev)
 ./deploy_all.sh --target agnostic --env dev --auto-approve
 
-# Deploy to GCP target (dev)
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
+# Deploy to GCP target (US_FED staging)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<YOUR_GCP_PROJECT_ID>
 
-# Deploy to GCP target (prod — NIST compliance enabled)
-./deploy_all.sh --target gcp-gke --env prod
+# Deploy to GCP target (EU_ECB production)
+./deploy_all.sh --target gcp-gke --env eu-prod --var project_id=<YOUR_GCP_PROJECT_ID>
 ```
 
 ### Advanced Options
@@ -99,13 +99,13 @@ docker compose -f docker-compose.dev.yml up
   --kubeconfig ~/.kube/my-cluster.yaml
 
 # Override specific Terraform variables
-./deploy_all.sh --target gcp-gke --env dev \
+./deploy_all.sh --target gcp-gke --env staging \
   --var project_id=<YOUR_GCP_PROJECT_ID> \
   --var gpu_type=nvidia-t4 \
   --var cluster_name=<YOUR_GKE_CLUSTER_NAME>
 
 # Use an additional var file
-./deploy_all.sh --target gcp-gke --env dev \
+./deploy_all.sh --target gcp-gke --env staging \
   --var-file=custom-overrides.tfvars
 ```
 
@@ -119,13 +119,13 @@ cd infra/targets/gcp-gke
 terraform init
 
 # Plan (always run before apply)
-terraform plan -var-file=dev.tfvars
+terraform plan -var-file=staging.tfvars
 
 # Apply
-terraform apply -var-file=dev.tfvars
+terraform apply -var-file=staging.tfvars
 
 # Destroy
-terraform destroy -var-file=dev.tfvars
+terraform destroy -var-file=staging.tfvars
 ```
 
 ---
@@ -150,7 +150,7 @@ registry_url = "ghcr.io/<YOUR_ORG>/cage"
 
 ### GCP-GKE Target
 
-Edit `infra/targets/gcp-gke/dev.tfvars`:
+Edit `infra/targets/gcp-gke/staging.tfvars`:
 
 ```hcl
 # Required: your GCP project ID
@@ -210,10 +210,13 @@ docker compose up
 - No Pod Security Standards
 - Public cluster access (GCP target)
 
-### Production (NIST SP 800-53 HIGH)
+### Full security posture (NIST SP 800-53 HIGH, US_FED)
+
+`staging` is the US_FED profile: full security posture at dev-scale cost. For
+regional production use `--env eu-prod` or `--env apac-prod`.
 
 ```bash
-./deploy_all.sh --target gcp-gke --env prod
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<YOUR_GCP_PROJECT_ID>
 ```
 
 **Configuration:**
@@ -314,7 +317,7 @@ Quick rollback:
 cd infra/targets/gcp-gke
 
 # Re-apply the last known-good configuration
-terraform apply -var-file=dev.tfvars
+terraform apply -var-file=staging.tfvars
 ```
 
 ---

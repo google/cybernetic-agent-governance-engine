@@ -181,10 +181,10 @@ export TF_VAR_minio_root_password="SecurePassword123!"
 terraform init
 
 # Plan
-terraform plan -var-file=dev.tfvars
+terraform plan -var-file=staging.tfvars
 
 # Apply
-terraform apply -var-file=dev.tfvars -auto-approve
+terraform apply -var-file=staging.tfvars -auto-approve
 ```
 
 ### Expected Resources
@@ -238,7 +238,7 @@ kubectl get nodes -l cloud.google.com/gke-accelerator
 
 ---
 
-## Test 4: GCP-GKE Target - Production Mode (NIST Compliance)
+## Test 4: GCP-GKE Target - Full Security Posture (NIST Compliance)
 
 **Duration**: 45-60 minutes  
 **Goal**: Validate NIST compliance features
@@ -248,8 +248,8 @@ kubectl get nodes -l cloud.google.com/gke-accelerator
 ```bash
 cd infra/targets/gcp-gke
 
-# Plan with prod config
-terraform plan -var-file=prod.tfvars
+# Plan with the US_FED staging profile (deploy_all.sh injects this flag)
+terraform plan -var-file=staging.tfvars -var=enable_nist_compliance=true
 
 # Review security features before applying
 # - Private cluster endpoints
@@ -259,7 +259,7 @@ terraform plan -var-file=prod.tfvars
 # - Network policies
 
 # Apply (review carefully!)
-terraform apply -var-file=prod.tfvars -auto-approve
+terraform apply -var-file=staging.tfvars -var=enable_nist_compliance=true
 ```
 
 ### Expected NIST Features
@@ -414,7 +414,7 @@ kubectl get pvc -n governance-stack-dev
 cd infra/targets/gcp-gke
 
 # Destroy
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=staging.tfvars -auto-approve
 
 # Verify GCP resources removed
 gcloud compute instances list --project=<project-id>
