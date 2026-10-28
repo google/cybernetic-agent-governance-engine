@@ -23,6 +23,8 @@ from src.cage_healthcare.constants import (
 )
 from src.gateway.governance.consensus import (
     ConsensusGate,
+    consensus_admits,
+    consensus_violation_code,
     extract_field_magnitude,
     load_critic_specs,
 )
@@ -76,9 +78,12 @@ class ClinicalConsensusTier(ReadOnlyTier):
         return action in REGISTERED_ACTIONS
 
     def _reject(
-        self, message: str, kind: ViolationKind = ViolationKind.HARD
+        self,
+        message: str,
+        kind: ViolationKind = ViolationKind.HARD,
+        code: str = "CLINICAL_CONSENSUS_REJECTED",
     ) -> list[Violation]:
-        return [Violation(self.tier_name, "CLINICAL_CONSENSUS_REJECTED", message, kind)]
+        return [Violation(self.tier_name, code, message, kind)]
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         if self.consensus_engine is None:
@@ -89,8 +94,12 @@ class ClinicalConsensusTier(ReadOnlyTier):
         if not isinstance(result, dict):
             return self._reject("Invalid clinical consensus result payload")
         status = result.get("status")
-        if status in ("APPROVE", "APPROVED", "SKIPPED"):
+        if consensus_admits(result):
             return []
         reason = str(result.get("reason") or "Multi-critic consensus not achieved")
         kind = ViolationKind.HITL if status == "ESCALATE" else ViolationKind.HARD
-        return self._reject(reason, kind=kind)
+        return self._reject(
+            reason,
+            kind=kind,
+            code=consensus_violation_code(result, "CLINICAL_CONSENSUS_REJECTED"),
+        )

@@ -20,6 +20,8 @@ from typing import Any
 from src.cage_physical_ai.constants import CTRL_PHYS_004, PHYSICAL_AI_GOVERNED_ACTIONS
 from src.gateway.governance.consensus import (
     ConsensusGate,
+    consensus_admits,
+    consensus_violation_code,
     extract_field_magnitude,
     load_critic_specs,
 )
@@ -118,13 +120,15 @@ class PhysicalSafetyConsensusTier(ReadOnlyTier):
             ]
         status = result.get("status")
         reason = str(result.get("reason") or "Consensus rejected physical action")
-        if status in ("APPROVE", "APPROVED", "SKIPPED"):
+        if consensus_admits(result):
             return []
         kind = ViolationKind.HITL if status == "ESCALATE" else ViolationKind.HARD
         return [
             Violation(
                 tier=self.tier_name,
-                code="PHYSICAL_SAFETY_CONSENSUS_REJECTED",
+                code=consensus_violation_code(
+                    result, "PHYSICAL_SAFETY_CONSENSUS_REJECTED"
+                ),
                 message=_format_ctrl_phys_004(reason),
                 kind=kind,
             )

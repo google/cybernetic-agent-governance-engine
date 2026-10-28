@@ -45,13 +45,14 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 from opentelemetry import trace
 
 from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
+from src.gateway.governance.inference_backend import inference_disabled
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.infrastructure.telemetry_client import genai_span
 from src.gateway.observability.attributes import (
@@ -76,6 +77,17 @@ _RESERVED_PROMPT_KEYS: frozenset[str] = frozenset(
     {"role", "action", "action_type", "params", "magnitude"}
 )
 _VALID_DECISIONS: frozenset[str] = frozenset({"APPROVE", "REJECT", "ESCALATE"})
+
+# A triggered check refused because no model exists to act as a critic
+# (CAGE_INFERENCE_BACKEND=none). It is a DENY that the evidence chain can
+# tell apart from a REJECT on the merits.
+CONSENSUS_NO_INFERENCE_BACKEND: Final[str] = "CONSENSUS_NO_INFERENCE_BACKEND"
+
+# The statuses a domain tier admits. The mapping lives here, once, so no
+# domain can translate a refusal into an admit.
+CONSENSUS_ADMIT_STATUSES: Final[frozenset[str]] = frozenset(
+    {"APPROVE", "APPROVED", "SKIPPED"}
+)
 _LINE_PREFIX_DECISION_RE = re.compile(r"^(APPROVE|REJECT|ESCALATE)\b")
 _WHOLE_WORD_REJECT_RE = re.compile(r"\bREJECT\b")
 _LEADING_THINK_BLOCK_RE = re.compile(
@@ -236,6 +248,27 @@ def load_critic_specs(path: Path) -> tuple[CriticSpec, ...]:
     return tuple(specs)
 
 
+def consensus_admits(result: Mapping[str, Any]) -> bool:
+    """True when a consensus result lets the action proceed.
+
+    Only an admitting ``status`` admits, and a result that carries a kernel
+    ``reason_code`` is a refusal whatever its status says.
+    """
+    return result.get("status") in CONSENSUS_ADMIT_STATUSES and not result.get(
+        "reason_code"
+    )
+
+
+def consensus_violation_code(result: Mapping[str, Any], default_code: str) -> str:
+    """Return the violation code a domain tier records for a refused result.
+
+    A kernel reason code (``CONSENSUS_NO_INFERENCE_BACKEND``) wins over the
+    domain's own default, so the evidence chain keeps it.
+    """
+    code = result.get("reason_code")
+    return code if isinstance(code, str) and code else default_code
+
+
 async def _background_audit_worker() -> None:
     """Drain the audit queue and log completed consensus results.
 
@@ -384,10 +417,17 @@ class ConsensusGate:
             magnitude_extractor
         )
         self.high_stakes_actions: frozenset[str] = frozenset(high_stakes_actions)
-        self._registry = registry or ConsensusModelRegistry.from_env(
-            [c.role for c in self.critics]
-        )
-        self._default_client = GatewayClient()
+        # Resolved once, at composition time. Under CAGE_INFERENCE_BACKEND=none
+        # a triggered check is refused before any critic is consulted, and no
+        # model client is built, so it cannot reach the network.
+        self._inference_disabled: bool = inference_disabled()
+        self._registry: ConsensusModelRegistry | None = registry
+        self._default_client: GatewayClient | None = None
+        if not self._inference_disabled:
+            self._registry = registry or ConsensusModelRegistry.from_env(
+                [c.role for c in self.critics]
+            )
+            self._default_client = GatewayClient()
 
     @classmethod
     def from_contribution(
@@ -426,6 +466,12 @@ class ConsensusGate:
             logger.error(
                 "No CriticSpec prompt configured for role '%s' — failing closed with ERROR",
                 role,
+            )
+            return "ERROR"
+
+        if self._registry is None or self._default_client is None:
+            logger.error(
+                "No model client for critic '%s' — failing closed with ERROR", role
             )
             return "ERROR"
 
@@ -593,6 +639,25 @@ class ConsensusGate:
                 "status": "SKIPPED",
                 "decision": "SKIPPED",
                 "reason": "Below threshold",
+                "votes": [],
+            }
+
+        if getattr(self, "_inference_disabled", False):
+            logger.warning(
+                "ConsensusGate triggered for action=%s magnitude=%.2f with no "
+                "inference backend (CAGE_INFERENCE_BACKEND=none) — DENY %s",
+                resolved_action,
+                resolved_magnitude,
+                CONSENSUS_NO_INFERENCE_BACKEND,
+            )
+            return {
+                "status": "DENY",
+                "decision": "DENY",
+                "reason": (
+                    "No inference backend (CAGE_INFERENCE_BACKEND=none): consensus "
+                    "needs model critics, so no critic was consulted."
+                ),
+                "reason_code": CONSENSUS_NO_INFERENCE_BACKEND,
                 "votes": [],
             }
 

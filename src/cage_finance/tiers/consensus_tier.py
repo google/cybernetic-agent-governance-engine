@@ -19,6 +19,8 @@ from typing import Any
 from src.gateway.governance.consensus.engine import (
     ConsensusGate,
     ConsensusModelRegistry,
+    consensus_admits,
+    consensus_violation_code,
     extract_field_magnitude,
     load_critic_specs,
 )
@@ -163,7 +165,7 @@ class ConsensusTierPlugin(ReadOnlyTier):
         status = result.get("status") if "status" in result else result.get("decision")
         reason = str(result.get("reason") or "Consensus check failed")
 
-        if status in ("APPROVE", "APPROVED", "SKIPPED"):
+        if consensus_admits(result):
             return []
         if status == "ESCALATE":
             return [
@@ -177,7 +179,7 @@ class ConsensusTierPlugin(ReadOnlyTier):
         return [
             Violation(
                 tier=self.tier_name,
-                code="CONSENSUS_REJECTED",
+                code=consensus_violation_code(result, "CONSENSUS_REJECTED"),
                 message=reason,
                 kind=ViolationKind.HARD,
             )
