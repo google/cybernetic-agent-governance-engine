@@ -47,6 +47,12 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
 
+from src.gateway.governance.inference_backend import (
+    INFERENCE_BACKEND_NONE,
+    INFERENCE_BACKEND_URL_MISSING,
+    InferenceBackendUnavailable,
+    inference_disabled,
+)
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
@@ -170,11 +176,38 @@ async def _stream_vllm(
 
 
 def _resolve_backend_url(model_id: str) -> str:
-    """Select the appropriate vLLM endpoint based on model identifier."""
-    base = config_manager.get("VLLM_BASE_URL", "http://localhost:8000/v1")
+    """Select the vLLM endpoint for *model_id*.
+
+    There is no default URL: a missing endpoint raises instead of
+    reaching for ``localhost``.
+
+    Raises:
+        InferenceBackendUnavailable: ``INFERENCE_BACKEND_URL_MISSING`` when
+            no endpoint is configured for the model.
+    """
+    base = config_manager.get("VLLM_BASE_URL")
     if "deepseek" in model_id.lower() or "reasoning" in model_id.lower():
-        return config_manager.get("VLLM_REASONING_API_BASE", base)
-    return config_manager.get("VLLM_FAST_API_BASE", base)
+        url = config_manager.get("VLLM_REASONING_API_BASE", base)
+    else:
+        url = config_manager.get("VLLM_FAST_API_BASE", base)
+    if not url:
+        raise InferenceBackendUnavailable(
+            INFERENCE_BACKEND_URL_MISSING,
+            "no inference endpoint is configured (VLLM_BASE_URL is unset).",
+        )
+    return url
+
+
+def _backend_unavailable_response(reason_code: str, message: str) -> JSONResponse:
+    """Return the 503 for a request no model can serve."""
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "inference_backend_unavailable",
+            "reason_code": reason_code,
+            "message": message,
+        },
+    )
 
 
 def _create_blocked_response(reason: str) -> dict[str, Any]:
@@ -215,6 +248,14 @@ async def chat_completions(
     from src.gateway.governance.semantic_rail_factory import (
         verify_semantic_input as verify_input,
     )
+
+    # No model by design (CAGE_INFERENCE_BACKEND=none): refuse before
+    # building rails or reading the request, with a reason code.
+    if inference_disabled():
+        return _backend_unavailable_response(
+            INFERENCE_BACKEND_NONE,
+            "No inference backend is configured (CAGE_INFERENCE_BACKEND=none).",
+        )
 
     # Rails are initialised externally at startup and stored on app.state.
     # Fall back to on-demand init if not set (e.g. during testing).
@@ -411,6 +452,12 @@ async def chat_completions(
             target_url = f"{api_base.rstrip('/')}/chat/completions"
             raw_client = _get_http_client()
             client = await raw_client if inspect.isawaitable(raw_client) else raw_client
+        except InferenceBackendUnavailable as exc:
+            await _get_token_quota_proxy().rollback_step(
+                agent_id, reserved_tokens=token_delta
+            )
+            logger.error("Inference proxy cannot forward: %s", exc)
+            return _backend_unavailable_response(exc.reason_code, str(exc))
         except Exception:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta

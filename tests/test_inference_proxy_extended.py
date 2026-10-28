@@ -959,3 +959,67 @@ async def test_gateway_client_generate_extra_headers_not_duplicated():
     sent_kwargs = fake_openai.chat.completions.create.call_args.kwargs
     assert sent_kwargs["extra_headers"]["X-Custom"] == "val"
     assert sent_kwargs["temperature"] == 0.1
+
+
+# ---------------------------------------------------------------------------
+# No inference backend (CAGE_INFERENCE_BACKEND) and no localhost fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_none_backend_returns_503_before_rails_or_upstream(
+    proxy_deps, monkeypatch
+):
+    """Under none: 503 INFERENCE_BACKEND_NONE, no rails, quota or upstream call."""
+    monkeypatch.setenv("CAGE_INFERENCE_BACKEND", "none")
+    init_rails = MagicMock()
+    monkeypatch.setattr(
+        "src.gateway.governance.semantic_rail_factory.initialize_semantic_rails",
+        init_rails,
+    )
+    monkeypatch.setattr(proxy_deps["app"].state, "nemo_rails", None, raising=False)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_deps["app"]), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body())
+
+    assert resp.status_code == 503
+    assert resp.json()["reason_code"] == "INFERENCE_BACKEND_NONE"
+    init_rails.assert_not_called()
+    proxy_deps["quota_proxy"].check_and_increment.assert_not_awaited()
+    proxy_deps["http_client"].post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_backend_url_returns_503_and_rolls_back_quota(
+    proxy_deps, monkeypatch
+):
+    """No endpoint configured: 503 INFERENCE_BACKEND_URL_MISSING, quota rolled back."""
+    monkeypatch.setattr(
+        proxy_deps["module"].config_manager, "get", lambda key, default=None: default
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_deps["app"]), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body())
+
+    assert resp.status_code == 503
+    assert resp.json()["reason_code"] == "INFERENCE_BACKEND_URL_MISSING"
+    proxy_deps["quota_proxy"].rollback_step.assert_awaited_once()
+    proxy_deps["http_client"].post.assert_not_awaited()
+
+
+@pytest.mark.parametrize("model_id", ["llama3-8b-instruct", "deepseek-r1"])
+def test_resolve_backend_url_has_no_localhost_default(monkeypatch, model_id):
+    import src.gateway.server.inference_proxy as mod
+    from src.gateway.governance.inference_backend import (
+        INFERENCE_BACKEND_URL_MISSING,
+        InferenceBackendUnavailable,
+    )
+
+    monkeypatch.setattr(mod.config_manager, "get", lambda key, default=None: default)
+    with pytest.raises(InferenceBackendUnavailable) as err:
+        mod._resolve_backend_url(model_id)
+    assert err.value.reason_code == INFERENCE_BACKEND_URL_MISSING
