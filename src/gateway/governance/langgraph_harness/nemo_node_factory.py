@@ -29,12 +29,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
 from opentelemetry import trace
 
 from src.gateway.governance.langgraph_harness.types import NemoNodeConfig, StateDict
+from src.gateway.governance.telemetry_provider import ConfigurationError
+from src.gateway.governance.text_filter import ac_keyword_scan
+from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.observability.attributes import OBSERVATION_TYPE
 
 logger = logging.getLogger("gateway.governance.langgraph_harness.nemo_node_factory")
@@ -48,6 +52,20 @@ tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.nemo_node_fa
 
 _nemo_rails = None
 _NEMO_AVAILABLE = False
+
+
+def nemo_rails_enabled() -> bool:
+    """Return whether NeMo Colang rails are enabled via ``CAGE_NEMO_ENABLED``.
+
+    Defaults to ``"true"`` when ``CAGE_NEMO_ENABLED`` is unset or empty; raises
+    :class:`ConfigurationError` on any unrecognised value (fail-closed).
+    """
+    raw = os.environ.get("CAGE_NEMO_ENABLED", "true").strip().lower()
+    if raw not in ("true", "false", "1", "0", ""):
+        raise ConfigurationError(
+            f"Invalid CAGE_NEMO_ENABLED={raw!r}: must be 'true' or 'false'"
+        )
+    return raw in ("true", "1", "")
 
 
 def create_nemo_manager(config_path: str = "config/rails") -> Any:
@@ -262,9 +280,13 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
     The returned node:
       1. Extracts user input via ``config.message_extractor`` (or default).
-      2. Calls ``validate_with_nemo()`` — NeMo input rails (LLM-backed filter).
-      3. Sets ``config.blocked_state_key`` and ``config.reason_state_key``.
-      4. Fail-closed: any exception or unsafe verdict → block.
+      2. Runs Presidio PII redaction (``_redact_pii``) unconditionally.
+      3. Runs deterministic Aho-Corasick prompt-injection fast-path (``ac_keyword_scan``)
+         unconditionally before ``get_nemo_rails()``.
+      4. When ``nemo_rails_enabled()`` is ``True``, calls ``get_nemo_rails()`` and
+         ``validate_with_nemo()``.
+      5. Sets ``config.blocked_state_key`` and ``config.reason_state_key``.
+      6. Fail-closed: any exception or unsafe verdict → block.
 
     If ``config.pass_through_state`` is ``True`` (default), the returned dict
     includes ``{**state, ...}`` so that downstream conditional edges can read
@@ -316,14 +338,11 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
             original_input = user_input
             try:
-                rails = get_nemo_rails()
-
-                # --- Input-side PII scan (Fix 3 / P1) ---
-                # Scan the input for PII BEFORE it reaches the LLM. Redacted
-                # text goes to the NeMo rail and, on PASS, replaces the user
-                # message in state so no downstream agent or LLM sees the raw
-                # values. A Presidio failure never blocks the input rail
-                # (graceful degradation); the output rail masks again.
+                # --- Step 1: Input-side PII scan (runs BEFORE get_nemo_rails) ---
+                # Scan the input for PII BEFORE it reaches any LLM or rail.
+                # Redacted text replaces the user message in state on PASS so no
+                # downstream agent or LLM sees the raw values. In enforcing
+                # posture, a Presidio failure fails closed.
                 try:
                     user_input, entity_types = await asyncio.to_thread(
                         _redact_pii, user_input
@@ -355,9 +374,31 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         pii_exc,
                     )
 
-                is_safe, reason, deterministic = await validate_with_nemo(
-                    user_input, rails
-                )
+                # --- Step 2: Deterministic Aho-Corasick fast-path (runs BEFORE get_nemo_rails) ---
+                if ac_keyword_scan(user_input):
+                    reason = "STPA Violation UCA-7: Request contains systemic bypass attempt."
+                    logger.warning(
+                        "nemo_guardrail_node: input BLOCKED by deterministic Aho-Corasick fast-path — reason: %s",
+                        reason,
+                    )
+                    span.set_attribute("nemo.input_rail.result", "BLOCKED")
+                    span.set_attribute("nemo.input_rail.reason", reason)
+                    span.set_attribute("nemo.input_rail.deterministic", True)
+                    base = {**state} if cfg.pass_through_state else {}
+                    return {
+                        **base,
+                        cfg.blocked_state_key: True,
+                        cfg.reason_state_key: reason,
+                    }
+
+                # --- Step 3: Optional NeMo Colang input rail ---
+                if nemo_rails_enabled():
+                    rails = get_nemo_rails()
+                    is_safe, reason, deterministic = await validate_with_nemo(
+                        user_input, rails
+                    )
+                else:
+                    is_safe, reason, deterministic = True, "", True
                 span.set_attribute(
                     "nemo.input_rail.result",
                     "PASSED" if is_safe else "BLOCKED",
@@ -418,10 +459,13 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
 
     The returned node:
       1. Extracts the last AI message from ``state["messages"]``.
-      2. Calls ``verify_and_mask_output()`` — NeMo output rails (PII, policy).
-      3. Returns a replacement ``AIMessage`` with the same ``id`` (for the
+      2. Runs Presidio identity PII redaction (``_redact_pii``) and regex PII
+         scrubbing (``scrub_pii``) unconditionally before ``get_nemo_rails()``.
+      3. When ``nemo_rails_enabled()`` is ``True``, calls ``get_nemo_rails()``,
+         ``verify_and_mask_output()``, and ``validate_output_semantics()``.
+      4. Returns a replacement ``AIMessage`` with the same ``id`` (for the
          ``add_messages`` reducer to replace in-place).
-      4. Fail-closed: any exception → output replaced with a safe sentinel.
+      5. Fail-closed: any exception → output replaced with a safe sentinel.
 
     Args:
         config: Optional :class:`NemoNodeConfig`.  ``None`` uses defaults.
@@ -447,55 +491,38 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
 
             span.set_attribute("nemo.output_rail.input_length", len(output_text))
 
-            # --- Optimization opportunity (Group D / D2) ---
-            # Currently PII masking and semantic validation are two sequential
-            # NeMo LLMRails invocations on the same LLMRails instance.  They
-            # cannot be collapsed into a single Colang execution pass without a
-            # dedicated combined output flow in config/rails/main_logic.co.
-            #
-            # What a future combined Colang flow would look like:
-            #
-            #   flow verify and validate output $output_text
-            #     $masked = await MaskPIIAction text=$output_text
-            #     $safe   = await CustomSelfCheckOutputAction text=$masked
-            #     if not $safe
-            #       bot refuse to respond
-            #       abort
-            #     return $masked
-            #
-            # Once that flow exists, both calls below collapse to a single
-            # rails.generate() invocation, saving one full LLM round-trip per
-            # request on the output path.  Track this as a Colang authoring task.
-            #
-            # OTel attributes below make the two-call cost visible in traces so
-            # it can be measured and prioritised for the Colang authoring sprint.
-            span.set_attribute("nemo.output_rail.pii_mask_call", 1)
-            span.set_attribute("nemo.output_rail.semantic_validate_call", 1)
-            span.set_attribute("nemo.output_rail.total_llm_calls", 2)
-            span.set_attribute(
-                "nemo.output_rail.optimization_opportunity",
-                "combine_into_single_colang_flow",
-            )
-
-            # --- Call 1 of 2: PII masking ---
-            # Presidio identity masking first (PERSON and the other entities
-            # the regex scrubber cannot see), then the NeMo output pass. Any
-            # error replaces the output with the blocked sentinel.
+            # --- Step 1: Unconditional Presidio + regex PII masking (before get_nemo_rails) ---
             rails: Any = None
             mask_failed = False
+            nemo_active = False
             try:
-                rails = get_nemo_rails()
                 presidio_text, output_entities = await asyncio.to_thread(
                     _redact_pii, output_text
                 )
                 span.set_attribute("output.pii_entity_types", str(output_entities))
-                masked_text = await verify_and_mask_output(rails, presidio_text)
+                scrubbed_text = scrub_pii(presidio_text)
+                nemo_active = nemo_rails_enabled()
+                if nemo_active:
+                    span.set_attribute("nemo.output_rail.pii_mask_call", 1)
+                    span.set_attribute("nemo.output_rail.semantic_validate_call", 1)
+                    span.set_attribute("nemo.output_rail.total_llm_calls", 2)
+                    span.set_attribute(
+                        "nemo.output_rail.optimization_opportunity",
+                        "combine_into_single_colang_flow",
+                    )
+                    rails = get_nemo_rails()
+                    masked_text = await verify_and_mask_output(rails, scrubbed_text)
+                else:
+                    span.set_attribute("nemo.output_rail.pii_mask_call", 0)
+                    span.set_attribute("nemo.output_rail.semantic_validate_call", 0)
+                    span.set_attribute("nemo.output_rail.total_llm_calls", 0)
+                    masked_text = scrubbed_text
                 span.set_attribute(
                     "nemo.output_rail.masked", masked_text != output_text
                 )
             except Exception as exc:
                 logger.error(
-                    "nemo_output_rail_node: verify_and_mask_output raised — blocking output: %s",
+                    "nemo_output_rail_node: PII masking / verify_and_mask_output raised — blocking output: %s",
                     exc,
                 )
                 span.record_exception(exc)
@@ -503,11 +530,11 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 masked_text = cfg.output_blocked_sentinel
                 mask_failed = True
 
-            # --- Call 2 of 2: Semantic safety validation ---
-            # Run validate_output_semantics() on the PII-masked text and fail closed.
-            # Skip when Call 1 already failed closed into the blocked sentinel.
+            # --- Step 2: Optional NeMo semantic safety validation ---
+            # Run validate_output_semantics() on the PII-masked text when NeMo
+            # rails are enabled and fail closed on any error or unsafe verdict.
             final_text = masked_text
-            if not mask_failed:
+            if not mask_failed and nemo_active:
                 try:
                     sem_safe, sem_reason = await validate_output_semantics(
                         rails, masked_text

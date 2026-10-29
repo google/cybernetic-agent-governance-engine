@@ -21,7 +21,7 @@ deterministic, runtime-enforceable governance artifacts:
 
   1. OPA Rego policy     → config/opa/generated_stpa_policy.rego
   2. NeMo Colang rail    → config/rails/generated_stpa_rails.co
-  3. Python validator    → src/gateway/governance/generated_stpa_validator.py
+  3. Python validator    → src/gateway/governance/stpa_validator.py (and domain stpa/uca_rules.py)
 
 Usage::
 
@@ -303,6 +303,16 @@ class ConditionModel(BaseModel):
             )
         return self
 
+    def is_structured(self) -> bool:
+        """Return True if this condition compiles to a structured OPA/Python check."""
+        if self.composite:
+            return True
+        if not (self.param and self.operator):
+            return False
+        if self.operator in ("is_null", "is_false", "is_true"):
+            return True
+        return self.threshold is not None or bool(self.threshold_ref)
+
 
 class OpaRuleModel(BaseModel):
     decision: OpaDecision = "DENY"
@@ -532,10 +542,24 @@ class UCAModel(BaseModel):
                 raise ValueError(
                     f"{self.id}: enforcement includes 'opa' but opa_rule is missing."
                 )
+        if (
+            "opa" in self.enforcement
+            or "python" in self.enforcement
+            or "all" in self.enforcement
+        ):
+            if not self.condition.is_structured():
+                raise ValueError(
+                    f"{self.id}: enforcement includes 'opa'/'python' but condition "
+                    "is not compilable to a structured check (requires param+operator or composite)."
+                )
         if "nemo" in self.enforcement or "all" in self.enforcement:
             if self.nemo_rail is None:
                 raise ValueError(
                     f"{self.id}: enforcement includes 'nemo' but nemo_rail is missing."
+                )
+            if not self.condition.semantic_pattern:
+                raise ValueError(
+                    f"{self.id}: enforcement includes 'nemo' but condition.semantic_pattern is missing."
                 )
         if "langgraph" in self.enforcement:
             if self.langgraph_saga is None:

@@ -254,6 +254,49 @@ class TestSchemaValidation:
         with pytest.raises(Exception, match="nemo_rail is missing"):
             ControlStructureModel(**raw)
 
+    def test_python_or_opa_enforcement_without_structured_condition_rejected(
+        self,
+    ) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["condition"] = {
+            "semantic_pattern": "uncompilable_pattern"
+        }
+        with pytest.raises(
+            Exception, match="condition is not compilable to a structured check"
+        ):
+            ControlStructureModel(**raw)
+
+    def test_nemo_enforcement_without_semantic_pattern_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["enforcement"] = ["opa", "nemo"]
+        raw["unsafe_control_actions"][0]["nemo_rail"] = {
+            "flow_name": "block_thing",
+            "message": "Blocked.",
+        }
+        with pytest.raises(Exception, match="condition.semantic_pattern is missing"):
+            ControlStructureModel(**raw)
+
+    def test_trade_hazards_uca_3_4_10_12_compiled_to_uca_rules(self) -> None:
+        from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
+
+        validator = GeneratedSTPAValidator()
+        v3 = validator.validate_generated(
+            "execute_trade", {"output_contains_pii": True}
+        )
+        assert any(v.code == "STPA_UCA_UCA_3" for v in v3)
+        v4 = validator.validate_generated(
+            "execute_trade", {"partial_transaction_detected": True}
+        )
+        assert any(v.code == "STPA_UCA_UCA_4" for v in v4)
+        v10 = validator.validate_generated(
+            "check_balance", {"stale_balance_data_detected": True}
+        )
+        assert any(v.code == "STPA_UCA_UCA_10" for v in v10)
+        v12 = validator.validate_generated(
+            "execute_trade_bounded", {"bounding_contract_violation_detected": True}
+        )
+        assert any(v.code == "STPA_UCA_UCA_12" for v in v12)
+
     def test_invalid_uca_type_rejected(self) -> None:
         raw = yaml.safe_load(_MINIMAL_YAML)
         raw["unsafe_control_actions"][0]["uca_type"] = "invented_type"

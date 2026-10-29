@@ -7,6 +7,3 @@ Do not execute "write_db" if "approval_token" is null or missing.
 
 # UCA-7: Adversarial prompt injection score exceeds detection threshold.
 Do not execute "prompt_injection_check" if "semantic_score" exceeds 0.85.
-
-# UCA-7 (NeMo rail): Adversarial prompt injection score exceeds detection threshold.
-Block any request that I cannot process this request as it appears to be attempting to override my instructions.

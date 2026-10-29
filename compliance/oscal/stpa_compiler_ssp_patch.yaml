@@ -1,5 +1,5 @@
 stpa-compiler-ssp-patch:
-  generated: '2026-10-25T22:54:34Z'
+  generated: '2026-10-29T01:29:55Z'
   source: config/stpa_control_structure.yaml
   system: CAGE Financial Advisor
   version: 1.1.0
@@ -15,13 +15,13 @@ stpa-compiler-ssp-patch:
       \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
       \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
       \    (OPA Rego — 7 UCAs)\n            - config/rails/generated_stpa_rails.co\
-      \     (NeMo Colang — 4 UCAs)\n            - src/gateway/governance/stpa_validator.py\
-      \ (Python — 8 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
+      \     (NeMo Colang — 0 UCAs)\n            - src/gateway/governance/stpa_validator.py\
+      \ (Python — 11 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
       \ (Sandbox — 1 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
       \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
       \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded: 12\n\
       \          Hazards modelled: 7\n          Safety constraints: 3\n          Last\
-      \ compiled: 2026-10-25T22:54:34Z\n\n          UCA-to-Control mapping (NIST SP\
+      \ compiled: 2026-10-29T01:29:54Z\n\n          UCA-to-Control mapping (NIST SP\
       \ 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action): Agent\
       \ executes write operation without a signed approval token.\n  → NIST: ac-3\
       \ (Access Enforcement), sc-4 (Information in Shared System Resources / Fiscal\
@@ -65,7 +65,7 @@ stpa-compiler-ssp-patch:
     - name: hazard-count
       value: '7'
     - name: last-compiled
-      value: '2026-10-25T22:54:34Z'
+      value: '2026-10-29T01:29:54Z'
     - name: target-framework
       value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
     - name: artifact-opa
@@ -85,8 +85,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00000
       description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
+        (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-1,
+        UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
       implementation-status:
         state: implemented
       links:
@@ -100,8 +101,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00001
       description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
         / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
-        (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-        (Python validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
+        (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
+        (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+        validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
       implementation-status:
         state: implemented
       links:
@@ -115,8 +117,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00002
       description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-10, UCA-13, UCA-2, UCA-9.'
+        (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-10,
+        UCA-13, UCA-2, UCA-9.'
       implementation-status:
         state: implemented
       links:
@@ -130,8 +133,8 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00003
       description: 'STPA compiler enforces SI-4 (System Monitoring) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-10.'
+        (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-10.'
       implementation-status:
         state: implemented
       links:
@@ -145,8 +148,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00004
       description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
         via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
-        config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-        (Python validator). UCAs covered: UCA-12, UCA-2, UCA-8.'
+        config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
+        (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+        validator). UCAs covered: UCA-12, UCA-2, UCA-8.'
       implementation-status:
         state: implemented
       links:
@@ -160,8 +164,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00005
       description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
         via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
-        config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-        (Python validator). UCAs covered: UCA-3.'
+        config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
+        (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+        validator). UCAs covered: UCA-3.'
       implementation-status:
         state: implemented
       links:
@@ -175,8 +180,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00006
       description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
         Integrity) via generated artifacts: config/opa/generated_stpa_policy.rego
-        (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
-        (Python validator). UCAs covered: UCA-4.'
+        (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
+        (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+        validator). UCAs covered: UCA-4.'
       implementation-status:
         state: implemented
       links:
@@ -190,8 +196,8 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00007
       description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated artifacts:
         config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-4.'
+        (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-4.'
       implementation-status:
         state: implemented
       links:
@@ -205,8 +211,9 @@ stpa-compiler-ssp-patch:
       uuid: h8000099-stpa-4000-8000-compiler00008
       description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via generated
         artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
-        validator). UCAs covered: UCA-6, UCA-7.'
+        (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-6,
+        UCA-7.'
       implementation-status:
         state: implemented
       links:
@@ -239,7 +246,7 @@ stpa-compiler-ssp-patch:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-10-25T22:54:34Z'
+      value: '2026-10-29T01:29:54Z'
     - name: uca-count
       value: '12'
     control-implementations:

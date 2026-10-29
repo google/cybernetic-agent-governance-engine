@@ -72,17 +72,21 @@ def _make_uca(
     param: str | None = None,
     threshold: float | None = None,
     composite: str | None = None,
+    semantic_pattern: str | None = None,
     enforcement: list[str] | None = None,
     nemo_rail: NemoRailModel | None = None,
     opa_rule: OpaRuleModel | None = None,
 ) -> UCAModel:
+    eff_enforcement = enforcement or ["python"]
+    if "nemo" in eff_enforcement and semantic_pattern is None:
+        semantic_pattern = "semantic_violation"
     condition = ConditionModel(
         operator=operator,
         param=param,
         threshold=threshold,
         composite=composite,
+        semantic_pattern=semantic_pattern,
     )
-    eff_enforcement = enforcement or ["python"]
     if "opa" in eff_enforcement and opa_rule is None:
         opa_rule = OpaRuleModel(decision="DENY", message=f"OPA deny for {uca_id}")
     if "nemo" in eff_enforcement and nemo_rail is None:

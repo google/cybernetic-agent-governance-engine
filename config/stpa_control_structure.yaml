@@ -150,13 +150,10 @@ unsafe_control_actions:
       param: semantic_score
       operator: greater_than
       threshold: 0.85
-    enforcement: [opa, nemo]
+    enforcement: [opa]
     opa_rule:
       decision: GOVERNANCE_VIOLATION
       message: "UCA-7: Prompt injection detected — governance violation."
-    nemo_rail:
-      flow_name: block_prompt_injection
-      message: "I cannot process this request as it appears to be attempting to override my instructions."
 
 # ---------------------------------------------------------------------------
 # Safety Constraints

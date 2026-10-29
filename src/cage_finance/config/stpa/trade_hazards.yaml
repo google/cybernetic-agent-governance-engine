@@ -190,11 +190,9 @@ unsafe_control_actions:
     # FTRA: execute_trade — same classification as UCA-2 (most restrictive wins).
     terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
-      semantic_pattern: "output_contains_pii"
-    enforcement: [nemo]
-    nemo_rail:
-      flow_name: block_pii_output
-      message: "I cannot share personal information in my response."
+      param: output_contains_pii
+      operator: is_true
+    enforcement: [python]
 
   - id: UCA-4
     action: execute_trade
@@ -204,11 +202,9 @@ unsafe_control_actions:
     # FTRA: execute_trade — irreversible external financial commitment.
     terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
-      semantic_pattern: "partial_transaction_detected"
-    enforcement: [nemo, langgraph]
-    nemo_rail:
-      flow_name: block_partial_transaction
-      message: "Transaction integrity check failed. Stopping execution."
+      param: partial_transaction_detected
+      operator: is_true
+    enforcement: [langgraph, python]
     # LangGraph Saga pattern: WAL forward node + idempotent compensating node.
     # The compiler generates:
     #   forward_execute_trade_node_uca_4  — writes PENDING, calls API, confirms COMPLETED
@@ -300,11 +296,9 @@ unsafe_control_actions:
     # a contrived unsafe scenario. Enforcement is advisory only.
     terminal_classification: READ_ONLY
     condition:
-      semantic_pattern: "stale_balance_data_detected"
-    enforcement: [nemo]
-    nemo_rail:
-      flow_name: log_stale_balance_warning
-      message: "Balance data may be stale. Please refresh."
+      param: stale_balance_data_detected
+      operator: is_true
+    enforcement: [python]
 
   - id: UCA-12
     action: execute_trade_bounded
@@ -313,7 +307,8 @@ unsafe_control_actions:
     description: "Agent executes bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling HITL review without confidence hard-gate per VEC-004. When B10 fails (closed rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks for human approval, as an irreversible action would."
     terminal_classification: EXTERNALLY_REVERSIBLE
     condition:
-      semantic_pattern: "bounding_contract_violation_detected"
+      param: bounding_contract_violation_detected
+      operator: is_true
     enforcement: [python, opa]
     opa_rule:
       decision: DENY

@@ -73,5 +73,5 @@
     "sc-7": "Boundary Protection",
     "ia-3": "Device Identification and Authentication"
   },
-  "narrative_template": "STPA compiler enforces {control_id_upper} ({control_description}) via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python validator). UCAs covered: {uca_list}."
+  "narrative_template": "STPA compiler enforces {control_id_upper} ({control_description}) via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: {uca_list}."
 }
