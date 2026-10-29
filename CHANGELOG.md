@@ -11,6 +11,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **CI runs `terraform test` against the gcp-gke target** (`ci`, [`ci.yml`](.github/workflows/ci.yml), [`w6.tftest.hcl`](infra/targets/gcp-gke/tests/w6.tftest.hcl)). The new `terraform-test` job plans the staging profile with mock providers and module overrides, so it needs no credentials and no state. Its 10 runs check what each inference backend deploys (no vLLM, advisor or NeMo server under `none`; vLLM and the selected advisor under `vllm`) and that the plan refuses `external`, any `enable_vllm`, `vllm` without a GPU pool, and the NeMo server without `vllm`. The job is not `continue-on-error`, so it can fail (POAM-2026-150). Two mutations of `main.tf` were checked to fail it.
 - **`CAGE_INFERENCE_BACKEND` chooses the inference backend independently of jurisdiction: `none`, `external` or `vllm`** (`feat(gateway)`, [`inference_backend.py`](src/gateway/governance/inference_backend.py)). Under `none` the gateway starts with no `VLLM_*` settings and builds no NeMo rails, and every model-dependent path refuses with its own reason code instead of admitting or reaching for a default URL.
   - Content safety answers `BLOCKED` with `CONTENT_SAFETY_NO_INFERENCE_BACKEND` ([`mcp_tool_server.py`](src/gateway/server/mcp_tool_server.py), [`semantic_rail_factory.py`](src/gateway/governance/semantic_rail_factory.py)).
   - The inference proxy answers 503 with `INFERENCE_BACKEND_NONE` ([`inference_proxy.py`](src/gateway/server/inference_proxy.py)).

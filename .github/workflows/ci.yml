@@ -864,3 +864,23 @@ jobs:
       - name: Tear down Docker Compose
         if: always()
         run: docker compose down -v || true
+
+  terraform-test:
+    # Plan-time contracts of the gcp-gke target (W6, AG-7): what each inference
+    # backend deploys, and what the plan refuses. Mock providers only, so no
+    # cloud credentials and no state. It must be able to fail (POAM-2026-150):
+    # never continue-on-error.
+    name: "Terraform Tests (gcp-gke, mock providers)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+      - name: Initialise without a backend
+        run: terraform -chdir=infra/targets/gcp-gke init -backend=false -input=false
+      - name: Run terraform test against the staging profile
+        run: terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars

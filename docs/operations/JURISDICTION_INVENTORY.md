@@ -70,7 +70,7 @@ All values verified by loading them through the threshold loader, `ControlRegist
 - **Placeholders.**
   - Every profile except `dev.tfvars` carries a placeholder `project_id`.
   - Every profile except `staging.tfvars` inherits placeholder image digests (section 7).
-- **Only tests read a profile's backend and GPU settings.** Since W6, [`test_inference_backend_gke.py`](../../tests/infrastructure/test_inference_backend_gke.py) reads every profile's `inference_backend` and staging's GPU pool settings, and fails if a profile still sets `enable_vllm`. No workflow or script reads them (verified, grep). That is not evidence that nothing outside the repository depends on them.
+- **Only tests read a profile's backend and GPU settings.** Since W6, [`test_inference_backend_gke.py`](../../tests/infrastructure/test_inference_backend_gke.py) reads every profile's `inference_backend` and staging's GPU pool settings, and fails if a profile still sets `enable_vllm`. The `terraform-test` CI job plans the staging profile with mock providers ([`w6.tftest.hcl`](../../infra/targets/gcp-gke/tests/w6.tftest.hcl)). No other workflow or script reads them (verified, grep). That is not evidence that nothing outside the repository depends on them.
 - **Control-plane access.** Every profile with a compliance posture active must name operator CIDRs and no `/0`; the plan refuses otherwise (POAM-2026-126, [`test_control_plane_access.py`](../../tests/infrastructure/test_control_plane_access.py)). `staging.tfvars` sets no list, so supply one with `TF_VAR_authorized_networks`.
 
 ## 4. Jurisdiction and geography: postures do not float
