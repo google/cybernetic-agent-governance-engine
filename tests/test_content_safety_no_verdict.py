@@ -44,6 +44,7 @@ def _rails_raising(message: str) -> AsyncMock:
     rails = AsyncMock()
     rails.is_transparent_fallback = False
     rails.generate_async.side_effect = RuntimeError(message)
+    rails.llm.ainvoke.side_effect = RuntimeError(message)
     return rails
 
 
@@ -284,9 +285,12 @@ def test_advisor_records_verdicts_as_given() -> None:
 
 
 @pytest.mark.asyncio
-async def test_harness_input_rail_blocks_when_no_main_flow() -> None:
+async def test_harness_input_rail_blocks_when_no_main_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from src.gateway.governance.langgraph_harness import nemo_node_factory
 
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
     with patch.object(nemo_node_factory, "_ensure_presidio_engines", lambda: None):
         node = nemo_node_factory.create_nemo_guardrail_node()
     with (

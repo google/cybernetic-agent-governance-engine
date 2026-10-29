@@ -238,6 +238,9 @@ async def _activate_domain() -> SymbolicGovernor:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    from src.gateway.governance.langgraph_harness.nemo_node_factory import (
+        nemo_rails_enabled,
+    )
     from src.gateway.governance.semantic_rail_factory import (
         initialize_semantic_rails as initialize_rails,
     )
@@ -262,8 +265,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app.state.nemo_rails = None
     else:
         require_backend_settings(config_manager.get)
-        # 4. Initialise NeMo rails and store on app state
-        app.state.nemo_rails = initialize_rails()
+        # 4. Initialise NeMo rails when CAGE_NEMO_ENABLED=true and store on app state
+        if nemo_rails_enabled():
+            app.state.nemo_rails = initialize_rails()
+        else:
+            logger.info("CAGE_NEMO_ENABLED=false: NeMo Colang rails are off.")
+            app.state.nemo_rails = None
 
     # 5. Start consensus background audit worker (Phase 4.4)
     from src.gateway.governance.consensus import _background_audit_worker

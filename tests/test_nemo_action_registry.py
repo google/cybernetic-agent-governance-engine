@@ -42,7 +42,6 @@ SEMANTIC_ACTIONS = [
     "retrieve_knowledge",
     "mask_pii_action",
     "custom_self_check_input",
-    "custom_self_check_output",
 ]
 
 AUDIT_ACTIONS = [
@@ -51,13 +50,15 @@ AUDIT_ACTIONS = [
 
 ALL_EXPECTED_ACTIONS = SEMANTIC_ACTIONS + AUDIT_ACTIONS
 
-# Finance pre-check actions deleted with the dead NeMo pre-check path.
+# Finance pre-check actions deleted with the dead NeMo pre-check path, plus
+# custom_self_check_output deleted under POAM-2026-140.
 DELETED_FINANCE_ACTIONS = [
     "check_approval_token_action",
     "check_data_latency_action",
     "check_drawdown_limit_action",
     "check_slippage_risk_action",
     "check_atomic_execution_action",
+    "custom_self_check_output",
 ]
 
 DELETED_REGISTRY_NAMES = [
@@ -66,6 +67,7 @@ DELETED_REGISTRY_NAMES = [
     "CheckDrawdownLimitAction",
     "CheckSlippageRiskAction",
     "CheckAtomicExecutionAction",
+    "CustomSelfCheckOutputAction",
 ]
 
 # Registry names (as registered with rails.register_action)
@@ -73,7 +75,6 @@ REGISTRY_ACTION_NAMES = [
     "RetrieveKnowledgeAction",
     "MaskPIIAction",
     "CustomSelfCheckInputAction",
-    "CustomSelfCheckOutputAction",
     "mask_sensitive_data",
     "detect_sensitive_data",
     "InvokeVllmFallbackAction",
@@ -213,7 +214,6 @@ class TestColangDefinitionsSync:
         "MaskPIIAction",
         "InvokeVllmFallbackAction",
         "CustomSelfCheckInputAction",
-        "CustomSelfCheckOutputAction",
         "LogSafetyAuditAction",
     }
 

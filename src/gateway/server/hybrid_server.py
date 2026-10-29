@@ -142,6 +142,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # content safety refuses with a reason code. An explicit ``vllm`` /
         # ``external`` needs its URL and key now, not at first use. Unset
         # keeps the behaviour from before the setting existed.
+        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
+            nemo_rails_enabled,
+        )
+
         if inference_backend is InferenceBackend.NONE:
             logger.warning("CAGE_INFERENCE_BACKEND=none: no model; NeMo rails are off.")
             nemo_rails = None
@@ -152,12 +156,16 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 )
 
                 require_backend_settings(config_manager.get)
-            from src.gateway.governance.semantic_rail_factory import (
-                initialize_semantic_rails as initialize_rails,
-            )
+            if nemo_rails_enabled():
+                from src.gateway.governance.semantic_rail_factory import (
+                    initialize_semantic_rails as initialize_rails,
+                )
 
-            logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
-            nemo_rails = initialize_rails()
+                logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
+                nemo_rails = initialize_rails()
+            else:
+                logger.info("CAGE_NEMO_ENABLED=false: NeMo Colang rails are off.")
+                nemo_rails = None
 
         # Store on root and sub-app states
         app.state.nemo_rails = nemo_rails

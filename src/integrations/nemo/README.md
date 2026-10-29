@@ -1,6 +1,10 @@
 # NeMo Guardrails — Integration Overview
 
-> **Last updated:** 2026-08-06 (v2.1.1-post)
+> **Last updated:** 2026-10-28
+>
+> **2026-10-28 update (`POAM-2026-125`, `POAM-2026-140`, `POAM-2026-142`):**
+> - **Opt-in Colang & semantic rails (`CAGE_NEMO_ENABLED=false` by default):** Deterministic Presidio PII redaction (`_redact_pii()`), regex PII scrubbing (`scrub_pii()`), and Stage 1 Aho-Corasick keyword screening (`ac_keyword_scan()`) run unconditionally in `nemo_guardrail_node` and `nemo_output_rail_node` with zero LLM dependency (`POAM-2026-142`). NeMo Colang 2.x flows (`validate_with_nemo`) and LLM semantic output auditing (`validate_output_semantics`) are opt-in behind `CAGE_NEMO_ENABLED=true` and require an active inference backend (`CAGE_INFERENCE_BACKEND != none`, enforced by `assert_production_posture()`).
+> - **Direct `rails.llm.ainvoke()` & `>= 7B` judge model requirement (`POAM-2026-125`, `POAM-2026-140`):** `validate_output_semantics()` invokes `rails.llm.ainvoke()` directly rather than `rails.generate_async()` (which routed through the input flow without sending the auditor prompt), strips closed `<think>...</think>` blocks, and accepts only an exact ASCII `"SAFE"` verdict. Dead `CustomSelfCheckOutputAction` (`custom_self_check_output`) was removed (`POAM-2026-140`). Enabling `CAGE_NEMO_ENABLED=true` requires a `>= 7B` instruction-tuned judge model (`Qwen/Qwen2.5-7B-Instruct` or hosted equivalent) — see [Opt-In Activation & Judge Model Requirements](#opt-in-activation--judge-model-requirements) below.
 >
 > **2026-08-06 update:** The GFA (Governed Financial Advisor) pod's `LLMRails`
 > lifecycle was consolidated to a single singleton. See
@@ -8,40 +12,55 @@
 > below for what changed and why.
 
 This package (`src.integrations.nemo/`) contains everything the
-Cybernetic Governance Engine needs to run NVIDIA NeMo Guardrails as a
-governed inference rail inside the LangGraph pipeline.
+Cybernetic Governance Engine needs to run NVIDIA NeMo Guardrails as an
+optional governed inference rail inside the LangGraph pipeline.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Architecture Diagram](#architecture-diagram)
-3. [GFA Pod — Singleton Consolidation (2026-08-06)](#gfa-pod--singleton-consolidation-2026-08-06)
-4. [File Reference](#file-reference)
-5. [Colang Rails](#colang-rails)
+2. [Opt-In Activation & Judge Model Requirements](#opt-in-activation--judge-model-requirements)
+3. [Architecture Diagram](#architecture-diagram)
+4. [GFA Pod — Singleton Consolidation (2026-08-06)](#gfa-pod--singleton-consolidation-2026-08-06)
+5. [File Reference](#file-reference)
+6. [Colang Rails](#colang-rails)
    - [cbrn_rails.co — CBRN Safety Rail \[US\_FED only\]](#cbrn_railsco--cbrn-safety-rail-us_fed-only)
-6. [Which path must graph nodes use?](#which-path-must-graph-nodes-use)
-7. [Warning — do not route graph nodes through gRPC](#warning--do-not-route-graph-nodes-through-grpc)
-8. [Related documents](#related-documents)
+7. [Which path must graph nodes use?](#which-path-must-graph-nodes-use)
+8. [Warning — do not route graph nodes through gRPC](#warning--do-not-route-graph-nodes-through-grpc)
+9. [Related documents](#related-documents)
 
 ---
 
 ## Overview
 
-NeMo Guardrails is integrated at **two boundaries** of every inference request:
+`nemo_guardrail_node` and `nemo_output_rail_node` sit at **two boundaries** of every inference request:
 
-| Boundary       | Graph node              | Direction                                                   |
-| -------------- | ----------------------- | ----------------------------------------------------------- |
-| **Entry rail** | `nemo_guardrail_node`   | User message → checked before the LLM sees it               |
-| **Exit rail**  | `nemo_output_rail_node` | LLM output → checked and PII-masked before the user sees it |
+| Boundary       | Graph node              | Always-On Deterministic Controls (`CAGE_NEMO_ENABLED=false` default) | Opt-In NeMo Semantic Rails (`CAGE_NEMO_ENABLED=true`) |
+| -------------- | ----------------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| **Entry rail** | `nemo_guardrail_node`   | Presidio `_redact_pii()` + Stage 1 Aho-Corasick `ac_keyword_scan()`   | Colang 2.x input rails (`validate_with_nemo`, Stage 3 `self_check_input`) |
+| **Exit rail**  | `nemo_output_rail_node` | Presidio `_redact_pii()` + regex `scrub_pii()`                       | Direct LLM output auditor (`validate_output_semantics` via `rails.llm.ainvoke()`) |
 
-Both nodes execute NeMo **in-process** — inside the same Python interpreter as
-the LangGraph runner — by calling functions in `manager.py`. No network call
+When `CAGE_NEMO_ENABLED=true`, both nodes execute NeMo **in-process** — inside the same Python interpreter as
+the LangGraph runner — by calling functions in `manager.py`. No network call to the gRPC sidecar
 is made.
 
 A separate gRPC sidecar process (`server.py`) also exists for external
 callers, but it is **not part of the graph's critical path**.
+
+---
+
+## Opt-In Activation & Judge Model Requirements
+
+By default (`CAGE_NEMO_ENABLED=false`), the gateway (`mcp_tool_server.py`, `hybrid_server.py`) and the LangGraph harness (`nemo_node_factory.py`) do **not** construct an `LLMRails` instance (`get_nemo_rails()` is not called). All deterministic input/output protections — Presidio identity-PII redaction (`_redact_pii`), regex PII scrubbing (`scrub_pii`), and Stage 1 Aho-Corasick keyword + prompt-injection screening (`ac_keyword_scan`) — execute unconditionally without an LLM (`POAM-2026-142`).
+
+To enable NeMo Colang 2.x input flows and LLM semantic output auditing:
+
+1. Set `CAGE_NEMO_ENABLED=true` and configure an active inference backend (`CAGE_INFERENCE_BACKEND=vllm` or `external` with `VLLM_BASE_URL`). Setting `CAGE_NEMO_ENABLED=true` with `CAGE_INFERENCE_BACKEND=none` is rejected at startup by `assert_production_posture()` (`nemo_rails_backend`).
+2. **Provision a `>= 7B` instruction-tuned judge model (`Qwen/Qwen2.5-7B-Instruct` or hosted equivalent)** on the endpoint backing `rails.llm`:
+   - In the 6-cell judge evaluation recorded in [`docs/POAM.md`](../../../docs/POAM.md) (`POAM-2026-125`, 20 multi-paragraph benign financial advisory answers + 20 labelled must-refuse outputs across 5 hazard categories at `temperature=0.0`), `Qwen/Qwen2.5-1.5B-Instruct` (`vllm-fast`) produced a **35.0% (7/20) benign false-refusal rate** and missed **40.0% (8/20)** of unsafe outputs on the shipped auditor prompt, and no prompt variant repaired it (adding an explicit rubric reduced false refusals to `0/20` while collapsing unsafe catch rate to `9/20 (45.0%)`).
+   - `Qwen/Qwen2.5-7B-Instruct` on the shipped `_SEMANTIC_SAFETY_SYSTEM_PROMPT` in [`manager.py`](manager.py) achieved **0/20 (0.0%) benign false refusals** and **20/20 (100.0%) unsafe catch** across all five categories.
+   - Do **not** point `CAGE_NEMO_ENABLED=true` at a `1.5B`-class model in enforcing deployments.
 
 ---
 

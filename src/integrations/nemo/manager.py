@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 try:
@@ -826,26 +827,33 @@ async def validate_output_semantics(
     rails: LLMRails,
     output_text: str,
 ) -> tuple[bool, str]:
-    """Semantic safety validation for LLM output text.
+    """Semantic safety validation for LLM output text (POAM-2026-125).
 
-    Runs the output through NeMo's LLMRails using a ``generate_async()`` call
-    with a system prompt that instructs the model to evaluate whether the output
-    contains harmful financial advice, hallucinated regulatory citations, prompt
-    injection payloads targeting downstream agents, or instructions to bypass
-    safety controls.
+    Invokes ``rails.llm.ainvoke()`` directly with ``_SEMANTIC_SAFETY_SYSTEM_PROMPT``
+    and the delimited assistant output text so Colang's input flow is never
+    entered on ``output_text``.
 
-    Returns:
-        ``(True, "")`` if the output is semantically safe.
-        ``(False, "<reason>")`` if the output is semantically unsafe or NeMo is unavailable.
+    Fail-closed contract:
+      - Empty or whitespace-only ``output_text`` returns ``(False, CONTENT_SAFETY_ERROR: ...)``.
+      - ``rails is None`` or ``rails.llm is None`` returns ``(False, CONTENT_SAFETY_RAILS_UNAVAILABLE: ...)``.
+      - Closed ``<think>...</think>`` blocks are stripped before parsing; an
+        unclosed ``<think>`` tag or an empty post-strip response fails closed.
+      - Only an exact ASCII ``"SAFE"`` (case-insensitive) returns ``(True, "")``.
+      - ``"UNSAFE"`` or ``"UNSAFE:<reason>"`` returns ``(False, "<reason>")``.
+      - Every other model reply (refusal prose, ``YES``/``NO``, ``**SAFETY**``,
+        Cyrillic homoglyphs, multi-line text) fails closed with
+        ``CONTENT_SAFETY_ERROR``.
 
     Args:
-        rails:       The LLMRails instance to use for semantic evaluation.
+        rails:       The LLMRails instance whose ``llm`` performs semantic evaluation.
         output_text: The LLM output text to evaluate (should be PII-masked first).
     """
     with tracer.start_as_current_span("guardrails.validate_output_semantics") as span:
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_output_semantic_validation")
-        span.set_attribute("input", scrub_pii(output_text))
+        span.set_attribute(
+            "input", scrub_pii(output_text if isinstance(output_text, str) else "")
+        )
 
         # --- Transparent Fallback Circuit Breaker ---
         if getattr(rails, "is_transparent_fallback", False):
@@ -881,36 +889,92 @@ async def validate_output_semantics(
             _mark_no_verdict(span, CONTENT_SAFETY_RAILS_UNAVAILABLE)
             return False, _RAILS_ABSENT_REASON
 
-        try:
-            # Use a two-message conversation: system prompt + the output to evaluate.
-            # The system prompt instructs the model to act as a safety auditor.
-            res = await rails.generate_async(
-                messages=[
-                    {"role": "system", "content": _SEMANTIC_SAFETY_SYSTEM_PROMPT},
-                    {"role": "user", "content": output_text},
-                ],
+        if not isinstance(output_text, str) or not output_text.strip():
+            logger.error(
+                "validate_output_semantics: empty output text — blocking (no verdict)."
+            )
+            _mark_no_verdict(span, CONTENT_SAFETY_ERROR)
+            span.set_attribute("output.semantic_safe", False)
+            return False, refusal_reason(
+                CONTENT_SAFETY_ERROR,
+                "Output text is empty; no semantic safety verdict was reached.",
             )
 
-            verdict_raw = _extract_bot_response(res).strip()
+        llm = getattr(rails, "llm", None)
+        if llm is None:
+            logger.error(
+                "validate_output_semantics: rails.llm is None — blocking (no verdict)."
+            )
+            _mark_no_verdict(span, CONTENT_SAFETY_RAILS_UNAVAILABLE)
+            return False, _RAILS_ABSENT_REASON
 
-            if not verdict_raw:
-                # Empty response — treat as safe (NeMo passed through without intervention).
-                span.set_attribute("output.semantic_verdict", "SAFE_EMPTY_RESPONSE")
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            res = await llm.ainvoke(
+                [
+                    SystemMessage(content=_SEMANTIC_SAFETY_SYSTEM_PROMPT),
+                    HumanMessage(
+                        content=f"Assistant output to evaluate:\n---\n{output_text}\n---"
+                    ),
+                ]
+            )
+
+            raw_content = res.content if hasattr(res, "content") else res
+            if not isinstance(raw_content, str):
+                logger.error(
+                    "validate_output_semantics: non-string judge response (%s) — blocking.",
+                    type(raw_content).__name__,
+                )
+                _mark_no_verdict(span, CONTENT_SAFETY_ERROR)
+                span.set_attribute("output.semantic_safe", False)
+                return False, refusal_reason(
+                    CONTENT_SAFETY_ERROR,
+                    "Semantic output judge returned a non-string verdict.",
+                )
+
+            # Strip closed <think>...</think> blocks emitted by reasoning models.
+            cleaned = re.sub(
+                r"<think>.*?</think>", "", raw_content, flags=re.DOTALL | re.IGNORECASE
+            ).strip()
+
+            # Reject unclosed <think> / stray </think> or empty post-strip output.
+            cleaned_lower = cleaned.lower()
+            if not cleaned or "<think>" in cleaned_lower or "</think>" in cleaned_lower:
+                logger.warning(
+                    "validate_output_semantics: empty or truncated <think> judge output — blocking."
+                )
+                _mark_no_verdict(span, CONTENT_SAFETY_ERROR)
+                span.set_attribute("output.semantic_verdict", "EMPTY_OR_TRUNCATED")
+                span.set_attribute("output.semantic_safe", False)
+                stamp_iso_control(
+                    span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
+                )
+                return False, refusal_reason(
+                    CONTENT_SAFETY_ERROR,
+                    "Semantic output judge returned an empty or truncated verdict.",
+                )
+
+            if cleaned.isascii() and cleaned.upper() == "SAFE":
+                span.set_attribute("output.semantic_verdict", "SAFE")
                 span.set_attribute("output.semantic_safe", True)
                 stamp_iso_control(
                     span, ingress_stage=3, control="A.6.1.2", outcome="PASS"
                 )
                 return True, ""
 
-            verdict_upper = verdict_raw.upper()
-
-            if verdict_upper.startswith("UNSAFE"):
-                # Extract the reason after "UNSAFE:" if present.
-                reason = (
-                    verdict_raw[len("UNSAFE:") :].strip()
-                    if ":" in verdict_raw
-                    else verdict_raw
-                )
+            verdict_upper = cleaned.upper()
+            if cleaned.isascii() and (
+                verdict_upper == "UNSAFE"
+                or verdict_upper.startswith(("UNSAFE:", "UNSAFE-", "UNSAFE "))
+            ):
+                remainder = cleaned[len("UNSAFE") :].strip()
+                if remainder and remainder[0] in (":", "-"):
+                    reason = remainder[1:].strip()
+                else:
+                    reason = remainder
+                if not reason:
+                    reason = "flagged as unsafe by semantic output auditor"
                 logger.warning(
                     "validate_output_semantics: output flagged as UNSAFE — reason: %s",
                     reason,
@@ -922,14 +986,19 @@ async def validate_output_semantics(
                     span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
                 )
                 return False, reason
-            else:
-                # "SAFE" or any non-UNSAFE response — treat as safe.
-                span.set_attribute("output.semantic_verdict", "SAFE")
-                span.set_attribute("output.semantic_safe", True)
-                stamp_iso_control(
-                    span, ingress_stage=3, control="A.6.1.2", outcome="PASS"
-                )
-                return True, ""
+
+            logger.warning(
+                "validate_output_semantics: non-conforming judge verdict %r — blocking (fail-closed).",
+                cleaned[:80],
+            )
+            _mark_no_verdict(span, CONTENT_SAFETY_ERROR)
+            span.set_attribute("output.semantic_verdict", "NON_CONFORMING")
+            span.set_attribute("output.semantic_safe", False)
+            stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK")
+            return False, refusal_reason(
+                CONTENT_SAFETY_ERROR,
+                "Semantic output judge returned a non-conforming verdict.",
+            )
 
         except Exception as exc:
             exc_str = str(exc)

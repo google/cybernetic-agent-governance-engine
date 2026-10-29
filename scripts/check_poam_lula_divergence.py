@@ -107,6 +107,13 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_content_safety_no_verdict.py",
         "tests/test_inference_backend_none.py",
     ),
+    # validate_output_semantics() calls rails.llm.ainvoke() directly and accepts only exact ASCII SAFE.
+    "POAM-2026-125": ("tests/test_validate_output_semantics.py",),
+    # Dead CustomSelfCheckOutputAction (custom_self_check_output) removed from config/rails/actions.py and action_registry.py.
+    "POAM-2026-140": (
+        "tests/test_nemo_self_check_judge.py",
+        "tests/test_nemo_action_registry.py",
+    ),
     # STPA compiler validates structured conditions for opa/python and semantic_pattern for nemo; UCA-3/4/7/10/12 re-homed.
     "POAM-2026-141": (
         "tests/test_stpa_compiler.py",

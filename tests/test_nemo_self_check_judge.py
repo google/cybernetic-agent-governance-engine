@@ -55,27 +55,25 @@ actions = pytest.importorskip("config.rails.actions")
 nemo_input = pytest.importorskip(
     "nemoguardrails.library.self_check.input_check.actions"
 )
-nemo_output = pytest.importorskip(
-    "nemoguardrails.library.self_check.output_check.actions"
-)
 from nemoguardrails.actions.actions import ActionResult  # noqa: E402
 
-# Benign inputs/outputs with no Stage 2 allowlist keyword: they reach the judge.
+# Benign input with no Stage 2 allowlist keyword: reaches the Stage 3 judge.
 _JUDGED_INPUT = "when is tsla's next earnings report?"
-_JUDGED_OUTPUT = "TSLA reports earnings on 22 October."
 
 _TASK_MANAGER = object()
 _CONFIG = object()
 _LLM = object()
 
 
-@pytest.mark.parametrize(
-    "fn", [actions.custom_self_check_input, actions.custom_self_check_output]
-)
+def test_custom_self_check_output_removed() -> None:
+    """POAM-2026-140: CustomSelfCheckOutputAction was dead and bypassed by Stage 2 safe_indicators."""
+    assert not hasattr(actions, "custom_self_check_output")
+
+
 @pytest.mark.parametrize("injected", ["llm_task_manager", "config", "llm", "context"])
-def test_signature_names_every_runtime_injected_parameter(fn, injected) -> None:
+def test_signature_names_every_runtime_injected_parameter(injected) -> None:
     # The Colang runtime checks ``name in inspect.signature(fn).parameters``.
-    assert injected in inspect.signature(fn).parameters
+    assert injected in inspect.signature(actions.custom_self_check_input).parameters
 
 
 def _fake_judge(seen: dict[str, Any], result: Any):
@@ -94,19 +92,6 @@ async def _run_input(monkeypatch, result: Any) -> tuple[bool, dict[str, Any]]:
     # The Colang v2 runtime shape: text as ``content``, no ``user_message``.
     allowed = await actions.custom_self_check_input(
         content=_JUDGED_INPUT,
-        context={},
-        llm=_LLM,
-        llm_task_manager=_TASK_MANAGER,
-        config=_CONFIG,
-    )
-    return allowed, seen
-
-
-async def _run_output(monkeypatch, result: Any) -> tuple[bool, dict[str, Any]]:
-    seen: dict[str, Any] = {}
-    monkeypatch.setattr(nemo_output, "self_check_output", _fake_judge(seen, result))
-    allowed = await actions.custom_self_check_output(
-        content=_JUDGED_OUTPUT,
         context={},
         llm=_LLM,
         llm_task_manager=_TASK_MANAGER,
@@ -134,16 +119,8 @@ async def test_input_judge_verdict(monkeypatch, result, allowed) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("result", "allowed"), _VERDICTS)
-async def test_output_judge_verdict(monkeypatch, result, allowed) -> None:
-    got, _ = await _run_output(monkeypatch, result)
-    assert got is allowed
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("run", [_run_input, _run_output])
-async def test_injected_parameters_reach_the_judge(monkeypatch, run) -> None:
-    _, seen = await run(monkeypatch, True)
+async def test_injected_parameters_reach_the_judge(monkeypatch) -> None:
+    _, seen = await _run_input(monkeypatch, True)
     assert seen["llm_task_manager"] is _TASK_MANAGER
     assert seen["config"] is _CONFIG
     # NeMo's llm_call() accepts only an LLMModel; the raw model is wrapped.
@@ -156,12 +133,6 @@ async def test_injected_parameters_reach_the_judge(monkeypatch, run) -> None:
 async def test_judge_context_carries_the_screened_input(monkeypatch) -> None:
     _, seen = await _run_input(monkeypatch, True)
     assert seen["context"]["user_message"] == _JUDGED_INPUT
-
-
-@pytest.mark.asyncio
-async def test_judge_context_carries_the_screened_output(monkeypatch) -> None:
-    _, seen = await _run_output(monkeypatch, True)
-    assert seen["context"]["bot_message"] == _JUDGED_OUTPUT
 
 
 class _TaskManager:
@@ -208,22 +179,6 @@ async def test_real_nemo_input_judge_calls_the_llm(llm_says, allowed) -> None:
         config=_Config(),
     )
     assert manager.rendered == [{"user_input": _JUDGED_INPUT}]
-    assert got is allowed
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("llm_says", "allowed"), [("safe", True), ("unsafe", False)])
-async def test_real_nemo_output_judge_calls_the_llm(llm_says, allowed) -> None:
-    manager = _TaskManager()
-    got = await actions.custom_self_check_output(
-        content=_JUDGED_OUTPUT,
-        context={},
-        llm=_raw_langchain_llm(llm_says),
-        llm_task_manager=manager,
-        config=_Config(),
-    )
-    assert len(manager.rendered) == 1
-    assert manager.rendered[0]["bot_response"] == _JUDGED_OUTPUT
     assert got is allowed
 
 

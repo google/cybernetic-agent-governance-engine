@@ -57,7 +57,6 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
     try:
         from config.rails.actions import (
             custom_self_check_input,
-            custom_self_check_output,
             log_safety_audit_action,
             mask_pii_action,
             retrieve_knowledge,
@@ -66,7 +65,6 @@ def get_all_actions() -> list[tuple[str, Callable[..., Any]]]:
         actions.extend(
             [
                 ("CustomSelfCheckInputAction", custom_self_check_input),
-                ("CustomSelfCheckOutputAction", custom_self_check_output),
                 ("MaskPIIAction", mask_pii_action),
                 ("mask_sensitive_data", mask_pii_action),
                 ("detect_sensitive_data", mask_pii_action),

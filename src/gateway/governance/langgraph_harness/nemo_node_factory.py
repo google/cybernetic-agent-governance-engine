@@ -57,15 +57,15 @@ _NEMO_AVAILABLE = False
 def nemo_rails_enabled() -> bool:
     """Return whether NeMo Colang rails are enabled via ``CAGE_NEMO_ENABLED``.
 
-    Defaults to ``"true"`` when ``CAGE_NEMO_ENABLED`` is unset or empty; raises
+    Defaults to ``"false"`` when ``CAGE_NEMO_ENABLED`` is unset or empty; raises
     :class:`ConfigurationError` on any unrecognised value (fail-closed).
     """
-    raw = os.environ.get("CAGE_NEMO_ENABLED", "true").strip().lower()
+    raw = os.environ.get("CAGE_NEMO_ENABLED", "false").strip().lower()
     if raw not in ("true", "false", "1", "0", ""):
         raise ConfigurationError(
             f"Invalid CAGE_NEMO_ENABLED={raw!r}: must be 'true' or 'false'"
         )
-    return raw in ("true", "1", "")
+    return raw in ("true", "1")
 
 
 def create_nemo_manager(config_path: str = "config/rails") -> Any:
@@ -475,6 +475,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
         ``workflow.add_node()``.
     """
     cfg = config or NemoNodeConfig()
+    _ensure_presidio_engines()
 
     async def nemo_output_rail_node(state: StateDict) -> dict[str, Any]:
         with tracer.start_as_current_span("nemo.output_rail") as span:

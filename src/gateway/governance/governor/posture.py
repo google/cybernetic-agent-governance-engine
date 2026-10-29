@@ -214,11 +214,25 @@ def _check_consensus_critics_backend(components: GovernorComponents) -> None:
         )
 
 
+def _check_nemo_rails_backend(components: GovernorComponents) -> None:
+    from src.gateway.governance.inference_backend import inference_disabled
+    from src.gateway.governance.langgraph_harness.nemo_node_factory import (
+        nemo_rails_enabled,
+    )
+
+    if nemo_rails_enabled() and inference_disabled():
+        raise RuntimeError(
+            "CAGE_NEMO_ENABLED=true requires an inference backend, "
+            "but CAGE_INFERENCE_BACKEND=none"
+        )
+
+
 CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("required_tiers", _check_required_tiers),
     ("tier_runtime_requirements", _check_tier_runtime_requirements),
     ("jurisdiction_requirements", _check_jurisdiction_requirements),
     ("consensus_critics_backend", _check_consensus_critics_backend),
+    ("nemo_rails_backend", _check_nemo_rails_backend),
     ("kms_signing_mode", _check_kms_signing_mode),
     ("kms_ready", _check_kms_ready),
     ("redis_ready", _check_redis_ready),

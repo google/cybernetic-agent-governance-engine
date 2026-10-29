@@ -16,5 +16,4 @@
 action MaskPIIAction
 action InvokeVllmFallbackAction
 action CustomSelfCheckInputAction
-action CustomSelfCheckOutputAction
 action LogSafetyAuditAction

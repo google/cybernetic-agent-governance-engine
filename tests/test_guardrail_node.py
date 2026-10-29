@@ -34,6 +34,12 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _enable_nemo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

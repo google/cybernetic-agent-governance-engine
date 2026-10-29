@@ -54,6 +54,11 @@ from src.gateway.governance.langgraph_harness import (
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.slow]
 
 
+@pytest.fixture(autouse=True)
+def _enable_nemo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+
+
 # ---------------------------------------------------------------------------
 # Jitter tolerance
 #
@@ -247,6 +252,10 @@ def _nemo_output_patches():
             new_callable=AsyncMock,
             return_value=(True, ""),
         ),
+        patch(
+            "src.integrations.presidio.redactor._presidio_analyzer",
+            None,
+        ),
     ]
 
 
@@ -425,8 +434,9 @@ class TestTier5NemoOutputRailLatency:
         node = create_nemo_output_rail_node(NemoNodeConfig())
         state = _output_state()
 
-        patches = _nemo_output_patches()
-        with patches[0], patches[1], patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_output_patches():
+                stack.enter_context(p)
             t_start = time.perf_counter()
             result = await node(state)
             t_end = time.perf_counter()
@@ -510,8 +520,9 @@ class TestPipelineCumulativeLatency:
         tier5_node = create_nemo_output_rail_node(NemoNodeConfig())
         out_state = _output_state()
 
-        nemo_out_patches = _nemo_output_patches()
-        with nemo_out_patches[0], nemo_out_patches[1], nemo_out_patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_output_patches():
+                stack.enter_context(p)
             t5_start = time.perf_counter()
             await tier5_node(out_state)
             t5_end = time.perf_counter()
@@ -587,8 +598,9 @@ class TestLatencyReportPrinted:
 
         # --- Tier 5 ---
         tier5_node = create_nemo_output_rail_node(NemoNodeConfig())
-        nemo_out_patches = _nemo_output_patches()
-        with nemo_out_patches[0], nemo_out_patches[1], nemo_out_patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_output_patches():
+                stack.enter_context(p)
             t5_start = time.perf_counter()
             await tier5_node(_output_state())
             t5_end = time.perf_counter()

@@ -230,9 +230,12 @@ async def test_verify_content_safety_under_none_is_blocked(backend_none) -> None
 
 
 @pytest.mark.asyncio
-async def test_harness_input_rail_blocks_under_none(backend_none) -> None:
+async def test_harness_input_rail_blocks_under_none(
+    backend_none, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from src.gateway.governance.langgraph_harness import nemo_node_factory
 
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
     with patch.object(nemo_node_factory, "_ensure_presidio_engines", lambda: None):
         node = nemo_node_factory.create_nemo_guardrail_node()
     with (

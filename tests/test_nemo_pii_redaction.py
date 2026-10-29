@@ -49,7 +49,8 @@ _RAW_VALUES = ("John Smith", "john.smith@secret-corp.com", "555-867-5309")
 
 
 @pytest.fixture(autouse=True)
-def _presidio_ready() -> None:
+def _presidio_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
     f._ensure_presidio_engines()
     if pii_redactor._presidio_analyzer is None:
         pytest.skip("Presidio engines (spaCy model) unavailable")
