@@ -128,7 +128,9 @@ def test_staging_keeps_a_three_zone_gpu_pool_that_scales_from_zero() -> None:
 
 
 def test_gpu_node_pool_uses_total_autoscaling_and_zero_initial_default() -> None:
-    gpu_block = _block(CLUSTER_MAIN, 'resource "google_container_node_pool" "gpu_nodes"')
+    gpu_block = _block(
+        CLUSTER_MAIN, 'resource "google_container_node_pool" "gpu_nodes"'
+    )
     autoscaling_match = re.search(r"autoscaling\s*\{(.*?)\}", gpu_block, re.DOTALL)
     assert autoscaling_match is not None
     autoscaling = _squash(autoscaling_match.group(1))
@@ -148,7 +150,9 @@ def test_gpu_node_pool_uses_total_autoscaling_and_zero_initial_default() -> None
         ("gcp_gke_cluster/variables.tf", CLUSTER_VARIABLES),
         ("gcp-gke/variables.tf", VARIABLES),
     ):
-        init_block = _squash(_block(vars_text, 'variable "gpu_node_pool_initial_count"'))
+        init_block = _squash(
+            _block(vars_text, 'variable "gpu_node_pool_initial_count"')
+        )
         min_block = _squash(_block(vars_text, 'variable "gpu_node_pool_min_count"'))
         assert "default = 0" in init_block, source_name
         assert "default = 0" in min_block, source_name
