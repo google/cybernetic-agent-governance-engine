@@ -96,8 +96,9 @@ output "deployment_summary" {
     cluster_location        = module.gke.cluster_location
     is_regional             = module.gke.is_regional
     namespace               = module.namespace.name
-    advisor_runtime         = var.advisor_runtime
-    geap_agent_principal    = var.advisor_runtime == "geap" ? module.gcp_geap_advisor[0].geap_agent_principal : "gke-pod"
+    inference_backend       = var.inference_backend
+    advisor_runtime         = local.advisor_enabled ? var.advisor_runtime : "none"
+    geap_agent_principal    = length(module.gcp_geap_advisor) > 0 ? module.gcp_geap_advisor[0].geap_agent_principal : (length(module.governed_advisor) > 0 ? "gke-pod" : "none")
     nist_compliance_enabled = var.enable_nist_compliance
     gpu_node_pool_enabled   = var.enable_gpu_node_pool
     worm_bucket             = module.worm_bucket.bucket_name
@@ -114,13 +115,13 @@ output "deployment_summary" {
 }
 
 output "advisor_runtime" {
-  description = "Active runtime for Governed Financial Advisor on GCP ('geap' or 'gke')"
-  value       = var.advisor_runtime
+  description = "Runtime of the deployed Governed Financial Advisor ('geap' or 'gke'), or 'none' when inference_backend = \"none\" deploys no advisor"
+  value       = local.advisor_enabled ? var.advisor_runtime : "none"
 }
 
 output "geap_agent_principal" {
-  description = "GEAP Agent Identity (ID-2) principal URI when advisor_runtime == 'geap'"
-  value       = var.advisor_runtime == "geap" ? module.gcp_geap_advisor[0].geap_agent_principal : ""
+  description = "GEAP Agent Identity (ID-2) principal URI while a GEAP advisor is deployed"
+  value       = length(module.gcp_geap_advisor) > 0 ? module.gcp_geap_advisor[0].geap_agent_principal : ""
 }
 
 
@@ -172,7 +173,7 @@ output "memorystore_app_host" {
 
 output "vllm_endpoint" {
   description = "vLLM inference endpoint"
-  value       = var.enable_vllm ? module.vllm[0].endpoint_url : "Not deployed"
+  value       = local.vllm_enabled ? module.vllm[0].endpoint_url : "Not deployed (inference_backend = \"none\")"
 }
 
 output "langfuse_url" {

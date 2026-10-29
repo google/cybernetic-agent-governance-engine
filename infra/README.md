@@ -247,7 +247,7 @@ Each module includes:
 # dev.tfvars
 environment = "dev"
 enable_nist_compliance = false
-enable_vllm = false  # Use external vLLM for speed
+inference_backend = "none"  # no model; "vllm" for a live agent (see targets/gcp-gke/README.md)
 primary_node_pool_min_count = 1
 ```
 

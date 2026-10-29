@@ -49,7 +49,7 @@ terraform apply -var-file=prod.tfvars
 
 - ✅ GKE cluster (with private nodes option)
 - ✅ Primary CPU node pool (autoscaling)
-- ✅ GPU node pool (NVIDIA L4 or T4 - regionally sourced across `us-central1-a/b/c`)
+- ✅ GPU node pool (NVIDIA L4 or T4; zones from `gpu_node_locations`, a single zone in staging)
 - ✅ GCS bucket for Langfuse events (7-year retention)
 - ✅ Cloud Router & NAT (when private cluster enabled)
 - ✅ Workload Identity federation service accounts
@@ -61,10 +61,38 @@ terraform apply -var-file=prod.tfvars
 - ✅ MinIO object storage (S3-compatible)
 - ✅ PostgreSQL database
 - ✅ Redis cache
-- ✅ vLLM inference engines (both fast instructions and reasoning)
+- ✅ vLLM inference engines (fast and reasoning) and the advisor, only with `inference_backend = "vllm"`
 - ✅ Langfuse stack (observability, database, ClickHouse, UI)
 - ✅ Compliance bridge (Langfuse-to-Lula dynamic bootstrapping)
 - ✅ OPA policy engine
+
+## Inference Backend
+
+`inference_backend` decides which model-dependent workloads exist, not only how they are configured. It also sets `CAGE_INFERENCE_BACKEND` on the gateway and the compliance bridge.
+
+| `inference_backend` | Deploys | For |
+|---|---|---|
+| `"none"` (the default, and staging's) | No vLLM, no advisor, no NeMo server | The governance core on its own, as an evaluator assesses it. No GPU, quota or model key. |
+| `"vllm"` | vLLM (fast and reasoning) on the GPU pool, and the advisor | Manual evaluation and demos with a live agent |
+
+- **Absent, not degraded.** Under `"none"` no workload points at a model service that does not exist, so nothing crash-loops. On the gateway, content safety and the inference proxy refuse with reason codes. The compliance bridge records its remediation advisory as not performed.
+- **Switching to `"vllm"` is a variable change.** Set `inference_backend = "vllm"` and apply. The GPU pool already exists at min 0, so the cluster and its node pools don't change. GKE adds GPU nodes when the vLLM pods request them. The plan refuses `"vllm"` without `enable_gpu_node_pool = true`.
+- **The staging GPU pool is one zone, min 0 / max 2 / initial 0.** GKE applies a pool's counts per zone, so the three-zone list it had tripled them. Starting at zero means no GPU is requested at create, so a zonal stockout shows up as Pending vLLM pods. `us-central1-a` offers both `nvidia-l4` and `g2-standard-8` (verified with the Compute API, 2026-10-29).
+- **`"external"` is compose-only.** The cluster denies external egress by default (L3/L4 default-deny, plus a per-workload FQDN egress allowlist), and the advisor's egress is cluster-internal only. Reaching a third-party model provider would mean opening that control for the agent, so the plan refuses `"external"` on GKE. Allowing it later would be a deliberate decision with its own entry, not a deployment convenience.
+- **Where no zone offers an L4, `external` is the only live agent.** `europe-west1-d` offers neither `nvidia-l4` nor `g2-standard-8` (POAM-2026-132). In a jurisdiction whose region has no such zone, the only way to see a live agent is the compose stack with `CAGE_INFERENCE_BACKEND=external`.
+- **The advisor calls its models directly, by design.** It does not go through the gateway's inference proxy. That looks like a bypass, but it is the architecture: the agent reasons freely and is constrained when it acts, at the gateway's action boundary.
+- **`enable_vllm` is removed.** A profile that still sets it fails the plan with a message that names `inference_backend` (AG-7 in [`BREAKING_CHANGES_v3.md`](../../../docs/BREAKING_CHANGES_v3.md)).
+- **The standalone NeMo server** (`enable_nemo_guardrails`, off by default) needs `"vllm"`, because it calls the in-cluster vLLM service. Nothing in CAGE calls the server: the gateway builds its rails in process.
+
+The backend each need uses is below. The integration tiers are not built yet; this is the split they are designed around.
+
+| Need | Backend | Agent |
+|---|---|---|
+| Unit and hermetic CI | `none` | none (stubs) |
+| Integration: governance path | `none` | scripted client |
+| Integration: agent behaviour | `external`, in compose | real LLM serving the shipped models |
+| Manual evaluation, demos | `vllm`, on GKE | real LLM; the GPU pool scales up on demand |
+| An evaluator assessing CAGE | `none` | none |
 
 ## Security Postures
 

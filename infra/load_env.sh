@@ -89,17 +89,6 @@ while IFS= read -r line || [ -n "$line" ]; do
                 export TF_VAR_model_consensus="$var_value"
                 ;;
             
-            # vLLM configuration
-            VLLM_REASONING_API_BASE)
-                export TF_VAR_vllm_reasoning_url="$var_value"
-                ;;
-            VLLM_FAST_API_BASE)
-                export TF_VAR_vllm_fast_url="$var_value"
-                ;;
-            VLLM_GATEWAY_URL)
-                export TF_VAR_vllm_gateway_url="$var_value"
-                ;;
-            
             # Langfuse configuration
             LANGFUSE_HOST)
                 export TF_VAR_langfuse_host="$var_value"

@@ -349,7 +349,7 @@ variable "gpu_node_pool_spot" {
 }
 
 variable "gpu_node_locations" {
-  description = "List of zones to deploy the GPU node pool to. Enables multi-zonal/regional node configuration."
+  description = "Zones for the GPU node pool. GKE applies the pool's min, max and initial counts per zone, so each zone listed multiplies them."
   type        = list(string)
   default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
 }
@@ -443,9 +443,9 @@ variable "clickhouse_storage_size" {
 # ─── NeMo Guardrails + Presidio Configuration ─────────────────────────────────
 
 variable "enable_nemo_guardrails" {
-  description = "Enable NVIDIA NeMo Guardrails + Microsoft Presidio deployment"
+  description = "Deploy the standalone NeMo Guardrails + Presidio server. Optional: nothing in CAGE calls it (the gateway builds its rails in process), and it needs inference_backend = \"vllm\"."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "image_digests" {
@@ -549,10 +549,28 @@ variable "presidio_anonymizer_image" {
 
 # ─── vLLM Configuration ───────────────────────────────────────────────────────
 
+variable "inference_backend" {
+  description = "Where model inference comes from: \"none\" (no model; no vLLM, advisor or NeMo server; the governance core runs alone) or \"vllm\" (in-cluster vLLM on the GPU pool, plus the advisor). Sets CAGE_INFERENCE_BACKEND on the gateway and compliance bridge. \"external\" is compose-only and refused here."
+  type        = string
+  default     = "none"
+
+  validation {
+    condition     = contains(["none", "vllm"], var.inference_backend)
+    error_message = "inference_backend must be \"none\" or \"vllm\" on GKE. \"external\" is compose-only: the cluster denies external egress by default and the advisor's egress is internal-only, so reaching a third-party model provider would mean weakening that control."
+  }
+}
+
+# Replaced by inference_backend. Kept only so that a profile still setting it
+# fails with a migration message rather than Terraform's undeclared-variable error.
 variable "enable_vllm" {
-  description = "Enable vLLM inference deployment"
+  description = "Removed: replaced by inference_backend. Setting it to any value fails the plan."
   type        = bool
-  default     = false
+  default     = null
+
+  validation {
+    condition     = var.enable_vllm == null
+    error_message = "enable_vllm is replaced by inference_backend: remove it and set inference_backend = \"vllm\" (or \"none\" for no model)."
+  }
 }
 
 variable "vllm_model_path" {
@@ -1000,24 +1018,6 @@ variable "cold_tier_bucket" {
   description = "Cold tier storage bucket name (from COLD_TIER_BUCKET)"
   type        = string
   default     = "cage-cold-tier"
-}
-
-variable "vllm_reasoning_url" {
-  description = "vLLM reasoning API base URL (from VLLM_REASONING_API_BASE)"
-  type        = string
-  default     = ""
-}
-
-variable "vllm_fast_url" {
-  description = "vLLM fast API base URL (from VLLM_FAST_API_BASE)"
-  type        = string
-  default     = ""
-}
-
-variable "vllm_gateway_url" {
-  description = "vLLM gateway URL (from VLLM_GATEWAY_URL)"
-  type        = string
-  default     = ""
 }
 
 variable "opa_url" {

@@ -105,7 +105,7 @@ enable_gcs_fuse_csi = true
 force_redeploy = true
 
 # ─── Services ─────────────────────────────────────────────────────────────────
-enable_vllm              = true
+inference_backend        = "vllm"
 enable_compliance_bridge = true
 enable_nemo_guardrails   = true
 

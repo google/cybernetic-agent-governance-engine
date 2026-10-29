@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-29T13:04:41Z'
+    last-modified: '2026-10-29T14:53:50Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -210,8 +210,9 @@ system-security-plan:
       The system''s authorization boundary encompasses all containers deployed in
       the governance-stack namespace, the Cloud SQL PostgreSQL database, Google Cloud
       Storage buckets for audit log archival, and Redis cache for session state. External
-      interconnections include the Langfuse observability platform (cloud-hosted SaaS)
-      and external LLM provider APIs (OpenAI, Anthropic, Google).
+      interconnections include the Langfuse observability platform (cloud-hosted SaaS).
+      On GKE, model inference stays in the cluster: the inference backend is in-cluster
+      vLLM or none, and the external-provider backend is compose-only.
 
       '
     security-sensitivity-level: high
@@ -367,10 +368,11 @@ system-security-plan:
         Manager for credential storage). The boundary is enforced via Kubernetes NetworkPolicy
         restricting all ingress/egress to authorized sources only. External to the
         boundary: Langfuse SaaS observability platform (external interconnection with
-        data flow agreement), LLM provider APIs (OpenAI/Anthropic/Google), and OFAC
-        sanctions API. GKE cluster infrastructure (physical, hypervisor, network fabric)
-        is managed by Google Cloud Platform as Common Control Provider and is inherited
-        via GCP FedRAMP High authorization.
+        data flow agreement) and OFAC sanctions API. No LLM provider API is an interconnection
+        on GKE: model inference stays in the cluster, and the external-provider backend
+        is compose-only. GKE cluster infrastructure (physical, hypervisor, network
+        fabric) is managed by Google Cloud Platform as Common Control Provider and
+        is inherited via GCP FedRAMP High authorization.
 
         '
       props:
@@ -390,13 +392,13 @@ system-security-plan:
         namespace via Kubernetes NetworkPolicy (deployment/k8s/network-policy.yaml).
         Inbound traffic is routed through a Cloud Load Balancer to the CAGE gateway
         service. Outbound traffic egresses via Cloud NAT (nat-config-{region}) for
-        controlled egress to external LLM APIs and Langfuse. All external traffic
-        uses TLS 1.3. Internal service-to-service communication uses gRPC and HTTP
-        over in-cluster networking; mTLS implementation is planned per POAM-013. GCP
-        VPC networking provides network isolation at the hypervisor level inherited
-        from GCP FedRAMP High authorization. The Redis cache, Cloud SQL PostgreSQL,
-        and Cloud Storage are accessed via Private Service Connect or VPC-native routes,
-        not exposed to the public internet.
+        controlled egress to the endpoints on each workload''s FQDN allowlist; model
+        inference stays in the cluster. All external traffic uses TLS 1.3. Internal
+        service-to-service communication uses gRPC and HTTP over in-cluster networking;
+        mTLS implementation is planned per POAM-013. GCP VPC networking provides network
+        isolation at the hypervisor level inherited from GCP FedRAMP High authorization.
+        The Redis cache, Cloud SQL PostgreSQL, and Cloud Storage are accessed via
+        Private Service Connect or VPC-native routes, not exposed to the public internet.
 
         '
       diagrams:
@@ -426,10 +428,12 @@ system-security-plan:
         monitor observes kernel-level syscalls for anomaly detection without data
         exfiltration.
 
-        Outbound: PII-redacted inference requests exit to external LLM provider APIs
-        (OpenAI/Anthropic/Google) via Cloud NAT over HTTPS. OFAC sanctions API queries
-        exit via Cloud NAT. Audit logs (OTel spans) flow to Langfuse SaaS over HTTPS
-        and are archived to GCS buckets for long-term retention per SEC Rule 17a-4.
+        Outbound: model inference does not leave the cluster. On GKE the inference
+        backend is in-cluster vLLM (inference_backend = "vllm") or none, and the "external"
+        backend, which sends requests to a third-party provider, is compose-only.
+        OFAC sanctions API queries exit via Cloud NAT. Audit logs (OTel spans) flow
+        to Langfuse SaaS over HTTPS and are archived to GCS buckets for long-term
+        retention per SEC Rule 17a-4.
 
         Data at rest: Cloud SQL PostgreSQL stores Langfuse metadata and session data
         encrypted with CMEK. GCS buckets store audit log archives with object versioning
@@ -1231,8 +1235,10 @@ system-security-plan:
         description: 'governance_thresholds.json and the regional baseline overlay
           are validated before any governor is assembled; tests/governor/test_regional_overlay.py
           observes each fail-closed path. Changes require PR review and CI validation.
-          Lula validation: compliance/lula/lula-validation-cm6.yaml (asserts that
-          the threshold ConfigMaps are deployed; it does not assert threshold values).
+          Lula validation: compliance/lula/lula-validation-cm6.yaml asserts that a
+          threshold ConfigMap is deployed, not its values. No manifest in this repository
+          creates that ConfigMap (the thresholds ship in the gateway image), so the
+          validation cannot pass as written (POAM-2026-151).
 
           '
         implementation-status:
@@ -1666,14 +1672,15 @@ system-security-plan:
         time. Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved
         IPs and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7
         HTTP-method enforcement is not claimed by this control implementation. Gateway
-        pods may reach only approved external LLM provider endpoints (generativelanguage.googleapis.com,
-        api.anthropic.com) and required GCP service APIs (*.googleapis.com). Reconciliation
-        worker egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), the
-        Memorystore for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign
-        telemetry OTLP (port 3000), and cluster DNS. Sovereign agent and financial
-        advisor pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080,
-        Compliance-Bridge:8090) and cannot contact any external endpoint directly,
-        preventing lateral movement and data exfiltration even if a pod is compromised.'
+        pods may reach only the FQDNs on their allowlist (deployment/k8s/cilium/egress-lockdown.yaml),
+        among them required GCP service APIs (*.googleapis.com) and three external
+        LLM provider endpoints that no GKE inference path calls. Reconciliation worker
+        egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), the Memorystore
+        for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign telemetry
+        OTLP (port 3000), and cluster DNS. Sovereign agent and financial advisor pods
+        are locked to intra-cluster egress only (OPA:8181, Gateway:8080, Compliance-Bridge:8090)
+        and cannot contact any external endpoint directly, preventing lateral movement
+        and data exfiltration even if a pod is compromised.'
       props:
       - name: implementation-status
         value: implemented

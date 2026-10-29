@@ -40,6 +40,8 @@ docker compose -f docker-compose.dev.yml up
 
 > **Compose file distinction:** `docker-compose.yml` is the production-equivalent compose file. `docker-compose.dev.yml` includes hot-reload volume mounts and development overrides. Use `docker-compose.dev.yml` for local iteration.
 
+> **Model backend:** compose is the only place `CAGE_INFERENCE_BACKEND=external`, a model served by a third-party provider, is supported. The GKE target refuses it (see [the gcp-gke README](targets/gcp-gke/README.md#inference-backend)).
+
 ### 2. Agnostic Kubernetes Target
 
 **Use case:** Deploy to an existing Kubernetes cluster (k3s, EKS, AKS, minikube, GKE, etc.)
@@ -70,6 +72,9 @@ docker compose -f docker-compose.dev.yml up
 - MinIO storage on GCP persistent disks
 - GCS bucket for Langfuse events
 - Cloud Router & NAT (when private cluster mode is enabled)
+- vLLM and the advisor, only with `inference_backend = "vllm"`
+
+**Model backend:** `inference_backend` decides what is deployed. `"none"`, the default and staging's setting, deploys no vLLM, no advisor and no NeMo server. `"vllm"` deploys vLLM on the GPU pool and the advisor. `"external"` is compose-only. The [gcp-gke README](targets/gcp-gke/README.md#inference-backend) has the details, including why the advisor calls its models directly and which zones have no L4.
 
 ---
 

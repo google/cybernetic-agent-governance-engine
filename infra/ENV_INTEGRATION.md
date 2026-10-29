@@ -201,13 +201,12 @@ The following `.env` variables are automatically mapped to Terraform variables:
 
 | .env Variable | Terraform Variable | Description |
 |---------------|-------------------|-------------|
-| `VLLM_REASONING_API_BASE` | `vllm_reasoning_url` | vLLM reasoning endpoint |
-| `VLLM_FAST_API_BASE` | `vllm_fast_url` | vLLM fast endpoint |
-| `VLLM_GATEWAY_URL` | `vllm_gateway_url` | vLLM gateway endpoint |
 | `OPA_URL` | `opa_url` | OPA base URL, no path (the gateway derives the decision path from the active domain's `DomainConfig.opa_package`) |
 | `REDIS_URL` | `redis_url` | Redis connection URL |
 | `S3_ENDPOINT_URL` | `minio_endpoint` | MinIO/S3 endpoint (agnostic only) |
 | `S3_BUCKET_NAME` | `minio_bucket` | MinIO/S3 bucket (agnostic only) |
+
+`VLLM_*` in `.env` configure Docker Compose only. On gcp-gke the vLLM endpoints follow `inference_backend` (see [`targets/gcp-gke/README.md`](targets/gcp-gke/README.md)). The `vllm_reasoning_url`, `vllm_fast_url` and `vllm_gateway_url` variables this table used to list were never read, and are removed (POAM-2026-136).
 
 ### General Configuration
 

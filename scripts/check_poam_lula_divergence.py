@@ -142,6 +142,9 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_seal_digest_evidence.py",
         "tests/test_actuator_registry_integration.py",
     ),
+    # The unread vllm_*_url variables are gone from both targets and both
+    # .env loaders; gcp-gke vLLM endpoints come only from inference_backend.
+    "POAM-2026-136": ("tests/infrastructure/test_inference_backend_gke.py",),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

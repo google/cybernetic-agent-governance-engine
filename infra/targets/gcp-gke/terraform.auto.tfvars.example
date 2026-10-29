@@ -138,8 +138,10 @@ redis_storage_size = "10Gi"
 # vLLM Inference Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Enable vLLM deployment
-enable_vllm = false
+# Inference backend: "none" (no model; no vLLM, advisor or NeMo server) or
+# "vllm" (in-cluster vLLM on the GPU pool, plus the advisor). "external" is
+# compose-only and refused on GKE. Replaces enable_vllm, which now fails the plan.
+inference_backend = "none"
 
 # Model path in GCS model bucket
 vllm_model_path = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"

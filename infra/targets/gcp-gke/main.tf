@@ -557,7 +557,30 @@ module "clickhouse_operator" {
 }
 
 
+# ─── Inference Backend (W6) ───────────────────────────────────────────────────
+# inference_backend decides what is deployed, not only how it is configured.
+# Under "none" nothing that needs a model exists: no vLLM, no advisor, no NeMo
+# server. Absent, not degraded: a workload pointed at a model service that does
+# not exist crash-loops. The GPU pool stays (min 0), so moving to "vllm" is a
+# variable change and an apply, not an infrastructure rebuild.
+locals {
+  vllm_enabled = var.inference_backend == "vllm"
+
+  # The advisor calls the model services directly, not through the gateway's
+  # inference proxy. That is by design: the agent reasons freely and is
+  # constrained when it acts, at the gateway's action boundary.
+  advisor_enabled = local.vllm_enabled
+
+  vllm_fast_url      = local.vllm_enabled ? "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1" : ""
+  vllm_reasoning_url = local.vllm_enabled ? "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1" : ""
+  # In-cluster vLLM runs without --api-key; the gateway and bridge still
+  # require a non-empty VLLM_API_KEY whenever a backend is configured.
+  vllm_api_key = local.vllm_enabled ? "EMPTY" : ""
+}
+
 # ─── Deploy NeMo Guardrails + Microsoft Presidio ───────────────────────────────
+# Optional and off by default: nothing in CAGE calls this server, because the
+# gateway builds its rails in process. It needs inference_backend = "vllm".
 
 module "nemo_guardrails" {
   count = var.enable_nemo_guardrails ? 1 : 0
@@ -579,7 +602,7 @@ module "nemo_guardrails" {
   presidio_anonymizer_image = var.presidio_anonymizer_image != "" ? var.presidio_anonymizer_image : var.image_digests["presidio-anonymizer"]
 
   # LLM backend: NeMo rails call vLLM fast service for rail evaluation
-  llm_api_base   = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  llm_api_base   = local.vllm_fast_url
   llm_api_key    = "EMPTY"
   llm_model_name = var.served_model_fast
 
@@ -605,7 +628,7 @@ module "nemo_guardrails" {
 # ─── Deploy vLLM Inference Engine ──────────────────────────────────────────────
 
 module "vllm" {
-  count = var.enable_vllm ? 1 : 0
+  count = local.vllm_enabled ? 1 : 0
 
   source = "../../modules/vllm_inference"
 
@@ -673,7 +696,7 @@ module "vllm" {
 # ─── Deploy vLLM Reasoning Engine ──────────────────────────────────────────────
 
 module "vllm_reasoning" {
-  count = var.enable_vllm ? 1 : 0
+  count = local.vllm_enabled ? 1 : 0
 
   source = "../../modules/vllm_inference"
 
@@ -793,8 +816,9 @@ module "compliance_bridge" {
   remediation_model          = var.served_model_fast
   remediation_max_tokens     = "2048"
   remediation_timeout_ms     = "30000"
-  vllm_base_url              = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_api_key               = "EMPTY"
+  cage_inference_backend     = var.inference_backend
+  vllm_base_url              = local.vllm_fast_url
+  vllm_api_key               = local.vllm_api_key
   alert_channel              = "console"
   oscal_s3_bucket            = module.worm_bucket.bucket_name
   oscal_s3_region            = var.region
@@ -875,9 +899,11 @@ module "gateway" {
   evidence_stream_redis_url = local.evidence_stream_redis_url
   evidence_stream_redis_db  = local.evidence_stream_redis_db
   evidence_stream_key       = local.evidence_stream_key
-  vllm_base_url             = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base   = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base        = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  cage_inference_backend    = var.inference_backend
+  vllm_base_url             = local.vllm_fast_url
+  vllm_reasoning_api_base   = local.vllm_reasoning_url
+  vllm_fast_api_base        = local.vllm_fast_url
+  vllm_api_key              = local.vllm_api_key
   guardrails_model_name     = var.served_model_fast
   opa_url                   = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   governance_salt           = var.governance_salt
@@ -887,7 +913,8 @@ module "gateway" {
   trusted_client_identities = [
     "${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
   ]
-  trusted_geap_principals = var.advisor_runtime == "geap" ? [
+  # Trust the GEAP agent principal only while a GEAP advisor is deployed.
+  trusted_geap_principals = local.advisor_enabled && var.advisor_runtime == "geap" ? [
     "principal://agents.global.org-${var.gcp_organization_id}/governed-financial-advisor",
   ] : []
 
@@ -914,9 +941,10 @@ module "gateway" {
 }
 
 # ─── Deploy Governed Financial Advisor (GEAP Agent Runtime for GCP) ──────────
+# Both advisor runtimes exist only with a model backend (local.advisor_enabled).
 
 module "gcp_geap_advisor" {
-  count  = var.advisor_runtime == "geap" ? 1 : 0
+  count  = local.advisor_enabled && var.advisor_runtime == "geap" ? 1 : 0
   source = "../../modules/gcp_geap_advisor"
 
   project_id              = var.project_id
@@ -932,9 +960,9 @@ module "gcp_geap_advisor" {
   model_fast              = var.served_model_fast
   model_reasoning         = var.served_model_reasoning
   model_consensus         = var.served_model_reasoning
-  vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_base_url           = local.vllm_fast_url
+  vllm_fast_api_base      = local.vllm_fast_url
+  vllm_reasoning_api_base = local.vllm_reasoning_url
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   langfuse_host           = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   gateway_url             = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
@@ -948,7 +976,7 @@ module "gcp_geap_advisor" {
 }
 
 module "governed_advisor" {
-  count  = var.advisor_runtime == "gke" ? 1 : 0
+  count  = local.advisor_enabled && var.advisor_runtime == "gke" ? 1 : 0
   source = "../../modules/governed_advisor"
 
   namespace                  = module.namespace.name
@@ -964,9 +992,9 @@ module "governed_advisor" {
   model_fast                 = var.served_model_fast
   model_reasoning            = var.served_model_reasoning
   model_consensus            = var.served_model_reasoning
-  vllm_base_url              = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base         = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base    = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_base_url              = local.vllm_fast_url
+  vllm_fast_api_base         = local.vllm_fast_url
+  vllm_reasoning_api_base    = local.vllm_reasoning_url
   opa_url                    = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
@@ -1140,6 +1168,24 @@ resource "terraform_data" "control_plane_access_guard" {
         committed profile. Terraform's kubernetes and helm providers use the public
         endpoint, so the machine running terraform must be on the list.
       EOT
+    }
+  }
+}
+
+# W6: what each inference backend deploys must be able to run. "vllm" schedules
+# its pods on the GPU pool, so it needs one (min 0 costs nothing while idle). The
+# standalone NeMo server calls the in-cluster vLLM service, so under "none" it
+# would crash-loop instead of being absent.
+resource "terraform_data" "inference_backend_guard" {
+  lifecycle {
+    precondition {
+      condition     = !local.vllm_enabled || var.enable_gpu_node_pool
+      error_message = "inference_backend = \"vllm\" needs enable_gpu_node_pool = true: the vLLM pods schedule only on the GPU pool. Keep the pool at min 0 to pay nothing while idle."
+    }
+
+    precondition {
+      condition     = !var.enable_nemo_guardrails || local.vllm_enabled
+      error_message = "enable_nemo_guardrails = true needs inference_backend = \"vllm\": the standalone NeMo server calls the in-cluster vLLM service, so without it the server would crash-loop. Nothing in CAGE calls the server; leave it off unless you need it."
     }
   }
 }

@@ -61,8 +61,24 @@ variable "redis_password" {
   sensitive = true
 }
 
+variable "cage_inference_backend" {
+  description = "CAGE_INFERENCE_BACKEND for the gateway: \"none\", \"external\" or \"vllm\". Targets may narrow this; gcp-gke refuses \"external\"."
+  type        = string
+
+  validation {
+    condition     = contains(["none", "external", "vllm"], var.cage_inference_backend)
+    error_message = "cage_inference_backend must be \"none\", \"external\" or \"vllm\"."
+  }
+}
+
 variable "vllm_base_url" {
   type = string
+}
+
+variable "vllm_api_key" {
+  description = "VLLM_API_KEY as a plain env value: a placeholder for in-cluster vLLM, which runs without --api-key, never a credential. The gateway's startup check requires it whenever a backend is set. A real key belongs in a Kubernetes Secret."
+  type        = string
+  default     = ""
 }
 
 variable "vllm_gateway_url" {

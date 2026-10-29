@@ -325,24 +325,6 @@ variable "minio_bucket" {
   default     = "cage-artifacts"
 }
 
-variable "vllm_reasoning_url" {
-  description = "vLLM reasoning API base URL (from VLLM_REASONING_API_BASE)"
-  type        = string
-  default     = ""
-}
-
-variable "vllm_fast_url" {
-  description = "vLLM fast API base URL (from VLLM_FAST_API_BASE)"
-  type        = string
-  default     = ""
-}
-
-variable "vllm_gateway_url" {
-  description = "vLLM gateway URL (from VLLM_GATEWAY_URL)"
-  type        = string
-  default     = ""
-}
-
 variable "opa_url" {
   description = "OPA policy engine URL (from OPA_URL)"
   type        = string

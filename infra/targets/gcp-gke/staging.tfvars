@@ -138,15 +138,20 @@ general_spot_max_count        = 5
 general_spot_initial_count    = 0
 
 # §3 GPU pool: L4 (24 GiB VRAM) — required for 7B+ models, Spot OFF in every posture.
+# Kept with inference_backend = "none", so switching to "vllm" needs no new pool.
+# One zone: GKE applies these counts per zone, so three zones tripled them. Zero
+# at create: no GPU node is requested until a vLLM pod needs one, so a zonal
+# stockout shows up as Pending pods. us-central1-a offers both L4 and
+# g2-standard-8 (verified, Compute API, 2026-10-29).
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8" # Same as dev (32 GB RAM prevents OOM)
 gpu_node_pool_min_count     = 0               # Cost-opt: scale to zero when idle
 gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
-gpu_node_pool_initial_count = 1
+gpu_node_pool_initial_count = 0
 gpu_node_pool_spot          = false # On-demand: Spot OFF in every posture (§3)
-gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
+gpu_node_locations          = ["us-central1-a"]
 
 # §3 ClickHouse pool: n2-standard-4 + local SSD, 1 node in staging, Spot OFF
 enable_clickhouse_node_pool        = true
@@ -181,9 +186,12 @@ enable_gcs_fuse_csi = true # Required for GCS tensor streaming (gs:// model path
 force_redeploy = false
 
 # ─── Services ─────────────────────────────────────────────────────────────────
-enable_vllm              = true
+# inference_backend = "none": the governance core runs alone, as an evaluator
+# assesses it, and no vLLM, advisor or NeMo server is deployed. Set "vllm" for a
+# live agent (manual evaluation, demos); the GPU pool scales up on demand.
+inference_backend        = "none"
 enable_compliance_bridge = true
-enable_nemo_guardrails   = true
+enable_nemo_guardrails   = false
 
 # vLLM configuration — weights streamed from GCS model bucket via runai_streamer
 model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"

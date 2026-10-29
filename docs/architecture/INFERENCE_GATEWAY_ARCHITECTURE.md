@@ -166,7 +166,9 @@ Update your `.env` file to set the `VLLM_GATEWAY_URL` environment variable using
 VLLM_GATEWAY_URL=http://<GATEWAY_IP>/v1
 ```
 
-Then, redeploy the application stack using the deployment script. `deploy_all.sh` reads `VLLM_GATEWAY_URL` from `.env` and passes it to Terraform (`vllm_gateway_url`), which injects it into the gateway and advisor containers.
+Then point the deployment at it:
+- **Docker Compose:** the gateway and advisor read `.env` through `env_file`, so restarting them picks the value up.
+- **GKE:** `.env` does not reach the containers. `deploy_all.sh` does not forward `VLLM_GATEWAY_URL`, and the gcp-gke target has no variable for it; the one it used to declare was never read (POAM-2026-136). Set the `vllm_gateway_url` input of the `gateway` and `governed_advisor` modules in [`main.tf`](../../infra/targets/gcp-gke/main.tf), then redeploy:
 
 ```bash
 ./deploy_all.sh --target gcp-gke --env dev

@@ -1194,9 +1194,15 @@ resource "terraform_data" "network_policy_workload_rollout" {
   ]
 
   input = {
-    namespace           = module.namespace.name
-    policy_hash         = local.network_policy_spec_hash
-    rollout_command     = "kubectl rollout restart deployment/gateway deployment/governed-financial-advisor deployment/compliance-bridge -n ${module.namespace.name}"
+    namespace   = module.namespace.name
+    policy_hash = local.network_policy_spec_hash
+    # Only deployments that exist: under inference_backend = "none" there is no
+    # advisor, and the compliance bridge is optional.
+    rollout_command = "kubectl rollout restart ${join(" ", concat(
+      ["deployment/gateway"],
+      length(module.governed_advisor) > 0 ? ["deployment/governed-financial-advisor"] : [],
+      var.enable_compliance_bridge ? ["deployment/compliance-bridge"] : [],
+    ))} -n ${module.namespace.name}"
     fqdn_policy_objects = local.fqdn_network_policies
   }
 

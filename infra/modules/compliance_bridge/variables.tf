@@ -91,6 +91,17 @@ variable "remediation_timeout_ms" {
   default = "30000"
 }
 
+variable "cage_inference_backend" {
+  description = "CAGE_INFERENCE_BACKEND for the bridge: \"none\", \"external\", \"vllm\", or empty for unset (the behaviour from before the setting existed). Under \"none\" no remediation advisory is attempted."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "none", "external", "vllm"], var.cage_inference_backend)
+    error_message = "cage_inference_backend must be empty, \"none\", \"external\" or \"vllm\"."
+  }
+}
+
 variable "vllm_base_url" {
   type = string
 }

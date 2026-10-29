@@ -30,10 +30,11 @@
 GKE ([`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)) is the sole cloud deployment target across three postures ([`us-dev.tfvars`](../../infra/targets/gcp-gke/us-dev.tfvars), [`staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars), [`prod.tfvars`](../../infra/targets/gcp-gke/prod.tfvars)):
 - **Control Plane & Datapath**: Zonal (`us-central1-a`) in `dev` and `staging`; regional (`us-central1`) in `prod`. GKE Dataplane V2 (`datapath_provider = "ADVANCED_DATAPATH"`) and `enable_fqdn_network_policy = true` are active in all postures.
 - **Four Node Pools**:
-  1. `general`: `e2-standard-4` (`dev`/`staging`, 1–5 nodes, `pd-standard`) or `e2-standard-8` (`prod`, 3–10 nodes, `pd-ssd`). Runs the governance workloads (`gateway`, `governed-financial-advisor`, `compliance-bridge`, `reconciler`, `opa`, `langfuse`). The gateway still keeps pod-local state, so it runs a fixed replica count with no autoscaler (see [`DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) §5).
+  1. `general`: `e2-standard-4` (`dev`/`staging`, 1–5 nodes, `pd-standard`) or `e2-standard-8` (`prod`, 3–10 nodes, `pd-ssd`). Runs the governance workloads (`gateway`, `compliance-bridge`, `reconciler`, `opa`, `langfuse`, and `governed-financial-advisor` when `inference_backend = "vllm"`). The gateway still keeps pod-local state, so it runs a fixed replica count with no autoscaler (see [`DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) §5).
   2. `general-spot`: `c3-highcpu-4` (`staging` only, 0–5 Spot nodes, tainted `cloud.google.com/gke-spot=true:NoSchedule`). Governance, stateful, and vLLM workloads enforce anti-Spot `nodeAffinity` (`cloud.google.com/gke-spot NotIn ["true"]`) so only fault-tolerant batch jobs (`cage-paper-benchmark`, Lula validation) schedule on Spot capacity.
-  3. `gpu-l4`: `g2-standard-8` (1× `nvidia-l4`, Spot disabled in all postures, GCFS image streaming enabled, 0–2 scale-to-zero in `dev`/`staging`, 2–5 in `prod`).
+  3. `gpu-l4`: `g2-standard-8` (1× `nvidia-l4`, Spot disabled in all postures, GCFS image streaming enabled, 0–2 scale-to-zero in `dev`/`staging`, 2–5 in `prod`). Staging's pool is one zone (`us-central1-a`) and starts at 0 nodes.
   4. `clickhouse`: `n2-standard-4` with local NVMe SSD, tainted `workload=clickhouse:NoSchedule` (`1` node in `dev`/`staging`, `3` nodes in `prod`).
+- **Inference Backend**: staging deploys no model by default (`inference_backend = "none"`): no vLLM, no advisor and no NeMo server. The mesh and gateway checks below run without them. The GPU notes in this section and the advisor runs in §8 need `inference_backend = "vllm"` first, which is a variable change and an apply, not a rebuild (see [the gcp-gke README](../../infra/targets/gcp-gke/README.md)).
 
 ### Verifying Cluster Context & Mesh Sidecar Readiness
 
@@ -45,7 +46,7 @@ kubectl get pods -n governance-stack -o wide
 ```
 
 Expected container counts per pod in `governance-stack` (`linkerd.io/inject: enabled`):
-- `gateway`, `governed-financial-advisor`, `compliance-bridge`, `opa`: **`2/2` Ready** (application container + `linkerd-proxy`).
+- `gateway`, `compliance-bridge`, `opa`, and `governed-financial-advisor` when `inference_backend = "vllm"`: **`2/2` Ready** (application container + `linkerd-proxy`).
 - `langfuse-web`, `langfuse-worker`: **`3/3` Ready** (application container + `cloud-sql-proxy` + `linkerd-proxy`).
 
 ### Managing the Port-Forward Daemon
@@ -73,7 +74,7 @@ pkill -f "kubectl port-forward"
 **Port-Forward Endpoint Detection & GPU Scale-to-Zero Cold-Start Handling:**
 - [`scripts/port_forward_staging.sh`](../../scripts/port_forward_staging.sh) (wrapping [`scripts/port_forward.sh`](../../scripts/port_forward.sh)) inspects `kubectl get endpointslice` (`has_endpoints`) and deployment desired replicas (`has_desired_replicas`) before opening each tunnel.
 - **GPU Scale-to-Zero & Cold-Start Invariant (`gpu-node-pool-nvidia-l4`)**:
-  - The GKE GPU node pool ([`infra/modules/gcp_gke_cluster/main.tf`](../../infra/modules/gcp_gke_cluster/main.tf)) is configured with `min_node_count = 0`, `max_node_count = 2`, and `location_policy = "ANY"` across regional zones so GKE Cluster Autoscaler provisions 1 NVIDIA L4 (`g2-standard-8`) node for `vllm-inference` (`Qwen/Qwen2.5-1.5B-Instruct`) and 1 NVIDIA L4 node for `vllm-reasoning` (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) in whichever zone has capacity.
+  - The GKE GPU node pool ([`infra/modules/gcp_gke_cluster/main.tf`](../../infra/modules/gcp_gke_cluster/main.tf)) is configured with `min_node_count = 0`, `max_node_count = 2`, and `location_policy = "ANY"` across regional zones so GKE Cluster Autoscaler provisions 1 NVIDIA L4 (`g2-standard-8`) node for `vllm-inference` (`Qwen/Qwen2.5-1.5B-Instruct`) and 1 NVIDIA L4 node for `vllm-reasoning` (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) in whichever listed zone has capacity. Staging lists only `us-central1-a`, so a stockout there leaves the vLLM pods Pending.
   - Because GKE Cluster Autoscaler only scales GPU nodes down to `0` when no pods request `nvidia.com/gpu`, use [`scripts/dev_gpu_toggle.sh`](../../scripts/dev_gpu_toggle.sh) to toggle GPU deployments between `0` and `1` replica:
     ```bash
     # Scale up both vLLM GPU deployments (1 GPU each) and wait up to 900s for cold start:
@@ -388,7 +389,7 @@ This section covers running the Governed Financial Advisor (`governed-financial-
 
 ### 8.1 GPU Node Pool Scale-Up & Offline GCS Model Weight Streaming (POAM-2026-083)
 
-In `dev` and `staging`, the `gpu-l4` node pool (`g2-standard-8`, 1× `nvidia-l4` per node) defaults to `0` replicas (`vllm_replicas = 0` in [`staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) to conserve GPU compute when idle:
+In `staging`, `inference_backend = "none"` deploys neither vLLM deployment nor the advisor, and the `gpu-l4` node pool (`g2-standard-8`, 1× `nvidia-l4` per node) sits at `0` nodes. Run this section after setting `inference_backend = "vllm"` and applying: both vLLM deployments then come up with `vllm_replicas = 1` from [`staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars), and the pool scales up from zero in `us-central1-a`:
 - Both vLLM deployments (`vllm-service` serving `Qwen/Qwen2.5-1.5B-Instruct` with `--enable-auto-tool-choice --tool-call-parser hermes`, and `vllm-reasoning` serving `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` with `--max-model-len 16384`) run under `cage-vllm-sa` and stream weights directly from the regional GCS model bucket (`gs://cage-models/...`) using `--load-format runai_streamer` ([`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)).
 - Both deployments enforce `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. No `HF_TOKEN` secret exists in the cluster, and `huggingface.co` egress is blocked by `FQDNNetworkPolicy`.
 

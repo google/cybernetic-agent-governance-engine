@@ -533,7 +533,12 @@ class TestTerraformGeapAdvisorPosture:
             encoding="utf-8"
         )
         assert 'module "gcp_geap_advisor"' in main_tf
-        assert 'count  = var.advisor_runtime == "geap" ? 1 : 0' in main_tf
+        # Still the default runtime, but deployed only with a model backend:
+        # under inference_backend = "none" there is no advisor (W6, AG-7).
+        assert (
+            'count  = local.advisor_enabled && var.advisor_runtime == "geap" ? 1 : 0'
+            in main_tf
+        )
         assert "trusted_geap_principals" in main_tf
 
     def test_gcp_geap_advisor_module_conforms_to_official_geap_spec(

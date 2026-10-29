@@ -224,7 +224,7 @@ resource "google_project_iam_member" "lula_container_viewer" {
 # ---------------------------------------------------------------------------
 
 resource "google_project_iam_member" "vllm_storage_viewer" {
-  count   = var.enable_vllm ? 1 : 0
+  count   = local.vllm_enabled ? 1 : 0
   project = var.project_id
   role    = "roles/storage.objectViewer"
   member  = "serviceAccount:${google_service_account.vllm.email}"
@@ -237,7 +237,7 @@ resource "google_project_iam_member" "vllm_storage_viewer" {
 }
 
 resource "google_storage_bucket_iam_member" "vllm_bucket_reader" {
-  count  = var.enable_vllm ? 1 : 0
+  count  = local.vllm_enabled ? 1 : 0
   bucket = local.model_bucket_name
   role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.vllm.email}"

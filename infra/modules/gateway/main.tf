@@ -292,8 +292,18 @@ resource "kubernetes_deployment" "gateway" {
             value = "redis://${var.redis_host}:${var.redis_port}"
           }
           env {
+            name  = "CAGE_INFERENCE_BACKEND"
+            value = var.cage_inference_backend
+          }
+          env {
             name  = "VLLM_BASE_URL"
             value = var.vllm_base_url
+          }
+          env {
+            # Not a credential for in-cluster vLLM, which runs without
+            # --api-key; startup requires it whenever a backend is set.
+            name  = "VLLM_API_KEY"
+            value = var.vllm_api_key
           }
           env {
             name  = "VLLM_GATEWAY_URL"

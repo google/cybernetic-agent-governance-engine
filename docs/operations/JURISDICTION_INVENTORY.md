@@ -62,7 +62,7 @@ All values verified by loading them through the threshold loader, `ControlRegist
 | `us-dev.tfvars` | US_FED | `cage-dev` | dev | on | PR template; GKE test runbook; tests |
 | `eu-dev.tfvars` | EU_ECB | `cage-eu-dev` | dev with compliance hardening | on; zones include `europe-west1-d` | EU workflow (warning only); tests |
 | `apac-dev.tfvars` | APAC_MAS | `cage-apac-dev` | dev with compliance hardening | on | APAC workflow (warning only); tests |
-| `staging.tfvars` | US_FED | `cage-staging` | full; zonal; Binary Authorization dry-run | on; L4 0–2 | staging scripts; tests |
+| `staging.tfvars` | US_FED | `cage-staging` | full; zonal; Binary Authorization dry-run | off (`inference_backend = "none"`, from W6); L4 pool kept, one zone, 0–2 | staging scripts; tests |
 | `prod.tfvars` | US_FED (DEP-12) | `cage-prod` | full; regional; HA; Binary Authorization enforced | on, 2 replicas | deploy usage; tests |
 | `eu-prod.tfvars` | EU_ECB | `cage-eu-prod` | as prod | on, 2; zones include `europe-west1-d` | EU workflow (can fail); tests |
 | `apac-prod.tfvars` | APAC_MAS | `cage-apac-prod` | as prod | on, 2 | APAC workflow (can fail); tests |
@@ -70,7 +70,7 @@ All values verified by loading them through the threshold loader, `ControlRegist
 - **Placeholders.**
   - Every profile except `dev.tfvars` carries a placeholder `project_id`.
   - Every profile except `staging.tfvars` inherits placeholder image digests (section 7).
-- **No repository consumer reads a profile's GPU or vLLM settings.** No workflow, script or test reads `enable_vllm`, `enable_gpu_node_pool`, `gpu_node_locations` or `vllm_replicas` from a profile. Tests assert module wiring only (verified, grep). That is not evidence that nothing outside the repository depends on them.
+- **Only tests read a profile's backend and GPU settings.** Since W6, [`test_inference_backend_gke.py`](../../tests/infrastructure/test_inference_backend_gke.py) reads every profile's `inference_backend` and staging's GPU pool settings, and fails if a profile still sets `enable_vllm`. No workflow or script reads them (verified, grep). That is not evidence that nothing outside the repository depends on them.
 - **Control-plane access.** Every profile with a compliance posture active must name operator CIDRs and no `/0`; the plan refuses otherwise (POAM-2026-126, [`test_control_plane_access.py`](../../tests/infrastructure/test_control_plane_access.py)). `staging.tfvars` sets no list, so supply one with `TF_VAR_authorized_networks`.
 
 ## 4. Jurisdiction and geography: postures do not float
@@ -151,13 +151,13 @@ Each has a one-line POA&M entry except the stale numbers. Several are one class:
 - **The documented required-check lists disagree with the ruleset (POAM-2026-133).** See section 6.
 - **Consensus on gcp-gke has never produced an automated verdict (POAM-2026-134).** The gateway pod has no `MODEL_*`, so both critics ask for `gemini-2.5-pro`, and every triggered consensus escalates. The 404 is inferred. The critics' prompt format also disagrees with their parser. `MODEL_CONSENSUS` and `CONSENSUS_<ROLE>_*` are set by no surface.
 - **The default advisor runtime (GEAP) can't call a model (POAM-2026-135).** It has no `OPENAI_API_KEY`, and its endpoints are cluster-local names (verified for the key; reachability open).
-- **Declared, never read (POAM-2026-136).** `vllm_fast_url`, `vllm_reasoning_url` and `vllm_gateway_url` are declared in `variables.tf` and filled by `deploy_all.sh`, but nothing reads them.
+- **Declared, never read (POAM-2026-136, closed 2026-10-29).** `vllm_fast_url`, `vllm_reasoning_url` and `vllm_gateway_url` were declared in `variables.tf` and filled by `deploy_all.sh`, but nothing read them. W6 removed them and their exports; on gcp-gke the vLLM endpoints now follow `inference_backend`.
 - **Model output enters compliance records with its provenance suppressed (POAM-2026-137).** The remediation advisory is scored as a completed control in the compliance trace, and AARM narratives are written by a model told not to say so.
 - **Correlated blind spots between judges and the agent can't be measured on any shipped surface (POAM-2026-139).** See section 7.
 - **The advisor's supervisor falls back silently to a mock model (POAM-2026-138)** when its reasoning endpoint is unset or contains "mock"; other nodes raise (read).
 - **Stale numbers.**
   - Three places say 31 Lula manifests.
-  - The GKE test runbook names a GPU pool and a `vllm_replicas` value that staging doesn't use.
+  - The GKE test runbook names a GPU pool that staging doesn't use. Its `vllm_replicas` claim was corrected in W6.
 
 ## 9. Open questions
 

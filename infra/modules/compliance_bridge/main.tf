@@ -213,6 +213,12 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            # Empty is unset: the behaviour from before the setting existed.
+            name  = "CAGE_INFERENCE_BACKEND"
+            value = var.cage_inference_backend
+          }
+
+          env {
             name  = "VLLM_BASE_URL"
             value = var.vllm_base_url
           }
