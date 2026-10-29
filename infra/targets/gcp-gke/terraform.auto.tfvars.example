@@ -102,14 +102,15 @@ primary_node_pool_max_count = 5
 primary_node_pool_initial_count = 2
 primary_node_pool_disk_type = "pd-standard"  # or "pd-ssd" for production
 
-# GPU node pool (vLLM inference)
+# GPU node pool (vLLM inference; pool-wide total min/max across gpu_node_locations)
 enable_gpu_node_pool = true
 gpu_type = "nvidia-l4"  # Options: nvidia-l4, nvidia-t4, nvidia-a100-80gb
 gpu_count = 1  # GPUs per node
 gpu_node_pool_machine_type = "g2-standard-8"  # L4 GPU, 8 vCPU, 32 GB RAM
-gpu_node_pool_min_count = 0  # Scale to zero when idle
+gpu_node_pool_min_count = 0  # Total across gpu_node_locations; scales to zero when idle
 gpu_node_pool_max_count = 2
-gpu_node_pool_initial_count = 1
+gpu_node_pool_initial_count = 0
+gpu_node_locations = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Storage Configuration

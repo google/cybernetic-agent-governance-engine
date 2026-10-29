@@ -108,14 +108,15 @@ primary_node_pool_disk_type     = "pd-ssd"
 # General-spot pool: disabled in prod (§3: 0 in dev & prod)
 enable_general_spot_node_pool = false
 
-# GPU pool: L4 available in asia-southeast1-b, asia-southeast1-c
+# GPU pool: L4 + g2-standard-8 available in asia-southeast1-a, asia-southeast1-b, asia-southeast1-c.
+# Pool-wide total counts; min = 0 until a live APAC prod cluster sets a floor.
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8"
-gpu_node_pool_min_count     = 2 # Always-on for production
+gpu_node_pool_min_count     = 0
 gpu_node_pool_max_count     = 5
-gpu_node_pool_initial_count = 2
+gpu_node_pool_initial_count = 0
 gpu_node_pool_name          = "gpu-l4"
 gpu_node_pool_spot          = false # No spot VMs in APAC prod (MAS TRM §7.2 availability)
 gpu_node_locations          = ["asia-southeast1-a", "asia-southeast1-b", "asia-southeast1-c"]

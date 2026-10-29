@@ -88,15 +88,18 @@ primary_node_pool_disk_type     = "pd-ssd" # Faster
 # General-spot pool: disabled in prod (§3: 0 in dev & prod, 0-5 in staging)
 enable_general_spot_node_pool = false
 
-# GPU pool: Production L4 GPUs, always available, on-demand only (Spot OFF)
+# GPU pool: on-demand L4 GPUs (Spot OFF); pool-wide total counts across verified
+# us-central1 zones. No cluster deploys this profile yet, so min = 0 avoids
+# guessing an always-on floor before a production cluster is stood up.
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4" # Better than T4
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8"
-gpu_node_pool_min_count     = 2 # Always-on for production
+gpu_node_pool_min_count     = 0
 gpu_node_pool_max_count     = 5
-gpu_node_pool_initial_count = 2
+gpu_node_pool_initial_count = 0
 gpu_node_pool_spot          = false # on-demand — production workloads must not be preempted
+gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # ClickHouse pool: 3 nodes across 3 zones in prod (§3)
 enable_clickhouse_node_pool        = true

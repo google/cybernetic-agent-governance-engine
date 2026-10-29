@@ -109,17 +109,18 @@ primary_node_pool_disk_type     = "pd-ssd"
 # General-spot pool: disabled in prod (§3: 0 in dev & prod)
 enable_general_spot_node_pool = false
 
-# GPU pool: L4 available in europe-west1-b, europe-west1-c
+# GPU pool: L4 + g2-standard-8 available only in europe-west1-b and europe-west1-c
+# (POAM-2026-132). Pool-wide total counts; min = 0 until a live EU prod cluster sets a floor.
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8"
-gpu_node_pool_min_count     = 2 # Always-on for production
+gpu_node_pool_min_count     = 0
 gpu_node_pool_max_count     = 5
-gpu_node_pool_initial_count = 2
+gpu_node_pool_initial_count = 0
 gpu_node_pool_name          = "gpu-l4"
 gpu_node_pool_spot          = false # No spot VMs in EU prod (DORA Art. 10 availability)
-gpu_node_locations          = ["europe-west1-b", "europe-west1-c", "europe-west1-d"]
+gpu_node_locations          = ["europe-west1-b", "europe-west1-c"]
 
 # ClickHouse pool: 3 nodes across 3 zones in EU prod (§3)
 enable_clickhouse_node_pool        = true

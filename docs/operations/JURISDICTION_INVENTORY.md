@@ -58,19 +58,19 @@ All values verified by loading them through the threshold loader, `ControlRegist
 
 | Profile | Jurisdiction | State prefix | Posture | In-cluster vLLM / GPU pool | Referenced by |
 |---|---|---|---|---|---|
-| `dev.tfvars` | none in the file; set at deploy time | `cage-dev`, shared with `us-dev` | dev | on; L4 0–2 | `Makefile` default; deploy examples; tests |
-| `us-dev.tfvars` | US_FED | `cage-dev` | dev | on | PR template; GKE test runbook; tests |
-| `eu-dev.tfvars` | EU_ECB | `cage-eu-dev` | dev with compliance hardening | on; zones include `europe-west1-d` | EU workflow (warning only); tests |
-| `apac-dev.tfvars` | APAC_MAS | `cage-apac-dev` | dev with compliance hardening | on | APAC workflow (warning only); tests |
-| `staging.tfvars` | US_FED | `cage-staging` | full; zonal; Binary Authorization dry-run | off (`inference_backend = "none"`, from W6); L4 pool kept, one zone, 0–2 | staging scripts; tests |
-| `prod.tfvars` | US_FED (DEP-12) | `cage-prod` | full; regional; HA; Binary Authorization enforced | on, 2 replicas | deploy usage; tests |
-| `eu-prod.tfvars` | EU_ECB | `cage-eu-prod` | as prod | on, 2; zones include `europe-west1-d` | EU workflow (can fail); tests |
-| `apac-prod.tfvars` | APAC_MAS | `cage-apac-prod` | as prod | on, 2 | APAC workflow (can fail); tests |
+| `dev.tfvars` | none in the file; set at deploy time | `cage-dev`, shared with `us-dev` | dev | on; L4 total 0–2, initial 0, `us-central1-a/b/c` | `Makefile` default; deploy examples; tests |
+| `us-dev.tfvars` | US_FED | `cage-dev` | dev | on; L4 total 0–2, initial 0, `us-central1-a/b/c` | PR template; GKE test runbook; tests |
+| `eu-dev.tfvars` | EU_ECB | `cage-eu-dev` | dev with compliance hardening | on; L4 total 0–2, initial 0, `europe-west1-b/c` | EU workflow (warning only); tests |
+| `apac-dev.tfvars` | APAC_MAS | `cage-apac-dev` | dev with compliance hardening | on; L4 total 0–2, initial 0, `asia-southeast1-a/b/c` | APAC workflow (warning only); tests |
+| `staging.tfvars` | US_FED | `cage-staging` | full; zonal; Binary Authorization dry-run | off (`inference_backend = "none"`, from W6); L4 pool kept, total 0–2, initial 0, `us-central1-a/b/c` | staging scripts; tests |
+| `prod.tfvars` | US_FED (DEP-12) | `cage-prod` | full; regional; HA; Binary Authorization enforced | on, 2 replicas; L4 total 0–5, initial 0, `us-central1-a/b/c` | deploy usage; tests |
+| `eu-prod.tfvars` | EU_ECB | `cage-eu-prod` | as prod | on, 2; L4 total 0–5, initial 0, `europe-west1-b/c` | EU workflow (can fail); tests |
+| `apac-prod.tfvars` | APAC_MAS | `cage-apac-prod` | as prod | on, 2; L4 total 0–5, initial 0, `asia-southeast1-a/b/c` | APAC workflow (can fail); tests |
 
 - **Placeholders.**
   - Every profile except `dev.tfvars` carries a placeholder `project_id`.
   - Every profile except `staging.tfvars` inherits placeholder image digests (section 7).
-- **Only tests read a profile's backend and GPU settings.** Since W6, [`test_inference_backend_gke.py`](../../tests/infrastructure/test_inference_backend_gke.py) reads every profile's `inference_backend` and staging's GPU pool settings, and fails if a profile still sets `enable_vllm`. The `terraform-test` CI job plans the staging profile with mock providers ([`w6.tftest.hcl`](../../infra/targets/gcp-gke/tests/w6.tftest.hcl)). No other workflow or script reads them (verified, grep). That is not evidence that nothing outside the repository depends on them.
+- **Only tests read a profile's backend and GPU settings.** Since W6, [`test_inference_backend_gke.py`](../../tests/infrastructure/test_inference_backend_gke.py) reads every profile's `inference_backend`, GPU counts, and verified L4 zone list, and fails if a profile still sets `enable_vllm`. The `terraform-test` CI job plans the staging profile and GPU module preconditions with mock providers ([`w6.tftest.hcl`](../../infra/targets/gcp-gke/tests/w6.tftest.hcl), [`gpu_pool.tftest.hcl`](../../infra/targets/gcp-gke/tests/gpu_pool.tftest.hcl)). No other workflow or script reads them (verified, grep). That is not evidence that nothing outside the repository depends on them.
 - **Control-plane access.** Every profile with a compliance posture active must name operator CIDRs and no `/0`; the plan refuses otherwise (POAM-2026-126, [`test_control_plane_access.py`](../../tests/infrastructure/test_control_plane_access.py)). `staging.tfvars` sets no list, so supply one with `TF_VAR_authorized_networks`.
 
 ## 4. Jurisdiction and geography: postures do not float
@@ -147,7 +147,7 @@ Each has a one-line POA&M entry except the stale numbers. Several are one class:
 - **Two HITL SLA sets (POAM-2026-129).** The runtime uses 4, 8 and 12 hours; the thresholds files say 4, 2 and 1, citing DORA and MAS FEAT. Which is intended is being established.
 - **The EU and APAC compliance flags do in Terraform exactly what the NIST flag does (POAM-2026-130),** although their descriptions claim distinct effects (verified, grep).
 - **Placeholder image digests (POAM-2026-131).** Every profile except staging inherits `sha256:e3b0c442…`, the hash of empty input. That includes the three Binary-Authorization-enforcing prod profiles (verified).
-- **No L4 in one EU zone (POAM-2026-132).** `europe-west1-d` offers neither L4 nor `g2-standard-8`, but `eu-dev` and `eu-prod` list it for their GPU pools. `europe-west1-b` and `-c` offer both (verified, Compute API). Node-pool creation failing is inferred.
+- **No L4 in one EU zone (POAM-2026-132, closed 2026-10-29).** `europe-west1-d` offers neither L4 nor `g2-standard-8`, and `eu-dev` and `eu-prod` used to list it alongside per-zone `initial`/`min`/`max` counts that multiplied across zones. `eu-dev` and `eu-prod` now list only `europe-west1-b` and `-c`, every profile starts at `initial = 0` / `min = 0` with pool-wide `total_min_node_count` / `total_max_node_count` (`location_policy = "ANY"`), and `google_container_node_pool.gpu_nodes` refuses non-L4 zones at plan time.
 - **The documented required-check lists disagree with the ruleset (POAM-2026-133).** See section 6.
 - **Consensus on gcp-gke has never produced an automated verdict (POAM-2026-134).** The gateway pod has no `MODEL_*`, so both critics ask for `gemini-2.5-pro`, and every triggered consensus escalates. The 404 is inferred. The critics' prompt format also disagrees with their parser. `MODEL_CONSENSUS` and `CONSENSUS_<ROLE>_*` are set by no surface.
 - **The default advisor runtime (GEAP) can't call a model (POAM-2026-135).** It has no `OPENAI_API_KEY`, and its endpoints are cluster-local names (verified for the key; reachability open).

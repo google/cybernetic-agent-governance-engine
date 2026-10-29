@@ -49,7 +49,7 @@ terraform apply -var-file=prod.tfvars
 
 - ✅ GKE cluster (with private nodes option)
 - ✅ Primary CPU node pool (autoscaling)
-- ✅ GPU node pool (NVIDIA L4 or T4; zones from `gpu_node_locations`, a single zone in staging)
+- ✅ GPU node pool (NVIDIA L4 or T4; pool-wide total autoscaling across verified `gpu_node_locations`)
 - ✅ GCS bucket for Langfuse events (7-year retention)
 - ✅ Cloud Router & NAT (when private cluster enabled)
 - ✅ Workload Identity federation service accounts
@@ -77,9 +77,9 @@ terraform apply -var-file=prod.tfvars
 
 - **Absent, not degraded.** Under `"none"` no workload points at a model service that does not exist, so nothing crash-loops. On the gateway, content safety and the inference proxy refuse with reason codes. The compliance bridge records its remediation advisory as not performed.
 - **Switching to `"vllm"` is a variable change.** Set `inference_backend = "vllm"` and apply. The GPU pool already exists at min 0, so the cluster and its node pools don't change. GKE adds GPU nodes when the vLLM pods request them. The plan refuses `"vllm"` without `enable_gpu_node_pool = true`.
-- **The staging GPU pool is one zone, min 0 / max 2 / initial 0.** GKE applies a pool's counts per zone, so the three-zone list it had tripled them. Starting at zero means no GPU is requested at create, so a zonal stockout shows up as Pending vLLM pods. `us-central1-a` offers both `nvidia-l4` and `g2-standard-8` (verified with the Compute API, 2026-10-29).
+- **The GPU pool uses pool-wide total counts (`total_min_node_count` / `total_max_node_count`, `location_policy = "ANY"`) and `initial_node_count = 0` across every profile.** Listing all verified L4 + `g2-standard-8` zones in each region (`us-central1-a/b/c`, `europe-west1-b/c`, `asia-southeast1-a/b/c`) gives Cluster Autoscaler capacity fallback on a zonal stockout without multiplying counts, and requesting zero nodes at create avoids creation-time stockout failures. The undeployed `prod` profiles also leave `gpu_node_pool_min_count = 0` until a live production cluster sets its own floor.
 - **`"external"` is compose-only.** The cluster denies external egress by default (L3/L4 default-deny, plus a per-workload FQDN egress allowlist), and the advisor's egress is cluster-internal only. Reaching a third-party model provider would mean opening that control for the agent, so the plan refuses `"external"` on GKE. Allowing it later would be a deliberate decision with its own entry, not a deployment convenience.
-- **Where no zone offers an L4, `external` is the only live agent.** `europe-west1-d` offers neither `nvidia-l4` nor `g2-standard-8` (POAM-2026-132). In a jurisdiction whose region has no such zone, the only way to see a live agent is the compose stack with `CAGE_INFERENCE_BACKEND=external`.
+- **Where no zone offers an L4, `external` is the only live agent.** In `europe-west1`, `-b` and `-c` offer both `nvidia-l4` and `g2-standard-8` while `-d` offers neither (POAM-2026-132, closed). In a jurisdiction whose region has no L4 zone at all, the only way to see a live agent is the compose stack with `CAGE_INFERENCE_BACKEND=external`.
 - **The advisor calls its models directly, by design.** It does not go through the gateway's inference proxy. That looks like a bypass, but it is the architecture: the agent reasons freely and is constrained when it acts, at the gateway's action boundary.
 - **`enable_vllm` is removed.** A profile that still sets it fails the plan with a message that names `inference_backend` (AG-7 in [`BREAKING_CHANGES_v3.md`](../../../docs/BREAKING_CHANGES_v3.md)).
 - **The standalone NeMo server** (`enable_nemo_guardrails`, off by default) needs `"vllm"`, because it calls the in-cluster vLLM service. Nothing in CAGE calls the server: the gateway builds its rails in process.
@@ -120,7 +120,7 @@ enable_audit_logging        = true   # Comprehensive logs
 enable_cmek                 = true   # Customer-managed keys
 
 # High availability
-gpu_node_pool_min_count = 2  # Always available
+gpu_node_pool_min_count = 0      # Total pool floor (raise when standing up a live prod cluster)
 primary_node_pool_min_count = 3  # HA requirement
 ```
 

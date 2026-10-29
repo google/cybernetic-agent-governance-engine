@@ -103,12 +103,12 @@ module "gke_prod" {
   primary_node_pool_max_count     = 10
   primary_node_pool_initial_count = 3
 
-  # Production GPUs (nvidia-l4 on g2 instances)
+  # Production GPUs (nvidia-l4 on g2 instances; pool-wide total min/max across verified L4 zones)
   gpu_type                    = "nvidia-l4"
   gpu_node_pool_machine_type  = "g2-standard-8"
-  gpu_node_pool_min_count     = 2
+  gpu_node_pool_min_count     = 0
   gpu_node_pool_max_count     = 5
-  gpu_node_pool_initial_count = 2
+  gpu_node_pool_initial_count = 0
   gpu_node_pool_spot          = false
   gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 }
@@ -195,13 +195,13 @@ Use `infra/targets/gcp-gke/apac-prod.tfvars`:
 | `gpu_type` | GPU type (`nvidia-l4`, `nvidia-t4`, `nvidia-a100-80gb`) | string | `"nvidia-l4"` |
 | `gpu_count` | GPUs per node | number | `1` |
 | `gpu_node_pool_machine_type` | GPU pool machine type | string | `"g2-standard-8"` |
-| `gpu_node_pool_min_count` | Minimum GPU nodes | number | `0` |
-| `gpu_node_pool_max_count` | Maximum GPU nodes | number | `2` |
-| `gpu_node_pool_initial_count` | Initial GPU node count | number | `1` |
+| `gpu_node_pool_min_count` | Pool-wide minimum GPU nodes (`total_min_node_count`) | number | `0` |
+| `gpu_node_pool_max_count` | Pool-wide maximum GPU nodes (`total_max_node_count`, `location_policy = "ANY"`) | number | `2` |
+| `gpu_node_pool_initial_count` | Initial GPU node count per zone (`0` = 0 total on create) | number | `0` |
 | `gpu_node_pool_disk_size` | Disk size in GB for GPU nodes | number | `200` |
 | `gpu_node_pool_disk_type` | Disk type for GPU nodes | string | `"pd-balanced"` |
 | `gpu_node_pool_spot` | Use Spot VMs for GPU pool (must stay false) | bool | `false` |
-| `gpu_node_locations` | Zones for GPU node pool (multi-zonal sourcing) | list(string) | `["us-central1-a","us-central1-b","us-central1-c"]` |
+| `gpu_node_locations` | Verified regional L4 + `g2-standard-8` zones for GPU pool (`location_policy = "ANY"`) | list(string) | `["us-central1-a","us-central1-b","us-central1-c"]` |
 
 ### Additional options
 

@@ -17,9 +17,11 @@
 server, so no workload is left pointing at a model service that does not exist
 (absent, not degraded). ``"vllm"`` deploys vLLM on the GPU pool and the advisor.
 ``"external"`` is compose-only: the cluster denies external egress and the
-advisor's egress is internal-only. Staging keeps a single-zone GPU pool at
-min 0 / max 2 / initial 0, so moving to ``"vllm"`` is a variable change, not an
-infrastructure rebuild. ``enable_vllm`` is replaced and fails the plan if set.
+advisor's egress is internal-only. Every profile configures a multi-zone GPU
+pool using ``total_min_node_count = 0`` and ``initial_node_count = 0`` across
+the region's verified L4 + ``g2-standard-8`` zones, so moving to ``"vllm"`` is
+a variable change, not an infrastructure rebuild, and zonal stockouts fall back
+without multiplying counts. ``enable_vllm`` is replaced and fails the plan if set.
 
 These tests read the Terraform source, as the other infrastructure tests do.
 """
@@ -36,7 +38,17 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GKE = REPO_ROOT / "infra" / "targets" / "gcp-gke"
+CLUSTER_MODULE = REPO_ROOT / "infra" / "modules" / "gcp_gke_cluster"
 PROFILES = sorted(p.name for p in GKE.glob("*.tfvars"))
+VERIFIED_L4_G2_ZONES: dict[str, list[str]] = {
+    "us-central1": ["us-central1-a", "us-central1-b", "us-central1-c"],
+    "europe-west1": ["europe-west1-b", "europe-west1-c"],
+    "asia-southeast1": [
+        "asia-southeast1-a",
+        "asia-southeast1-b",
+        "asia-southeast1-c",
+    ],
+}
 
 
 def _read(path: Path) -> str:
@@ -62,6 +74,8 @@ def _squash(text: str) -> str:
 
 MAIN = _read(GKE / "main.tf")
 VARIABLES = _read(GKE / "variables.tf")
+CLUSTER_MAIN = _read(CLUSTER_MODULE / "main.tf")
+CLUSTER_VARIABLES = _read(CLUSTER_MODULE / "variables.tf")
 
 
 # ── The selector ──────────────────────────────────────────────────────────────
@@ -97,7 +111,7 @@ def test_staging_is_the_profile_without_a_model() -> None:
     assert {p for p, b in backends.items() if b == "none"} == {"staging.tfvars"}
 
 
-def test_staging_keeps_a_single_zone_gpu_pool_that_scales_from_zero() -> None:
+def test_staging_keeps_a_three_zone_gpu_pool_that_scales_from_zero() -> None:
     text = _read(GKE / "staging.tfvars")
     assert _setting(text, "enable_gpu_node_pool") == "true"
     assert _setting(text, "gpu_node_pool_min_count") == "0"
@@ -105,8 +119,63 @@ def test_staging_keeps_a_single_zone_gpu_pool_that_scales_from_zero() -> None:
     assert _setting(text, "gpu_node_pool_initial_count") == "0"
     zones = re.search(r"^gpu_node_locations\s*=\s*\[(.*?)\]", text, re.MULTILINE)
     assert zones is not None
-    assert re.findall(r'"([^"]+)"', zones.group(1)) == ["us-central1-a"]
+    assert re.findall(r'"([^"]+)"', zones.group(1)) == [
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c",
+    ]
     assert _setting(text, "enable_nemo_guardrails") == "false"
+
+
+def test_gpu_node_pool_uses_total_autoscaling_and_zero_initial_default() -> None:
+    gpu_block = _block(CLUSTER_MAIN, 'resource "google_container_node_pool" "gpu_nodes"')
+    autoscaling_match = re.search(r"autoscaling\s*\{(.*?)\}", gpu_block, re.DOTALL)
+    assert autoscaling_match is not None
+    autoscaling = _squash(autoscaling_match.group(1))
+    assert "total_min_node_count = var.gpu_node_pool_min_count" in autoscaling
+    assert "total_max_node_count = var.gpu_node_pool_max_count" in autoscaling
+    assert 'location_policy = "ANY"' in autoscaling
+    assert re.search(r"(?<!total_)min_node_count\s*=", autoscaling) is None
+    assert re.search(r"(?<!total_)max_node_count\s*=", autoscaling) is None
+
+    zones_map = _block(CLUSTER_MAIN, "verified_l4_g2_zones = {")
+    for region, expected in VERIFIED_L4_G2_ZONES.items():
+        row = re.search(rf'"{re.escape(region)}"\s*=\s*\[(.*?)\]', zones_map)
+        assert row is not None, region
+        assert re.findall(r'"([^"]+)"', row.group(1)) == expected, region
+
+    for source_name, vars_text in (
+        ("gcp_gke_cluster/variables.tf", CLUSTER_VARIABLES),
+        ("gcp-gke/variables.tf", VARIABLES),
+    ):
+        init_block = _squash(_block(vars_text, 'variable "gpu_node_pool_initial_count"'))
+        min_block = _squash(_block(vars_text, 'variable "gpu_node_pool_min_count"'))
+        assert "default = 0" in init_block, source_name
+        assert "default = 0" in min_block, source_name
+
+
+@pytest.mark.parametrize("profile", [*PROFILES, "terraform.auto.tfvars.example"])
+def test_every_profile_starts_with_zero_gpus_and_lists_only_verified_l4_zones(
+    profile: str,
+) -> None:
+    text = _read(GKE / profile)
+    region = _setting(text, "region") or "us-central1"
+    expected_zones = VERIFIED_L4_G2_ZONES[region]
+
+    assert _setting(text, "enable_gpu_node_pool") == "true", profile
+    assert _setting(text, "gpu_type") == "nvidia-l4", profile
+    assert _setting(text, "gpu_node_pool_machine_type") == "g2-standard-8", profile
+    assert _setting(text, "gpu_node_pool_initial_count") == "0", profile
+    assert _setting(text, "gpu_node_pool_min_count") == "0", profile
+
+    expected_max = "5" if profile.endswith("prod.tfvars") else "2"
+    assert _setting(text, "gpu_node_pool_max_count") == expected_max, profile
+
+    zones_match = re.search(r"^gpu_node_locations\s*=\s*\[(.*?)\]", text, re.MULTILINE)
+    assert zones_match is not None, f"{profile} must explicitly list gpu_node_locations"
+    zones = re.findall(r'"([^"]+)"', zones_match.group(1))
+    assert zones == expected_zones, (profile, zones, expected_zones)
+    assert "europe-west1-d" not in zones, profile
 
 
 # ── What each backend deploys ─────────────────────────────────────────────────

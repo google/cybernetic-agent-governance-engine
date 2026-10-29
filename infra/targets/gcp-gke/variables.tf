@@ -314,21 +314,21 @@ variable "gpu_node_pool_machine_type" {
 }
 
 variable "gpu_node_pool_min_count" {
-  description = "Minimum GPU nodes"
+  description = "Total minimum GPU nodes across gpu_node_locations (total_min_node_count; 0 scales to zero when idle)"
   type        = number
   default     = 0
 }
 
 variable "gpu_node_pool_max_count" {
-  description = "Maximum GPU nodes"
+  description = "Total maximum GPU nodes across gpu_node_locations (total_max_node_count)"
   type        = number
   default     = 2
 }
 
 variable "gpu_node_pool_initial_count" {
-  description = "Initial GPU node count"
+  description = "Initial GPU node count per zone at pool creation (0 avoids requesting GPUs at create time)"
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "gpu_node_pool_name" {
@@ -349,7 +349,7 @@ variable "gpu_node_pool_spot" {
 }
 
 variable "gpu_node_locations" {
-  description = "Zones for the GPU node pool. GKE applies the pool's min, max and initial counts per zone, so each zone listed multiplies them."
+  description = "Zones for the GPU node pool. Autoscaling min and max are pool-wide totals (location_policy = ANY), so extra zones provide capacity fallback without multiplying counts; initial_node_count remains per-zone and defaults to 0."
   type        = list(string)
   default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
 }

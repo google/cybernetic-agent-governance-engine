@@ -34,6 +34,14 @@ locals {
   clickhouse_max_count     = var.clickhouse_node_pool_max_count != null ? var.clickhouse_node_pool_max_count : (var.environment == "prod" ? 3 : 1)
   clickhouse_initial_count = var.clickhouse_node_pool_initial_count != null ? var.clickhouse_node_pool_initial_count : (var.environment == "prod" ? 3 : 1)
 
+  # Verified via Compute Engine API (2026-10-28 / 2026-10-29, POAM-2026-132):
+  # zones in each shipped CAGE region offering both nvidia-l4 and g2-standard-8.
+  verified_l4_g2_zones = {
+    "us-central1"     = ["us-central1-a", "us-central1-b", "us-central1-c"]
+    "europe-west1"    = ["europe-west1-b", "europe-west1-c"]
+    "asia-southeast1" = ["asia-southeast1-a", "asia-southeast1-b", "asia-southeast1-c"]
+  }
+
   # §3: Canonical 4-pool topology specification (general, general-spot, gpu-l4, clickhouse).
   node_pools = [
     {
@@ -452,7 +460,9 @@ resource "google_container_node_pool" "general_spot_nodes" {
 }
 
 # ─── Pool 3: GPU Node Pool (§3: gpu-l4, for vLLM and vllm_reasoning) ─────────
-# g2-standard-8, 1x nvidia-l4; 0-2 in dev/staging (scale to zero), 2-5 in prod.
+# g2-standard-8, 1x nvidia-l4; pool-wide total_min_node_count / total_max_node_count
+# across gpu_node_locations (location_policy = "ANY") so extra zones provide capacity
+# fallback without multiplying counts.
 # §3, §7: GPU Spot stays OFF in every posture so measurement runs are never preempted.
 
 resource "google_container_node_pool" "gpu_nodes" {
@@ -463,13 +473,13 @@ resource "google_container_node_pool" "gpu_nodes" {
   location       = local.cluster_location
   node_locations = var.gpu_node_locations
 
-  # GPU node pool sizing
+  # GPU node pool sizing (initial_node_count is per-zone at creation; min/max are pool totals)
   initial_node_count = var.gpu_node_pool_initial_count
 
   autoscaling {
-    min_node_count  = var.gpu_node_pool_min_count
-    max_node_count  = var.gpu_node_pool_max_count
-    location_policy = "ANY"
+    total_min_node_count = var.gpu_node_pool_min_count
+    total_max_node_count = var.gpu_node_pool_max_count
+    location_policy      = "ANY"
   }
 
   # Node configuration with GPUs
@@ -478,7 +488,7 @@ resource "google_container_node_pool" "gpu_nodes" {
     disk_size_gb = var.gpu_node_pool_disk_size
     disk_type    = var.gpu_node_pool_disk_type
     # §3, §7: GPU Spot stays off in every posture
-    spot         = false
+    spot = false
 
     # GPU accelerator
     guest_accelerator {
@@ -540,6 +550,23 @@ resource "google_container_node_pool" "gpu_nodes" {
   }
 
   lifecycle {
+    precondition {
+      condition = (
+        length(var.gpu_node_locations) > 0 &&
+        alltrue([for z in var.gpu_node_locations : startswith(z, "${var.region}-")])
+      )
+      error_message = "gpu_node_locations (${join(", ", var.gpu_node_locations)}) must be non-empty and within region '${var.region}'."
+    }
+
+    precondition {
+      condition = (
+        !(var.gpu_type == "nvidia-l4" || startswith(var.gpu_node_pool_machine_type, "g2-")) ||
+        !contains(keys(local.verified_l4_g2_zones), var.region) ||
+        alltrue([for z in var.gpu_node_locations : contains(local.verified_l4_g2_zones[var.region], z)])
+      )
+      error_message = "One or more gpu_node_locations (${join(", ", var.gpu_node_locations)}) do not offer '${var.gpu_type}' / '${var.gpu_node_pool_machine_type}' in region '${var.region}' (POAM-2026-132)."
+    }
+
     ignore_changes = [
       initial_node_count,
 

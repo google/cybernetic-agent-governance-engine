@@ -30,7 +30,7 @@ output "cluster_endpoint" {
 
 output "cluster_ca_certificate" {
   description = "GKE cluster CA certificate (base64 encoded)"
-  value       = google_container_cluster.primary.master_auth[0].cluster_ca_certificate
+  value       = try(google_container_cluster.primary.master_auth[0].cluster_ca_certificate, "")
   sensitive   = true
 }
 

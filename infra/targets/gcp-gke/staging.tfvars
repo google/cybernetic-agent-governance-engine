@@ -139,19 +139,18 @@ general_spot_initial_count    = 0
 
 # §3 GPU pool: L4 (24 GiB VRAM) — required for 7B+ models, Spot OFF in every posture.
 # Kept with inference_backend = "none", so switching to "vllm" needs no new pool.
-# One zone: GKE applies these counts per zone, so three zones tripled them. Zero
-# at create: no GPU node is requested until a vLLM pod needs one, so a zonal
-# stockout shows up as Pending pods. us-central1-a offers both L4 and
-# g2-standard-8 (verified, Compute API, 2026-10-29).
+# Pool-wide total counts (total_min_node_count = 0, total_max_node_count = 2) with
+# initial_node_count = 0 across all three verified L4 + g2-standard-8 zones in
+# us-central1: zero GPUs requested at create, and any zone can absorb a stockout.
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8" # Same as dev (32 GB RAM prevents OOM)
-gpu_node_pool_min_count     = 0               # Cost-opt: scale to zero when idle
-gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
+gpu_node_pool_min_count     = 0               # Total across gpu_node_locations; scales to zero when idle
+gpu_node_pool_max_count     = 2               # Total across gpu_node_locations (vllm-inference + vllm-reasoning)
 gpu_node_pool_initial_count = 0
 gpu_node_pool_spot          = false # On-demand: Spot OFF in every posture (§3)
-gpu_node_locations          = ["us-central1-a"]
+gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # §3 ClickHouse pool: n2-standard-4 + local SSD, 1 node in staging, Spot OFF
 enable_clickhouse_node_pool        = true
