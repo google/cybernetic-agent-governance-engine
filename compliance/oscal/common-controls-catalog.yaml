@@ -792,8 +792,9 @@ component-definition:
                 a leveraged authorization relationship per NIST SP 800-37 Rev 2. GCP maintains
                 all required external service documentation, assessment results, and continuous
                 monitoring artifacts. CAGE must also document and assess other external services:
-                Langfuse SaaS (AI observability), LLM provider APIs (OpenAI/Anthropic/Google),
-                and OFAC Sanctions API.
+                Langfuse SaaS (AI observability) and the OFAC Sanctions API. No LLM provider API
+                is used on GKE; a deployment that uses the compose-only external inference
+                backend must document and assess its provider.
               props:
                 - name: implementation-status
                   value: "shared"

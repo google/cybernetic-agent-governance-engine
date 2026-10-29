@@ -44,17 +44,10 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # ---- Rule 1: Approved external AI provider APIs ----------------------
-    - to:
-        - fqdns:
-            - "api.openai.com"
-            - "api.anthropic.com"
-            - "generativelanguage.googleapis.com"
-      ports:
-        - protocol: TCP
-          port: 443
+    # No model provider is listed: on GKE inference stays in the cluster, and
+    # the external-provider backend is compose-only (POAM-2026-152).
 
-    # ---- Rule 2: GCP service APIs (Cloud KMS, Cloud Logging, GCS) --------
+    # ---- Rule 1: GCP service APIs (Cloud KMS, Cloud Logging, GCS) --------
     # Wildcards use single-label prefix only (*.googleapis.com).
     - to:
         - fqdns:
@@ -64,7 +57,7 @@ spec:
         - protocol: TCP
           port: 443
 
-    # ---- Rule 3: Langfuse telemetry --------------------------------------
+    # ---- Rule 2: Langfuse telemetry --------------------------------------
     - to:
         - fqdns:
             - "us.i.posthog.com"
@@ -73,7 +66,7 @@ spec:
         - protocol: TCP
           port: 443
 
-    # ---- Rule 4: OFAC Sanctions API (SDN list lookups) -------------------
+    # ---- Rule 3: OFAC Sanctions API (SDN list lookups) -------------------
     - to:
         - fqdns:
             - "api.trade.gov"

@@ -151,9 +151,9 @@ _Describe the technical environment in which the system operates. Include hardwa
 
 **Special Considerations:**
 
-1. **AI/ML Components:** CAGE uses Large Language Models (LLMs) from third-party providers (OpenAI, Anthropic, Google). LLM inference introduces non-deterministic outputs and adversarial manipulation risks not present in traditional systems. Refer to NIST AI RMF 1.0 and SR 11-7 for applicable AI risk management requirements.
+1. **AI/ML Components:** CAGE's governance core needs no model. The optional agent and the model-dependent integrations use open-weight models (Qwen2.5-1.5B-Instruct, DeepSeek-R1-Distill-Llama-8B), served in the cluster by vLLM on GKE; only the compose-only `external` backend uses a third-party provider. LLM inference introduces non-deterministic outputs and adversarial manipulation risks not present in traditional systems. Refer to NIST AI RMF 1.0 and SR 11-7 for applicable AI risk management requirements.
 
-2. **External LLM API Dependencies:** AI inference is performed by external cloud-hosted LLM providers. Data sent to these providers must be pre-processed by NeMo Guardrails PII detection to prevent PII egress. This external dependency is out-of-boundary but represents a significant third-party risk.
+2. **No external LLM API dependency on GKE:** inference stays in the cluster (in-cluster vLLM or none), and the gateway's egress allowlist names no model provider (POAM-2026-152). The compose-only `external` backend sends prompts to a third-party provider. There, deterministic Presidio redaction runs before a prompt reaches the model, and the provider is an out-of-boundary third-party risk.
 
 3. **Financial Regulatory Environment:** System operates subject to SEC Rule 17a-4 (records retention), FINRA 4511 (books and records), and OFAC sanctions screening requirements. These regulatory obligations impose additional controls beyond the NIST SP 800-53 HIGH baseline.
 

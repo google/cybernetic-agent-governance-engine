@@ -1180,12 +1180,9 @@ variable "kube_dns_cidr" {
 }
 
 variable "gateway_egress_allowed_fqdns" {
-  description = "FQDNs allowed for gateway external HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3)"
+  description = "FQDNs allowed for gateway external HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3). No model provider is listed: on GKE inference stays in the cluster (POAM-2026-152)."
   type        = list(string)
   default = [
-    "api.openai.com",
-    "api.anthropic.com",
-    "generativelanguage.googleapis.com",
     "*.googleapis.com",
     "metadata.google.internal",
     "us.i.posthog.com",

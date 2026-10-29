@@ -724,11 +724,13 @@ profile:
                 prose: >
                   CAGE-SPECIFIC PII AUTHORITY REQUIREMENT: CAGE processes PII in AI prompts
                   and must maintain documented authority for each PII processing activity.
-                  Microsoft Presidio (NeMo Guardrails integration) detects and anonymizes
-                  16 PII entity types (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN,
-                  CREDIT_CARD, US_BANK_NUMBER, US_ITIN, US_PASSPORT, US_DRIVER_LICENSE,
-                  IP_ADDRESS, DATE_TIME, LOCATION, NRP, URL, MEDICAL_LICENSE, CRYPTO)
-                  before any prompt exits the cluster boundary to external LLM providers.
+                  Deterministic in-process redaction with Microsoft Presidio
+                  (src/integrations/presidio/redactor.py), independent of the optional NeMo
+                  rails, replaces 12 identity entity types (PERSON, EMAIL_ADDRESS, PHONE_NUMBER,
+                  CREDIT_CARD, CRYPTO, US_SSN, US_ITIN, US_PASSPORT, US_BANK_NUMBER,
+                  US_DRIVER_LICENSE, IBAN_CODE, IP_ADDRESS) with type tokens. Input redaction
+                  fails open if the Presidio engines fail to initialise (POAM-2026-147). On GKE
+                  no prompt leaves the cluster: inference is in-cluster vLLM or none.
                   PII processing authority must be documented in privacy notices (SEC Reg S-P)
                   and reviewed annually by the ISSO and Legal/Privacy team.
 

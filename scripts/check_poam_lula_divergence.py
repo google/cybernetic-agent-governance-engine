@@ -145,6 +145,8 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
     # The unread vllm_*_url variables are gone from both targets and both
     # .env loaders; gcp-gke vLLM endpoints come only from inference_backend.
     "POAM-2026-136": ("tests/infrastructure/test_inference_backend_gke.py",),
+    # Healthcare declares no causal graph and ships no causal_graph.yaml.
+    "POAM-2026-143": ("tests/test_healthcare_plugin.py",),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

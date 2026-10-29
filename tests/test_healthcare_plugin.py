@@ -161,7 +161,7 @@ class TestHealthcarePlugin:
         assert "clinical_consensus" in tier_names
 
     def test_healthcare_config_files_exist(self):
-        """Healthcare config files (critics.yaml, causal_graph.yaml, overlays) exist."""
+        """Healthcare config files (critics.yaml, overlays) exist."""
         from pathlib import Path
 
         healthcare_config = (
@@ -169,10 +169,25 @@ class TestHealthcarePlugin:
         )
 
         assert (healthcare_config / "critics.yaml").exists()
-        assert (healthcare_config / "causal_graph.yaml").exists()
         assert (healthcare_config / "compliance" / "US_FED_OVERLAY.json").exists()
         assert (healthcare_config / "compliance" / "EU_ECB_OVERLAY.json").exists()
         assert (healthcare_config / "compliance" / "APAC_MAS_OVERLAY.json").exists()
+
+    def test_healthcare_declares_no_causal_graph(self):
+        """POAM-2026-143: healthcare registers no causal tier, so it declares no graph.
+
+        The declared path was checked for existence at startup and read by
+        nothing in the domain.
+        """
+        from pathlib import Path
+
+        from src.cage_healthcare.plugin import HealthcareCagePlugin
+
+        assert HealthcareCagePlugin.domain_config.causal_graph_path is None
+        healthcare_config = (
+            Path(__file__).parent.parent / "src" / "cage_healthcare" / "config"
+        )
+        assert not (healthcare_config / "causal_graph.yaml").exists()
 
     def test_healthcare_opa_policy_exists(self):
         """Healthcare OPA policy file exists."""

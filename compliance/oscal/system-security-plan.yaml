@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-29T14:53:50Z'
+    last-modified: '2026-10-29T15:37:26Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1672,15 +1672,16 @@ system-security-plan:
         time. Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved
         IPs and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7
         HTTP-method enforcement is not claimed by this control implementation. Gateway
-        pods may reach only the FQDNs on their allowlist (deployment/k8s/cilium/egress-lockdown.yaml),
-        among them required GCP service APIs (*.googleapis.com) and three external
-        LLM provider endpoints that no GKE inference path calls. Reconciliation worker
-        egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), the Memorystore
-        for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign telemetry
-        OTLP (port 3000), and cluster DNS. Sovereign agent and financial advisor pods
-        are locked to intra-cluster egress only (OPA:8181, Gateway:8080, Compliance-Bridge:8090)
-        and cannot contact any external endpoint directly, preventing lateral movement
-        and data exfiltration even if a pod is compromised.'
+        pods may reach only the FQDNs on their allowlist (deployment/k8s/cilium/egress-lockdown.yaml):
+        required GCP service APIs (*.googleapis.com), observability telemetry and
+        the OFAC sanctions APIs. No model provider is listed, although the *.googleapis.com
+        wildcard also matches Google''s model API (POAM-2026-152). Reconciliation
+        worker egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), the
+        Memorystore for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign
+        telemetry OTLP (port 3000), and cluster DNS. Sovereign agent and financial
+        advisor pods are locked to intra-cluster egress only (OPA:8181, Gateway:8080,
+        Compliance-Bridge:8090) and cannot contact any external endpoint directly,
+        preventing lateral movement and data exfiltration even if a pod is compromised.'
       props:
       - name: implementation-status
         value: implemented

@@ -50,7 +50,6 @@ class HealthcareCagePlugin(CagePlugin):
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",
         opa_required_rules=("allow",),
-        causal_graph_path=_CONFIG_DIR / "causal_graph.yaml",
     )
 
     def contribute(self) -> PluginContribution:

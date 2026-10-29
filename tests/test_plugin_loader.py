@@ -248,10 +248,13 @@ def test_finance_opa_package_matches_its_shipped_rego():
 
 
 def test_healthcare_is_runnable_and_declares_existing_config():
-    """POAM-2026-077: healthcare ships its own FTRA registry, OPA package and causal graph."""
+    """POAM-2026-077: healthcare ships its own FTRA registry and OPA package.
+
+    It declares no causal graph: it registers no causal tier (POAM-2026-143).
+    """
     config = domain_config_of(load_domain_plugin("healthcare"))
     assert config.ftra_registry_path.is_file()
-    assert config.causal_graph_path is not None and config.causal_graph_path.is_file()
+    assert config.causal_graph_path is None
     rego = (
         Path(__file__).resolve().parents[1]
         / "src"
