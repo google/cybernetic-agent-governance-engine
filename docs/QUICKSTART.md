@@ -72,8 +72,9 @@ This starts:
 
 ```bash
 curl http://localhost:8080/health
-# Expected: {"status":"ok","mode":"mcp-tool-server","nemo":"active"}
-# (a static liveness response; it does not probe NeMo or OPA)
+# Expected: {"status":"ok","mode":"mcp-tool-server","nemo":"off"}
+# (a liveness response; it probes neither NeMo nor OPA. NeMo rails are opt-in, so "nemo"
+#  reads "active" only with CAGE_NEMO_ENABLED=true and a model backend configured)
 
 # A gated route without an identity header is refused
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8080/mcp/

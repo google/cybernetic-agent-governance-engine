@@ -57,10 +57,14 @@ The verifier in [`proof/`](proof/) has no dependency on `src/`, so a trace from 
 ## Architecture in one pass
 
 ```text
-agent → gateway → [ FTRA → STPA → OPA → confidence → warrant → CBF → consensus → causal ]
+agent → gateway → [ FTRA → STPA → OPA → confidence → warrant* → consensus → CBF → fiscal ]
                             ↓                                                    ↓
                      refuse + receipt                                     clear + receipt
 ```
+
+\* `warrant` applies only to norms the active region marks `requires_warrant`.
+
+By default every tier is deterministic and needs no model. `consensus` escalates an action at or above its threshold to a human; LLM critics are optional. The diagram shows the seven tiers of the formal model in [`proof/`](proof/), plus `warrant`. Domain plugins contribute tiers of their own, such as finance's `bounding` and healthcare's `dose_barrier`, and the finance causal tier is an optional extension, off by default.
 
 - **Kernel** — domain- and vendor-neutral enforcement. Import boundaries are enforced in CI, not by convention.
 - **Domain plugins** — finance and healthcare ship complete configurations. Exactly one domain is active per process.

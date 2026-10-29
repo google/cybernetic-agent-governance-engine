@@ -56,6 +56,8 @@ Plugin tiers (finance's `bounding` and optional `causal`, healthcare's `dose_bar
 
 The former "Concurrent CBF∥OPA: 49" row is gone: no function in `proof/model.py` enumerates a concurrent state space, and no test pinned that number.
 
+**The downscoping plan predicted other numbers.** The plan of 2026-10-28, which proposed removing `causal` from the model, predicted 34 / 19 / 32 reachable states, labelled FULL / POST_HITL / DRY_RUN. The measured counts are gated 34, ungated 17 and skipped-tier (`cbf`) 31, the variants in the table above, plus 38 under `EU_ECB`. The plan was wrong about two numbers and all three labels. The code did not drift from the design: these are measured values, and the tests pin them.
+
 ### Gap Proofs
 
 The model proves three concrete CAGE gaps:

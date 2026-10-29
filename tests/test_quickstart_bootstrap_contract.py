@@ -173,3 +173,37 @@ def test_quickstart_governance_demo_executes_all_acts(
     out = capsys.readouterr().out
     assert "PASS — exactly one reservation atomically succeeded" in out
     assert "All acts passed — governance-as-code demo complete" in out
+
+
+def test_quickstart_documents_the_default_health_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Step 3 of docs/QUICKSTART.md shows what /health returns under the compose defaults.
+
+    NeMo rails are opt-in, compose does not set CAGE_NEMO_ENABLED, and with no
+    rails built the gateway reports ``"nemo": "off"``. W5 changed that default
+    while the document still said "active"; this pins the two together.
+    """
+    import asyncio
+    import json
+    import re
+
+    import src.gateway.server.mcp_tool_server as mod
+    from src.gateway.governance.feature_flags import nemo_rails_enabled
+
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    gateway_env = compose["services"]["gateway"].get("environment") or []
+    assert not any(str(entry).startswith("CAGE_NEMO_ENABLED") for entry in gateway_env)
+    monkeypatch.delenv("CAGE_NEMO_ENABLED", raising=False)
+    assert not nemo_rails_enabled()
+
+    text = (_REPO_ROOT / "docs" / "QUICKSTART.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"curl http://localhost:8080/health\n# Expected: (\{.*?\})\n", text
+    )
+    assert match is not None, "QUICKSTART no longer documents the /health response"
+
+    monkeypatch.setattr(mod.app.state, "nemo_rails", None, raising=False)
+    assert asyncio.run(mod.health_check()) == json.loads(match.group(1))

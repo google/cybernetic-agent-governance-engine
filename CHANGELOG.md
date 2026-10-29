@@ -56,6 +56,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The quickstart and README describe the core as merged** ([`QUICKSTART.md`](docs/QUICKSTART.md), [`README.md`](README.md), [`proof/README.md`](proof/README.md)).
+  - The quickstart expected `/health` to report `"nemo":"active"`. NeMo rails have been opt-in since W5, so under the compose defaults it reports `"off"`. [`test_quickstart_bootstrap_contract.py`](tests/test_quickstart_bootstrap_contract.py) now compares the documented response with the gateway's, so the two cannot drift apart again unnoticed.
+  - The README's pipeline ended `→ consensus → causal`. It now shows the deterministic core in the formal model's order, ending `→ consensus → CBF → fiscal`, and says that consensus escalates to a human, critics are optional and the causal tier is an optional extension.
+  - `proof/README.md` records that the downscoping plan predicted 34 / 19 / 32 states with FULL / POST_HITL / DRY_RUN labels, and that the measured 34 / 17 / 31 / 38 are the values the tests pin.
 - **The chaos-agent playground no longer presents emulations as real components, and its trades can be allowed** ([`chaos_agent_playground.py`](examples/chaos_agent_playground.py), [`examples/README.md`](examples/README.md)).
   - Only Tier 0, the finance plugin's `GeneratedSTPAValidator`, is real. Yet Tier 2 printed a Python re-implementation of the STPA Rego rules under "OPA Rego Policy", and the README said every layer "executes its actual logic". Every tier now says whether it is real, emulated or simulated, and the README and QUICKSTART say the playground never calls the governor, OPA, consensus, CBF or a model.
   - Every trade payload lacked `order_size` and `daily_vol`, so UCA-6 refused every trade whatever the other inputs. The payloads now carry them. A new Scenario F, a compliant baseline, shows the real validator allowing the action it denies in Scenario A, and the summary checks each scenario against its expected verdict.
