@@ -765,40 +765,48 @@ component-definition:
                   rel: reference
 
     # -----------------------------------------------------------------------
-    # Component 2: NeMo Guardrails (src/gateway/governance/nemo/)
+    # Component 2: Deterministic Input Screening and PII Redaction
+    # (src/gateway/governance/text_filter.py, src/integrations/presidio/)
     # Enforces: SI-10 (Information Input Validation), SI-3 (Malicious Code Protection)
+    # The optional NeMo Guardrails tier (CAGE_NEMO_ENABLED, default false) is not
+    # credited here: every statement below holds with it off (POAM-2026-145).
     # -----------------------------------------------------------------------
     - uuid: "3d19fa63-7253-4563-b757-23c89ea461ce"
-      title: "NeMo Guardrails"
+      title: "Deterministic Input Screening and PII Redaction"
       type: software
       description: >
-        NVIDIA NeMo Guardrails with Microsoft Presidio PII detection providing
-        input/output validation, prompt injection detection, and malicious code
-        protection. Configured via Colang rail definitions and integrated into
-        the governance pipeline through src/gateway/governance/nemo/manager.py.
+        In-process screening that needs no LLM and no network service: the Stage 1
+        Aho-Corasick keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py)
+        for known prompt-injection and control-override phrases, Microsoft Presidio
+        identity-PII redaction (src/integrations/presidio/redactor.py), and regex PII
+        scrubbing (scrub_pii in src/gateway/infrastructure/privacy.py). It runs whether
+        or not the optional NeMo Guardrails tier is enabled (POAM-2026-142).
       purpose: >
-        Validates all user inputs against 16 PII entity types, detects and blocks
-        prompt injection and jailbreak attempts, and applies content safety rails
-        to both inputs and model outputs. Provides defense-in-depth against
-        adversarial inputs that bypass tier-1 heuristic filtering.
+        Screens every input for known injection phrases, redacts 12 identity PII
+        entity types from user input before any agent or model sees it, and scrubs
+        PII from model output.
       responsible-roles:
         - role-id: provider
       control-implementations:
         - uuid: "2de5e59a-f094-4d79-94eb-b3321211b4dc"
           source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
-          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by NeMo Guardrails"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by deterministic input screening and PII redaction"
           implemented-requirements:
             - uuid: "8e46d991-dd78-416a-897d-f909cb63be8d"
               control-id: si-10
               description: |
-                Information input validation is implemented via Microsoft Presidio PII detection
-                integrated into NeMo Guardrails. The rail configuration in config/rails/config.yml
-                enables detection of 16 PII entity types including PERSON, EMAIL_ADDRESS,
-                PHONE_NUMBER, US_SSN, CREDIT_CARD, IBAN_CODE, IP_ADDRESS, and more. Colang
-                rail definitions in config/rails/definitions.co enforce input blocking when
-                PII is detected. The NeMo manager in src/gateway/governance/nemo/manager.py
-                orchestrates the validation pipeline. All validation events are tagged with
-                the relevant SP 800-53 control ID and logged to OTel.
+                Information input validation runs in-process on every input. The governed
+                agent's input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
+                replaces each user message with its Presidio-redacted text (12 identity
+                entity types: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, CRYPTO,
+                US_SSN, US_ITIN, US_PASSPORT, US_BANK_NUMBER, US_DRIVER_LICENSE, IBAN_CODE,
+                IP_ADDRESS), failing closed in enforcing postures when redaction raises, and
+                blocks input that matches the Stage 1 keyword list (tier1_keywords in
+                config/governance_thresholds.json). The gateway's inference proxy
+                (src/gateway/server/inference_proxy.py) runs the same keyword scan over
+                every message of every request and stamps the outcome on the request's
+                OTel span. A Presidio engine that fails to initialise leaves input
+                unredacted instead of failing closed (POAM-2026-147).
               props:
                 - name: implementation-status
                   value: implemented
@@ -811,16 +819,18 @@ component-definition:
             - uuid: "b1f022fc-e7f1-45e6-8972-9f5ab16f99fa"
               control-id: si-3
               description: |
-                Malicious code protection is implemented via NeMo Guardrails input/output
-                filtering in src/gateway/governance/nemo/manager.py. The jailbreak detection
-                rail analyzes prompts for known prompt injection patterns, adversarial
-                instructions, and role-confusion attacks. Output rails prevent the model
-                from generating harmful content, code execution instructions, or compliance-
-                violating responses. All detected malicious inputs are blocked, logged, and
-                trigger optional PagerDuty/Slack alerts via the compliance bridge notifier.
+                Partial. On the input side the Stage 1 keyword scan blocks known
+                prompt-injection, jailbreak and control-override phrases at the governed
+                agent's input rail and at the gateway's inference proxy before any model
+                sees them, and the proxy stamps each outcome on the request's OTel span.
+                On the output side only PII scrubbing is deterministic: the output rail
+                node scrubs every agent answer and returns the blocked sentinel on any
+                error, but no deterministic check screens model output for harmful content.
+                The optional NeMo Colang rails add an LLM jailbreak check and output judge
+                only when CAGE_NEMO_ENABLED=true; this statement does not rely on them.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -860,9 +870,14 @@ component-definition:
                 only inside its signed autonomous envelope with a known, finite, positive
                 magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation
                 (SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py) and the
-                domain OPA policy (src/cage_finance/opa/trade_governance.rego); injection is
-                mitigated by NeMo/AGP rails generated from UCA-7
-                (config/rails/generated_stpa_rails.co, config/agp/generated_semantic_policy.txt).
+                domain OPA policy (src/cage_finance/opa/trade_governance.rego). Prompt injection
+                is screened on every input by the deterministic Stage 1 keyword scan
+                (ac_keyword_scan in src/gateway/governance/text_filter.py, run by the LangGraph
+                input rail node and the inference proxy). UCA-7 compiles only to OPA
+                (stpa_violation_uca_7 in config/opa/generated_stpa_policy.rego, which denies a
+                prompt_injection_check whose semantic_score exceeds the UCA's threshold); the
+                optional NeMo Colang rails add LLM-backed screening only when
+                CAGE_NEMO_ENABLED=true.
                 Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews
                 every claiming phase-2 mutating barrier side-effect-free (Phase2Mode.PREVIEW /
                 _preview_mutating in src/gateway/governance/governor/pipeline.py): a HARD barrier

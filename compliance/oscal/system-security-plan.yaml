@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-10-29T01:29:54Z'
+    last-modified: '2026-10-29T13:04:41Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -106,8 +106,8 @@ system-security-plan:
     - id: ai-model-operator
       title: AI Model Operator
       description: 'Monitors AI model performance, manages model versioning, reviews
-        NeMo Guardrails and OPA Rego governance policies, coordinates AI incident
-        response per SR 11-7.
+        OPA Rego governance policies and, where the optional tier is enabled, NeMo
+        Guardrails Colang rails, coordinates AI incident response per SR 11-7.
 
         '
     - id: compliance-engineer
@@ -192,23 +192,26 @@ system-security-plan:
     system-name-short: CAGE
     description: 'The Cybernetic Governance Engine (CAGE) is a HIGH-impact AI governance
       platform for financial services that enforces real-time, deterministic controls
-      over large language model (LLM) inference. CAGE implements a three-tier semantic
-      shielding architecture: Tier 1 Aho-Corasick heuristic filtering, NeMo Guardrails
-      content shielding, and Tier 3 Open Policy Agent (OPA) Rego policy enforcement.
-      All governance decisions are emitted as OpenTelemetry (OTel) spans stamped with
-      ISO 42001 and NIST SP 800-53 control identifiers, providing a continuous, machine-verifiable
-      audit trail aligned with SEC Rule 17a-4 and FINRA 4511 record retention requirements.
+      over large language model (LLM) inference. Its deterministic screening has three
+      parts: a Tier 1 Aho-Corasick scan for prompt-injection and control-override
+      phrases, in-process Microsoft Presidio and regex PII redaction, and Tier 3 Open
+      Policy Agent (OPA) Rego policy enforcement. NeMo Guardrails Colang rails are
+      an optional tier, off by default (CAGE_NEMO_ENABLED=false), that adds LLM-backed
+      content screening when an operator enables it. All governance decisions are
+      emitted as OpenTelemetry (OTel) spans stamped with ISO 42001 and NIST SP 800-53
+      control identifiers, providing a continuous, machine-verifiable audit trail
+      aligned with SEC Rule 17a-4 and FINRA 4511 record retention requirements.
 
       CAGE is deployed on Google Kubernetes Engine (GKE) within the governance-stack
-      namespace and integrates with Langfuse for AI observability, NeMo Guardrails
-      for input/output rail enforcement, and Microsoft Presidio for PII detection
-      and anonymization. The system processes Financial Trade Execution Data, AI Governance
-      Audit Logs, Personally Identifiable Information (PII), and Governance Policy
-      Configurations. The system''s authorization boundary encompasses all containers
-      deployed in the governance-stack namespace, the Cloud SQL PostgreSQL database,
-      Google Cloud Storage buckets for audit log archival, and Redis cache for session
-      state. External interconnections include the Langfuse observability platform
-      (cloud-hosted SaaS) and external LLM provider APIs (OpenAI, Anthropic, Google).
+      namespace and integrates with Langfuse for AI observability. Microsoft Presidio
+      runs in-process, so PII redaction depends on no separate service and no LLM.
+      The system processes Financial Trade Execution Data, AI Governance Audit Logs,
+      Personally Identifiable Information (PII), and Governance Policy Configurations.
+      The system''s authorization boundary encompasses all containers deployed in
+      the governance-stack namespace, the Cloud SQL PostgreSQL database, Google Cloud
+      Storage buckets for audit log archival, and Redis cache for session state. External
+      interconnections include the Langfuse observability platform (cloud-hosted SaaS)
+      and external LLM provider APIs (OpenAI, Anthropic, Google).
 
       '
     security-sensitivity-level: high
@@ -278,9 +281,10 @@ system-security-plan:
         selected: moderate
     - uuid: b2000003-0000-4000-8000-000000000003
       title: PII/User Identity Data
-      description: 'Individual investor PII processed through NeMo Guardrails Presidio
-        PII detection (16 entity types including SSN, credit card, bank numbers, passport).
-        Governed by SEC Reg S-P and FINRA privacy rules.
+      description: 'Individual investor PII, redacted in-process by Microsoft Presidio
+        (12 identity entity types, including SSN, credit card, bank account and passport
+        numbers) and deterministic regex scrubbing. Governed by SEC Reg S-P and FINRA
+        privacy rules.
 
         '
       categorizations:
@@ -356,16 +360,17 @@ system-security-plan:
     authorization-boundary:
       description: 'The authorization boundary of the CAGE system encompasses all
         components deployed within the governance-stack Kubernetes namespace on GKE.
-        This includes the CAGE FastAPI/gRPC gateway, NeMo Guardrails server, OPA policy
-        engine, Compliance Bridge service, AgentSight eBPF monitor, and associated
-        GCP managed services (Cloud SQL PostgreSQL, Cloud Storage buckets for audit
-        archival, Redis for session state, Cloud Secret Manager for credential storage).
-        The boundary is enforced via Kubernetes NetworkPolicy restricting all ingress/egress
-        to authorized sources only. External to the boundary: Langfuse SaaS observability
-        platform (external interconnection with data flow agreement), LLM provider
-        APIs (OpenAI/Anthropic/Google), and OFAC sanctions API. GKE cluster infrastructure
-        (physical, hypervisor, network fabric) is managed by Google Cloud Platform
-        as Common Control Provider and is inherited via GCP FedRAMP High authorization.
+        This includes the CAGE FastAPI/gRPC gateway, OPA policy engine, the optional
+        NeMo Guardrails server where an operator enables it, Compliance Bridge service,
+        AgentSight eBPF monitor, and associated GCP managed services (Cloud SQL PostgreSQL,
+        Cloud Storage buckets for audit archival, Redis for session state, Cloud Secret
+        Manager for credential storage). The boundary is enforced via Kubernetes NetworkPolicy
+        restricting all ingress/egress to authorized sources only. External to the
+        boundary: Langfuse SaaS observability platform (external interconnection with
+        data flow agreement), LLM provider APIs (OpenAI/Anthropic/Google), and OFAC
+        sanctions API. GKE cluster infrastructure (physical, hypervisor, network fabric)
+        is managed by Google Cloud Platform as Common Control Provider and is inherited
+        via GCP FedRAMP High authorization.
 
         '
       props:
@@ -410,12 +415,16 @@ system-security-plan:
         enter via HTTPS. Financial Trade Data (IT-001) and PII (IT-004) are received
         at the gateway boundary.
 
-        Internal processing pipeline: Gateway → NeMo Guardrails (gRPC, intra-cluster;
-        Presidio PII masking strips PII before any external egress) → OPA Policy Engine
-        (HTTP, intra-cluster; fiscal limits and RBAC enforcement) → LLM inference
-        layer. All services emit OTel spans to the Langfuse collector endpoint. AgentSight
-        eBPF monitor observes kernel-level syscalls for anomaly detection without
-        data exfiltration.
+        Internal processing pipeline: the governed agent''s input rail redacts identity
+        PII from each user message in-process (Presidio; it fails open if the engines
+        cannot initialise, POAM-2026-147) and runs the Stage 1 keyword scan before
+        any agent or model sees the text → Gateway inference proxy (Stage 1 keyword
+        scan over every message; regex PII scrub of every model response) → OPA Policy
+        Engine (HTTP, intra-cluster; fiscal limits and RBAC enforcement) → LLM inference
+        layer. NeMo Guardrails joins this path only when CAGE_NEMO_ENABLED=true. All
+        services emit OTel spans to the Langfuse collector endpoint. AgentSight eBPF
+        monitor observes kernel-level syscalls for anomaly detection without data
+        exfiltration.
 
         Outbound: PII-redacted inference requests exit to external LLM provider APIs
         (OpenAI/Anthropic/Google) via Cloud NAT over HTTPS. OFAC sanctions API queries
@@ -497,9 +506,10 @@ system-security-plan:
     - uuid: d4000004-0000-4000-8000-000000000004
       title: AI Model Operator
       short-name: ai-model-operator
-      description: 'Personnel who manage AI model versions, tune NeMo Guardrails Colang
-        rail definitions, review OPA Rego governance policies, and monitor AI model
-        performance via Langfuse dashboards per SR 11-7 model risk management.
+      description: 'Personnel who manage AI model versions, review OPA Rego governance
+        policies, tune NeMo Guardrails Colang rail definitions where the optional
+        tier is enabled, and monitor AI model performance via Langfuse dashboards
+        per SR 11-7 model risk management.
 
         '
       role-ids:
@@ -514,9 +524,10 @@ system-security-plan:
       type: software
       title: CAGE Gateway
       description: 'FastAPI/gRPC hybrid gateway serving as the primary ingress enforcement
-        layer. Implements multi-tier semantic shielding: Tier 1 Aho-Corasick heuristic,
-        NeMo Guardrails, Tier 3 OPA policy enforcement. Emits OTel spans stamped with
-        ISO 42001 and NIST SP 800-53 control identifiers.
+        layer. Implements deterministic screening: the Tier 1 Aho-Corasick keyword
+        scan, regex PII scrubbing of model responses, and Tier 3 OPA policy enforcement.
+        NeMo Guardrails rails run in the gateway only when CAGE_NEMO_ENABLED=true.
+        Emits OTel spans stamped with ISO 42001 and NIST SP 800-53 control identifiers.
 
         '
       purpose: 'Provides the system''s authorization boundary ingress point, enforcing
@@ -539,17 +550,25 @@ system-security-plan:
     - uuid: e5000002-0000-4000-8000-000000000002
       type: software
       title: NeMo Guardrails Server
-      description: 'NVIDIA NeMo Guardrails applying Colang-defined input/output rails.
-        Integrates Microsoft Presidio for PII entity detection and anonymization across
-        16 PII entity types before any data egresses the cluster.
+      description: 'NVIDIA NeMo Guardrails Colang input rails and LLM output judge.
+        Optional tier, off by default: the gateway builds NeMo rails only when CAGE_NEMO_ENABLED=true
+        and an inference backend is configured, and refuses every rail path otherwise
+        (POAM-2026-144). The nemo-guardrails server deployment exists only where an
+        operator enables the nemo_guardrails Terraform module. PII redaction does
+        not depend on this component (see Deterministic PII Redaction).
 
         '
-      purpose: 'Prevents PII transmission to external AI suppliers. Implements A.9.2
-        ISO 42001 data transfer controls and PT-2/PT-3 NIST SP 800-53 PII controls.
+      purpose: 'When enabled, adds LLM-backed input screening and semantic output
+        validation (ISO 42001 A.6.1.2). Claims no control in the default posture.
 
         '
       status:
-        state: operational
+        state: other
+        remarks: 'Optional tier, disabled by default since AG-5 (#576). The ISO 42001
+          A.9.2 and NIST PT-2/PT-3 claims this component carried belong to the in-process
+          Deterministic PII Redaction component (POAM-2026-145).
+
+          '
       responsible-roles:
       - role-id: ai-model-operator
       props:
@@ -557,8 +576,59 @@ system-security-plan:
         value: nemo-guardrails:latest
       - name: namespace
         value: governance-stack
+      - name: enablement
+        value: CAGE_NEMO_ENABLED=true (default false)
+    - uuid: e5000008-0000-4000-8000-000000000008
+      type: software
+      title: Deterministic PII Redaction
+      description: 'In-process PII redaction with no LLM and no network dependency
+        (spaCy NER runs locally), independent of CAGE_NEMO_ENABLED (POAM-2026-142).
+        Microsoft Presidio (src/integrations/presidio/redactor.py) replaces 12 identity
+        entity types (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, CRYPTO, US_SSN,
+        US_ITIN, US_PASSPORT, US_BANK_NUMBER, US_DRIVER_LICENSE, IBAN_CODE, IP_ADDRESS)
+        with type tokens; scrub_pii (src/gateway/infrastructure/privacy.py) removes
+        SSN, credit card, email and phone patterns with regular expressions. The governed
+        agent''s input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
+        replaces each user message with its redacted text before any agent or model
+        sees it. It fails closed in enforcing postures when redaction raises, but
+        not when the Presidio engines failed to initialise: redaction then returns
+        the text unchanged and the message passes unredacted (POAM-2026-147). The
+        output rail node applies both passes to every agent answer and returns the
+        blocked sentinel on any error. The gateway''s inference proxy applies scrub_pii
+        to every model response and to the prompt text it records in telemetry.
+
+        '
+      purpose: 'Keeps identity PII in user input from reaching the inference layer
+        while the Presidio engines are initialised (POAM-2026-147), and PII in model
+        output from reaching users or telemetry. Implements ISO 42001 A.9.2 data transfer
+        controls and supports NIST SP 800-53 PT-2/PT-3 PII processing controls. A.9.2''s
+        automated evidence has no producer yet (POAM-2026-146).
+
+        '
+      status:
+        state: operational
+        remarks: 'Operational with a documented fail-open: if the Presidio engines
+          fail to initialise, input redaction passes text through unredacted, in enforcing
+          postures too (POAM-2026-147, reproduced 2026-10-29). The shipped advisor
+          image installs Presidio and its spaCy models, so the defect is latent there.
+          Output keeps its regex scrub_pii pass.
+
+          '
+      responsible-roles:
+      - role-id: ai-model-operator
+      props:
       - name: pii-masking
-        value: Microsoft Presidio (16 entity types)
+        value: Microsoft Presidio (12 identity entity types) + regex scrub_pii
+      - name: deployment-type
+        value: In-process library (governed agent rail nodes, gateway inference proxy)
+      - name: namespace
+        value: governance-stack
+      - name: poam-gap
+        value: POAM-2026-147
+        remarks: Input redaction fails open when the Presidio engines fail to initialise
+      - name: poam-gap-evidence
+        value: POAM-2026-146
+        remarks: A.9.2's automated Lula evidence has no producer
     - uuid: e5000003-0000-4000-8000-000000000003
       type: software
       title: OPA Policy Engine
@@ -696,8 +766,10 @@ system-security-plan:
         - a1000004-0000-4000-8000-000000000004
       implemented-components:
       - component-uuid: e5000001-0000-4000-8000-000000000001
+      - component-uuid: e5000008-0000-4000-8000-000000000008
     - uuid: f6000002-0000-4000-8000-000000000002
-      description: NeMo Guardrails Server container — governance-stack namespace
+      description: NeMo Guardrails Server container (optional; present only where
+        the nemo_guardrails module is enabled) — governance-stack namespace
       props:
       - name: asset-type
         value: container
@@ -1381,14 +1453,13 @@ system-security-plan:
         \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
         \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
         \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
-        \    (OPA Rego — 7 UCAs)\n            - config/rails/generated_stpa_rails.co\
-        \     (NeMo Colang — 0 UCAs)\n            - src/gateway/governance/stpa_validator.py\
+        \    (OPA Rego — 7 UCAs)\n            - src/gateway/governance/stpa_validator.py\
         \ (Python — 11 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
         \ (Sandbox — 1 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-10-29T01:29:54Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-10-29T13:04:41Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1432,13 +1503,11 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-10-29T01:29:54Z'
+        value: '2026-10-29T13:04:41Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
         value: config/opa/generated_stpa_policy.rego
-      - name: artifact-nemo
-        value: config/rails/generated_stpa_rails.co
       - name: artifact-python
         value: src/gateway/governance/stpa_validator.py
       - name: artifact-sandbox
@@ -1451,10 +1520,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00000
         description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
-          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-          (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA
-          rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
+          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
         implementation-status:
           state: implemented
         links:
@@ -1468,9 +1536,9 @@ system-security-plan:
         uuid: h8000099-stpa-4000-8000-compiler00001
         description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
           / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
-          (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
+          (OPA Rego), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
         implementation-status:
           state: implemented
         links:
@@ -1483,10 +1551,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00002
         description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
-          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-          (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA
-          rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-10, UCA-13, UCA-2, UCA-9.'
+          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-10, UCA-13, UCA-2, UCA-9.'
         implementation-status:
           state: implemented
         links:
@@ -1499,10 +1566,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00003
         description: 'STPA compiler enforces SI-4 (System Monitoring) via generated
-          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-          (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA
-          rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-10.'
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-10.'
         implementation-status:
           state: implemented
         links:
@@ -1516,9 +1582,8 @@ system-security-plan:
         uuid: h8000099-stpa-4000-8000-compiler00004
         description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
           via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
-          config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-12, UCA-2, UCA-8.'
+          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+          (STPA validator). UCAs covered: UCA-12, UCA-2, UCA-8.'
         implementation-status:
           state: implemented
         links:
@@ -1531,10 +1596,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00005
         description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
-          via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
-          config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-3.'
+          via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+          UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
+          covered: UCA-3.'
         implementation-status:
           state: implemented
         links:
@@ -1547,10 +1611,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00006
         description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
-          Integrity) via generated artifacts: config/opa/generated_stpa_policy.rego
-          (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-4.'
+          Integrity) via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated
+          Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator).
+          UCAs covered: UCA-4.'
         implementation-status:
           state: implemented
         links:
@@ -1563,10 +1626,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00007
         description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated
-          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-          (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA
-          rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-4.'
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-4.'
         implementation-status:
           state: implemented
         links:
@@ -1579,10 +1641,9 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00008
         description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via
-          generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
-          (NeMo Colang), src/cage_finance/stpa/uca_rules.py (generated Python UCA
-          rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-6, UCA-7.'
+          generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-6, UCA-7.'
         implementation-status:
           state: implemented
         links:

@@ -130,6 +130,12 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_nemo_flag_binding.py",
         "tests/test_inference_proxy_extended.py",
     ),
+    # The compliance artifacts credit the deterministic path, not the optional
+    # NeMo tier, and cite a generated artifact only while a UCA targets it.
+    "POAM-2026-145": (
+        "tests/test_oscal_nemo_claims.py",
+        "tests/test_oscal_ssp_exporter.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

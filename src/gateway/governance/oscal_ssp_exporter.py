@@ -127,9 +127,14 @@ _FTRA_SI10_DESCRIPTION = (
     "unregistered actions to human review; a registered terminal clears autonomously "
     "only inside its signed autonomous envelope with a known, finite, positive "
     "magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation "
-    "(SI-10) is enforced by the domain STPA UCA rules and the domain OPA policy; "
-    "injection is mitigated by NeMo/AGP rails generated from UCA-7 "
-    "(config/rails/generated_stpa_rails.co, config/agp/generated_semantic_policy.txt). "
+    "(SI-10) is enforced by the domain STPA UCA rules and the domain OPA policy. "
+    "Prompt injection is screened on every input by the deterministic Stage 1 "
+    "keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py, run by "
+    "the LangGraph input rail node and the inference proxy). UCA-7 compiles only to "
+    "OPA (stpa_violation_uca_7 in config/opa/generated_stpa_policy.rego, which denies "
+    "a prompt_injection_check whose semantic_score exceeds the UCA's threshold); the "
+    "optional NeMo Colang rails add LLM-backed screening only when "
+    "CAGE_NEMO_ENABLED=true. "
     "Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews "
     "every claiming phase-2 barrier side-effect-free (Phase2Mode.PREVIEW in "
     "src/gateway/governance/governor/pipeline.py), denying outright on HARD barrier "
@@ -469,6 +474,24 @@ _FRAMEWORK_FILE_MAP: dict[str, str] = {
     "MAS_FEAT": "MAS_FEAT",
 }
 
+#: Generators an ``all`` enforcement entry stands for. stpa_compiler.py emits
+#: OPA, NeMo and Python output for ``all``; LangGraph and sandbox output need
+#: an explicit target.
+_ALL_EXPANDS_TO = frozenset({"opa", "nemo", "python"})
+
+
+def _enforcement_targets(ucas: list[UCAModel]) -> set[str]:
+    """Return the enforcement targets *ucas* declare, with ``all`` expanded.
+
+    Every artifact list the exporter writes derives from this set, so a
+    generator no UCA targets (NeMo Colang while no UCA declares ``nemo``) is
+    never named as enforcing a control.
+    """
+    targets: set[str] = {t for u in ucas for t in u.enforcement}
+    if "all" in targets:
+        targets |= _ALL_EXPANDS_TO
+    return targets
+
 
 class FrameworkRouter:
     """Load and cache an external JSON framework routing table.
@@ -514,6 +537,12 @@ class FrameworkRouter:
         self.uca_mappings: dict[str, list[str]] = data["uca_mappings"]
         self.control_descriptions: dict[str, str] = data["control_descriptions"]
         self.narrative_template: str = data["narrative_template"]
+        # Enforcement target (a UCA's ``enforcement`` entry) → the generated
+        # artifact text a narrative cites for it. Kept in the mapping file so
+        # the kernel holds no domain paths (Gate G3).
+        self.enforcement_artifacts: dict[str, str] = data.get(
+            "enforcement_artifacts", {}
+        )
         logger.info(
             "FrameworkRouter: loaded '%s' from %s (%d UCA entries)",
             self.framework_id,
@@ -537,16 +566,27 @@ class FrameworkRouter:
         """Return the human-readable description for a control ID."""
         return self.control_descriptions.get(control_id, control_id)
 
+    def artifacts_for(self, ucas: list[UCAModel]) -> str:
+        """Return the generated artifacts that enforce *ucas*, in mapping order.
+
+        Only targets the UCAs declare are cited (:func:`_enforcement_targets`).
+        """
+        targets = _enforcement_targets(ucas)
+        return ", ".join(
+            text
+            for target, text in self.enforcement_artifacts.items()
+            if target in targets
+        )
+
     def format_narrative(self, control_id: str, ucas: list[UCAModel]) -> str:
         """Build the by-component description prose for a single control."""
-        uca_list = ", ".join(
-            u.id for u in ucas if control_id in self.controls_for_uca(u.id)
-        )
+        mapped = [u for u in ucas if control_id in self.controls_for_uca(u.id)]
         return self.narrative_template.format(
             control_id=control_id,
             control_id_upper=control_id.upper(),
             control_description=self.describe(control_id),
-            uca_list=uca_list,
+            uca_list=", ".join(u.id for u in mapped),
+            artifacts=self.artifacts_for(mapped) or "none",
         )
 
     def build_summary(self, ucas: list[UCAModel]) -> str:
@@ -767,6 +807,25 @@ def generate_ssp_patch(
             }
         )
 
+    def _targeting(target: str) -> int:
+        return sum(
+            1 for u in cs.unsafe_control_actions if target in _enforcement_targets([u])
+        )
+
+    # A generator no UCA targets is not listed as an enforcement artifact.
+    nemo_ucas = _targeting("nemo")
+    nemo_artifact_line = (
+        "              - config/rails/generated_stpa_rails.co     "
+        f"(NeMo Colang — {nemo_ucas} UCAs)\n"
+        if nemo_ucas
+        else ""
+    )
+    nemo_artifact_props = (
+        [{"name": "artifact-nemo", "value": "config/rails/generated_stpa_rails.co"}]
+        if nemo_ucas
+        else []
+    )
+
     requirement: dict[str, Any] = {
         "uuid": _STPA_IMPL_UUID,
         "control-id": "sa-11",  # SA-11 Developer Testing — closest NIST anchor for compiler-as-control
@@ -780,9 +839,8 @@ def generate_ssp_patch(
             Compiler source: src/gateway/governance/stpa_compiler.py
             Control structure (source of truth): config/stpa_control_structure.yaml
             Generated artifacts:
-              - config/opa/generated_stpa_policy.rego    (OPA Rego — {len([u for u in cs.unsafe_control_actions if "opa" in u.enforcement or "all" in u.enforcement])} UCAs)
-              - config/rails/generated_stpa_rails.co     (NeMo Colang — {len([u for u in cs.unsafe_control_actions if "nemo" in u.enforcement or "all" in u.enforcement])} UCAs)
-              - src/gateway/governance/stpa_validator.py (Python — {len([u for u in cs.unsafe_control_actions if "python" in u.enforcement or "all" in u.enforcement])} UCAs)
+              - config/opa/generated_stpa_policy.rego    (OPA Rego — {_targeting("opa")} UCAs)
+{nemo_artifact_line}              - src/gateway/governance/stpa_validator.py (Python — {_targeting("python")} UCAs)
               - config/sandbox/generated_sandbox_policy.yaml (Sandbox — {len([u for u in cs.unsafe_control_actions if u.sandbox_rule is not None])} UCAs)
 
             Target compliance framework: {framework_label}
@@ -804,7 +862,7 @@ def generate_ssp_patch(
             {"name": "last-compiled", "value": now},
             {"name": "target-framework", "value": framework_label},
             {"name": "artifact-opa", "value": "config/opa/generated_stpa_policy.rego"},
-            {"name": "artifact-nemo", "value": "config/rails/generated_stpa_rails.co"},
+            *nemo_artifact_props,
             {
                 "name": "artifact-python",
                 "value": "src/gateway/governance/stpa_validator.py",
@@ -860,20 +918,38 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
             }
         )
 
+    # Name only the artifact kinds some UCA actually targets.
+    targeted = _enforcement_targets(cs.unsafe_control_actions)
+    kinds = [
+        label
+        for target, label in (
+            ("opa", "OPA Rego"),
+            ("nemo", "NeMo Colang"),
+            ("python", "Python validator"),
+        )
+        if target in targeted
+    ]
+    kinds_prose = (
+        ", ".join(kinds[:-1]) + f", and {kinds[-1]}"
+        if len(kinds) > 2
+        else " and ".join(kinds)
+    )
+    runtime_prose = "/".join(k.split()[0] for k in kinds)
+
     return {
         "uuid": _STPA_COMPONENT_UUID,
         "title": "STPA-to-Policy Compiler",
         "type": "software",
         "description": (
             f"CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests "
-            f"config/stpa_control_structure.yaml and generates deterministic OPA Rego, "
-            f"NeMo Colang, and Python validator artifacts enforcing STAMP/STPA UCAs at "
+            f"config/stpa_control_structure.yaml and generates deterministic {kinds_prose} "
+            f"artifacts enforcing STAMP/STPA UCAs at "
             f"runtime. Eliminates manual policy drift by treating the YAML as the single "
             f"authoritative source of truth. System: {cs.system.name} v{cs.system.version}."
         ),
         "purpose": (
             "Provides compile-time enforcement of STPA UCAs, bridging design-time "
-            "hazard analysis (MIT STAMP methodology) with runtime OPA/NeMo/Python "
+            f"hazard analysis (MIT STAMP methodology) with runtime {runtime_prose} "
             "governance controls. Closes the compliance loop between safety engineering "
             "artefacts and live cluster enforcement policies."
         ),

@@ -190,6 +190,25 @@ def full_cs() -> ControlStructureModel:
     return _load_full_cs()
 
 
+_NEMO_ARTIFACT = "config/rails/generated_stpa_rails.co"
+_OPA_ARTIFACT = "config/opa/generated_stpa_policy.rego"
+
+
+def _with_uca1_targets(enforcement: list[str]) -> ControlStructureModel:
+    """The minimal structure with UCA-1 retargeted (and valid for NeMo)."""
+    raw = yaml.safe_load(_MINIMAL_YAML)
+    uca = raw["unsafe_control_actions"][0]
+    uca["enforcement"] = enforcement
+    uca["condition"]["semantic_pattern"] = "missing_token"
+    uca["nemo_rail"] = {"flow_name": "block_missing_token", "message": "Blocked."}
+    return ControlStructureModel(**raw)
+
+
+@pytest.fixture
+def nemo_cs() -> ControlStructureModel:
+    return _with_uca1_targets(["opa", "nemo"])
+
+
 # ---------------------------------------------------------------------------
 # Patch block generation
 # ---------------------------------------------------------------------------
@@ -223,12 +242,31 @@ class TestGenerateSspPatch:
         block = generate_ssp_patch(minimal_cs)
         props = {p["name"]: p["value"] for p in block["props"]}
         assert "artifact-opa" in props
-        assert "artifact-nemo" in props
         assert "artifact-python" in props
         assert (
             props.get("artifact-sandbox")
             == "config/sandbox/generated_sandbox_policy.yaml"
         )
+
+    def test_untargeted_nemo_artifact_is_not_cited(
+        self, minimal_cs: ControlStructureModel
+    ) -> None:
+        """UCA-1 targets [opa, python]: nothing may name the Colang rails file."""
+        block = generate_ssp_patch(minimal_cs)
+        props = {p["name"]: p["value"] for p in block["props"]}
+        assert "artifact-nemo" not in props
+        assert _NEMO_ARTIFACT not in block["description"]
+        for entry in block["by-components"]:
+            assert _NEMO_ARTIFACT not in entry["description"]
+
+    def test_targeted_nemo_artifact_is_cited(
+        self, nemo_cs: ControlStructureModel
+    ) -> None:
+        block = generate_ssp_patch(nemo_cs)
+        props = {p["name"]: p["value"] for p in block["props"]}
+        assert props["artifact-nemo"] == _NEMO_ARTIFACT
+        assert f"{_NEMO_ARTIFACT}     (NeMo Colang — 1 UCAs)" in block["description"]
+        assert all(_NEMO_ARTIFACT in e["description"] for e in block["by-components"])
 
     def test_by_components_non_empty(self, minimal_cs: ControlStructureModel) -> None:
         block = generate_ssp_patch(minimal_cs)
@@ -241,6 +279,33 @@ class TestGenerateSspPatch:
         props = {p["name"]: p["value"] for p in block["props"]}
         assert int(props["uca-count"]) >= 9
         assert int(props["hazard-count"]) >= 6
+
+
+class TestEnforcementArtifactCitation:
+    """A control narrative names only the generators its UCAs target (POAM-2026-145)."""
+
+    @staticmethod
+    def _ac3(cs: ControlStructureModel) -> str:
+        # UCA-1 maps to ac-3 in the NIST routing table.
+        return FrameworkRouter.get("NIST").format_narrative(
+            "ac-3", cs.unsafe_control_actions
+        )
+
+    def test_python_target_cites_neither_opa_nor_nemo(self) -> None:
+        text = self._ac3(_with_uca1_targets(["python"]))
+        assert "uca_rules.py" in text and "stpa_validator.py" in text
+        assert _OPA_ARTIFACT not in text
+        assert _NEMO_ARTIFACT not in text
+
+    def test_all_target_cites_every_generator(self) -> None:
+        text = self._ac3(_with_uca1_targets(["all"]))
+        assert _OPA_ARTIFACT in text
+        assert _NEMO_ARTIFACT in text
+        assert "uca_rules.py" in text
+
+    def test_no_generated_artifact_reads_none(self) -> None:
+        text = self._ac3(_with_uca1_targets(["ftra"]))
+        assert "via generated artifacts: none." in text
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +335,24 @@ class TestGenerateComponentEntry:
         control_ids = {r["control-id"] for r in impl_reqs}
         # UCA-1 maps to A.8.4 in _UCA_TO_ISO
         assert "A.8.4" in control_ids
+
+    def test_names_only_targeted_artifact_kinds(
+        self, minimal_cs: ControlStructureModel, nemo_cs: ControlStructureModel
+    ) -> None:
+        entry = generate_component_entry(minimal_cs)
+        assert (
+            "deterministic OPA Rego and Python validator artifacts"
+            in entry["description"]
+        )
+        assert "NeMo" not in entry["description"] + entry["purpose"]
+        assert "runtime OPA/Python governance" in entry["purpose"]
+
+        nemo_entry = generate_component_entry(nemo_cs)
+        assert (
+            "deterministic OPA Rego and NeMo Colang artifacts"
+            in nemo_entry["description"]
+        )
+        assert "runtime OPA/NeMo governance" in nemo_entry["purpose"]
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +732,7 @@ class TestCLI:
     def test_ftra_si10_multiple_components(
         self, tmp_path: Path, minimal_cs: ControlStructureModel
     ) -> None:
-        """Verify SI-10 control has multiple component references (NeMo and FTRA)."""
+        """Verify SI-10 control has multiple component references (input screening and FTRA)."""
         cs_file = tmp_path / "cs.yaml"
         cs_file.write_text(_MINIMAL_YAML)
         ssp_file = tmp_path / "ssp.yaml"
@@ -973,11 +1056,12 @@ class TestFtraTelemetryToOscalTraceability:
 
         Exports the complete System Security Plan and validates that control SI-10
         lists implemented requirements for:
-        (a) NeMo Guardrails component (nemo0001-4e47-bbc8-guardrails001)
+        (a) Deterministic Input Screening and PII Redaction component
+            (3d19fa63-7253-4563-b757-23c89ea461ce, sp800-53-component-definition.yaml)
         (b) FTRA Irreversibility Classifier component (ftra0001-4e47-bbc8-irreversibility01)
 
         This multi-component control implementation demonstrates defense-in-depth:
-        - NeMo: PII validation, content masking
+        - Input screening: Presidio PII redaction and the Stage 1 keyword scan
         - FTRA: irreversibility classification at the controller boundary
           (value policy is STPA/OPA; see docs/governance/FTRA_SCOPE.md)
         """
@@ -1047,8 +1131,8 @@ class TestFtraTelemetryToOscalTraceability:
             "FTRA Irreversibility Classifier must be listed as implementing SI-10"
         )
 
-        # Note: NeMo Guardrails component UUID would be checked here if it exists
-        # in the minimal fixture. In production SSP, both components should be present.
+        # Note: the input screening component would be checked here if it existed
+        # in the minimal fixture. In the production component definitions, both are present.
         # Verify at least FTRA is present (minimal test fixture constraint)
         assert len(si10_implementing_components) >= 1, (
             "SI-10 must be implemented by at least FTRA component"

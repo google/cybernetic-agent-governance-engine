@@ -132,14 +132,15 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src/integrations/nemo/manager.py",
+            "src/gateway/governance/text_filter.py",
             "src/cage_finance/opa/trade_governance.rego",
-            "config/rails/config.yml",
         ],
         notes=(
-            "NeMo Guardrails Colang rails enforce topic lock-down at Layer 0. "
-            "OPA trade_governance.rego provides declarative goal constraints at Layer 3, "
-            "independent of LLM reasoning."
+            "The deterministic Stage 1 keyword scan blocks known prompt-injection and "
+            "control-override phrases at Layer 0. OPA trade_governance.rego provides "
+            "declarative goal constraints at Layer 3, independent of LLM reasoning. "
+            "NeMo Colang topic lock-down adds an LLM-backed layer only when "
+            "CAGE_NEMO_ENABLED=true."
         ),
     ),
     "AARM-V3": AARMVector(
@@ -201,12 +202,16 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-a92.yaml",
         ],
         implementation_files=[
-            "src/integrations/nemo/manager.py",
+            "src/gateway/governance/text_filter.py",
+            "src/gateway/server/inference_proxy.py",
+            "src/integrations/presidio/redactor.py",
         ],
         notes=(
-            "Multi-tier shielding: Pre-gate Aho-Corasick heuristic, "
-            "NeMo Guardrails Colang rails, and OPA policy enforcement. "
-            "Presidio strips PII from all injection payloads before they reach inference."
+            "Deterministic shielding: the Stage 1 Aho-Corasick keyword scan at the "
+            "agent's input rail and the gateway inference proxy, then OPA policy "
+            "enforcement. Presidio redacts identity PII from user input before it "
+            "reaches inference. NeMo Colang rails add LLM-backed screening only when "
+            "CAGE_NEMO_ENABLED=true."
         ),
     ),
     "AARM-V6": AARMVector(
@@ -314,14 +319,16 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "compliance/lula/lula-validation-sc4.yaml",
         ],
         implementation_files=[
-            "src/integrations/nemo/manager.py",
+            "src/integrations/presidio/redactor.py",
+            "src/gateway/infrastructure/privacy.py",
             "deployment/k8s/cilium/egress-lockdown.yaml",
         ],
         notes=(
-            "Presidio PII masking (20 entity types, spaCy en_core_web_sm) strips "
-            "sensitive fields before any data leaves the cluster. Cilium L7 network "
-            "policy enforces strict FQDN egress allowlist — sovereign agent pods "
-            "cannot establish connections to unlisted external endpoints."
+            "Presidio redacts 12 identity PII entity types (spaCy NER, in-process) "
+            "from user input and agent output, and regex scrub_pii cleans every model "
+            "response. Cilium L7 network policy enforces strict FQDN egress allowlist "
+            "— sovereign agent pods cannot establish connections to unlisted external "
+            "endpoints."
         ),
     ),
     "AARM-V11": AARMVector(

@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-10-29T01:29:54Z'
+    last-modified: '2026-10-29T13:04:41Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -148,16 +148,19 @@ component-definition:
           rel: lula
           text: 'Lula validation: SC-4 Fiscal Limits (US_FED)'
   - uuid: c9d0e1f2-a3b4-5678-cdef-789012345678
-    title: NeMo Guardrails + Presidio PII Masking
+    title: Deterministic PII Redaction (Presidio + regex)
     type: software
-    description: 'NVIDIA NeMo Guardrails apply Colang-defined input/output rails.
-      Microsoft Presidio performs PII entity detection and anonymization before any
-      data leaves the cluster to external model APIs.
+    description: 'Microsoft Presidio (src/integrations/presidio/redactor.py) replaces
+      12 identity entity types with type tokens, and scrub_pii (src/gateway/infrastructure/privacy.py)
+      removes SSN, credit card, email and phone patterns with regular expressions.
+      Both run in-process, with no LLM and no network dependency, whether or not the
+      optional NeMo Guardrails tier is enabled (CAGE_NEMO_ENABLED, default false;
+      POAM-2026-142).
 
       '
-    purpose: 'Prevents PII (names, SSNs, account numbers, addresses) from being transmitted
-      to external AI suppliers. Implements data minimization and anonymization at
-      the egress boundary.
+    purpose: 'Keeps identity PII (names, SSNs, account and card numbers) in user input
+      from reaching the inference layer, and PII in model output from reaching users
+      or telemetry.
 
       '
     responsible-roles:
@@ -169,13 +172,21 @@ component-definition:
       implemented-requirements:
       - uuid: e1f2a3b4-c5d6-7890-efab-901234567890
         control-id: A.9.2
-        description: 'Presidio masking strips PII from all prompts before they reach
-          external vLLM inference. All masking events are tagged iso42001.control_id=A.9.2
-          in Langfuse.
+        description: 'The governed agent''s input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
+          replaces each user message with its Presidio-redacted text before any agent
+          or model sees it. It fails closed in enforcing postures when redaction raises,
+          but not when the Presidio engines failed to initialise: redaction then returns
+          the text unchanged and the message passes unredacted (POAM-2026-147). The
+          output rail node applies Presidio and scrub_pii to every agent answer and
+          returns the blocked sentinel on any error. The gateway''s inference proxy
+          applies scrub_pii to every model response.
 
           '
-        remarks: 'Zero-tolerance control: safety_rate must equal 1.0. Any PII leak
-          triggers immediate Slack/PagerDuty alert via complianceAuditWorkflow alertOnCriticalFailStep.
+        remarks: 'Zero-tolerance control: lula-validation-a92.yaml requires a safety_rate
+          of 1.0 over compliance-bridge traces tagged control:A.9.2. No component
+          emits that tag today, so the validation cannot pass (POAM-2026-146). A FAIL
+          or ERROR on A.9.2, a critical control, alerts through the compliance bridge
+          audit workflow (_step4_alert_on_critical_fail in src/compliance_bridge/audit_workflow.py).
 
           '
         links:
@@ -234,9 +245,13 @@ component-definition:
           text: 'Lula validation: AARM Conformance Vectors'
       - uuid: aarm2026-v2-goal-hijacking
         control-id: A.5.2
-        description: AARM-V2 Goal Hijacking neutralized by NeMo Guardrails Colang
-          topic lock-down (Layer 0) and OPA declarative goal constraints (Layer 3).
-        remarks: 'NeMo rails: config/rails/. OPA policy: src/cage_finance/opa/trade_governance.rego.'
+        description: AARM-V2 Goal Hijacking mitigated by the deterministic Stage 1
+          keyword scan for prompt-injection and control-override phrases on every
+          input (Layer 0) and OPA declarative goal constraints (Layer 3). NeMo Colang
+          topic lock-down adds an LLM-backed layer only when CAGE_NEMO_ENABLED=true.
+        remarks: 'Stage 1 scan: src/gateway/governance/text_filter.py (tier1_keywords
+          in config/governance_thresholds.json). OPA policy: src/cage_finance/opa/trade_governance.rego.
+          Optional NeMo rails: config/rails/.'
       - uuid: aarm2026-v3-confused-deputy
         control-id: SC-4
         description: AARM-V3 Confused Deputy neutralized by KMS-backed ECDSA-P256
@@ -601,14 +616,14 @@ component-definition:
     title: STPA-to-Policy Compiler
     type: software
     description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests
-      config/stpa_control_structure.yaml and generates deterministic OPA Rego, NeMo
-      Colang, and Python validator artifacts enforcing STAMP/STPA UCAs at runtime.
-      Eliminates manual policy drift by treating the YAML as the single authoritative
-      source of truth. System: CAGE Financial Advisor v1.1.0.'
+      config/stpa_control_structure.yaml and generates deterministic OPA Rego and
+      Python validator artifacts enforcing STAMP/STPA UCAs at runtime. Eliminates
+      manual policy drift by treating the YAML as the single authoritative source
+      of truth. System: CAGE Financial Advisor v1.1.0.'
     purpose: Provides compile-time enforcement of STPA UCAs, bridging design-time
-      hazard analysis (MIT STAMP methodology) with runtime OPA/NeMo/Python governance
-      controls. Closes the compliance loop between safety engineering artefacts and
-      live cluster enforcement policies.
+      hazard analysis (MIT STAMP methodology) with runtime OPA/Python governance controls.
+      Closes the compliance loop between safety engineering artefacts and live cluster
+      enforcement policies.
     responsible-roles:
     - role-id: compliance-engineer
     props:
@@ -619,7 +634,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-10-29T01:29:54Z'
+      value: '2026-10-29T13:04:41Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -679,7 +694,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-10-29T01:29:54Z'
+      value: '2026-10-29T13:04:41Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home
@@ -694,13 +709,18 @@ component-definition:
           clears autonomously only inside its signed autonomous envelope with a known,
           finite, positive magnitude (src/gateway/governance/ftra/autonomy.py). Parameter
           value validation (SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py)
-          and the domain OPA policy (src/cage_finance/opa/trade_governance.rego);
-          injection is mitigated by NeMo/AGP rails generated from UCA-7 (config/rails/generated_stpa_rails.co,
-          config/agp/generated_semantic_policy.txt). Before parking a REQUIRE_APPROVAL
-          token for human review, run_pipeline() previews every claiming phase-2 barrier
-          side-effect-free (Phase2Mode.PREVIEW in src/gateway/governance/governor/pipeline.py),
-          denying outright on HARD barrier breaches and recording NARROWABLE barrier
-          bounds (Violation.bound in src/gateway/governance/contracts.py) on the DeferToken
+          and the domain OPA policy (src/cage_finance/opa/trade_governance.rego).
+          Prompt injection is screened on every input by the deterministic Stage 1
+          keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py,
+          run by the LangGraph input rail node and the inference proxy). UCA-7 compiles
+          only to OPA (stpa_violation_uca_7 in config/opa/generated_stpa_policy.rego,
+          which denies a prompt_injection_check whose semantic_score exceeds the UCA's
+          threshold); the optional NeMo Colang rails add LLM-backed screening only
+          when CAGE_NEMO_ENABLED=true. Before parking a REQUIRE_APPROVAL token for
+          human review, run_pipeline() previews every claiming phase-2 barrier side-effect-free
+          (Phase2Mode.PREVIEW in src/gateway/governance/governor/pipeline.py), denying
+          outright on HARD barrier breaches and recording NARROWABLE barrier bounds
+          (Violation.bound in src/gateway/governance/contracts.py) on the DeferToken
           snapshot. The registry's manifest_sha256 (registry_digest in src/gateway/governance/ftra/classifier.py)
           covers the autonomous_envelope together with the terminals, so a tampered
           ceiling fails the load-time integrity check.
