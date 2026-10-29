@@ -240,6 +240,9 @@ async def test_nemo_proposal_staged_on_replica_a_approved_on_replica_b_and_pubsu
     )
     approver_id = "compliance-bridge.governance-stack.serviceaccount.identity.linkerd.cluster.local"
     monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", f"{proposer_id},{approver_id}")
+    # Applying a refinement rebuilds the rails, which needs them switched on.
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+    monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
 
     import src.gateway.server.hybrid_server as gw_srv
     from src.gateway.server.workload_identity import (

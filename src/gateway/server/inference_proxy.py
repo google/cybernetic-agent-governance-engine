@@ -22,10 +22,15 @@ governance middleware logic.
 Governance pipeline applied here:
   1. Ingress Stage 1 Aho-Corasick keyword scan on ALL messages (not just user role).
   2. Token Quota Enforcement (ISO 42001 Annex A.4) — CTRL_TQP_007.
-  3. NeMo Guardrails input verification on ALL messages.
+  3. NeMo Guardrails input verification on ALL messages, when semantic rails
+     are on. When ``semantic_rails_refusal()`` reports them off, no input rail
+     runs: A.6.1.2 is stamped ``SKIPPED`` with the reason code, and no rails
+     are built on demand.
   4. ISO 42001 evidence stamps.
   5. Forward to vLLM backend.
-  6. Output scanning / PII masking via NeMo before returning.
+  6. Output scanning / PII masking before returning: the NeMo output rail
+     when semantic rails are on (it applies ``scrub_pii()`` first), else the
+     same deterministic ``scrub_pii()`` pass alone.
      For streaming: collect full response, filter, then return.
 """
 
@@ -233,6 +238,23 @@ def _create_blocked_response(reason: str) -> dict[str, Any]:
     }
 
 
+async def _mask_output(rails: Any, text: str) -> str:
+    """Mask *text* before it leaves the proxy.
+
+    With semantic rails on, the NeMo output rail runs. It applies
+    ``scrub_pii()`` first and its LLM rail after. With them off (``rails`` is
+    ``None``), only the deterministic ``scrub_pii()`` pass runs and no model
+    is called.
+    """
+    if rails is None:
+        return scrub_pii(text)
+    from src.gateway.governance.semantic_rail_factory import (
+        verify_and_mask_semantic_output,
+    )
+
+    return await verify_and_mask_semantic_output(rails, text)
+
+
 @inference_app.post("/v1/chat/completions")
 async def chat_completions(
     request: Request,
@@ -243,7 +265,7 @@ async def chat_completions(
         initialize_semantic_rails as _init_rails,
     )
     from src.gateway.governance.semantic_rail_factory import (
-        verify_and_mask_semantic_output as verify_and_mask_output,
+        semantic_rails_refusal,
     )
     from src.gateway.governance.semantic_rail_factory import (
         verify_semantic_input as verify_input,
@@ -257,11 +279,18 @@ async def chat_completions(
             "No inference backend is configured (CAGE_INFERENCE_BACKEND=none).",
         )
 
-    # Rails are initialised externally at startup and stored on app.state.
-    # Fall back to on-demand init if not set (e.g. during testing).
-    rails = getattr(request.app.state, "nemo_rails", None)
-    if rails is None:
-        rails = _init_rails()
+    # Semantic rails run only when semantic_rails_refusal() allows them. Gateway
+    # startup checks the same predicate, so this request path cannot build
+    # rails the configuration turned off. When they are off, ``rails`` stays
+    # None and the proxy runs deterministic-only (steps 4 and 6).
+    rails_refusal = semantic_rails_refusal()
+    rails: Any = None
+    if rails_refusal is None:
+        # Rails are initialised at startup and stored on app.state. Fall back
+        # to on-demand init if not set (e.g. during testing).
+        rails = getattr(request.app.state, "nemo_rails", None)
+        if rails is None:
+            rails = _init_rails()
 
     body = await request.json()
     requested_model = body.get("model", "default")
@@ -429,22 +458,35 @@ async def chat_completions(
             )
         stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="PASS")
 
-        # 4. NeMo input verification — runs for ALL requests.
-        # Uses the full message list; falls back to last_user_msg for NeMo
-        # rails that expect a single string (NeMo context is the last user msg
-        # or a concatenation of all messages when no user message exists).
+        # 4. NeMo input verification — runs for ALL requests while semantic
+        # rails are on. Uses the full message list; falls back to last_user_msg
+        # for NeMo rails that expect a single string (NeMo context is the last
+        # user msg or a concatenation of all messages when no user message
+        # exists). With rails off no input rail runs, and the evidence records
+        # SKIPPED with the reason code instead of a PASS that never happened.
         # Steps 4-7 are wrapped in a try/except so that any downstream
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
         nemo_input_text = last_user_msg if last_user_msg else all_messages_text
         try:
-            nemo_result = await verify_input(rails, nemo_input_text)
-            if not nemo_result.is_safe:
+            if rails_refusal is not None:
+                # Off by configuration. An enabled-but-absent rail (rails
+                # None, refusal None) takes the else branch, where
+                # verify_input(None, ...) blocks with RAILS_UNAVAILABLE.
                 stamp_iso_control(
-                    span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
+                    span, ingress_stage=3, control="A.6.1.2", outcome="SKIPPED"
                 )
-                blocked = _create_blocked_response(nemo_result.reason)
-                return JSONResponse(content=blocked, status_code=403)
-            stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")
+                span.set_attribute("cage.content_safety.reason_code", rails_refusal[0])
+            else:
+                nemo_result = await verify_input(rails, nemo_input_text)
+                if not nemo_result.is_safe:
+                    stamp_iso_control(
+                        span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
+                    )
+                    blocked = _create_blocked_response(nemo_result.reason)
+                    return JSONResponse(content=blocked, status_code=403)
+                stamp_iso_control(
+                    span, ingress_stage=3, control="A.6.1.2", outcome="PASS"
+                )
 
             # 5. Forward to vLLM (R-06 fix — pooled client, streaming support)
             api_base = _resolve_backend_url(model_id)
@@ -568,7 +610,7 @@ async def chat_completions(
                         raw_args = tc_entry["arguments"]
                         safe_args_str = raw_args
                         if raw_args:
-                            safe_args = await verify_and_mask_output(rails, raw_args)
+                            safe_args = await _mask_output(rails, raw_args)
                             safe_args_str = (
                                 safe_args.strip()
                                 if isinstance(safe_args, str)
@@ -605,8 +647,7 @@ async def chat_completions(
                                         "content": safe_content
                                         if filtered_content
                                         and (
-                                            safe_content
-                                            := await verify_and_mask_output(
+                                            safe_content := await _mask_output(
                                                 rails, filtered_content
                                             )
                                         )
@@ -625,7 +666,7 @@ async def chat_completions(
 
                 # Apply NeMo output filtering to the assembled content
                 if filtered_content:
-                    safe_content = await verify_and_mask_output(rails, filtered_content)
+                    safe_content = await _mask_output(rails, filtered_content)
                     if safe_content != filtered_content:
                         logger.info(
                             "Streaming output filtered by NeMo: model=%s", model_id
@@ -728,18 +769,14 @@ async def chat_completions(
                         ):
                             raw_args = tool_call["function"]["arguments"]
                             if raw_args:
-                                safe_args = await verify_and_mask_output(
-                                    rails, raw_args
-                                )
+                                safe_args = await _mask_output(rails, raw_args)
                                 tool_call["function"]["arguments"] = (
                                     safe_args.strip()
                                     if isinstance(safe_args, str)
                                     else str(safe_args)
                                 )
                 elif message.get("content"):
-                    safe_content = await verify_and_mask_output(
-                        rails, message["content"]
-                    )
+                    safe_content = await _mask_output(rails, message["content"])
                     message["content"] = safe_content
         except Exception:
             await _get_token_quota_proxy().rollback_step(

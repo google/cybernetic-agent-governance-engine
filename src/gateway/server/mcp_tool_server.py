@@ -69,7 +69,6 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.inference_backend import (
     InferenceBackend,
-    inference_disabled,
     require_backend_settings,
     resolve_inference_backend,
 )
@@ -238,11 +237,11 @@ async def _activate_domain() -> SymbolicGovernor:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-    from src.gateway.governance.langgraph_harness.nemo_node_factory import (
-        nemo_rails_enabled,
-    )
     from src.gateway.governance.semantic_rail_factory import (
         initialize_semantic_rails as initialize_rails,
+    )
+    from src.gateway.governance.semantic_rail_factory import (
+        semantic_rails_refusal,
     )
 
     # 1. Tracing bootstrap (Phase 5.1)
@@ -265,11 +264,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app.state.nemo_rails = None
     else:
         require_backend_settings(config_manager.get)
-        # 4. Initialise NeMo rails when CAGE_NEMO_ENABLED=true and store on app state
-        if nemo_rails_enabled():
+        # 4. Initialise NeMo rails only when semantic_rails_refusal() allows
+        #    them, the same predicate every runtime construction path checks.
+        refusal = semantic_rails_refusal()
+        if refusal is None:
             app.state.nemo_rails = initialize_rails()
         else:
-            logger.info("CAGE_NEMO_ENABLED=false: NeMo Colang rails are off.")
+            logger.info("NeMo Colang rails are off (%s).", refusal[1])
             app.state.nemo_rails = None
 
     # 5. Start consensus background audit worker (Phase 4.4)
@@ -551,26 +552,32 @@ async def verify_content_safety(text: str) -> str:
     """Verify safety of a given text using NeMo Guardrails.
 
     Returns ``SAFE`` only when the rails ran and passed the text. Every
-    other outcome, including absent rails, a check that raises and
-    ``CAGE_INFERENCE_BACKEND=none``, is ``BLOCKED: <reason>`` with a
-    reason code (POAM-2026-124).
+    other outcome is ``BLOCKED: <reason>`` with a reason code (POAM-2026-124),
+    and the code says which fact applies:
+
+    - ``CONTENT_SAFETY_NO_INFERENCE_BACKEND``: ``CAGE_INFERENCE_BACKEND=none``.
+    - ``CONTENT_SAFETY_RAILS_DISABLED``: ``CAGE_NEMO_ENABLED`` is off. The
+      rails are off by configuration; nothing failed.
+    - ``CONTENT_SAFETY_RAILS_UNAVAILABLE``: the rails are enabled but not
+      initialised.
+    - ``CONTENT_SAFETY_ERROR``: the check raised.
     """
+    from src.gateway.governance.semantic_rail_factory import (
+        semantic_rails_refusal,
+    )
     from src.gateway.governance.semantic_rail_factory import (
         validate_with_semantic_rail as validate_with_nemo,
     )
 
-    if inference_disabled():
-        return blocked_verdict(
-            refusal_reason(
-                CONTENT_SAFETY_NO_INFERENCE_BACKEND,
-                "CAGE_INFERENCE_BACKEND=none: no semantic rails are built.",
-            )
-        )
+    refusal = semantic_rails_refusal()
+    if refusal is not None:
+        return blocked_verdict(refusal_reason(*refusal))
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
         return blocked_verdict(
             refusal_reason(
-                CONTENT_SAFETY_RAILS_UNAVAILABLE, "NeMo rails are not initialised."
+                CONTENT_SAFETY_RAILS_UNAVAILABLE,
+                "NeMo rails are enabled but not initialised.",
             )
         )
     try:

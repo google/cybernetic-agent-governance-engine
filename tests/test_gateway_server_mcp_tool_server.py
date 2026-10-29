@@ -418,9 +418,13 @@ class TestMCPToolServerFunctions:
         assert "AAPL" in res
 
     @pytest.mark.asyncio
-    async def test_verify_content_safety(self):
+    async def test_verify_content_safety(self, monkeypatch):
         import sys
 
+        # The rails-on path: CAGE_NEMO_ENABLED off returns RAILS_DISABLED
+        # (tests/test_nemo_flag_binding.py).
+        monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+        monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod

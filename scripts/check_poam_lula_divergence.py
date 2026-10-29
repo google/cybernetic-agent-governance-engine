@@ -124,6 +124,12 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_nemo_pii_unbundling.py",
         "tests/test_stpa_compiler.py",
     ),
+    # CAGE_NEMO_ENABLED=false binds every rail construction path (proxy, reload,
+    # refinement approval, get/reload_nemo_rails); one parser for all opt-in switches.
+    "POAM-2026-144": (
+        "tests/test_nemo_flag_binding.py",
+        "tests/test_inference_proxy_extended.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

@@ -14,7 +14,6 @@
 
 """CAGE Finance Plugin — Domain governance tiers and tool provider."""
 
-import os
 from typing import Any
 
 from src.cage_finance.safety.bounding.contract import (
@@ -41,10 +40,10 @@ from src.cage_finance.tiers.trade_confidence_tier import (
 from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
 from src.gateway.governance.causal.world_model_refresher import WorldModelRefresher
 from src.gateway.governance.contracts import GovernanceTier, NormBinding
+from src.gateway.governance.feature_flags import opt_in_enabled
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
     BaseTelemetryProvider,
-    ConfigurationError,
     get_telemetry_provider,
 )
 
@@ -54,19 +53,14 @@ CAGE_CAUSAL_TIER_ENABLED_ENV = "CAGE_CAUSAL_TIER_ENABLED"
 def is_causal_tier_enabled() -> bool:
     """Return True only when ``CAGE_CAUSAL_TIER_ENABLED`` explicitly opts in.
 
-    Defaults to ``False`` (the 5 core deterministic finance tiers run without
-    the DoWhy causal gatekeeper or ``WorldModelRefresher``). Raises
-    :class:`ConfigurationError` on any unrecognised value so typos fail closed
-    at assembly rather than silently disabling or enabling the tier.
+    Defaults to ``False``, so the 5 core deterministic finance tiers run
+    without the DoWhy causal gatekeeper or ``WorldModelRefresher``. Parsed by
+    the kernel's :func:`~src.gateway.governance.feature_flags.opt_in_enabled`,
+    which every opt-in switch shares. Any value other than ``true``/``false``/
+    ``1``/``0`` raises ``ConfigurationError`` at assembly rather than silently
+    enabling or disabling the tier.
     """
-    raw = os.environ.get(CAGE_CAUSAL_TIER_ENABLED_ENV, "false").strip().lower()
-    if raw in ("true", "1", "yes"):
-        return True
-    if raw in ("false", "0", "no", ""):
-        return False
-    raise ConfigurationError(
-        f"Invalid {CAGE_CAUSAL_TIER_ENABLED_ENV}={raw!r}; expected 'true' or 'false'."
-    )
+    return opt_in_enabled(CAGE_CAUSAL_TIER_ENABLED_ENV)
 
 
 # ---------------------------------------------------------------------------

@@ -150,9 +150,17 @@ async def test_rail_function_errors_carry_the_error_code() -> None:
 
 
 @pytest.fixture
-def gateway_tool_module():
+def gateway_tool_module(monkeypatch):
+    """The gateway tool module with semantic rails switched on.
+
+    These tests exercise what the tool reports once the rails are enabled.
+    The off-by-configuration path (``CONTENT_SAFETY_RAILS_DISABLED``) is
+    covered in tests/test_nemo_flag_binding.py.
+    """
     import src.gateway.server.mcp_tool_server as mod
 
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+    monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
     saved = getattr(mod.app.state, "nemo_rails", None)
     yield mod
     mod.app.state.nemo_rails = saved
@@ -162,6 +170,7 @@ def gateway_tool_module():
 async def test_verify_content_safety_without_rails_is_blocked(
     gateway_tool_module,
 ) -> None:
+    """Enabled but not initialised is RAILS_UNAVAILABLE, not RAILS_DISABLED."""
     gateway_tool_module.app.state.nemo_rails = None
 
     verdict = await gateway_tool_module.verify_content_safety("hello")

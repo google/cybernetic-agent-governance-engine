@@ -377,6 +377,9 @@ class TestApplyRefinementProposalFlow:
         monkeypatch.setenv(
             "CAGE_TRUSTED_CLIENT_IDENTITIES", f"{self._TRUSTED_ID},{approver_id}"
         )
+        # The approval that succeeds rebuilds the rails: switch them on.
+        monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+        monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
         import src.gateway.server.hybrid_server as gw_srv
 
         for mw in gw_srv.root_app.user_middleware:

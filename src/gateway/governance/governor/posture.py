@@ -204,7 +204,13 @@ def _check_required_tiers(components: GovernorComponents) -> None:
 
 
 def _check_consensus_critics_backend(components: GovernorComponents) -> None:
-    from src.gateway.governance.consensus.engine import consensus_critics_enabled
+    """Startup half of the critics rule.
+
+    ``ConsensusGate`` enforces the runtime half. It builds no critic client
+    without a backend, and ``check_consensus()`` denies with
+    ``CONSENSUS_NO_INFERENCE_BACKEND`` if critics are on and no model exists.
+    """
+    from src.gateway.governance.feature_flags import consensus_critics_enabled
     from src.gateway.governance.inference_backend import inference_disabled
 
     if consensus_critics_enabled() and inference_disabled():
@@ -215,10 +221,15 @@ def _check_consensus_critics_backend(components: GovernorComponents) -> None:
 
 
 def _check_nemo_rails_backend(components: GovernorComponents) -> None:
+    """Startup half of the semantic-rails rule.
+
+    ``semantic_rail_factory.semantic_rails_refusal()`` enforces the runtime
+    half, and every path that builds rails consults it: startup, the inference
+    proxy, the rail nodes and the hot-reload path. No runtime path can build
+    rails this configuration leaves off.
+    """
+    from src.gateway.governance.feature_flags import nemo_rails_enabled
     from src.gateway.governance.inference_backend import inference_disabled
-    from src.gateway.governance.langgraph_harness.nemo_node_factory import (
-        nemo_rails_enabled,
-    )
 
     if nemo_rails_enabled() and inference_disabled():
         raise RuntimeError(

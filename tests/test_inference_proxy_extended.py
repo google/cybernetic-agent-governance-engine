@@ -127,9 +127,16 @@ def proxy_deps(monkeypatch):
     """
     Patch all external collaborators in the inference_proxy module namespace.
 
+    Semantic rails are switched on (``CAGE_NEMO_ENABLED=true``): most tests
+    here exercise the NeMo input/output rails. Tests of the deterministic-only
+    path set ``CAGE_NEMO_ENABLED=false`` themselves.
+
     Yields a dict with the key mock objects so tests can inspect / override them.
     """
     import src.gateway.server.inference_proxy as _mod
+
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
+    monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
 
     quota_proxy = _make_quota_proxy(allowed=True)
     uca_logger = _make_uca_logger()
@@ -1023,3 +1030,107 @@ def test_resolve_backend_url_has_no_localhost_default(monkeypatch, model_id):
     with pytest.raises(InferenceBackendUnavailable) as err:
         mod._resolve_backend_url(model_id)
     assert err.value.reason_code == INFERENCE_BACKEND_URL_MISSING
+
+
+# ---------------------------------------------------------------------------
+# Semantic rails off (CAGE_NEMO_ENABLED=false): deterministic-only proxy
+# ---------------------------------------------------------------------------
+
+
+def _a612_outcomes(stamp: MagicMock) -> list[str]:
+    return [
+        c.kwargs.get("outcome")
+        for c in stamp.call_args_list
+        if c.kwargs.get("control") == "A.6.1.2"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rails_off_builds_no_rails_and_runs_no_input_rail(
+    proxy_deps, monkeypatch
+):
+    """The bypass: rails off, app.state.nemo_rails None, a request arrives.
+
+    Before, the proxy rebuilt NeMo on demand here, once per request. Now it
+    builds none, calls no input rail, and records A.6.1.2 as SKIPPED with the
+    reason code rather than a PASS for a rail that never ran.
+    """
+    import src.integrations.nemo.manager as nemo_manager
+
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "false")
+    monkeypatch.setattr(proxy_deps["app"].state, "nemo_rails", None, raising=False)
+    init_rails = MagicMock(name="initialize_rails")
+    verify_input = AsyncMock(name="verify_input")
+    monkeypatch.setattr(nemo_manager, "initialize_rails", init_rails)
+    monkeypatch.setattr(nemo_manager, "verify_input", verify_input)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_deps["app"]), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body())
+
+    assert resp.status_code == 200
+    init_rails.assert_not_called()
+    verify_input.assert_not_awaited()
+    assert _a612_outcomes(proxy_deps["module"].stamp_iso_control) == ["SKIPPED"]
+    proxy_deps["http_client"].post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rails_off_masks_output_with_scrub_pii_and_no_model(
+    proxy_deps, monkeypatch
+):
+    """With rails off, output masking is the deterministic scrub_pii() pass alone."""
+    import src.integrations.nemo.manager as nemo_manager
+    from src.gateway.infrastructure.privacy import scrub_pii
+
+    monkeypatch.setenv("CAGE_NEMO_ENABLED", "false")
+    monkeypatch.setattr(proxy_deps["app"].state, "nemo_rails", None, raising=False)
+    monkeypatch.setattr(proxy_deps["module"], "scrub_pii", scrub_pii)
+    nemo_mask = AsyncMock(name="verify_and_mask_output")
+    monkeypatch.setattr(nemo_manager, "verify_and_mask_output", nemo_mask)
+    http_client = _make_http_client_mock(
+        _vllm_json_response(content="Your SSN is 123-45-6789.")
+    )
+    monkeypatch.setattr(proxy_deps["module"], "_get_http_client", lambda: http_client)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_deps["app"]), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body())
+
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert "123-45-6789" not in content
+    assert "[REDACTED-SSN-UCA-3]" in content
+    nemo_mask.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rails_on_but_absent_still_reach_the_input_rail(proxy_deps, monkeypatch):
+    """Only "off by configuration" skips the input rail.
+
+    Rails that are switched on but absent go to ``verify_input(None, ...)``,
+    which blocks with CONTENT_SAFETY_RAILS_UNAVAILABLE
+    (tests/test_content_safety_no_verdict.py). They never fall through to the
+    deterministic-only path.
+    """
+    import src.integrations.nemo.manager as nemo_manager
+
+    monkeypatch.setattr(proxy_deps["app"].state, "nemo_rails", None, raising=False)
+    monkeypatch.setattr(
+        "src.gateway.governance.semantic_rail_factory.initialize_semantic_rails",
+        MagicMock(return_value=None),
+    )
+    verify_input = AsyncMock(return_value=MagicMock(is_safe=False, reason="absent"))
+    monkeypatch.setattr(nemo_manager, "verify_input", verify_input)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_deps["app"]), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body())
+
+    assert resp.status_code == 403
+    assert verify_input.await_args.args[0] is None
+    assert "SKIPPED" not in _a612_outcomes(proxy_deps["module"].stamp_iso_control)
+    proxy_deps["http_client"].post.assert_not_awaited()

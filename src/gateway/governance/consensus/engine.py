@@ -52,9 +52,9 @@ from opentelemetry import trace
 
 from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
+from src.gateway.governance.feature_flags import consensus_critics_enabled
 from src.gateway.governance.inference_backend import inference_disabled
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
-from src.gateway.governance.telemetry_provider import ConfigurationError
 from src.gateway.infrastructure.telemetry_client import genai_span
 from src.gateway.observability.attributes import (
     TRACE_METADATA_CONSENSUS_DECISION,
@@ -79,11 +79,9 @@ _RESERVED_PROMPT_KEYS: frozenset[str] = frozenset(
 )
 _VALID_DECISIONS: frozenset[str] = frozenset({"APPROVE", "REJECT", "ESCALATE"})
 
-CAGE_CONSENSUS_CRITICS_ENABLED_ENV: Final[str] = "CAGE_CONSENSUS_CRITICS_ENABLED"
-
 # A triggered check escalated deterministically to HITL (REQUIRE_APPROVAL)
 # because LLM critic voting is disabled (CAGE_CONSENSUS_CRITICS_ENABLED=false,
-# the default).
+# the default; read by feature_flags.consensus_critics_enabled()).
 NOTIONAL_THRESHOLD_ESCALATION: Final[str] = "NOTIONAL_THRESHOLD_ESCALATION"
 
 # A triggered check refused because critics are enabled
@@ -97,26 +95,6 @@ CONSENSUS_NO_INFERENCE_BACKEND: Final[str] = "CONSENSUS_NO_INFERENCE_BACKEND"
 CONSENSUS_ADMIT_STATUSES: Final[frozenset[str]] = frozenset(
     {"APPROVE", "APPROVED", "SKIPPED"}
 )
-
-
-def consensus_critics_enabled(environ: Mapping[str, str] | None = None) -> bool:
-    """Return True only when ``CAGE_CONSENSUS_CRITICS_ENABLED`` explicitly opts in.
-
-    Defaults to ``False`` (actions at or above the domain magnitude threshold
-    or in ``high_stakes_actions`` deterministically escalate to human review
-    with ``NOTIONAL_THRESHOLD_ESCALATION`` without calling any LLM critic).
-    Raises :class:`ConfigurationError` on any unrecognised value so typos fail
-    closed at assembly rather than silently disabling or enabling critic voting.
-    """
-    env = os.environ if environ is None else environ
-    raw = env.get(CAGE_CONSENSUS_CRITICS_ENABLED_ENV, "false").strip().lower()
-    if raw in ("true", "1", "yes"):
-        return True
-    if raw in ("false", "0", "no", ""):
-        return False
-    raise ConfigurationError(
-        f"Invalid {CAGE_CONSENSUS_CRITICS_ENABLED_ENV}={raw!r}; expected 'true' or 'false'."
-    )
 
 
 _LINE_PREFIX_DECISION_RE = re.compile(r"^(APPROVE|REJECT|ESCALATE)\b")

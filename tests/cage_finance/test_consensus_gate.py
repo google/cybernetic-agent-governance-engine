@@ -139,7 +139,7 @@ async def test_finance_tier_emits_notional_threshold_escalation_hitl_violation_b
 
 def test_invalid_critics_enabled_env_raises_configuration_error(monkeypatch):
     """Unrecognised CAGE_CONSENSUS_CRITICS_ENABLED values fail closed with ConfigurationError."""
-    from src.gateway.governance.consensus import consensus_critics_enabled
+    from src.gateway.governance.feature_flags import consensus_critics_enabled
     from src.gateway.governance.telemetry_provider import ConfigurationError
 
     monkeypatch.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "maybe")

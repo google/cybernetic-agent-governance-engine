@@ -29,7 +29,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.gateway.governance.consensus import (
-    CAGE_CONSENSUS_CRITICS_ENABLED_ENV,
     CONSENSUS_NO_INFERENCE_BACKEND,
     NOTIONAL_THRESHOLD_ESCALATION,
     ConsensusGate,
@@ -37,6 +36,7 @@ from src.gateway.governance.consensus import (
     consensus_violation_code,
 )
 from src.gateway.governance.contracts import CriticSpec, ViolationKind
+from src.gateway.governance.feature_flags import CAGE_CONSENSUS_CRITICS_ENABLED_ENV
 from src.gateway.governance.inference_backend import ENV_VAR
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

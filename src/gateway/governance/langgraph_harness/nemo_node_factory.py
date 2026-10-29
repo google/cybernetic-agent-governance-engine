@@ -29,14 +29,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.feature_flags import nemo_rails_enabled
 from src.gateway.governance.langgraph_harness.types import NemoNodeConfig, StateDict
-from src.gateway.governance.telemetry_provider import ConfigurationError
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.observability.attributes import OBSERVATION_TYPE
@@ -52,20 +51,6 @@ tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.nemo_node_fa
 
 _nemo_rails = None
 _NEMO_AVAILABLE = False
-
-
-def nemo_rails_enabled() -> bool:
-    """Return whether NeMo Colang rails are enabled via ``CAGE_NEMO_ENABLED``.
-
-    Defaults to ``"false"`` when ``CAGE_NEMO_ENABLED`` is unset or empty; raises
-    :class:`ConfigurationError` on any unrecognised value (fail-closed).
-    """
-    raw = os.environ.get("CAGE_NEMO_ENABLED", "false").strip().lower()
-    if raw not in ("true", "false", "1", "0", ""):
-        raise ConfigurationError(
-            f"Invalid CAGE_NEMO_ENABLED={raw!r}: must be 'true' or 'false'"
-        )
-    return raw in ("true", "1")
 
 
 def create_nemo_manager(config_path: str = "config/rails") -> Any:
@@ -188,8 +173,18 @@ async def reload_nemo_rails(config_path: str = "config/rails") -> None:
         config_path: Path to the NeMo Guardrails config directory.
             Defaults to ``"config/rails"`` (same default used by
             ``get_nemo_rails()``).
+
+    Raises:
+        InferenceBackendUnavailable: under ``CAGE_INFERENCE_BACKEND=none``.
+        SemanticRailsDisabled: when ``CAGE_NEMO_ENABLED`` is off. The
+            singleton is left untouched.
     """
     global _nemo_rails
+    from src.gateway.governance.semantic_rail_factory import (
+        refuse_unless_semantic_rails_enabled,
+    )
+
+    refuse_unless_semantic_rails_enabled()
     async with _get_reload_lock():
         logger.info(
             "nemo_singleton_reload_start",
@@ -208,9 +203,20 @@ async def reload_nemo_rails(config_path: str = "config/rails") -> None:
 def get_nemo_rails():  # type: ignore[no-untyped-def]
     """Return the singleton LLMRails instance, initializing on first call.
 
-    Raises ``RuntimeError`` (fail-closed) if initialization fails.
+    The configuration is checked on every call, cached instance or not, so no
+    caller obtains rails while they are switched off.
+
+    Raises:
+        InferenceBackendUnavailable: under ``CAGE_INFERENCE_BACKEND=none``.
+        SemanticRailsDisabled: when ``CAGE_NEMO_ENABLED`` is off.
+        RuntimeError: initialization fails (fail-closed).
     """
     global _nemo_rails
+    from src.gateway.governance.semantic_rail_factory import (
+        refuse_unless_semantic_rails_enabled,
+    )
+
+    refuse_unless_semantic_rails_enabled()
     if _nemo_rails is None:
         if not _NEMO_AVAILABLE:
             raise RuntimeError(

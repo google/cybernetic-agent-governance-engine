@@ -54,6 +54,14 @@ callers, but it is **not part of the graph's critical path**.
 
 By default (`CAGE_NEMO_ENABLED=false`), the gateway (`mcp_tool_server.py`, `hybrid_server.py`) and the LangGraph harness (`nemo_node_factory.py`) do **not** construct an `LLMRails` instance (`get_nemo_rails()` is not called). All deterministic input/output protections — Presidio identity-PII redaction (`_redact_pii`), regex PII scrubbing (`scrub_pii`), and Stage 1 Aho-Corasick keyword + prompt-injection screening (`ac_keyword_scan`) — execute unconditionally without an LLM (`POAM-2026-142`).
 
+The switch holds at runtime as well as at startup (`POAM-2026-144`). Every path that builds rails consults the same predicate: [`semantic_rails_refusal()`](../../gateway/governance/semantic_rail_factory.py). That covers gateway startup, the inference proxy, `get_nemo_rails()`, `reload_nemo_rails()` and the `cage:nemo:reload` hot-reload path. Its counterparts at the factory, `initialize_semantic_rails()` and `create_semantic_rail_manager()`, raise `SemanticRailsDisabled`. While the rails are off:
+
+- The inference proxy runs deterministic-only. It applies the Stage 1 keyword scan on input and `scrub_pii()` masking on output, and stamps ISO 42001 `A.6.1.2` as `SKIPPED` rather than `PASS`.
+- The reload subscriber is not started, and approving a refinement returns `409` with `CONTENT_SAFETY_RAILS_DISABLED`. The proposal stays `staged`.
+- `verify_content_safety` returns `BLOCKED: CONTENT_SAFETY_RAILS_DISABLED: …`. This is distinct from `CONTENT_SAFETY_RAILS_UNAVAILABLE`, which now means only "enabled but not initialised".
+
+`CAGE_NEMO_ENABLED` is parsed by the kernel's shared [`opt_in_enabled()`](../../gateway/governance/feature_flags.py), like every other opt-in switch. `true`/`1` turns it on and `false`/`0`/empty/unset leaves it off. Any other value, including `yes`, raises `ConfigurationError` at startup.
+
 To enable NeMo Colang 2.x input flows and LLM semantic output auditing:
 
 1. Set `CAGE_NEMO_ENABLED=true` and configure an active inference backend (`CAGE_INFERENCE_BACKEND=vllm` or `external` with `VLLM_BASE_URL`). Setting `CAGE_NEMO_ENABLED=true` with `CAGE_INFERENCE_BACKEND=none` is rejected at startup by `assert_production_posture()` (`nemo_rails_backend`).

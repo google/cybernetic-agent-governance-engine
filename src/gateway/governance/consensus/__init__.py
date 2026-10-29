@@ -12,31 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Domain-agnostic consensus mechanisms."""
+"""Domain-agnostic consensus mechanisms.
+
+The critics switch (``CAGE_CONSENSUS_CRITICS_ENABLED``) lives with the other
+opt-in switches in :mod:`src.gateway.governance.feature_flags`.
+"""
 
 from src.gateway.governance.consensus.engine import (
-    CAGE_CONSENSUS_CRITICS_ENABLED_ENV,
     CONSENSUS_ADMIT_STATUSES,
     CONSENSUS_NO_INFERENCE_BACKEND,
     NOTIONAL_THRESHOLD_ESCALATION,
     ConsensusGate,
     _background_audit_worker,
     consensus_admits,
-    consensus_critics_enabled,
     consensus_violation_code,
     extract_field_magnitude,
     load_critic_specs,
 )
 
 __all__ = [
-    "CAGE_CONSENSUS_CRITICS_ENABLED_ENV",
     "CONSENSUS_ADMIT_STATUSES",
     "CONSENSUS_NO_INFERENCE_BACKEND",
     "NOTIONAL_THRESHOLD_ESCALATION",
     "ConsensusGate",
     "_background_audit_worker",
     "consensus_admits",
-    "consensus_critics_enabled",
     "consensus_violation_code",
     "extract_field_magnitude",
     "load_critic_specs",

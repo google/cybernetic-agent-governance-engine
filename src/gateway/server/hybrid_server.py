@@ -141,9 +141,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # Under ``none`` no rails are built: NeMo is off and visible, and
         # content safety refuses with a reason code. An explicit ``vllm`` /
         # ``external`` needs its URL and key now, not at first use. Unset
-        # keeps the behaviour from before the setting existed.
-        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
-            nemo_rails_enabled,
+        # keeps the behaviour from before the setting existed. Rails are built
+        # only when semantic_rails_refusal() allows them: the same predicate
+        # the inference proxy, the rail nodes and the hot-reload path check.
+        from src.gateway.governance.semantic_rail_factory import (
+            semantic_rails_refusal,
         )
 
         if inference_backend is InferenceBackend.NONE:
@@ -156,7 +158,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 )
 
                 require_backend_settings(config_manager.get)
-            if nemo_rails_enabled():
+            rails_refusal = semantic_rails_refusal()
+            if rails_refusal is None:
                 from src.gateway.governance.semantic_rail_factory import (
                     initialize_semantic_rails as initialize_rails,
                 )
@@ -164,7 +167,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
                 nemo_rails = initialize_rails()
             else:
-                logger.info("CAGE_NEMO_ENABLED=false: NeMo Colang rails are off.")
+                logger.info("NeMo Colang rails are off (%s).", rails_refusal[1])
                 nemo_rails = None
 
         # Store on root and sub-app states
@@ -340,11 +343,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         mcp_app.state.redis = shared_redis
         bind_quarantine_redis(shared_redis)
 
-        nemo_reload_task = None
-        if shared_redis is not None and hasattr(shared_redis, "pubsub"):
-            nemo_reload_task = asyncio.create_task(
-                _subscribe_nemo_reload(shared_redis, app)
-            )
+        nemo_reload_task = _start_nemo_reload_subscriber(shared_redis, app)
+        if nemo_reload_task is not None:
             app.state.nemo_reload_task = nemo_reload_task
 
         loop_lag_task = asyncio.create_task(run_loop_lag_monitor())
@@ -650,12 +650,25 @@ def _get_refinement_redis(app_instance: FastAPI | None = None) -> Any:
 
 
 async def _reload_app_nemo_rails(target_app: FastAPI | None = None) -> Any:
-    """Reload NeMo rails off the event loop and update app states."""
+    """Reload NeMo rails off the event loop and update app states.
+
+    Refuses before touching any app state when semantic rails are off, so a
+    reload broadcast or an approved refinement cannot build rails the startup
+    configuration turned off.
+
+    Raises:
+        InferenceBackendUnavailable: under ``CAGE_INFERENCE_BACKEND=none``.
+        SemanticRailsDisabled: when ``CAGE_NEMO_ENABLED`` is off.
+    """
     from src.gateway.governance.langgraph_harness.nemo_node_factory import (
         get_nemo_rails,
         reload_nemo_rails,
     )
+    from src.gateway.governance.semantic_rail_factory import (
+        refuse_unless_semantic_rails_enabled,
+    )
 
+    refuse_unless_semantic_rails_enabled()
     await reload_nemo_rails()
     new_rails = get_nemo_rails()
     app_obj = target_app or root_app
@@ -663,6 +676,26 @@ async def _reload_app_nemo_rails(target_app: FastAPI | None = None) -> Any:
     inference_app.state.nemo_rails = new_rails
     mcp_app.state.nemo_rails = new_rails
     return new_rails
+
+
+def _start_nemo_reload_subscriber(
+    redis_client: Any, target_app: FastAPI | None = None
+) -> _asyncio.Task[None] | None:
+    """Start the ``cage:nemo:reload`` subscriber, or return ``None``.
+
+    Starts it only when semantic rails may be built and the client supports
+    Pub/Sub. With rails off there is nothing to reload, and a subscriber
+    would rebuild them on the first broadcast.
+    """
+    from src.gateway.governance.semantic_rail_factory import semantic_rails_refusal
+
+    if redis_client is None or not hasattr(redis_client, "pubsub"):
+        return None
+    refusal = semantic_rails_refusal()
+    if refusal is not None:
+        logger.info("[NeMo/Refinement] Reload subscriber not started (%s).", refusal[0])
+        return None
+    return _asyncio.create_task(_subscribe_nemo_reload(redis_client, target_app))
 
 
 async def _subscribe_nemo_reload(
@@ -902,6 +935,29 @@ async def approve_nemo_refinement(
             "reviewer": reviewer,
             "approver_identity": approver_identity,
         }
+
+    # Applying a refinement rebuilds the rails. When they are off by
+    # configuration, refuse before saving anything: the proposal stays
+    # ``staged`` (nothing failed) and can be applied once the rails are on.
+    from src.gateway.governance.semantic_rail_factory import semantic_rails_refusal
+
+    rails_refusal = semantic_rails_refusal()
+    if rails_refusal is not None:
+        reason_code, detail = rails_refusal
+        logger.info(
+            "[NeMo/Refinement] Proposal NOT APPLIED: id=%s reason_code=%s",
+            proposal_id,
+            reason_code,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason_code": reason_code,
+                "message": f"NeMo refinement not applied: {detail}",
+                "proposal_id": proposal_id,
+                "status": "staged",
+            },
+        )
 
     try:
         await _reload_app_nemo_rails(request.app)
