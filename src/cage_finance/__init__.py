@@ -14,6 +14,7 @@
 
 """CAGE Finance Plugin — Domain governance tiers and tool provider."""
 
+import os
 from typing import Any
 
 from src.cage_finance.safety.bounding.contract import (
@@ -43,8 +44,30 @@ from src.gateway.governance.contracts import GovernanceTier, NormBinding
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
     BaseTelemetryProvider,
+    ConfigurationError,
     get_telemetry_provider,
 )
+
+CAGE_CAUSAL_TIER_ENABLED_ENV = "CAGE_CAUSAL_TIER_ENABLED"
+
+
+def is_causal_tier_enabled() -> bool:
+    """Return True only when ``CAGE_CAUSAL_TIER_ENABLED`` explicitly opts in.
+
+    Defaults to ``False`` (the 5 core deterministic finance tiers run without
+    the DoWhy causal gatekeeper or ``WorldModelRefresher``). Raises
+    :class:`ConfigurationError` on any unrecognised value so typos fail closed
+    at assembly rather than silently disabling or enabling the tier.
+    """
+    raw = os.environ.get(CAGE_CAUSAL_TIER_ENABLED_ENV, "false").strip().lower()
+    if raw in ("true", "1", "yes"):
+        return True
+    if raw in ("false", "0", "no", ""):
+        return False
+    raise ConfigurationError(
+        f"Invalid {CAGE_CAUSAL_TIER_ENABLED_ENV}={raw!r}; expected 'true' or 'false'."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Canonical action surface (domain plugin's single source of truth)
@@ -66,7 +89,7 @@ from src.gateway.governance.telemetry_provider import (
 #   - config/ftra/terminal_registry.json terminals block
 REGISTERED_ACTIONS: frozenset[str] = frozenset(
     {
-        "execute_trade",  # IRREVERSIBLE_TERMINAL — consensus, causal, cbf, fiscal
+        "execute_trade",  # IRREVERSIBLE_TERMINAL — consensus, cbf, fiscal (+ optional causal)
         "execute_trade_bounded",  # EXTERNALLY_REVERSIBLE — bounding, cbf, fiscal (claim-by-cost)
         "check_balance",  # READ_ONLY — balance query
         "market_analysis",  # READ_ONLY — market-data lookups by the data analyst
@@ -86,6 +109,7 @@ def create_finance_tiers(
     *,
     causal_gatekeeper: CausalGatekeeper | None = None,
     world_model_refresher: WorldModelRefresher | None = None,
+    include_causal: bool | None = None,
 ) -> tuple[GovernanceTier, ...]:
     """Create finance domain governance tiers for construction-time registration.
 
@@ -99,8 +123,9 @@ def create_finance_tiers(
         consensus_gate: ConsensusGate instance for multi-model consensus
         bounding_registry: Optional BoundingContractRegistry for Phase 5 bounding tier.
                           If None, bounding tier is created with default stub providers.
-        telemetry_provider: Live telemetry source for the causal tier. If None,
-                          resolved by ``get_telemetry_provider()`` from
+        telemetry_provider: Live telemetry source for the causal tier. If None
+                          and the causal tier is enabled, resolved by
+                          ``get_telemetry_provider()`` from
                           ``CAGE_TELEMETRY_PROVIDER`` (``remote`` without
                           credentials raises ``ConfigurationError`` here, at
                           assembly, rather than on the first trade).
@@ -110,15 +135,21 @@ def create_finance_tiers(
                           ``domains.finance.confidence.min_trade_confidence``.
         causal_gatekeeper: Optional pre-built :class:`CausalGatekeeper`.
         world_model_refresher: Optional pre-built :class:`WorldModelRefresher`.
+        include_causal: Whether to include the optional ``CausalTierPlugin``.
+                          If None, enabled when ``is_causal_tier_enabled()`` is
+                          True or when any causal dependency
+                          (``telemetry_provider``, ``causal_gatekeeper``, or
+                          ``world_model_refresher``) is explicitly supplied.
 
     Returns:
         Tuple of finance domain tiers in (phase, order, tier_name) order.
-        The tiers are:
+        The core tiers are:
         - TradeConfidenceTier (phase=1, order=1) — Regional trade-confidence floor
         - BoundingContractTierPlugin (phase=1, order=2) — Phase 5 pre-trade constraints
         - CBFTierPlugin (phase=2, order=3) — Cash barrier validation
         - FiscalTierPlugin (phase=2, order=4) — Daily limit reservation
         - ConsensusTierPlugin (phase=1, order=5) — Multi-model consensus
+        When ``include_causal`` resolves to True, also appends:
         - CausalTierPlugin (phase=1, order=6) — DoWhy causal gatekeeper
     """
     if bounding_registry is None:
@@ -148,6 +179,23 @@ def create_finance_tiers(
             load_finance_thresholds().confidence.min_trade_confidence
         )
 
+    core_tiers: tuple[GovernanceTier, ...] = (
+        TradeConfidenceTier(trade_confidence),
+        BoundingContractTierPlugin(bounding_registry),
+        CBFTierPlugin(cbf),
+        FiscalTierPlugin(fiscal_guard),
+        ConsensusTierPlugin(consensus_gate),
+    )
+
+    if include_causal is None:
+        include_causal = is_causal_tier_enabled() or any(
+            x is not None
+            for x in (telemetry_provider, causal_gatekeeper, world_model_refresher)
+        )
+
+    if not include_causal:
+        return core_tiers
+
     resolved_provider = telemetry_provider or get_telemetry_provider()
     resolved_gatekeeper = causal_gatekeeper or build_finance_causal_gatekeeper()
     resolved_refresher = world_model_refresher or WorldModelRefresher(
@@ -156,11 +204,7 @@ def create_finance_tiers(
     )
 
     return (
-        TradeConfidenceTier(trade_confidence),
-        BoundingContractTierPlugin(bounding_registry),
-        CBFTierPlugin(cbf),
-        FiscalTierPlugin(fiscal_guard),
-        ConsensusTierPlugin(consensus_gate),
+        *core_tiers,
         CausalTierPlugin(
             causal_gatekeeper=resolved_gatekeeper,
             telemetry_provider=resolved_provider,

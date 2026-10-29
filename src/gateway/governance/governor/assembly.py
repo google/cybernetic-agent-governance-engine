@@ -107,6 +107,19 @@ class GovernorAssemblyError(ValueError):
 
 
 @dataclass(frozen=True)
+class DisabledTier:
+    """A contributed tier that is not enabled, and why.
+
+    A disabled tier examined no evidence: it never runs and never yields a
+    verdict. ``assert_production_posture()`` refuses an enforcing posture in
+    which a tier named in ``PluginContribution.required_tiers`` is disabled.
+    """
+
+    tier_name: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class GovernorComponents:
     """Everything a :class:`SymbolicGovernor` runs on. Immutable."""
 
@@ -136,6 +149,8 @@ class GovernorComponents:
     execution_ledger: ExecutionLedger = field(
         default_factory=lambda: ExecutionLedger(None)
     )
+    # Contributed tiers that are not enabled. Never in ``domain_tiers``.
+    disabled_tiers: tuple[DisabledTier, ...] = ()
 
     def __post_init__(self) -> None:
         if self.classifier is None:
@@ -149,6 +164,7 @@ class GovernorComponents:
             "saga_compensators",
             "contributions",
             "norm_bindings",
+            "disabled_tiers",
         ):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(
@@ -158,6 +174,10 @@ class GovernorComponents:
             self, "server_inputs", MappingProxyType(dict(self.server_inputs))
         )
         object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
+        enabled = {t.tier_name for t in self.domain_tiers}
+        both = sorted(enabled & {d.tier_name for d in self.disabled_tiers})
+        if both:
+            raise ValueError(f"tiers both enabled and disabled: {both}")
 
     @property
     def jurisdiction_tiers(self) -> tuple[GovernanceTier, ...]:
@@ -167,6 +187,11 @@ class GovernorComponents:
     def plugin_tiers(self) -> tuple[GovernanceTier, ...]:
         """Every non-kernel tier: the domain's, then the jurisdiction's."""
         return (*self.domain_tiers, *self.jurisdiction_tiers)
+
+    @property
+    def required_tiers(self) -> frozenset[str]:
+        """Every tier some contribution declares it cannot be governed without."""
+        return frozenset(n for c in self.contributions for n in c.required_tiers)
 
     @property
     def unfilled_slots(self) -> tuple[str, ...]:
@@ -291,6 +316,9 @@ def assemble_governor(
     )
     _validate_threshold_sections(contributions)
     tiers = tuple(t for c in contributions for t in c.tiers)
+    disabled_tiers = tuple(d for c in contributions for d in c.disabled_tiers)
+    _reject_duplicates("disabled tier", (d.tier_name for d in disabled_tiers))
+    _reject_unknown_required_tiers(contributions)
     _reject_slot_collisions(
         (*tiers, *jurisdiction.tiers), _known_actions(plugins, contributions)
     )
@@ -407,6 +435,7 @@ def assemble_governor(
         norm_bindings=norm_bindings,
         server_inputs=server_inputs,
         execution_ledger=ExecutionLedger(execution_ledger_redis),
+        disabled_tiers=disabled_tiers,
     )
     governor = SymbolicGovernor(components)
     logger.info(
@@ -516,6 +545,17 @@ def _reject_duplicates(what: str, names: Iterable[str]) -> None:
                 f"duplicate {what}: {name!r} is contributed twice"
             )
         seen.add(name)
+
+
+def _reject_unknown_required_tiers(contributions: Sequence[PluginContribution]) -> None:
+    """A contribution may only require tiers it contributes itself."""
+    for c in contributions:
+        known = {t.tier_name for t in c.tiers} | {d.tier_name for d in c.disabled_tiers}
+        unknown = sorted(c.required_tiers - known)
+        if unknown:
+            raise GovernorAssemblyError(
+                f"domain {c.domain!r} requires tiers it does not contribute: {unknown}"
+            )
 
 
 def _effective_thresholds() -> GovernanceThresholds:

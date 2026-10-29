@@ -15,7 +15,11 @@
 import logging
 from pathlib import Path
 
-from src.cage_finance import REGISTERED_ACTIONS, create_finance_tiers
+from src.cage_finance import (
+    REGISTERED_ACTIONS,
+    create_finance_tiers,
+    is_causal_tier_enabled,
+)
 from src.cage_finance.narrowers.amount_narrower import AmountNarrower
 from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
@@ -48,12 +52,23 @@ from src.gateway.governance.contracts import (
     DomainConfig,
     PluginContribution,
 )
+from src.gateway.governance.governor.assembly import DisabledTier
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 logger = logging.getLogger(__name__)
 
 FINANCE_EXECUTION_VERBS: frozenset[str] = frozenset(
     {"buy", "sell", "trade", "transfer", "execute_trade"}
+)
+
+# The 5 core deterministic finance tiers. An enforcing posture refuses to start
+# if any of them is not enabled (posture check ``required_tiers``); listed
+# explicitly so that dropping a tier from ``create_finance_tiers`` fails
+# assembly instead of silently shrinking this set. The optional ``causal`` tier
+# is gated by ``CAGE_CAUSAL_TIER_ENABLED=true`` and recorded in
+# ``disabled_tiers`` when off.
+FINANCE_REQUIRED_TIERS: frozenset[str] = frozenset(
+    {"trade_confidence", "bounding", "cbf", "fiscal", "consensus"}
 )
 
 
@@ -137,12 +152,22 @@ class FinanceCagePlugin(CagePlugin):
         trade_confidence = trade_confidence_norm_binding(
             finance.confidence.min_trade_confidence
         )
+        causal_enabled = is_causal_tier_enabled()
         tiers = create_finance_tiers(
             cbf=cbf,
             fiscal_guard=FiscalLimitGuard.from_env(),
             consensus_gate=consensus_gate,
             bounding_registry=bounding_registry,
             trade_confidence=trade_confidence,
+            include_causal=causal_enabled,
+        )
+        disabled_tiers = (
+            ()
+            if causal_enabled
+            else (DisabledTier("causal", "CAGE_CAUSAL_TIER_ENABLED=false"),)
+        )
+        required_tiers = FINANCE_REQUIRED_TIERS | (
+            {"causal"} if causal_enabled else set()
         )
         background_tasks = {"consensus_audit_worker": _background_audit_worker}
         for tier in tiers:
@@ -185,6 +210,8 @@ class FinanceCagePlugin(CagePlugin):
             norm_bindings=(trade_confidence,),
             server_inputs=dict.fromkeys(TRADE_ACTIONS, trade_inputs),
             rail_providers=(FinancialRailsProvider(),),
+            required_tiers=required_tiers,
+            disabled_tiers=disabled_tiers,
         )
 
 

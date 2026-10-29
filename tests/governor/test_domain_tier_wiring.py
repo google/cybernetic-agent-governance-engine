@@ -154,7 +154,7 @@ def test_duplicate_tier_name_is_rejected_at_construction() -> None:
     [
         (
             FinanceCagePlugin,
-            {"trade_confidence", "bounding", "consensus", "causal", "cbf", "fiscal"},
+            {"trade_confidence", "bounding", "consensus", "cbf", "fiscal"},
         ),
         (HealthcareCagePlugin, {"clinical_consensus", "dose_barrier"}),
         (PhysicalAICagePlugin, {"kinematic_barrier", "physical_safety_consensus"}),
@@ -165,6 +165,21 @@ def test_each_plugin_contributes_its_tiers_into_the_pipeline(
 ) -> None:
     governor = _assemble(plugin_cls())
     assert set(_domain_stage_names(governor)) == expected
+
+
+def test_finance_plugin_contributes_causal_tier_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAGE_CAUSAL_TIER_ENABLED", "true")
+    governor = _assemble(FinanceCagePlugin())
+    assert set(_domain_stage_names(governor)) == {
+        "trade_confidence",
+        "bounding",
+        "consensus",
+        "causal",
+        "cbf",
+        "fiscal",
+    }
 
 
 def test_contribution_is_data_and_does_not_mutate_a_governor() -> None:

@@ -11,6 +11,7 @@ supported-markers = [
 
 [manifest]
 overrides = [
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "opentelemetry-api", specifier = ">=1.45.1" },
     { name = "opentelemetry-sdk", specifier = ">=1.45.1" },
     { name = "opentelemetry-semantic-conventions", specifier = ">=0.66b0" },
@@ -1203,7 +1204,7 @@ dev = [
     { name = "bandit", specifier = ">=1.7.0" },
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.1" },
-    { name = "filelock", specifier = "==3.20.3" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "freezegun", specifier = ">=1.5.0" },
     { name = "hypothesis", specifier = ">=6.100.0" },
     { name = "kfp", specifier = ">=2.0,<3.0" },
@@ -1499,11 +1500,11 @@ wheels = [
 
 [[package]]
 name = "filelock"
-version = "3.20.3"
+version = "4.2.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1d/65/ce7f1b70157833bf3cb851b556a37d4547ceafc158aa9b34b36782f23696/filelock-3.20.3.tar.gz", hash = "sha256:18c57ee915c7ec61cff0ecf7f0f869936c7c30191bb0cf406f1341778d0834e1", size = 19485, upload-time = "2026-01-09T17:55:05.421Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/28/3893324bcadf8f89b1616637468d766af3f625008c0735bf704fdfa86617/filelock-4.2.4.tar.gz", hash = "sha256:c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d", size = 652444, upload-time = "2026-10-19T01:57:51.001Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/36/7fb70f04bf00bc646cd5bb45aa9eddb15e19437a28b8fb2b4a5249fac770/filelock-3.20.3-py3-none-any.whl", hash = "sha256:4b0dda527ee31078689fc205ec4f1c1bf7d56cf88b6dc9426c4f230e46c2dce1", size = 16701, upload-time = "2026-01-09T17:55:04.334Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/1b/5e74289a1878e666bb4b65fe5805a04cafcac2aa5f519ef1ead67ef91c56/filelock-4.2.4-py3-none-any.whl", hash = "sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e", size = 162475, upload-time = "2026-10-19T01:57:49.419Z" },
 ]
 
 [[package]]
@@ -2720,9 +2721,10 @@ wheels = [
 
 [[package]]
 name = "langgraph-api"
-version = "0.13.5"
+version = "0.16.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "anyio", marker = "python_full_version >= '3.11'" },
     { name = "cloudpickle", marker = "python_full_version >= '3.11'" },
     { name = "cryptography", marker = "python_full_version >= '3.11'" },
     { name = "grpcio", marker = "python_full_version >= '3.11'" },
@@ -2758,9 +2760,9 @@ dependencies = [
     { name = "websockets", marker = "python_full_version >= '3.11'" },
     { name = "zstandard", marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/7a/6d9e009f000dce1c068e36537b039a2d7bffca96a34ef0e7b04de39b0c31/langgraph_api-0.13.5.tar.gz", hash = "sha256:3fa3ddb7a501ace0db571d3c65668523a824ec45748b6a8d8281fd789cdaafbc", size = 777201, upload-time = "2026-09-16T00:37:22.955Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/09/4e766b2e0d4b156bb403c0bfdb0e62e4ac85fba2a65e5a0efd47b8715626/langgraph_api-0.16.9.tar.gz", hash = "sha256:f0e70730bb68d65e0064e26a35c2715c28880c1c0ca55f56ae26616e1c8f6754", size = 872724, upload-time = "2026-10-28T22:10:27.732Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/8e/5c77d5502d9efbe9027ad5b61c13f8d4a0cdbf98095ff25cfb41ef5cb59d/langgraph_api-0.13.5-py3-none-any.whl", hash = "sha256:881e82e5cbbdd4cdd69def1520242111d7eb00e6c6a20f591d1f7e16d95a3d9c", size = 617346, upload-time = "2026-09-16T00:37:21.493Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/7e/645132e231381837590c697f910d2c329e74b83532b3eabdcb1a4fff0959/langgraph_api-0.16.9-py3-none-any.whl", hash = "sha256:a6c5da8af6359cfb522ae4d702846ed3ff672bb460f51f585a96541e88d179f6", size = 650713, upload-time = "2026-10-28T22:10:25.539Z" },
 ]
 
 [[package]]
@@ -2793,7 +2795,7 @@ wheels = [
 
 [[package]]
 name = "langgraph-cli"
-version = "0.4.31"
+version = "0.4.40"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", marker = "python_full_version >= '3.11'" },
@@ -2802,9 +2804,9 @@ dependencies = [
     { name = "pathspec", marker = "python_full_version >= '3.11'" },
     { name = "python-dotenv", marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/51/47/b436abcd95cdc0685e662b7b6670566fed6f96a6ebeb130ad20b9781cd45/langgraph_cli-0.4.31.tar.gz", hash = "sha256:b35951d901bc8bcb998be6715ee3512a545182ddbb8f72702d0558fe39cea505", size = 1046834, upload-time = "2026-07-10T22:57:50.749Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/93/31/e7d40afcf50f45c9ae9f8dcacad534d7c756cdd8ebadf1d1ee2e2781841b/langgraph_cli-0.4.40.tar.gz", hash = "sha256:c0a75dc9816021e156362730286c926f5bdac478c85f3cceb441a425f80838af", size = 1102197, upload-time = "2026-10-26T16:45:39.913Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/73/afe77f0c81f43b35e41dc90e5bde8c25f6518811258ee5bca1f953e41186/langgraph_cli-0.4.31-py3-none-any.whl", hash = "sha256:111da6269d6c9d8606b19264caaa8d5e6b98bb6684233853a5d55489a6e62496", size = 82646, upload-time = "2026-07-10T22:57:49.425Z" },
+    { url = "https://files.pythonhosted.org/packages/16/4d/985a2dca1423ef5ecf79c35084577df4e964a54d1f52fbcd7aa61fa1482a/langgraph_cli-0.4.40-py3-none-any.whl", hash = "sha256:3a3fc9e435019d15df97e73c079ef12ba2960b1355b84ccc4b5e44cf151e999c", size = 94298, upload-time = "2026-10-26T16:45:38.643Z" },
 ]
 
 [package.optional-dependencies]
@@ -2828,7 +2830,7 @@ wheels = [
 
 [[package]]
 name = "langgraph-runtime-inmem"
-version = "0.33.5"
+version = "0.36.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "blockbuster", marker = "python_full_version >= '3.11'" },
@@ -2839,9 +2841,9 @@ dependencies = [
     { name = "starlette", marker = "python_full_version >= '3.11'" },
     { name = "structlog", marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/34/04790696ca89534f46132f9602379f1e3bd1db8ae27862208f907915b3a2/langgraph_runtime_inmem-0.33.5.tar.gz", hash = "sha256:f948ddce8e985975fe2ce01e79c4ac52ea15dc20d048434f87acd0a302327e1e", size = 133055, upload-time = "2026-09-16T00:23:20.932Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/1a/93f5209c26aaaf0db542fa87371d1b99d503676f85ea9cff5c5f0ee128cc/langgraph_runtime_inmem-0.36.9.tar.gz", hash = "sha256:dba3ac149a98abf67fa094c89efc1d15ebcb2ccb028214118bcc913a6319fd5c", size = 135084, upload-time = "2026-10-28T22:07:40.593Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/ec/36d75bbb2a1df4122773ca50f84ef112dbe490f2a573ca188f4e12a3d400/langgraph_runtime_inmem-0.33.5-py3-none-any.whl", hash = "sha256:e5c698b2696ea97ce3b1e6d5aa8423e7313483495b58601d08e7601592c8d13e", size = 52253, upload-time = "2026-09-16T00:23:19.818Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/60/a730f39205b0d3f95246bc39b0fe556e12d600887a17621563c049b6b544/langgraph_runtime_inmem-0.36.9-py3-none-any.whl", hash = "sha256:b413d26b659ce0c8ff2e50c64eba651fcfd37ce0ef97b48519a2a11bc889ec8d", size = 54367, upload-time = "2026-10-28T22:07:39.334Z" },
 ]
 
 [[package]]

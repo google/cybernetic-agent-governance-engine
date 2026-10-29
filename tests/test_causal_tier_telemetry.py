@@ -417,9 +417,30 @@ def _causal_tier_of(tiers) -> CausalTierPlugin:
     return tier
 
 
+def test_create_finance_tiers_excludes_causal_by_default(monkeypatch):
+    import src.cage_finance as finance
+
+    monkeypatch.delenv("CAGE_CAUSAL_TIER_ENABLED", raising=False)
+    monkeypatch.setattr(
+        finance,
+        "get_telemetry_provider",
+        MagicMock(side_effect=AssertionError("causal tier disabled by default")),
+    )
+    tiers = finance.create_finance_tiers(MagicMock(), MagicMock(), MagicMock())
+    assert [t for t in tiers if isinstance(t, CausalTierPlugin)] == []
+    assert [t.tier_name for t in tiers] == [
+        "trade_confidence",
+        "bounding",
+        "cbf",
+        "fiscal",
+        "consensus",
+    ]
+
+
 def test_create_finance_tiers_wires_resolved_provider(monkeypatch):
     import src.cage_finance as finance
 
+    monkeypatch.setenv("CAGE_CAUSAL_TIER_ENABLED", "true")
     sentinel = NullTelemetryProvider()
     monkeypatch.setattr(finance, "get_telemetry_provider", lambda: sentinel)
     tiers = finance.create_finance_tiers(MagicMock(), MagicMock(), MagicMock())
@@ -444,6 +465,7 @@ def test_create_finance_tiers_prefers_explicit_provider(monkeypatch):
 def test_create_finance_tiers_remote_without_credentials_fails_at_assembly(monkeypatch):
     import src.cage_finance as finance
 
+    monkeypatch.setenv("CAGE_CAUSAL_TIER_ENABLED", "true")
     monkeypatch.setenv("CAGE_TELEMETRY_PROVIDER", "remote")
     monkeypatch.delenv("TELEMETRY_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("TELEMETRY_SECRET_KEY", raising=False)
@@ -452,9 +474,10 @@ def test_create_finance_tiers_remote_without_credentials_fails_at_assembly(monke
 
 
 def test_create_finance_tiers_enforcing_posture_requires_explicit_provider(monkeypatch):
-    """Staging/prod never fall back to the null provider silently."""
+    """Staging/prod never fall back to the null provider silently when causal is enabled."""
     import src.cage_finance as finance
 
+    monkeypatch.setenv("CAGE_CAUSAL_TIER_ENABLED", "true")
     monkeypatch.setenv("CAGE_ENV", "staging")
     monkeypatch.delenv("CAGE_TELEMETRY_PROVIDER", raising=False)
     with pytest.raises(ConfigurationError, match="CAGE_TELEMETRY_PROVIDER must be set"):

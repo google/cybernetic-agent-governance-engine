@@ -83,11 +83,10 @@ dev = [
     # setuptools 82.0.1: CVE-2026-59890 (MANIFEST.in NFC/NFD bypass on macOS APFS) — fixed in 83.0.0
     # setuptools 83.0.0: GHSA-xmj3-9gf7-h52w — fixed in 84.1.0
     "setuptools>=84.1.0",
-    # filelock: GHSA-v4x8-3wr5-3wq8 (high; ReadWriteLock) and GHSA-9vhv-jxww-xfm5 /
-    # GHSA-567q-5qvw-pf92 (low; Windows) affect 3.20.4 (3.22.0) through 4.2.0 and are fixed
-    # in 4.2.1, but litellm (advisor extra) caps filelock < 4.0. 3.20.3 predates all three.
-    # Require filelock >= 4.2.1 once litellm allows 4.x.
-    "filelock==3.20.3",
+    # filelock>=4.2.1: fixes GHSA-v4x8-3wr5-3wq8, CVE-2026-112909 (GHSA-9vhv-jxww-xfm5),
+    # and CVE-2026-112910 (GHSA-567q-5qvw-pf92). Forced past litellm's <4.0 cap via
+    # [tool.uv].override-dependencies.
+    "filelock>=4.2.1",
 ]
 
 deployment = [
@@ -309,6 +308,8 @@ override-dependencies = [
     "opentelemetry-semantic-conventions>=0.66b0",
     # Force patched pillow (>=13.0.0) past fastembed's <13.0 pin (GHSA-78g4-xqwv-q3g8)
     "pillow>=13.0.0",
+    # Force patched filelock (>=4.2.1) past litellm's <4.0 pin (CVE-2026-112909, CVE-2026-112910)
+    "filelock>=4.2.1",
 ]
 
 [tool.uv.sources]

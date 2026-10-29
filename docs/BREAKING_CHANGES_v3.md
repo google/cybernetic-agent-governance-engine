@@ -2,7 +2,7 @@
 
 > **Status:** Released. Covers v3.0.1 (2026-09-07) through v4.0.0 (2026-10-26). v4.0.0's breaking changes
 > (CT-1 to CT-6) are recorded here too: the file keeps its v3 name because the published advisory links to it.
-> The next major version's breaking changes (IB-1 to IB-4 and CP-1, unreleased) are recorded at the end.
+> The next major version's breaking changes (IB-1 to IB-4, CP-1, and AG-1, unreleased) are recorded at the end.
 > The v3.1.0 clean breaks are collected in
 > [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) at the end of this document.
 > See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. The sections below
@@ -924,7 +924,13 @@ This ships with the POAM-2026-126 fix, in the same next major (v5.0.0). It chang
 |---|---|---|---|---|
 | **CP-1** | GKE control-plane access | Whenever a compliance posture is active, `authorized_networks` must hold at least one CIDR and no /0, or [`main.tf`](../infra/targets/gcp-gke/main.tf) refuses the plan. [`staging.tfvars`](../infra/targets/gcp-gke/staging.tfvars) no longer sets the list: supply it with `TF_VAR_authorized_networks` or a `--var-file` after the profile. | An empty list made the cluster module emit no allowlist, so GKE accepted any address, and staging shipped `0.0.0.0/0` under a header claiming VPN scope (POAM-2026-126). A plan-time refusal turns that claim into a check. | `terraform plan` stops with `[POAM-2026-126]`. Nothing is applied, so no half-built cluster is left behind. A fork whose enforcing profile authorizes a /0 sees the same refusal. |
 
+## Unreleased (next major) — Deterministic Action-Governance Core
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **AG-1** | Finance causal tier & required tiers | [`FinanceCagePlugin.contribute()`](../src/cage_finance/plugin.py) and [`create_finance_tiers()`](../src/cage_finance/__init__.py) assemble the five deterministic finance tiers (`trade_confidence`, `bounding`, `cbf`, `fiscal`, `consensus`) by default (`CAGE_CAUSAL_TIER_ENABLED=false`). Setting `CAGE_CAUSAL_TIER_ENABLED=true` (or passing `include_causal=True` to `create_finance_tiers()`) registers `CausalTierPlugin` and `causal_world_model_refresher`; an unrecognised `CAGE_CAUSAL_TIER_ENABLED` value raises `ConfigurationError`. [`PluginContribution`](../src/gateway/governance/contracts.py) gains `required_tiers: frozenset[str]` and `disabled_tiers: tuple[DisabledTier, ...]`, and [`assert_production_posture()`](../src/gateway/governance/governor/posture.py) runs a `required_tiers` check first: any tier in `required_tiers` that is absent from `domain_tiers` or listed in `disabled_tiers` refuses startup in enforcing postures and logs a critical warning in permissive postures. | In enforcing postures without a live telemetry corpus of at least `causal.min_samples` independent rows, `CausalTierPlugin` denies every `execute_trade` (`CAUSAL_TELEMETRY_UNAVAILABLE` / `CAUSAL_INSUFFICIENT_SAMPLES`, `POAM-2026-094`, `POAM-2026-117`), while the other two domains (`healthcare`, `physical_ai`) assemble no causal tier (`POAM-2026-143`). Making the causal tier opt-in aligns the default finance assembly with the deterministic core and enforces `FINANCE_REQUIRED_TIERS` at startup. | Callers expecting `"causal"` in the default `FinanceCagePlugin` tier list or expecting causal telemetry refusals without setting `CAGE_CAUSAL_TIER_ENABLED=true` must opt in via `CAGE_CAUSAL_TIER_ENABLED=true` or `create_finance_tiers(..., include_causal=True)`. A custom plugin whose `required_tiers` names an unregistered or disabled tier fails `assemble_governor()` / `assert_production_posture()`. |
+
 ---
 
-**Last updated:** 2026-10-28 (unreleased next major: inference backend and content-safety refusals IB-1–IB-4; control-plane access CP-1); 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
+**Last updated:** 2026-10-28 (unreleased next major: inference backend and content-safety refusals IB-1–IB-4; control-plane access CP-1; deterministic action-governance core AG-1); 2026-10-26 (v4.0.0: causal tier refusal paths CT-1–CT-6); 2026-10-25 (v3.3.0: sections labelled with the release that first shipped them; GHSA-f6xq-23f7-9grm GH-1–GH-7)
 

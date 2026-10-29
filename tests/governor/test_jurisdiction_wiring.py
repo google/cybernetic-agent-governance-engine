@@ -228,7 +228,6 @@ def test_eu_governor_runs_fria_once_in_phase_one_after_causal(
         "trade_confidence",
         "bounding",
         "consensus",
-        "causal",
         "fria",
         "cbf",
         "fiscal",
