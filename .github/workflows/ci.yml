@@ -27,8 +27,6 @@ on:
       # feature branch no longer double-triggers this workflow.
       - main
   pull_request:
-    branches:
-      - main
 
 # Default least-privilege permissions for every job in this workflow.
 # zizmor's excessive-permissions audit flags jobs with no permissions:
@@ -772,7 +770,7 @@ jobs:
           set -a; source .env; set +a
           test -n "${OPA_AUTH_TOKEN}" || (echo "::error::OPA_AUTH_TOKEN is empty in .env.example" && exit 1)
           docker compose config -q
-          if ! USE_MOCK_BROKER=true docker compose up -d --build --wait; then
+          if ! docker compose up -d --build --wait; then
             echo "::error::docker compose up -d --wait failed; dumping container logs:"
             docker compose ps -a || true
             docker compose logs --no-color || true

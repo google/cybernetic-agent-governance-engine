@@ -16,7 +16,6 @@ name: Hermetic Test (No ML Dependencies)
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - 'src/gateway/**'
       - 'src/compliance_bridge/**'

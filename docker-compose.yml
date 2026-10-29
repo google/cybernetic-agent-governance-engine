@@ -73,7 +73,7 @@ services:
       - CAGE_KMS_PROVIDER=${CAGE_KMS_PROVIDER:-ed25519}
       - EVIDENCE_STREAM_ENABLED=${EVIDENCE_STREAM_ENABLED:-true}
       - EVIDENCE_CHAIN_BLOCKING=${EVIDENCE_CHAIN_BLOCKING:-true}
-      - USE_MOCK_BROKER=${USE_MOCK_BROKER:-false}
+      - USE_MOCK_BROKER=${USE_MOCK_BROKER:-true}
       - VLLM_BASE_URL=${VLLM_BASE_URL:-http://vllm-fast:8000/v1}
       - VLLM_API_KEY=${VLLM_API_KEY:-dev-local}
       - CAGE_TRUSTED_CLIENT_IDENTITIES=${CAGE_TRUSTED_CLIENT_IDENTITIES:-cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local}

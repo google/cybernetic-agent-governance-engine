@@ -308,3 +308,30 @@ def test_quickstart_env_and_compose_mint_verifiable_strict_seal(
             await sink.stop()
 
     assert asyncio.run(_round_trip()) is True
+
+
+def test_quickstart_documents_dev_only_ed25519_and_seal_mint_verify_step() -> None:
+    """QUICKSTART.md must disclose that ed25519 is dev-only (Cloud KMS in enforcing postures) and include a live /tools/execute mint->verify step."""
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    gw_env = _extract_env_dict(compose["services"]["gateway"].get("environment", []))
+    assert gw_env.get("USE_MOCK_BROKER") == "${USE_MOCK_BROKER:-true}"
+
+    dot_env = _extract_env_dict(
+        [
+            line.strip()
+            for line in (_REPO_ROOT / ".env.example")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    )
+    assert dot_env.get("USE_MOCK_BROKER") == "true"
+
+    quickstart = (_REPO_ROOT / "docs" / "QUICKSTART.md").read_text(encoding="utf-8")
+    assert "Software Ed25519 signing is dev-only." in quickstart
+    assert "require Cloud KMS" in quickstart
+    assert "http://localhost:8080/tools/execute" in quickstart
+    assert '"tool_name":"execute_trade_action"' in quickstart
+    assert "mint → verify → consume" in quickstart

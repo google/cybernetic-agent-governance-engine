@@ -28,8 +28,6 @@ on:
       # feature branch no longer double-triggers this workflow.
       - main
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 # Only run this workflow for EU_ECB deployments.

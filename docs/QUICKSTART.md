@@ -37,6 +37,8 @@ CAGE_KMS_PROVIDER=ed25519
 CAGE_TRUSTED_CLIENT_IDENTITIES=cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
 ```
 
+> **Software Ed25519 signing is dev-only.** `CAGE_KMS_PROVIDER=ed25519` generates an ephemeral in-memory keypair so local Docker Compose can mint and verify asymmetric `EdDSA` JWT routing seals without cloud credentials; enforcing postures (`local`, `staging`, `production`) reject software providers at startup and require Cloud KMS (`gcp`, `aws`, or `azure`).
+
 Set `OPENAI_API_KEY` only if you will start the optional advisor container (§2).
 
 `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment and the
@@ -69,7 +71,7 @@ This starts:
 - **Redis** (internal Compose network `:6379`) — Barrier state, routing-seal nonces, execution idempotency, and the `cage:evidence:stream` hash chain (`EVIDENCE_STREAM_ENABLED=true`, `EVIDENCE_CHAIN_BLOCKING=true`)
 - *(Optional)* **Governed Financial Advisor (`app`)** (`localhost:3000`) — Finance reference application container (`docker compose --profile advisor up -d`)
 
-## 3. Verify the gateway is running
+## 3. Verify the gateway and seal mint→verify
 
 `/health` is one of the open paths listed in §1, so it needs no `l5d-client-id` header. Every other route does.
 
@@ -90,6 +92,24 @@ curl -s -X POST http://localhost:8080/mcp/ \
   -H "Accept: application/json, text/event-stream" \
   -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+
+# Exercise the governance loop end to end (mint → verify → consume):
+# evaluates OPA + STPA + CBF + Fiscal, commits GOVERNANCE_DECISION to
+# cage:evidence:stream, mints an EdDSA JWT routing seal, verifies its signature
+# against /governance/jwks and its committed record_hash, atomically consumes
+# the single-use nonce in Redis, runs the simulated broker, and settles CBF.
+curl -s -X POST http://localhost:8080/tools/execute \
+  -H "Content-Type: application/json" \
+  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+  -d '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}'
+# Expected: {"status":"SUCCESS","output":"EXECUTED: AAPL x 250.0 (Receipt ID: ...)"}
+
+# Verify a policy denial commits a signed refusal receipt and returns its 64-hex proof_hash
+curl -s -X POST http://localhost:8080/tools/execute \
+  -H "Content-Type: application/json" \
+  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+  -d '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"transaction_id":"33333333-3333-4333-8333-333333333333","side":"buy"}}'
+# Expected: {"status":"SUCCESS","output":"BLOCKED: Governance Blocked: ...","proof_hash":"<64-hex>"}
 ```
 
 ## 4. Run the governance demo

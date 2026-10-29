@@ -403,11 +403,11 @@ The Routing Seal is a short-lived cryptographic token issued by the Hybrid Gatew
 
 ### Seal Format
 
-In production (v3), the seal is a standard **asymmetric JWT** signed via Cloud KMS HSM:
-- **Header:** `{"alg": "RS256"|"ES256", "typ": "JWT", "kid": "<kms-key-id>"}`
-- **Payload:** `{"iss": "cage-governance-kernel", "aud": "cage-execution-engine", "exp": <unix_ts>, "act": "<action_slug>", "ehash": "<record_hash_hex>"}`
+In production and default local development (v3, `CAGE_SEAL_STRICT_MODE=true`), the seal is a standard **asymmetric JWT** signed via Cloud KMS HSM (`gcp`, `aws`, `azure` in enforcing postures) or ephemeral `SoftwareEd25519Provider` (`CAGE_KMS_PROVIDER=ed25519`, permitted only in `dev`/`test`/`ci`):
+- **Header:** `{"alg": "RS256"|"ES256"|"EdDSA", "typ": "JWT", "kid": "<kms-or-software-key-id>"}`
+- **Payload:** `{"iss": "cage-governance-kernel", "aud": "cage-execution-engine", "exp": <unix_ts>, "act": "<action_slug>", "ehash": "<record_hash_hex>", "jti": "<nonce>", ...}`
 
-In development/test environments without KMS, it falls back to a **4-tuple HMAC** token:
+Only in hermetic unit tests that have no KMS/software provider configured and explicitly opt out of strict mode (`CAGE_SEAL_STRICT_MODE=false`), it falls back to a **4-tuple HMAC** token (rejected as `[DOWNGRADE_ATTACK]` whenever `CAGE_SEAL_STRICT_MODE=true`):
 
 ```
 <expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
@@ -422,11 +422,11 @@ In development/test environments without KMS, it falls back to a **4-tuple HMAC*
 
 ### Cryptographic Contract
 
-**Key:** Cloud KMS HSM asymmetric key ring in production; `GOVERNANCE_SALT` for the dev/test HMAC fallback (the default salt is refused outside development/test).
+**Key:** Cloud KMS HSM asymmetric key ring in enforcing postures; `SoftwareEd25519Provider` (`EdDSA`) in local dev/Docker Compose; `GOVERNANCE_SALT` only for explicit non-strict (`CAGE_SEAL_STRICT_MODE=false`) unit-test fallback (the default salt is refused outside development/test).
 
 **Evidence Binding:** The seal binds the action to the exact compliance evidence stream record via `record_hash` (`ehash` JWT claim).
 
-**Algorithm:** RS256/ES256 (KMS HSM) in production; HMAC-SHA256 in test/dev environments.
+**Algorithm:** RS256/ES256 (Cloud KMS HSM) in enforcing postures; EdDSA (`SoftwareEd25519Provider`) in local dev/Compose; HMAC-SHA256 only under explicit `CAGE_SEAL_STRICT_MODE=false` in hermetic tests.
 
 **TTL:** 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). Seals expire after this window; `verify_seal()` checks expiry before cryptographic verification.
 
@@ -568,9 +568,10 @@ Step 8 proves discrete-time invariance for one barrier evaluation. This step ask
 - **The fence CAS is not needed for SP-1.** A barrier on live state plus `WAIT` carries the property; the fence remains defense in depth.
 - **Self-reported mode no longer has its two defects.** The model found a fence-epoch ABA (a stale scalar passing the CAS once the epoch climbed back) and rollback over-credit through the former `ROLLED_BACK_SETTLED` branch. The self-reported script now reads the state key itself, and a rollback with no ledger entry (`ROLLED_BACK_UNLEDGERED`) credits nothing, so the separate `_selfreported` configuration was retired: it is now identical to `DistributedCBF`. Under-credit after a rollback of a settled debit is the safe direction; the next reconciled snapshot corrects it.
 
-### Scope
+### Scope & Model–Implementation Verification Gap
 
-The model is bounded (pool 2, one failover, $N \le 3$) and abstracts amounts to unit reserves; it does not model `WAIT` timeouts beyond "unacknowledged ⇒ not actuatable", nor the reconciler's snapshot signing (Step 8).
+- **State-space bounds:** The model is bounded (pool 2, one failover, $N \le 3$) and abstracts amounts to unit reserves; it does not model `WAIT` timeouts beyond "unacknowledged ⇒ not actuatable", nor the reconciler's snapshot signing (Step 8).
+- **Atomicity grain (`Read(a)` vs. multi-await Python — `POAM-2026-154`):** [`DistributedCBF.tla`](../../proof/DistributedCBF.tla)'s `Read(a)` action (lines 94–102) models reading `available_balance`, `fence_epoch`, and `agent_epochs[a]` as a **single atomic transition**, delegating concurrent commits to `WriteReject` (`LUA_ATOMIC_CBF` status `2`, `FENCE_ADVANCED`). Prior to `#586` (`c8b0a504`, [`POAM-2026-154`](../POAM.md)), [`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py) split that logical `Read` across separate Redis `GET` round trips and `await` boundaries (`GET safety:fence_epoch`, then `self._last_seen_epoch` + `GET safety:fence_epoch_hwm`, plus a second post-read check in `atomic_verify_and_commit()`). While TLC verified 0 `SP-1`/`SP-2`/`SP-4` violations across every reachable state (1,811 distinct states at $N=2$ under `DistributedCBF.cfg`; 12,184 states generated across the $N=2$ suite), an actual concurrent commit interleaving between those `await`s produced a torn read (`epoch=0 < last_seen=1`), falsely tripping `CBF_EPOCH_REGRESSION_DETECTED` and rejecting admissible concurrent traffic without retrying. `#586` (`c8b0a504`) closed that refinement gap by fetching `(safety:fence_epoch, safety:fence_epoch_hwm)` in one `MGET` (`_read_fence_epoch_and_hwm()`), re-reading on forward concurrent advances in `_read_cbf_state_atomic()`, and verifying refinement under deterministic interleaving-skew schedules (`CBF-M1`–`CBF-M4` in [`test_cbf_settlement_ledger.py`](../../tests/test_cbf_settlement_ledger.py)). Any external claim citing Step 12 must disclose that TLC verifies the **abstract action grain** of `DistributedCBF.tla`; sub-action interleavings in Python async code are discharged by linearizable Redis primitives (`MGET` / Lua) and schedule-skew tests, not by TLC alone.
 
 ---
 

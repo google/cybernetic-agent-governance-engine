@@ -23,8 +23,6 @@ concurrency:
 
 on:
   pull_request:
-    branches:
-      - main
     # Only run when compliance-relevant paths change
     paths:
       - "compliance/**"
