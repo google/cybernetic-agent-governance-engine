@@ -107,6 +107,16 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_content_safety_no_verdict.py",
         "tests/test_inference_backend_none.py",
     ),
+    # STPA compiler validates structured conditions for opa/python and semantic_pattern for nemo; UCA-3/4/7/10/12 re-homed.
+    "POAM-2026-141": (
+        "tests/test_stpa_compiler.py",
+        "tests/test_nemo_pii_unbundling.py",
+    ),
+    # Deterministic Presidio/regex PII redaction and Aho-Corasick screening unbundled from get_nemo_rails().
+    "POAM-2026-142": (
+        "tests/test_nemo_pii_unbundling.py",
+        "tests/test_stpa_compiler.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
