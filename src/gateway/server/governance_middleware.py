@@ -655,15 +655,14 @@ async def validate_action_endpoint(
         ``cage.tool_execute`` root span, producing a unified Telemetry trace
         tree across the service boundary.
 
-    Governance tiers executed (8-tier pipeline via ``run_pipeline()``, matching
-    ``TIER_LABELS`` in ``proof/model.py``; plugin tiers such as ``bounding`` run
-    alongside):
+    Governance tiers executed (7-tier deterministic pipeline via ``run_pipeline()``,
+    matching ``TIER_LABELS`` in ``proof/model.py``; plugin tiers such as
+    ``bounding`` or optional ``causal`` run alongside):
         - Tier 0.5: FTRA action classification & reachability analysis
         - Tier 1: STPA/STAMP Unsafe Control Action validation
         - Tier 2: Agent confidence threshold pre-check (fast-fail)
         - Tier 3b: OPA Rego policy evaluation — declarative rule enforcement
-        - Tier 5: Multi-agent Consensus gate (ISO 42001)
-        - Tier 6: DoWhy Causal Gatekeeper — refutation-based safety lock
+        - Tier 5: Notional threshold escalation / Consensus gate (ISO 42001)
         - Tier 3a (phase 2): Control Barrier Function (CBF) — barrier headroom
         - Tier 4 (phase 2): Fiscal Limit Pre-Reservation
 

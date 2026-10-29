@@ -58,6 +58,12 @@ def mock_genai_span():
         yield mock_span
 
 
+@pytest.fixture
+def critics_enabled(monkeypatch):
+    """Enable multi-critic LLM voting (opt-in via CAGE_CONSENSUS_CRITICS_ENABLED=true)."""
+    monkeypatch.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "true")
+
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_consensus_engine_below_threshold_skips_consensus(
@@ -87,10 +93,67 @@ async def test_consensus_engine_below_threshold_exact_boundary(
 
 
 @pytest.mark.asyncio
-async def test_consensus_engine_above_threshold_unanimous_approve(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+async def test_default_critics_disabled_escalates_with_notional_threshold_escalation(
+    mock_thresholds, mock_gateway_client, monkeypatch
 ):
-    """Trades above threshold with unanimous APPROVE should return APPROVE."""
+    """By default (CAGE_CONSENSUS_CRITICS_ENABLED=false), trades at/above threshold deterministically escalate."""
+    from src.gateway.governance.consensus import NOTIONAL_THRESHOLD_ESCALATION
+
+    monkeypatch.delenv("CAGE_CONSENSUS_CRITICS_ENABLED", raising=False)
+    engine = build_finance_consensus_gate()
+    assert engine._critics_enabled is False
+    assert engine._registry is None
+    assert engine._default_client is None
+
+    with patch.object(
+        engine, "_get_critic_vote", new_callable=AsyncMock
+    ) as mock_critic:
+        result = await engine.check_consensus(
+            "buy", context={"amount": 15000.0, "symbol": "MSFT"}, magnitude=15000.0
+        )
+    mock_critic.assert_not_awaited()
+    assert result["status"] == "ESCALATE"
+    assert result["decision"] == "ESCALATE"
+    assert result["reason_code"] == NOTIONAL_THRESHOLD_ESCALATION
+    assert result["votes"] == []
+
+
+@pytest.mark.asyncio
+async def test_finance_tier_emits_notional_threshold_escalation_hitl_violation_by_default(
+    mock_thresholds, monkeypatch
+):
+    """ConsensusTierPlugin emits Violation(code=NOTIONAL_THRESHOLD_ESCALATION, kind=HITL) by default."""
+    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+    from src.gateway.governance.consensus import NOTIONAL_THRESHOLD_ESCALATION
+    from src.gateway.governance.contracts import ViolationKind
+
+    monkeypatch.delenv("CAGE_CONSENSUS_CRITICS_ENABLED", raising=False)
+    tier = ConsensusTierPlugin()
+    violations = await tier.evaluate(
+        "execute_trade", {"amount": 25000.0, "symbol": "AAPL"}
+    )
+    assert [(v.code, v.kind) for v in violations] == [
+        (NOTIONAL_THRESHOLD_ESCALATION, ViolationKind.HITL)
+    ]
+
+
+def test_invalid_critics_enabled_env_raises_configuration_error(monkeypatch):
+    """Unrecognised CAGE_CONSENSUS_CRITICS_ENABLED values fail closed with ConfigurationError."""
+    from src.gateway.governance.consensus import consensus_critics_enabled
+    from src.gateway.governance.telemetry_provider import ConfigurationError
+
+    monkeypatch.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "maybe")
+    with pytest.raises(
+        ConfigurationError, match="Invalid CAGE_CONSENSUS_CRITICS_ENABLED"
+    ):
+        consensus_critics_enabled()
+
+
+@pytest.mark.asyncio
+async def test_consensus_engine_above_threshold_unanimous_approve(
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
+):
+    """Trades above threshold with unanimous APPROVE should return APPROVE when critics are enabled."""
     engine = build_finance_consensus_gate()
 
     with patch.object(
@@ -105,7 +168,7 @@ async def test_consensus_engine_above_threshold_unanimous_approve(
 
 @pytest.mark.asyncio
 async def test_consensus_engine_split_vote_escalates_for_human_review(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
 ):
     """A split vote (APPROVE + REJECT) must ESCALATE for human review, not outright REJECT."""
     engine = build_finance_consensus_gate()
@@ -129,7 +192,7 @@ async def test_consensus_engine_split_vote_escalates_for_human_review(
 
 @pytest.mark.asyncio
 async def test_consensus_engine_unanimous_reject_blocks_trade(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
 ):
     """Unanimous REJECT from all critics must result in REJECT (outright block)."""
     engine = build_finance_consensus_gate()
@@ -148,7 +211,7 @@ async def test_consensus_engine_unanimous_reject_blocks_trade(
 
 @pytest.mark.asyncio
 async def test_consensus_engine_escalate_on_one_escalate_vote(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
 ):
     """If any critic returns ESCALATE (and none REJECT), result must be ESCALATE."""
     engine = build_finance_consensus_gate()
@@ -169,7 +232,7 @@ async def test_consensus_engine_escalate_on_one_escalate_vote(
 
 @pytest.mark.asyncio
 async def test_consensus_engine_critic_error_returns_escalate(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
 ):
     """If ALL critics return ERROR (LLM unavailable), result must be ESCALATE (fail-closed)."""
     engine = build_finance_consensus_gate()
@@ -185,7 +248,7 @@ async def test_consensus_engine_critic_error_returns_escalate(
 
 @pytest.mark.asyncio
 async def test_consensus_engine_returns_votes_list(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
 ):
     """check_consensus() must return a votes list with an entry per configured finance critic."""
     engine = build_finance_consensus_gate()
@@ -263,7 +326,7 @@ async def test_get_critic_vote_strict_parser_table(
 
 @pytest.mark.asyncio
 async def test_consensus_gate_negated_approve_never_approves(
-    mock_thresholds, mock_gateway_client, mock_genai_span
+    mock_thresholds, mock_gateway_client, mock_genai_span, critics_enabled
 ):
     """Regression test for PoC 1.1: critics that negate APPROVE must produce REJECT, never APPROVE."""
     engine = build_finance_consensus_gate()

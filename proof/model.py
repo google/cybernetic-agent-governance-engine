@@ -1,7 +1,7 @@
 # Adapted from the open-source implementation by LalaSkye (Apache 2.0)
 # Original repository: https://github.com/LalaSkye/no-direct-bind
-# Modifications: Adapted for the CAGE 8-tier governance architecture,
-# extended with Gap 1/2/3/4 sub-proofs and a concurrency-interleaving
+# Modifications: Adapted for the CAGE 7-tier deterministic governance architecture,
+# extended with Gap 1/2/3 sub-proofs and a concurrency-interleaving
 # sub-proof, and integrated with CAGE state machine phases
 # (PENDING → CHECKING → SEAL_ISSUED → EXECUTED/DENIED).
 #
@@ -19,9 +19,9 @@
 # (EXPECTED_GATED_STATES / EXPECTED_UNGATED_STATES / EXPECTED_SKIPPED_TIER_STATES)
 # and must be regenerated (``uv run python proof/model.py``) whenever the
 # transition relation changes:
-#   - Gated sequential model:     38 reachable states
-#   - Ungated (direct-bind) model: 19 reachable states
-#   - Skipped-tier (Gap 4) model: 35 reachable states
+#   - Gated sequential model:     34 reachable states
+#   - Ungated (direct-bind) model: 17 reachable states
+#   - Skipped-tier (Gap 3) model: 31 reachable states
 # The NARROW terminal state is included in the counts above, enabled by:
 #   - narrower_present / clamped_params_valid flags (NARROW terminal state)
 #   - Non-deterministic branching in tier FAIL transitions
@@ -52,7 +52,7 @@ Model property (No-Direct-Bind):
         NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
 This file:
-  1. Defines the CAGE 8-tier governance state machine (FTRA + 7 in-pipeline tiers).
+  1. Defines the CAGE 7-tier deterministic governance state machine (FTRA + 6 in-pipeline tiers).
   2. Enumerates every reachable state via BFS.
   3. Asserts the invariant holds in ALL reachable states.
   4. Defines an ungated (direct-bind) variant and shows it VIOLATES the
@@ -71,20 +71,22 @@ Expected output:
 
 The model is intentionally small and enumerable.  It captures the essential
 structure of the CAGE pipeline:
-  - 8 governance tiers, each of which can PASS or FAIL
+  - 7 deterministic governance tiers, each of which can PASS or FAIL
   - A routing seal that is issued only after all tiers pass
   - A downstream actuator that verifies the seal before executing
 
 Scope of the model
 ------------------
-The tuple models the kernel stages that ``run_pipeline()``
+The tuple models the deterministic stages that ``run_pipeline()``
 (``src/gateway/governance/governor/pipeline.py``) runs for every governed
 call made through ``SymbolicGovernor.govern()`` / ``verify()``: Tier 0.5
-(FTRA) and Tiers 1 through 6, with Tier 3 split into its ``opa`` (phase 1)
+(FTRA) and Tiers 1 through 5, with Tier 3 split into its ``opa`` (phase 1)
 and ``cbf`` (phase 2) components.  Plugin-contributed tiers (e.g. finance's
-``bounding`` or healthcare's ``dose_barrier``) add no proof states of their
-own; they are covered structurally by ``PLUGIN_TIER_PHASE`` so the POST_HITL
-predicate cannot skip a plugin-named phase-2 tier.  Jurisdiction tiers
+``bounding`` or optional ``causal``, or healthcare's ``dose_barrier``) add no
+proof states of their own; phase-2 plugin tiers are covered structurally by
+``PLUGIN_TIER_PHASE`` so the POST_HITL predicate cannot skip a plugin-named
+phase-2 tier, and ``PluginContribution.required_tiers`` prevents any required
+tier from being silently disabled.  Jurisdiction tiers
 (``JURISDICTION_TIERS``: ``fria`` under ``EU_ECB`` only) are appended per
 region in a sub-proof; the universal tuple below stays the proved model.
 
@@ -92,8 +94,8 @@ Gaps closed by this proof:
   Gap 1: Proves the ungated (no-seal) architecture violates the invariant,
          establishing that the seal-issuance gate is load-bearing
   Gap 2: Proves govern() path satisfies the invariant when seal is issued
-  Gap 3: Proves CBF_FAIL_OPEN shortcut removes the CBF tier from the gate
-  Gap 4: Proves DoWhy-absent shortcut removes the causal tier from the gate
+  Gap 3: Proves a skipped required tier removes that tier from the gate
+         (prevented at startup by ``required_tiers`` in ``assert_production_posture``)
 """
 
 from __future__ import annotations
@@ -121,8 +123,7 @@ TIERS = (
     "stpa",  # Tier 1:  STAMP/STPA unsafe control action check
     "opa",  # Tier 3b: OPA Rego policy evaluation
     "confidence",  # Tier 2:  agent confidence threshold
-    "consensus",  # Tier 5:  multi-agent consensus gate
-    "causal",  # Tier 6:  DoWhy causal gatekeeper
+    "consensus",  # Tier 5:  notional threshold escalation / consensus gate
     "cbf",  # Tier 3a: Control Barrier Function (Redis cash barrier)
     "fiscal",  # Tier 4:  fiscal limit pre-reservation
 )
@@ -143,7 +144,6 @@ TIER_LABELS: dict[str, str] = {
     "opa": "Tier 3b",
     "fiscal": "Tier 4",
     "consensus": "Tier 5",
-    "causal": "Tier 6",
 }
 
 
@@ -226,8 +226,8 @@ def post_hitl_runs_every_phase2_tier() -> bool:
 # ---------------------------------------------------------------------------
 #
 # A deployment region may add obligations to every domain. They are appended
-# to the universal TIERS for that region only; the 8-tier tuple above stays
-# the proved universal model (38/19/35). Mirrored by
+# to the universal TIERS for that region only; the 7-tier tuple above stays
+# the proved universal model (34/17/31). Mirrored by
 # ``src/gateway/governance/jurisdiction/registry.py::JURISDICTIONS`` (parity in
 # ``tests/test_formal_profile_parity.py``, once per region).
 
@@ -1143,7 +1143,7 @@ def enumerate_region(region: str, transition_fn=None) -> set[State]:
     The transition functions and ``State`` read the module-level ``TIERS`` /
     ``TIER_PHASE`` / ``PROFILE_STAGES``; they are rebound to the region's
     model for the enumeration and restored afterwards, so the universal model
-    (and its 38/19/35 counts) is never altered.
+    (and its 34/17/31 counts) is never altered.
     """
     global TIERS, TIER_PHASE, PROFILE_STAGES
     saved = (TIERS, TIER_PHASE, PROFILE_STAGES)
@@ -1280,16 +1280,16 @@ def main() -> None:
     print("    seal gate in gated_transitions() is load-bearing.")
     print()
 
-    # Gap 4: DoWhy absent — causal tier always PASS (silently skipped)
-    def dowhy_absent_transitions(state: State) -> Iterator[State]:
-        """Causal tier is silently skipped — models DoWhy ImportError."""
+    # Gap 3: Skipped required tier — CBF tier always PASS (silently skipped)
+    def skipped_tier_transitions(state: State) -> Iterator[State]:
+        """Required CBF tier is silently skipped — models CBF_FAIL_OPEN or disabled required tier."""
         if state.phase == "CHECKING":
             results = dict(state.tier_results)
             pending_tiers = [t for t in TIERS if results[t] == "PENDING"]
-            if pending_tiers and pending_tiers[0] == "causal":
-                # Skip causal: mark as PASS without any check
+            if pending_tiers and pending_tiers[0] == "cbf":
+                # Skip cbf: mark as PASS without any check
                 new_results = dict(state.tier_results)
-                new_results["causal"] = "PASS"
+                new_results["cbf"] = "PASS"
                 new_tier_results = tuple((t, new_results[t]) for t in TIERS)
                 yield State(
                     phase="CHECKING",
@@ -1303,14 +1303,14 @@ def main() -> None:
                 return
         yield from gated_transitions(state)
 
-    dowhy_states = enumerate_reachable(dowhy_absent_transitions)
-    dowhy_holds, _dowhy_cex = check_no_direct_bind(dowhy_states)
+    skipped_states = enumerate_reachable(skipped_tier_transitions)
+    skipped_holds, _skipped_cex = check_no_direct_bind(skipped_states)
     print(
-        f"  Gap 4 (DoWhy absent): reachable states={len(dowhy_states)}, "
-        f"invariant holds={dowhy_holds}"
+        f"  Gap 3 (skipped required tier): reachable states={len(skipped_states)}, "
+        f"invariant holds={skipped_holds}"
     )
-    print("  → Structural invariant preserved, but causal tier is absent from gate.")
-    print("  → Production startup RuntimeError prevents this configuration.")
+    print("  → Structural invariant preserved, but CBF tier is absent from gate.")
+    print("  → Production startup required_tiers check prevents this configuration.")
     print()
 
     # Gap 2: govern() without seal — models the old path where govern() returned

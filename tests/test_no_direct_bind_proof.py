@@ -98,9 +98,18 @@ _spec.loader.exec_module(model)
 # The former EXPECTED_CONCURRENT_STATES constant was removed: no test (and no
 # function in proof/model.py) enumerated a concurrent CBF/OPA state space.
 
-EXPECTED_GATED_STATES = 38
-EXPECTED_UNGATED_STATES = 19
-EXPECTED_SKIPPED_TIER_STATES = 35  # Gap 3 and Gap 4 variants
+# NOTE (refactor/consensus-model-core, 2026-10-28): the universal model covers
+# the 7 deterministic governance tiers (the optional DoWhy ``causal`` tier is
+# gated by ``CAGE_CAUSAL_TIER_ENABLED=true`` and outside the universal tuple).
+# The new counts are:
+#   - Gated: 34 (was 38)
+#   - Ungated: 17 (was 19)
+#   - Skipped tier: 31 (was 35)
+
+
+EXPECTED_GATED_STATES = 34
+EXPECTED_UNGATED_STATES = 17
+EXPECTED_SKIPPED_TIER_STATES = 31  # Gap 3 skipped-tier variant
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +125,8 @@ def test_tier_tuple_matches_pipeline() -> None:
     (FTRA, STPA, OPA, confidence), the phase-1 domain tiers, then the phase-2
     tiers. There is no ``fria`` tier in the universal tuple: it is an
     ``EU_ECB`` jurisdiction tier. Plugin tiers such as finance's ``bounding``
-    are covered structurally via ``PLUGIN_TIER_PHASE``.
+    or optional ``causal`` are covered structurally via ``PLUGIN_TIER_PHASE``
+    and ``PluginContribution.required_tiers``.
     """
     assert model.TIERS == (
         "ftra",
@@ -124,7 +134,6 @@ def test_tier_tuple_matches_pipeline() -> None:
         "opa",
         "confidence",
         "consensus",
-        "causal",
         "cbf",
         "fiscal",
     )
@@ -134,17 +143,18 @@ def test_tier_tuple_matches_pipeline() -> None:
     assert "ftra" in model.TIERS
 
 
-def test_tier_count_is_exactly_8() -> None:
-    """Pin the number of modelled governance tiers to exactly 8.
+def test_tier_count_is_exactly_7() -> None:
+    """Pin the number of modelled governance tiers to exactly 7.
 
     ARCH-1 added FTRA (Tier 0.5); refactor/gateway-surface-cleanup removed the
-    dead ``fria`` tier, which no pipeline stage implemented.
+    dead ``fria`` tier; refactor/consensus-model-core aligned the universal
+    tuple to the 7 deterministic governance tiers.
     This figure is cited in CAGE_ARXIV.MD §4.2 and §7.2 Limitations.
     Update this constant AND every location listed in docs/paper/REVISION_TRACKER.md
     if the pipeline adds or removes a tier.
     """
-    assert len(model.TIERS) == 8, (
-        f"Expected exactly 8 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
+    assert len(model.TIERS) == 7, (
+        f"Expected exactly 7 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
     )
 
 
@@ -230,18 +240,17 @@ def test_gap1_ungated_reachable_state_count_is_stable() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("skipped_tier", ["causal"])
+@pytest.mark.parametrize("skipped_tier", ["cbf"])
 def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
     skipped_tier: str,
 ) -> None:
-    """Gap 3 (CBF tier skipped) and Gap 4 (DoWhy absent).
+    """Gap 3 (skipped required tier).
 
     Marking a tier PASS without evaluating it does not break the structural
     invariant — the seal is still issued only after the remaining tiers pass —
-    but it removes one check from the gate. Gap 3's former trigger, the
-    ``CBF_FAIL_OPEN`` flag, has been deleted from the code; Gap 4 is backed by
-    a production startup ``RuntimeError``. Removing Gap 3 from the model is
-    tracked in PR 2 task T8.
+    but it removes one check from the gate. At runtime, ``required_tiers`` in
+    ``assert_production_posture()`` refuses any enforcing posture in which a
+    required tier is disabled or missing.
     """
 
     def skipping_transitions(state):  # type: ignore[no-untyped-def]

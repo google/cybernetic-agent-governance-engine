@@ -28,7 +28,7 @@ NoDirectBind ≜ (phase = "EXECUTED") ⇒ (resolvedAllow = TRUE)
 
 ### Scope
 
-Models the 8-tier CAGE governance pipeline (`TIERS` in `proof/model.py`; ARCH-1 added FTRA, refactor/gateway-surface-cleanup removed the dead `fria` tier):
+Models the 7-tier deterministic CAGE governance pipeline (`TIERS` in `proof/model.py`; ARCH-1 added FTRA, refactor/gateway-surface-cleanup removed the dead `fria` tier, and refactor/consensus-model-core aligned the universal tuple to the 7 deterministic tiers):
 
 | Tier | Name | Role |
 |------|------|------|
@@ -36,34 +36,33 @@ Models the 8-tier CAGE governance pipeline (`TIERS` in `proof/model.py`; ARCH-1 
 | 1 | STPA | STAMP/STPA unsafe control action check |
 | 3b | OPA | OPA Rego policy evaluation |
 | 2 | Confidence | Agent confidence threshold |
-| 5 | Consensus | Multi-agent consensus gate |
-| 6 | Causal | DoWhy causal gatekeeper |
+| 5 | Consensus | Notional threshold escalation / consensus gate |
 | 3a | CBF | Control Barrier Function (Redis cash barrier) — phase 2 |
 | 4 | Fiscal | Fiscal limit pre-reservation — phase 2 |
 
 The rows are in `run_pipeline()` execution order: the read-only kernel stages (`KERNEL_TIERS`), the phase-1 domain tiers, then the phase-2 (mutating) tiers. Tier numbers follow the paper.
 
-Plugin tiers (finance's `bounding`, healthcare's `dose_barrier`) add no proof states; `PLUGIN_TIER_PHASE` keeps the POST_HITL predicate from skipping a plugin-named phase-2 tier. No pipeline stage named `fria` exists, so the model has none.
+Plugin tiers (finance's `bounding` and optional `causal`, healthcare's `dose_barrier`) add no proof states; `PLUGIN_TIER_PHASE` keeps the POST_HITL predicate from skipping a plugin-named phase-2 tier, and `PluginContribution.required_tiers` prevents any required tier from being silently disabled. No universal pipeline stage named `fria` exists (`fria` is an `EU_ECB` jurisdiction tier), so the universal model has none.
 
 **Note**: Tier 3 is split into `opa` and `cbf` because each can block the action on its own. The model evaluates tiers in the pipeline's fixed order; it does not enumerate CBF/OPA interleavings (OPA is a phase-1 read-only stage and CBF a phase-2 mutating stage, so they never run concurrently).
 
-### State Counts (post refactor/gateway-surface-cleanup)
+### State Counts (post refactor/consensus-model-core)
 
 | Model Variant | Reachable States | Invariant Holds? |
 |---------------|------------------|------------------|
-| Gated (correct CAGE) | 38 | ✅ TRUE |
-| Ungated (direct-bind) | 19 | ❌ FALSE (counterexample) |
-| Skipped tier (causal) | 35 | ✅ TRUE (structural) |
+| Gated (correct CAGE) | 34 | ✅ TRUE |
+| Ungated (direct-bind) | 17 | ❌ FALSE (counterexample) |
+| Skipped tier (cbf) | 31 | ✅ TRUE (structural) |
 
 The former "Concurrent CBF∥OPA: 49" row is gone: no function in `proof/model.py` enumerates a concurrent state space, and no test pinned that number.
 
 ### Gap Proofs
 
-The model proves four concrete CAGE gaps:
+The model proves three concrete CAGE gaps:
 
 - **Gap 1**: Ungated architecture violates NoDirectBind (seal gate is load-bearing)
 - **Gap 2**: `govern()` without seal issuance violates NoDirectBind
-- **Gap 4**: DoWhy `ImportError` (causal tier silently skipped) preserves structure but removes a mandatory check
+- **Gap 3**: Skipped required tier preserves structure but removes a mandatory check (prevented at startup by `required_tiers` in `assert_production_posture()`)
 
 ### Verdict Lattice and I-6
 
@@ -100,7 +99,7 @@ uv run pytest tests/test_no_direct_bind_proof.py -v
 
 PROVED:
   1. The gated CAGE architecture satisfies No-Direct-Bind over the
-     entire reachable state space (38 states).
+     entire reachable state space (34 states).
   2. The ungated (direct-bind) variant provably violates the invariant.
   ...
 ```
@@ -250,7 +249,7 @@ These are **not provable in the Python BFS model** (which abstracts FTRA as a bi
   run: uv run pytest tests/test_no_direct_bind_proof.py -v
 ```
 
-Regression tests pin the governance model counts — gated 38 / ungated 19 / DoWhy-absent 35 / EU_ECB 42 — and every distributed CBF count and verdict in the table above, plus the cfg ↔ spec ↔ Python constant parity. Any change that alters these numbers fails CI and triggers a review of `docs/paper/REVISION_TRACKER.md` (published figures must stay consistent with proof).
+Regression tests pin the governance model counts — gated 34 / ungated 17 / skipped-tier 31 / EU_ECB 38 — and every distributed CBF count and verdict in the table above, plus the cfg ↔ spec ↔ Python constant parity. Any change that alters these numbers fails CI and triggers a review of `docs/paper/REVISION_TRACKER.md` (published figures must stay consistent with proof).
 
 ### TLA+ (TLC)
 
@@ -273,4 +272,4 @@ All proof artifacts in this directory are released under the Apache 2.0 License.
 
 The Python BFS model (`model.py`) is adapted from the open-source implementation by LalaSkye (Apache 2.0), available at: https://github.com/LalaSkye/no-direct-bind
 
-Modifications: Extended to CAGE's 8-tier architecture, added the NARROW state, seal consumption semantics, and FTRA tier.
+Modifications: Extended to CAGE's 7-tier deterministic architecture, added the NARROW state, seal consumption semantics, and FTRA tier.

@@ -93,6 +93,7 @@ def _is_escalated_governance_error(exc: GovernanceError) -> bool:
         "Manual Review" in msg
         or "Consensus Escalation" in msg
         or "CONSENSUS_ESCALATED" in msg
+        or "NOTIONAL_THRESHOLD_ESCALATION" in msg
         or "escalating for human review" in msg
     )
 

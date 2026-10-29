@@ -171,7 +171,7 @@ class ConsensusTierPlugin(ReadOnlyTier):
             return [
                 Violation(
                     tier=self.tier_name,
-                    code="CONSENSUS_ESCALATED",
+                    code=consensus_violation_code(result, "CONSENSUS_ESCALATED"),
                     message=reason,
                     kind=ViolationKind.HITL,
                 )

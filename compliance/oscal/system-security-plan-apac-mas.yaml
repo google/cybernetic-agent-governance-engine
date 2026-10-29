@@ -198,8 +198,11 @@ system-security-plan:
         0.96 trade-confidence floor (APAC_MAS_BASELINE.json
         domains.finance.confidence.min_trade_confidence.value) is enforced for trade
         execution by src/cage_finance/tiers/trade_confidence_tier.py, and trades
-        above domains.finance.consensus.threshold_usd = 8500.0 (SGD 11,500 /
-        USD 8,500 equivalent) require multi-model critic consensus
+        at or above domains.finance.consensus.threshold_usd = 8500.0 (SGD 11,500 /
+        USD 8,500 equivalent) deterministically escalate to human review with
+        NOTIONAL_THRESHOLD_ESCALATION (REQUIRE_APPROVAL) by default
+        (CAGE_CONSENSUS_CRITICS_ENABLED=false), or consult multi-model critic
+        consensus when CAGE_CONSENSUS_CRITICS_ENABLED=true
         (src/cage_finance/tiers/consensus_tier.py). Model performance monitoring
         with drift detection.'
       purpose: 'Satisfies MAS TRM §6.3 AI governance framework, model risk
@@ -352,7 +355,9 @@ system-security-plan:
         CBF gamma 0.55 (CashBarrier(gamma=...) in src/cage_finance/plugin.py);
         drawdown.limit 0.045 (bounding contract B2,
         src/cage_finance/safety/bounding/contracts.py); consensus.threshold_usd
-        8500.0 (multi-model consensus above this amount,
+        8500.0 (deterministic HITL escalation NOTIONAL_THRESHOLD_ESCALATION by
+        default, or multi-model critic consensus when
+        CAGE_CONSENSUS_CRITICS_ENABLED=true,
         src/cage_finance/tiers/consensus_tier.py); STPA UCA-5 drawdown
         4.0%, UCA-6 order-volume fraction 0.008 and FIN-2 /
         UCA-2 latency 175 ms (src/cage_finance/stpa/uca_rules.py).

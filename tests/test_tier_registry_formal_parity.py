@@ -180,7 +180,6 @@ class TestFormalModelParity:
             "opa",
             "confidence",
             "consensus",
-            "causal",
             "cbf",
             "fiscal",
         )

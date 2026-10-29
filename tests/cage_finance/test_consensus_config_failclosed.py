@@ -81,9 +81,11 @@ class TestFinanceConsensusContextSignature:
 
     @pytest.mark.asyncio
     async def test_unconfigured_gate_fails_closed_above_threshold(self):
-        """An unconfigured ConsensusGate() fails closed with DENY when triggered."""
+        """An unconfigured ConsensusGate(critics_enabled=True) fails closed with DENY when triggered."""
         gate = ConsensusGate(
-            threshold=100.0, magnitude_extractor=lambda p: float(p.get("amount", 0.0))
+            threshold=100.0,
+            magnitude_extractor=lambda p: float(p.get("amount", 0.0)),
+            critics_enabled=True,
         )
         result = await gate.check_consensus("execute_trade", context={"amount": 500.0})
         assert result["status"] == "DENY"

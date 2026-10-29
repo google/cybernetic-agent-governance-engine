@@ -167,9 +167,9 @@ def test_tlc_reproduces_python_bfs() -> None:
 
 def test_published_governance_model_counts() -> None:
     """proof/README.md and REVISION_TRACKER cite these numbers."""
-    assert len(enumerate_reachable(gated_transitions)) == 38
-    assert len(enumerate_reachable(ungated_transitions)) == 19
-    assert len(enumerate_region("EU_ECB")) == 42
+    assert len(enumerate_reachable(gated_transitions)) == 34
+    assert len(enumerate_reachable(ungated_transitions)) == 17
+    assert len(enumerate_region("EU_ECB")) == 38
 
 
 def test_i6_narrow_valid_holds_on_every_reachable_state() -> None:

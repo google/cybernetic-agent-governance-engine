@@ -29,7 +29,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.gateway.governance.consensus import (
+    CAGE_CONSENSUS_CRITICS_ENABLED_ENV,
     CONSENSUS_NO_INFERENCE_BACKEND,
+    NOTIONAL_THRESHOLD_ESCALATION,
     ConsensusGate,
     consensus_admits,
     consensus_violation_code,
@@ -45,6 +47,12 @@ _THRESHOLD = 10_000.0
 @pytest.fixture
 def backend_none(monkeypatch):
     monkeypatch.setenv(ENV_VAR, "none")
+
+
+@pytest.fixture
+def critics_enabled_backend_none(monkeypatch):
+    monkeypatch.setenv(ENV_VAR, "none")
+    monkeypatch.setenv(CAGE_CONSENSUS_CRITICS_ENABLED_ENV, "true")
 
 
 def _gate() -> ConsensusGate:
@@ -64,7 +72,22 @@ async def test_below_threshold_still_skips_under_none(backend_none) -> None:
 
 
 @pytest.mark.asyncio
-async def test_at_threshold_denies_under_none_with_reason_code(backend_none) -> None:
+async def test_default_critics_disabled_escalates_deterministically_under_none(
+    backend_none, monkeypatch
+) -> None:
+    monkeypatch.delenv(CAGE_CONSENSUS_CRITICS_ENABLED_ENV, raising=False)
+    result = await _gate().check_consensus("act", {}, magnitude=_THRESHOLD)
+
+    assert result["status"] == "ESCALATE"
+    assert result["decision"] == "ESCALATE"
+    assert result["reason_code"] == NOTIONAL_THRESHOLD_ESCALATION
+    assert result["votes"] == []
+
+
+@pytest.mark.asyncio
+async def test_at_threshold_denies_under_none_when_critics_enabled(
+    critics_enabled_backend_none,
+) -> None:
     result = await _gate().check_consensus("act", {}, magnitude=_THRESHOLD)
 
     assert result["status"] == "DENY"
@@ -74,7 +97,9 @@ async def test_at_threshold_denies_under_none_with_reason_code(backend_none) -> 
 
 
 @pytest.mark.asyncio
-async def test_high_stakes_action_denies_under_none(backend_none) -> None:
+async def test_high_stakes_action_denies_under_none_when_critics_enabled(
+    critics_enabled_backend_none,
+) -> None:
     result = await _gate().check_consensus("HIGH_STAKES_ACTION", {}, magnitude=1.0)
 
     assert result["status"] == "DENY"
@@ -83,7 +108,7 @@ async def test_high_stakes_action_denies_under_none(backend_none) -> None:
 
 @pytest.mark.asyncio
 async def test_no_critic_is_consulted_and_no_client_built_under_none(
-    backend_none,
+    critics_enabled_backend_none,
 ) -> None:
     gate = _gate()
     assert gate._registry is None
@@ -107,16 +132,60 @@ def test_admit_mapping_refuses_reason_coded_and_non_status_results() -> None:
         )
         == CONSENSUS_NO_INFERENCE_BACKEND
     )
+    assert (
+        consensus_violation_code(
+            {"status": "ESCALATE", "reason_code": NOTIONAL_THRESHOLD_ESCALATION}, "X"
+        )
+        == NOTIONAL_THRESHOLD_ESCALATION
+    )
     assert consensus_violation_code({"status": "REJECT"}, "X") == "X"
 
 
 # ---------------------------------------------------------------------------
-# Domain tiers record the kernel's code as a HARD violation
+# Domain tiers record NOTIONAL_THRESHOLD_ESCALATION (HITL) by default, and
+# CONSENSUS_NO_INFERENCE_BACKEND (HARD) when critics are enabled without a backend
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_finance_tier_records_no_backend_code(backend_none) -> None:
+async def test_all_domain_tiers_record_notional_threshold_escalation_by_default(
+    backend_none, monkeypatch
+) -> None:
+    from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
+    from src.cage_healthcare.tiers.clinical_consensus_tier import (
+        ClinicalConsensusTier,
+    )
+    from src.cage_physical_ai.tiers.physical_consensus_tier import (
+        PhysicalSafetyConsensusTier,
+    )
+
+    monkeypatch.delenv(CAGE_CONSENSUS_CRITICS_ENABLED_ENV, raising=False)
+
+    fin_v = await ConsensusTierPlugin().evaluate(
+        "execute_trade", {"amount": 500_000.0, "symbol": "AAPL"}
+    )
+    hc_v = await ClinicalConsensusTier().evaluate(
+        "prescribe_medication", {"dose_mg": 5_000.0}
+    )
+    phys_v = await PhysicalSafetyConsensusTier().evaluate(
+        "move_arm", {"velocity_m_s": 50.0}
+    )
+
+    assert [(v.code, v.kind) for v in fin_v] == [
+        (NOTIONAL_THRESHOLD_ESCALATION, ViolationKind.HITL)
+    ]
+    assert [(v.code, v.kind) for v in hc_v] == [
+        (NOTIONAL_THRESHOLD_ESCALATION, ViolationKind.HITL)
+    ]
+    assert [(v.code, v.kind) for v in phys_v] == [
+        (NOTIONAL_THRESHOLD_ESCALATION, ViolationKind.HITL)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finance_tier_records_no_backend_code(
+    critics_enabled_backend_none,
+) -> None:
     from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 
     violations = await ConsensusTierPlugin().evaluate(
@@ -129,7 +198,9 @@ async def test_finance_tier_records_no_backend_code(backend_none) -> None:
 
 
 @pytest.mark.asyncio
-async def test_healthcare_tier_records_no_backend_code(backend_none) -> None:
+async def test_healthcare_tier_records_no_backend_code(
+    critics_enabled_backend_none,
+) -> None:
     from src.cage_healthcare.tiers.clinical_consensus_tier import (
         ClinicalConsensusTier,
     )
@@ -144,7 +215,9 @@ async def test_healthcare_tier_records_no_backend_code(backend_none) -> None:
 
 
 @pytest.mark.asyncio
-async def test_physical_tier_records_no_backend_code(backend_none) -> None:
+async def test_physical_tier_records_no_backend_code(
+    critics_enabled_backend_none,
+) -> None:
     from src.cage_physical_ai.tiers.physical_consensus_tier import (
         PhysicalSafetyConsensusTier,
     )

@@ -24,8 +24,8 @@ AAIF spec reference: Linux Foundation AAIF working group.
 
 AAIF governed run loop specs use the ``governedRunLoop`` top-level key and
 describe agent execution stages with governance hooks at each stage. This
-adapter maps those constructs to CAGE's 8-tier governance pipeline stages (FTRA pre-gate + 7 in-pipeline tiers)
-and UCA model.
+adapter maps those constructs to CAGE's 7-tier deterministic governance
+pipeline stages (plus optional plugin tiers) and UCA model.
 
 AAIF stage → CAGE pipeline tier mapping
 -----------------------------------------
@@ -36,8 +36,8 @@ AAIF stage → CAGE pipeline tier mapping
 | ``policy_check``        | Tier 3b — OPA Rego policy              |
 | ``access_control``      | Tier 3b — OPA RBAC                     |
 | ``rate_limiting``       | Tier 3a — CBF / token quota            |
-| ``consensus``           | Tier 5 — Consensus / multi-agent       |
-| ``causal_validation``   | Tier 6 — DoWhy causal gatekeeper       |
+| ``consensus``           | Tier 5 — Consensus / threshold gate    |
+| ``causal_validation``   | Optional causal plugin — DoWhy gate    |
 
 Any other stage (including ``output_validation``, which no pipeline tier
 implements) maps to an explicit unknown-stage entry with ``tier: -1``.

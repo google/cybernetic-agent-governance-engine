@@ -94,16 +94,17 @@ class TestConsensusContextSignature:
 
 
 class TestConsensusFailClosedOnEmptyCritics:
-    """Verify ConsensusGate fails closed when triggered with no critics configured."""
+    """Verify ConsensusGate fails closed when triggered with no critics configured and critics enabled."""
 
     @pytest.mark.asyncio
     async def test_empty_critics_above_threshold_returns_deny(self):
-        """When magnitude >= threshold and critics is empty, returns DENY."""
+        """When critics are enabled, magnitude >= threshold, and critics is empty, returns DENY."""
         gate = ConsensusGate(
             critics=(),
             threshold=100.0,
             magnitude_extractor=lambda p: float(p.get("value", 0.0)),
             registry=MagicMock(),
+            critics_enabled=True,
         )
 
         result = await gate.check_consensus(
@@ -116,13 +117,14 @@ class TestConsensusFailClosedOnEmptyCritics:
 
     @pytest.mark.asyncio
     async def test_empty_critics_on_high_stakes_action_returns_deny(self):
-        """When action is in high_stakes_actions and critics is empty, returns DENY even below threshold."""
+        """When critics are enabled, action is in high_stakes_actions, and critics is empty, returns DENY even below threshold."""
         gate = ConsensusGate(
             critics=(),
             threshold=10000.0,
             magnitude_extractor=lambda _p: 0.0,
             high_stakes_actions=frozenset({"override_contraindication"}),
             registry=MagicMock(),
+            critics_enabled=True,
         )
 
         result = await gate.check_consensus(
@@ -140,12 +142,14 @@ class TestDomainInjectedCriticPrompts:
     @pytest.mark.asyncio
     async def test_healthcare_consensus_formats_clinical_prompts_without_finance_terms(
         self,
+        monkeypatch,
     ):
         """Healthcare ConsensusGate formats clinical critic prompts with zero finance vocabulary."""
         from src.cage_healthcare.tiers.clinical_consensus_tier import (
             build_healthcare_consensus_gate,
         )
 
+        monkeypatch.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "true")
         gate = build_healthcare_consensus_gate()
         assert len(gate.critics) == 3
         roles = {c.role for c in gate.critics}

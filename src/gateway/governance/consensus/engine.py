@@ -54,6 +54,7 @@ from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
 from src.gateway.governance.inference_backend import inference_disabled
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.telemetry_provider import ConfigurationError
 from src.gateway.infrastructure.telemetry_client import genai_span
 from src.gateway.observability.attributes import (
     TRACE_METADATA_CONSENSUS_DECISION,
@@ -78,7 +79,15 @@ _RESERVED_PROMPT_KEYS: frozenset[str] = frozenset(
 )
 _VALID_DECISIONS: frozenset[str] = frozenset({"APPROVE", "REJECT", "ESCALATE"})
 
-# A triggered check refused because no model exists to act as a critic
+CAGE_CONSENSUS_CRITICS_ENABLED_ENV: Final[str] = "CAGE_CONSENSUS_CRITICS_ENABLED"
+
+# A triggered check escalated deterministically to HITL (REQUIRE_APPROVAL)
+# because LLM critic voting is disabled (CAGE_CONSENSUS_CRITICS_ENABLED=false,
+# the default).
+NOTIONAL_THRESHOLD_ESCALATION: Final[str] = "NOTIONAL_THRESHOLD_ESCALATION"
+
+# A triggered check refused because critics are enabled
+# (CAGE_CONSENSUS_CRITICS_ENABLED=true) but no model exists to act as a critic
 # (CAGE_INFERENCE_BACKEND=none). It is a DENY that the evidence chain can
 # tell apart from a REJECT on the merits.
 CONSENSUS_NO_INFERENCE_BACKEND: Final[str] = "CONSENSUS_NO_INFERENCE_BACKEND"
@@ -88,6 +97,28 @@ CONSENSUS_NO_INFERENCE_BACKEND: Final[str] = "CONSENSUS_NO_INFERENCE_BACKEND"
 CONSENSUS_ADMIT_STATUSES: Final[frozenset[str]] = frozenset(
     {"APPROVE", "APPROVED", "SKIPPED"}
 )
+
+
+def consensus_critics_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Return True only when ``CAGE_CONSENSUS_CRITICS_ENABLED`` explicitly opts in.
+
+    Defaults to ``False`` (actions at or above the domain magnitude threshold
+    or in ``high_stakes_actions`` deterministically escalate to human review
+    with ``NOTIONAL_THRESHOLD_ESCALATION`` without calling any LLM critic).
+    Raises :class:`ConfigurationError` on any unrecognised value so typos fail
+    closed at assembly rather than silently disabling or enabling critic voting.
+    """
+    env = os.environ if environ is None else environ
+    raw = env.get(CAGE_CONSENSUS_CRITICS_ENABLED_ENV, "false").strip().lower()
+    if raw in ("true", "1", "yes"):
+        return True
+    if raw in ("false", "0", "no", ""):
+        return False
+    raise ConfigurationError(
+        f"Invalid {CAGE_CONSENSUS_CRITICS_ENABLED_ENV}={raw!r}; expected 'true' or 'false'."
+    )
+
+
 _LINE_PREFIX_DECISION_RE = re.compile(r"^(APPROVE|REJECT|ESCALATE)\b")
 _WHOLE_WORD_REJECT_RE = re.compile(r"\bREJECT\b")
 _LEADING_THINK_BLOCK_RE = re.compile(
@@ -410,6 +441,7 @@ class ConsensusGate:
         magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None,
         high_stakes_actions: AbstractSet[str] = frozenset(),
         registry: ConsensusModelRegistry | None = None,
+        critics_enabled: bool | None = None,
     ) -> None:
         self.critics: tuple[CriticSpec, ...] = tuple(critics)
         self.threshold: float = float(threshold)
@@ -417,13 +449,21 @@ class ConsensusGate:
             magnitude_extractor
         )
         self.high_stakes_actions: frozenset[str] = frozenset(high_stakes_actions)
-        # Resolved once, at composition time. Under CAGE_INFERENCE_BACKEND=none
-        # a triggered check is refused before any critic is consulted, and no
-        # model client is built, so it cannot reach the network.
+        # Resolved once, at composition time. By default
+        # (CAGE_CONSENSUS_CRITICS_ENABLED=false) a triggered check escalates
+        # deterministically with NOTIONAL_THRESHOLD_ESCALATION and no model
+        # client is built. When critics are enabled under
+        # CAGE_INFERENCE_BACKEND=none, a triggered check is refused before any
+        # critic is consulted, and no model client is built.
+        self._critics_enabled: bool = (
+            consensus_critics_enabled()
+            if critics_enabled is None
+            else bool(critics_enabled)
+        )
         self._inference_disabled: bool = inference_disabled()
         self._registry: ConsensusModelRegistry | None = registry
         self._default_client: GatewayClient | None = None
-        if not self._inference_disabled:
+        if self._critics_enabled and not self._inference_disabled:
             self._registry = registry or ConsensusModelRegistry.from_env(
                 [c.role for c in self.critics]
             )
@@ -434,6 +474,7 @@ class ConsensusGate:
         cls,
         contribution: ConsensusContribution,
         registry: ConsensusModelRegistry | None = None,
+        critics_enabled: bool | None = None,
     ) -> ConsensusGate:
         """Build a ``ConsensusGate`` from a domain ``ConsensusContribution``."""
         return cls(
@@ -442,6 +483,7 @@ class ConsensusGate:
             magnitude_extractor=contribution.magnitude_extractor,
             high_stakes_actions=contribution.high_stakes_actions,
             registry=registry,
+            critics_enabled=critics_enabled,
         )
 
     def _resolve_critic_spec(self, critic: CriticSpec | str) -> CriticSpec | None:
@@ -639,6 +681,27 @@ class ConsensusGate:
                 "status": "SKIPPED",
                 "decision": "SKIPPED",
                 "reason": "Below threshold",
+                "votes": [],
+            }
+
+        if not getattr(self, "_critics_enabled", True):
+            logger.info(
+                "⚖️ Notional threshold escalation for action=%s magnitude=%.2f "
+                "(threshold=%.2f, CAGE_CONSENSUS_CRITICS_ENABLED=false) — ESCALATE %s",
+                resolved_action,
+                resolved_magnitude,
+                threshold,
+                NOTIONAL_THRESHOLD_ESCALATION,
+            )
+            return {
+                "status": "ESCALATE",
+                "decision": "ESCALATE",
+                "reason": (
+                    f"Action '{resolved_action}' magnitude ({resolved_magnitude:.2f}) "
+                    f"meets or exceeds threshold ({threshold:.2f}) — escalating to "
+                    "human review (NOTIONAL_THRESHOLD_ESCALATION)."
+                ),
+                "reason_code": NOTIONAL_THRESHOLD_ESCALATION,
                 "votes": [],
             }
 

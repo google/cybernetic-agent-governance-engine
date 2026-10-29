@@ -15,22 +15,28 @@
 """Domain-agnostic consensus mechanisms."""
 
 from src.gateway.governance.consensus.engine import (
+    CAGE_CONSENSUS_CRITICS_ENABLED_ENV,
     CONSENSUS_ADMIT_STATUSES,
     CONSENSUS_NO_INFERENCE_BACKEND,
+    NOTIONAL_THRESHOLD_ESCALATION,
     ConsensusGate,
     _background_audit_worker,
     consensus_admits,
+    consensus_critics_enabled,
     consensus_violation_code,
     extract_field_magnitude,
     load_critic_specs,
 )
 
 __all__ = [
+    "CAGE_CONSENSUS_CRITICS_ENABLED_ENV",
     "CONSENSUS_ADMIT_STATUSES",
     "CONSENSUS_NO_INFERENCE_BACKEND",
+    "NOTIONAL_THRESHOLD_ESCALATION",
     "ConsensusGate",
     "_background_audit_worker",
     "consensus_admits",
+    "consensus_critics_enabled",
     "consensus_violation_code",
     "extract_field_magnitude",
     "load_critic_specs",

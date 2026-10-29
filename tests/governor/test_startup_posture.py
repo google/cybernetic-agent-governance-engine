@@ -153,6 +153,13 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
                 posture_mod, "_reconciler_verifier", lambda: _Verifier(kids=())
             ),
         ),
+        (
+            "consensus_critics_backend.*CAGE_CONSENSUS_CRITICS_ENABLED=true",
+            lambda mp: (
+                mp.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "true"),
+                mp.setenv("CAGE_INFERENCE_BACKEND", "none"),
+            ),
+        ),
     ],
 )
 def test_each_violation_refuses_production(

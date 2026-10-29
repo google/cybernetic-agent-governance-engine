@@ -525,9 +525,9 @@ def test_tier_count_matches_published_proof_model() -> None:
     sys.modules["cage_proof_model"] = model
     spec.loader.exec_module(model)
 
-    # Verify tier count (ARCH-1 added FTRA; the dead `fria` tier was removed)
-    assert len(model.TIERS) == 8, (
-        f"Expected 8 governance tiers in proof model; got {len(model.TIERS)}: "
+    # Verify tier count (7-tier deterministic core)
+    assert len(model.TIERS) == 7, (
+        f"Expected 7 governance tiers in proof model; got {len(model.TIERS)}: "
         f"{model.TIERS}"
     )
 
