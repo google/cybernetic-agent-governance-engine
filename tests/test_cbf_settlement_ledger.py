@@ -621,6 +621,170 @@ async def test_concurrent_trades_over_the_limit_admit_one(
     assert world.total() == pytest.approx(cost)
 
 
+async def _run_skewed_concurrent_pair(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    instances: int,
+    cost: float,
+    skew_ticks: int,
+) -> tuple[list[tuple[bool, str, float]], float, _World]:
+    """Run two concurrent commits while delaying the second snapshot read by ``skew_ticks``."""
+    from src.gateway.governance.safety import cbf_engine as cbf_mod
+
+    world = _build_world(monkeypatch, custodian_lag_s=3_600.0)
+    world.async_redis = _YieldingRedis(world.async_redis)
+    cbfs = [world.cbf]
+    if instances == 2:
+        replica = ControlBarrierFunction(
+            invariant=CashBarrier(gamma=GAMMA),
+            cost_resolver=finance_cost_resolver,
+            skip_epoch_seed=True,
+        )
+        replica.tracer = None
+        cbfs.append(replica)
+
+    real_to_thread = asyncio.to_thread
+    call_idx = 0
+
+    async def skewed_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        nonlocal call_idx
+        call_idx += 1
+        my_idx = call_idx
+        res = await real_to_thread(func, *args, **kwargs)
+        if my_idx == 2:
+            for _ in range(skew_ticks):
+                await asyncio.sleep(0)
+        return res
+
+    with (
+        world.live(),
+        patch.object(cbf_mod.asyncio, "to_thread", side_effect=skewed_to_thread),
+    ):
+        assert world.reconcile() is not None
+        results = list(
+            await asyncio.gather(
+                *(
+                    cbf.atomic_verify_and_commit(
+                        ACTION, {"amount": cost}, debit_id=uuid.uuid4().hex
+                    )
+                    for cbf in (cbfs[0], cbfs[-1])
+                )
+            )
+        )
+    return results, world.total(), world
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instances", [1, 2], ids=["one-cbf", "two-cbfs"])
+async def test_concurrent_over_limit_trades_never_false_epoch_regress_across_skew(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    instances: int,
+) -> None:
+    """POAM-2026-154: thread-pool skew on ``read_verified_snapshot`` must never
+    turn a normal concurrent commit into a false stale-replica epoch regression.
+    """
+    alone = _max_admissible(INITIAL)
+    after_one = alone / (1 + GAMMA)
+    cost = (alone + after_one) / 2
+
+    caplog.clear()
+    for skew_ticks in range(14):
+        results, total, _ = await _run_skewed_concurrent_pair(
+            monkeypatch,
+            instances=instances,
+            cost=cost,
+            skew_ticks=skew_ticks,
+        )
+        assert [ok for ok, _, _ in results].count(True) == 1, (
+            f"skew_ticks={skew_ticks}: {results}"
+        )
+        refusal = next(reason for ok, reason, _ in results if not ok)
+        assert refusal.startswith("UNSAFE"), (
+            f"skew_ticks={skew_ticks}: expected UNSAFE, got {refusal!r}"
+        )
+        assert total == pytest.approx(cost), f"skew_ticks={skew_ticks}: {total}"
+
+    assert "CBF_EPOCH_REGRESSION_DETECTED" not in caplog.text
+    assert "FENCE_EPOCH_REGRESSION" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instances", [1, 2], ids=["one-cbf", "two-cbfs"])
+async def test_concurrent_admissible_trades_both_commit_across_skew(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    instances: int,
+) -> None:
+    """POAM-2026-154: two concurrent admissible trades must both commit across
+    all snapshot-read interleavings instead of aborting on a torn epoch read.
+    """
+    cost = 100.0
+    caplog.clear()
+    for skew_ticks in range(14):
+        results, total, world = await _run_skewed_concurrent_pair(
+            monkeypatch,
+            instances=instances,
+            cost=cost,
+            skew_ticks=skew_ticks,
+        )
+        assert [ok for ok, _, _ in results] == [True, True], (
+            f"skew_ticks={skew_ticks}: {results}"
+        )
+        assert total == pytest.approx(2 * cost), f"skew_ticks={skew_ticks}: {total}"
+        assert world.sync_redis.get("safety:fence_epoch") == "2"
+        assert world.sync_redis.get("safety:fence_epoch_hwm") == "2"
+
+    assert "CBF_EPOCH_REGRESSION_DETECTED" not in caplog.text
+    assert "FENCE_EPOCH_REGRESSION" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("regression_source", ["in_process_seen", "redis_hwm"])
+async def test_genuine_stale_replica_epoch_regression_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    regression_source: str,
+) -> None:
+    """POAM-2026-154: eliminating torn-read false positives must keep genuine
+    stale-replica epoch regressions fail-closed on both in-process and HWM floors.
+    """
+    world = _build_world(monkeypatch, custodian_lag_s=3_600.0)
+    with world.live():
+        assert world.reconcile() is not None
+        ok1, _, _ = await world.commit(100.0)
+        ok2, _, _ = await world.commit(100.0)
+        assert ok1 and ok2
+        assert world.sync_redis.get("safety:fence_epoch") == "2"
+
+        if regression_source == "in_process_seen":
+            # Stale replica promoted: both Redis keys regress, process memory holds 2.
+            world.sync_redis.set("safety:fence_epoch", "1")
+            world.sync_redis.set("safety:fence_epoch_hwm", "1")
+            target_cbf = world.cbf
+        else:
+            # Fresh gateway pod (_last_seen_epoch == 0) reads regressed epoch < Redis HWM.
+            world.sync_redis.set("safety:fence_epoch", "1")
+            world.sync_redis.set("safety:fence_epoch_hwm", "2")
+            target_cbf = ControlBarrierFunction(
+                invariant=CashBarrier(gamma=GAMMA),
+                cost_resolver=finance_cost_resolver,
+                skip_epoch_seed=True,
+            )
+            target_cbf.tracer = None
+
+        caplog.clear()
+        ok3, reason, magnitude = await target_cbf.atomic_verify_and_commit(
+            ACTION, {"amount": 100.0}, debit_id=uuid.uuid4().hex
+        )
+
+    assert ok3 is False
+    assert magnitude == 0.0
+    assert "epoch=1 < last_seen=2" in reason, reason
+    assert "CBF_EPOCH_REGRESSION_DETECTED" in caplog.text
+    assert world.total() == pytest.approx(200.0)
+
+
 @pytest.mark.asyncio
 async def test_settle_never_prunes_before_attestation(
     monkeypatch: pytest.MonkeyPatch,

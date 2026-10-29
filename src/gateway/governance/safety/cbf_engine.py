@@ -726,19 +726,93 @@ return {1, status, tostring(restored), new_epoch}
         pipeline.incr(_REDIS_KEY_FENCE_EPOCH)
         return 0
 
-    async def _get_fence_epoch(self) -> int:
+    async def _read_fence_epoch_and_hwm(
+        self, client: Any = None
+    ) -> tuple[int, int | None]:
+        """Read ``(safety:fence_epoch, safety:fence_epoch_hwm)`` atomically when supported.
+
+        ``MGET`` executes as a single command on Redis, so ``LUA_ATOMIC_CBF`` or
+        ``LUA_ROLLBACK_CBF`` cannot land between reading ``fence_epoch`` and
+        reading ``fence_epoch_hwm``. Falls back to individual ``GET`` calls for
+        mocks and minimal client stubs.
+        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
-        client = await _get_raw_redis(redis_client)
-        raw = await client.get(_REDIS_KEY_FENCE_EPOCH)
-        if raw is None:
-            return 0
-        return int(raw)
+        if client is None:
+            client = await _get_raw_redis(redis_client)
+        if client is not None and not _is_mock(client) and hasattr(client, "mget"):
+            mget_res = client.mget(_REDIS_KEY_FENCE_EPOCH, _REDIS_KEY_FENCE_EPOCH_HWM)
+            raw_pair = await mget_res if inspect.isawaitable(mget_res) else mget_res
+            if isinstance(raw_pair, (list, tuple)) and len(raw_pair) == 2:
+                raw_epoch, raw_hwm = raw_pair[0], raw_pair[1]
+                epoch = (
+                    int(raw_epoch)
+                    if (
+                        raw_epoch is not None
+                        and isinstance(raw_epoch, (int, str, bytes, float))
+                        and not _is_mock(raw_epoch)
+                    )
+                    else 0
+                )
+                hwm = (
+                    int(raw_hwm)
+                    if (
+                        raw_hwm is not None
+                        and isinstance(raw_hwm, (int, str, bytes, float))
+                        and not _is_mock(raw_hwm)
+                    )
+                    else 0
+                )
+                return (epoch, hwm)
 
-    async def _check_fence_epoch(self, current_epoch: int) -> tuple[bool, str]:
-        client = await _get_raw_redis(redis_client)
-        hwm = self._last_seen_epoch
+        raw_epoch_res = client.get(_REDIS_KEY_FENCE_EPOCH)
+        raw_epoch = (
+            await raw_epoch_res if inspect.isawaitable(raw_epoch_res) else raw_epoch_res
+        )
+        epoch = (
+            int(raw_epoch)
+            if (
+                raw_epoch is not None
+                and isinstance(raw_epoch, (int, str, bytes, float))
+                and not _is_mock(raw_epoch)
+            )
+            else 0
+        )
+        hwm_opt: int | None = None
         if client is not None and hasattr(client, "get"):
+            try:
+                raw_hwm_res = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+                raw_hwm = (
+                    await raw_hwm_res
+                    if inspect.isawaitable(raw_hwm_res)
+                    else raw_hwm_res
+                )
+                if (
+                    raw_hwm is not None
+                    and isinstance(raw_hwm, (int, str, bytes, float))
+                    and not _is_mock(raw_hwm)
+                ):
+                    hwm_opt = int(raw_hwm)
+            except Exception as e:
+                logger.warning("Could not read fence epoch HWM from Redis: %s", e)
+        return (epoch, hwm_opt)
+
+    async def _get_fence_epoch(self) -> int:
+        epoch, _ = await self._read_fence_epoch_and_hwm()
+        return epoch
+
+    async def _check_fence_epoch(
+        self,
+        current_epoch: int,
+        *,
+        pre_read_hwm: int | None = None,
+        seen_floor: int | None = None,
+    ) -> tuple[bool, str]:
+        client = await _get_raw_redis(redis_client)
+        hwm = self._last_seen_epoch if seen_floor is None else seen_floor
+        if pre_read_hwm is not None:
+            hwm = max(hwm, pre_read_hwm)
+        elif client is not None and hasattr(client, "get"):
             try:
                 raw_hwm = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
                 if inspect.isawaitable(raw_hwm):
@@ -779,11 +853,12 @@ return {1, status, tostring(restored), new_epoch}
 
         self._last_seen_epoch = max(self._last_seen_epoch, current_epoch)
         if _CURRENT_FENCE_EPOCH_GAUGE is not None:
-            _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
+            _CURRENT_FENCE_EPOCH_GAUGE.set(self._last_seen_epoch)
 
         if (
             client is not None
             and current_epoch > 0
+            and (pre_read_hwm is None or current_epoch > pre_read_hwm)
             and hasattr(client, "eval")
             and not _is_mock(client)
         ):
@@ -936,6 +1011,7 @@ return {1, status, tostring(restored), new_epoch}
         outstanding: float,
         fence_epoch: int | None,
         *,
+        fence_epoch_hwm: int | None = None,
         source: str = "reconciled",
     ) -> dict[str, Any]:
         """Shape a verified snapshot into the CBF state dict, netting outstanding debits.
@@ -963,33 +1039,59 @@ return {1, status, tostring(restored), new_epoch}
         }
         if fence_epoch is not None:
             state["fence_epoch"] = fence_epoch
+        if fence_epoch_hwm is not None:
+            state["fence_epoch_hwm"] = fence_epoch_hwm
         return state
 
     async def _read_cbf_state_atomic(self) -> dict[str, Any]:
-        """Read the CBF state scalar, preferring externally reconciled ground truth."""
+        """Read the CBF state scalar, preferring externally reconciled ground truth.
+
+        ``DistributedCBF.tla`` models ``Read`` as a single step that observes
+        ``available_balance``, ``fence_epoch``, and ``agent_epochs[a]`` together.
+        Here the read spans multiple awaits, so concurrent commits on this or
+        another gateway process can advance ``safety:fence_epoch``,
+        ``safety:fence_epoch_hwm``, and ``self._last_seen_epoch`` mid-read.
+        Bracketing the read with ``seen_before`` / ``epoch_before`` and an atomic
+        ``(fence_epoch, fence_epoch_hwm)`` fetch distinguishes a forward commit
+        (re-read at the new epoch) from a stale-replica regression (fail closed).
+        """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
+
+        max_read_attempts = max(4, 2 * max(1, _COMMIT_ATTEMPTS))
 
         try:
             from src.gateway.governance.reconciliation.daemon import (
                 read_verified_snapshot,
             )
 
-            # Read the outstanding-debit total *before* the snapshot: if the
-            # reconciler publishes and settles in between, we net a fresh
-            # scalar with a pre-settle (larger) total — conservative. The
-            # opposite order could net a stale scalar with a settled total.
-            outstanding = await outstanding_debits_total(
-                await _get_raw_redis(redis_client),
-                namespace=self._debit_ledger.namespace,
-            )
-            verified = await asyncio.to_thread(
-                read_verified_snapshot,
-                sync_redis_client,
-                self._invariant.invariant_id,
-            )
+            for read_attempt in range(max_read_attempts):
+                raw_client = await _get_raw_redis(redis_client)
+                seen_before = self._last_seen_epoch
+                if raw_client is not None and not _is_mock(raw_client):
+                    epoch_before, hwm_before = await self._read_fence_epoch_and_hwm(
+                        raw_client
+                    )
+                else:
+                    epoch_before, hwm_before = seen_before, 0
 
-            if verified is not None and verified.is_valid:
+                # Read the outstanding-debit total *before* the snapshot: if the
+                # reconciler publishes and settles in between, we net a fresh
+                # scalar with a pre-settle (larger) total — conservative. The
+                # opposite order could net a stale scalar with a settled total.
+                outstanding = await outstanding_debits_total(
+                    raw_client,
+                    namespace=self._debit_ledger.namespace,
+                )
+                verified = await asyncio.to_thread(
+                    read_verified_snapshot,
+                    sync_redis_client,
+                    self._invariant.invariant_id,
+                )
+
+                if verified is None or not verified.is_valid:
+                    break
+
                 scalar_val = float(verified.state_scalar)
                 if verified.signature:
                     try:
@@ -1001,78 +1103,7 @@ return {1, status, tostring(restored), new_epoch}
                         # resolved by the snapshot's kid. Gateway-signed or
                         # unknown-kid snapshots fail closed.
                         sig_valid = verify_snapshot_signature(verified)
-                        if sig_valid:
-                            seq_num = getattr(verified, "sequence", 0)
-                            if _REPLAY_DEFENSE_ENABLED:
-                                (
-                                    sequence_valid,
-                                    seq_reason,
-                                ) = await self._validate_sequence(
-                                    seq_num if isinstance(seq_num, int) else -1,
-                                    verified.source,
-                                    sync_redis_client,
-                                )
-                                if not sequence_valid:
-                                    logger.critical(
-                                        json.dumps(
-                                            {
-                                                "event": "CBF_RECONCILED_BALANCE_SEQUENCE_REPLAY_DETECTED",
-                                                "severity": "CRITICAL",
-                                                "source": verified.source,
-                                                "state_scalar": scalar_val,
-                                                "sequence": verified.sequence,
-                                                "reason": seq_reason,
-                                            }
-                                        )
-                                    )
-                                    if _REPLAY_REJECTED_COUNTER is not None:
-                                        _REPLAY_REJECTED_COUNTER.labels(
-                                            source=verified.source
-                                        ).inc()
-                                    return {
-                                        "state_scalar": None,
-                                        "current_cash": None,
-                                        "source": "sequence_regression",
-                                        "fence_epoch": 0,
-                                        "reason": seq_reason,
-                                    }
-                                else:
-                                    fence_epoch = await self._get_fence_epoch()
-                                    if _FENCE_EPOCH_ENABLED:
-                                        (
-                                            epoch_valid,
-                                            epoch_reason,
-                                        ) = await self._check_fence_epoch(fence_epoch)
-                                        if not epoch_valid:
-                                            return {
-                                                "state_scalar": None,
-                                                "current_cash": None,
-                                                "source": "epoch_regression",
-                                                "fence_epoch": fence_epoch,
-                                                "epoch_reason": epoch_reason,
-                                            }
-                                    return self._reconciled_state(
-                                        verified, outstanding, fence_epoch
-                                    )
-                            else:
-                                fence_epoch = await self._get_fence_epoch()
-                                if _FENCE_EPOCH_ENABLED:
-                                    (
-                                        epoch_valid,
-                                        epoch_reason,
-                                    ) = await self._check_fence_epoch(fence_epoch)
-                                    if not epoch_valid:
-                                        return {
-                                            "state_scalar": None,
-                                            "current_cash": None,
-                                            "source": "epoch_regression",
-                                            "fence_epoch": fence_epoch,
-                                            "epoch_reason": epoch_reason,
-                                        }
-                                return self._reconciled_state(
-                                    verified, outstanding, fence_epoch
-                                )
-                        else:
+                        if not sig_valid:
                             logger.critical(
                                 json.dumps(
                                     {
@@ -1090,6 +1121,92 @@ return {1, status, tostring(restored), new_epoch}
                                 "fence_epoch": 0,
                                 "reason": "reconciled snapshot signature invalid",
                             }
+
+                        seq_num = getattr(verified, "sequence", 0)
+                        if _REPLAY_DEFENSE_ENABLED:
+                            (
+                                sequence_valid,
+                                seq_reason,
+                            ) = await self._validate_sequence(
+                                seq_num if isinstance(seq_num, int) else -1,
+                                verified.source,
+                                sync_redis_client,
+                            )
+                            if not sequence_valid:
+                                logger.critical(
+                                    json.dumps(
+                                        {
+                                            "event": "CBF_RECONCILED_BALANCE_SEQUENCE_REPLAY_DETECTED",
+                                            "severity": "CRITICAL",
+                                            "source": verified.source,
+                                            "state_scalar": scalar_val,
+                                            "sequence": verified.sequence,
+                                            "reason": seq_reason,
+                                        }
+                                    )
+                                )
+                                if _REPLAY_REJECTED_COUNTER is not None:
+                                    _REPLAY_REJECTED_COUNTER.labels(
+                                        source=verified.source
+                                    ).inc()
+                                return {
+                                    "state_scalar": None,
+                                    "current_cash": None,
+                                    "source": "sequence_regression",
+                                    "fence_epoch": 0,
+                                    "reason": seq_reason,
+                                }
+
+                        fence_epoch, redis_hwm = await self._read_fence_epoch_and_hwm(
+                            raw_client
+                        )
+                        if _FENCE_EPOCH_ENABLED:
+                            floor_before = max(
+                                seen_before,
+                                epoch_before,
+                                hwm_before if hwm_before is not None else 0,
+                            )
+                            unambiguous_regression = fence_epoch < floor_before or (
+                                redis_hwm is not None and fence_epoch < redis_hwm
+                            )
+                            concurrent_advance = not unambiguous_regression and (
+                                fence_epoch > epoch_before
+                                or self._last_seen_epoch > fence_epoch
+                            )
+                            if (
+                                concurrent_advance
+                                and read_attempt + 1 < max_read_attempts
+                            ):
+                                continue
+                            effective_floor = (
+                                floor_before
+                                if not concurrent_advance
+                                else max(floor_before, self._last_seen_epoch)
+                            )
+                            (
+                                epoch_valid,
+                                epoch_reason,
+                            ) = await self._check_fence_epoch(
+                                fence_epoch,
+                                pre_read_hwm=redis_hwm,
+                                seen_floor=effective_floor,
+                            )
+                            if not epoch_valid:
+                                return {
+                                    "state_scalar": None,
+                                    "current_cash": None,
+                                    "source": "epoch_regression",
+                                    "fence_epoch": fence_epoch,
+                                    "epoch_reason": epoch_reason,
+                                }
+                        return self._reconciled_state(
+                            verified,
+                            outstanding,
+                            fence_epoch,
+                            fence_epoch_hwm=redis_hwm,
+                        )
+                    except GroundTruthUnavailableError:
+                        raise
                     except Exception as sig_exc:
                         logger.critical(
                             json.dumps(
@@ -1107,6 +1224,7 @@ return {1, status, tostring(restored), new_epoch}
                                 f"KMS verification failed: {type(sig_exc).__name__}",
                                 cause=sig_exc,
                             ) from sig_exc
+                        break
                 else:
                     if _IS_PRODUCTION:
                         logger.critical(
@@ -1157,44 +1275,84 @@ return {1, status, tostring(restored), new_epoch}
                 }
             )
         )
-        client = await _get_raw_redis(redis_client)
-        pipe_ctx = client.pipeline(transaction=False)
-        if inspect.isawaitable(pipe_ctx):
-            pipe_ctx = await pipe_ctx
-        async with pipe_ctx as pipe:
-            pipe.get(self.redis_key)
-            pipe.get(_REDIS_KEY_FENCE_EPOCH)
-            results = await pipe.execute()
-            if inspect.isawaitable(results):
-                results = await results
-        raw_state = results[0]
-        raw_epoch = results[1]
-        current_state = (
-            float(raw_state) if raw_state is not None else self._initial_state_scalar()
-        )
-        current_epoch = int(raw_epoch) if raw_epoch is not None else 0
+        for read_attempt in range(max_read_attempts):
+            seen_before = self._last_seen_epoch
+            client = await _get_raw_redis(redis_client)
+            is_mock_client = _is_mock(client)
+            pipe_ctx = client.pipeline(transaction=not is_mock_client)
+            if inspect.isawaitable(pipe_ctx):
+                pipe_ctx = await pipe_ctx
+            async with pipe_ctx as pipe:
+                pipe.get(self.redis_key)
+                pipe.get(_REDIS_KEY_FENCE_EPOCH)
+                if not is_mock_client:
+                    pipe.get(_REDIS_KEY_FENCE_EPOCH_HWM)
+                results = await pipe.execute()
+                if inspect.isawaitable(results):
+                    results = await results
+            raw_state = results[0]
+            raw_epoch = results[1]
+            raw_hwm = results[2] if len(results) > 2 else None
+            current_state = (
+                float(raw_state)
+                if raw_state is not None
+                else self._initial_state_scalar()
+            )
+            current_epoch = int(raw_epoch) if raw_epoch is not None else 0
+            if (
+                raw_hwm is not None
+                and isinstance(raw_hwm, (int, str, bytes, float))
+                and not _is_mock(raw_hwm)
+            ):
+                redis_hwm = int(raw_hwm)
+            elif not is_mock_client:
+                redis_hwm = 0
+            else:
+                redis_hwm = None
 
-        if _FENCE_EPOCH_ENABLED:
-            epoch_valid, epoch_reason = await self._check_fence_epoch(current_epoch)
-            if not epoch_valid:
-                return {
-                    "state_scalar": None,
-                    "current_cash": None,
-                    "source": "epoch_regression",
-                    "fence_epoch": current_epoch,
-                    "epoch_reason": epoch_reason,
-                }
-        else:
-            self._last_seen_epoch = current_epoch
-            if _CURRENT_FENCE_EPOCH_GAUGE is not None:
-                _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
+            if _FENCE_EPOCH_ENABLED:
+                unambiguous_regression = current_epoch < seen_before or (
+                    redis_hwm is not None and current_epoch < redis_hwm
+                )
+                concurrent_advance = (
+                    not unambiguous_regression and self._last_seen_epoch > current_epoch
+                )
+                if concurrent_advance and read_attempt + 1 < max_read_attempts:
+                    continue
+                effective_floor = (
+                    seen_before
+                    if not concurrent_advance
+                    else max(seen_before, self._last_seen_epoch)
+                )
+                epoch_valid, epoch_reason = await self._check_fence_epoch(
+                    current_epoch,
+                    pre_read_hwm=redis_hwm,
+                    seen_floor=effective_floor,
+                )
+                if not epoch_valid:
+                    return {
+                        "state_scalar": None,
+                        "current_cash": None,
+                        "source": "epoch_regression",
+                        "fence_epoch": current_epoch,
+                        "epoch_reason": epoch_reason,
+                    }
+            else:
+                self._last_seen_epoch = current_epoch
+                if _CURRENT_FENCE_EPOCH_GAUGE is not None:
+                    _CURRENT_FENCE_EPOCH_GAUGE.set(current_epoch)
 
-        return {
-            "state_scalar": current_state,
-            "current_cash": current_state,
-            "source": "self_reported",
-            "fence_epoch": current_epoch,
-        }
+            self_reported_state: dict[str, Any] = {
+                "state_scalar": current_state,
+                "current_cash": current_state,
+                "source": "self_reported",
+                "fence_epoch": current_epoch,
+            }
+            if redis_hwm is not None:
+                self_reported_state["fence_epoch_hwm"] = redis_hwm
+            return self_reported_state
+
+        raise RuntimeError("Unreachable CBF self-reported read state.")
 
     async def _resolve_ground_truth_balance(self) -> tuple[float, dict[str, Any]]:
         state = await self._read_cbf_state_atomic()
@@ -1207,25 +1365,25 @@ return {1, status, tostring(restored), new_epoch}
             "reconciled_unsigned",
         ):
             sequence = state.get("sequence", 0)
-            return (
-                float(state["current_cash"]),
-                {
-                    "source": (
-                        "reconciliation"
-                        if state["source"] == "reconciled"
-                        else "reconciled_unsigned"
-                    ),
-                    "mode": "reconciled",
-                    "sequence": sequence,
-                    "fence_epoch": state.get("fence_epoch", 0),
-                    "strict_mode": _CBF_STRICT_MODE,
-                    "reconciliation_age_ms": 0,
-                    "state_scalar": float(state["state_scalar"]),
-                    "outstanding_debits": float(state.get("outstanding_debits", 0.0)),
-                    "verified_at": state.get("verified_at"),
-                    "raw_payload": state.get("raw_payload"),
-                },
-            )
+            reconciled_meta: dict[str, Any] = {
+                "source": (
+                    "reconciliation"
+                    if state["source"] == "reconciled"
+                    else "reconciled_unsigned"
+                ),
+                "mode": "reconciled",
+                "sequence": sequence,
+                "fence_epoch": state.get("fence_epoch", 0),
+                "strict_mode": _CBF_STRICT_MODE,
+                "reconciliation_age_ms": 0,
+                "state_scalar": float(state["state_scalar"]),
+                "outstanding_debits": float(state.get("outstanding_debits", 0.0)),
+                "verified_at": state.get("verified_at"),
+                "raw_payload": state.get("raw_payload"),
+            }
+            if "fence_epoch_hwm" in state:
+                reconciled_meta["fence_epoch_hwm"] = state["fence_epoch_hwm"]
+            return (float(state["current_cash"]), reconciled_meta)
         source = state.get("source")
         if source in (
             "epoch_regression",
@@ -1259,19 +1417,19 @@ return {1, status, tostring(restored), new_epoch}
             else self._initial_state_scalar()
         )
         fence_epoch = int(state.get("fence_epoch", 0))
+        self_meta: dict[str, Any] = {
+            "source": "self_reported",
+            # The script reads the live state key itself; ``balance`` is
+            # only the seed used while the key is unset.
+            "mode": "self_reported",
+            "fence_epoch": fence_epoch,
+            "strict_mode": False,
+            "reconciliation_age_ms": None,
+        }
+        if "fence_epoch_hwm" in state:
+            self_meta["fence_epoch_hwm"] = state["fence_epoch_hwm"]
 
-        return (
-            balance,
-            {
-                "source": "self_reported",
-                # The script reads the live state key itself; ``balance`` is
-                # only the seed used while the key is unset.
-                "mode": "self_reported",
-                "fence_epoch": fence_epoch,
-                "strict_mode": False,
-                "reconciliation_age_ms": None,
-            },
-        )
+        return (balance, self_meta)
 
     @staticmethod
     def _default_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
@@ -1735,6 +1893,7 @@ return {1, status, tostring(restored), new_epoch}
         last_contended_msg = ""
 
         for attempt in range(1, max_attempts + 1):
+            verified_before_read = self._last_verified_fence_epoch
             try:
                 (
                     ground_truth_balance,
@@ -1748,8 +1907,17 @@ return {1, status, tostring(restored), new_epoch}
             client = await _get_raw_redis(redis_client)
 
             current_fence_epoch = balance_metadata["fence_epoch"]
-            effective_verified_epoch = self._last_verified_fence_epoch
-            if client is not None and hasattr(client, "get"):
+            effective_verified_epoch = verified_before_read
+            if "fence_epoch_hwm" in balance_metadata:
+                hwm_at_read = balance_metadata["fence_epoch_hwm"]
+                if isinstance(hwm_at_read, int):
+                    effective_verified_epoch = max(
+                        effective_verified_epoch
+                        if effective_verified_epoch is not None
+                        else 0,
+                        hwm_at_read,
+                    )
+            elif client is not None and hasattr(client, "get"):
                 try:
                     raw_hwm_res = client.get(_REDIS_KEY_FENCE_EPOCH_HWM)
                     raw_hwm = (

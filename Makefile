@@ -109,10 +109,12 @@ verify-deploy: ## Verify GKE deployment matches latest build and all Secrets are
 # Linting and Security
 # ---------------------------------------------------------------------------
 
-## Run linters and lockfile validation
+## Run linters, type checks, and lockfile validation
 lint:
 	@echo "==> Running ruff linter..."
 	@uv run ruff check src/ scripts/ tests/
+	@echo "==> Running mypy type checker..."
+	@uv run mypy src/
 	@echo "==> Validating dependency lockfile..."
 	@uv lock --check
 	@echo "✅ Lint checks passed."
