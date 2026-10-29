@@ -364,14 +364,33 @@ gcloud services enable container.googleapis.com \
   --project=<YOUR_GCP_PROJECT_ID>
 ```
 
-### `ImagePullBackOff` on GKE
+### `ImagePullBackOff` on GKE & Image Digest Portability
 
-Images must be built via Cloud Build before Terraform apply. `deploy_all.sh` handles this automatically; for manual builds:
+Images must be built via Cloud Build before Terraform apply, and container digests must be rendered against the evaluator's project registry (committed profiles pin specific project digests):
 
 ```bash
 export PROJECT_ID=<YOUR_GCP_PROJECT_ID>
+export REGISTRY_URL=gcr.io/<YOUR_GCP_PROJECT_ID>
 bash scripts/build_images.sh
+bash scripts/render_image_digests.sh
 ```
+
+### Control Plane Connection Refused / Lockout (POAM-2026-126)
+
+Under POAM-2026-126, GKE control plane authorized networks enforces a strict CIDR allowlist without `0.0.0.0/0`. Deployers must specify their outbound public egress CIDR when applying:
+
+```bash
+./deploy_all.sh --target gcp-gke --env staging \
+  --var project_id=<YOUR_GCP_PROJECT_ID> \
+  --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
+```
+
+### `linkerd-network-validator` CrashLoopBackOff (Exit 95)
+
+If pods enter `Init:CrashLoopBackOff` with `Failed to validate networking configuration` (Linkerd CNI setup race on new or scaling nodes):
+- **Mitigation**: Delete the affected pods (`kubectl delete pod -l app=gateway -n governance-stack`) to trigger rescheduling after node CNI setup settles.
+- **Operational Status**: Root cause is an unestablished CNI setup race; pod restart is a known mitigation.
+
 
 ### Backend connection refused on port-forward
 

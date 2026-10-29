@@ -348,6 +348,34 @@ make advisor-rollback   # rolls back governed-financial-advisor
 make advisor-watch      # monitors recovery
 ```
 
+### Linkerd Network Validator CrashLoopBackOff (Mitigation vs. Root Cause)
+
+If pods (e.g., `gateway`, `compliance-bridge`, or `advisor`) enter `Init:CrashLoopBackOff` with `linkerd-network-validator` exiting with code 95 (`Failed to validate networking configuration`):
+- **Mitigation**: Delete the affected pods (`kubectl delete pod -l app=gateway -n governance-stack`) and/or cordon and cycle the node pool. This clears the loop by forcing a rescheduled pod to acquire a fresh network namespace after node CNI setup has settled.
+- **Root Cause & Operational Reality**: The root cause remains unestablished (inferred to be a race condition during node initialization where application pods schedule before `linkerd-cni` finishes chaining into `/etc/cni/net.d/10-gke-cni.conflist`). In staging, deleting pods and scaling node pools resolved the 31-hour crash loop. **This is a mitigation rather than a structural fix.** The cause is unknown and recurrence is possible upon node restarts, pool scaling, or cluster upgrades. If it happens again, clearing pods or cycling the node clears it; do not spend a day rediscovering that a restart resolves the condition.
+
+### Container `image_digests` Portability Constraint
+
+Committed deployment profiles (such as [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) pin container images by immutable digest (`@sha256:...`) pointing to a specific repository (`gcr.io/laah-cybernetics` or reference registries).
+- **Inherent Limitation**: Container digests name images that exist in a single GCP project registry. Committed profiles cannot be universally portable across outside GCP projects unless the deployer has read access to that registry.
+- **Evaluator Prerequisite**: Every evaluator deploying CAGE into their own GCP project must run `scripts/render_image_digests.sh` against their own project registry first to generate local digests:
+  ```bash
+  PROJECT_ID=<YOUR_GCP_PROJECT_ID> REGISTRY_URL=gcr.io/<YOUR_GCP_PROJECT_ID> bash scripts/render_image_digests.sh
+  ```
+  This is a required operational prerequisite before running `./deploy_all.sh`.
+
+### Authorized Networks Lockout (POAM-2026-126)
+
+Closing `0.0.0.0/0` in compliance with POAM-2026-126 (AC-3 / SC-7 control-plane access restriction) means the GKE master API endpoint denies all ingress CIDRs not explicitly allowlisted in `var.authorized_networks`.
+- **Symptom**: `terraform apply` or `kubectl` commands immediately time out or receive `connection refused / unauthorized` when communicating with the GKE control plane.
+- **Deploy Prerequisite**: The deployer's workstation or CI runner public egress CIDR must be explicitly passed into `deploy_all.sh`:
+  ```bash
+  ./deploy_all.sh --target gcp-gke --env staging \
+    --var project_id=<PROJECT_ID> \
+    --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
+  ```
+
+
 ---
 
 ## Assurance Status & Legal Boundaries
