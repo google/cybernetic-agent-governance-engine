@@ -36,6 +36,15 @@ _USE_MOCK_BROKER: bool = os.getenv("USE_MOCK_BROKER", "false").lower() in (
 )
 
 
+def _is_mock_broker() -> bool:
+    """Return True when mock broker mode is active via module flag or runtime env."""
+    return _USE_MOCK_BROKER or os.getenv("USE_MOCK_BROKER", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+
 async def _redis_get(key: str):  # type: ignore[no-untyped-def]
     """Compatibility wrapper: awaits redis_client.get() when it returns a coroutine,
     falls back to calling it synchronously (used by unit test mocks that return plain values)."""
@@ -89,7 +98,7 @@ async def execute_trade(order: TradeOrder, *, routing_seal: str) -> str:
     # --- MOCK BROKER FAST-PATH ---
     # Activated by USE_MOCK_BROKER=true (env).  Skips real Alpaca HTTP call.
     # Still runs the interrupt checks above so the test remains representative.
-    if _USE_MOCK_BROKER:
+    if _is_mock_broker():
         mock_order_id = f"MOCK-{order.transaction_id[:8].upper()}"
         logger.info(
             "🧪 Mock broker: EXECUTED %s x %s → %s",

@@ -667,17 +667,20 @@ class GroundTruthReconciler:
     ) -> tuple[ReconciliationResult, bool]:
         """Fetch from either a GroundTruthProvider or a legacy fetch_balance mock."""
         use_fetch_balance = False
-        if not isinstance(target_provider, GroundTruthProvider):
-            prov_dict = getattr(target_provider, "__dict__", {})
-            mock_children = getattr(target_provider, "_mock_children", {})
+        mock_children = getattr(target_provider, "_mock_children", None)
+        if isinstance(mock_children, dict):
             if (
-                "fetch_balance" in prov_dict
-                or "fetch_balance" in mock_children
-                or (
-                    hasattr(target_provider, "fetch_balance")
-                    and not hasattr(target_provider, "fetch_snapshot")
-                    and not hasattr(target_provider, "fetch_snapshot_sync")
-                )
+                "fetch_balance" in mock_children
+                and "fetch_snapshot" not in mock_children
+                and "fetch_snapshot_sync" not in mock_children
+            ):
+                use_fetch_balance = True
+        elif not isinstance(target_provider, GroundTruthProvider):
+            prov_dict = getattr(target_provider, "__dict__", {})
+            if "fetch_balance" in prov_dict or (
+                hasattr(target_provider, "fetch_balance")
+                and not hasattr(target_provider, "fetch_snapshot")
+                and not hasattr(target_provider, "fetch_snapshot_sync")
             ):
                 use_fetch_balance = True
 

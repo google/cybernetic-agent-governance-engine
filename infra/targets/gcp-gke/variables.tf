@@ -980,6 +980,11 @@ variable "cage_kms_provider" {
   description = "Cloud KMS provider backend for governance signing (from CAGE_KMS_PROVIDER): gcp, aws, or azure."
   type        = string
   default     = "gcp"
+
+  validation {
+    condition     = contains(["gcp", "aws", "azure"], var.cage_kms_provider)
+    error_message = "cage_kms_provider must be gcp, aws, or azure for gcp-gke deployments."
+  }
 }
 
 # K-4: otel_exporter_otlp_headers — Langfuse OTLP Basic-auth header.

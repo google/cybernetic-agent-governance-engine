@@ -279,11 +279,18 @@ def _build_synthetic_chain(
 async def live_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[SimpleNamespace]:
-    """Real ``EvidenceStreamSink`` + ``FakeRedis`` backing seals, CBF, and receipts."""
-    monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
+    """Real ``EvidenceStreamSink`` + ``FakeRedis`` backing strict asymmetric seals, CBF, and receipts."""
+    from src.gateway.governance import jwks as jwks_mod
+    from src.gateway.governance import kms_signer as ks
+
+    monkeypatch.delenv("CAGE_SEAL_STRICT_MODE", raising=False)
     monkeypatch.setenv("CAGE_ENV", "test")
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("CAGE_REQUIRE_EVIDENCE_BINDING", raising=False)
+    monkeypatch.setattr(
+        ks, "_signer", ks.KMSGovernanceSigner(provider=ks.SoftwareEd25519Provider())
+    )
+    monkeypatch.setattr(jwks_mod, "_global_jwks", None)
 
     server = fakeredis.FakeServer()
     stream_redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)

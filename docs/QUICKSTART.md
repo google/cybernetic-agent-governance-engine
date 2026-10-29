@@ -27,11 +27,13 @@ The template already sets the values the gateway needs. Check that `.env` contai
 # ship a complete DomainConfig today; see §8 for why `physical_ai` refuses to start.
 CAGE_DOMAIN=finance
 CAGE_DEPLOYMENT_REGION=US_FED
-# A development posture enables local software fallbacks (HMAC seal, optional Redis).
+# A development posture allows local software Ed25519 signing (no Cloud KMS needed)
+# while keeping strict asymmetric JWT routing-seal verification enabled.
 # The template sets `dev`; `development` is equivalent.
 # Note: CAGE_ENV=local / production / staging are enforcing postures that require
 # live Cloud KMS, Redis, and GroundTruthReconciler.
 CAGE_ENV=dev
+CAGE_KMS_PROVIDER=ed25519
 CAGE_TRUSTED_CLIENT_IDENTITIES=cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local
 ```
 
@@ -64,7 +66,7 @@ docker compose up -d
 This starts:
 - **Gateway** (`localhost:8080`) — Gateway: 8080 (REST Ingress / Stateless FastMCP Streamable HTTP / In-Process Tier Pipeline)
 - **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies (mounts only `src/cage_${CAGE_DOMAIN}/opa`)
-- **Redis** (internal Compose network `:6379`) — Barrier state, routing-seal nonces, execution idempotency, and `cage:evidence:stream` when `EVIDENCE_STREAM_ENABLED=true`
+- **Redis** (internal Compose network `:6379`) — Barrier state, routing-seal nonces, execution idempotency, and the `cage:evidence:stream` hash chain (`EVIDENCE_STREAM_ENABLED=true`, `EVIDENCE_CHAIN_BLOCKING=true`)
 - *(Optional)* **Governed Financial Advisor (`app`)** (`localhost:3000`) — Finance reference application container (`docker compose --profile advisor up -d`)
 
 ## 3. Verify the gateway is running
@@ -122,7 +124,7 @@ uv sync --all-groups --all-extras
 uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
 ```
 
-> **Run the hermetic suite without the §1 `.env`.** `tests/conftest.py` loads `.env` from the repository root. The template's runtime values (for example `EVIDENCE_CHAIN_BLOCKING=false` and placeholder provider API keys) then replace the hermetic defaults the tests expect, and dozens of tests fail. Move `.env` aside while the tests run (`mv .env .env.local-stack`) and restore it afterwards.
+> **Run the hermetic suite without the §1 `.env`.** `tests/conftest.py` loads `.env` from the repository root. The template's runtime values (for example `CAGE_ENV=dev`, `CAGE_KMS_PROVIDER=ed25519`, and placeholder provider API keys) then replace the hermetic defaults the tests expect, and tests asserting unset defaults fail. Move `.env` aside while the tests run (`mv .env .env.local-stack`) and restore it afterwards.
 
 > **Local Development Postures:** For details on developing with the offline hermetic test loop vs. the full containerized LangGraph SDK runtime with host Ollama, see [`docs/guides/LOCAL_DEVELOPMENT_POSTURES.md`](guides/LOCAL_DEVELOPMENT_POSTURES.md).
 

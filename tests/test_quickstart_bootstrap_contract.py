@@ -207,3 +207,104 @@ def test_quickstart_documents_the_default_health_response(
 
     monkeypatch.setattr(mod.app.state, "nemo_rails", None, raising=False)
     assert asyncio.run(mod.health_check()) == json.loads(match.group(1))
+
+
+def test_quickstart_env_and_compose_mint_verifiable_strict_seal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Out-of-the-box .env.example and docker-compose.yml mint evidence-bound EdDSA JWT seals accepted under strict defaults."""
+    import asyncio
+
+    import fakeredis
+    import fakeredis.aioredis
+
+    from src.gateway.governance import jwks as jwks_mod
+    from src.gateway.governance import kms_signer as ks
+    from src.gateway.governance import routing_seal as rs
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
+
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    gw_env = _extract_env_dict(compose["services"]["gateway"].get("environment", []))
+    assert gw_env.get("CAGE_KMS_PROVIDER") == "${CAGE_KMS_PROVIDER:-ed25519}"
+    assert gw_env.get("EVIDENCE_STREAM_ENABLED") == "${EVIDENCE_STREAM_ENABLED:-true}"
+    assert gw_env.get("EVIDENCE_CHAIN_BLOCKING") == "${EVIDENCE_CHAIN_BLOCKING:-true}"
+    assert "CAGE_SEAL_STRICT_MODE" not in gw_env
+    assert "CAGE_REQUIRE_EVIDENCE_BINDING" not in gw_env
+    assert "redis" in compose["services"], (
+        "docker-compose.yml must define an internal redis service for barrier state and evidence streaming"
+    )
+
+    for rel in (".env.example", "config/environments/local-dev.env.example"):
+        lines = [
+            line.strip()
+            for line in (_REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        env_map = _extract_env_dict(lines)
+        assert env_map.get("CAGE_KMS_PROVIDER") == "ed25519", (
+            f"{rel} must default CAGE_KMS_PROVIDER=ed25519 so local dev mints "
+            "EdDSA JWT seals compatible with CAGE_SEAL_STRICT_MODE=true"
+        )
+        assert env_map.get("CAGE_SEAL_STRICT_MODE", "true").lower() == "true"
+        assert env_map.get("CAGE_REQUIRE_EVIDENCE_BINDING", "true").lower() == "true"
+
+    dot_env_lines = [
+        line.strip()
+        for line in (_REPO_ROOT / ".env.example")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    dot_env = _extract_env_dict(dot_env_lines)
+    assert dot_env.get("EVIDENCE_STREAM_ENABLED") == "true"
+    assert dot_env.get("EVIDENCE_CHAIN_BLOCKING") == "true"
+
+    # End-to-end seal round-trip under .env.example dev posture + strict JWT + evidence binding
+    monkeypatch.setenv("CAGE_ENV", "dev")
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("CAGE_KMS_PROVIDER", "ed25519")
+    monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+    monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "true")
+    monkeypatch.delenv("KMS_PROVIDER", raising=False)
+    monkeypatch.delenv("CAGE_SEAL_STRICT_MODE", raising=False)
+    monkeypatch.delenv("CAGE_REQUIRE_EVIDENCE_BINDING", raising=False)
+
+    signer = ks.KMSGovernanceSigner.from_env()
+    assert signer.is_kms_active is True
+    assert signer.jose_alg == "EdDSA"
+    monkeypatch.setattr(ks, "_signer", signer)
+    monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+
+    server = fakeredis.FakeServer()
+    stream_redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    raw_bytes_redis = fakeredis.aioredis.FakeRedis(
+        server=server, decode_responses=False
+    )
+    sink = EvidenceStreamSink(
+        redis_url="redis://localhost:6379", stream_key="cage:evidence:quickstart"
+    )
+    sink._redis = stream_redis
+
+    async def _resolve_bytes(_client: object) -> object:
+        return raw_bytes_redis
+
+    monkeypatch.setattr(rs.es, "is_evidence_chain_blocking", lambda: True)
+    monkeypatch.setattr(rs.es, "get_evidence_sink", lambda: sink)
+    monkeypatch.setattr(rs, "_resolve_redis", _resolve_bytes)
+
+    async def _round_trip() -> bool:
+        try:
+            params = {"symbol": "AAPL", "amount": 250.0}
+            seal = await rs.generate_seal_with_evidence(
+                "execute_trade", params, redis_client=raw_bytes_redis
+            )
+            assert len(seal.split(".")) == 3, f"Expected 3-part JWT seal, got {seal!r}"
+            return await rs.verify_and_consume_seal(
+                seal, "execute_trade", params, redis_client=raw_bytes_redis
+            )
+        finally:
+            await sink.stop()
+
+    assert asyncio.run(_round_trip()) is True
