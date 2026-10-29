@@ -160,8 +160,17 @@ async def ingest_actuation_receipt(
 
     try:
         sink = get_evidence_sink()
-        return await sink.ingest(event)
+        has_redis = getattr(sink, "_redis", None) is not None
+        msg_id = await sink.ingest(event)
+        if has_redis and msg_id is None:
+            from src.gateway.governance.governor.metrics import governor_metrics
+
+            governor_metrics().evidence_publish_failure("actuation")
+        return msg_id
     except Exception as exc:
+        from src.gateway.governance.governor.metrics import governor_metrics
+
+        governor_metrics().evidence_publish_failure("actuation")
         logger.error(
             "[ExecutionActuator] Failed to ingest %s for action=%s thread_id=%s: %s",
             event_type,

@@ -64,6 +64,7 @@ docker compose up -d
 This starts:
 - **Gateway** (`localhost:8080`) — Gateway: 8080 (REST Ingress / Stateless FastMCP Streamable HTTP / In-Process Tier Pipeline)
 - **OPA** (`localhost:8181`) — Policy engine with Rego authorization policies (mounts only `src/cage_${CAGE_DOMAIN}/opa`)
+- **Redis** (internal Compose network `:6379`) — Barrier state, routing-seal nonces, execution idempotency, and `cage:evidence:stream` when `EVIDENCE_STREAM_ENABLED=true`
 - *(Optional)* **Governed Financial Advisor (`app`)** (`localhost:3000`) — Finance reference application container (`docker compose --profile advisor up -d`)
 
 ## 3. Verify the gateway is running

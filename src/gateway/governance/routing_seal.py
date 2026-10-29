@@ -482,6 +482,7 @@ async def generate_seal_with_evidence(
     aud: str | None = None,
     redis_client: Any = None,
     reliance: Sequence[Mapping[str, Any]] = (),
+    decision_context: Mapping[str, Any] | None = None,
 ) -> str:
     """Generate a routing seal with evidence chain blocking gate (R-06 mitigation).
 
@@ -527,6 +528,10 @@ async def generate_seal_with_evidence(
             it the seal -- commits to exactly which warrants grounded the
             decision. Omitted from the record when empty, so a decision that
             relied on no warranted norm commits the same record as before.
+        decision_context: Optional formal-model projection fields (``plan``,
+            ``outcomes``, ``verdict``, ``phase``, ``clamped_plan``,
+            ``clamped_outcomes``, etc.) committed into ``GOVERNANCE_DECISION``
+            (``schema_version: 2``) so ``record_hash`` binds stage coverage.
 
     Returns:
         A dot-separated v2 seal string:
@@ -537,6 +542,8 @@ async def generate_seal_with_evidence(
             commit fails or times out. Caller MUST NOT proceed with execution when
             this exception is raised — the seal is not issued.
     """
+    from src.gateway.governance.schemas.thresholds import thresholds_digest
+
     with tracer.start_as_current_span(
         "cage.routing_seal.generate_with_evidence"
     ) as span:
@@ -553,12 +560,18 @@ async def generate_seal_with_evidence(
         reliance_evidence = _strict_json(
             [dict(record) for record in reliance], "reliance"
         )
+        decision_evidence: dict[str, Any] = {}
+        if decision_context is not None:
+            decision_evidence = _strict_json(dict(decision_context), "decision_context")
 
         evidence_event: dict[str, Any] = {
+            **decision_evidence,
             "type": "GOVERNANCE_DECISION",
+            "schema_version": 2 if decision_context is not None else 1,
             "controlId": _SCOPE_CONTROL.value,
             "action": action,
             "params_hash": hashlib.sha256(action_bytes).hexdigest(),
+            "thresholds_digest": thresholds_digest(),
             "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
             "seal_ttl_s": ttl_s,
         }
@@ -1314,6 +1327,44 @@ async def verify_and_consume_seal(
         _verify_elapsed_us,
         _burn_elapsed_us,
     )
+    raw_bound_hash = expected_record_hash or extract_record_hash(seal) or ""
+    decision_record_hash = "" if _is_unbound(raw_bound_hash) else str(raw_bound_hash)
+    consumed_event: dict[str, Any] = {
+        "type": "GOVERNANCE_SEAL_CONSUMED",
+        "schema_version": 1,
+        "controlId": _SCOPE_CONTROL.value,
+        "action": action,
+        "params_hash": hashlib.sha256(
+            canonical_action_bytes(action, params)
+        ).hexdigest(),
+        "phase": "EXECUTED",
+        "seal_present": True,
+        "seal_ref": seal_digest(seal),
+        "decision_record_hash": decision_record_hash,
+        "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    sink = es.get_evidence_sink()
+    has_redis = getattr(sink, "_redis", None) is not None
+    if has_redis or getattr(sink, "is_running", False):
+        try:
+            msg_id = await sink.ingest(consumed_event)
+            if has_redis and msg_id is None:
+                raise EvidenceChainUnavailableError(
+                    "evidence sink failed to append GOVERNANCE_SEAL_CONSUMED"
+                )
+        except Exception as exc:
+            from src.gateway.governance.governor.metrics import governor_metrics
+
+            governor_metrics().evidence_publish_failure("seal_consumed")
+            if es.is_evidence_chain_blocking():
+                raise SymbolicGovernorViolation(
+                    f"seal consumption evidence commit failed: {exc}", action
+                ) from exc
+            logger.warning(
+                "⚠️ Failed to record GOVERNANCE_SEAL_CONSUMED (non-blocking): %s",
+                exc,
+            )
+
     # This caller owns the seal: the model's SEAL_ISSUED -> EXECUTED step.
     # Best effort; the trace never changes the authorisation decided above.
     from src.gateway.governance.governor.trace import (

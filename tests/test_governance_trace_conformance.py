@@ -217,6 +217,7 @@ class _Recorder:
         *,
         path: str,
         reliance: Any = (),
+        decision_context: Any = None,
     ) -> str:
         seal = f"seal-{len(self.seals)}"
         self.seals.append(seal)

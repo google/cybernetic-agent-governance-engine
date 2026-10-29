@@ -510,10 +510,17 @@ async def test_s10_committing_run_seals_the_narrowed_params(
     receipt = await receipt_store.get(narrow_receipt_key(sealed))
     assert receipt is not None, "a sealed NARROW must leave its single-use receipt"
     assert '"amount": 1000.0' in receipt
+    from unittest.mock import ANY
+
     seal.assert_awaited_once_with(
         ACTION,
         {"amount": 1000.0, "agent_id": "agent-1"},
         path="govern_narrow",
         reliance=(),
+        decision_context=ANY,
     )
+    ctx_arg = seal.await_args.kwargs["decision_context"]
+    assert ctx_arg["verdict"] == "NARROW"
+    assert ctx_arg["phase"] == "NARROW"
+    assert ctx_arg["clamped_governed"] is True
     assert log[-1] == "commit:fiscal:1000"

@@ -37,7 +37,11 @@ except ImportError:  # pragma: no cover - exercised only without prometheus_clie
 class GovernorMetrics:
     """Governor collectors bound to one registry. Build via :func:`governor_metrics`."""
 
-    __slots__ = ("_evidence_publish_failures", "_ftra_boundary_checks")
+    __slots__ = (
+        "_evidence_publish_failures",
+        "_ftra_boundary_checks",
+        "_refusals",
+    )
 
     def __init__(self, registry: CollectorRegistry | None) -> None:
         self._ftra_boundary_checks = (
@@ -60,11 +64,26 @@ class GovernorMetrics:
                 registry=registry,
             )
         )
+        self._refusals = (
+            None
+            if Counter is None or registry is None
+            else Counter(
+                "cage_governance_refusals_total",
+                "Total hard governance refusals decided by the gateway",
+                ["tier"],
+                registry=registry,
+            )
+        )
 
     def evidence_publish_failure(self, kind: str) -> None:
-        """Count one best-effort evidence write that failed (``refusal``, ``deferral``)."""
+        """Count one best-effort evidence write that failed (``refusal``, ``deferral``, etc.)."""
         if self._evidence_publish_failures is not None:
             self._evidence_publish_failures.labels(kind=kind).inc()
+
+    def refusal_decided(self, tier: str) -> None:
+        """Count one hard governance refusal under its lead tier."""
+        if self._refusals is not None:
+            self._refusals.labels(tier=tier or "SYMBOLIC_GOVERNOR").inc()
 
     def ftra_boundary_check(self, result: str) -> None:
         """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""

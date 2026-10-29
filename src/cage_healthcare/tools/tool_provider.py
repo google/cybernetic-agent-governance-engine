@@ -24,23 +24,31 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from src.cage_healthcare.tools.dose_order import DoseOrder
+from src.gateway.governance import execution_actuator as _act
+from src.gateway.governance import routing_seal as _rs
 from src.gateway.governance.contracts import DomainToolProvider
-from src.gateway.governance.execution_actuator import (
-    dispatch_actuation,
-    get_actuator_registry,
-)
-from src.gateway.governance.routing_seal import (
-    SymbolicGovernorViolation,
-    seal_digest,
-    verify_and_consume_seal,
-)
+from src.gateway.governance.execution_actuator import get_actuator_registry
+from src.gateway.governance.routing_seal import verify_and_consume_seal
 from src.gateway.governance.seams import actuation as _seam
-from src.gateway.server.governance_middleware import ActionDeferred, enforce_governance
+from src.gateway.server import governance_middleware as _gm
+from src.gateway.server.governance_middleware import enforce_governance
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from src.gateway.governance.governor.governor import SymbolicGovernor
+
+
+def _blocked(reason: str, ph: object = "") -> dict[str, object]:
+    out: dict[str, object] = {"status": "BLOCKED", "reason": reason}
+    return {**out, "proof_hash": str(ph)} if ph else out
+
+
+async def _refuse(reason: str, params: dict[str, Any]) -> dict[str, object]:
+    ph = await _gm.record_refusal(
+        "administer_dose", reason, oscal_control_ref="AC-3", params=params
+    )
+    return _blocked(reason, ph)
 
 
 class ClinicalDoseActuator:
@@ -57,19 +65,17 @@ class ClinicalDoseActuator:
     async def actuate(
         self, clearance: _seam.ExecutionClearance
     ) -> _seam.ActuationReceipt:
-        ts = datetime.now(tz=timezone.utc).isoformat()
-        valid = (
-            clearance.executor_id == self.actuator_id
-            and clearance.decision == "ALLOW"
-            # The digest is validated by the contract; the seal is what binds.
-            and bool(clearance.routing_seal)
-        )
-        if not valid:
+        ts, c = datetime.now(tz=timezone.utc).isoformat(), clearance
+        # The digest is validated by the contract; the seal is what binds.
+        if (
+            c.executor_id != self.actuator_id
+            or c.decision != "ALLOW"
+            or not c.routing_seal
+        ):
             bad = [{"code": "CLEARANCE_INVALID"}]
             return _seam.ActuationReceipt(False, None, None, None, bad, False, ts)
-        raw = DoseOrder(**clearance.params).model_dump()  # type: ignore[arg-type]
-        ok = (True, clearance.nonce, clearance.thread_id, raw, [], False, ts)
-        return _seam.ActuationReceipt(*ok)
+        raw = DoseOrder(**c.params).model_dump()  # type: ignore[arg-type]
+        return _seam.ActuationReceipt(True, c.nonce, c.thread_id, raw, [], False, ts)
 
 
 if get_actuator_registry().get_actuator("administer_dose") is None:
@@ -91,34 +97,33 @@ async def administer_dose_action(
     params: dict[str, Any] = {**order.model_dump(), "confidence": confidence}
     try:
         seal = await enforce_governance(governor, "administer_dose", params)
-    except ActionDeferred as exc:
+    except _gm.ActionDeferred as exc:
         msg = str(exc)
         return {"status": "DEFERRED", "deferred_id": exc.deferred_id, "reason": msg}
     except PermissionError as exc:
-        return {"status": "BLOCKED", "reason": str(exc)}
+        return _blocked(str(exc), getattr(exc, "proof_hash", ""))
     if not seal or not isinstance(seal, str) or not seal.strip():
-        raise SymbolicGovernorViolation("No seal", action="administer_dose")
+        raise _rs.SymbolicGovernorViolation("No seal", action="administer_dose")
     executed = False
     try:
         try:
             await verify_and_consume_seal(seal, "administer_dose", params)
-        except SymbolicGovernorViolation as exc:
-            return {"status": "BLOCKED", "reason": exc.reason}
+        except _rs.SymbolicGovernorViolation as exc:
+            return await _refuse(exc.reason, params)
         actuator = get_actuator_registry().get_actuator("administer_dose")
         if actuator is None:
-            raise SymbolicGovernorViolation("No actuator", action="administer_dose")
-        tid = str(uuid.uuid4())
+            raise _rs.SymbolicGovernorViolation("No actuator", action="administer_dose")
+        tid, nonce = str(uuid.uuid4()), uuid.uuid4().hex[:32]
         digest = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
         c1 = (tid, "ALLOW", "DIRECT", "administer_dose", order.patient_id)
         c2 = ("clinician_001", int(time.time()), "CONSTRUCTION_TIME", tid)
-        nonce = uuid.uuid4().hex[:32]
-        c3 = ("THREAD_DERIVED", seal_digest(seal), digest, nonce, params)
+        c3 = ("THREAD_DERIVED", _rs.seal_digest(seal), digest, nonce, params)
         c4 = ("cage_healthcare_clinical", "local://default", "HIGH_CLINICAL")
         clearance = _seam.ExecutionClearance(*c1, *c2, *c3, *c4, routing_seal=seal)  # type: ignore[arg-type]
-        receipt = await dispatch_actuation(actuator, clearance)
+        receipt = await _act.dispatch_actuation(actuator, clearance)
         executed = receipt.may_have_executed
         if not receipt.accepted:
-            return {"status": "BLOCKED", "reason": "Actuation rejected"}
+            return await _refuse("Actuation rejected", params)
         rid = receipt.receipt_id
         return {"status": "GOVERNED", **order.model_dump(), "receipt_id": rid}
     finally:

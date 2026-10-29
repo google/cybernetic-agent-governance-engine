@@ -32,6 +32,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
+from datetime import datetime, timezone
 from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
@@ -371,7 +372,7 @@ if debit_id ~= "" and cost > 0 then
     redis.call('ZADD', KEYS[6], ARGV[9], debit_id)
     redis.call('INCRBYFLOAT', KEYS[7], ARGV[1])
 end
-return {1, "COMMITTED", tostring(next_state), new_epoch}
+return {1, "COMMITTED", tostring(next_state), new_epoch, tostring(current)}
 """
 
     LUA_ROLLBACK_CBF: str = """
@@ -391,7 +392,7 @@ return {1, "COMMITTED", tostring(next_state), new_epoch}
 -- ARGV[2]: governance_signature (string, may be empty)
 -- ARGV[3]: debit_id (string; empty → legacy restore by ARGV[1])
 -- ARGV[4]: timestamp (float string)
--- Returns: array {status_code, message, new_state_str, new_epoch}
+-- Returns: array {status_code, message, new_state_str, new_epoch, prev_state_str, restore_str}
 --   message: ROLLED_BACK | ROLLED_BACK_UNLEDGERED | NOOP
 local restore = tonumber(ARGV[1]) or 0.0
 local sig = ARGV[2] or ""
@@ -403,8 +404,9 @@ if debit_id ~= "" then
     if redis.call('HEXISTS', KEYS[8], debit_id) == 1 then
         -- Second rollback of the same debit: nothing to undo, nothing changes.
         local cur_raw = redis.call('GET', KEYS[1])
+        local cur_num = cur_raw and tonumber(cur_raw) or 0.0
         local epoch_raw = redis.call('GET', KEYS[3])
-        return {1, "NOOP", tostring(cur_raw and tonumber(cur_raw) or 0.0), epoch_raw and tonumber(epoch_raw) or 0}
+        return {1, "NOOP", tostring(cur_num), epoch_raw and tonumber(epoch_raw) or 0, tostring(cur_num), "0.0"}
     end
     local entry = redis.call('HGET', KEYS[4], debit_id)
     if entry then
@@ -452,7 +454,7 @@ if sig ~= "" then
     redis.call('RPUSH', KEYS[2], ledger_entry)
 end
 
-return {1, status, tostring(restored), new_epoch}
+return {1, status, tostring(restored), new_epoch, tostring(current), tostring(restore)}
 """
 
     def __init__(
@@ -1665,6 +1667,93 @@ return {1, status, tostring(restored), new_epoch}
             f"CBF _update_state_unsafe failed after {self._MAX_RETRIES} retries due to concurrent writes."
         )
 
+    @staticmethod
+    def _decode_lua_str(raw: Any) -> str:
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+    async def _emit_cbf_commit(
+        self,
+        *,
+        action_name: str,
+        debit_id: str,
+        mode: str,
+        state_before: float,
+        cost: float,
+        state_after: float,
+        threshold: float,
+        fence_epoch: int,
+    ) -> None:
+        from src.gateway.governance.evidence.stream import get_evidence_sink
+        from src.gateway.governance.governor.metrics import governor_metrics
+
+        try:
+            sink = get_evidence_sink()
+            has_redis = getattr(sink, "_redis", None) is not None
+            if not has_redis and not getattr(sink, "is_running", False):
+                return
+            event: dict[str, Any] = {
+                "type": "CBF_COMMIT",
+                "schema_version": 1,
+                "controlId": GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                "invariant_id": self._invariant.invariant_id,
+                "action": action_name,
+                "debit_id": debit_id,
+                "mode": mode,
+                "state_before": float(state_before),
+                "cost": float(cost),
+                "state_after": float(state_after),
+                "threshold": float(threshold),
+                "gamma": float(self.gamma),
+                "h_t": float(state_before) - float(threshold),
+                "h_next": float(state_after) - float(threshold),
+                "fence_epoch": int(fence_epoch),
+                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+            }
+            msg_id = await sink.ingest(event)
+            if has_redis and msg_id is None:
+                governor_metrics().evidence_publish_failure("cbf_commit")
+        except Exception as exc:
+            logger.error("Failed to publish CBF_COMMIT record: %s", exc)
+            governor_metrics().evidence_publish_failure("cbf_commit")
+
+    async def _emit_cbf_rollback(
+        self,
+        *,
+        debit_id: str,
+        status: str,
+        state_before: float,
+        restore: float,
+        state_after: float,
+        fence_epoch: int,
+    ) -> None:
+        from src.gateway.governance.evidence.stream import get_evidence_sink
+        from src.gateway.governance.governor.metrics import governor_metrics
+
+        try:
+            sink = get_evidence_sink()
+            has_redis = getattr(sink, "_redis", None) is not None
+            if not has_redis and not getattr(sink, "is_running", False):
+                return
+            event: dict[str, Any] = {
+                "type": "CBF_ROLLBACK",
+                "schema_version": 1,
+                "controlId": GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                "invariant_id": self._invariant.invariant_id,
+                "debit_id": debit_id,
+                "status": status,
+                "state_before": float(state_before),
+                "restore": float(restore),
+                "state_after": float(state_after),
+                "fence_epoch": int(fence_epoch),
+                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+            }
+            msg_id = await sink.ingest(event)
+            if has_redis and msg_id is None:
+                governor_metrics().evidence_publish_failure("cbf_rollback")
+        except Exception as exc:
+            logger.error("Failed to publish CBF_ROLLBACK record: %s", exc)
+            governor_metrics().evidence_publish_failure("cbf_rollback")
+
     async def rollback_state(
         self,
         magnitude: float,
@@ -1722,11 +1811,29 @@ return {1, status, tostring(restored), new_epoch}
                     and not _is_mock(res_list)
                     and len(res_list) > 3
                 ):
+                    rb_status = self._decode_lua_str(res_list[1])
+                    restored_val = float(self._decode_lua_str(res_list[2]))
                     new_epoch = int(res_list[3])
+                    if len(res_list) > 5:
+                        current_val = float(self._decode_lua_str(res_list[4]))
+                        restore_val = float(self._decode_lua_str(res_list[5]))
+                    else:
+                        restore_val = (
+                            float(magnitude) if rb_status == "ROLLED_BACK" else 0.0
+                        )
+                        current_val = restored_val - restore_val
                     if new_epoch > 0:
                         self._last_seen_epoch = new_epoch
                         if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                             _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
+                    await self._emit_cbf_rollback(
+                        debit_id=debit_id or "",
+                        status=rb_status,
+                        state_before=current_val,
+                        restore=restore_val,
+                        state_after=restored_val,
+                        fence_epoch=new_epoch,
+                    )
                     await self._sync_to_replicas(client=target_client)
                     return
             except Exception as lua_exc:
@@ -1759,6 +1866,7 @@ return {1, status, tostring(restored), new_epoch}
                         float(raw) if raw is not None else self._initial_state_scalar()
                     )
                     restore = float(magnitude)
+                    rb_status = "ROLLED_BACK"
                     if ledgered:
                         # Same rules as LUA_ROLLBACK_CBF: a tombstoned id is a
                         # no-op; only a ledgered amount is restored.
@@ -1766,8 +1874,18 @@ return {1, status, tostring(restored), new_epoch}
                             self._debit_ledger.DEBITS_ROLLED_BACK_KEY, debit_id
                         ):
                             await pipe.reset()
+                            await self._emit_cbf_rollback(
+                                debit_id=debit_id or "",
+                                status="NOOP",
+                                state_before=current,
+                                restore=0.0,
+                                state_after=current,
+                                fence_epoch=self._last_seen_epoch or 0,
+                            )
                             return
                         entry = await pipe.hget(self._debit_ledger.DEBITS_KEY, debit_id)
+                        if not entry:
+                            rb_status = "ROLLED_BACK_UNLEDGERED"
                         restore = _ledgered_amount(entry)
                     restored = current + restore
                     pipe.multi()
@@ -1803,6 +1921,17 @@ return {1, status, tostring(restored), new_epoch}
                     if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                         _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
 
+                    await self._emit_cbf_rollback(
+                        debit_id=debit_id or "",
+                        status=rb_status,
+                        state_before=current,
+                        restore=restore,
+                        state_after=restored,
+                        fence_epoch=int(new_epoch)
+                        if isinstance(new_epoch, (int, float))
+                        and not _is_mock(new_epoch)
+                        else 0,
+                    )
                     await self._sync_to_replicas(client=target_client)
                     return
             except Exception as exc:
@@ -2062,6 +2191,29 @@ return {1, status, tostring(restored), new_epoch}
                     else:
                         if _COMMIT_ATTEMPTS_HISTOGRAM is not None:
                             _COMMIT_ATTEMPTS_HISTOGRAM.observe(attempt)
+
+                        if committed:
+                            next_state_val = float(self._decode_lua_str(result_list[2]))
+                            new_epoch_val = (
+                                int(result_list[3])
+                                if len(result_list) > 3 and result_list[3] is not None
+                                else 0
+                            )
+                            current_val = (
+                                float(self._decode_lua_str(result_list[4]))
+                                if len(result_list) > 4
+                                else next_state_val + float(cost)
+                            )
+                            await self._emit_cbf_commit(
+                                action_name=action_name,
+                                debit_id=debit_id,
+                                mode=mode,
+                                state_before=current_val,
+                                cost=float(cost),
+                                state_after=next_state_val,
+                                threshold=float(resolved_threshold),
+                                fence_epoch=new_epoch_val,
+                            )
 
                         if committed and _WAIT_REPLICAS > 0:
                             wait_result = await self._sync_to_replicas(

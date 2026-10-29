@@ -275,6 +275,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app.state.governor = governor
         governance_app.state.governor = governor
 
+        # ── Record effective threshold baseline on the evidence stream (CM-6) ───
+        from src.gateway.governance.schemas.thresholds import publish_thresholds_loaded
+
+        await publish_thresholds_loaded(evidence_sink)
+
         # ── State-commitment service (POST /governance/state-commitments) ──────
         # Retains sanitized state preimages through the evidence sink above; the
         # gateway itself holds no cold store. Refused here under an enforcing

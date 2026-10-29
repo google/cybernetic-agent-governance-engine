@@ -27,6 +27,7 @@ respectively.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import logging
@@ -36,6 +37,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import AsyncExitStack
+from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from typing import Any, NoReturn
 
@@ -52,7 +54,9 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import GovernanceDeferred
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
+from src.gateway.governance.governor.metrics import governor_metrics
 from src.gateway.governance.iso_control import stamp_iso_control
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.text_filter import ac_keyword_scan
@@ -105,6 +109,37 @@ def _is_dev_environment() -> bool:
 # ---------------------------------------------------------------------------
 
 
+_last_refusal_proof_hash: ContextVar[str | None] = ContextVar(
+    "cage_last_refusal_proof_hash", default=None
+)
+
+
+def set_last_refusal_proof_hash(proof_hash: str | None) -> Token[str | None]:
+    """Bind ``proof_hash`` for the current execution task."""
+    return _last_refusal_proof_hash.set(proof_hash)
+
+
+def get_last_refusal_proof_hash() -> str | None:
+    """Return the most recent refusal ``proof_hash`` bound in this task."""
+    return _last_refusal_proof_hash.get()
+
+
+def reset_last_refusal_proof_hash(token: Token[str | None]) -> None:
+    """Restore ``_last_refusal_proof_hash`` to its prior value."""
+    _last_refusal_proof_hash.reset(token)
+
+
+class GovernanceBlockedError(PermissionError):
+    """A :class:`PermissionError` carrying the refusal's ``proof_hash``."""
+
+    def __init__(
+        self, message: str, *, proof_hash: str = "", violated_tier: str = ""
+    ) -> None:
+        super().__init__(message)
+        self.proof_hash: str = proof_hash
+        self.violated_tier: str = violated_tier
+
+
 class ActionDeferred(PermissionError):
     """The committing run deferred: nothing was sealed, committed or refused.
 
@@ -153,14 +188,30 @@ async def enforce_governance(
         raise ActionDeferred(exc, approval_retained=False) from exc
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
-        await _emit_refusal_receipt(
+        emitted = await _emit_refusal_receipt(
             action_id=tool_name,
             refusal_reason=str(exc),
             oscal_control_ref="SC-4",
             params=params,
             receipt=exc.receipt,
         )
-        raise PermissionError(f"Governance Blocked: {exc}")
+        receipt_hash = (
+            str(getattr(exc.receipt, "proof_hash", "") or "")
+            if exc.receipt is not None
+            else ""
+        )
+        resolved_hash = (
+            emitted if isinstance(emitted, str) and emitted else receipt_hash
+        )
+        if resolved_hash:
+            set_last_refusal_proof_hash(resolved_hash)
+        raise GovernanceBlockedError(
+            f"Governance Blocked: {exc}",
+            proof_hash=resolved_hash,
+            violated_tier=str(getattr(exc.receipt, "violated_tier", "") or "")
+            if exc.receipt is not None
+            else "",
+        ) from exc
 
 
 async def enforce_approved_governance(
@@ -212,13 +263,21 @@ async def enforce_approved_governance(
 
     async def _refuse_unredeemable() -> NoReturn:
         reason = f"no unconsumed approval {deferred_id!r} covers this {tool_name}"
-        await _emit_refusal_receipt(
+        emitted = await _emit_refusal_receipt(
             action_id=tool_name,
             refusal_reason=reason,
             oscal_control_ref="AC-3",
             params=params,
+            receipt_expected=False,
         )
-        raise PermissionError(f"Governance Blocked: {reason}")
+        resolved_hash = emitted if isinstance(emitted, str) else ""
+        if resolved_hash:
+            set_last_refusal_proof_hash(resolved_hash)
+        raise GovernanceBlockedError(
+            f"Governance Blocked: {reason}",
+            proof_hash=resolved_hash,
+            violated_tier="MIDDLEWARE",
+        )
 
     try:
         async with AsyncExitStack() as stack:
@@ -262,14 +321,30 @@ async def enforce_approved_governance(
         raise ActionDeferred(exc, approval_retained=True) from exc
     except GovernanceError as exc:
         logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
-        await _emit_refusal_receipt(
+        emitted = await _emit_refusal_receipt(
             action_id=tool_name,
             refusal_reason=str(exc),
             oscal_control_ref="SC-4",
             params=params,
             receipt=exc.receipt,
         )
-        raise PermissionError(f"Governance Blocked: {exc}") from exc
+        receipt_hash = (
+            str(getattr(exc.receipt, "proof_hash", "") or "")
+            if exc.receipt is not None
+            else ""
+        )
+        resolved_hash = (
+            emitted if isinstance(emitted, str) and emitted else receipt_hash
+        )
+        if resolved_hash:
+            set_last_refusal_proof_hash(resolved_hash)
+        raise GovernanceBlockedError(
+            f"Governance Blocked: {exc}",
+            proof_hash=resolved_hash,
+            violated_tier=str(getattr(exc.receipt, "violated_tier", "") or "")
+            if exc.receipt is not None
+            else "",
+        ) from exc
 
 
 async def tier1_keyword_check(text: str, span: Any = None) -> str | None:
@@ -446,14 +521,14 @@ async def record_refusal(
     *,
     oscal_control_ref: str,
     params: dict[str, Any],
-) -> None:
+) -> str:
     """Record a refusal decided outside the governor in the evidence stream.
 
     Such a refusal has no tier ``RefusalReceipt`` (for example, a resubmitted
     idempotency key the execution ledger turned away), so its summary receipt
     is signed and ingested like every other refusal in this module.
     """
-    await _emit_refusal_receipt(
+    return await _emit_refusal_receipt(
         action_id=action_id,
         refusal_reason=refusal_reason,
         oscal_control_ref=oscal_control_ref,
@@ -470,7 +545,7 @@ async def _emit_refusal_receipt(
     receipt: Any = None,
     *,
     receipt_expected: bool = True,
-) -> None:
+) -> str:
     """Emit a signed OSCAL compliance receipt for a hard governance refusal.
 
     Called from every ``GovernanceError`` handler in this module.  The receipt
@@ -509,6 +584,11 @@ async def _emit_refusal_receipt(
         receipt_payload["oscal_control_ref"] = oscal_control_ref
         receipt_payload["kms_signature"] = ""
         # proof_hash is already in the serialized payload from the receipt
+        proof_hash = str(
+            receipt_payload.get("proof_hash")
+            or getattr(receipt, "proof_hash", "")
+            or ""
+        )
     else:
         # Degraded path: emit summary form when receipt is None
         # Log a warning to make this visible — silently emitting thin receipts
@@ -520,6 +600,17 @@ async def _emit_refusal_receipt(
                 "This indicates GovernanceError was raised without a receipt.",
                 action_id,
             )
+        computed_hash = hashlib.sha256(
+            jcs_canonicalize_plan(
+                {
+                    "action_id": action_id,
+                    "oscal_control_ref": oscal_control_ref,
+                    "receipt_id": receipt_id,
+                    "refusal_reason": refusal_reason,
+                    "timestamp_utc": timestamp_utc,
+                }
+            )
+        ).hexdigest()
         receipt_payload = {
             "type": "GOVERNANCE_REFUSAL_RECEIPT",
             "receipt_id": receipt_id,
@@ -529,6 +620,15 @@ async def _emit_refusal_receipt(
             "oscal_control_ref": oscal_control_ref,
             "kms_signature": "",
         }
+        if receipt_expected:
+            receipt_payload["receipt_digest"] = computed_hash
+        else:
+            receipt_payload["proof_hash"] = computed_hash
+        proof_hash = computed_hash
+        governor_metrics().refusal_decided("MIDDLEWARE")
+
+    if proof_hash:
+        set_last_refusal_proof_hash(proof_hash)
 
     # Sign the receipt via KMS
     try:
@@ -548,7 +648,10 @@ async def _emit_refusal_receipt(
     # Publish to evidence stream
     try:
         sink = get_evidence_sink()
-        await sink.ingest(receipt_payload)
+        has_redis = getattr(sink, "_redis", None) is not None
+        msg_id = await sink.ingest(receipt_payload)
+        if has_redis and msg_id is None:
+            governor_metrics().evidence_publish_failure("refusal_receipt")
         # MED-7 fix: a successfully emitted refusal receipt is not an error —
         # logging it at ERROR level polluted error dashboards with normal events.
         logger.info(
@@ -561,6 +664,7 @@ async def _emit_refusal_receipt(
             "proof_hash" in receipt_payload,
         )
     except Exception as emit_exc:
+        governor_metrics().evidence_publish_failure("refusal_receipt")
         logger.error(
             "❌ [P6] Failed to emit OSCAL refusal receipt for action '%s' "
             "(receipt_id=%s): %s — GovernanceError will still propagate.",
@@ -568,14 +672,21 @@ async def _emit_refusal_receipt(
             receipt_id,
             emit_exc,
         )
+    return proof_hash
 
 
 @governance_app.get("/policy-version")
 async def get_policy_version_endpoint() -> JSONResponse:
-    """Retrieve the active policy hash for session pinning verification."""
+    """Retrieve the active policy hash and thresholds digest for session pinning."""
     from src.gateway.governance.constants import ControlRegistry
+    from src.gateway.governance.schemas.thresholds import thresholds_digest
 
-    return JSONResponse(content={"active_hash": ControlRegistry().active_hash})
+    return JSONResponse(
+        content={
+            "active_hash": ControlRegistry().active_hash,
+            "thresholds_digest": thresholds_digest(),
+        }
+    )
 
 
 @governance_app.get("/jwks")
@@ -814,7 +925,7 @@ async def validate_action_endpoint(
     except GovernanceError as exc:
         # P6: emit a signed OSCAL compliance receipt for every hard refusal.
         # Errors during emission are logged but do NOT suppress the refusal.
-        await _emit_refusal_receipt(
+        emitted = await _emit_refusal_receipt(
             action_id=body.action,
             refusal_reason=str(exc),
             oscal_control_ref="SC-4",
@@ -834,6 +945,8 @@ async def validate_action_endpoint(
             refusal_content["refusal_receipt"] = _serialize_receipt(exc.receipt)
             if hasattr(exc.receipt, "proof_hash"):
                 refusal_content["proof_hash"] = exc.receipt.proof_hash
+        elif isinstance(emitted, str) and emitted:
+            refusal_content["proof_hash"] = emitted
 
         return JSONResponse(
             status_code=403,

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -99,7 +99,11 @@ async def test_concurrent_mutation_of_caller_dict_does_not_reach_seal(
     assert holder.seen == [10.0]
     assert params["amount"] == 1_000_000.0  # the concurrent write did happen
     seal.assert_awaited_once_with(
-        ACTION, {"amount": 10.0, "agent_id": "agent-1"}, path="govern", reliance=()
+        ACTION,
+        {"amount": 10.0, "agent_id": "agent-1"},
+        path="govern",
+        reliance=(),
+        decision_context=ANY,
     )
 
 
@@ -114,5 +118,9 @@ async def test_stage_mutating_its_input_does_not_reach_seal(seal: AsyncMock) -> 
     assert tier.seen == [10.0]
     assert params == {"amount": 10.0, "agent_id": "agent-1"}  # caller's dict untouched
     seal.assert_awaited_once_with(
-        ACTION, {"amount": 10.0, "agent_id": "agent-1"}, path="govern", reliance=()
+        ACTION,
+        {"amount": 10.0, "agent_id": "agent-1"},
+        path="govern",
+        reliance=(),
+        decision_context=ANY,
     )

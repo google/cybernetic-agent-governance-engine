@@ -66,6 +66,7 @@ from src.gateway.governance.governor.verdicts import (
     handle_narrow,
     handle_post_hitl_defer,
     handle_require_approval,
+    publish_settlement,
     reported_confidence,
 )
 from src.gateway.governance.narrow_receipt import issue_narrow_receipt
@@ -495,6 +496,7 @@ class SymbolicGovernor:
             path="govern_narrow",
             settlements=self._settlements,
             on_seal=_deliver,
+            original_result=result,
         )
         span = trace.get_current_span()
         span.set_attribute("cage.governance.narrow_reverified", seal is not None)
@@ -752,6 +754,13 @@ class SymbolicGovernor:
             span.set_attribute("cage.settlement.commit_count", len(commits))
             failures = await settle(commits, executed=executed)
             span.set_attribute("cage.settlement.failure_count", len(failures))
+            if commits or failures:
+                await publish_settlement(
+                    seal=seal,
+                    executed=executed,
+                    commits=commits,
+                    failures=failures,
+                )
             if failures:
                 span.set_status(Status(StatusCode.ERROR, "settlement failed"))
                 logger.critical(

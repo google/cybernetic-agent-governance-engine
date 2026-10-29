@@ -772,7 +772,7 @@ jobs:
           set -a; source .env; set +a
           test -n "${OPA_AUTH_TOKEN}" || (echo "::error::OPA_AUTH_TOKEN is empty in .env.example" && exit 1)
           docker compose config -q
-          if ! docker compose up -d --build --wait; then
+          if ! EVIDENCE_STREAM_ENABLED=true EVIDENCE_CHAIN_BLOCKING=true USE_MOCK_BROKER=true docker compose up -d --build --wait; then
             echo "::error::docker compose up -d --wait failed; dumping container logs:"
             docker compose ps -a || true
             docker compose logs --no-color || true
@@ -813,6 +813,74 @@ jobs:
               assert isinstance(res, dict) and res.get('verdict') == 'DENY', f'Expected GovernanceError or DENY dict, got {res}'
           asyncio.run(main())
           "
+      - name: Verify live Compose evidence stream with check_trace_conformance.py --stream
+        run: |
+          ID_HEADER="l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+          policy_json=$(curl -sf -H "$ID_HEADER" http://127.0.0.1:8080/governance/policy-version)
+          thresholds_digest=$(python3 -c 'import json, re, sys; d = json.loads(sys.argv[1])["thresholds_digest"]; assert re.fullmatch(r"[0-9a-f]{64}", d), d; print(d)' "$policy_json")
+
+          # 1. Admitted & settled trade (ALLOW -> seal consumed -> ACTUATION_RECEIPT -> CONFIRMED)
+          allow_resp=$(curl -sf -X POST http://127.0.0.1:8080/tools/execute \
+            -H "Content-Type: application/json" \
+            -H "$ID_HEADER" \
+            -d '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
+          python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "SUCCESS" and "EXECUTED:" in r.get("output", ""), r' "$allow_resp"
+
+          # 2. Admitted by governor, interrupted at broker -> rolled back (CBF_ROLLBACK + ROLLED_BACK settlement)
+          docker compose exec -T redis redis-cli -n 0 SET safety_violation smoke_interrupt >/dev/null
+          rollback_resp=$(curl -sf -X POST http://127.0.0.1:8080/tools/execute \
+            -H "Content-Type: application/json" \
+            -H "$ID_HEADER" \
+            -d '{"tool_name":"execute_trade_action","params":{"symbol":"MSFT","amount":300.0,"currency":"USD","confidence":0.99,"transaction_id":"22222222-2222-4222-8222-222222222222","side":"buy"}}')
+          docker compose exec -T redis redis-cli -n 0 DEL safety_violation >/dev/null
+          python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "ERROR" and "Actuation rejected" in r.get("error", ""), r' "$rollback_resp"
+
+          # 3. Denied by governor (restricted asset BTC -> GOVERNANCE_REFUSAL + caller proof_hash)
+          deny_resp=$(curl -sf -X POST http://127.0.0.1:8080/tools/execute \
+            -H "Content-Type: application/json" \
+            -H "$ID_HEADER" \
+            -d '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"transaction_id":"33333333-3333-4333-8333-333333333333","side":"buy"}}')
+          refusal_hash=$(python3 -c 'import json, re, sys; r = json.loads(sys.argv[1]); assert "BLOCKED:" in r.get("output", ""), r; h = r["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), r; print(h)' "$deny_resp")
+
+          # Flush group-commit window and export raw Redis Stream entries from DB 1
+          sleep 0.25
+          docker compose exec -T gateway python -c '
+          import json, redis
+          r = redis.Redis.from_url("redis://redis:6379/1", decode_responses=True)
+          for _entry_id, fields in r.xrange("cage:evidence:stream", "-", "+"):
+              print(json.dumps(fields, sort_keys=True))
+          ' > /tmp/compose_evidence_stream.jsonl
+
+          # Guard against vacuous conformance: assert every producer record family appeared on the live stream
+          python3 -c '
+          import json, pathlib
+          lines = pathlib.Path("/tmp/compose_evidence_stream.jsonl").read_text(encoding="utf-8").splitlines()
+          assert lines, "Exported compose evidence stream is empty"
+          seen = {json.loads(line)["event_type"] for line in lines if line.strip()}
+          required = {
+              "GOVERNANCE_THRESHOLDS_LOADED",
+              "CBF_COMMIT",
+              "GOVERNANCE_DECISION",
+              "GOVERNANCE_SEAL_CONSUMED",
+              "ACTUATION_RECEIPT",
+              "ACTUATION_REFUSAL_RECEIPT",
+              "CBF_ROLLBACK",
+              "GOVERNANCE_SETTLEMENT",
+              "GOVERNANCE_REFUSAL",
+          }
+          missing = sorted(required - seen)
+          assert not missing, f"Missing expected live stream event types: {missing} (seen={sorted(seen)})"
+          print(f"✅ Exported {len(lines)} live cage-audit/3.0 records covering {sorted(seen)}")
+          '
+
+          uv run python scripts/check_trace_conformance.py \
+            --stream \
+            --require-thresholds-loaded \
+            --expected-thresholds-digest "$thresholds_digest" \
+            --expected-refusal-hash "$refusal_hash" \
+            --expected-refusal-count 1 \
+            --require-settled \
+            /tmp/compose_evidence_stream.jsonl
       - name: Verify Healthcare Domain Container Isolation & Handshake
         run: |
           set -a; source .env; set +a

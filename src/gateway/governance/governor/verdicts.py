@@ -17,7 +17,7 @@ import logging
 import os
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -114,6 +114,7 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
 
     try:
         sink = get_evidence_sink()
+        has_redis = getattr(sink, "_redis", None) is not None
         event = {
             "type": "GOVERNANCE_REFUSAL",
             "controlId": receipt.control_id
@@ -122,12 +123,58 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
             if hasattr(receipt, "to_dict")
             else vars(receipt),
         }
-        await sink.ingest(event)
+        msg_id = await sink.ingest(event)
+        if has_redis and msg_id is None:
+            governor_metrics().evidence_publish_failure("refusal")
     except Exception as exc:
         # Non-blocking (the refusal already holds the action back) but never
         # silent: ERROR log plus a Prometheus counter an operator can alert on.
         logger.error("Failed to publish refusal receipt: %s", exc)
         governor_metrics().evidence_publish_failure("refusal")
+
+
+async def publish_settlement(
+    *,
+    seal: str,
+    executed: bool,
+    commits: Sequence[Any],
+    failures: Sequence[Violation],
+) -> None:
+    """Publish a ``GOVERNANCE_SETTLEMENT`` record when phase-2 commits settle."""
+    from src.gateway.governance.evidence.stream import get_evidence_sink
+
+    try:
+        sink = get_evidence_sink()
+        has_redis = getattr(sink, "_redis", None) is not None
+        if not has_redis and not getattr(sink, "is_running", False):
+            return
+        event: dict[str, Any] = {
+            "type": "GOVERNANCE_SETTLEMENT",
+            "schema_version": 1,
+            "controlId": GovernanceControl.AGENTIC_SCOPE_STATEMENT.value,
+            "seal_ref": routing_seal.seal_digest(seal),
+            "executed": bool(executed),
+            "commit_count": len(commits),
+            "tiers": [c.stage.name for c in commits],
+            "debit_ids": [
+                str(c.receipt.token)
+                for c in commits
+                if getattr(c.receipt, "token", None)
+            ],
+            "status": "FAILED"
+            if failures
+            else ("CONFIRMED" if executed else "ROLLED_BACK"),
+            "failures": [
+                f.to_dict() if isinstance(f, Violation) else f for f in failures
+            ],
+            "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        msg_id = await sink.ingest(event)
+        if has_redis and msg_id is None:
+            governor_metrics().evidence_publish_failure("settlement")
+    except Exception as exc:
+        logger.error("Failed to publish settlement record: %s", exc)
+        governor_metrics().evidence_publish_failure("settlement")
 
 
 async def issue_seal(
@@ -136,16 +183,19 @@ async def issue_seal(
     *,
     path: str,
     reliance: Sequence[RelianceRecord] = (),
+    decision_context: Mapping[str, Any] | None = None,
 ) -> str:
-    """Mint the routing seal, committing ``reliance`` into its evidence record.
+    """Mint the routing seal, committing ``reliance`` and ``decision_context`` into its evidence record.
 
-    The reliance records are those of the clean run being sealed, so the
-    evidence record cannot drift from what the stages saw. With none (no
-    warranted norm governs the action) the evidence record is unchanged.
+    The reliance records and stage coverage context are those of the clean run
+    being sealed, so the evidence record cannot drift from what the stages saw.
     """
     with tracer.start_as_current_span("cage.routing_seal") as seal_span:
         seal = await routing_seal.generate_seal_with_evidence(
-            action, params, reliance=reliance_evidence(reliance)
+            action,
+            params,
+            reliance=reliance_evidence(reliance),
+            decision_context=decision_context,
         )
         seal_span.set_attribute("cage.seal_issued", True)
         seal_span.set_attribute("cage.seal_path", path)
@@ -661,6 +711,7 @@ async def handle_deny(
         action, params, violations, tier_failures, reliance=reliance
     )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
+    governor_metrics().refusal_decided(receipt.violated_tier)
     await publish_refusal(receipt)
     # Lead with the violation that decided the refusal (a HARD one when
     # present), so a co-occurring HITL finding never masks the real cause.

@@ -716,16 +716,33 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=404, detail=f"Tool '{request_body.tool_name}' not found."
         )
 
+    from src.gateway.server.governance_middleware import (
+        get_last_refusal_proof_hash,
+        reset_last_refusal_proof_hash,
+        set_last_refusal_proof_hash,
+    )
+
     func = tool_map[request_body.tool_name]
+    refusal_token = set_last_refusal_proof_hash(None)
     try:
         if inspect.iscoroutinefunction(func):
             output = await func(**request_body.params)
         else:
             output = await asyncio.to_thread(func, **request_body.params)
-        return {"status": "SUCCESS", "output": str(output)}
+        response: dict[str, Any] = {"status": "SUCCESS", "output": str(output)}
+        proof_hash = get_last_refusal_proof_hash()
+        if proof_hash:
+            response["proof_hash"] = proof_hash
+        return response
     except Exception as exc:
         logger.error("Tool Execution Error: %s", exc)
-        return {"status": "ERROR", "error": str(exc)}
+        err_response: dict[str, Any] = {"status": "ERROR", "error": str(exc)}
+        proof_hash = get_last_refusal_proof_hash()
+        if proof_hash:
+            err_response["proof_hash"] = proof_hash
+        return err_response
+    finally:
+        reset_last_refusal_proof_hash(refusal_token)
 
 
 @app.get("/health")

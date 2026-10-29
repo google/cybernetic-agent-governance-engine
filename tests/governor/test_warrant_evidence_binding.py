@@ -118,14 +118,26 @@ _RELIANCE_KEYS = {
     "provider_name",
     "verification_status",
 }
-#: The seal evidence record's fields before reliance binding existed.
+#: The seal evidence record's fields when no warrant reliance is bound.
 _LEGACY_DECISION_KEYS = {
     "type",
+    "schema_version",
     "controlId",
     "action",
     "params_hash",
+    "thresholds_digest",
     "timestamp_utc",
     "seal_ttl_s",
+    "path",
+    "profile",
+    "verdict",
+    "phase",
+    "seal_present",
+    "governed",
+    "narrower_present",
+    "clamped_params_valid",
+    "plan",
+    "outcomes",
 }
 
 _BINDING = NormBinding(
@@ -504,7 +516,12 @@ async def test_narrow_seal_carries_the_narrowed_runs_reliance(
     sealed: list[dict[str, Any]] = []
 
     async def _issue_seal(
-        action: str, params: dict[str, Any], *, path: str, reliance: Any
+        action: str,
+        params: dict[str, Any],
+        *,
+        path: str,
+        reliance: Any,
+        decision_context: Any = None,
     ) -> str:
         sealed.append({"path": path, "params": params, "reliance": reliance})
         return "sealed-narrow"

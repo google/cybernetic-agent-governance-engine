@@ -171,17 +171,36 @@ async def execute_trade_action(
         confidence,
         deferred_id,
     )
+    raw_params: dict[str, Any] = {
+        "symbol": symbol,
+        "amount": amount,
+        "currency": currency,
+        "confidence": confidence,
+        "transaction_id": str(transaction_id or ""),
+        "dry_run": dry_run,
+        "side": str(side),
+    }
     if side not in ("buy", "sell"):
-        return f"BLOCKED: invalid trade side {side!r}; expected 'buy' or 'sell'."
-    if not transaction_id:
-        return (
-            "BLOCKED: transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
+        reason = f"invalid trade side {side!r}; expected 'buy' or 'sell'."
+        await record_refusal(
+            "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
         )
+        return f"BLOCKED: {reason}"
+    if not transaction_id:
+        reason = "transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
+        await record_refusal(
+            "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
+        )
+        return f"BLOCKED: {reason}"
     if not is_valid_transaction_id(transaction_id):
-        return (
-            f"BLOCKED: invalid transaction_id {str(transaction_id)[:64]!r}; "
+        reason = (
+            f"invalid transaction_id {str(transaction_id)[:64]!r}; "
             "expected a UUIDv4 or UUIDv5."
         )
+        await record_refusal(
+            "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
+        )
+        return f"BLOCKED: {reason}"
     transaction_id = transaction_id.lower()
 
     params: dict[str, Any] = {
@@ -376,13 +395,20 @@ async def _govern_and_actuate(
 
                     # Verify original signature matches (prevents receipt forgery)
                     if receipt_signature != seal:
+                        reason = "Narrowing receipt signature mismatch — possible forgery attempt"
                         logger.error(
                             "🚫 execute_trade: NARROW receipt signature mismatch. "
                             "Receipt sig=%s, Seal=%s",
                             receipt_signature[:16],
                             seal[:16],
                         )
-                        return "BLOCKED: Narrowing receipt signature mismatch — possible forgery attempt"
+                        await record_refusal(
+                            "execute_trade",
+                            reason,
+                            oscal_control_ref="AC-3",
+                            params=params,
+                        )
+                        return f"BLOCKED: {reason}"
 
                     # Use narrowed params for trade execution
                     action_params = narrowed_params
@@ -395,11 +421,18 @@ async def _govern_and_actuate(
                         },
                     )
             except json.JSONDecodeError as exc:
+                reason = "Narrowing receipt payload corrupted"
                 logger.error(
                     "🚫 execute_trade: NARROW receipt payload invalid JSON: %s",
                     exc,
                 )
-                return "BLOCKED: Narrowing receipt payload corrupted"
+                await record_refusal(
+                    "execute_trade",
+                    reason,
+                    oscal_control_ref="AC-3",
+                    params=params,
+                )
+                return f"BLOCKED: {reason}"
             except Exception as exc:
                 # Only log errors, don't block — receipt may legitimately not exist
                 logger.debug(
@@ -414,12 +447,22 @@ async def _govern_and_actuate(
         try:
             await verify_and_consume_seal(seal, "execute_trade", action_params)
         except SymbolicGovernorViolation as exc:
+            reason = (
+                "routing seal invalid, expired, or already consumed — "
+                "governance authority unresolved."
+            )
             logger.error(
                 "🔒 execute_trade_action: routing seal verification FAILED — "
                 "blocking execution (No-Direct-Bind invariant). Reason: %s",
                 exc.reason,
             )
-            return "BLOCKED: routing seal invalid, expired, or already consumed — governance authority unresolved."
+            await record_refusal(
+                "execute_trade",
+                f"{reason} ({exc.reason})",
+                oscal_control_ref="AC-3",
+                params=action_params,
+            )
+            return f"BLOCKED: {reason}"
 
         if dry_run:
             return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."

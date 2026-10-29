@@ -30,11 +30,13 @@ deployment region: the global ``domains.<section>`` blocks with the region's
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import sys
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
@@ -45,6 +47,7 @@ from src.gateway.governance.schemas.regional_overlay import (
     load_regional_domains,
     overlay_domains,
 )
+from src.gateway.governance.vendor.jcs import canonicalize
 
 logger = logging.getLogger("Gateway.Governance.Schemas")
 
@@ -840,3 +843,60 @@ def get_reconciliation_pending_debit_max_age_seconds() -> float:
 # ---------------------------------------------------------------------------
 
 THRESHOLDS: GovernanceThresholds = load_and_validate_thresholds()
+
+
+def thresholds_digest(thresholds: GovernanceThresholds | None = None) -> str:
+    """Return the RFC 8785 JCS SHA-256 hex digest of the effective thresholds.
+
+    Computed over ``target.model_dump(mode="json")`` so the digest reflects
+    both ``config/governance_thresholds.json`` and any regional overlay applied
+    at load time (NIST SP 800-53 CM-6 / POAM-2026-151 Option 2).
+    """
+    target = thresholds if thresholds is not None else THRESHOLDS
+    canonical_bytes = canonicalize(target.model_dump(mode="json"))
+    return hashlib.sha256(canonical_bytes).hexdigest()
+
+
+def thresholds_loaded_event(
+    thresholds: GovernanceThresholds | None = None,
+) -> dict[str, Any]:
+    """Build the ``GOVERNANCE_THRESHOLDS_LOADED`` evidence-stream payload."""
+    target = thresholds if thresholds is not None else THRESHOLDS
+    return {
+        "type": "GOVERNANCE_THRESHOLDS_LOADED",
+        "schema_version": 1,
+        "controlId": "CM-6",
+        "thresholds_digest": thresholds_digest(target),
+        "region": target.region or _active_region(),
+        "domain_sections": sorted(target.domains.keys()),
+        "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+async def publish_thresholds_loaded(
+    sink: Any = None,
+    thresholds: GovernanceThresholds | None = None,
+) -> str | None:
+    """Publish ``GOVERNANCE_THRESHOLDS_LOADED`` to the evidence stream at startup.
+
+    No-ops cleanly when the evidence sink has no Redis client attached (e.g.
+    hermetic local tests). Under ``EVIDENCE_CHAIN_BLOCKING=true``, commits
+    synchronously via ``sink.ingest_sync`` so startup fails closed if the
+    evidence chain cannot record the active threshold baseline.
+    """
+    from src.gateway.governance.evidence.stream import (
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
+
+    target_sink = sink if sink is not None else get_evidence_sink()
+    if getattr(target_sink, "_redis", None) is None and not getattr(
+        target_sink, "is_running", False
+    ):
+        return None
+    event = thresholds_loaded_event(thresholds)
+    if is_evidence_chain_blocking():
+        commit = await target_sink.ingest_sync(event)
+        return str(commit.evidence_id)
+    result = await target_sink.ingest(event)
+    return str(result) if result is not None else None
