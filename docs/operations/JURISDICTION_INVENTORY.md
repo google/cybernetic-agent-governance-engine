@@ -117,7 +117,7 @@ Read at `d830249c`; nothing was planned.
   - `lula-validate.yml`;
   - `ci-integration.yml`, which runs on dispatch only.
 
-  POAM-2026-121 records these.
+  POAM-2026-121 records the first two. POAM-2026-150 records the pattern, with `ci.yml`'s `integration-smoke` job, which skips all 153 tests it selects.
 - **Regional workflows that can fail:** [`eu-ecb-compliance.yml`](../../.github/workflows/eu-ecb-compliance.yml) and [`apac-mas-compliance.yml`](../../.github/workflows/apac-mas-compliance.yml) check the prod profiles' residency, jurisdiction and compliance flag.
 
 ## 7. Inference consumers
