@@ -33,7 +33,7 @@
 
 > **Two rulesets on `main` (POAM-2026-115):** ruleset 19769096 holds the review rule, which
 > cannot be met for the maintainer's own pull requests, so each of their merges is an admin
-> bypass of that rule. The six required status checks are in ruleset 25966171, which has no
+> bypass of that rule. The eight required status checks are in ruleset 25966171, which has no
 > bypass actor, so no merge skips them. The one exception, an advisory fix landed from a
 > private fork, is described in [`SECURITY.md`](../SECURITY.md). Before each merge, run
 > `scripts/check_pr_mergeable.sh <pr> --comment` as a double-check and record.
@@ -66,34 +66,30 @@
 
 ---
 
-## 3. Required Status Checks for `main` and `release/**`
+## 3. Required Status Checks on `main` (Ruleset 25966171)
 
-Add each of the following as a required status check. The **exact job name** must
-match what appears in the GitHub Actions run UI (copy from a recent run if unsure).
+Ruleset `25966171` (`Require status checks on main`, `enforcement: active`, `bypass_actors: []`) enforces the following **eight** required status checks on `refs/heads/main`. The **exact check context** must match what GitHub Actions reports:
 
-### Minimum viable set (single-maintainer reference repo)
-
-| Job name (exact) | Workflow file | Blocks merge? |
+| Check context (exact) | Workflow file | Integration pin |
 |---|---|---|
-| `CI Gate — Lint & Tests` | `ref_impl_signoff.yml` | ✅ Hard block |
-| `Secret Scanning (Gitleaks)` | `security-scan.yml` | ✅ Hard block |
-| `License Guard / license-check` | `license_guard.yml` | ✅ Hard block |
+| `Lint` | `ci.yml` | GitHub Actions |
+| `AI 600-1 Unit Tests` | `ci.yml` | GitHub Actions |
+| `OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)` | `ci.yml` | GitHub Actions |
+| `Secret Scanning (Gitleaks)` | `security-scan.yml` | GitHub Actions |
+| `license-check` | `license_guard.yml` | GitHub Actions |
+| `Pytest Logic Tests` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
+| `Terraform Tests (gcp-gke, mock providers)` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
+| `Quickstart Bootstrap & First-DENY Smoke Gate` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 
-### Full set (add as workflows stabilise)
+### Additional non-required pull-request workflows
 
 | Job name (exact) | Workflow file | Notes |
 |---|---|---|
-| `build / license-check` | `ci.yml` | Apache 2.0 header enforcement |
-| `Pytest Logic Tests (US_FED)` | `ci.yml` | |
-| `Pytest Logic Tests (EU_ECB)` | `ci.yml` | |
-| `Pytest Logic Tests (APAC_MAS)` | `ci.yml` | |
-| `Lint` | `ci.yml` | ruff + mypy |
-| `STPA Artifact Freshness Check` | `ci.yml` | |
-| `Python Dependency Vulnerability Scan (Universal — NIST RA-5/SI-2 reporting: US_FED only)` | `security-scan.yml` | Requires GHAS (§5) |
+| `Python Dependency Vulnerability Scan (Universal — NIST RA-5/SI-2 reporting: US_FED only)` | `security-scan.yml` | Runs on every PR |
 | `Dependency Review (POAM-013)` | `dependency-review.yml` | Requires GHAS (§5); path-filtered |
-| `EU AI Act Compliance Posture (EU_ECB only)` | `eu-ecb-compliance.yml` | |
-| `MAS FEAT Compliance Posture (APAC_MAS only)` | `apac-mas-compliance.yml` | |
-| `Compile STPA → Governance Artifacts` | `policy_compile.yml` | Path-filtered; only required when STPA files change |
+| `EU AI Act Compliance Posture (EU_ECB only)` | `eu-ecb-compliance.yml` | Runs on every PR |
+| `MAS FEAT Compliance Posture (APAC_MAS only)` | `apac-mas-compliance.yml` | Runs on every PR |
+| `Compile STPA → Governance Artifacts` | `policy_compile.yml` | Path-filtered; only runs when STPA files change |
 
 > **Note on path-filtered workflows:** GitHub only reports a status check as
 > "required" when the workflow actually runs. For path-filtered workflows
@@ -170,7 +166,7 @@ all required checks pass.
 After applying all settings above, verify with a test PR:
 
 - [ ] Open a PR from a feature branch to `main`
-- [ ] Confirm all required status checks appear and must pass before merge is enabled
+- [ ] Confirm all eight required status checks in ruleset 25966171 appear and must pass before merge is enabled
 - [ ] Confirm the "Review required" badge appears (code-owner review stays disabled while the project has one maintainer; see §1)
 - [ ] Confirm direct push to `main` is rejected: `git push origin HEAD:main` should fail with `remote: error: GH006`
 - [ ] Confirm a `v0.0.1-ref` tag push triggers the `publish-release` job and creates a GitHub Release
@@ -183,9 +179,9 @@ After applying all settings above, verify with a test PR:
 | Code-level enforcement | GitHub UI setting that activates it |
 |---|---|
 | `.github/CODEOWNERS` | None while the project has one maintainer: §1 leaves "Require review from Code Owners" disabled, so the file is advisory (POAM-2026-115) |
-| `ref_impl_signoff.yml` `ci-gate` job | §3 → Required status check: `CI Gate — Lint & Tests` |
-| `security-scan.yml` `secret-scan` job | §3 → Required status check: `Secret Scanning (Gitleaks)` |
-| `license_guard.yml` `license-check` job | §3 → Required status check: `License Guard / license-check` |
+| `ci.yml` (`Lint`, `AI 600-1 Unit Tests`, `OPA Rego Policy Lint and Test ...`, `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock providers)`, `Quickstart Bootstrap & First-DENY Smoke Gate`) | §3 → Ruleset `25966171` required status checks |
+| `security-scan.yml` `secret-scan` job | §3 → Ruleset `25966171` required status check: `Secret Scanning (Gitleaks)` |
+| `license_guard.yml` `license-check` job | §3 → Ruleset `25966171` required status check: `license-check` |
 | `dependency-review.yml` (hardened) | §3 + §5 → GHAS must be enabled |
 | `ref_impl_signoff.yml` `publish-release` job | §4 → Tag protection + §6 → write permissions |
 | `scripts/setup_git_hooks.sh` pre-push hook | §1 → "Restrict who can push" (server-side equivalent) |

@@ -121,7 +121,7 @@ def test_makefile_lint_runs_mypy() -> None:
 
 
 def test_required_check_workflows_trigger_on_stacked_pr_branches() -> None:
-    """Workflows backing ruleset 25966171's 7 required checks must run unconditionally on every PR."""
+    """Workflows backing ruleset 25966171's 8 required checks must run unconditionally on every PR."""
     required_workflows = ("ci.yml", "security-scan.yml", "license_guard.yml")
     for wf_name in required_workflows:
         on_block = _load_on_block(_WORKFLOWS_DIR / wf_name)

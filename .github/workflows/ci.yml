@@ -824,6 +824,40 @@ jobs:
             -d '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
           python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "SUCCESS" and "EXECUTED:" in r.get("output", ""), r' "$allow_resp"
 
+          # 1b. HTTP replay of the already-executed transaction_id (ExecutionLedger Redis SET NX -> duplicate refusal receipt, no second actuation)
+          dup_resp=$(curl -sf -X POST http://127.0.0.1:8080/tools/execute \
+            -H "Content-Type: application/json" \
+            -H "$ID_HEADER" \
+            -d '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
+          dup_refusal_hash=$(python3 -c 'import json, re, sys; a, d = json.loads(sys.argv[1]), json.loads(sys.argv[2]); assert d.get("status") == "SUCCESS" and d.get("output") == a.get("output"), (a, d); h = d["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), d; print(h)' "$allow_resp" "$dup_resp")
+
+          # 1c. Direct routing-seal nonce replay (Theorem 5.3 / INV-2: mint EdDSA JWT -> consume #1 passes -> consume #2 on same seal refused by live Redis Lua burn)
+          docker compose exec -T gateway python -c '
+          import asyncio, hashlib
+          from src.gateway.governance.routing_seal import (
+              SymbolicGovernorViolation,
+              _index_evidence_binding,
+              generate_seal,
+              seal_nonce,
+              verify_and_consume_seal,
+          )
+          async def main() -> None:
+              params = {"symbol": "NVDA", "amount": 150.0, "currency": "USD", "confidence": 0.99, "side": "buy"}
+              ev_hash = hashlib.sha256(b"quickstart-live-seal-replay").hexdigest()
+              seal = await generate_seal("execute_trade", params, record_hash=ev_hash)
+              assert len(seal.split(".")) == 3, f"expected v3 EdDSA JWT seal, got {seal!r}"
+              await _index_evidence_binding(seal, ev_hash, 60, None)
+              assert await verify_and_consume_seal(seal, "execute_trade", params) is True
+              try:
+                  await verify_and_consume_seal(seal, "execute_trade", params)
+              except SymbolicGovernorViolation as exc:
+                  assert "replay attack detected" in exc.reason and "already consumed" in exc.reason, exc.reason
+                  print(f"✅ Live Redis routing-seal replay refused (nonce={seal_nonce(seal)[:16]}...): {exc.reason}")
+                  return
+              raise AssertionError("Replayed routing seal was accepted instead of refused!")
+          asyncio.run(main())
+          '
+
           # 2. Admitted by governor, interrupted at broker -> rolled back (CBF_ROLLBACK + ROLLED_BACK settlement)
           docker compose exec -T redis redis-cli -n 0 SET safety_violation smoke_interrupt >/dev/null
           rollback_resp=$(curl -sf -X POST http://127.0.0.1:8080/tools/execute \
@@ -849,12 +883,13 @@ jobs:
               print(json.dumps(fields, sort_keys=True))
           ' > /tmp/compose_evidence_stream.jsonl
 
-          # Guard against vacuous conformance: assert every producer record family appeared on the live stream
+          # Guard against vacuous conformance: assert every producer record family appeared and replay did not re-actuate
           python3 -c '
-          import json, pathlib
+          import collections, json, pathlib
           lines = pathlib.Path("/tmp/compose_evidence_stream.jsonl").read_text(encoding="utf-8").splitlines()
           assert lines, "Exported compose evidence stream is empty"
-          seen = {json.loads(line)["event_type"] for line in lines if line.strip()}
+          counts = collections.Counter(json.loads(line)["event_type"] for line in lines if line.strip())
+          seen = set(counts)
           required = {
               "GOVERNANCE_THRESHOLDS_LOADED",
               "CBF_COMMIT",
@@ -865,9 +900,12 @@ jobs:
               "CBF_ROLLBACK",
               "GOVERNANCE_SETTLEMENT",
               "GOVERNANCE_REFUSAL",
+              "GOVERNANCE_REFUSAL_RECEIPT",
           }
           missing = sorted(required - seen)
           assert not missing, f"Missing expected live stream event types: {missing} (seen={sorted(seen)})"
+          assert counts["ACTUATION_RECEIPT"] == 1, f"Expected 1 ACTUATION_RECEIPT (replay must not re-actuate), got {counts}"
+          assert counts["GOVERNANCE_SEAL_CONSUMED"] == 2, f"Expected 2 GOVERNANCE_SEAL_CONSUMED (AAPL + MSFT only), got {counts}"
           print(f"✅ Exported {len(lines)} live cage-audit/3.0 records covering {sorted(seen)}")
           '
 
@@ -875,8 +913,9 @@ jobs:
             --stream \
             --require-thresholds-loaded \
             --expected-thresholds-digest "$thresholds_digest" \
+            --expected-refusal-hash "$dup_refusal_hash" \
             --expected-refusal-hash "$refusal_hash" \
-            --expected-refusal-count 1 \
+            --expected-refusal-count 2 \
             --require-settled \
             /tmp/compose_evidence_stream.jsonl
       - name: Verify Healthcare Domain Container Isolation & Handshake

@@ -335,3 +335,32 @@ def test_quickstart_documents_dev_only_ed25519_and_seal_mint_verify_step() -> No
     assert "http://localhost:8080/tools/execute" in quickstart
     assert '"tool_name":"execute_trade_action"' in quickstart
     assert "mint → verify → consume" in quickstart
+
+
+def test_quickstart_smoke_workflow_exercises_live_seal_and_ledger_replay() -> None:
+    """quickstart-smoke in ci.yml must exercise live Redis routing-seal nonce replay (INV-2) and duplicate transaction_id replay."""
+    ci_workflow = yaml.safe_load(
+        (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    steps = ci_workflow["jobs"]["quickstart-smoke"]["steps"]
+    stream_step = next(
+        (
+            s
+            for s in steps
+            if "check_trace_conformance.py --stream" in s.get("name", "")
+        ),
+        None,
+    )
+    assert stream_step is not None, (
+        "quickstart-smoke missing check_trace_conformance.py --stream step"
+    )
+    script = stream_step["run"]
+    assert script.count("verify_and_consume_seal(seal,") >= 2, (
+        "quickstart-smoke must invoke verify_and_consume_seal twice on the same seal to test Theorem 5.3 burn-first replay"
+    )
+    assert '"replay attack detected" in exc.reason' in script
+    assert '--expected-refusal-hash "$dup_refusal_hash"' in script
+    assert '--expected-refusal-hash "$refusal_hash"' in script
+    assert "--expected-refusal-count 2" in script
+    assert 'counts["ACTUATION_RECEIPT"] == 1' in script
+    assert 'counts["GOVERNANCE_SEAL_CONSUMED"] == 2' in script
