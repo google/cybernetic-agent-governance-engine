@@ -132,9 +132,9 @@ class BrokerActuator:
         Execute a trade based on the governance clearance.
 
         This method:
-        1. Validates clearance signature digest and quorum
+        1. Validates the clearance, its quorum, and its out-of-band routing seal
         2. Constructs TradeOrder from clearance parameters
-        3. Invokes execute_trade with routing_seal
+        3. Invokes execute_trade with the routing seal (never the digest)
         4. Returns the ActuationReceipt (evidence is recorded by the kernel's
            ``dispatch_actuation()``, never by the actuator)
 
@@ -223,12 +223,14 @@ class BrokerActuator:
                 timestamp_utc=timestamp_utc,
             )
 
-        # Step 3: Validate governance decision digest is present
-        if not clearance.governance_decision_digest:
+        # Step 3: Require the routing seal. It arrives out of band in
+        # ``clearance.routing_seal``; ``governance_decision_digest`` is its
+        # SHA-256 digest (validated by the contract) and never the seal.
+        if not clearance.routing_seal:
             findings.append(
                 {
-                    "code": "MISSING_GOVERNANCE_DIGEST",
-                    "detail": "governance_decision_digest is required for actuation",
+                    "code": "MISSING_ROUTING_SEAL",
+                    "detail": "the routing seal is required for actuation",
                 }
             )
             return ActuationReceipt(
@@ -272,11 +274,11 @@ class BrokerActuator:
                 timestamp_utc=timestamp_utc,
             )
 
-        # Step 5: Execute trade with routing seal (governance_decision_digest)
+        # Step 5: Execute trade with the out-of-band routing seal
         try:
             result_msg = await execute_trade(
                 order,
-                routing_seal=clearance.governance_decision_digest,
+                routing_seal=clearance.routing_seal,
             )
 
             # Extract order ID from result message

@@ -748,6 +748,19 @@ def seal_nonce(seal: str) -> str:
     return nonce
 
 
+def seal_digest(seal: str) -> str:
+    """SHA-256 hex digest of a routing seal: the only form evidence may carry.
+
+    A seal is a bearer credential. Receipts, envelopes and evidence records
+    name the decision a seal carried by this digest and never by the seal
+    itself, because an archived copy cannot be redacted once WORM retention
+    holds it (POAM-2026-149). The digest is also the decision trace's
+    ``seal_ref``, which makes it the join key between a seal's issuance and
+    the actuation it authorised.
+    """
+    return hashlib.sha256(seal.encode()).hexdigest()
+
+
 def _unverified_claims(seal: str) -> dict[str, Any]:
     """Parse a JWT seal's claims WITHOUT checking its signature.
 

@@ -120,8 +120,12 @@ async def test_broker_actuator_quorum_validation():
 
 
 @pytest.mark.asyncio
-async def test_broker_actuator_governance_digest_validation():
-    """BrokerActuator validates governance decision digest presence."""
+async def test_broker_actuator_requires_the_routing_seal():
+    """BrokerActuator refuses a clearance whose out-of-band seal is missing.
+
+    A valid digest is not a seal: the digest is evidence, the seal is the
+    bearer credential ``execute_trade`` re-checks (POAM-2026-149).
+    """
     actuator = BrokerActuator()
 
     clearance = ExecutionClearance(
@@ -135,7 +139,7 @@ async def test_broker_actuator_governance_digest_validation():
         issued_at_provenance="CONSTRUCTION_TIME",
         correlation_id=str(uuid.uuid4()),
         correlation_id_source="THREAD_DERIVED",
-        governance_decision_digest="",  # Empty digest
+        governance_decision_digest=hashlib.sha256(b"test_seal").hexdigest(),
         opa_input_digest="b" * 64,
         nonce="c" * 32,
         required_quorum=0,
@@ -145,7 +149,7 @@ async def test_broker_actuator_governance_digest_validation():
     receipt = await actuator.actuate(clearance)
 
     assert receipt.accepted is False
-    assert any(f["code"] == "MISSING_GOVERNANCE_DIGEST" for f in receipt.findings)
+    assert any(f["code"] == "MISSING_ROUTING_SEAL" for f in receipt.findings)
 
 
 @pytest.mark.asyncio
@@ -185,16 +189,22 @@ async def test_broker_actuator_success_path(monkeypatch):
         params=trade_params,
         required_quorum=0,
         executor_id="cage_finance_broker",
+        routing_seal="test_seal",
     )
 
     with patch(
         "src.cage_finance.actuators.broker_actuator.execute_trade",
         new_callable=AsyncMock,
         return_value="EXECUTED: AAPL x 100.0 (Order ID: mock-123)",
-    ):
+    ) as execute_trade:
         receipt = await actuator.actuate(clearance)
 
     assert receipt.accepted is True
+    # The broker re-checks the seal itself, never its digest (POAM-2026-149).
+    assert execute_trade.await_args.kwargs["routing_seal"] == "test_seal"
+    assert (
+        receipt.raw_receipt["governance_digest"] == clearance.governance_decision_digest
+    )
     assert receipt.receipt_id == clearance.nonce
     assert receipt.session_uuid == clearance.thread_id
     assert receipt.raw_receipt is not None
@@ -347,6 +357,7 @@ class TestBrokerActuatorV3SecurityGates:
             executor_id="cage_finance_broker",
             target_route="local://default",  # Valid local route
             required_quorum=0,
+            routing_seal="test_seal",
         )
 
         with patch(
@@ -395,6 +406,7 @@ class TestBrokerActuatorV3SecurityGates:
             executor_id="cage_finance_broker",
             target_route="*",  # Wildcard route
             required_quorum=0,
+            routing_seal="test_seal",
         )
 
         with patch(

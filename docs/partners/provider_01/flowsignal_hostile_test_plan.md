@@ -334,7 +334,7 @@ uv run pytest tests/test_execution_actuator.py::test_direct_execution_blocked -v
 ```
 
 **Expected CAGE Behavior:**
-- [`ExecutionClearance`](src/cage_finance/tools/tool_provider.py:192) requires `governance_decision_digest` (seal)
+- [`ExecutionClearance`](src/cage_finance/tools/tool_provider.py:192) requires the routing seal out of band (`routing_seal`); `governance_decision_digest` carries only the seal's SHA-256 digest and refuses anything else (POAM-2026-149)
 - Actuator validates clearance structure before execution
 - Missing seal → `SymbolicGovernorViolation` exception raised
 

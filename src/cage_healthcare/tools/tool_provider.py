@@ -31,6 +31,7 @@ from src.gateway.governance.execution_actuator import (
 )
 from src.gateway.governance.routing_seal import (
     SymbolicGovernorViolation,
+    seal_digest,
     verify_and_consume_seal,
 )
 from src.gateway.governance.seams import actuation as _seam
@@ -60,7 +61,8 @@ class ClinicalDoseActuator:
         valid = (
             clearance.executor_id == self.actuator_id
             and clearance.decision == "ALLOW"
-            and bool(clearance.governance_decision_digest)
+            # The digest is validated by the contract; the seal is what binds.
+            and bool(clearance.routing_seal)
         )
         if not valid:
             bad = [{"code": "CLEARANCE_INVALID"}]
@@ -109,7 +111,8 @@ async def administer_dose_action(
         digest = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
         c1 = (tid, "ALLOW", "DIRECT", "administer_dose", order.patient_id)
         c2 = ("clinician_001", int(time.time()), "CONSTRUCTION_TIME", tid)
-        c3 = ("THREAD_DERIVED", seal, digest, uuid.uuid4().hex[:32], params)
+        nonce = uuid.uuid4().hex[:32]
+        c3 = ("THREAD_DERIVED", seal_digest(seal), digest, nonce, params)
         c4 = ("cage_healthcare_clinical", "local://default", "HIGH_CLINICAL")
         clearance = _seam.ExecutionClearance(*c1, *c2, *c3, *c4, routing_seal=seal)  # type: ignore[arg-type]
         receipt = await dispatch_actuation(actuator, clearance)

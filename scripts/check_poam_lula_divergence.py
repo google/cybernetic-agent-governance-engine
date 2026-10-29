@@ -136,6 +136,12 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_oscal_nemo_claims.py",
         "tests/test_oscal_ssp_exporter.py",
     ),
+    # Actuation evidence records seal_digest(seal), never the routing seal;
+    # ExecutionClearance refuses any digest that is not SHA-256 hex.
+    "POAM-2026-149": (
+        "tests/test_seal_digest_evidence.py",
+        "tests/test_actuator_registry_integration.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

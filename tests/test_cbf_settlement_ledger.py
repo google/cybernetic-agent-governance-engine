@@ -917,6 +917,7 @@ def _clearance(amount: float) -> ExecutionClearance:
         params=params,
         required_quorum=0,
         executor_id="cage_finance_broker",
+        routing_seal="seal",
     )
 
 

@@ -33,12 +33,12 @@ receipt.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from enum import StrEnum
 from typing import Any
 
 from src.gateway.governance.governor.pipeline import PipelineResult, Profile
+from src.gateway.governance.routing_seal import seal_digest
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +61,12 @@ SEALING_VERDICTS = frozenset({"ALLOW", "NARROW"})
 
 
 def seal_ref(seal: str) -> str:
-    """A stable, non-secret reference to ``seal`` for joining trace events."""
-    return hashlib.sha256(seal.encode()).hexdigest()
+    """A stable, non-secret reference to ``seal`` for joining trace events.
+
+    The same digest an actuation receipt records as its
+    ``governance_decision_digest`` (:func:`~src.gateway.governance.routing_seal.seal_digest`).
+    """
+    return seal_digest(seal)
 
 
 def trace_phase(verdict: str, *, sealed: bool) -> TracePhase:
