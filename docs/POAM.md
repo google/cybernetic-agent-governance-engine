@@ -1180,7 +1180,7 @@ The percentage is the share of files the cited commit touched whose content is b
 None of the 13 is reachable from the private refs, so none is an advisory-fork commit preserved there. The six that resolve are pre-squash branch commits: recoverable, but cited at an object an assessor checking `main` cannot find. The seven that resolve nowhere leave POAM-2026-011's closure with no checkable commit evidence, POAM-2026-079 and POAM-2026-080 with part of theirs, and POAM-2026-083 (open) with two attested commits that nobody can inspect.
 
 **Remediation:**
-1. Extend Gate G9 to verify commit citations with the pinned-path machinery (the commit exists and is an ancestor of HEAD), telling apart identifiers that are not commits and this entry's own inventory.
+1. Extend Gate G9 to verify commit citations with the pinned-path machinery (the commit exists and is an ancestor of HEAD), telling apart identifiers that are not commits and this entry's own inventory. A commit kept off `main` on purpose is cited together with an `archive/*` tag (POAM-2026-094 cites `5735a3d7` as `archive/causal-outcome-detector`); for those the check verifies that the tag exists and peels to the cited commit, instead of ancestry.
 2. Repoint the six pre-squash citations to their mainline commits.
 3. For each of the seven, find the mainline commit by content; where there is none, re-verify the closure against HEAD with dated evidence, or state in the entry that its commit evidence cannot be checked.
 
