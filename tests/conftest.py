@@ -738,6 +738,7 @@ def pytest_collection_modifyitems(
     )
 
     from tests.fixtures.deployment_region import live_region_mismatch, marked_region
+    from tests.fixtures.selection_flags import live_external_enabled
 
     session_region = config.stash[_SESSION_REGION]
 
@@ -747,7 +748,11 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.skip(reason=reason))
         if "integration" in item.keywords and not run_integration:
             item.add_marker(skip_integration)
-        if "live_external" in item.keywords and not run_live_external:
+        if "live_external" in item.keywords and not live_external_enabled(
+            item.keywords,
+            run_live_external=run_live_external,
+            run_partner_integration=run_partner_integration,
+        ):
             item.add_marker(skip_live_external)
         if "partner_integration" in item.keywords and not (
             run_partner_integration or run_live_external

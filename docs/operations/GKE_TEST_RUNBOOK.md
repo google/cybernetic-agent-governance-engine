@@ -282,16 +282,16 @@ External partner integration tests hitting third-party vendor APIs are tagged wi
 
 | Dimension | Internal Integration (`integration`) | Partner Integration (`partner_integration`) |
 |---|---|---|
-| **Target** | CAGE internal services (GKE, Memorystore, Langfuse, OPA, vLLM) | External partner sandboxes (Provider 01–08, Actuator 01) |
+| **Target** | CAGE internal services (GKE, Memorystore, Langfuse, OPA, vLLM) | External partner sandboxes (the partners in [`partner_harness.py`](../../scripts/partner_harness.py)) |
 | **Operational Control** | Under CAGE operational control | Outside CAGE control, partner-managed sandboxes |
-| **Credential Management** | Configured in cluster secrets (Workload Identity) | Configured via `config/environments/partner-sandbox.env` |
-| **Failure Impact** | Blocks PR merge (critical path) | Does not block PR merge (workflow_dispatch only) |
-| **CI Execution** | Every PR via `ci-integration.yml` | Manual dispatch via `ci-partner-integration.yml` |
+| **Credential Management** | Configured in cluster secrets (Workload Identity) | Locally `config/environments/partner-sandbox.env`; in CI, repository secrets |
+| **Failure Impact** | Blocks PR merge (critical path) | Does not block PR merge (weekly and on dispatch) |
+| **CI Execution** | Every PR via `ci-integration.yml` | Weekly and on dispatch via `ci-partner-integration.yml`, one job per partner |
 | **Test Markers** | `[integration, local]` or `[integration]` | `[partner_integration, live_external, partner]` |
 
 ### Partner Test Execution
 
-Running `uv run pytest tests/ --run-integration` or `-m integration` **excludes** partner tests by default.
+Running `uv run pytest tests/ --run-integration` or `-m integration` **excludes** partner tests by default. `--run-partner-integration` enables the `partner_integration` tests, including their `live_external` marker ([`selection_flags.py`](../../tests/fixtures/selection_flags.py)); `--run-live-external` enables every `live_external` test.
 
 **Local execution with credentials:**
 
@@ -306,17 +306,19 @@ source config/environments/partner-sandbox.env
 # 3. Run all partner integration tests
 make test-partner
 
-# Or run specific partner tests
-uv run pytest tests/integrations/provider_01/test_provider_01_live.py -m partner_integration --run-partner-integration -v
-uv run pytest tests/integrations/provider_02/test_provider_02_live.py -m partner_integration --run-partner-integration -v
-uv run pytest tests/integrations/provider_03/test_provider_03_live.py -m partner_integration --run-partner-integration -v
-uv run pytest tests/integrations/provider_05/test_provider_05_live.py -m partner_integration --run-partner-integration -v
-uv run pytest tests/integrations/provider_07/test_provider_07_live.py -m partner_integration --run-partner-integration --run-live-external -v
-uv run pytest tests/integrations/provider_08/test_provider_08_live.py -m partner_integration --run-partner-integration -v
+# Or run one partner's tests (scripts/partner_harness.py lists each target)
+uv run pytest tests/integrations/provider_01 -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_02 -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_03 -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_05 -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_07 -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_08 -m partner_integration --run-partner-integration -v
 uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partner-integration -v
+
+# Add -p tests.fixtures.require_live -n 0 to fail on any skip, as CI does
 ```
 
-**CI execution:** Partner integration tests run via `.github/workflows/ci-partner-integration.yml` on `workflow_dispatch` only. Partner credentials are stored in GitHub Secrets and injected at runtime.
+**CI execution:** [`ci-partner-integration.yml`](../../.github/workflows/ci-partner-integration.yml) runs weekly (Mondays 06:17 UTC) and on dispatch, one job per partner. Each job receives only its own partner's repository secrets; [`partner_harness.py`](../../scripts/partner_harness.py) lists them, along with the variables the workflow deliberately does not supply and why. actuator_01's mTLS certificate, key and CA bundle are stored as PEM in the `ACTUATOR_01_CLIENT_CERT`, `ACTUATOR_01_CLIENT_KEY` and `ACTUATOR_01_CA_CERT` secrets and written to files at run time. A job passes only if every selected live test ran and passed: the [`require_live`](../../tests/fixtures/require_live.py) plugin fails it on any skip, because a skipped test verified nothing. Until a partner's secrets exist, its job fails. [`test_partner_harness.py`](../../tests/test_partner_harness.py) checks the workflow against the harness module and the live tests on every pull request.
 
 ### Partner Integration Test Coverage
 
@@ -333,7 +335,7 @@ uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partne
 ### Credential Security & Fail-Closed Skipping
 
 - **Never commit `partner-sandbox.env`** to version control (gitignored)
-- **Graceful skip on missing credentials**: All partner live tests check for required environment variables and skip with `pytest.skip("... not configured")` when credentials are missing
+- **Missing credentials skip locally and fail in CI**: every partner live test checks its required environment variables and calls `pytest.skip("... not configured")` when they are missing. The CI harness loads `require_live`, which turns any skip into a failed job
 - **Standard developers** running `make test-fast` or `make test` never encounter partner tests (they require explicit `--run-partner-integration` flag)
 
 ### Trust Anchors & Cryptographic Verification Rules

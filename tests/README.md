@@ -55,10 +55,14 @@ make test-partner
 # Or directly with pytest
 uv run pytest tests/ -m partner_integration --run-partner-integration -v
 
-# Test specific partner
-uv run pytest tests/test_provider_01_live.py -m partner_integration --run-partner-integration -v
-uv run pytest tests/test_provider_02_live.py -m partner_integration --run-partner-integration -v
+# Test one partner (scripts/partner_harness.py lists each partner's target)
+uv run pytest tests/integrations/provider_01 -m partner_integration --run-partner-integration -v
+uv run pytest tests/integrations/provider_02 -m partner_integration --run-partner-integration -v
 uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partner-integration -v
+
+# Fail on any skip, as the CI harness does
+uv run pytest tests/integrations/provider_01 -m partner_integration --run-partner-integration \
+  -p tests.fixtures.require_live -n 0 -v
 ```
 
 **Credential Configuration:**
@@ -66,12 +70,12 @@ uv run pytest tests/test_actuator_01_live.py -m partner_integration --run-partne
 1. Copy the template: `cp config/environments/partner-sandbox.env.example config/environments/partner-sandbox.env`
 2. Fill in partner sandbox credentials (never commit `partner-sandbox.env`)
 3. Source before testing: `source config/environments/partner-sandbox.env`
-4. Tests gracefully skip when credentials are not configured
+4. Locally, tests skip when credentials are not configured. The CI harness (`ci-partner-integration.yml`) loads [`require_live`](fixtures/require_live.py), which fails a run on any skip.
 
 **Partner Integration vs. Internal Integration:**
 
 - **Internal Integration (`integration` marker)**: Tests CAGE's internal GKE services, Redis, Langfuse, vLLM — under our operational control
-- **Partner Integration (`partner_integration` marker)**: Tests external third-party APIs (FlowSignal, Provider 02–06, Actuator 01) — outside our control, may have sandbox downtime
+- **Partner Integration (`partner_integration` marker)**: Tests external third-party APIs (the partners listed in [`partner_harness.py`](../scripts/partner_harness.py)) — outside our control, may have sandbox downtime
 
 Partner tests are isolated to prevent external API failures from blocking internal development velocity.
 
@@ -110,7 +114,7 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | Marker | Meaning | Enabled by |
 |---|---|---|
 | `local` | Runs with **no network and no live service**. All I/O is faked (`fakeredis`, `respx`, `TestClient`, `monkeypatch`). | Default |
-| `partner_integration` | Runs against **live external partner sandboxes** (Provider 01–06, Actuator 01). Requires partner credentials. | `--run-partner-integration` or `make test-partner` |
+| `partner_integration` | Runs against **live external partner sandboxes** (the partners in [`partner_harness.py`](../scripts/partner_harness.py)). Requires partner credentials. | `--run-partner-integration` or `make test-partner` |
 | `unit` | Scope is a single module/class in isolation. Additive to `local`. | Default |
 | `integration` | Requires a live service (GKE, OPA, Langfuse, Redis, vLLM). | `--run-integration` |
 | `partner_integration` | Hits external partner APIs. Isolated from default integration tests. | `--run-partner-integration` / `--run-live-external` |
