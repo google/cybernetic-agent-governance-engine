@@ -69,7 +69,7 @@ The following findings are tracked as open items with target remediation dates. 
 | ID | Control | Description | Severity | Target Date |
 |----|---------|-------------|----------|-------------|
 | POAM-2026-010 | RA-5 | In-cluster vulnerability scanning CronJob not yet deployed | High | 2026-09-30 |
-| POAM-2026-016 | RA-5 / SI-2 | `torch` dev-only dependency carries PYSEC-2026-139; no upstream fix available; dev-only scope, not in production images | Low | 2026-12-31 |
+| POAM-2026-016 | RA-5 / SI-2 | `torch` dev-only dependency carries PYSEC-2026-139; no upstream fix available; dev-only scope, not in production images. torch left `uv.lock` in `7ab1acd5` (#224, 2026-09-19); see POAM-2026-161 | Low | 2026-12-31 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
 | POAM-2026-076 | SI-10 / ISO 42001 A.6.2.6 | Physical-AI barriers (separation, velocity, torque) are declared but not enforced: no cost resolver, so `KinematicBarrierTier` has no CBF and fails closed (DENY) on every governed physical action | Moderate | 2026-12-31 |
@@ -112,6 +112,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-158 | CM-2 / CM-3 | The `governed-financial-advisor` Deployment on the staging cluster drifted out of Terraform ownership on 2026-10-25 (reported by the maintainer; mechanism not recorded). [`main.tf`](../infra/targets/gcp-gke/main.tf) sets `advisor_enabled = local.vllm_enabled`, so the staging profile (`inference_backend = "none"`) deploys no advisor. Under the staging profile both advisor modules have `count = 0`, so the next apply will either destroy the Deployment (if state still tracks it) or leave it running outside Terraform (if it doesn't); nothing in the configuration would adopt it. Which one is unknown. Resolution: a read-only `terraform plan` run directly, not through `deploy_all.sh`, with images pinned to what staging runs now, then a deliberate import or deletion (detail section) | Moderate | Before the next staging apply |
 | POAM-2026-159 | AU-11 / CM-6 | Staging cannot be torn down. The Langfuse event bucket (`google_storage_bucket.langfuse_events` in [`main.tf`](../infra/targets/gcp-gke/main.tf)) locks a 2555-day retention whenever any compliance flag is set, which `deploy_all.sh` does for US_FED staging; the WORM evidence bucket has a one-day staging carve-out, and this bucket has none. On the live staging project the bucket holds 35,639 objects under a locked policy effective 2026-09-29, and the project carries a Cloud Storage deletion lien (verified read-only, 2026-10-30), so the bucket cannot be deleted before 2033-09-27 at the earliest. This contradicts the ephemeral staging lifecycle in [`DEPLOYMENT_RULES.md`](operations/DEPLOYMENT_RULES.md) and `staging.tfvars`, and every staging run in a new project repeats it. Option (a) decided 2026-10-30: a posture-gated staging carve-out that cannot reach prod, closing only when a walk project's teardown completes (detail section) | Moderate | 2026-11-30 |
 | POAM-2026-160 | IA-5 / SA-11 / CA-7 | The required check "Secret Scanning (Gitleaks)" has no detection rules. [`.gitleaks.toml`](../.gitleaks.toml) (added 2026-08-28 in `9a7fabe7`, unchanged since) holds only an `[allowlist]`, with no `[[rules]]` and no `[extend] useDefault = true`, and the job in [`security-scan.yml`](../.github/workflows/security-scan.yml) runs gitleaks 8.27.2 with no `--config`, so gitleaks loads that file instead of its default rules. Since 2026-08-28 the scan has loaded a configuration with zero rules and cannot report a finding, and since 2026-10-27 it has been one of the eight required checks POAM-2026-115 relies on. Confirmed from the configuration, the workflow and gitleaks' documentation; a CI canary is the empirical confirmation. High until a full-history scan with the default rules comes back clean (detail section) | High | 2026-11-15 |
+| POAM-2026-161 | RA-5 / SI-2 / CA-7 | The pip-audit gate is configured around findings rather than detecting them: the shape POAM-2026-120 records for test fixtures, here in a security gate. The pip-audit step in [`security-scan.yml`](../.github/workflows/security-scan.yml) passes four `--ignore-vuln` flags, and all four are dead at HEAD. diskcache (GHSA-rg7c-g689-fr3x) is not in `uv.lock`, although its comment says "RESOLVED — removed". torch (PYSEC-2026-139, GHSA-rrmf-rvhw-rf47) left `uv.lock` in `7ab1acd5`. pip's PYSEC-2026-3721 is fixed in 26.2, the version CI installs. GHSA-rrmf-rvhw-rf47, a critical memory-corruption CVE, has had no comment since `e429b230` deleted it, and POAM-2026-016 names only PYSEC-2026-139. The next step, "Scan compliance extras", discards pip-audit's exit status, so it cannot fail (POAM-2026-150 class). No suppression hides a live finding today; each would silently mask its CVE if the package returned (detail section) | Low | 2026-11-15 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -1313,6 +1314,39 @@ Since 2026-10-27 it has been one of the eight required status checks in ruleset 
 1. The canary step exists, and a recorded run shows it failing when the rules are removed.
 2. The full-history scan result is recorded here.
 3. Record the merge commit SHA and the actual verification date here.
+
+### POAM-2026-161: The pip-audit Gate Carries Four Dead Suppressions, One Unexplained
+
+**Control:** NIST RA-5 (Vulnerability Monitoring and Scanning), SI-2 (Flaw Remediation), CA-7 (Continuous Monitoring)
+**Risk Level:** Low
+**Status:** Open — fix in progress on `fix/pip-audit-suppressions`
+**Date Opened:** 2026-10-30
+**Target Closure:** 2026-11-15
+
+**Description:**
+Tracked at the maintainer's request (2026-10-30), who calls it "the POAM-120 pattern in a security gate: a control configured around a finding rather than detecting it. An unexplained suppression and an explained one are different artifacts, and only one of them survives review." POAM-2026-120 records fixtures configured around a defect rather than detecting it; here the configuration is a security gate's suppression list.
+
+The pip-audit step in [`security-scan.yml`](../.github/workflows/security-scan.yml) passes four `--ignore-vuln` flags, and all four are dead at HEAD (verified at `34709d55`, 2026-10-30):
+1. **GHSA-rg7c-g689-fr3x (diskcache).** diskcache is not in `uv.lock`. The step's own comment says "RESOLVED — removed", yet the flag stayed.
+2. **PYSEC-2026-139 and GHSA-rrmf-rvhw-rf47 (both torch).** The second is CVE-2025-3000, memory corruption in `torch.jit.script`, which OSV lists as fixed in 2.13.0. torch left `uv.lock` in `7ab1acd5` (#224, 2026-09-19). The PYSEC-2026-139 comment still calls torch 2.10.0 "a dev/inference-only dependency", which has been false since then.
+3. **PYSEC-2026-3721 (pip).** OSV lists it as fixed in 26.2. CI's audit venv installs pip 26.2 (run 41087195977), the version `uv.lock` pins, but the comment names "pip 26.1.2".
+
+**GHSA-rrmf-rvhw-rf47 is the unexplained one.** `3256100a` (2026-06-13) added it with a five-line comment ending "Suppressed under the same POAM-016 tracking item". `e429b230` (#90, 2026-08-22) deleted that comment and kept the flag. POAM-2026-016's row names only PYSEC-2026-139, never this alias. POAM-2026-016 itself (torch PYSEC-2026-139, Low, open, target 2026-12-31) has rested on a false premise since `7ab1acd5`.
+
+The next step, "Scan compliance extras", runs `uv run pip-audit … || true`. It cannot fail, the class POAM-2026-150 records for CI jobs whose test outcomes cannot fail the build, and it scans the same venv as the first step.
+
+**Risk.** Low: no suppression hides a live finding today. Each flag would silently mask its CVE if the package returned, and torch's GHSA-rrmf-rvhw-rf47 is a critical memory-corruption CVE.
+
+**Remediation Plan (fix in progress on `fix/pip-audit-suppressions`):**
+1. Delete all four flags and their comments.
+2. Delete the `|| true` step, or make it able to fail.
+3. Add a hermetic test that fails if any `--ignore-vuln` in `.github/workflows/` has no adjacent comment naming that exact ID.
+4. Close POAM-2026-016, citing `7ab1acd5`.
+
+**Closure Criteria:**
+1. Record the merge commit SHA here.
+2. A recorded mutation shows that an uncommented `--ignore-vuln` fails the test.
+3. A green pip-audit run with zero suppressions is recorded here, with the actual verification date.
 
 ### POAM-2026-121: Validation Report Makes a False Composition Claim
 
