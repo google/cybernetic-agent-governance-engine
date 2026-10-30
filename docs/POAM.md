@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-10-29
+**Last Updated:** 2026-10-30
 
 ---
 
@@ -122,6 +122,9 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-128 | SI-10 | The regional tier-1 keywords are not loaded. The EU overlay lists `BYPASS FRIA`, `GDPR OVERRIDE` and `IGNORE FAIRNESS CHECKS`; the APAC overlay lists `BYPASS FEAT CHECKS` and `IGNORE FAIRNESS ASSESSMENT`. Every region loads the same 14 global keywords, because the overlay merges only `domains.*`; the eu-dev and apac-dev headers say the extras are active (verified 2026-10-28; [`JURISDICTION_INVENTORY.md`](operations/JURISDICTION_INVENTORY.md)). | Moderate | 2026-11-30 |
 | POAM-2026-129 | AU-6 | Two HITL SLA sets. The runtime escalates within 4, 8 and 12 hours (US, EU, APAC). The thresholds files and the finance constants say 4, 2 and 1, citing DORA Art. 10 and MAS FEAT. Whether either regulation sets such a deadline is being established; if one does, the runtime misses it (verified values; [`JURISDICTION_INVENTORY.md`](operations/JURISDICTION_INVENTORY.md)). | Moderate | 2026-11-15 |
 | POAM-2026-130 | CM-6 | In Terraform, `enable_eu_ecb_compliance` and `enable_apac_mas_compliance` do exactly what `enable_nist_compliance` does: all three feed only `any_compliance_active`. Their descriptions claim distinct effects (verified, grep; [`JURISDICTION_INVENTORY.md`](operations/JURISDICTION_INVENTORY.md)). | Low | 2026-12-31 |
+| POAM-2026-155 | SI-10 / AC-3 | Nothing at the consequence boundary range-checks a magnitude at consume. [`ConsequenceGateway.evaluate()`](../src/gateway/governance/consequence_gateway.py) rejects non-finite values and checks the `act` digest, but passes zero and negative amounts. The only range checks are in provider_01 ([`provider.py`](../src/integrations/provider_01/provider.py)), before the partner is called and again before minting, and both cover only `amount` or `magnitude` at the payload's top level or directly under `params`. A magnitude under any other key, or nested deeper, is never range-checked (read at `23f48374`, 2026-10-30; detail section) | Moderate | 2026-11-30 |
+| POAM-2026-156 | AC-3 / SC-24 | Single use at the consequence boundary is not durable. [`ConsequenceAuthorityStore.consume_once()`](../src/gateway/governance/consequence_authority_store.py) keys its `SET NX EX 90` marker on `authority_record_id` but sizes it to the 60 s ConsequenceToken. provider_01 reads no receipt validity, so a record that stays valid past 90 s and is issued again can be consumed twice. The marker is also not replica-acknowledged, although CBF commits on the same instance wait for a replica and roll back without one. The live staging instance replicates asynchronously with persistence disabled (verified 2026-10-30), so a failover inside a token's 60 s life can lose the marker and allow one replay (detail section) | Moderate | 2026-11-30 |
+| POAM-2026-157 | SA-11 / CA-7 | A partner-facing test passes only under a flag production never sets. [`test_flowsignal_step2_qualification.py`](../tests/integrations/provider_01/test_flowsignal_step2_qualification.py) runs TC-01 to TC-06 on a payload carrying `prefer_receipt_id_for_rec`, which makes provider_01 key single use on the partner's receipt id. Nothing in `src/` or `scripts/` sets the flag, so production keys on `authority_record_id` (POAM-2026-156). With the flag removed, TC-06 ("second distinct transaction under the SAME mandate_id ... succeeds without false collision") fails with `AUTHORITY_RECORD_BINDING_MISMATCH` (mutation run, 2026-10-30). Same class as POAM-2026-120: a fixture configured around a defect (detail section) | Moderate | 2026-11-30 |
 
 ### APAC MAS Region (APAC_MAS)
 
@@ -1073,6 +1076,79 @@ Nine pull-request workflows filtered `on.pull_request.branches` to `[main]` (or 
 1. **Done (local gate).** [`Makefile`](../Makefile) `lint` runs `uv run mypy src/` alongside `ruff check` and `uv lock --check` (`#586`, `c8b0a504`).
 2. **Done (workflow triggers + guard test).** All nine pull-request workflows remove `on.pull_request.branches` / `branches-ignore` (`#589`, `8d167084`) so stacked pull requests targeting feature base branches run the full pull-request suite (including all eight required status checks) on every push, while `on.push.branches` stays scoped to `main` across all seven branch-scoped push workflows. [`test_workflow_pr_triggers.py`](../tests/test_workflow_pr_triggers.py) enforces those invariants across every `.github/workflows/*.yml` file and `Makefile`. Sensitivity checks (`2026-10-29`, `rc=1`): `WF-M1` re-adding `branches: [main]` to `ci.yml` `pull_request` failed `test_pull_request_workflows_do_not_filter_target_branches` and `test_required_check_workflows_trigger_on_stacked_pr_branches`; `WF-M2` adding `branches-ignore: ['feat/**']` to `ci.yml` `pull_request` failed `test_pull_request_workflows_do_not_filter_target_branches` and `test_required_check_workflows_trigger_on_stacked_pr_branches`; `WF-M3` dropping `push.branches` in `ci.yml` failed `test_push_triggers_remain_scoped_on_unfiltered_pr_workflows`; `WF-M4` removing `mypy src/` from `Makefile` `lint` failed `test_makefile_lint_runs_mypy`.
 3. **Open (live verification).** Closes once a pull request targeting a non-`main` base branch triggers the workflow suite from `main` (GitHub Actions resolves `pull_request` workflow definitions from the repository's default/base branch once merged) and its check-run count is recorded here.
+
+### POAM-2026-155: No Magnitude Range Check at Consume, and a Name-Dependent One at Mint (EU_ECB)
+
+**Control:** NIST SI-10 (Information Input Validation), AC-3 (Access Enforcement)
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-10-30
+**Target Closure:** 2026-11-30
+
+**Description:**
+A ConsequenceToken authorises one consequential action, and nothing at the consequence boundary checks that the action's magnitude is a positive, finite number at consume. Read at `23f48374` (2026-10-30):
+1. **Consume.** [`ConsequenceGateway.evaluate()`](../src/gateway/governance/consequence_gateway.py) verifies the token, rejects payloads that are not I-JSON (non-finite numbers and integers beyond ±(2^53−1)), recomputes the action digest against the token's `act` claim and consumes the single-use marker. It has no range check, so a zero or negative amount passes whenever the digest matches.
+2. **Before minting.** The only range checks are in provider_01 ([`provider.py`](../src/integrations/provider_01/provider.py)): `validate_fria()` checks before the partner is called, and the ALLOW path checks again before minting. Each refuses with `CONSEQUENCE_TOKEN_MINT_FAILED` when the first `amount` or `magnitude` value it finds is a boolean, non-finite or not strictly positive. Both look only at the payload's top level and directly under `params`, and both compare `float()` values rather than integer minor units. A magnitude under any other key (for example `value` or `notional`) or nested deeper (for example `params.payment.amount`) is never range-checked, at mint or at consume.
+3. Because `act` binds the exact payload, consume cannot see a value that mint did not see. Consume-side protection is therefore exactly the mint-side check, which depends on the field's name and depth.
+
+A token is minted only on the partner's ALLOW, which narrows the exposure; whatever validation the partner applies is not evidence for a CAGE control.
+
+**Remediation Plan:**
+1. Make magnitude a declared part of the consequence contract: the domain plugin declares, per action, the payload paths that carry magnitudes, so the check no longer depends on key names. The kernel enforces "finite and strictly positive" on the declared paths without naming them, which keeps it domain-agnostic.
+2. Enforce the declared check at both mint and consume, so consume no longer relies on the mint check through the digest binding.
+3. Fail closed when an action that moves value declares no magnitude path, or the declared path is absent from the payload.
+
+**Closure Criteria:**
+1. Tests mint and consume payloads with zero, negative, non-finite and boolean magnitudes at the top level, under `params` and nested deeper, and each is refused at mint and at consume; a mutation that removes either check fails a named test.
+2. If the fix changes provider_01, an over-the-wire run against the partner sandbox covers a refused magnitude (AGENTS.md, Tier 1).
+3. Record the merge commit SHA and the actual verification date here.
+
+### POAM-2026-156: Single-Use Consumption Is Not Durable at the Consequence Boundary (EU_ECB)
+
+**Control:** NIST AC-3 (Access Enforcement), SC-24 (Fail in Known State)
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-10-30
+**Target Closure:** 2026-11-30
+
+**Description:**
+[`ConsequenceAuthorityStore.consume_once()`](../src/gateway/governance/consequence_authority_store.py) enforces single use of a partner authority record by writing `flowsignal:token:<authority_record_id>` with `SET NX EX` on the governance Valkey instance. [`ConsequenceGateway.evaluate()`](../src/gateway/governance/consequence_gateway.py) executes only if that write wins. Read at `23f48374` and checked against the live staging instance (2026-10-30), single use fails in two ways:
+1. **The marker's lifetime is sized to the token but keyed on the record.** The marker expires after 90 s (`FLOWSIGNAL_CONSUMPTION_TTL_SECONDS`; no manifest overrides it). That is 1.5 times the ConsequenceToken's 60 s lifetime, and [`ConsequenceToken.verify()`](../src/gateway/governance/consequence_token.py) rejects an `iat` more than 5 s in the future, so a token always expires before its marker. But the marker is keyed on the token's `rec` claim, which provider_01 ([`provider.py`](../src/integrations/provider_01/provider.py)) sets to the partner's `authority_record_id` unless the payload sets `prefer_receipt_id_for_rec`; only a hermetic test sets it. The partner reports that this field equals the mandate id on every call (not verified by CAGE); if so, the marker allows one consumption per mandate per 90 s rather than one per determination. provider_01 also reads no validity or expiry from the partner's authority receipt. If a record stays valid for longer than 90 s and is issued to CAGE again, a newly minted token for it is consumed successfully after the first marker expires.
+2. **The marker is not replica-acknowledged.** Valkey replication is asynchronous. `gcloud memorystore instances describe cage-valkey-gov-staging-v2` (read-only, 2026-10-30) reports one replica across two zones, `noeviction`, and persistence `DISABLED`. A failover inside a token's 60 s lifetime can promote a replica that never received the marker, allowing one replay. CBF commits on the same instance don't have this gap: they `WAIT` for a replica acknowledgement and roll back when none arrives under `CAGE_STRICT_REPLICATION` ([`cbf_engine.py`](../src/gateway/governance/safety/cbf_engine.py)).
+
+**Remediation Plan:**
+1. Replica-acknowledge the marker as CBF commits do: after `SET NX`, `WAIT` for the configured replicas (`CAGE_REDIS_WAIT_REPLICAS`). Refuse the consumption with no `EXECUTE` when the acknowledgement doesn't arrive; the record stays consumed and nothing executes.
+2. Retain the marker for the record's full validity. Carry the partner's receipt validity into the token or the store, set the marker TTL to cover both the token's expiry and the record's validity, and fail closed when the partner states no validity. This needs the partner's receipt-validity rules, so agree it within the wire-contract revision tracked in POAM-2026-113.
+3. Decide whether governance state needs persistence to survive the loss of a whole shard, and record the decision here.
+4. Key the marker on the partner's per-determination receipt id by default, not on a field that may identify the mandate. Correct the store's module docstring, which calls it a Redis-Lua store although consumption is a plain `SET NX EX`.
+
+**Closure Criteria:**
+1. Tests show that a replay is refused after the marker is lost between consumption and replay (a simulated failover). They also show that a token re-issued for a still-valid record is refused after the token-sized TTL has elapsed, and that the production path, without `prefer_receipt_id_for_rec`, keys the marker per determination. A mutation that removes any of these fixes fails a named test.
+2. An over-the-wire run against the partner sandbox exercises the revised receipt validity (AGENTS.md, Tier 1).
+3. Record the merge commit SHA and the actual verification date here.
+
+### POAM-2026-157: provider_01's Step 2 Qualification Test Passes Only Under a Flag Production Never Sets (EU_ECB)
+
+**Control:** NIST SA-11 (Developer Testing and Evaluation), CA-7 (Continuous Monitoring)
+**Risk Level:** Moderate
+**Status:** Open
+**Date Opened:** 2026-10-30
+**Target Closure:** 2026-11-30
+
+**Description:**
+`test_tc01_to_tc06_step2_consequence_qualification_vectors` in [`test_flowsignal_step2_qualification.py`](../tests/integrations/provider_01/test_flowsignal_step2_qualification.py) builds every case on a payload that sets `prefer_receipt_id_for_rec: True`. provider_01 ([`provider.py`](../src/integrations/provider_01/provider.py)) reads that flag from the request payload; when it is set, single use is keyed on the partner's `authority_receipt.id` instead of its `authority_record_id`. No production caller sets it. [`FriaTier`](../src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py) builds the payload from a fixed key set that leaves it out, and nothing else in `src/` or `scripts/` sets it (verified, grep, 2026-10-30). The test's own mock returns an `authority_record_id` equal to the mandate id, which is the behaviour the partner reports from its side. On the production path, therefore, two payments under one mandate share a marker (POAM-2026-156).
+
+**Mutation check (2026-10-30).** The flag and the two assertions that read its effect were removed. TC-06 ("second distinct transaction under the SAME mandate_id with a fresh authority_receipt.id succeeds without false collision") then returned `BLOCK` / `AUTHORITY_RECORD_BINDING_MISMATCH` instead of `EXECUTE`. The test reported green on a path production does not take. That is the masking mechanism POAM-2026-120 records: a fixture configured around a defect rather than detecting it. The flag is also a caller-selectable branch in production code that only a test uses.
+
+**Remediation Plan:**
+1. Run the qualification cases on the payload shape production sends, as built by `FriaTier`, with no adapter flags.
+2. Remove `prefer_receipt_id_for_rec` and make the per-determination key the only behaviour (POAM-2026-156, item 4).
+3. Add a guard test that fails when provider_01 reads a top-level payload key that `FriaTier` never sends. Today it would flag `prefer_receipt_id_for_rec`, `approval_id` and `target`.
+
+**Closure Criteria:**
+1. TC-01 to TC-06 pass on the production payload shape with no flag, after POAM-2026-156 item 4 lands.
+2. The guard test exists, and a recorded mutation that reintroduces a test-only payload key makes it fail.
+3. Record the merge commit SHA and the actual verification date here.
 
 ### POAM-2026-121: Validation Report Makes a False Composition Claim
 
