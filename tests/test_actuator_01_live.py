@@ -172,7 +172,10 @@ async def test_live_wire_dispatch_roundtrip(
             signer=bundle.approver_signer,
         )
     elif live_adapter._signer.is_kms_active:
-        primary_approval = build_webauthn_approval(
+        import asyncio
+
+        primary_approval = await asyncio.to_thread(
+            build_webauthn_approval,
             action=action,
             target=target,
             approver_urn=urns[0],

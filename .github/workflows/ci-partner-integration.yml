@@ -14,20 +14,26 @@
 
 name: Partner Integration Tests
 
-# This workflow runs live integration tests against external partner sandboxes.
-# It is decoupled from standard CI to prevent partner API failures from blocking
-# internal development.
+# Live, over-the-wire conformance runs against partner sandboxes (AGENTS.md,
+# Tier 1). Kept out of pull-request CI so a partner outage never blocks a merge.
+# Runs on dispatch and weekly.
 #
-# Trigger: Manual dispatch only (workflow_dispatch)
-# Secrets: Partner credentials must be configured in GitHub Secrets
+# A partner's job passes only if every selected live test ran and passed
+# (tests/fixtures/require_live.py). A skip fails the job: a skipped test
+# verified nothing, and pytest reports an all-skipped run as a success.
+#
+# Each job receives only its own partner's secrets. scripts/partner_harness.py
+# is the single source for the partner list, the pytest targets and the secret
+# names; tests/test_partner_harness.py checks this file against it and against
+# the live tests on every pull request.
 
 on:
   workflow_dispatch:
     inputs:
       partner_filter:
-        description: 'Partner to test (provider_01, provider_02, provider_03, provider_05, actuator_01, or "all")'
-        required: false
-        default: 'all'
+        description: 'Partner to verify, or "all" for one job per partner'
+        required: true
+        default: all
         type: choice
         options:
           - all
@@ -35,16 +41,55 @@ on:
           - provider_02
           - provider_03
           - provider_05
+          - provider_07
+          - provider_08
           - actuator_01
+  schedule:
+    # Mondays 06:17 UTC: a live check that runs only on request decays.
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
 
+concurrency:
+  group: partner-integration
+  cancel-in-progress: false
+
 jobs:
-  partner-integration:
-    name: Partner Integration Tests
-    runs-on: ubuntu-22.04
+  select:
+    name: Select partners
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      partners: ${{ steps.select.outputs.partners }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve the partner matrix
+        id: select
+        env:
+          # Empty on the weekly schedule, which runs every partner.
+          SELECTION: ${{ inputs.partner_filter }}
+        run: |
+          partners="$(python3 scripts/partner_harness.py matrix "${SELECTION:-all}")"
+          echo "partners=${partners}" >> "$GITHUB_OUTPUT"
+
+  live:
+    name: Live (${{ matrix.partner }})
+    needs: select
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        partner: ${{ fromJSON(needs.select.outputs.partners) }}
 
     steps:
       - name: Checkout repository
@@ -63,91 +108,95 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: |
-          uv sync --frozen --all-extras
+        run: uv sync --frozen --all-extras
 
-      - name: Configure partner credentials
+      - name: Authenticate to GCP for actuator_01 KMS signing
+        if: matrix.partner == 'actuator_01'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: projects/104563134786/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: sa-cage-deployer@laah-cybernetics.iam.gserviceaccount.com
+
+      - name: Stage actuator_01 mTLS material
+        if: matrix.partner == 'actuator_01'
         env:
-          PARTNER_FILTER: ${{ inputs.partner_filter }}
-          # Provider 01 (FlowSignal / EU ECB)
-          PROVIDER_01_ENDPOINT: ${{ secrets.PROVIDER_01_ENDPOINT }}
-          PROVIDER_01_API_KEY: ${{ secrets.PROVIDER_01_API_KEY }}
-          
-          # Provider 02 (CER Attestation)
-          PROVIDER_02_API_ENDPOINT: ${{ secrets.PROVIDER_02_API_ENDPOINT }}
-          PROVIDER_02_JWK_ENDPOINT: ${{ secrets.PROVIDER_02_JWK_ENDPOINT }}
-          PROVIDER_02_API_KEY_SECRET: ${{ secrets.PROVIDER_02_API_KEY_SECRET }}
-          PROVIDER_02_TEST_CERT_HASH: ${{ secrets.PROVIDER_02_TEST_CERT_HASH }}
-          
-          # Provider 03 (Normative Baseline)
-          PROVIDER_03_ENDPOINT: ${{ secrets.PROVIDER_03_ENDPOINT }}
-          PROVIDER_03_API_KEY: ${{ secrets.PROVIDER_03_API_KEY }}
-          
-          # Provider 05 (AO Warrant / Blueprint)
-          PROVIDER_05_BLUEPRINT_REGISTRY_URL: ${{ secrets.PROVIDER_05_BLUEPRINT_REGISTRY_URL }}
-          PROVIDER_05_API_KEY: ${{ secrets.PROVIDER_05_API_KEY }}
-          
-          # Actuator 01 (Execution Gateway)
-          ACTUATOR_01_ENDPOINT: ${{ secrets.ACTUATOR_01_ENDPOINT }}
           ACTUATOR_01_CLIENT_CERT: ${{ secrets.ACTUATOR_01_CLIENT_CERT }}
           ACTUATOR_01_CLIENT_KEY: ${{ secrets.ACTUATOR_01_CLIENT_KEY }}
-          
-          # KMS (for Actuator 01 quorum signatures)
-          KMS_GOVERNANCE_KEY: ${{ secrets.KMS_GOVERNANCE_KEY }}
-          CAGE_OPERATOR_URNS: ${{ secrets.CAGE_OPERATOR_URNS }}
-          
-          # Disable LangSmith tracing
+          ACTUATOR_01_CA_CERT: ${{ secrets.ACTUATOR_01_CA_CERT }}
+        run: |
+          # The adapter reads file paths. Write a PEM only when its secret is
+          # set: a missing secret then leaves the path unset, and the test
+          # names it instead of failing later on an empty file.
+          umask 077
+          dir="${RUNNER_TEMP}/actuator_01"
+          mkdir -p "$dir"
+          stage() {  # <secret variable> <path variable> <file name>
+            local pem="${!1}"
+            [ -n "$pem" ] || return 0
+            printf '%s\n' "$pem" > "${dir}/$3"
+            echo "$2=${dir}/$3" >> "$GITHUB_ENV"
+          }
+          stage ACTUATOR_01_CLIENT_CERT ACTUATOR_01_CERT_PATH client.crt
+          stage ACTUATOR_01_CLIENT_KEY ACTUATOR_01_KEY_PATH client.key
+          stage ACTUATOR_01_CA_CERT ACTUATOR_01_CA_PATH ca.crt
+
+      - name: Run live tests
+        env:
+          PARTNER: ${{ matrix.partner }}
           LANGSMITH_TRACING: "false"
           LANGCHAIN_TRACING_V2: "false"
+          KMS_GOVERNANCE_KEY: ${{ matrix.partner == 'actuator_01' && 'projects/laah-cybernetics/locations/us-central1/keyRings/cybernetics-keyring/cryptoKeys/actuator-01-signing/cryptoKeyVersions/1' || '' }}
+          # Each secret reaches only its own partner's job.
+          PROVIDER_01_ENDPOINT: ${{ matrix.partner == 'provider_01' && secrets.PROVIDER_01_ENDPOINT || '' }}
+          PROVIDER_01_API_KEY: ${{ matrix.partner == 'provider_01' && secrets.PROVIDER_01_API_KEY || '' }}
+          PROVIDER_02_API_ENDPOINT: ${{ matrix.partner == 'provider_02' && secrets.PROVIDER_02_API_ENDPOINT || '' }}
+          PROVIDER_02_JWK_ENDPOINT: ${{ matrix.partner == 'provider_02' && secrets.PROVIDER_02_JWK_ENDPOINT || '' }}
+          PROVIDER_02_API_KEY_SECRET: ${{ matrix.partner == 'provider_02' && secrets.PROVIDER_02_API_KEY_SECRET || '' }}
+          PROVIDER_02_TEST_CERT_HASH: ${{ matrix.partner == 'provider_02' && secrets.PROVIDER_02_TEST_CERT_HASH || '' }}
+          PROVIDER_03_ENDPOINT: ${{ matrix.partner == 'provider_03' && secrets.PROVIDER_03_ENDPOINT || '' }}
+          PROVIDER_03_API_KEY: ${{ matrix.partner == 'provider_03' && secrets.PROVIDER_03_API_KEY || '' }}
+          PROVIDER_05_BLUEPRINT_REGISTRY_URL: ${{ matrix.partner == 'provider_05' && secrets.PROVIDER_05_BLUEPRINT_REGISTRY_URL || '' }}
+          PROVIDER_05_API_KEY: ${{ matrix.partner == 'provider_05' && secrets.PROVIDER_05_API_KEY || '' }}
+          PROVIDER_05_ATTESTATION_ENDPOINT: ${{ matrix.partner == 'provider_05' && secrets.PROVIDER_05_ATTESTATION_ENDPOINT || '' }}
+          PROVIDER_07_ENDPOINT: ${{ matrix.partner == 'provider_07' && secrets.PROVIDER_07_ENDPOINT || '' }}
+          PROVIDER_07_API_KEY: ${{ matrix.partner == 'provider_07' && secrets.PROVIDER_07_API_KEY || '' }}
+          PROVIDER_07_JWKS_URL: ${{ matrix.partner == 'provider_07' && secrets.PROVIDER_07_JWKS_URL || '' }}
+          PROVIDER_07_EXPECTED_KID: ${{ matrix.partner == 'provider_07' && secrets.PROVIDER_07_EXPECTED_KID || '' }}
+          PROVIDER_08_ENDPOINT: ${{ matrix.partner == 'provider_08' && secrets.PROVIDER_08_ENDPOINT || '' }}
+          PROVIDER_08_API_KEY: ${{ matrix.partner == 'provider_08' && secrets.PROVIDER_08_API_KEY || '' }}
+          ACTUATOR_01_ENDPOINT: ${{ matrix.partner == 'actuator_01' && secrets.ACTUATOR_01_ENDPOINT || '' }}
+          ACTUATOR_01_TENANT_ID: ${{ matrix.partner == 'actuator_01' && secrets.ACTUATOR_01_TENANT_ID || '' }}
+          ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL: ${{ matrix.partner == 'actuator_01' && secrets.ACTUATOR_01_RECEIPT_KEY_MANIFEST_URL || '' }}
+          CAGE_OPERATOR_URNS: ${{ matrix.partner == 'actuator_01' && secrets.CAGE_OPERATOR_URNS || '' }}
         run: |
-          echo "Partner credentials configured via GitHub Secrets"
-          echo "Filter: ${PARTNER_FILTER}"
-
-      - name: Run partner integration tests
-        env:
-          FILTER: ${{ inputs.partner_filter }}
-        run: |
-          case "$FILTER" in
-            all)
-              echo "Running all partner integration tests..."
-              uv run pytest tests/ -m partner_integration --run-partner-integration -v --tb=short
-              ;;
-            provider_01|provider_02|provider_03|provider_05|actuator_01)
-              echo "Running $FILTER partner integration tests..."
-              uv run pytest "tests/test_${FILTER}_live.py" -m partner_integration --run-partner-integration -v --tb=short
-              ;;
-            *)
-              echo "Invalid partner_filter: $FILTER" >&2
-              exit 1
-              ;;
-          esac
+          target="$(python3 scripts/partner_harness.py target "$PARTNER")"
+          uv run pytest "$target" -m partner_integration --run-partner-integration \
+            -p tests.fixtures.require_live -n 0 -v --tb=short \
+            --junitxml="partner-results/${PARTNER}.xml"
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: partner-integration-results
-          path: |
-            .pytest_cache/
-            *.log
-          retention-days: 7
+          name: partner-results-${{ matrix.partner }}
+          path: partner-results/
+          if-no-files-found: warn
+          retention-days: 90
 
-  summary:
-    name: Partner Integration Summary
-    runs-on: ubuntu-22.04
-    needs: partner-integration
+  verdict:
+    name: Partner Integration Verdict
+    needs: live
     if: always()
-    
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
     steps:
-      - name: Report status
+      - name: Require every partner job to pass
         env:
-          PARTNER_RESULT: ${{ needs.partner-integration.result }}
+          LIVE_RESULT: ${{ needs.live.result }}
         run: |
-          if [ "$PARTNER_RESULT" = "success" ]; then
-            echo "✅ Partner integration tests passed"
-          elif [ "$PARTNER_RESULT" = "skipped" ]; then
-            echo "⏭️  Partner integration tests skipped (credentials not configured)"
-          else
-            echo "❌ Partner integration tests failed"
+          if [ "$LIVE_RESULT" != "success" ]; then
+            echo "At least one partner job did not pass (result: ${LIVE_RESULT})." >&2
             exit 1
           fi
+          echo "Every selected partner's live tests ran and passed."
