@@ -81,4 +81,5 @@ regexes = [
     '''ACTUATOR_01_SIGNING_KEYS_DIR''',
     '''s3-reconciliation-bucket''',
     '''nvapi-1234567890abcdef''',
+    '''projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/''',
 ]
