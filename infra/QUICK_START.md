@@ -364,15 +364,18 @@ gcloud services enable container.googleapis.com \
   --project=<YOUR_GCP_PROJECT_ID>
 ```
 
-### `ImagePullBackOff` on GKE & Image Digest Portability
+### `ImagePullBackOff` on GKE & Profile Portability (`image_digests` / `project_id`)
 
-Images must be built via Cloud Build before Terraform apply, and container digests must be rendered against the evaluator's project registry (committed profiles pin specific project digests):
+Images must be built via Cloud Build before Terraform apply, container digests must be rendered against the evaluator's project registry, and `project_id` must be explicitly overridden (committed profiles like `staging.tfvars` pin specific project digests and `project_id`):
 
 ```bash
 export PROJECT_ID=<YOUR_GCP_PROJECT_ID>
 export REGISTRY_URL=gcr.io/<YOUR_GCP_PROJECT_ID>
 bash scripts/build_images.sh
 bash scripts/render_image_digests.sh
+
+# Deploy with project override:
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<YOUR_GCP_PROJECT_ID>
 ```
 
 ### Control Plane Connection Refused / Lockout (POAM-2026-126)
@@ -385,11 +388,16 @@ Under POAM-2026-126, GKE control plane authorized networks enforces a strict CID
   --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
 ```
 
+### Deployer Service Account (`sa-cage-deployer`) Unverified Status
+
+Live staging deployments have run under human credentials (`gcloud auth application-default login`). The headless automated deployment path (`sa-cage-deployer`) remains unverified end-to-end, as it previously lacked `cloudkms.cryptoKeyVersions.viewPublicKey` on the attestor key during probe evaluation.
+
 ### `linkerd-network-validator` CrashLoopBackOff (Exit 95)
 
 If pods enter `Init:CrashLoopBackOff` with `Failed to validate networking configuration` (Linkerd CNI setup race on new or scaling nodes):
 - **Mitigation**: Delete the affected pods (`kubectl delete pod -l app=gateway -n governance-stack`) to trigger rescheduling after node CNI setup settles.
 - **Operational Status**: Root cause is an unestablished CNI setup race; pod restart is a known mitigation.
+
 
 
 ### Backend connection refused on port-forward

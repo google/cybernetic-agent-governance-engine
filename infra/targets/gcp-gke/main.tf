@@ -1124,22 +1124,32 @@ resource "terraform_data" "poam_019_compliance_key_guard" {
     precondition {
       condition = !(local.any_compliance_active && (
         var.langfuse_compliance_public_key == "" ||
-        var.langfuse_compliance_secret_key == "" ||
-        var.langfuse_compliance_public_key == var.langfuse_public_key ||
-        var.langfuse_compliance_secret_key == var.langfuse_secret_key
+        var.langfuse_compliance_secret_key == ""
+      ))
+      error_message = <<-EOT
+        [POAM-019] Missing compliance telemetry keys (environment not loaded).
+        When compliance hardening is active (enable_nist_compliance, enable_eu_ecb_compliance, or enable_apac_mas_compliance),
+        the Langfuse compliance project keys (langfuse_compliance_public_key / langfuse_compliance_secret_key) must not be empty.
+        Remediation: You likely ran bare `terraform plan` without loading your environment.
+        Run via `./deploy_all.sh` (which maps LANGFUSE_COMPLIANCE_* from .env) or source
+        `infra/load_env.sh` before running Terraform directly.
+        See docs/POAM_US_FED.md#POAM-019.
+      EOT
+    }
+    precondition {
+      condition = !(local.any_compliance_active && (
+        var.langfuse_compliance_public_key != "" &&
+        var.langfuse_compliance_secret_key != "" && (
+          var.langfuse_compliance_public_key == var.langfuse_public_key ||
+          var.langfuse_compliance_secret_key == var.langfuse_secret_key
+        )
       ))
       error_message = <<-EOT
         [POAM-019] AU-9 dual-project telemetry isolation violated.
-        When compliance hardening is active (enable_nist_compliance, enable_eu_ecb_compliance, or enable_apac_mas_compliance), the Langfuse compliance project keys
-        (langfuse_compliance_public_key / langfuse_compliance_secret_key) must be:
-          (1) Non-empty
-          (2) Distinct from the application project keys (langfuse_public_key / langfuse_secret_key)
-        An empty or identical compliance key silently collapses the dual-project
-        architecture, defeating evidentiary independence for NIST SP 800-53 AU-9.
-        Remediation: Set langfuse_compliance_public_key and langfuse_compliance_secret_key
-        to valid cage-compliance Langfuse project credentials through TF_VAR_* or
-        terraform.auto.tfvars (deploy_all.sh maps LANGFUSE_COMPLIANCE_* from .env),
-        never a committed tfvars file.
+        The Langfuse compliance project keys are identical to the application project keys
+        (langfuse_public_key / langfuse_secret_key). An identical compliance key silently collapses
+        the dual-project architecture, defeating evidentiary independence for NIST SP 800-53 AU-9.
+        Remediation: Set distinct credentials for the compliance project in .env.
         See docs/POAM_US_FED.md#POAM-019.
       EOT
     }

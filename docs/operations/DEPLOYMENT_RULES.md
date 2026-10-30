@@ -354,15 +354,22 @@ If pods (e.g., `gateway`, `compliance-bridge`, or `advisor`) enter `Init:CrashLo
 - **Mitigation**: Delete the affected pods (`kubectl delete pod -l app=gateway -n governance-stack`) and/or cordon and cycle the node pool. This clears the loop by forcing a rescheduled pod to acquire a fresh network namespace after node CNI setup has settled.
 - **Root Cause & Operational Reality**: The root cause remains unestablished (inferred to be a race condition during node initialization where application pods schedule before `linkerd-cni` finishes chaining into `/etc/cni/net.d/10-gke-cni.conflist`). In staging, deleting pods and scaling node pools resolved the 31-hour crash loop. **This is a mitigation rather than a structural fix.** The cause is unknown and recurrence is possible upon node restarts, pool scaling, or cluster upgrades. If it happens again, clearing pods or cycling the node clears it; do not spend a day rediscovering that a restart resolves the condition.
 
-### Container `image_digests` Portability Constraint
+### Container `image_digests` & `project_id` Portability Constraints
 
-Committed deployment profiles (such as [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) pin container images by immutable digest (`@sha256:...`) pointing to a specific repository (`gcr.io/laah-cybernetics` or reference registries).
-- **Inherent Limitation**: Container digests name images that exist in a single GCP project registry. Committed profiles cannot be universally portable across outside GCP projects unless the deployer has read access to that registry.
-- **Evaluator Prerequisite**: Every evaluator deploying CAGE into their own GCP project must run `scripts/render_image_digests.sh` against their own project registry first to generate local digests:
-  ```bash
-  PROJECT_ID=<YOUR_GCP_PROJECT_ID> REGISTRY_URL=gcr.io/<YOUR_GCP_PROJECT_ID> bash scripts/render_image_digests.sh
-  ```
-  This is a required operational prerequisite before running `./deploy_all.sh`.
+Committed deployment profiles (such as [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) pin container images by immutable digest (`@sha256:...`) pointing to a specific repository (`gcr.io/laah-cybernetics` or reference registries) and pin `project_id = "laah-cybernetics"`.
+- **Inherent Limitation**: Container digests name images that exist in a single GCP project registry, and `project_id` targets a specific project. An outside evaluator applying `staging.tfvars` unmodified will target `laah-cybernetics`, fail with GCP IAM permission errors, and assume their own IAM setup is broken.
+- **Evaluator Prerequisites**:
+  1. **Render Project Digests**: Every evaluator deploying CAGE into their own GCP project must run `scripts/render_image_digests.sh` against their own project registry first to generate local digests:
+     ```bash
+     PROJECT_ID=<YOUR_GCP_PROJECT_ID> REGISTRY_URL=gcr.io/<YOUR_GCP_PROJECT_ID> bash scripts/render_image_digests.sh
+     ```
+  2. **Override `project_id`**: Always pass `--var project_id=<YOUR_GCP_PROJECT_ID>` (or set `GOOGLE_CLOUD_PROJECT` in `.env` for `deploy_all.sh` to forward). Never let the committed `project_id` in `staging.tfvars` take effect in a different project.
+
+### Unverified Deployer Service Account (`sa-cage-deployer`)
+
+Successful staging deployments have run under personal human credentials (Owner / ADC).
+- **The Gap**: The headless/automated deployment path using the dedicated deployer service account (`sa-cage-deployer`) remains **unverified end-to-end**.
+- **Known Blocker**: The GKE probe found that `sa-cage-deployer` lacked `cloudkms.cryptoKeyVersions.viewPublicKey` on the Binary Authorization attestor key. Evaluators or CI pipelines attempting automated deployment under `sa-cage-deployer` must ensure this role is granted, and should treat the service account deployment path as unverified until an automated CI deploy is proven over the wire.
 
 ### Authorized Networks Lockout (POAM-2026-126)
 
@@ -374,6 +381,19 @@ Closing `0.0.0.0/0` in compliance with POAM-2026-126 (AC-3 / SC-7 control-plane 
     --var project_id=<PROJECT_ID> \
     --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
   ```
+
+### POAM-019 Telemetry Isolation vs. Environment Loading Diagnostic
+
+If running bare `terraform plan` produces:
+```text
+[POAM-019] Missing compliance telemetry keys (environment not loaded).
+```
+This indicates that `deploy_all.sh` or `infra/load_env.sh` was bypassed, leaving `var.langfuse_compliance_public_key` unset. It does **not** indicate a compliance defect in CAGE. CAGE's guard explicitly distinguishes this from:
+```text
+[POAM-019] AU-9 dual-project telemetry isolation violated.
+```
+which triggers only when compliance keys are populated but identical to application project keys.
+
 
 
 ---
