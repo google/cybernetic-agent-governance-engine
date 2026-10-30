@@ -849,7 +849,7 @@ def _rego_denylist_guard(field_name: str, item: object) -> str:
     field leaves the line undefined, so the rule does not fire (fail closed).
     """
     literal = json.dumps(str(item).strip().upper())
-    return f"    upper(trim_space(input.{field_name})) != {literal}"
+    return f"\tupper(trim_space(input.{field_name})) != {literal}"
 
 
 def generate_opa(cs: ControlStructureModel) -> str:
@@ -890,10 +890,10 @@ def generate_opa(cs: ControlStructureModel) -> str:
 
             # Build the violation rule
             rule_name = f"stpa_violation_{uca.id.lower().replace('-', '_')}"
-            scope_lines = [f'    input.action == "{action}"']
+            scope_lines = [f'\tinput.action == "{action}"']
             if cond.applies_when:
                 scope_lines.append(
-                    f"    lower(input.{cond.applies_when.param}) == "
+                    f"\tlower(input.{cond.applies_when.param}) == "
                     f'"{cond.applies_when.equals.lower()}"'
                 )
             lines.append(f"{rule_name} := msg if {{")
@@ -903,25 +903,25 @@ def generate_opa(cs: ControlStructureModel) -> str:
                 param = cond.param
                 op = cond.operator
                 if op == "is_null":
-                    lines.append(f"    not input.{param}")
+                    lines.append(f"\tnot input.{param}")
                 elif op == "is_false":
-                    lines.append(f"    input.{param} == false")
+                    lines.append(f"\tinput.{param} == false")
                 elif op == "is_true":
-                    lines.append(f"    input.{param} == true")
+                    lines.append(f"\tinput.{param} == true")
                 elif op == "greater_than":
                     if cond.threshold is not None:
-                        lines.append(f"    input.{param} > {cond.threshold}")
+                        lines.append(f"\tinput.{param} > {cond.threshold}")
                     elif cond.threshold_ref:
                         ref_comment = f"  # threshold from governance_thresholds.json:{cond.threshold_ref}"
                         lines.append(
-                            f"    input.{param} > input._thresholds.{cond.threshold_ref.replace('.', '_')}{ref_comment}"
+                            f"\tinput.{param} > input._thresholds.{cond.threshold_ref.replace('.', '_')}{ref_comment}"
                         )
                 elif op == "less_than":
                     if cond.threshold is not None:
-                        lines.append(f"    input.{param} < {cond.threshold}")
+                        lines.append(f"\tinput.{param} < {cond.threshold}")
                     elif cond.threshold_ref:
                         lines.append(
-                            f"    input.{param} < input._thresholds.{cond.threshold_ref.replace('.', '_')}"
+                            f"\tinput.{param} < input._thresholds.{cond.threshold_ref.replace('.', '_')}"
                         )
                 elif op == "equals":
                     if cond.threshold is not None:
@@ -931,20 +931,20 @@ def generate_opa(cs: ControlStructureModel) -> str:
                             lit = f'"{cond.threshold}"'
                         else:
                             lit = f"{cond.threshold}"
-                        lines.append(f"    input.{param} == {lit}")
+                        lines.append(f"\tinput.{param} == {lit}")
                     elif cond.threshold_ref:
                         ref_comment = f"  # threshold from governance_thresholds.json:{cond.threshold_ref}"
                         lines.append(
-                            f"    input.{param} == input._thresholds.{cond.threshold_ref.replace('.', '_')}{ref_comment}"
+                            f"\tinput.{param} == input._thresholds.{cond.threshold_ref.replace('.', '_')}{ref_comment}"
                         )
             elif cond.composite:
                 lhs, ref, rhs = _composite_parts(cond.composite)
-                lines.append(f"    # composite: {cond.composite}")
+                lines.append(f"\t# composite: {cond.composite}")
                 lines.append(
-                    f"    input.{lhs} > input._thresholds.{ref.replace('.', '_')} * input.{rhs}"
+                    f"\tinput.{lhs} > input._thresholds.{ref.replace('.', '_')} * input.{rhs}"
                 )
 
-            lines.append(f'    msg := "{uca.opa_rule.message}"')
+            lines.append(f'\tmsg := "{uca.opa_rule.message}"')
             lines.append("}")
             lines.append("")
 
@@ -953,8 +953,8 @@ def generate_opa(cs: ControlStructureModel) -> str:
                 for operand in _composite_parts(cond.composite)[::2]:
                     lines.append(f"{rule_name} := msg if {{")
                     lines.extend(scope_lines)
-                    lines.append(f"    not is_number(input.{operand})")
-                    lines.append(f'    msg := "{uca.opa_rule.message}"')
+                    lines.append(f"\tnot is_number(input.{operand})")
+                    lines.append(f'\tmsg := "{uca.opa_rule.message}"')
                     lines.append("}")
                     lines.append("")
 
@@ -966,15 +966,18 @@ def generate_opa(cs: ControlStructureModel) -> str:
         "",
     ]
 
+    agg_rules: list[str] = []
     for uca in cs.unsafe_control_actions:
         if "opa" in uca.enforcement or "all" in uca.enforcement:
             rule_name = f"stpa_violation_{uca.id.lower().replace('-', '_')}"
-            lines.append(f"stpa_violations contains msg if msg := {rule_name}")
+            agg_rules.append(f"stpa_violations contains msg if msg := {rule_name}")
+    if agg_rules:
+        lines.append("\n\n".join(agg_rules))
 
     lines += [
         "",
         "stpa_allow if {",
-        "    count(stpa_violations) == 0",
+        "\tcount(stpa_violations) == 0",
         "}",
         "",
     ]
@@ -1006,9 +1009,9 @@ def generate_opa(cs: ControlStructureModel) -> str:
 
                 if allow_below:
                     lines.append(f"rbac_allow_{role.name}_trade if {{")
-                    lines.append(f'    input.action == "{role_action}"')
-                    lines.append(f'    lower(input.{subj_field}) == "{role.name}"')
-                    lines.append(f"    input.{mag_field} <= {allow_below}")
+                    lines.append(f'\tinput.action == "{role_action}"')
+                    lines.append(f'\tlower(input.{subj_field}) == "{role.name}"')
+                    lines.append(f"\tinput.{mag_field} <= {allow_below}")
                     for c in denylist:
                         lines.append(_rego_denylist_guard(deny_field, c))
                     lines.append("}")
@@ -1016,10 +1019,10 @@ def generate_opa(cs: ControlStructureModel) -> str:
 
                 if review_below and allow_below:
                     lines.append(f"rbac_review_{role.name}_trade if {{")
-                    lines.append(f'    input.action == "{role_action}"')
-                    lines.append(f'    lower(input.{subj_field}) == "{role.name}"')
-                    lines.append(f"    input.{mag_field} > {allow_below}")
-                    lines.append(f"    input.{mag_field} <= {review_below}")
+                    lines.append(f'\tinput.action == "{role_action}"')
+                    lines.append(f'\tlower(input.{subj_field}) == "{role.name}"')
+                    lines.append(f"\tinput.{mag_field} > {allow_below}")
+                    lines.append(f"\tinput.{mag_field} <= {review_below}")
                     for c in denylist:
                         lines.append(_rego_denylist_guard(deny_field, c))
                     lines.append("}")

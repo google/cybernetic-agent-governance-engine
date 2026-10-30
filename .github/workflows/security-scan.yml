@@ -107,14 +107,6 @@ jobs:
           cat pip-audit-results.json
           exit $EXIT_CODE
 
-      - name: Scan compliance extras (pyproject.toml [compliance])
-        # compliance_bridge/requirements.txt was migrated into pyproject.toml under
-        # [project.optional-dependencies] compliance. Scan the installed extras instead.
-        run: |
-          uv run pip-audit \
-            --format json \
-            --output pip-audit-compliance-bridge.json || true
-
       - name: Upload pip-audit results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -153,11 +145,10 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -f ${{ matrix.dockerfile }} \
-            -t scan-target:${{ github.sha }} . \
-            || echo "Build failed, skipping image scan — filesystem scan will continue"
+            -t scan-target:${{ github.sha }} .
 
       - name: Run Trivy filesystem scan
-        # Pinned to v0.31.0 — Node 20 deprecation fix (was @master, unpinned).
+        # Pinned to v0.36.0 — Node 20 deprecation fix (was @master, unpinned).
         # Update via Dependabot PR or bump manually when a new release ships.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -166,18 +157,18 @@ jobs:
           format: "sarif"
           output: "trivy-results-${{ strategy.job-index }}.sarif"
           severity: "CRITICAL,HIGH"
-          exit-code: "0"
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Upload Trivy SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always()
-        continue-on-error: true # Fixed: Code scanning not enabled on this private repo
         with:
           sarif_file: "trivy-results-${{ strategy.job-index }}.sarif"
           category: "trivy-${{ matrix.dockerfile }}"
 
       - name: Generate SBOM with Trivy (CycloneDX — POAM-006)
-        # Pinned to v0.31.0 — Node 20 deprecation fix (was @master, unpinned).
+        # Pinned to v0.36.0 — Node 20 deprecation fix (was @master, unpinned).
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
@@ -214,8 +205,8 @@ jobs:
 
       - name: Check Rego formatting
         run: |
-          find . -name "*.rego" -not -path "*/node_modules/*" \
-            | xargs opa fmt --diff || true
+          find . -name "*.rego" -not -path "*/node_modules/*" -print0 \
+            | xargs -0 opa fmt --fail
 
       - name: OPA check all Rego files
         run: |
@@ -239,7 +230,8 @@ jobs:
               config/opa/ \
               -v
           else
-            echo "No OPA test files found — skipping opa test"
+            echo "::error::No OPA test files found"
+            exit 1
           fi
 
   # ---------------------------------------------------------------------------
@@ -294,8 +286,7 @@ jobs:
         run: |
           syft dir:. \
             -o cyclonedx-json \
-            --file compliance/sbom/filesystem-${{ github.sha }}.cdx.json \
-            || echo "::warning::Syft dir scan encountered issues — check SBOM output"
+            --file compliance/sbom/filesystem-${{ github.sha }}.cdx.json
 
       - name: Upload SBOM artifacts (90-day retention — POAM-006 evidence)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -309,22 +300,19 @@ jobs:
         run: |
           SBOM_FILES=$(find compliance/sbom -name "*.json" -not -name "SBOM_SUMMARY*" 2>/dev/null | head -5)
           if [ -z "$SBOM_FILES" ]; then
-            echo "::warning::No SBOM JSON files found — skipping Grype CVE scan"
-            exit 0
+            echo "::error::No SBOM JSON files found — failing Grype CVE scan"
+            exit 1
           fi
           EXIT_CODE=0
           for SBOM_FILE in $SBOM_FILES; do
             echo "Scanning $SBOM_FILE with Grype..."
             grype "sbom:${SBOM_FILE}" \
               --fail-on critical \
+              --only-fixed \
               --quiet \
-              || { echo "::warning::Critical CVEs found in ${SBOM_FILE} — see POAM-010"; EXIT_CODE=1; }
+              || { echo "::error::Critical fixed CVEs found in ${SBOM_FILE} — see POAM-010"; EXIT_CODE=1; }
           done
-          # Warn but do not fail CI until POAM-010 is resolved
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "::warning::POAM-010: Critical CVEs detected. Remediation required by 2026-04-15."
-          fi
-          exit 0
+          exit $EXIT_CODE
 
   # ---------------------------------------------------------------------------
   # Job 5: Dependency Lockfile Validation
@@ -372,21 +360,16 @@ jobs:
              [ ! -f "uv.lock" ] && \
              [ ! -f "poetry.lock" ] && \
              [ ! -f "pdm.lock" ]; then
-            echo "::warning::POAM-013 (SI-2/CM-8): No dependency lockfile found at project root."
-            echo "::warning::Consider running 'pip freeze > requirements-lock.txt' or using uv/poetry for reproducible builds."
-            echo "::warning::Unpinned dependencies (>= constraints) prevent reproducible builds and may introduce unscanned CVEs."
-            # Don't fail — this is a warning only until lockfiles are generated
-            exit 0
+            echo "::error::POAM-013 (SI-2/CM-8): No dependency lockfile found at project root."
+            exit 1
           else
             echo "Lockfile found — dependency pinning is in place."
           fi
 
       - name: Generate dependency snapshot
         run: |
-          pip install -e . 2>/dev/null \
-            || pip install -r src/compliance_bridge/requirements.txt 2>/dev/null \
-            || true
-          pip freeze > dependency-snapshot.txt
+          uv sync --frozen --all-groups --all-extras
+          uv pip freeze > dependency-snapshot.txt
           echo "Dependency snapshot generated:"
           wc -l dependency-snapshot.txt
 
@@ -456,7 +439,6 @@ jobs:
         run: |
           gitleaks detect \
             --source . \
-            --log-opts "HEAD~1..HEAD" \
             --redact \
             --verbose \
             --exit-code 1

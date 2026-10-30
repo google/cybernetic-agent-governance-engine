@@ -66,8 +66,8 @@ _restricted_asset if _symbol in restricted_assets
 
 # The order is in a tradable currency and touches no restricted asset.
 _admissible_asset if {
-    _currency in tradable_currencies
-    not _restricted_asset
+	_currency in tradable_currencies
+	not _restricted_asset
 }
 
 # A trade outside a tradable currency, or touching a restricted asset —
@@ -75,8 +75,8 @@ _admissible_asset if {
 # too; stated for audit clarity). _rbac_deny includes the same condition, so no
 # MANUAL_REVIEW rule routes such a trade to a human either.
 allow = "DENY" if {
-    _is_trade
-    not _admissible_asset
+	_is_trade
+	not _admissible_asset
 }
 
 # ---------------------------------------------------------------------------
@@ -100,15 +100,16 @@ allow = "DENY" if {
 #   APAC_MAS: MAS TRM §11 / MAS Notice 655 (system integrity)
 # ---------------------------------------------------------------------------
 allow = "MANUAL_REVIEW" if {
-    input.claimed_authorization_present == true
-    # amount != 0: when amount IS zero the fail-closed rule below takes
-    # priority — deny rather than route to manual review, because an
-    # authorization claim with an unresolved amount cannot be meaningfully
-    # reviewed for fiscal appropriateness.
-    input.amount != 0
-    not _rbac_deny
-    not _speculative_deny
-    not _quota_exhausted
+	input.claimed_authorization_present == true
+
+	# amount != 0: when amount IS zero the fail-closed rule below takes
+	# priority — deny rather than route to manual review, because an
+	# authorization claim with an unresolved amount cannot be meaningfully
+	# reviewed for fiscal appropriateness.
+	input.amount != 0
+	not _rbac_deny
+	not _speculative_deny
+	not _quota_exhausted
 }
 
 # ---------------------------------------------------------------------------
@@ -129,8 +130,8 @@ allow = "MANUAL_REVIEW" if {
 #   APAC_MAS: MAS TRM §11 / MAS Notice 655 (system integrity)
 # ---------------------------------------------------------------------------
 allow = "DENY" if {
-    input.claimed_authorization_present == true
-    input.amount == 0
+	input.claimed_authorization_present == true
+	input.amount == 0
 }
 
 # ---------------------------------------------------------------------------
@@ -139,9 +140,9 @@ allow = "DENY" if {
 # Guard: not allowed when an authorization claim is present (defer to MANUAL_REVIEW).
 # ---------------------------------------------------------------------------
 allow = "ALLOW" if {
-    input.action == "market_analysis"
-    not input.claimed_authorization_present
-    not _speculative_deny
+	input.action == "market_analysis"
+	not input.claimed_authorization_present
+	not _speculative_deny
 }
 
 # ---------------------------------------------------------------------------
@@ -150,9 +151,9 @@ allow = "ALLOW" if {
 # (From: finance_policy.rego — RBAC guard)
 # ---------------------------------------------------------------------------
 allow = "DENY" if {
-    input.action != "market_analysis"
-    input.action != "prompt_injection_check"
-    not lower(input.trader_role) in allowed_roles
+	input.action != "market_analysis"
+	input.action != "prompt_injection_check"
+	not lower(input.trader_role) in allowed_roles
 }
 
 # ---------------------------------------------------------------------------
@@ -163,25 +164,25 @@ allow = "DENY" if {
 # Junior ALLOW: ≤ $5 000, no restricted asset
 # Guard: not allowed when an authorization claim is present (defer to MANUAL_REVIEW).
 allow = "ALLOW" if {
-    _is_trade
-    lower(input.trader_role) == "junior"
-    input.amount <= 5000
-    _admissible_asset
-    not input.claimed_authorization_present
-    not _speculative_deny
-    not _quota_exhausted
-    not _quota_below_reserve
+	_is_trade
+	lower(input.trader_role) == "junior"
+	input.amount <= 5000
+	_admissible_asset
+	not input.claimed_authorization_present
+	not _speculative_deny
+	not _quota_exhausted
+	not _quota_below_reserve
 }
 
 # Junior MANUAL_REVIEW: $5 001 – $10 000, no restricted asset
 allow = "MANUAL_REVIEW" if {
-    _is_trade
-    lower(input.trader_role) == "junior"
-    input.amount > 5000
-    input.amount <= 10000
-    _admissible_asset
-    not _speculative_deny
-    not _quota_exhausted
+	_is_trade
+	lower(input.trader_role) == "junior"
+	input.amount > 5000
+	input.amount <= 10000
+	_admissible_asset
+	not _speculative_deny
+	not _quota_exhausted
 }
 
 # Junior DENY: > $10 000  (implicit via default, stated for clarity)
@@ -200,24 +201,24 @@ allow = "MANUAL_REVIEW" if {
 #  manual_review boundary — no conflict for senior traders at this threshold)
 # Guard: not allowed when an authorization claim is present (defer to MANUAL_REVIEW).
 allow = "ALLOW" if {
-    _is_trade
-    lower(input.trader_role) == "senior"
-    input.amount <= 500000
-    _admissible_asset
-    not input.claimed_authorization_present
-    not _quota_exhausted
-    not _quota_below_reserve
+	_is_trade
+	lower(input.trader_role) == "senior"
+	input.amount <= 500000
+	_admissible_asset
+	not input.claimed_authorization_present
+	not _quota_exhausted
+	not _quota_below_reserve
 }
 
 # Senior MANUAL_REVIEW: $500 001 – $1 000 000, no restricted asset
 # (From: finance_policy.rego — preserves human-in-the-loop for large trades)
 allow = "MANUAL_REVIEW" if {
-    _is_trade
-    lower(input.trader_role) == "senior"
-    input.amount > 500000
-    input.amount <= 1000000
-    _admissible_asset
-    not _quota_exhausted
+	_is_trade
+	lower(input.trader_role) == "senior"
+	input.amount > 500000
+	input.amount <= 1000000
+	_admissible_asset
+	not _quota_exhausted
 }
 
 # Senior DENY: > $1 000 000 (implicit via default)
@@ -234,37 +235,37 @@ allow = "MANUAL_REVIEW" if {
 # ---------------------------------------------------------------------------
 
 allow = "ALLOW" if {
-    not _is_trade
-    input.action != "prompt_injection_check"
-    lower(input.risk_profile) == "aggressive"
-    not input.claimed_authorization_present
-    not _rbac_deny
+	not _is_trade
+	input.action != "prompt_injection_check"
+	lower(input.risk_profile) == "aggressive"
+	not input.claimed_authorization_present
+	not _rbac_deny
 }
 
 allow = "ALLOW" if {
-    not _is_trade
-    input.action != "prompt_injection_check"
-    lower(input.risk_profile) == "moderate"
-    not input.claimed_authorization_present
-    not _rbac_deny
+	not _is_trade
+	input.action != "prompt_injection_check"
+	lower(input.risk_profile) == "moderate"
+	not input.claimed_authorization_present
+	not _rbac_deny
 }
 
 allow = "ALLOW" if {
-    not _is_trade
-    input.action != "prompt_injection_check"
-    lower(input.risk_profile) == "conservative"
-    not input.claimed_authorization_present
-    not _rbac_deny
+	not _is_trade
+	input.action != "prompt_injection_check"
+	lower(input.risk_profile) == "conservative"
+	not input.claimed_authorization_present
+	not _rbac_deny
 }
 
 _speculative_deny if {
-    lower(input.risk_profile) == "speculative"
-    not lower(input.trader_role) == "senior"
+	lower(input.risk_profile) == "speculative"
+	not lower(input.trader_role) == "senior"
 }
 
 allow = "DENY" if {
-    input.action != "prompt_injection_check"
-    _speculative_deny
+	input.action != "prompt_injection_check"
+	_speculative_deny
 }
 
 # ---------------------------------------------------------------------------
@@ -273,13 +274,13 @@ allow = "DENY" if {
 # ---------------------------------------------------------------------------
 
 allow = "GOVERNANCE_VIOLATION" if {
-    input.action == "prompt_injection_check"
-    input.semantic_score > 0.85
+	input.action == "prompt_injection_check"
+	input.semantic_score > 0.85
 }
 
 allow = "GOVERNANCE_VIOLATION" if {
-    input.action == "prompt_injection_check"
-    contains(lower(input.content), "system override")
+	input.action == "prompt_injection_check"
+	contains(lower(input.content), "system override")
 }
 
 # ---------------------------------------------------------------------------
@@ -301,58 +302,58 @@ allow = "GOVERNANCE_VIOLATION" if {
 # ---------------------------------------------------------------------------
 
 _quota_exhausted if {
-    _is_trade
-    quota := input.token_quota
-    quota.quota_available == true
-    quota.quota_exhausted == true
+	_is_trade
+	quota := input.token_quota
+	quota.quota_available == true
+	quota.quota_exhausted == true
 }
 
 _quota_below_reserve if {
-    _is_trade
-    quota := input.token_quota
-    quota.quota_available == true
-    quota.quota_exhausted == false
-    quota.below_min_reserve == true
+	_is_trade
+	quota := input.token_quota
+	quota.quota_available == true
+	quota.quota_exhausted == false
+	quota.below_min_reserve == true
 }
 
 # Token quota exhausted → hard DENY (H-7: prevent uncapped resource consumption)
 allow = "DENY" if {
-    _quota_exhausted
+	_quota_exhausted
 }
 
 # Token quota below minimum reserve → degrade to MANUAL_REVIEW
 # (preserves human oversight when budget is nearly exhausted)
 allow = "MANUAL_REVIEW" if {
-    _quota_below_reserve
-    # Only override if primary RBAC gate would otherwise ALLOW
-    # (avoid overriding existing DENY decisions)
-    not _rbac_deny
-    not _speculative_deny
-    not input.claimed_authorization_present
+	_quota_below_reserve
+
+	# Only override if primary RBAC gate would otherwise ALLOW
+	# (avoid overriding existing DENY decisions)
+	not _rbac_deny
+	not _speculative_deny
+	not input.claimed_authorization_present
 }
 
 # Internal helper: primary RBAC gate would deny this request
 _rbac_deny if {
-    _is_trade
-    lower(input.trader_role) == "junior"
-    input.amount > 10000
+	_is_trade
+	lower(input.trader_role) == "junior"
+	input.amount > 10000
 }
 
 _rbac_deny if {
-    _is_trade
-    lower(input.trader_role) == "senior"
-    input.amount > 1000000
+	_is_trade
+	lower(input.trader_role) == "senior"
+	input.amount > 1000000
 }
 
 # A trade outside a tradable currency or touching a restricted asset: neither
 # a human (the MANUAL_REVIEW rules above) nor the RBAC ladder may admit it.
 _rbac_deny if {
-    _is_trade
-    not _admissible_asset
+	_is_trade
+	not _admissible_asset
 }
 
 _rbac_deny if {
-    input.action != "market_analysis"
-    not lower(input.trader_role) in allowed_roles
+	input.action != "market_analysis"
+	not lower(input.trader_role) in allowed_roles
 }
-

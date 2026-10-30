@@ -38,17 +38,17 @@ default stpa_allow = false
 # --- Action: write_db ---
 # UCA-1: Agent executes write operation without a signed approval token.
 stpa_violation_uca_1 := msg if {
-    input.action == "write_db"
-    not input.approval_token
-    msg := "UCA-1: write_db requires a signed approval_token."
+	input.action == "write_db"
+	not input.approval_token
+	msg := "UCA-1: write_db requires a signed approval_token."
 }
 
 # --- Action: prompt_injection_check ---
 # UCA-7: Adversarial prompt injection score exceeds detection threshold.
 stpa_violation_uca_7 := msg if {
-    input.action == "prompt_injection_check"
-    input.semantic_score > 0.85
-    msg := "UCA-7: Prompt injection detected — governance violation."
+	input.action == "prompt_injection_check"
+	input.semantic_score > 0.85
+	msg := "UCA-7: Prompt injection detected — governance violation."
 }
 
 # ---------------------------------------------------------------------------
@@ -56,8 +56,9 @@ stpa_violation_uca_7 := msg if {
 # ---------------------------------------------------------------------------
 
 stpa_violations contains msg if msg := stpa_violation_uca_1
+
 stpa_violations contains msg if msg := stpa_violation_uca_7
 
 stpa_allow if {
-    count(stpa_violations) == 0
+	count(stpa_violations) == 0
 }

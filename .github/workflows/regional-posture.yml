@@ -48,13 +48,13 @@ jobs:
         include:
           - region: US_FED
             marker: us_fed
-            continue_on_error: false   # US_FED is a hard gate (AGENTS.md §Architecture)
+            continue_on_error: false
           - region: EU_ECB
             marker: eu_ecb
-            continue_on_error: true    # Soft gate: EU_ECB open findings not yet closed
+            continue_on_error: false
           - region: APAC_MAS
             marker: apac_mas
-            continue_on_error: true    # Soft gate: APAC_MAS open findings not yet closed
+            continue_on_error: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

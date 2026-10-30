@@ -89,6 +89,7 @@ test_b1_fail_exceeds_max if {
 # Fail-closed: missing amount (should fail during evaluation, or fail-closed by Python tier)
 test_b1_fail_closed_missing_amount if {
 	inp := object.remove(baseline_input, ["amount"])
+
 	# OPA will fail evaluation if amount is missing; Python tier fails-closed
 	# This test documents the expected behavior
 	result := bounding_contracts.allow with input as inp
@@ -129,6 +130,7 @@ test_b2_fail_exceeds_drawdown if {
 test_b2_fail_closed_missing_drawdown if {
 	inp := object.remove(baseline_input, ["current_drawdown"])
 	result := bounding_contracts.allow with input as inp
+
 	# Defaults to 0.0, which is safe (below threshold)
 	result == true
 }
@@ -147,6 +149,7 @@ test_b3_pass_high_liquidity if {
 # Boundary: exactly at min_liquidity_depth_ratio (10.0)
 test_b3_boundary_at_min_ratio if {
 	inp := object.union(baseline_input, {"order_book_depth": 100000.0})
+
 	# 100000 / 10000 = 10.0 (exactly at bound)
 	result := bounding_contracts.allow with input as inp
 	result == true
@@ -155,6 +158,7 @@ test_b3_boundary_at_min_ratio if {
 # Fail: depth ratio below minimum
 test_b3_fail_low_liquidity if {
 	inp := object.union(baseline_input, {"order_book_depth": 50000.0})
+
 	# 50000 / 10000 = 5.0 (< 10.0 min)
 	result := bounding_contracts.allow with input as inp
 	result == false
@@ -170,6 +174,7 @@ test_b3_fail_low_liquidity if {
 test_b3_fail_closed_missing_depth if {
 	inp := object.remove(baseline_input, ["order_book_depth"])
 	result := bounding_contracts.allow with input as inp
+
 	# Defaults to 0.0, ratio = 0.0 / 10000 = 0.0 < 10.0 → BLOCK
 	result == false
 }
@@ -190,6 +195,7 @@ test_b4_pass_low_exposure if {
 		"counterparty": "COUNTERPARTY_A",
 		"counterparty_exposure_usd": 50000.0,
 	})
+
 	# Default max_counterparty_exposure_usd is 100000.0
 	result := bounding_contracts.allow with input as inp
 	result == true
@@ -246,6 +252,7 @@ test_b5_fail_high_volatility if {
 test_b5_fail_closed_missing_volatility if {
 	inp := object.remove(baseline_input, ["volatility_percentile"])
 	result := bounding_contracts.allow with input as inp
+
 	# Defaults to 0.0, which is safe (below 75.0 threshold)
 	result == true
 }
@@ -284,6 +291,7 @@ test_b8_fail_high_slippage if {
 test_b8_fail_closed_missing_slippage if {
 	inp := object.remove(baseline_input, ["twap_slippage_bps"])
 	result := bounding_contracts.allow with input as inp
+
 	# Defaults to 0.0, which is safe (below 50.0 threshold)
 	result == true
 }
@@ -314,6 +322,7 @@ test_multiple_violations if {
 test_wrong_action_denied if {
 	inp := object.union(baseline_input, {"action": "execute_trade"})
 	result := bounding_contracts.allow with input as inp
+
 	# Fail-closed: only execute_trade_bounded is allowed
 	result == false
 }

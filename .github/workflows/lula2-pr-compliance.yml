@@ -52,41 +52,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          node-version: "22"
+          python-version: "3.11"
 
-      - name: Run lula2 PR compliance crawler
-        # lula2 crawl analyzes changed files in the PR and posts a compliance
-        # impact summary comment. Uses npx so no installation is required.
-        # GITHUB_TOKEN is used to read PR file list and post the comment.
-        env:
-          OWNER: ${{ github.repository_owner }}
-          REPO: ${{ github.event.repository.name }}
-          PULL_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Verify compliance manifest and POAM integrity
         run: |
-          echo "Running lula2 compliance impact analysis on PR #${PULL_NUMBER}..."
-          npx lula2 crawl --post-mode=comment 2>&1 || {
-            echo "::warning::lula2 crawl exited non-zero — compliance impact comment may not have been posted"
-            echo "This is non-fatal: lula2 crawl is an advisory tool, not a blocking gate."
-            exit 0
-          }
+          python3 scripts/check_ai600_lula_manifests.py
+          python3 scripts/check_poam_lula_divergence.py
 
       - name: Summarise compliance-impacting paths
-        # Fallback summary if lula2 crawl does not post a comment
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Passed via env rather than interpolated directly into the script:
-          # `${{ github.base_ref }}` expands before the shell runs, so a branch
-          # name containing shell metacharacters would execute as code.
           BASE_REF: ${{ github.base_ref }}
         run: |
-          # List changed files that touch compliance-relevant paths
           CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" | \
-            grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|deployment/k8s/|infra/|\.github/workflows/)" || true)
+            grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|deployment/k8s/|infra/|\.github/workflows/)" || test $? -eq 1)
           if [ -n "$CHANGED" ]; then
             echo "Compliance-relevant files changed in this PR:"
             echo "$CHANGED"

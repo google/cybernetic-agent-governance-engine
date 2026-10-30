@@ -195,7 +195,7 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov-fail-under=70
       - name: Run Bandit SAST (medium+ severity)
-        run: uv run bandit -r src/ -c pyproject.toml -ll
+        run: uv run bandit -r src/ scripts/ -c pyproject.toml -ll -ii
 
   lint:
     name: "Lint"

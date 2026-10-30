@@ -213,7 +213,6 @@ jobs:
         run: chmod +x scripts/run_matrix_tests.sh
 
       - name: Run compliance matrix tests
-        continue-on-error: true
         run: ./scripts/run_matrix_tests.sh ${{ matrix.environment }} ${{ matrix.region }}
         env:
           CAGE_ENV: ${{ matrix.environment }}
