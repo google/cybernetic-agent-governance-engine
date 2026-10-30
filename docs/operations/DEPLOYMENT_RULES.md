@@ -356,14 +356,14 @@ If pods (e.g., `gateway`, `compliance-bridge`, or `advisor`) enter `Init:CrashLo
 
 ### Container `image_digests` & `project_id` Portability Constraints
 
-Committed deployment profiles (such as [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) pin container images by immutable digest (`@sha256:...`) pointing to a specific repository (`gcr.io/laah-cybernetics` or reference registries) and pin `project_id = "laah-cybernetics"`.
-- **Inherent Limitation**: Container digests name images that exist in a single GCP project registry, and `project_id` targets a specific project. An outside evaluator applying `staging.tfvars` unmodified will target `laah-cybernetics`, fail with GCP IAM permission errors, and assume their own IAM setup is broken.
+Committed deployment profiles (such as [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) pin container images by immutable digest (`@sha256:...`) pointing to reference registries (`gcr.io/cage-reference/` or a developer registry) and default `project_id = "YOUR_GCP_PROJECT_ID"`.
+- **Inherent Limitation**: Container digests name images that exist in a single GCP project registry, and `project_id` must target the evaluator's own project. If an evaluator applies without setting `project_id`, Terraform will fail on invalid project credentials or permissions. If digests are not rendered locally, Kubernetes will fail with `ImagePullBackOff` against reference placeholders.
 - **Evaluator Prerequisites**:
   1. **Render Project Digests**: Every evaluator deploying CAGE into their own GCP project must run `scripts/render_image_digests.sh` against their own project registry first to generate local digests:
      ```bash
      PROJECT_ID=<YOUR_GCP_PROJECT_ID> REGISTRY_URL=gcr.io/<YOUR_GCP_PROJECT_ID> bash scripts/render_image_digests.sh
      ```
-  2. **Override `project_id`**: Always pass `--var project_id=<YOUR_GCP_PROJECT_ID>` (or set `GOOGLE_CLOUD_PROJECT` in `.env` for `deploy_all.sh` to forward). Never let the committed `project_id` in `staging.tfvars` take effect in a different project.
+  2. **Override `project_id`**: Always pass `--var project_id=<YOUR_GCP_PROJECT_ID>` (or set `GOOGLE_CLOUD_PROJECT` in `.env` for `deploy_all.sh` to forward). Never let placeholder `project_id` values take effect during deploy.
 
 ### Unverified Deployer Service Account (`sa-cage-deployer`)
 
