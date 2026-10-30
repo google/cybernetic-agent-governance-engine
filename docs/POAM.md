@@ -111,6 +111,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-149 | IA-5 / SC-28 / AU-3 | **Reopened 2026-10-30** (closed 2026-10-29 on `fix/seal-digest-in-evidence`, verified by `SD-M1`–`SD-M13`). The closure fixed one of three writers of `governance_decision_digest`: [`ExecutionClearance`](../src/gateway/governance/seams/actuation.py) refuses anything but lowercase SHA-256 hex, so actuation receipts record the routing seal's digest, never the seal. Two other writers put the field into the same WORM-archived evidence stream and were never examined. [`QuarantineDirective`](../src/gateway/governance/seams/quarantine.py) has no format check and two meanings: the kernel's quarantine trigger sets it to a refusal receipt's `proof_hash`, which `WORKLOAD_QUARANTINE_RECEIPT` archives, and actuator_03 sets it to a clearance's seal digest; actuator_03's partner receives both. actuator_02's [`OcsfEventModel`](../src/integrations/actuator_02/ocsf_ingestor.py) accepts any 8–128-character string and writes it into `SANDBOX_OCSF_TELEMETRY`. The stream oracle checks the field only on `ACTUATION_*` events. Decided 2026-10-30: rename, so that each field has one meaning, behind one shared validator and a stream-wide oracle invariant (detail section) | Moderate | 2026-11-30 |
 | POAM-2026-158 | CM-2 / CM-3 | The `governed-financial-advisor` Deployment on the staging cluster drifted out of Terraform ownership on 2026-10-25 (reported by the maintainer; mechanism not recorded). [`main.tf`](../infra/targets/gcp-gke/main.tf) sets `advisor_enabled = local.vllm_enabled`, so the staging profile (`inference_backend = "none"`) deploys no advisor. Under the staging profile both advisor modules have `count = 0`, so the next apply will either destroy the Deployment (if state still tracks it) or leave it running outside Terraform (if it doesn't); nothing in the configuration would adopt it. Which one is unknown. Resolution: a read-only `terraform plan` run directly, not through `deploy_all.sh`, with images pinned to what staging runs now, then a deliberate import or deletion (detail section) | Moderate | Before the next staging apply |
 | POAM-2026-159 | AU-11 / CM-6 | Staging cannot be torn down. The Langfuse event bucket (`google_storage_bucket.langfuse_events` in [`main.tf`](../infra/targets/gcp-gke/main.tf)) locks a 2555-day retention whenever any compliance flag is set, which `deploy_all.sh` does for US_FED staging; the WORM evidence bucket has a one-day staging carve-out, and this bucket has none. On the live staging project the bucket holds 35,639 objects under a locked policy effective 2026-09-29, and the project carries a Cloud Storage deletion lien (verified read-only, 2026-10-30), so the bucket cannot be deleted before 2033-09-27 at the earliest. This contradicts the ephemeral staging lifecycle in [`DEPLOYMENT_RULES.md`](operations/DEPLOYMENT_RULES.md) and `staging.tfvars`, and every staging run in a new project repeats it. Remediation decision pending (detail section) | Moderate | 2026-11-30 |
+| POAM-2026-160 | IA-5 / SA-11 / CA-7 | The required check "Secret Scanning (Gitleaks)" has no detection rules. [`.gitleaks.toml`](../.gitleaks.toml) (added 2026-08-28 in `9a7fabe7`, unchanged since) holds only an `[allowlist]`, with no `[[rules]]` and no `[extend] useDefault = true`, and the job in [`security-scan.yml`](../.github/workflows/security-scan.yml) runs gitleaks 8.27.2 with no `--config`, so gitleaks loads that file instead of its default rules. Since 2026-08-28 the scan has loaded a configuration with zero rules and cannot report a finding, and since 2026-10-27 it has been one of the eight required checks POAM-2026-115 relies on. Confirmed from the configuration, the workflow and gitleaks' documentation; a CI canary is the empirical confirmation. High until a full-history scan with the default rules comes back clean (detail section) | High | 2026-11-15 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -1278,6 +1279,34 @@ Every run of the staging posture in a new project repeats this. The apply locks 
 
 **Closure Criteria:** set with the decision. They include the merge commit SHA and the actual verification date.
 
+### POAM-2026-160: The Required Secret Scan Has No Detection Rules
+
+**Control:** NIST IA-5 (Authenticator Management), SA-11 (Developer Testing and Evaluation), CA-7 (Continuous Monitoring)
+**Risk Level:** High (proposed, until the full-history scan below comes back clean)
+**Status:** Open
+**Date Opened:** 2026-10-30
+**Target Closure:** 2026-11-15
+
+**Description:**
+[`.gitleaks.toml`](../.gitleaks.toml), added on 2026-08-28 in `9a7fabe7` and never changed since, holds only an `[allowlist]`: it has no `[[rules]]` and no `[extend] useDefault = true`. The required check "Secret Scanning (Gitleaks)" in [`security-scan.yml`](../.github/workflows/security-scan.yml) runs `gitleaks detect --source . --log-opts "HEAD~1..HEAD" --redact --verbose --exit-code 1` with gitleaks 8.27.2 and no `--config` (verified 2026-10-30).
+
+gitleaks' v8.27.2 README gives the configuration precedence as `--config`, then `GITLEAKS_CONFIG`, then `GITLEAKS_CONFIG_TOML`, then `(target path)/.gitleaks.toml`, and says: "If none of the four options are used, then gitleaks will use the default config." The built-in rules are inherited only through `[extend] useDefault = true`. The job sets none of the first three, so gitleaks loads the repository's `.gitleaks.toml`: since 2026-08-28 the scan has loaded a configuration with zero rules, and it cannot report a finding.
+
+Since 2026-10-27 it has been one of the eight required status checks in ruleset 25966171, which POAM-2026-115 cites as the automated change control that remains while human review is uncompensated. This is the class POAM-2026-150 records, CI jobs that cannot fail, but in a required check.
+
+**Evidence basis.** Confirmed from the configuration, the workflow and gitleaks' documentation. A local canary run was blocked by the workstation's binary allowlisting, so the CI canary in the remediation below is the empirical confirmation. The severity is High until the full-history scan comes back clean, because whether any secret entered the history while the scan had no rules is unknown.
+
+**Remediation Plan:**
+1. Add `[extend] useDefault = true` to `.gitleaks.toml`.
+2. Add a CI canary step. It writes a known-fake token to a temporary directory at runtime (never committed), runs gitleaks with the repository's configuration against it, and fails the job unless gitleaks reports the token. This proves the check can fail.
+3. Run one full-history scan with the default rules and record the result here. Rotate anything real it finds.
+4. **Done (2026-10-30).** POAM-2026-115's detail section notes that its eight required checks include this one until this item closes.
+
+**Closure Criteria:**
+1. The canary step exists, and a recorded run shows it failing when the rules are removed.
+2. The full-history scan result is recorded here.
+3. Record the merge commit SHA and the actual verification date here.
+
 ### POAM-2026-121: Validation Report Makes a False Composition Claim
 
 **Control:** NIST CA-2 (Control Assessments), CA-7 (Continuous Monitoring)
@@ -1481,7 +1510,7 @@ A probe tag, `v0-ruleset-probe-20261027`, was created, which the ruleset allows.
 **Description:**
 Ruleset 19769096 ("Protect main branch") requires one approving review on `refs/heads/main` (`require_code_owner_review: false`, `dismiss_stale_reviews_on_push: true`). Its one bypass actor is the repository admin role, in mode `always`. The project has one maintainer, and GitHub does not let an author approve their own pull request, so none of the maintainer's own pull requests can meet the rule, and each is merged as an admin bypass. Pull requests by other authors can meet it: in the period measured below, 5 did, each approved by the maintainer.
 
-Since 2026-10-27 the required status checks (Lint; AI 600-1 Unit Tests; OPA Rego Policy Lint and Test; Secret Scanning (Gitleaks); license-check; Pytest Logic Tests; Terraform Tests (gcp-gke, mock providers); and, since 2026-10-29, Quickstart Bootstrap & First-DENY Smoke Gate — eight checks total, pinned to the GitHub Actions app) are in ruleset 25966171 ("Require status checks on main"), which has no bypass actor, so an admin merge skips only the review. The one exception is an advisory fix landed from a private fork, where Actions does not run: the ruleset is disabled for that single merge and re-enabled, and its history records both edits ([`SECURITY.md`](../SECURITY.md)). [`check_pr_mergeable.sh`](../scripts/check_pr_mergeable.sh) still verifies the required checks on the exact head SHA before each merge and posts the result on the pull request.
+Since 2026-10-27 the required status checks (Lint; AI 600-1 Unit Tests; OPA Rego Policy Lint and Test; Secret Scanning (Gitleaks); license-check; Pytest Logic Tests; Terraform Tests (gcp-gke, mock providers); and, since 2026-10-29, Quickstart Bootstrap & First-DENY Smoke Gate — eight checks total, pinned to the GitHub Actions app) are in ruleset 25966171 ("Require status checks on main"), which has no bypass actor, so an admin merge skips only the review. The one exception is an advisory fix landed from a private fork, where Actions does not run: the ruleset is disabled for that single merge and re-enabled, and its history records both edits ([`SECURITY.md`](../SECURITY.md)). [`check_pr_mergeable.sh`](../scripts/check_pr_mergeable.sh) still verifies the required checks on the exact head SHA before each merge and posts the result on the pull request. Until POAM-2026-160 closes, the eight include Secret Scanning (Gitleaks), which loads a configuration with no detection rules and so cannot report a finding.
 
 `.github/branch-protection-rules.md` stated that code-owner review was enabled. The live rule does not require it, and one maintainer could not satisfy it. The change that opened this entry corrected the document.
 
