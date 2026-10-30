@@ -80,47 +80,24 @@ jobs:
         run: uv pip install "pip-audit>=2.7.0"
 
       - name: Run pip-audit
+        # Audits the venv synced above, which holds every group and extra,
+        # compliance included. An --ignore-vuln <ID> added here needs a comment
+        # in this run: block naming that ID and why it is suppressed;
+        # tests/test_workflow_vuln_suppressions.py fails otherwise (POAM-2026-161).
+        # The runner's shell is `bash -e`, so the exit code is captured with ||
+        # and the results are printed before the step fails.
         run: |
-          # CVE-2025-69872 / GHSA-rg7c-g689-fr3x (diskcache): RESOLVED — removed
-          #   'outlines' from pyproject.toml [project.optional-dependencies.gateway].
-          #   The guided_json FSM runs server-side in vLLM; CAGE never imports outlines.
-          #   diskcache is no longer in the dependency tree.
-          #
-          # CVE-2026-4810 (google-adk): RESOLVED — upgraded google-adk to 2.2.0 which
-          #   drops the starlette<1 constraint and no longer carries this vulnerability.
-          #
-          # PYSEC-2026-139 / CVE-2026-4538 (torch 2.10.0): No fix version available
-          #   upstream as of 2026-06-08. torch is a dev/inference-only dependency; it
-          #   is not included in the compliance-bridge or gateway production images.
-          #   Suppressed pending an upstream patch release. Mitigation: torch is never
-          #   executed in production containers; only used locally for offline evaluation
-          #   experiments. POAM item tracked under POAM-016.
-          #
-          # PYSEC-2026-3721 (pip 26.1.2): Wheel installation path traversal via doubly-encoded URLs.
-          #   Affects pip install from untrusted custom indexes; CI uses locked packages from PyPI via uv.
-          uv run pip-audit --format json --output pip-audit-results.json \
-            --ignore-vuln GHSA-rg7c-g689-fr3x \
-            --ignore-vuln PYSEC-2026-139 \
-            --ignore-vuln GHSA-rrmf-rvhw-rf47 \
-            --ignore-vuln PYSEC-2026-3721
-          EXIT_CODE=$?
+          EXIT_CODE=0
+          uv run pip-audit --format json --output pip-audit-results.json || EXIT_CODE=$?
           cat pip-audit-results.json
           exit $EXIT_CODE
-
-      - name: Scan compliance extras (pyproject.toml [compliance])
-        # compliance_bridge/requirements.txt was migrated into pyproject.toml under
-        # [project.optional-dependencies] compliance. Scan the installed extras instead.
-        run: |
-          uv run pip-audit \
-            --format json \
-            --output pip-audit-compliance-bridge.json || true
 
       - name: Upload pip-audit results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: pip-audit-results
-          path: pip-audit*.json
+          path: pip-audit-results.json
 
   # ---------------------------------------------------------------------------
   # Job 2: Container Image & Filesystem Vulnerability Scan + SBOM
