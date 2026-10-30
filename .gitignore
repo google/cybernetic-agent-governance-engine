@@ -71,6 +71,8 @@ GEMINI.md
 tfplan_*
 tfplan
 terraform.auto.tfvars
+# Rendered per deployment by scripts/render_image_digests.sh (POAM-2026-131)
+image_digests.*.tfvars.json
 .terraform/
 .terraform.lock.hcl
 crash.log

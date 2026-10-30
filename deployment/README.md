@@ -126,7 +126,7 @@ All GKE images are built via Cloud Build — **never** with local `docker build`
 | `vllm-streamer` | `deployment/docker/cloudbuild.vllm.yaml` | `deployment/docker/Dockerfile.vllm` |
 | `agentsight-ui` | `deployment/docker/cloudbuild.image.yaml` | `src/agentsight-ui/Dockerfile` |
 
-Tags: immutable `:<short-git-sha>` only (attested by `scripts/attest_image.sh` and pinned by `@sha256:` digest via `scripts/render_image_digests.sh`).
+Tags: immutable `:<short-git-sha>` only (attested by `scripts/attest_image.sh`). Terraform pins each image by the `@sha256:` digest `scripts/render_image_digests.sh` renders per deployment; no digest is committed (POAM-2026-131).
 
 ### Approved commands
 

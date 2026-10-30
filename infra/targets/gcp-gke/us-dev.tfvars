@@ -48,8 +48,8 @@
 #   5. OCC Bulletin 2021-38 third-party risk management review (vLLM / NeMo)
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-# REPLACE with your US GCP project ID (may be same project as generic dev)
-project_id = "YOUR_GCP_PROJECT_ID"
+# project_id is not committed (POAM-2026-131): set GOOGLE_CLOUD_PROJECT in .env
+# (deploy_all.sh maps it to TF_VAR_project_id) or pass --var project_id=<project>.
 
 # US data residency — SR 26-2 / OCC data localisation
 # us-central1 = Iowa (USA) | us-east1 = South Carolina (USA)

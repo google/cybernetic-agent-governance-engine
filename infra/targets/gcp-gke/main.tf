@@ -13,7 +13,9 @@
 # limitations under the License.
 
 terraform {
-  required_version = ">= 1.5.0"
+  # 1.9: variable validations reference other variables and locals
+  # (image_digests follows local.required_image_digests).
+  required_version = ">= 1.9.0"
 
   required_providers {
     google = {
@@ -576,6 +578,26 @@ locals {
   # In-cluster vLLM runs without --api-key; the gateway and bridge still
   # require a non-empty VLLM_API_KEY whenever a backend is configured.
   vllm_api_key = local.vllm_enabled ? "EMPTY" : ""
+}
+
+# ─── Images Each Profile Deploys (POAM-2026-131) ──────────────────────────────
+# The keys var.image_digests must hold. Each entry follows the count of the
+# module that reads it, so an absent workload needs no image: staging under
+# inference_backend = "none" renders no vLLM, advisor or NeMo image. An explicit
+# *_image override replaces the map entry it would otherwise read. Both advisor
+# runtimes (geap and gke) consume the advisor image. deploy_all.sh selects the
+# images to build from the same profile variables; scripts/render_image_digests.sh
+# must be able to render every name here.
+locals {
+  required_image_digests = concat(
+    ["gateway", "opa", "agentsight-ui", "langfuse", "langfuse-worker", "cloud-sql-proxy", "clickhouse-server", "clickhouse-keeper"],
+    var.enable_compliance_bridge && var.compliance_bridge_image == "" ? ["compliance-bridge"] : [],
+    local.vllm_enabled && var.vllm_image == "" ? ["vllm-streamer"] : [],
+    local.advisor_enabled ? ["governed-financial-advisor"] : [],
+    var.enable_nemo_guardrails && var.nemo_image == "" ? ["nemo-guardrails"] : [],
+    var.enable_nemo_guardrails && var.presidio_analyzer_image == "" ? ["presidio-analyzer"] : [],
+    var.enable_nemo_guardrails && var.presidio_anonymizer_image == "" ? ["presidio-anonymizer"] : [],
+  )
 }
 
 # ─── Deploy NeMo Guardrails + Microsoft Presidio ───────────────────────────────

@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build, push, and attest all CAGE first-party container images in parallel via
+# Build, push, and attest CAGE first-party container images in parallel via
 # Cloud Build using `deployment/docker/cloudbuild.image.yaml` (and
 # `deployment/docker/cloudbuild.vllm.yaml` for the high-CPU vLLM streamer image).
+# IMAGES selects which (default: all); deploy_all.sh passes the images the profile
+# deploys. Every image is tagged with the short git SHA; render its digests with
+# scripts/render_image_digests.sh.
 #
 # Every build executes under the dedicated Cloud Build service account
 # `cage-cloudbuild-${ENVIRONMENT}@${PROJECT_ID}.iam.gserviceaccount.com` and
@@ -44,28 +47,35 @@ CLOUDBUILD_SA="projects/${PROJECT_ID}/serviceAccounts/cage-cloudbuild-${ENVIRONM
 echo "📌 Short SHA: ${SHORT_SHA} | Environment: ${ENVIRONMENT} | KMS Location: ${KMS_LOCATION}"
 echo "🔐 Cloud Build SA: ${CLOUDBUILD_SA}"
 
-ADVISOR_RUNTIME="${ADVISOR_RUNTIME:-geap}"
-
 FIRST_PARTY_IMAGES=(
   "gateway|src/gateway/Dockerfile"
   "agentsight-ui|src/agentsight-ui/Dockerfile"
   "compliance-bridge|src/compliance_bridge/Dockerfile"
+  "governed-financial-advisor|Dockerfile"
   "nemo-guardrails|deployment/docker/Dockerfile.nemo"
 )
 
-# Governed Financial Advisor: on GEAP (default for GCP), the build is part of the
-# GEAP Agent Runner deployment (source archive + Vertex AI Reasoning Engine).
-# A separate Docker image is only built if explicitly targeting the in-cluster GKE runtime.
-if [[ "${ADVISOR_RUNTIME}" == "gke" ]]; then
-  FIRST_PARTY_IMAGES=("governed-financial-advisor|Dockerfile" "${FIRST_PARTY_IMAGES[@]}")
-fi
+# Which first-party images to build, space-separated. deploy_all.sh passes the
+# images the profile deploys (local.required_image_digests in
+# infra/targets/gcp-gke/main.tf), so staging under inference_backend = "none"
+# builds no vLLM, advisor or NeMo image. Both advisor runtimes (geap and gke)
+# consume the advisor image. ONLY_IMAGE=<name> builds one image and skips mirroring.
+ALL_IMAGES="gateway agentsight-ui compliance-bridge governed-financial-advisor nemo-guardrails vllm-streamer"
+IMAGES="${ONLY_IMAGE:-${IMAGES:-${ALL_IMAGES}}}"
+for wanted in ${IMAGES}; do
+  if [[ " ${ALL_IMAGES} " != *" ${wanted} "* ]]; then
+    echo "❌ Error: unknown image '${wanted}' (known: ${ALL_IMAGES})" >&2
+    exit 1
+  fi
+done
+selected() { [[ " ${IMAGES} " == *" $1 "* ]]; }
 
 wait_for_pids=()
 build_names=()
 
 for entry in "${FIRST_PARTY_IMAGES[@]}"; do
   IFS='|' read -r image_name dockerfile <<< "${entry}"
-  if [[ -n "${ONLY_IMAGE:-}" && "${ONLY_IMAGE}" != "${image_name}" ]]; then
+  if ! selected "${image_name}"; then
     continue
   fi
   if [[ ! -f "${dockerfile}" ]]; then
@@ -84,11 +94,11 @@ for entry in "${FIRST_PARTY_IMAGES[@]}"; do
 done
 
 # vLLM Streamer uses its dedicated high-CPU / 40-minute config
-if [[ "${SKIP_VLLM:-false}" == "true" ]]; then
-  echo "⏩ Skipping vLLM Streamer build (SKIP_VLLM=true)."
-elif [[ -n "${ONLY_IMAGE:-}" && "${ONLY_IMAGE}" != "vllm-streamer" ]]; then
-  :
-elif [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
+if selected "vllm-streamer"; then
+  if [[ ! -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
+    echo "❌ Error: vllm-streamer selected but deployment/docker/cloudbuild.vllm.yaml is missing." >&2
+    exit 1
+  fi
   echo "🏗️  Starting build & attestation for vllm-streamer (${SHORT_SHA})..."
   gcloud builds submit \
     --config "deployment/docker/cloudbuild.vllm.yaml" \
@@ -98,8 +108,6 @@ elif [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
     . > "/tmp/build_vllm-streamer.log" 2>&1 &
   wait_for_pids+=("$!")
   build_names+=("vllm-streamer")
-else
-  echo "⚠️  deployment/docker/cloudbuild.vllm.yaml not found. Skipping vLLM Streamer build."
 fi
 
 # Third-party images (Presidio, OPA, Redis, ClickHouse, Langfuse, Cloud SQL Proxy)
@@ -130,8 +138,5 @@ if [[ "${fail}" -eq 1 ]]; then
 fi
 
 echo "✅ All images built and attested successfully! SHA: ${SHORT_SHA}"
-if [[ -z "${ONLY_IMAGE:-}" ]]; then
-  echo ""
-  echo "📋 Resolved image_digests block for ${SHORT_SHA}:"
-  PROJECT_ID="${PROJECT_ID}" SKIP_VLLM="${SKIP_VLLM:-false}" bash scripts/render_image_digests.sh "${SHORT_SHA}"
-fi
+echo "   Next, render their digests for terraform (deploy_all.sh does this itself):"
+echo "   PROJECT_ID=${PROJECT_ID} scripts/render_image_digests.sh ${SHORT_SHA}"

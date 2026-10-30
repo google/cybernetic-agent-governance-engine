@@ -1190,10 +1190,8 @@ def _extract_image_digests_block(variables_tf: str) -> str:
 def _evaluate_image_digests_validation(
     variables_tf: str,
     image_digests: dict[str, str],
-    *,
-    enable_binary_authorization: bool = True,
 ) -> bool:
-    """Evaluate the `variable "image_digests"` validation rules from `variables.tf`."""
+    """Evaluate the `variable "image_digests"` reference rules from `variables.tf`."""
     block = _extract_image_digests_block(variables_tf)
     regex_matches = re.findall(r'regex\("([^"]+)",\s*ref\)', block)
     assert len(regex_matches) >= 2, (
@@ -1202,20 +1200,18 @@ def _evaluate_image_digests_validation(
     # Unescape HCL string double-backslashes (e.g. `\\s` -> `\s`)
     digest_regex = re.compile(regex_matches[0].replace(r"\\", "\\"))
     latest_regex = re.compile(regex_matches[1].replace(r"\\", "\\"))
+    placeholder = re.search(r'endswith\(ref, "([^"]+)"\)', block)
+    assert placeholder, (
+        'Expected the empty-input digest refusal in variable "image_digests"'
+    )
 
-    # Rule 1: when enable_binary_authorization = true, every image must match @sha256:<64-hex> and not :latest
-    if enable_binary_authorization:
-        if not all(
-            bool(digest_regex.match(ref)) and not bool(latest_regex.search(ref))
-            for ref in image_digests.values()
-        ):
-            return False
-
-    # Rule 2: unconditional digest + no-:latest check
+    # Unconditional: every reference is digest-pinned, never :latest, never the
+    # SHA-256 of empty input (POAM-2026-083, POAM-2026-131).
     for ref in image_digests.values():
         if not digest_regex.match(ref) or latest_regex.search(ref):
             return False
-
+        if ref.endswith(placeholder.group(1)):
+            return False
     return True
 
 
@@ -1242,83 +1238,61 @@ class TestImageSupplyChainAndAttestation:
             offending
         )
 
-    def test_image_digests_validation_rejects_tag_only_reference_when_binauthz_enabled(
-        self,
-    ) -> None:
+    def test_image_digests_validation_rejects_unpinned_references(self) -> None:
         variables_tf = (GKE_TARGET_DIR / "variables.tf").read_text(encoding="utf-8")
         block = _extract_image_digests_block(variables_tf)
-
-        assert "!var.enable_binary_authorization" in block
         assert ":latest(@|$)" in block
 
-        # Extract default map entries from variable "image_digests"
-        default_entries = dict(
-            re.findall(r'"([^"]+)"\s*=\s*"([^"]+)"', block.split("validation {", 1)[0])
-        )
-        expected_keys = {
-            "gateway",
-            "governed-financial-advisor",
-            "vllm-streamer",
-            "nemo-guardrails",
-            "compliance-bridge",
-            "agentsight-ui",
-            "presidio-analyzer",
-            "presidio-anonymizer",
-            "opa",
-            "langfuse",
-            "langfuse-worker",
-            "cloud-sql-proxy",
-            "clickhouse-server",
-            "clickhouse-keeper",
-            "redis",
-        }
-        assert expected_keys.issubset(default_entries.keys()), (
-            f"Missing required keys in image_digests default map: "
-            f"{expected_keys - set(default_entries.keys())}"
-        )
-
-        # 1. Default digest-pinned map passes validation when enable_binary_authorization = True
-        assert (
-            _evaluate_image_digests_validation(
-                variables_tf, default_entries, enable_binary_authorization=True
+        # No default map exists any more (POAM-2026-131); the test-only fixture the
+        # terraform tests plan with is the known-good baseline.
+        fixture = GKE_TARGET_DIR / "tests" / "fixtures" / "image_digests.tfvars"
+        valid_entries = dict(
+            re.findall(
+                r'^\s*"([^"]+)"\s*=\s*"([^"]+)"',
+                fixture.read_text(encoding="utf-8"),
+                re.M,
             )
-            is True
         )
+        assert valid_entries, "fixture image_digests map is empty"
+
+        # 1. A digest-pinned map passes.
+        assert _evaluate_image_digests_validation(variables_tf, valid_entries) is True
 
         # 2. Fail-closed: a tag-only reference (even a version tag like :v1.2.3) is rejected
-        with_version_tag = dict(default_entries)
+        with_version_tag = dict(valid_entries)
         with_version_tag["gateway"] = (
             "us-central1-docker.pkg.dev/project/cage-images/cage-gateway:v1.2.3"
         )
         assert (
-            _evaluate_image_digests_validation(
-                variables_tf, with_version_tag, enable_binary_authorization=True
-            )
-            is False
+            _evaluate_image_digests_validation(variables_tf, with_version_tag) is False
         )
 
         # 3. Fail-closed: a :latest tag reference is rejected
-        with_latest_tag = dict(default_entries)
+        with_latest_tag = dict(valid_entries)
         with_latest_tag["gateway"] = (
             "us-central1-docker.pkg.dev/project/cage-images/cage-gateway:latest"
         )
         assert (
-            _evaluate_image_digests_validation(
-                variables_tf, with_latest_tag, enable_binary_authorization=True
-            )
-            is False
+            _evaluate_image_digests_validation(variables_tf, with_latest_tag) is False
         )
 
         # 4. Fail-closed: a malformed/truncated sha256 digest is rejected
-        with_short_digest = dict(default_entries)
+        with_short_digest = dict(valid_entries)
         with_short_digest["gateway"] = (
             "us-central1-docker.pkg.dev/project/cage-images/cage-gateway@sha256:deadbeef"
         )
         assert (
-            _evaluate_image_digests_validation(
-                variables_tf, with_short_digest, enable_binary_authorization=True
-            )
-            is False
+            _evaluate_image_digests_validation(variables_tf, with_short_digest) is False
+        )
+
+        # 5. Fail-closed: the SHA-256 of empty input is a placeholder, not a pin
+        with_placeholder = dict(valid_entries)
+        with_placeholder["gateway"] = (
+            "us-central1-docker.pkg.dev/project/cage-images/cage-gateway@sha256:"
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+        assert (
+            _evaluate_image_digests_validation(variables_tf, with_placeholder) is False
         )
 
     def test_gke_main_tf_wires_image_digests_across_all_workloads(self) -> None:

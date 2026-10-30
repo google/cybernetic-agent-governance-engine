@@ -16,7 +16,8 @@
 # backend deploys, and what the plan refuses. Mock providers and module
 # overrides only, so no credentials and no state. CI runs it in the
 # terraform-test job:
-#   terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars
+#   terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars \
+#     -var-file=tests/fixtures/image_digests.tfvars
 
 mock_provider "google" {
   mock_resource "google_container_cluster" {

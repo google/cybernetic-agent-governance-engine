@@ -987,4 +987,6 @@ jobs:
       - name: Initialise without a backend
         run: terraform -chdir=infra/targets/gcp-gke init -backend=false -input=false
       - name: Run terraform test against the staging profile
-        run: terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars
+        # image_digests has no default and no committed value (POAM-2026-131);
+        # the mock-provider tests plan with a test-only fixture map.
+        run: terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars -var-file=tests/fixtures/image_digests.tfvars
