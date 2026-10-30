@@ -1288,7 +1288,7 @@ Every run of the staging posture in a new project repeats this. The apply locks 
 **Target Closure:** 2026-11-15
 
 **Description:**
-[`.gitleaks.toml`](../.gitleaks.toml), added on 2026-08-28 in `9a7fabe7` and never changed since, holds only an `[allowlist]`: it has no `[[rules]]` and no `[extend] useDefault = true`. The required check "Secret Scanning (Gitleaks)" in [`security-scan.yml`](../.github/workflows/security-scan.yml) runs `gitleaks detect --source . --log-opts "HEAD~1..HEAD" --redact --verbose --exit-code 1` with gitleaks 8.27.2 and no `--config` (verified 2026-10-30).
+[`.gitleaks.toml`](../.gitleaks.toml), added on 2026-08-28 in `9a7fabe7` and never changed since, holds only an `[allowlist]`: it has no `[[rules]]` and no `[extend] useDefault = true`. The required check "Secret Scanning (Gitleaks)" in [`security-scan.yml`](../.github/workflows/security-scan.yml) runs `gitleaks detect --source . --log-opts "HEAD~1..HEAD" --redact --verbose --exit-code 1` with gitleaks 8.27.2 and no `--config` (verified 2026-10-30). The job's own comment says it "Scans full commit history", but `--log-opts "HEAD~1..HEAD"` limits each run to the commits between `HEAD` and its first parent: a pull request's commits, or the latest commit on `main` for pushes and the nightly schedule. So the job never scans the full history, with rules or without.
 
 gitleaks' v8.27.2 README gives the configuration precedence as `--config`, then `GITLEAKS_CONFIG`, then `GITLEAKS_CONFIG_TOML`, then `(target path)/.gitleaks.toml`, and says: "If none of the four options are used, then gitleaks will use the default config." The built-in rules are inherited only through `[extend] useDefault = true`. The job sets none of the first three, so gitleaks loads the repository's `.gitleaks.toml`: since 2026-08-28 the scan has loaded a configuration with zero rules, and it cannot report a finding.
 
@@ -1298,7 +1298,7 @@ Since 2026-10-27 it has been one of the eight required status checks in ruleset 
 
 **Remediation Plan:**
 1. Add `[extend] useDefault = true` to `.gitleaks.toml`.
-2. Add a CI canary step. It writes a known-fake token to a temporary directory at runtime (never committed), runs gitleaks with the repository's configuration against it, and fails the job unless gitleaks reports the token. This proves the check can fail.
+2. Add a CI canary step. It writes a known-fake token to a temporary directory at runtime (never committed), runs gitleaks with the repository's configuration against it, and fails the job unless gitleaks reports the token. This proves the check can fail. The same change corrects the job comment, which claims a full-history scan.
 3. Run one full-history scan with the default rules and record the result here. Rotate anything real it finds.
 4. **Done (2026-10-30).** POAM-2026-115's detail section notes that its eight required checks include this one until this item closes.
 
