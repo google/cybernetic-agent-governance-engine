@@ -357,7 +357,7 @@ If pods (e.g., `gateway`, `compliance-bridge`, or `advisor`) enter `Init:CrashLo
 ### Container `image_digests` & `project_id` Portability Constraints
 
 Committed deployment profiles (such as [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)) pin container images by immutable digest (`@sha256:...`) pointing to reference registries (`gcr.io/cage-reference/` or a developer registry) and default `project_id = "YOUR_GCP_PROJECT_ID"`.
-- **Inherent Limitation**: Container digests name images that exist in a single GCP project registry, and `project_id` must target the evaluator's own project. If an evaluator applies without setting `project_id`, Terraform will fail on invalid project credentials or permissions. If digests are not rendered locally, Kubernetes will fail with `ImagePullBackOff` against reference placeholders.
+- **Inherent Limitation & Procedural Reproducibility**: Container digests name images that exist in a single GCP project registry, and `project_id` must target the evaluator's own project. Terraform consumes `var.image_digests` directly without registry prefix substitution. Running `scripts/render_image_digests.sh` queries `gcloud` live against `${REGISTRY}/${name}:${SHORT_SHA}` and **overwrites the entire `image_digests` map**. Consequently, the committed digests in `staging.tfvars` are declarative placeholders that satisfy HCL validation (`repo@sha256:...`) during offline `terraform test`, but are not consumed directly in a live deploy. Staging reproducibility is **procedural** (running `render_image_digests.sh` against the evaluator's registry), not static artifact capture.
 - **Evaluator Prerequisites**:
   1. **Render Project Digests**: Every evaluator deploying CAGE into their own GCP project must run `scripts/render_image_digests.sh` against their own project registry first to generate local digests:
      ```bash
@@ -393,6 +393,15 @@ This indicates that `deploy_all.sh` or `infra/load_env.sh` was bypassed, leaving
 [POAM-019] AU-9 dual-project telemetry isolation violated.
 ```
 which triggers only when compliance keys are populated but identical to application project keys.
+
+### Diagnostic Hygiene: The Misleading Error Pattern
+
+Error messages and guard assertions must describe the mechanical condition detected rather than a speculative downstream root cause. Three separate investigations this week were prolonged by diagnostics that asserted the wrong condition:
+1. **POAM-019 Key Guard**: Unset variables evaluating `"" == ""` asserted an AU-9 dual-project isolation compliance breach when `.env` was simply not loaded.
+2. **Linkerd Network Validator**: Pod startup exit 95 asserted network validation and iptables failure when the issue was an asynchronous CNI plugin initialization race on scaling nodes.
+3. **Project ID Mismatches**: Applying against a placeholder or stale `project_id` returned GCP `403 Forbidden` API errors that appeared to indicate broken deployer IAM permissions rather than an invalid target project.
+
+Engineers adding validation guards must name the immediate unfulfilled precondition, not the highest-severity hypothetical failure mode.
 
 
 
