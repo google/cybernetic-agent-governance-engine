@@ -64,8 +64,10 @@ jobs:
         run: |
           uv run pip-licenses --format=json > licenses.json
           
-          # Check for forbidden licenses (including versioned SPDX/classifier strings like GPLv3, LGPL-2.1, AGPL-3.0)
-          if grep -iE '"[^"]*(GPL|AGPL|LGPL|General Public License)[^"]*"' licenses.json; then
+          # Check for forbidden licenses (including versioned SPDX/classifier strings
+          # like GPLv3, LGPL-2.1, AGPL-3.0), while permitting dual-licensed packages
+          # that offer a permissive alternative (e.g. "GPLv3+; MIT License").
+          if grep -iE '"[^"]*(GPL|AGPL|LGPL|General Public License)[^"]*"' licenses.json | grep -viE '; *(MIT|Apache|BSD|ISC)'; then
             echo "::error::Forbidden license found! (GPL/AGPL/LGPL)"
             exit 1
           fi

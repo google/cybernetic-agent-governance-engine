@@ -112,13 +112,9 @@ jobs:
               echo "Running all partner integration tests..."
               uv run pytest tests/ -m partner_integration --run-partner-integration -v --tb=short
               ;;
-            provider_01|provider_02|provider_03|provider_05)
+            provider_01|provider_02|provider_03|provider_05|actuator_01)
               echo "Running $FILTER partner integration tests..."
-              uv run pytest "tests/integrations/${FILTER}/test_${FILTER}_live.py" -m partner_integration --run-partner-integration -v --tb=short
-              ;;
-            actuator_01)
-              echo "Running $FILTER partner integration tests..."
-              uv run pytest "tests/test_actuator_01_live.py" -m partner_integration --run-partner-integration -v --tb=short
+              uv run pytest "tests/test_${FILTER}_live.py" -m partner_integration --run-partner-integration -v --tb=short
               ;;
             *)
               echo "Invalid partner_filter: $FILTER" >&2

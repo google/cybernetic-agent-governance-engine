@@ -412,23 +412,23 @@ def test_every_workflow_pytest_target_path_exists() -> None:
         r"\bpytest\b[^\n]*?\b((?:tests|compliance)/[A-Za-z0-9_./*${}-]+)"
     )
     missing: list[str] = []
+    harness_script = REPO_ROOT / "scripts" / "partner_harness.py"
+    if harness_script.is_file():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("partner_harness", harness_script)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        for partner, rel_target in mod.PARTNER_TARGETS.items():
+            if not (REPO_ROOT / rel_target).exists():
+                missing.append(
+                    f"partner_harness.py: {partner} target {rel_target!r} does not exist"
+                )
     for path in sorted(WORKFLOWS_DIR.glob("*.yml")):
         content = path.read_text(encoding="utf-8")
         for match in pytest_path_re.finditer(content):
             raw_target = match.group(1)
-            if "${FILTER}" in raw_target:
-                for partner in (
-                    "provider_01",
-                    "provider_02",
-                    "provider_03",
-                    "provider_05",
-                ):
-                    expanded = raw_target.replace("${FILTER}", partner)
-                    if not (REPO_ROOT / expanded).exists():
-                        missing.append(
-                            f"{path.name}: expanded partner path {expanded!r} does not exist"
-                        )
-                continue
             if "${" in raw_target:
                 continue
             if "*" in raw_target:
@@ -874,26 +874,36 @@ def test_gate_gitleaks_scans_full_history_and_catches_planted_secret_patterns() 
 
 
 def test_gate_license_guard_rejects_planted_gpl_dependency() -> None:
-    """`license_guard.yml` forbidden license regex must flag GPL, AGPL, and LGPL packages."""
+    """`license_guard.yml` forbidden license regex must flag GPL, AGPL, and LGPL packages and allow dual-licensed MIT/Apache/BSD."""
     lg_data = yaml.safe_load(
         (WORKFLOWS_DIR / "license_guard.yml").read_text(encoding="utf-8")
     )
     step_run = lg_data["jobs"]["license-check"]["steps"][5]["run"]
     m = re.search(r"grep -iE '([^']+)'", step_run)
+    m_allow = re.search(r"grep -viE '([^']+)'", step_run)
     assert m is not None
+    assert m_allow is not None
     forbidden_re = re.compile(m.group(1), re.IGNORECASE)
+    permissive_dual_re = re.compile(m_allow.group(1), re.IGNORECASE)
+
+    def _is_flagged(line: str) -> bool:
+        return bool(forbidden_re.search(line)) and not bool(
+            permissive_dual_re.search(line)
+        )
 
     for forbidden in (
         '{"Name": "bad", "License": "GPLv3"}',
+        '{"Name": "bad", "License": "GPL-3.0-only"}',
         '{"Name": "bad", "License": "GNU Affero General Public License v3 (AGPL-3.0)"}',
         '{"Name": "bad", "License": "LGPL-2.1"}',
     ):
-        assert forbidden_re.search(forbidden), (
-            f"license_guard.yml failed to flag {forbidden}"
-        )
+        assert _is_flagged(forbidden), f"license_guard.yml failed to flag {forbidden}"
 
-    assert not forbidden_re.search('{"Name": "ok", "License": "Apache-2.0"}')
-    assert not forbidden_re.search('{"Name": "ok", "License": "MIT"}')
+    assert not _is_flagged('{"Name": "ok", "License": "Apache-2.0"}')
+    assert not _is_flagged('{"Name": "ok", "License": "MIT"}')
+    assert not _is_flagged(
+        '{"Name": "forbiddenfruit", "License": "GNU General Public License v3 or later (GPLv3+); MIT License"}'
+    )
 
 
 def test_gate_apac_mas_and_eu_ecb_compliance_workflows_catch_planted_defects(
