@@ -89,6 +89,7 @@ import logging
 import os
 import statistics
 import sys
+import tempfile
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -671,12 +672,14 @@ def render_text(results: dict[str, Any]) -> str:
 def _write_outputs(results: dict[str, Any]) -> None:
     json_path = Path(
         os.environ.get(
-            "RECONCILIATION_OUTPUT_JSON", "/tmp/cage_reconciliation_metrics.json"
+            "RECONCILIATION_OUTPUT_JSON",
+            str(Path(tempfile.gettempdir()) / "cage_reconciliation_metrics.json"),
         )
     )
     txt_path = Path(
         os.environ.get(
-            "RECONCILIATION_OUTPUT_TXT", "/tmp/cage_reconciliation_metrics.txt"
+            "RECONCILIATION_OUTPUT_TXT",
+            str(Path(tempfile.gettempdir()) / "cage_reconciliation_metrics.txt"),
         )
     )
     json_path.write_text(json.dumps(results, indent=2, default=str))

@@ -144,7 +144,7 @@ class MetricsServerHandle:
 
 def start_metrics_http_server(
     port: int | None = None,
-    addr: str = "0.0.0.0",  # nosec B104 - Prometheus scrape endpoint must bind container interface
+    addr: str = "0.0.0.0",  # nosec B104  # Prometheus scrape endpoint must bind container interface
 ) -> MetricsServerHandle | None:
     """Start the out-of-band Prometheus HTTP server on its own daemon thread.
 

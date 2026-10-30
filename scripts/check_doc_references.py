@@ -44,6 +44,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -254,8 +255,8 @@ KNOWN_DOCUMENTED_GAPS = {
     "docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md",
     "docs/MIGRATION_GUIDE_v3.md",
     "docs/whitepapers/CAGE_TECHNICAL_PREPRINT.md",
-    "/tmp/benign_dataset.json",
-    "/tmp/adversarial_dataset.json",
+    str(Path(tempfile.gettempdir()) / "benign_dataset.json"),
+    str(Path(tempfile.gettempdir()) / "adversarial_dataset.json"),
     "tests/governance/test_ir_drill.py",
 }
 

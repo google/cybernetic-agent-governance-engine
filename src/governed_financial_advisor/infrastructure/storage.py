@@ -46,6 +46,7 @@ Relevant environment variables for S3Storage:
 
 import logging
 import os
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -145,7 +146,11 @@ class LocalStorage(StorageInterface):
 
     def __init__(self, base_dir: str | None = None):
         self.base_dir = Path(
-            base_dir or os.environ.get("LOCAL_STORAGE_DIR", "/tmp/cage-storage")  # nosec B108
+            base_dir
+            or os.environ.get(
+                "LOCAL_STORAGE_DIR",
+                os.path.join(tempfile.gettempdir(), "cage-storage"),
+            )
         )
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info("LocalStorage initialised at %s", self.base_dir)

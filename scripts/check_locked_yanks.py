@@ -100,7 +100,7 @@ def fetch_release(release: LockedRelease) -> dict:
         release_url(release),
         headers={"Accept": "application/json", "User-Agent": "cage-check-locked-yanks"},
     )
-    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310 - https enforced in release_url()
+    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # nosec B310  # https enforced in release_url()
         return json.load(response)
 
 

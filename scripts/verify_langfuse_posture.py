@@ -83,7 +83,7 @@ def query_langfuse_projects(host: str, pub_key: str, secret_key: str) -> list | 
     req = Request(url)
     req.add_header("Authorization", f"Basic {b64_auth}")
     try:
-        with urlopen(req, timeout=5) as response:  # nosec B310
+        with urlopen(req, timeout=5) as response:  # nosec B310  # scheme validated to http/https above
             if response.status == 200:
                 data = json.loads(response.read().decode())
                 return [p["id"] for p in data.get("data", [])]

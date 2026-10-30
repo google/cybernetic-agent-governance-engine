@@ -32,6 +32,8 @@ Required env vars for the Langfuse source:
 
 import logging
 import os
+import urllib.parse
+import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -97,6 +99,20 @@ class TraceSource(ABC):
 # ---------------------------------------------------------------------------
 
 
+def validate_auditor_url(url: str) -> str:
+    """Validate that *url* uses http or https with a non-empty netloc (Bandit B310)."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(
+            f"Invalid URL scheme or missing host in auditor URL: {url!r} "
+            "(expected http:// or https:// with a non-empty netloc)"
+        )
+    return url
+
+
+_validate_auditor_url = validate_auditor_url
+
+
 class OTLPTraceSource(TraceSource):
     """Query a Jaeger / OTLP-compatible HTTP endpoint for recent traces.
 
@@ -108,14 +124,13 @@ class OTLPTraceSource(TraceSource):
         self.endpoint = endpoint.rstrip("/")
 
     def fetch_traces(self, service_name: str, lookback_minutes: int) -> list[dict]:
-        try:
-            import json as _json
-            import urllib.request
+        import json as _json
 
-            url = f"{self.endpoint}/api/traces?service={service_name}&lookback={lookback_minutes}m"
-            if not url.startswith(("http://", "https://")):
-                raise ValueError(f"Invalid URL scheme: {url}")
-            with urllib.request.urlopen(url, timeout=10) as resp:
+        url = f"{self.endpoint}/api/traces?service={service_name}&lookback={lookback_minutes}m"
+        validate_auditor_url(url)
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310  # scheme validated to http/https above
                 payload = _json.loads(resp.read().decode())
             # Jaeger returns {"data": [...traces...]}
             raw_traces = payload.get("data", [])

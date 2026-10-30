@@ -98,6 +98,7 @@ import math
 import os
 import statistics
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -1150,7 +1151,7 @@ def _send_prompt(prompt: str) -> tuple[int, str]:
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:  # nosec B310
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:  # nosec B310  # scheme validated to http/https above
             return resp.status, resp.read().decode("utf-8", errors="replace")
 
     # ── First attempt ────────────────────────────────────────────────────────
@@ -2094,8 +2095,18 @@ def _write_outputs(
         "benign_fpr": benign,
     }
 
-    json_path = Path(os.environ.get("OUTPUT_JSON", "/tmp/cage_paper_metrics.json"))
-    txt_path = Path(os.environ.get("OUTPUT_TXT", "/tmp/cage_paper_metrics.txt"))
+    json_path = Path(
+        os.environ.get(
+            "OUTPUT_JSON",
+            str(Path(tempfile.gettempdir()) / "cage_paper_metrics.json"),
+        )
+    )
+    txt_path = Path(
+        os.environ.get(
+            "OUTPUT_TXT",
+            str(Path(tempfile.gettempdir()) / "cage_paper_metrics.txt"),
+        )
+    )
 
     json_path.write_text(json.dumps(combined, indent=2))
     print(f"[output] JSON written to {json_path}")
