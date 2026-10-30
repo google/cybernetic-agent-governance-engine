@@ -246,7 +246,6 @@ jobs:
       - name: Vendor brand check (G8 - No vendor brands in kernel executable code)
         # C7: kernel must be vendor-neutral. Vendor names in prose/docs are legitimate,
         # but executable literals (enum members, Redis keys, env vars) must use abstractions.
-        # Empty brand list means gate is wired but not currently restrictive.
         run: |
           uv run python scripts/check_vendor_brands.py --verbose
       - name: Project-ID hygiene check

@@ -104,14 +104,12 @@ jobs:
           chmod +x /usr/local/bin/lula
           lula version
 
-      - name: Gate 0.1 — Core unit tests (if tests/core/ exists)
+      - name: Gate 0.1 — Core unit test suite presence check
         run: |
-          if [ -d "tests/core" ]; then
-            echo "Running core unit tests..."
-            uv run pytest -p no:langsmith -p no:langsmith_plugin tests/core/ -v
-          else
-            echo "::warning::tests/core/ not found — skipping core unit tests"
-          fi
+          test -f tests/test_symbolic_governor.py || {
+            echo "::error::Core unit test suite tests/test_symbolic_governor.py not found"
+            exit 1
+          }
 
       - name: Gate 0.2 — STPA freshness check
         run: python3 scripts/check_stpa_freshness.py
@@ -129,13 +127,13 @@ jobs:
           LANGFUSE_COMPLIANCE_SECRET_KEY: "sk-lf-comp-mock"
 
       - name: "Gate 0.4a — ISO 42001 Lula YAML Structure (a52)"
-        run: python3 -c "import yaml, sys; yaml.safe_load(open('compliance/lula/lula-validation-a52.yaml')); print('✅ lula-validation-a52.yaml is valid YAML')"
+        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-a52.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-a52.yaml is valid OSCAL YAML')"
       - name: "Gate 0.4b — ISO 42001 Lula YAML Structure (a53)"
-        run: python3 -c "import yaml, sys; yaml.safe_load(open('compliance/lula/lula-validation-a53.yaml')); print('✅ lula-validation-a53.yaml is valid YAML')"
+        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-a53.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-a53.yaml is valid OSCAL YAML')"
       - name: "Gate 0.4c — ISO 42001 Lula YAML Structure (a92)"
-        run: python3 -c "import yaml, sys; yaml.safe_load(open('compliance/lula/lula-validation-a92.yaml')); print('✅ lula-validation-a92.yaml is valid YAML')"
+        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-a92.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-a92.yaml is valid OSCAL YAML')"
       - name: "Gate 0.4d — ISO 42001 Lula YAML Structure (aarm-vectors)"
-        run: python3 -c "import yaml, sys; yaml.safe_load(open('compliance/lula/lula-validation-aarm-vectors.yaml')); print('✅ lula-validation-aarm-vectors.yaml is valid YAML')"
+        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-aarm-vectors.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-aarm-vectors.yaml is valid OSCAL YAML')"
 
   # ---------------------------------------------------------------------------
   # Job 2: Regional Posture Gates (2×3 matrix)
@@ -145,7 +143,6 @@ jobs:
   regional-posture:
     name: "Regional Posture (${{ matrix.region }} / ${{ matrix.environment }})"
     needs: [universal-iso42001]
-    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

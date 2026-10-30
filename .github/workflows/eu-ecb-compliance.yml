@@ -66,12 +66,12 @@ jobs:
           import yaml, sys, pathlib
           manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-eu-*.yaml'))
           if not manifests:
-              print('WARNING: no EU AI Act Lula manifests found — CA-03 remediation pending')
-              sys.exit(0)
+              print('ERROR: no EU AI Act Lula manifests found')
+              sys.exit(1)
           errors = []
           for m in manifests:
               doc = yaml.safe_load(m.read_text())
-              if 'component-definition' not in doc:
+              if not isinstance(doc, dict) or 'component-definition' not in doc:
                   errors.append(f'{m.name}: missing component-definition key')
               print(f'  OK {m.name}')
           if errors:
@@ -120,17 +120,16 @@ jobs:
         # Checks that DORA Art. 10 audit logging is enabled in eu-dev.tfvars.
         run: |
           python3 - <<'PYEOF'
-          import pathlib, sys
+          import pathlib, re, sys
           tfvars_path = pathlib.Path('infra/targets/gcp-gke/eu-dev.tfvars')
           if not tfvars_path.exists():
-              print('WARNING: infra/targets/gcp-gke/eu-dev.tfvars not found — skipping DORA check')
-              sys.exit(0)
+              print('ERROR: infra/targets/gcp-gke/eu-dev.tfvars not found')
+              sys.exit(1)
           content = tfvars_path.read_text()
-          # Check for DORA audit logging marker
-          if 'enable_eu_ecb_compliance' not in content:
-              print('WARNING: enable_eu_ecb_compliance not found in eu-dev.tfvars')
-          else:
-              print('DORA Art. 10 audit logging configuration present — OK')
+          if not re.search(r'enable_eu_ecb_compliance\s*=\s*true', content):
+              print('ERROR: enable_eu_ecb_compliance = true not found in eu-dev.tfvars')
+              sys.exit(1)
+          print('DORA Art. 10 audit logging configuration present — OK')
           PYEOF
 
       - name: Validate SR 26-2 telemetry suppression sentinel
@@ -144,14 +143,19 @@ jobs:
                             list(pathlib.Path('config/thresholds').glob('*.json'))
           eu_files = [f for f in threshold_files if 'eu' in f.name.lower()]
           if not eu_files:
-              print('WARNING: No EU threshold files found — SR 26-2 sentinel check skipped')
-              sys.exit(0)
+              print('ERROR: No EU threshold files found — SR 26-2 sentinel check failed')
+              sys.exit(1)
+          errors = []
           for f in eu_files:
               content = f.read_text()
-              if 'no legal force' in content or 'SR 26-2' in content:
+              if 'no legal force' in content and 'SR 26-2' in content:
                   print(f'SR 26-2 sentinel present in {f.name} — OK')
               else:
-                  print(f'WARNING: SR 26-2 sentinel not found in {f.name}')
+                  errors.append(f'ERROR: SR 26-2 / "no legal force" sentinel not found in {f.name}')
+          if errors:
+              for err in errors:
+                  print(err)
+              sys.exit(1)
           PYEOF
   # NOTE: the former `eu-ecb-iso42001-lula` job was removed. It ran a
   # structural YAML check over compliance/lula/lula-validation-a*.yaml that was

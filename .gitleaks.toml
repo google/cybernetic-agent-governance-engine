@@ -44,9 +44,10 @@ tags = ["key", "pem", "cage"]
 description = "Allowlist for non-secret placeholders, synthetic test/doc fixtures, and rotated historical commits"
 
 # Historical commits containing a dev-only Langfuse init password in
-# infra/targets/gcp-gke/main.tf:411 that was removed and rotated in d103ff9d
-# (tracked under POAM-2026-160). Allowlisted by commit SHA rather than path so
-# active Terraform files under infra/ remain fully scanned.
+# infra/targets/gcp-gke/main.tf:411 that was removed from HCL in e5376b58 (#477)
+# and rotated in live Cloud SQL Postgres on 2026-10-30 (tracked under
+# POAM-2026-160 and POAM-2026-162). Allowlisted by commit SHA rather than path
+# so active Terraform files under infra/ remain fully scanned.
 commits = [
     "1902c92cc44ca6ef89450b57e9aa634486ab4148",
     "e608f3ac2488080762f6de93f9a932cb347c0fe1",
