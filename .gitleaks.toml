@@ -79,6 +79,7 @@ regexes = [
     '''hf_abcdefghijklmnopqrstuvwxyz''',
     # Non-secret identifiers flagged by generic-api-key entropy heuristics
     '''ACTUATOR_01_SIGNING_KEYS_DIR''',
+    '''ACTUATOR_01_KMS_KEY''',
     '''s3-reconciliation-bucket''',
     '''nvapi-1234567890abcdef''',
     '''projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/''',
