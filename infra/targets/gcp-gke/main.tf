@@ -1115,7 +1115,7 @@ module "app_secrets" {
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
   # Dev posture: pass the key as-is (may be empty → module skips secret creation
   #   when any_compliance_active=false; compliance bridge handles None gracefully).
-  # Prod posture (any_compliance_active=true): the precondition below enforces
+  # Prod posture (any_compliance_active=true): the POAM-019 guards below enforce
   #   that a real, distinct cage-compliance project key is provided.
   #   The silent fallback to module.langfuse.public_key has been removed to prevent
   #   circular evidence contamination in Step 5 (_fetch_failing_traces).
@@ -1132,37 +1132,71 @@ module "app_secrets" {
 }
 
 
-# POAM-019 enforcement: fail the plan if compliance keys are missing when
-# any compliance posture (US_FED, EU_ECB, APAC_MAS) is active. lifecycle { precondition }
-# is only valid inside resource blocks, not module blocks, so this terraform_data
-# resource carries the guard. It runs at plan time and provides a clear error message
-# citing the POAM item and remediation path.
-resource "terraform_data" "poam_019_compliance_key_guard" {
+# POAM-2026-086 (SC-8): with in-transit encryption on, the gateway and
+# compliance-bridge pods pin the governance instance's managed server CA, so it
+# must not be empty.
+resource "terraform_data" "memorystore_ca_pinning_guard" {
   lifecycle {
     precondition {
       condition     = !var.enable_memorystore_tls || length(module.memorystore_governance.managed_server_ca) > 0
       error_message = "[POAM-2026-086] SC-8 Memorystore CA pinning invariant violated: when enable_memorystore_tls=true, module.memorystore_governance.managed_server_ca must be non-empty so gateway and compliance-bridge pods can pin the server CA."
     }
+  }
+}
+
+# POAM-019 (AU-9 / SC-7): with any compliance posture active (US_FED, EU_ECB,
+# APAC_MAS), the cage-compliance Langfuse project keys must be set, and must
+# differ from the application project's. lifecycle { precondition } is only
+# valid inside resource blocks, not module blocks, so terraform_data resources
+# carry the guards, at plan time. Each condition has its own resource, whose
+# error headline names that condition: terraform test's expect_failures names a
+# resource, not a precondition, so tests/poam_019.tftest.hcl can check each
+# guard on its own. Error lines stay within 76 columns so that Terraform does
+# not re-wrap them when its output is not a terminal.
+resource "terraform_data" "poam_019_empty_key_guard" {
+  lifecycle {
     precondition {
-      condition = !(local.any_compliance_active && (
-        var.langfuse_compliance_public_key == "" ||
-        var.langfuse_compliance_secret_key == "" ||
-        var.langfuse_compliance_public_key == var.langfuse_public_key ||
-        var.langfuse_compliance_secret_key == var.langfuse_secret_key
-      ))
+      condition = !local.any_compliance_active || (
+        var.langfuse_compliance_public_key != "" &&
+        var.langfuse_compliance_secret_key != ""
+      )
       error_message = <<-EOT
-        [POAM-019] AU-9 dual-project telemetry isolation violated.
-        When compliance hardening is active (enable_nist_compliance, enable_eu_ecb_compliance, or enable_apac_mas_compliance), the Langfuse compliance project keys
-        (langfuse_compliance_public_key / langfuse_compliance_secret_key) must be:
-          (1) Non-empty
-          (2) Distinct from the application project keys (langfuse_public_key / langfuse_secret_key)
-        An empty or identical compliance key silently collapses the dual-project
-        architecture, defeating evidentiary independence for NIST SP 800-53 AU-9.
-        Remediation: Set langfuse_compliance_public_key and langfuse_compliance_secret_key
-        to valid cage-compliance Langfuse project credentials through TF_VAR_* or
-        terraform.auto.tfvars (deploy_all.sh maps LANGFUSE_COMPLIANCE_* from .env),
-        never a committed tfvars file.
-        See docs/POAM_US_FED.md#POAM-019.
+        [POAM-019] Compliance telemetry keys are empty under compliance hardening.
+        enable_nist_compliance, enable_eu_ecb_compliance or
+        enable_apac_mas_compliance is true, and langfuse_compliance_public_key or
+        langfuse_compliance_secret_key is empty. AU-9 dual-project telemetry
+        isolation needs the cage-compliance Langfuse project's own keys.
+        Remediation: supply both keys through TF_VAR_* or terraform.auto.tfvars,
+        never a committed tfvars file. If you ran terraform directly, load .env
+        first: ./deploy_all.sh maps LANGFUSE_COMPLIANCE_* from .env, or source
+        infra/load_env.sh from bash. If .env was loaded, check that it sets
+        LANGFUSE_COMPLIANCE_PUBLIC_KEY and LANGFUSE_COMPLIANCE_SECRET_KEY.
+        See POAM-019 in docs/compliance/us_fed/POAM_US_FED.md.
+      EOT
+    }
+  }
+}
+
+resource "terraform_data" "poam_019_shared_key_guard" {
+  lifecycle {
+    precondition {
+      # An empty compliance key is the empty-key guard's finding. Skipping it here
+      # keeps unset keys ("" == "") from also being reported as shared.
+      condition = !local.any_compliance_active || !(
+        (var.langfuse_compliance_public_key != "" && var.langfuse_compliance_public_key == var.langfuse_public_key) ||
+        (var.langfuse_compliance_secret_key != "" && var.langfuse_compliance_secret_key == var.langfuse_secret_key)
+      )
+      error_message = <<-EOT
+        [POAM-019] Compliance telemetry keys equal the application project keys.
+        A compliance posture is active, and langfuse_compliance_public_key equals
+        langfuse_public_key or langfuse_compliance_secret_key equals
+        langfuse_secret_key. A key shared by both projects collapses the
+        dual-project telemetry architecture and defeats the evidentiary
+        independence NIST SP 800-53 AU-9 relies on.
+        Remediation: supply the cage-compliance Langfuse project's own keys
+        (LANGFUSE_COMPLIANCE_* in .env, TF_VAR_* or terraform.auto.tfvars), never
+        a committed tfvars file.
+        See POAM-019 in docs/compliance/us_fed/POAM_US_FED.md.
       EOT
     }
   }

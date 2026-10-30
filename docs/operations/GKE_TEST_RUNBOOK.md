@@ -352,7 +352,7 @@ Partner integration tests enforce the **Trust Anchor Isolation** invariant from 
 
 [`scripts/verify_langfuse_posture.py`](../../scripts/verify_langfuse_posture.py) validates dual-pipeline telemetry isolation (primary application telemetry vs. compliance audit pipeline). In GKE ([`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)):
 - **Cloud SQL Auth Proxy + IAM Auth**: `langfuse-web` and `langfuse-worker` run with the `cloud-sql-proxy` sidecar (`--auto-iam-authn`) connecting to `cage-postgres-<env>` over private IP (`127.0.0.1:5432`) and `cage-valkey-app-<env>` for queue/cache state.
-- **POAM-019 Compliance Key Guard**: `terraform_data.poam_019_compliance_key_guard` enforces at plan/apply time that `langfuse_compliance_public_key != langfuse_public_key` and `langfuse_compliance_secret_key != langfuse_secret_key` in `staging` and `prod`.
+- **POAM-019 Compliance Key Guards**: With any compliance posture active (`enable_nist_compliance`, `enable_eu_ecb_compliance` or `enable_apac_mas_compliance`), `terraform_data.poam_019_empty_key_guard` refuses a plan when `langfuse_compliance_public_key` or `langfuse_compliance_secret_key` is empty, and `terraform_data.poam_019_shared_key_guard` refuses it when either equals its application-project counterpart (`langfuse_public_key` / `langfuse_secret_key`). [`poam_019.tftest.hcl`](../../infra/targets/gcp-gke/tests/poam_019.tftest.hcl) tests each guard on its own.
 - **OTLP Basic-Auth Header Derivation**: Gateway (`gateway-secrets`) and Advisor (`advisor-secrets`) automatically receive `OTEL_EXPORTER_OTLP_HEADERS` (`Authorization=Basic base64(<public_key>:<secret_key>)`) for authenticated Langfuse v3 OTLP trace ingestion.
 
 ### 1. Local Dry-Run Requirements

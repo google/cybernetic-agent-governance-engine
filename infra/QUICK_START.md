@@ -400,6 +400,26 @@ scripts/render_image_digests.sh        # writes infra/targets/gcp-gke/image_dige
 An image pulled from a different project or SHA than the one built means the
 rendered file belongs to another build. Render it again rather than editing it.
 
+### Control plane unreachable / lockout (POAM-2026-126)
+
+With a compliance posture active, the plan requires a non-empty `authorized_networks` list with no `/0`, and the GKE control plane's public endpoint then accepts only those CIDRs. Pass the deploying machine's public egress address (or export it as `TF_VAR_authorized_networks`):
+
+```bash
+./deploy_all.sh --target gcp-gke --env staging \
+  --var project_id=<YOUR_GCP_PROJECT_ID> \
+  --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
+```
+
+If `kubectl` or Terraform's `kubernetes` / `helm` providers time out against the endpoint, your egress address is probably not on the list. See [Authorized Networks Lockout](../docs/operations/DEPLOYMENT_RULES.md#authorized-networks-lockout-poam-2026-126).
+
+### Deploying under a service account (`sa-cage-deployer`)
+
+Staging deployments have been verified only under human credentials (`gcloud auth application-default login`). The automated path under a deployer service account (`sa-cage-deployer` in the staging probe) is unverified end-to-end; the probe found that account lacked `cloudkms.cryptoKeyVersions.viewPublicKey` (which is not included in `roles/cloudkms.admin` or `roles/editor`). Grant `roles/cloudkms.publicKeyViewer` at the project level (not on the `binauthz-attestor` key itself, which uses an authoritative `google_kms_crypto_key_iam_policy`). See [Unverified Deployer Service Account](../docs/operations/DEPLOYMENT_RULES.md#unverified-deployer-service-account-sa-cage-deployer).
+
+### `linkerd-network-validator` CrashLoopBackOff (exit 95)
+
+If pods stay in `Init:CrashLoopBackOff` because `linkerd-network-validator` exits with code 95 (`Failed to validate networking configuration`), delete them so they reschedule (`kubectl delete pod -l app=gateway -n governance-stack`), or cycle the node pool. The root cause is not established (a CNI-chaining race on new or scaling nodes is the leading hypothesis), and the condition can recur. See [Linkerd Network Validator CrashLoopBackOff](../docs/operations/DEPLOYMENT_RULES.md#linkerd-network-validator-crashloopbackoff-mitigation-vs-root-cause).
+
 ### Backend connection refused on port-forward
 
 ```bash
