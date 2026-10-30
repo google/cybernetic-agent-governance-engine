@@ -85,10 +85,10 @@ def check_file(filepath: Path) -> list[tuple[int, str]]:
         return checker.violations
     except SyntaxError as exc:
         print(f"⚠️  Syntax error in {filepath}: {exc}", file=sys.stderr)
-        return []
+        return [(1, f"<unparseable: {exc}>")]
     except Exception as exc:
         print(f"⚠️  Failed to parse {filepath}: {exc}", file=sys.stderr)
-        return []
+        return [(1, f"<unparseable: {exc}>")]
 
 
 def should_skip(path: Path, base_dir: Path) -> bool:
@@ -124,12 +124,11 @@ def main() -> int:
         return 1
 
     if not FORBIDDEN_VENDOR_BRANDS:
-        if args.verbose:
-            print("INFO: Gate G8: No vendor brands configured (empty list).")
         print(
-            "✅ Gate G8 PASSED: Vendor brand list is empty (gate is wired but not restrictive)."
+            "❌ Gate G8 FAILED: FORBIDDEN_VENDOR_BRANDS must not be empty.",
+            file=sys.stderr,
         )
-        return 0
+        return 1
 
     violations_found = False
     scanned_count = 0

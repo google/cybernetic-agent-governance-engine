@@ -1,7 +1,86 @@
+# Gitleaks configuration for CAGE (Cybernetic AI Governance Engine)
+# Reference: docs/operations/GIT_WORKFLOW_STANDARDS.md, AGENTS.md § Secret Hygiene
+#
+# Extends the built-in Gitleaks ruleset (~150+ secret detection rules) and adds
+# CAGE-specific credential patterns. Used by pre-commit hooks and the CI
+# `secret-scan` job in `.github/workflows/security-scan.yml`.
+
 title = "CAGE Gitleaks Configuration"
 
+[extend]
+useDefault = true
+
+[[rules]]
+id = "cage-langfuse-key"
+description = "Langfuse secret or public API key (sk-lf-* / pk-lf-*)"
+regex = '''\b(?:sk|pk)-lf-[0-9a-wA-WyzYZ][0-9a-zA-Z_-]{19,}\b'''
+tags = ["key", "langfuse", "cage"]
+
+[[rules]]
+id = "cage-huggingface-token"
+description = "HuggingFace User Access Token (hf_*)"
+regex = '''\bhf_[0-9A-Za-z]{20,}\b'''
+tags = ["key", "huggingface", "cage"]
+
+[[rules]]
+id = "cage-google-credential"
+description = "Google API key or GOOG credential token (GOOG* / AIza*)"
+regex = '''\b(?:GOOG[0-9A-Za-z]{20,}|AIza[0-9A-Za-z_-]{35})\b'''
+tags = ["key", "google", "cage"]
+
+[[rules]]
+id = "cage-aws-access-key-id"
+description = "AWS Access Key ID (AKIA* / ASIA* / ABIA* / ACCA*)"
+regex = '''\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b'''
+tags = ["key", "aws", "cage"]
+
+[[rules]]
+id = "cage-private-key"
+description = "PEM-encoded Private Key block"
+regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'''
+tags = ["key", "pem", "cage"]
+
 [allowlist]
-description = "Allow synthetic test fixtures in unit tests"
+description = "Allowlist for non-secret placeholders, synthetic test/doc fixtures, and rotated historical commits"
+
+# Historical commits containing a dev-only Langfuse init password in
+# infra/targets/gcp-gke/main.tf:411 that was removed from HCL in e5376b58 (#477)
+# and rotated in live Cloud SQL Postgres on 2026-10-30 (tracked under
+# POAM-2026-160 and POAM-2026-162). Allowlisted by commit SHA rather than path
+# so active Terraform files under infra/ remain fully scanned.
+commits = [
+    "1902c92cc44ca6ef89450b57e9aa634486ab4148",
+    "e608f3ac2488080762f6de93f9a932cb347c0fe1",
+]
+
 paths = [
-    '''tests/test_pii_sanitizer\.py''',
+    '''^\.gitleaks\.toml$''',
+    '''\.env\.example$''',
+    '''^tests/''',
+    '''^contrib/.*/tests/''',
+    '''^docs/''',
+    '''^plans/''',
+]
+
+regexTarget = "line"
+regexes = [
+    # Environment variable reference syntax
+    '''\$\{[A-Z_]+\}''',
+    '''\{\{.*\}\}''',
+    # Explicit placeholder / redaction markers
+    '''(?i)placeholder''',
+    '''(?i)example''',
+    '''(?i)changeme''',
+    '''(?i)your[_-]?(?:api[_-]?)?(?:key|secret|token|password)''',
+    '''REDACTED_[A-Z_]+''',
+    '''dev-only-insecure-placeholder''',
+    '''(?:sk|pk)-lf-x{8,}''',
+    '''hf_x{8,}''',
+    '''hf_abcdefghijklmnopqrstuvwxyz''',
+    # Non-secret identifiers flagged by generic-api-key entropy heuristics
+    '''ACTUATOR_01_SIGNING_KEYS_DIR''',
+    '''ACTUATOR_01_KMS_KEY''',
+    '''s3-reconciliation-bucket''',
+    '''nvapi-1234567890abcdef''',
+    '''projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/''',
 ]

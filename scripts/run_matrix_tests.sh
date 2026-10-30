@@ -129,18 +129,19 @@ uv run pytest tests/ -m "local and ${REGION_MARKER}" \
     --junitxml="pytest-results/pytest-${CAGE_REGION}-${CAGE_ENV}.xml" \
   || { echo "Pytest failed for region ${CAGE_REGION}"; exit 1; }
 
-# Gate 0.1 — Core unit tests (skip gracefully if directory absent)
+# Gate 0.1 — Core unit tests (fail closed if test suite absent)
 echo ""
-info "Gate 0.1 — Core unit tests (tests/core/)"
-if [[ -d "tests/core" ]]; then
-  if uv run pytest tests/core/ -v; then
+info "Gate 0.1 — Core unit tests (tests/test_symbolic_governor.py)"
+if [[ -f "tests/test_symbolic_governor.py" ]]; then
+  if uv run pytest -p no:langsmith -p no:langsmith_plugin tests/test_symbolic_governor.py -q; then
     success "Gate 0.1 passed — core unit tests"
   else
     error "Gate 0.1 FAILED — core unit tests"
     PHASE0_FAILURES=$((PHASE0_FAILURES + 1))
   fi
 else
-  warn "Gate 0.1 SKIPPED — tests/core/ directory not found"
+  error "Gate 0.1 FAILED — tests/test_symbolic_governor.py not found"
+  PHASE0_FAILURES=$((PHASE0_FAILURES + 1))
 fi
 
 # Gate 0.2 — STPA freshness check
@@ -214,7 +215,7 @@ case "${CAGE_REGION}" in
   US_FED)
     echo ""
     info "Gate 1.1 — OPA unit tests (US_FED posture)"
-    if opa test compliance/postures/us_fed/opa/ src/governed_financial_advisor/governance/policy/trade_governance.rego -v; then
+    if opa test compliance/postures/us_fed/opa/ src/cage_finance/opa/ config/opa/ -v; then
       success "Gate 1.1 passed — OPA unit tests"
     else
       error "Gate 1.1 FAILED — OPA unit tests"
@@ -281,7 +282,8 @@ case "${CAGE_REGION}" in
           PHASE1_FAILURES=$((PHASE1_FAILURES + 1))
         fi
       else
-        warn "Gate 1.2 SKIPPED — ${RESIDENCY_TEST} not found"
+        error "Gate 1.2 FAILED — ${RESIDENCY_TEST} not found"
+        PHASE1_FAILURES=$((PHASE1_FAILURES + 1))
       fi
     else
       info "Gate 1.2 — Data residency validation SKIPPED (dev environment)"

@@ -44,48 +44,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # GitHub's dependency review action checks for:
-      # 1. New dependencies with known CVEs (blocks CRITICAL/HIGH by default)
-      # 2. License compatibility issues (configurable)
-      # POAM-013: This blocks PRs that introduce >= specifiers without lock file entries
-      # via the license/vulnerability enforcement below.
-      - name: Dependency Review
-        # continue-on-error: actions/dependency-review-action@v5 requires GitHub
-        # Advanced Security (GHAS) and the Dependency Graph feature to be enabled
-        # on the repository. Until GHAS is provisioned, this step is non-blocking
-        # so that the rest of the POAM-013 checks (unpinned specifier scan below)
-        # can still run and report. Track GHAS enablement under POAM-013.
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        continue-on-error: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          # Fail on CRITICAL and HIGH vulnerabilities in new/changed dependencies
-          fail-on-severity: high
-          # Allow these licenses (Apache 2.0, MIT, BSD variants, PSF)
-          allow-licenses: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Python-2.0
-          # Comment on the PR with dependency review results
-          comment-summary-in-pr: always
+          enable-cache: true
 
-      - name: Check for unpinned version specifiers (POAM-013)
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Verify lockfile synchronization (POAM-013)
         run: |
-          echo "## Checking for unpinned >= specifiers in pyproject.toml (POAM-013)" >> $GITHUB_STEP_SUMMARY
+          uv lock --check
+          python scripts/check_locked_yanks.py uv.lock
 
-          # Count unpinned specifiers
-          UNPINNED=$(grep -E '^\s+"[a-zA-Z].*>=.*"' pyproject.toml | wc -l || true)
-
-          echo "Unpinned \`>=\` specifiers found: $UNPINNED" >> $GITHUB_STEP_SUMMARY
-
-          if [ "$UNPINNED" -gt "0" ]; then
-            echo "### Unpinned dependencies detected:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            grep -E '^\s+"[a-zA-Z].*>=.*"' pyproject.toml || true >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
-            echo "> **POAM-013**: This PR introduces or retains unpinned \`>=\` version specifiers." >> $GITHUB_STEP_SUMMARY
-            echo "> Consider pinning these dependencies in \`uv.lock\` via \`uv lock\`." >> $GITHUB_STEP_SUMMARY
-            echo "> Non-reproducible builds can introduce uncontrolled dependency updates." >> $GITHUB_STEP_SUMMARY
-            # Warn only (not blocking) — pinning is tracked as POAM-013 in progress
-            echo "WARNING: $UNPINNED unpinned specifiers found. See POAM-013 in docs/POAM_US_FED.md."
-          else
-            echo "✅ No unpinned \`>=\` specifiers found." >> $GITHUB_STEP_SUMMARY
-          fi
+      - name: Audit locked dependencies for CVEs (POAM-013)
+        run: |
+          uv sync --frozen --all-groups --all-extras
+          uv pip install "pip-audit>=2.7.0"
+          uv run pip-audit \
+            --ignore-vuln GHSA-rg7c-g689-fr3x \
+            --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln GHSA-rrmf-rvhw-rf47 \
+            --ignore-vuln PYSEC-2026-3721

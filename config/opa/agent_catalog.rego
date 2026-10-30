@@ -50,16 +50,16 @@ import future.keywords.in
 
 # Allow if: caller is in approved_agents AND tool is in caller's allowed_tools
 allow {
-    agent := approved_agents[input.caller_identity.sub]
-    input.tool_name in agent.allowed_tools
+	agent := approved_agents[input.caller_identity.sub]
+	input.tool_name in agent.allowed_tools
 }
 
 # Allow A2A invocation if parent SPIFFE ID matches subagent's authorized prefix
 allow {
-    input.subagent_id
-    subagent := approved_agents[input.subagent_id]
-    parent_spiffe := input.caller_identity.sub
-    _parent_authorized_for_subagent(parent_spiffe, subagent)
+	input.subagent_id
+	subagent := approved_agents[input.subagent_id]
+	parent_spiffe := input.caller_identity.sub
+	_parent_authorized_for_subagent(parent_spiffe, subagent)
 }
 
 # ---------------------------------------------------------------------------
@@ -68,34 +68,34 @@ allow {
 
 # Deny with reason if caller is not in approved_agents
 violation[msg] {
-    not approved_agents[input.caller_identity.sub]
-    msg := sprintf(
-        "caller '%v' is not in the approved agent catalog",
-        [input.caller_identity.sub],
-    )
+	not approved_agents[input.caller_identity.sub]
+	msg := sprintf(
+		"caller '%v' is not in the approved agent catalog",
+		[input.caller_identity.sub],
+	)
 }
 
 # Deny with reason if tool is not in caller's allowed_tools
 violation[msg] {
-    agent := approved_agents[input.caller_identity.sub]
-    not input.tool_name in agent.allowed_tools
-    not input.subagent_id  # not an A2A call
-    msg := sprintf(
-        "caller '%v' is not authorized to call tool '%v'",
-        [input.caller_identity.sub, input.tool_name],
-    )
+	agent := approved_agents[input.caller_identity.sub]
+	not input.tool_name in agent.allowed_tools
+	not input.subagent_id # not an A2A call
+	msg := sprintf(
+		"caller '%v' is not authorized to call tool '%v'",
+		[input.caller_identity.sub, input.tool_name],
+	)
 }
 
 # Deny A2A invocation if parent SPIFFE ID does not match any authorized prefix
 violation[msg] {
-    input.subagent_id
-    subagent := approved_agents[input.subagent_id]
-    parent_spiffe := input.caller_identity.sub
-    not _parent_authorized_for_subagent(parent_spiffe, subagent)
-    msg := sprintf(
-        "parent agent '%v' is not authorized to invoke subagent '%v' (no matching SPIFFE prefix)",
-        [parent_spiffe, input.subagent_id],
-    )
+	input.subagent_id
+	subagent := approved_agents[input.subagent_id]
+	parent_spiffe := input.caller_identity.sub
+	not _parent_authorized_for_subagent(parent_spiffe, subagent)
+	msg := sprintf(
+		"parent agent '%v' is not authorized to invoke subagent '%v' (no matching SPIFFE prefix)",
+		[parent_spiffe, input.subagent_id],
+	)
 }
 
 # ---------------------------------------------------------------------------
@@ -104,12 +104,12 @@ violation[msg] {
 
 # _parent_authorized_for_subagent: true if parent SPIFFE ID matches any authorized prefix
 _parent_authorized_for_subagent(parent_spiffe, subagent) {
-    # Get authorized_parent_prefixes from subagent (default to empty array if not present)
-    authorized_prefixes := object.get(subagent, "authorized_parent_prefixes", [])
-    
-    # Check if parent_spiffe starts with any of the authorized prefixes
-    some prefix in authorized_prefixes
-    startswith(parent_spiffe, prefix)
+	# Get authorized_parent_prefixes from subagent (default to empty array if not present)
+	authorized_prefixes := object.get(subagent, "authorized_parent_prefixes", [])
+
+	# Check if parent_spiffe starts with any of the authorized prefixes
+	some prefix in authorized_prefixes
+	startswith(parent_spiffe, prefix)
 }
 
 # ---------------------------------------------------------------------------
@@ -131,5 +131,5 @@ approved_agents := data.agent_catalog_data.agents
 #
 # If caller_identity.sub is empty, the request is denied (no allow rule matches).
 caller_sub_present {
-    input.caller_identity.sub != ""
+	input.caller_identity.sub != ""
 }

@@ -228,6 +228,13 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
 
     if exists_rc == 0:
         print("[INFO] langfuse-secrets already exists - patching keys...")
+        print(
+            "⚠️  WARNING: LANGFUSE_INIT_USER_PASSWORD only seeds on first user creation.\n"
+            "   Patching langfuse-secrets and restarting langfuse-web does NOT rotate an\n"
+            "   existing user's password in Cloud SQL Postgres (`users.password`). To rotate\n"
+            "   a live credential, update the bcrypt hash in Postgres `users.password` and\n"
+            "   purge `sessions` directly (see POAM-2026-162)."
+        )
         # Read, merge, re-apply via stdin without writing temporary secret files.
         raw = run(
             [

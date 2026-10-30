@@ -114,10 +114,10 @@ def check_file(filepath: Path) -> list[tuple[int, str]]:
         return checker.violations
     except SyntaxError as e:
         print(f"Warning: could not parse {filepath}: {e}", file=sys.stderr)
-        return []
+        return [(1, f"<unparseable: {e}>")]
     except Exception as e:
         print(f"Warning: error reading {filepath}: {e}", file=sys.stderr)
-        return []
+        return [(1, f"<unparseable: {e}>")]
 
 
 def scan_directory(

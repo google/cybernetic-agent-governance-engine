@@ -66,12 +66,12 @@ jobs:
           import yaml, sys, pathlib
           manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-mas-*.yaml'))
           if not manifests:
-              print('WARNING: no MAS FEAT Lula manifests found — CA-03 remediation pending')
-              sys.exit(0)
+              print('ERROR: no MAS FEAT Lula manifests found')
+              sys.exit(1)
           errors = []
           for m in manifests:
               doc = yaml.safe_load(m.read_text())
-              if 'component-definition' not in doc:
+              if not isinstance(doc, dict) or 'component-definition' not in doc:
                   errors.append(f'{m.name}: missing component-definition key')
               print(f'  OK {m.name}')
           if errors:
@@ -120,17 +120,16 @@ jobs:
         # Checks that MAS Notice 655 audit logging is enabled in apac-dev.tfvars.
         run: |
           python3 - <<'PYEOF'
-          import pathlib, sys
+          import pathlib, re, sys
           tfvars_path = pathlib.Path('infra/targets/gcp-gke/apac-dev.tfvars')
           if not tfvars_path.exists():
-              print('WARNING: infra/targets/gcp-gke/apac-dev.tfvars not found — skipping MAS Notice 655 check')
-              sys.exit(0)
+              print('ERROR: infra/targets/gcp-gke/apac-dev.tfvars not found')
+              sys.exit(1)
           content = tfvars_path.read_text()
-          # Check for MAS Notice 655 audit logging marker
-          if 'enable_apac_mas_compliance' not in content:
-              print('WARNING: enable_apac_mas_compliance not found in apac-dev.tfvars')
-          else:
-              print('MAS Notice 655 audit logging configuration present — OK')
+          if not re.search(r'enable_apac_mas_compliance\s*=\s*true', content):
+              print('ERROR: enable_apac_mas_compliance = true not found in apac-dev.tfvars')
+              sys.exit(1)
+          print('MAS Notice 655 audit logging configuration present — OK')
           PYEOF
 
       - name: Validate SR 26-2 telemetry suppression sentinel
@@ -144,14 +143,19 @@ jobs:
                             list(pathlib.Path('config/thresholds').glob('*.json'))
           apac_files = [f for f in threshold_files if 'apac' in f.name.lower() or 'mas' in f.name.lower()]
           if not apac_files:
-              print('WARNING: No APAC threshold files found — SR 26-2 sentinel check skipped')
-              sys.exit(0)
+              print('ERROR: No APAC threshold files found — SR 26-2 sentinel check failed')
+              sys.exit(1)
+          errors = []
           for f in apac_files:
               content = f.read_text()
-              if 'no legal force' in content or 'SR 26-2' in content:
+              if 'no legal force' in content and 'SR 26-2' in content:
                   print(f'SR 26-2 sentinel present in {f.name} — OK')
               else:
-                  print(f'WARNING: SR 26-2 sentinel not found in {f.name}')
+                  errors.append(f'ERROR: SR 26-2 / "no legal force" sentinel not found in {f.name}')
+          if errors:
+              for err in errors:
+                  print(err)
+              sys.exit(1)
           PYEOF
   # NOTE: the former `apac-mas-iso42001-lula` job was removed. It ran a
   # structural YAML check over compliance/lula/lula-validation-a*.yaml that was

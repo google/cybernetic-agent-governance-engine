@@ -195,7 +195,7 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov-fail-under=70
       - name: Run Bandit SAST (medium+ severity)
-        run: uv run bandit -r src/ -c pyproject.toml -ll
+        run: uv run bandit -r src/ scripts/ -c pyproject.toml -ll -ii
 
   lint:
     name: "Lint"
@@ -246,7 +246,6 @@ jobs:
       - name: Vendor brand check (G8 - No vendor brands in kernel executable code)
         # C7: kernel must be vendor-neutral. Vendor names in prose/docs are legitimate,
         # but executable literals (enum members, Redis keys, env vars) must use abstractions.
-        # Empty brand list means gate is wired but not currently restrictive.
         run: |
           uv run python scripts/check_vendor_brands.py --verbose
       - name: Project-ID hygiene check

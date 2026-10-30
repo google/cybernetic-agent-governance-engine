@@ -137,10 +137,10 @@ def check_file(
         return checker.violations
     except SyntaxError as exc:
         print(f"⚠️  Syntax error in {filepath}: {exc}", file=sys.stderr)
-        return []
+        return [(1, f"<unparseable: {exc}>")]
     except Exception as exc:
         print(f"⚠️  Failed to parse {filepath}: {exc}", file=sys.stderr)
-        return []
+        return [(1, f"<unparseable: {exc}>")]
 
 
 def should_skip(path: Path, base_dir: Path) -> bool:

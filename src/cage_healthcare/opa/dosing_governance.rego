@@ -22,17 +22,17 @@ import rego.v1
 default allow := false
 
 governed_dosing_actions := {
-    "administer_dose",
-    "prescribe_medication",
-    "adjust_dosage",
-    "administer_medication",
-    "dose_order",
-    "order_controlled_substance",
+	"administer_dose",
+	"prescribe_medication",
+	"adjust_dosage",
+	"administer_medication",
+	"dose_order",
+	"order_controlled_substance",
 }
 
 allow if {
-    governed_dosing_actions[input.action]
-    input.dose_mg > 0
-    input.dose_mg < 500
-    not input.contraindication_present
+	governed_dosing_actions[input.action]
+	input.dose_mg > 0
+	input.dose_mg < 500
+	not input.contraindication_present
 }
