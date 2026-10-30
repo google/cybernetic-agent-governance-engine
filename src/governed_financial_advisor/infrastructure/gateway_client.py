@@ -81,7 +81,7 @@ def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
     base = float(
         os.environ.get("CAGE_GATEWAY_RETRY_BASE_SECONDS", str(_RETRY_BASE_SECONDS))
     )
-    jitter_delay = random.uniform(0.0, min(cap, base * (2**attempt)))  # nosec B311
+    jitter_delay = random.uniform(0.0, min(cap, base * (2**attempt)))  # nosec B311  # non-cryptographic retry backoff jitter
     raw_retry_after = response.headers.get("Retry-After")
     if raw_retry_after:
         try:

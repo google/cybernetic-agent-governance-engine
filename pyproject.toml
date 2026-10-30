@@ -278,7 +278,7 @@ module = "src.integrations.provider_06.adapter"
 disable_error_code = ["arg-type"]
 
 [tool.bandit]
-exclude_dirs = ["tests", "scripts", "examples"]
+exclude_dirs = ["tests", "examples"]
 skips = ["B101", "B104"]  # assert statements and 0.0.0.0 container interface binds are acceptable in this codebase
 
 [tool.codespell]

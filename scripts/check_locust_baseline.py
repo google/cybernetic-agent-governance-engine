@@ -39,6 +39,8 @@ import argparse
 import csv
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 # Default p95 SLO in milliseconds (2 seconds).
 _DEFAULT_P95_MS = 2000
@@ -132,7 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--stats-csv",
-        default=os.environ.get("LOCUST_STATS_CSV", "/tmp/locust-stats_stats.csv"),
+        default=os.environ.get(
+            "LOCUST_STATS_CSV",
+            str(Path(tempfile.gettempdir()) / "locust-stats_stats.csv"),
+        ),
         help="Path to the Locust *_stats.csv file.",
     )
     parser.add_argument(

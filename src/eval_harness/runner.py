@@ -772,7 +772,7 @@ class HttpRolloutAdapter(BaseRolloutAdapter):
         if not self.endpoint_url.startswith(("http://", "https://")):
             raise ValueError("Unsupported URL scheme")
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # nosec B310
+        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # nosec B310  # scheme validated to http/https above
             raw_bytes = resp.read(self.max_response_bytes + 1)
         if len(raw_bytes) > self.max_response_bytes:
             raise ValueError(

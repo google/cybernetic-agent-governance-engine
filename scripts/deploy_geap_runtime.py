@@ -259,7 +259,7 @@ def _api_request(
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310
+        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310  # https enforced in _assert_https_url()
             body = resp.read().decode("utf-8")
             return json.loads(body) if body.strip() else {}
     except urllib.error.HTTPError as exc:

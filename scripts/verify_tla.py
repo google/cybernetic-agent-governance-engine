@@ -36,7 +36,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess  # nosec B404 — fixed argv, no shell
+import subprocess  # nosec B404  # fixed argv, no shell
 import sys
 import tempfile
 from pathlib import Path
@@ -67,7 +67,7 @@ def _tools() -> tuple[str, str] | None:
 def run_tlc(java: str, jar: str, cfg: Path, spec: Path) -> tuple[int, set[str], str]:
     """Return (distinct states, violated invariants, raw output)."""
     with tempfile.TemporaryDirectory() as meta:
-        proc = subprocess.run(  # nosec B603 — argv built from repo paths
+        proc = subprocess.run(  # nosec B603  # argv built from repo paths
             [
                 java,
                 "-XX:+UseParallelGC",
