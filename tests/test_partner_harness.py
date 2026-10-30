@@ -297,21 +297,24 @@ def test_actuator_01_wif_and_kms_signing() -> None:
     live_job = _workflow()["jobs"]["live"]
     assert live_job["permissions"] == {"contents": "read", "id-token": "write"}
 
+    wif_var = harness.ACTUATOR_01_GCP_AUTH["workload_identity_provider"]
+    sa_var = harness.ACTUATOR_01_GCP_AUTH["service_account"]
+    kms_var = harness.ACTUATOR_01_GCP_AUTH["kms_governance_key"]
+
     auth_step = _live_steps()["Authenticate to GCP for actuator_01 KMS signing"]
-    assert auth_step["if"] == "matrix.partner == 'actuator_01'"
+    assert auth_step["if"] == (
+        f"matrix.partner == 'actuator_01' && vars.{wif_var} != ''"
+    )
     assert auth_step["uses"].startswith("google-github-actions/auth@")
     assert re.search(r"@[0-9a-f]{40}$", auth_step["uses"])
     assert auth_step["with"] == {
-        "workload_identity_provider": harness.ACTUATOR_01_GCP_AUTH[
-            "workload_identity_provider"
-        ],
-        "service_account": harness.ACTUATOR_01_GCP_AUTH["service_account"],
+        "workload_identity_provider": f"${{{{ vars.{wif_var} }}}}",
+        "service_account": f"${{{{ vars.{sa_var} }}}}",
     }
 
     env = _live_steps()["Run live tests"]["env"]
-    kms_key = harness.ACTUATOR_01_GCP_AUTH["kms_governance_key"]
     assert env["KMS_GOVERNANCE_KEY"] == (
-        f"${{{{ matrix.partner == 'actuator_01' && '{kms_key}' || '' }}}}"
+        f"${{{{ matrix.partner == 'actuator_01' && vars.{kms_var} || '' }}}}"
     )
 
 

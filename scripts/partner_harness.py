@@ -89,21 +89,14 @@ STAGED_FILES: dict[str, str] = {
     "ACTUATOR_01_CA_CERT": "ACTUATOR_01_CA_PATH",
 }
 
-#: actuator_01's Workload Identity Federation + Cloud KMS signing configuration.
-#: Leaves no long-lived Ed25519 private keys in repository secrets: the job
-#: authenticates as the deployer service account via GitHub OIDC and signs
-#: assertions and quorum envelopes with the Ed25519 KMS key.
+#: actuator_01's Workload Identity Federation + Cloud KMS signing configuration
+#: (GitHub Actions repository variable names). Leaves no long-lived Ed25519
+#: private keys in repository secrets and no maintainer project IDs in source:
+#: the job authenticates via GitHub OIDC and signs with the Ed25519 KMS key.
 ACTUATOR_01_GCP_AUTH: dict[str, str] = {
-    "workload_identity_provider": (
-        "projects/104563134786/locations/global/"
-        "workloadIdentityPools/github-actions/providers/github"
-    ),
-    "service_account": "sa-cage-deployer@laah-cybernetics.iam.gserviceaccount.com",
-    "kms_governance_key": (
-        "projects/laah-cybernetics/locations/us-central1/"
-        "keyRings/cybernetics-keyring/cryptoKeys/actuator-01-signing/"
-        "cryptoKeyVersions/1"
-    ),
+    "workload_identity_provider": "ACTUATOR_01_WIF_PROVIDER",
+    "service_account": "ACTUATOR_01_WIF_SERVICE_ACCOUNT",
+    "kms_governance_key": "ACTUATOR_01_KMS_KEY",
 }
 
 _EMPTY_REPLACES_DEFAULT = (

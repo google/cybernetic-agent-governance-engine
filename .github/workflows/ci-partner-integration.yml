@@ -111,11 +111,11 @@ jobs:
         run: uv sync --frozen --all-extras
 
       - name: Authenticate to GCP for actuator_01 KMS signing
-        if: matrix.partner == 'actuator_01'
+        if: matrix.partner == 'actuator_01' && vars.ACTUATOR_01_WIF_PROVIDER != ''
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          workload_identity_provider: projects/104563134786/locations/global/workloadIdentityPools/github-actions/providers/github
-          service_account: sa-cage-deployer@laah-cybernetics.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.ACTUATOR_01_WIF_PROVIDER }}
+          service_account: ${{ vars.ACTUATOR_01_WIF_SERVICE_ACCOUNT }}
 
       - name: Stage actuator_01 mTLS material
         if: matrix.partner == 'actuator_01'
@@ -145,7 +145,7 @@ jobs:
           PARTNER: ${{ matrix.partner }}
           LANGSMITH_TRACING: "false"
           LANGCHAIN_TRACING_V2: "false"
-          KMS_GOVERNANCE_KEY: ${{ matrix.partner == 'actuator_01' && 'projects/laah-cybernetics/locations/us-central1/keyRings/cybernetics-keyring/cryptoKeys/actuator-01-signing/cryptoKeyVersions/1' || '' }}
+          KMS_GOVERNANCE_KEY: ${{ matrix.partner == 'actuator_01' && vars.ACTUATOR_01_KMS_KEY || '' }}
           # Each secret reaches only its own partner's job.
           PROVIDER_01_ENDPOINT: ${{ matrix.partner == 'provider_01' && secrets.PROVIDER_01_ENDPOINT || '' }}
           PROVIDER_01_API_KEY: ${{ matrix.partner == 'provider_01' && secrets.PROVIDER_01_API_KEY || '' }}
