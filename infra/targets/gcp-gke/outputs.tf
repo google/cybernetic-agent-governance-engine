@@ -54,7 +54,7 @@ output "worm_bucket_url" {
 
 output "langfuse_events_bucket" {
   description = "GCS bucket for Langfuse event traces"
-  value       = google_storage_bucket.langfuse_events.name
+  value       = google_storage_bucket.langfuse_event_upload.name
 }
 
 output "gcs_s3_endpoint" {
@@ -64,7 +64,7 @@ output "gcs_s3_endpoint" {
 
 output "gcs_bucket" {
   description = "GCS bucket for Langfuse events"
-  value       = google_storage_bucket.langfuse_events.name
+  value       = google_storage_bucket.langfuse_event_upload.name
 }
 
 # ─── kubectl Access Command ───────────────────────────────────────────────────
@@ -102,7 +102,7 @@ output "deployment_summary" {
     nist_compliance_enabled = var.enable_nist_compliance
     gpu_node_pool_enabled   = var.enable_gpu_node_pool
     worm_bucket             = module.worm_bucket.bucket_name
-    langfuse_bucket         = google_storage_bucket.langfuse_events.name
+    langfuse_bucket         = google_storage_bucket.langfuse_event_upload.name
     postgres_service        = module.cloudsql_postgres.instance_name
     redis_host              = module.memorystore_governance.primary_endpoint_ip
     memorystore_governance  = module.memorystore_governance.primary_endpoint_ip

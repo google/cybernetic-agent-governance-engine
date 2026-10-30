@@ -728,7 +728,7 @@ variable "langfuse_s3_endpoint" {
 }
 
 variable "langfuse_s3_bucket" {
-  description = "S3 bucket for Langfuse events (defaults to langfuse-events)"
+  description = "S3 bucket for Langfuse event uploads. Empty selects the managed bucket, langfuse-event-upload-<project>-<suffix>."
   type        = string
   default     = ""
 }

@@ -602,6 +602,11 @@ cd infra/targets/gcp-gke
 terraform destroy -var-file=staging.tfvars -auto-approve
 ```
 
+A staging project applied before POAM-2026-159 needs one apply with the current
+code before its first teardown, and its old Langfuse event bucket stays until at
+least 2033-09-27. The migration, and what a full teardown still meets, are in
+[`DEPLOYMENT_RULES.md`](DEPLOYMENT_RULES.md#langfuse-event-bucket-retention-poam-2026-159).
+
 **What staging validates** (ISO 42001 §A.5.3 CA-2 pre-production validation):
 - All 32 Lula validation gates pass at 1-replica compute scale
 - Per-workload Identity Partition (`cage-gateway-sa`, `cage-reconciler-sa`, `cage-compliance-bridge-sa`, `cage-vllm-sa`, `langfuse-sa`) and Zero-Identity Advisor (`cage-advisor-sa` with `gsa = null`)
@@ -617,7 +622,7 @@ terraform destroy -var-file=staging.tfvars -auto-approve
 - **Hardware**: Zonal (`us-central1-a`), `general` (`e2-standard-4`), `general-spot` (`c3-highcpu-4` Spot for batch jobs only), `gpu-l4` (`g2-standard-8`, scale-to-zero `0–2`), `clickhouse` (`n2-standard-4` local SSD, 1 node)
 - **Security**: Full prod security primitives (`enable_nist_compliance=true` for `US_FED`, HSM signing keys, CAS-backed Linkerd mTLS, Dataplane V2 + `FQDNNetworkPolicy`, CMEK, PSS `restricted`, locked 1-day WORM retention)
 - **Replication**: Real synchronous Valkey replication on the governance instance (`memorystore_governance_replica_count = 1`, `CAGE_REDIS_WAIT_REPLICAS = "1"`, `CAGE_CBF_STRICT_MODE = "true"`, `CAGE_STRICT_REPLICATION = "true"`)
-- **Lifecycle**: Ephemeral (`enable_deletion_protection=false`, `worm_bucket_force_destroy=true`, allows clean `terraform destroy`)
+- **Lifecycle**: Ephemeral by intent (`enable_deletion_protection=false`; the WORM and Langfuse event-upload buckets lock for one day), but a full `terraform destroy` does not complete yet: the signing keys set `prevent_destroy`, and neither bucket sets `force_destroy` in staging (see [`DEPLOYMENT_RULES.md`](DEPLOYMENT_RULES.md#langfuse-event-bucket-retention-poam-2026-159))
 
 **Automation workflow** ([`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)):
 1. **Phase 1**: Provision staging with `./deploy_all.sh --env staging`

@@ -31,3 +31,13 @@ output "bucket_self_link" {
   description = "Self-link URI of the retention-locked WORM bucket"
   value       = google_storage_bucket.bucket.self_link
 }
+
+output "retention_period_seconds" {
+  description = "Retention period the bucket's retention policy enforces, in seconds"
+  value       = google_storage_bucket.bucket.retention_policy[0].retention_period
+}
+
+output "retention_locked" {
+  description = "Whether the bucket's retention policy is locked (irreversible)"
+  value       = google_storage_bucket.bucket.retention_policy[0].is_locked
+}
