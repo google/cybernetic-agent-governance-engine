@@ -349,6 +349,55 @@ make advisor-rollback   # rolls back governed-financial-advisor
 make advisor-watch      # monitors recovery
 ```
 
+### Linkerd Network Validator CrashLoopBackOff (Mitigation vs. Root Cause)
+
+If pods (e.g., `gateway`, `compliance-bridge`, or the advisor) stay in `Init:CrashLoopBackOff` because the `linkerd-network-validator` init container exits with code 95 (`Failed to validate networking configuration`):
+- **Mitigation**: Delete the affected pods so their controllers reschedule them (`kubectl delete pod -l app=gateway -n governance-stack`; use `app=compliance-bridge` and so on for other workloads), and/or cordon and cycle the node pool. In staging, deleting pods and scaling the node pools ended a 31-hour crash loop.
+- **Root cause: not established.** The leading hypothesis is a race during node initialization, in which application pods schedule before `linkerd2-cni` (installed by [`infra/modules/service_mesh`](../../infra/modules/service_mesh/main.tf)) has chained its plugin into the node's CNI configuration in `/etc/cni/net.d`. That a restart clears the loop is consistent with this hypothesis but does not prove it. **This is a mitigation, not a structural fix**: the condition can recur on node restarts, pool scaling, or cluster upgrades. If it does, deleting the pods or cycling the node clears it; do not spend a day rediscovering that a restart resolves the condition.
+
+### Unverified Deployer Service Account (`sa-cage-deployer`)
+
+Successful staging deployments have run under personal human credentials (Owner / ADC).
+- **The gap**: The headless, automated deployment path under a dedicated deployer service account (`sa-cage-deployer` in the staging probe) remains **unverified end-to-end**. This repository's Terraform does not create that account.
+- **Known blocker (remediated in staging project IAM; full apply still unverified)**: Terraform reads the attestor key's public key (`data.google_kms_crypto_key_version.binauthz_attestor` in [`perimeter.tf`](../../infra/targets/gcp-gke/perimeter.tf)), which needs `cloudkms.cryptoKeyVersions.viewPublicKey`. Neither `roles/cloudkms.admin` nor `roles/editor` includes `viewPublicKey` (whereas `roles/owner` does, which is why human Owner ADC succeeded while `sa-cage-deployer` failed). `roles/cloudkms.publicKeyViewer` has now been granted to `sa-cage-deployer` at the project level. Evaluators or CI pipelines deploying under a service account must grant `roles/cloudkms.publicKeyViewer` at the **project** (or keyring) level — **not** on the `binauthz-attestor` key itself, because `google_kms_crypto_key_iam_policy.signing_key["binauthz_attestor"]` in [`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf) is authoritative on the key and will overwrite out-of-band key-level bindings on `terraform apply`. Treat the service-account path as unverified until an automated CI deploy is proven end-to-end over the wire.
+
+### Authorized Networks Lockout (POAM-2026-126)
+
+With a compliance posture active, `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. Committed profiles such as `staging.tfvars` deliberately set no operator address.
+- **Plan refused**: An empty list fails the plan with `[POAM-2026-126] AC-3 control-plane access: ...` before anything changes.
+- **Lockout symptom**: From an address that is not on the list, `kubectl` and Terraform's `kubernetes` / `helm` providers cannot reach the endpoint; the connection typically times out (`dial tcp <endpoint>:443: i/o timeout`) rather than being refused or rejected as unauthorized. A deployer whose egress address has changed (new network, VPN on or off) hits this on the next apply.
+- **Deploy prerequisite**: Pass the public egress CIDR of the deployer's workstation or CI runner to `deploy_all.sh`, which applies `--var` after the profile, or export it as `TF_VAR_authorized_networks`:
+  ```bash
+  ./deploy_all.sh --target gcp-gke --env staging \
+    --var project_id=<PROJECT_ID> \
+    --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
+  ```
+
+### POAM-019 Telemetry Isolation vs. Environment Loading Diagnostic
+
+With a compliance posture active (`enable_nist_compliance`, `enable_eu_ecb_compliance` or `enable_apac_mas_compliance`), the plan refuses missing or shared Langfuse compliance keys with one of two errors. Each headline names the condition detected, not a cause:
+
+```text
+[POAM-019] Compliance telemetry keys are empty under compliance hardening.
+```
+
+`langfuse_compliance_public_key` or `langfuse_compliance_secret_key` is empty (`terraform_data.poam_019_empty_key_guard`). Likely causes: the environment was not loaded (`terraform` run directly, without `deploy_all.sh`, which maps `LANGFUSE_COMPLIANCE_*` from `.env`, or `infra/load_env.sh`, which needs bash), or `.env` has no `LANGFUSE_COMPLIANCE_*` entries. The plan stops before anything is deployed. This error does **not** indicate a defect in CAGE's telemetry isolation.
+
+```text
+[POAM-019] Compliance telemetry keys equal the application project keys.
+```
+
+A compliance key is set and equal to its application-project counterpart (`terraform_data.poam_019_shared_key_guard`). This is the AU-9 dual-project isolation breach the guard exists to stop: supply the cage-compliance project's own keys. An empty compliance key is reported only by the first error, so unset variables (`"" == ""`) cannot pose as shared keys. [`poam_019.tftest.hcl`](../../infra/targets/gcp-gke/tests/poam_019.tftest.hcl) tests each guard on its own.
+
+### Diagnostic Hygiene: The Misleading Error Pattern
+
+Error messages and guard assertions must describe the mechanical condition detected rather than a speculative downstream root cause. Three investigations were prolonged by misleading diagnostics:
+1. **POAM-019 Key Guard**: Unset variables (`"" == ""`) tripped a guard headlined as an AU-9 dual-project isolation breach when `.env` had simply not been loaded. The guard is now two resources, each headlined with the condition it detects ([above](#poam-019-telemetry-isolation-vs-environment-loading-diagnostic)).
+2. **Linkerd Network Validator**: The exit-95 message (`Failed to validate networking configuration`) pointed investigators at iptables and network validation. The cause is still unestablished; a CNI-chaining race on new or scaling nodes is the leading hypothesis ([above](#linkerd-network-validator-crashloopbackoff-mitigation-vs-root-cause)).
+3. **Project ID Mismatches**: Applying against a placeholder or stale `project_id` returned GCP `403 Forbidden` API errors that appeared to indicate broken deployer IAM permissions rather than an invalid target project. (#594 removes the committed placeholders.)
+
+Engineers adding validation guards must name the immediate unfulfilled precondition, not the highest-severity hypothetical failure mode. A likely cause belongs in the remediation text, labelled as likely.
+
 ---
 
 ## Assurance Status & Legal Boundaries
