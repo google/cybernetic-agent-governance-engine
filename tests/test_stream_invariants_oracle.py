@@ -15,7 +15,8 @@
 """End-to-end and mutation-sensitivity suite for ``proof/stream_invariants.py``.
 
 Verifies:
-1. ``proof/`` modules have zero ``src/`` imports (AST purity guard for W4 reuse).
+1. ``proof/`` modules have zero ``src/`` imports (AST purity guard for W4 reuse;
+   see ``docs/architecture/CONFORMANCE_VERIFIER_SPEC.md``).
 2. Pure-stdlib ``jcs_bytes`` matches the gateway's RFC 8785 canonicalizer byte-for-byte.
 3. Startup ``GOVERNANCE_THRESHOLDS_LOADED``, ``GET /governance/policy-version``,
    and ``GOVERNANCE_DECISION`` agree on ``thresholds_digest`` (POAM-2026-151 Option 2).

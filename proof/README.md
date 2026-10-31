@@ -262,8 +262,9 @@ TLC runs in the manually dispatched [`tlc-model-check`](../.github/workflows/tlc
 - **Python BFS Model**: `proof/model.py`
 - **TLA+ Specs**: `proof/*.tla`
 - **TLC Configs**: `proof/*.cfg`
-- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`, `tests/test_tla_specs_proof.py`, `tests/test_governance_trace_conformance.py`
-- **Trace checker**: `proof/trace_conformance.py`, `scripts/check_trace_conformance.py`
+- **Regression Tests**: `tests/test_no_direct_bind_proof.py`, `tests/test_distributed_cbf_proof.py`, `tests/test_tla_specs_proof.py`, `tests/test_governance_trace_conformance.py`, `tests/test_stream_invariants_oracle.py`
+- **Trace & Stream Checkers**: `proof/trace_conformance.py`, `proof/stream_invariants.py`, `scripts/check_trace_conformance.py`
+- **Standalone Verifier Specification (W4)**: [`docs/architecture/CONFORMANCE_VERIFIER_SPEC.md`](../docs/architecture/CONFORMANCE_VERIFIER_SPEC.md)
 - **TLC runner**: `scripts/verify_tla.py` (pins: `proof/distributed_cbf_model.py`, `proof/tla_pins.py`)
 - **Paper Citation**: CAGE_ARXIV.MD §4.4 "Formal Verification", Appendix A
 - **Revision Tracker**: `docs/paper/REVISION_TRACKER.md` (published state counts)
