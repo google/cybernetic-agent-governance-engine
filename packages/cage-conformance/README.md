@@ -105,11 +105,19 @@ curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
 With a Google service account, call the IAM Credentials `generateIdToken`
 method with that audience and `includeEmail: true`.
 
+An attested report exists before any verifier has judged it, so a signature on
+it is not an endorsement. Its face says so: a fixed `notice`, which
+`verify-report` requires verbatim, states that the attestation proves only who
+signed the report and grants no verification posture. Each relying party
+derives the posture with its own party pins, and a signer those pins do not
+recognize earns none.
+
 `verify-report attested.json` re-verifies the token. Expiry no longer matters,
 because the audience already binds the token to one report, so it verifies for
 as long as the issuer publishes the key. The posture comes from the verified
 principal and the party pins you trust, never from the organizations the runner
-declared:
+declared, and the output names the pins used (`pins=package-defaults` or your
+file):
 
 | Verified principal | Posture |
 |---|---|

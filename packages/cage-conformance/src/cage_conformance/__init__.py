@@ -27,6 +27,7 @@ from __future__ import annotations
 __version__ = "0.2.0"
 
 from .attestation import (  # noqa: E402
+    ATTESTED_NOTICE,
     ATTESTED_SCHEMA_VERSION,
     ISSUERS,
     OIDC_ENV_VAR,
@@ -78,6 +79,7 @@ from .runner import (  # noqa: E402
 )
 
 __all__ = [
+    "ATTESTED_NOTICE",
     "ATTESTED_POSTURES",
     "ATTESTED_SCHEMA_VERSION",
     "INPUT_ASSERTION",

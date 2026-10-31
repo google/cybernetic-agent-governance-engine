@@ -54,6 +54,15 @@ from .report import (
 )
 
 ATTESTED_SCHEMA_VERSION = "cage-conformance-attested-report/1"
+#: Printed on the face of every attested report. The artifact exists before any
+#: verifier has judged it, so it says plainly that a signature is not an
+#: endorsement: the posture is the relying party's to derive.
+ATTESTED_NOTICE = (
+    "This attestation proves who signed the report and nothing more. It grants "
+    "no verification posture: each relying party derives one by running "
+    "'cage-conformance verify-report' with its own party pins, and a signer "
+    "those pins do not recognize earns none."
+)
 PARTIES_SCHEMA_VERSION = "cage-conformance-parties/1"
 AUDIENCE_PREFIX = "cage-conformance:"
 OIDC_ENV_VAR = "CAGE_CONFORMANCE_OIDC_TOKEN"
@@ -383,6 +392,7 @@ class AttestedReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": ATTESTED_SCHEMA_VERSION,
+            "notice": ATTESTED_NOTICE,
             "report": self.report.to_dict(),
             "attestation": {"oidc_token": self.oidc_token},
         }
@@ -403,21 +413,25 @@ def attest(
     return AttestedReport(report=report, oidc_token=token.strip(), identity=identity)
 
 
+_ATTESTED_KEYS = frozenset({"schema_version", "notice", "report", "attestation"})
+
+
 def validate_attested_report(
     raw: Any, *, resolve: KeyResolver, now: float
 ) -> AttestedReport:
     """Parse an attested report strictly and re-verify its token."""
-    if not isinstance(raw, Mapping) or set(raw) != {
-        "schema_version",
-        "report",
-        "attestation",
-    }:
+    if not isinstance(raw, Mapping) or set(raw) != _ATTESTED_KEYS:
         raise AttestationError(
-            "an attested report has exactly schema_version, report and attestation"
+            "an attested report has exactly schema_version, notice, report and "
+            "attestation"
         )
     if raw["schema_version"] != ATTESTED_SCHEMA_VERSION:
         raise AttestationError(
             f"schema_version is {raw['schema_version']!r}, expected {ATTESTED_SCHEMA_VERSION!r}"
+        )
+    if raw["notice"] != ATTESTED_NOTICE:
+        raise AttestationError(
+            "the notice that the signature grants no posture is missing or altered"
         )
     attestation = raw["attestation"]
     if not isinstance(attestation, Mapping) or set(attestation) != {"oidc_token"}:

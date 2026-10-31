@@ -44,6 +44,7 @@ from typing import Any, TextIO
 
 from . import __version__
 from .attestation import (
+    ATTESTED_NOTICE,
     OIDC_ENV_VAR,
     AttestationError,
     UnpinnedPartyError,
@@ -257,7 +258,7 @@ def _attest(args: argparse.Namespace) -> int:
     identity = attested.identity
     print(f"attested by {identity.principal} ({identity.iss})")
     print(f"  report:   {report.digest()}")
-    print("  run verify-report to derive the posture under your party pins")
+    print(f"  notice:   {ATTESTED_NOTICE}")
     return 0
 
 
@@ -272,9 +273,10 @@ def _verify_report(args: argparse.Namespace) -> int:
             f"digest={report.digest()}"
         )
         return 0
-    parties = (
-        parse_parties(_load_json(args.parties)) if args.parties else default_parties()
-    )
+    if args.parties:
+        parties, pins = parse_parties(_load_json(args.parties)), args.parties.name
+    else:
+        parties, pins = default_parties(), "package-defaults"
     attested = validate_attested_report(raw, resolve=fetch_key_set, now=time.time())
     report = attested.report
     posture = attested_posture(
@@ -285,7 +287,7 @@ def _verify_report(args: argparse.Namespace) -> int:
     print(
         f"valid attested report: mode={report.mode} conformant={report.conformant} "
         f"posture={posture.value} attested_by={attested.identity.principal} "
-        f"digest={report.digest()}"
+        f"pins={pins} digest={report.digest()}"
     )
     return 0
 

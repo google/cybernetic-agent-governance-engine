@@ -169,6 +169,8 @@ def test_attest_binds_a_github_identity_to_exactly_one_report() -> None:
 
     raw = json.loads(json.dumps(attested.to_dict()))
     assert raw["schema_version"] == cc.ATTESTED_SCHEMA_VERSION
+    assert list(raw)[:2] == ["schema_version", "notice"], "the notice leads the face"
+    assert raw["notice"] == cc.ATTESTED_NOTICE
     again = cc.validate_attested_report(raw, resolve=_Resolver(), now=now)
     assert again.identity == attested.identity
     assert again.report == report
@@ -201,6 +203,29 @@ def test_an_expired_token_still_attests_its_report_later() -> None:
     assert later.identity.principal == f"github:{CAGE_REPO}"
     with pytest.raises(cc.AttestationError, match="expired"):
         cc.attest(report, attested.oidc_token, resolve=_Resolver(), now=ten_days)
+
+
+def test_the_face_says_a_signature_grants_no_posture() -> None:
+    """The artifact exists before any verifier judges it, so it must say so."""
+    for claim in (
+        "proves who signed the report and nothing more",
+        "grants no verification posture",
+        "its own party pins",
+        "a signer those pins do not recognize earns none",
+    ):
+        assert claim in cc.ATTESTED_NOTICE
+
+    now = time.time()
+    report = _report()
+    attested = cc.attest(
+        report, _token(_github_claims(report, now)), resolve=_Resolver(), now=now
+    )
+    stripped = attested.to_dict()
+    del stripped["notice"]
+    reworded = attested.to_dict() | {"notice": "Verified by CAGE."}
+    for raw in (stripped, reworded):
+        with pytest.raises(cc.AttestationError, match="notice"):
+            cc.validate_attested_report(raw, resolve=_Resolver(), now=now)
 
 
 def test_any_edit_to_an_attested_report_breaks_its_attestation() -> None:
@@ -453,9 +478,11 @@ def test_cli_attests_and_the_relying_party_derives_the_posture(
     attested = tmp_path / "attested.json"
     argv = ["attest", str(report_path), "--output", str(attested)]
     assert cli_mod.main([*argv, "--token-file", str(token_file)]) == 0
+    assert cc.ATTESTED_NOTICE in capsys.readouterr().out
     assert cli_mod.main(["verify-report", str(attested)]) == 0
     out = capsys.readouterr().out
     assert "posture=AUTHOR_SELF_TEST" in out and f"github:{CAGE_REPO}" in out
+    assert "pins=package-defaults" in out
 
     # A bank's run: the default pins leave the operator unpinned, so no posture...
     bank_path = _verify(tmp_path, "Example Bank")
@@ -485,7 +512,8 @@ def test_cli_attests_and_the_relying_party_derives_the_posture(
     )
     argv = ["verify-report", str(bank_attested), "--parties", str(pins)]
     assert cli_mod.main(argv) == 0
-    assert "posture=COUNTERPARTY_VERIFIED" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "posture=COUNTERPARTY_VERIFIED" in out and "pins=parties.json" in out
 
 
 def test_cli_attest_needs_a_token_and_never_takes_one_on_the_command_line(
