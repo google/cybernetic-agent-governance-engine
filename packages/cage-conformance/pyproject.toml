@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cage-conformance"
-version = "0.1.0"
+version = "0.2.0"
 description = "Standalone conformance verifier for CAGE governance traces and evidence streams"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,10 @@ classifiers = [
 # Standard library only: an auditor can verify without trusting third-party code.
 dependencies = []
 
+[project.optional-dependencies]
+# Checking an attestation's RS256 signature is the one step that needs it.
+attest = ["cryptography>=42"]
+
 [project.scripts]
 cage-conformance = "cage_conformance.cli:main"
 
@@ -34,4 +38,4 @@ Repository = "https://github.com/google/cybernetic-agent-governance-engine"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cage_conformance = ["py.typed", "vectors/*.json"]
+cage_conformance = ["py.typed", "parties.json", "vectors/*.json"]
