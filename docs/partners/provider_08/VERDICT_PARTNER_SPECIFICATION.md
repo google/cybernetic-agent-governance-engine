@@ -1,5 +1,13 @@
 # Verdict Systems (provider_08) Partner Integration Specification & Runbook
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 **Partner:** Verdict Systems — https://verdict.systems
 **Slot:** `provider_08` · **Seam:** `NormativeProvider` (3 endpoints)
 **Base URL:** `https://verdict.systems/api/cage` · **Discovery:** `GET /api/cage`

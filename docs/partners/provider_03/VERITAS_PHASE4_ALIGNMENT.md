@@ -1,5 +1,13 @@
 # VERITAS / CAGE Phase 4 — Architectural Alignment Report
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 **Version:** 1.0.0  
 **Evaluation Date:** 2026-09-16  
 **Specification Reference:** [VERITAS _ CAGE Phase 4 — Invariant Review Specification.pdf](VERITAS%20_%20CAGE%20Phase%204%20%E2%80%94%20Invariant%20Review%20Specification.pdf)  

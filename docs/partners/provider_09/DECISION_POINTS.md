@@ -1,5 +1,13 @@
 # OpsCanvas (`provider_09`) — CAGE Decision Points
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 **Slot:** `provider_09` · **Seam:** `EstateProvider` ([`seams/estate.py`](../../../src/gateway/governance/seams/estate.py))
 **Response contract:** [`estate_decision_response.schema.json`](../../../schemas/provider_09/estate_decision_response.schema.json)
 **Worked example:** [`DP-01.example.json`](../../../tests/fixtures/provider_09/DP-01.example.json)

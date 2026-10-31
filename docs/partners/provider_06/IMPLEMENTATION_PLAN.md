@@ -1,5 +1,13 @@
 # Provider 06 Agent Integrity Conformance Implementation Plan
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prove whether a realistic CAGE governed-response artifact is compatible with the unchanged Agent Integrity `1-alpha` envelope by invoking the real vendored verifier CLI from CAGE tests.

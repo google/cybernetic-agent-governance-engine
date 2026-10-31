@@ -1,5 +1,13 @@
 # FlowSignal Phase 3 v0.2 Canonical Schema Mapping
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 > **Canonical Specification Notice:** This schema document is consolidated into the authoritative
 > [**FlowSignal Partner Integration Specification & Runbook**](FLOWSIGNAL_PARTNER_SPECIFICATION.md).
 > Refer to that document for full 37-field schema definitions, Cloud Run DRS dual-header authentication,

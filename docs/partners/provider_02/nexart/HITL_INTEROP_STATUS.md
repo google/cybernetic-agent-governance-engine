@@ -1,5 +1,13 @@
 # NexArt HITL Interoperability Status
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 Status record for the HITL approval-path interop between CAGE's Provider 02
 adapter ([`adapter.py`](../../../../src/integrations/provider_02/adapter.py)) and
 NexArt's governed-execution SDK and Node.

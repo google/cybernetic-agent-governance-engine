@@ -1,5 +1,13 @@
 # CAGE × VEIP: The Three Uncomputable Axioms — Architectural Resolution
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 > **Document Type:** Architecture Design Document
 > **Status:** Draft for review
 > **Scope:** Maps the "Three Uncomputable Axioms" framework onto CAGE's existing
