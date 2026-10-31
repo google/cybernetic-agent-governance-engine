@@ -274,15 +274,16 @@ gcloud builds submit --config=deployment/docker/cloudbuild.image.yaml \
 
 ### Path B — `scripts/build_images.sh` (full-stack fan-out, pre-deploy)
 
-[`scripts/build_images.sh`](scripts/build_images.sh) builds **all first-party services in parallel** (advisor, vLLM streamer, gateway, AgentSight UI, compliance bridge, NeMo Guardrails) by submitting [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) (and [`deployment/docker/cloudbuild.vllm.yaml`](deployment/docker/cloudbuild.vllm.yaml)) across `name|dockerfile` pairs. It captures the short git SHA from `git rev-parse --short HEAD` (refusing to run outside a git checkout) and on completion invokes [`scripts/render_image_digests.sh`](scripts/render_image_digests.sh) to print the `image_digests = { ... }` HCL map. Set `MIRROR_THIRD_PARTY_IMAGES=true` to also mirror and attest third-party images via [`scripts/mirror_and_attest_images.sh`](scripts/mirror_and_attest_images.sh).
+[`scripts/build_images.sh`](scripts/build_images.sh) builds first-party services in parallel by submitting [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) (and [`deployment/docker/cloudbuild.vllm.yaml`](deployment/docker/cloudbuild.vllm.yaml)) across `name|dockerfile` pairs. `IMAGES` selects which; the default is all six: advisor, vLLM streamer, gateway, AgentSight UI, compliance bridge and NeMo Guardrails. It captures the short git SHA from `git rev-parse --short HEAD` and refuses to run outside a git checkout. `MIRROR_THIRD_PARTY_IMAGES` (default `true`) also mirrors and attests third-party images via [`scripts/mirror_and_attest_images.sh`](scripts/mirror_and_attest_images.sh).
 
-[`deploy_all.sh`](deploy_all.sh) calls this script automatically as a pre-build step before every `gcp-gke` Terraform apply, ensuring images exist before Kubernetes deployments reference them.
+[`deploy_all.sh`](deploy_all.sh) calls this script for every `gcp-gke` deploy with the images the profile deploys. It then renders their digests with [`scripts/render_image_digests.sh`](scripts/render_image_digests.sh) into a gitignored var file, and only then plans. No digest is committed (POAM-2026-131).
 
 **When to use:** Full-stack deploys, CI pre-deploy steps, or when you need all services rebuilt from a clean state.
 
 ```bash
 export PROJECT_ID=<your-gcp-project>
 bash scripts/build_images.sh
+scripts/render_image_digests.sh   # writes infra/targets/gcp-gke/image_digests.<short_sha>.tfvars.json
 ```
 
 ### Which path takes precedence?
@@ -292,7 +293,7 @@ They are **not in conflict** — both submit [`deployment/docker/cloudbuild.imag
 | Concern | Path A (single service) | Path B (`build_images.sh`) |
 |---|---|---|
 | Trigger | `ONLY_IMAGE=<name>` or GCP Console trigger | Developer / `deploy_all.sh` |
-| Scope | One service | All services in parallel |
+| Scope | One service | The selected services in parallel |
 | Service account | `cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com` | `cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com` |
 | SHA source | `_SHORT_SHA` substitution (required, no default) | `git rev-parse --short HEAD` (required) |
 | Use case | Targeted single-service rebuild | Full-stack pre-deploy fan-out |
@@ -300,8 +301,9 @@ They are **not in conflict** — both submit [`deployment/docker/cloudbuild.imag
 ### Adding a new service
 
 1. Create `src/<service>/Dockerfile` with the repo root as build context.
-2. Add `"<service>|src/<service>/Dockerfile"` to `FIRST_PARTY_IMAGES` in [`scripts/build_images.sh`](scripts/build_images.sh) and `<service>` to [`scripts/render_image_digests.sh`](scripts/render_image_digests.sh).
-3. If the service needs an independent GCP Console trigger, point the trigger at [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) with `_IMAGE_NAME` and `_DOCKERFILE` substitutions.
+2. Add `"<service>|src/<service>/Dockerfile"` to `FIRST_PARTY_IMAGES` and `<service>` to `ALL_IMAGES` in [`scripts/build_images.sh`](scripts/build_images.sh), and add `<service>` to `FIRST_PARTY_IMAGES` in [`scripts/render_image_digests.sh`](scripts/render_image_digests.sh).
+3. Add `<service>` to `local.required_image_digests` in [`infra/targets/gcp-gke/main.tf`](infra/targets/gcp-gke/main.tf), gated like the module that deploys it, and to `deploy_all.sh`'s image selection. Add it to the test-only fixture [`image_digests.tfvars`](infra/targets/gcp-gke/tests/fixtures/image_digests.tfvars) too. [`test_image_digests_rendered.py`](tests/infrastructure/test_image_digests_rendered.py) fails until the renderer, the builder and Terraform agree.
+4. If the service needs an independent GCP Console trigger, point the trigger at [`deployment/docker/cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) with `_IMAGE_NAME` and `_DOCKERFILE` substitutions.
 
 ---
 

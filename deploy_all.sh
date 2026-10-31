@@ -53,12 +53,20 @@ ${BOLD}Environments${RESET}
 ${BOLD}Options${RESET}
   --auto-approve          Skip Terraform confirmation prompts
   --var-file=PATH         Additional .tfvars file to load
-  --skip-build            Skip container image builds
+  --skip-build            Skip container image builds; render digests for HEAD's
+                          images, which must already exist
+  --image-sha=SHA         Deploy the images built for an earlier commit (implies
+                          --skip-build)
   --kubeconfig=PATH       Kubeconfig path (agnostic target only)
   --var KEY=VALUE         Override any Terraform variable
   --verify-e2e            After apply, run the live trade-governance e2e Job
                           (make test-gke-e2e; needs REGISTRY_URL and the
                           cage-e2e-credentials Secret)
+
+  gcp-gke: images are built first, their digests rendered into
+  infra/targets/gcp-gke/image_digests.<sha>.tfvars.json (gitignored), and only
+  then planned. No digest or project is committed (POAM-2026-131): set
+  GOOGLE_CLOUD_PROJECT in .env, or pass --var project_id=<project>.
 
 ${BOLD}Examples${RESET}
   # Deploy to local k3s cluster
@@ -130,7 +138,8 @@ _effective_tf_var() {
       "-var=$name="*) value="${arg#"-var=$name="}" ;;
       -var-file=*)
         file="${arg#-var-file=}"
-        found=$(sed -nE "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\1/p" "$file" | tail -n 1)
+        # A quoted string (\2) or an unquoted scalar such as true, false or 3 (\3).
+        found=$(sed -nE "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*(\"([^\"]*)\"|([^[:space:]#\"]+)).*/\2\3/p" "$file" | tail -n 1)
         [[ -n "$found" ]] && value="$found"
         ;;
     esac
@@ -317,6 +326,7 @@ deploy_terraform_target() {
   local kubeconfig_path=""
   local kubeconfig_context=""
   local verify_e2e=false
+  local image_sha=""
   local _vf=""
   
   while [[ $# -gt 0 ]]; do
@@ -346,6 +356,15 @@ deploy_terraform_target() {
         shift
         ;;
       --skip-build)
+        export SKIP_BUILD=true
+        shift
+        ;;
+      --image-sha=*)
+        image_sha="${1#--image-sha=}"
+        if [[ ! "$image_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+          error "--image-sha must be a git commit SHA, got: $image_sha"
+          exit 1
+        fi
         export SKIP_BUILD=true
         shift
         ;;
@@ -501,6 +520,50 @@ deploy_terraform_target() {
     fi
   fi
 
+  # ── Images: build, render their digests, then plan (POAM-2026-131) ────────
+  # No digest is committed: a digest names an image in one registry. The images
+  # are built first and their digests rendered into a gitignored var file; only
+  # then is the plan computed, so the saved plan pins exactly what was built.
+  if [[ "$target" == "gcp-gke" ]]; then
+    if [[ -z "$_project" ]]; then
+      error "No project: set GOOGLE_CLOUD_PROJECT in .env, or pass --var project_id=<project>."
+      exit 1
+    fi
+    local _image_sha="$image_sha"
+    if [[ -z "$_image_sha" ]] && ! _image_sha="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)"; then
+      error "Cannot name the image build: $REPO_ROOT is not a git checkout. Pass --image-sha=<sha>."
+      exit 1
+    fi
+    if [[ "${SKIP_BUILD:-false}" != "true" ]]; then
+      # The images this profile deploys. Keep in step with
+      # local.required_image_digests in infra/targets/gcp-gke/main.tf; a
+      # mismatch fails closed at plan time (var.image_digests validation).
+      local _images="gateway agentsight-ui"
+      if [[ "$(_effective_tf_var enable_compliance_bridge "${tf_args[@]}")" == "true" &&
+            -z "$(_effective_tf_var compliance_bridge_image "${tf_args[@]}")" ]]; then
+        _images+=" compliance-bridge"
+      fi
+      if [[ "$(_effective_tf_var inference_backend "${tf_args[@]}")" == "vllm" ]]; then
+        _images+=" governed-financial-advisor"
+        if [[ -z "$(_effective_tf_var vllm_image "${tf_args[@]}")" ]]; then
+          _images+=" vllm-streamer"
+        fi
+      fi
+      if [[ "$(_effective_tf_var enable_nemo_guardrails "${tf_args[@]}")" == "true" &&
+            -z "$(_effective_tf_var nemo_image "${tf_args[@]}")" ]]; then
+        _images+=" nemo-guardrails"
+      fi
+      header "Building Container Images ($_image_sha)"
+      info "Images this profile deploys: $_images"
+      PROJECT_ID="$_project" IMAGES="$_images" bash "$REPO_ROOT/scripts/build_images.sh"
+    fi
+    header "Rendering Image Digests ($_image_sha)"
+    local _digests_file="$tf_dir/image_digests.${_image_sha}.tfvars.json"
+    PROJECT_ID="$_project" bash "$REPO_ROOT/scripts/render_image_digests.sh" \
+      --output "$_digests_file" "$_image_sha"
+    tf_args+=("-var-file=$_digests_file")
+  fi
+
   # Initialize Terraform
   info "Initializing Terraform..."
   if [[ ${#backend_config_args[@]} -gt 0 ]]; then
@@ -523,38 +586,6 @@ deploy_terraform_target() {
   done
   terraform -chdir="$tf_dir" plan "${plan_args[@]}" -out=tfplan
 
-  # ─── PRE-BUILD STEP (Fix Race Conditions) ────────────────────────────────────
-  # Build images BEFORE Terraform apply to ensure they exist for K8s deployments.
-  if [[ "${SKIP_BUILD:-false}" != "true" && "$target" == "gcp-gke" ]]; then
-    header "Pre-building Container Images"
-    
-    # Extract project_id from tf_vars or env
-    local project_id="${TF_VAR_project_id:-${GOOGLE_CLOUD_PROJECT:-}}"
-    if [[ -z "$project_id" ]]; then
-      # Try to grep it from .env as fallback
-      project_id=$(grep -E "^GOOGLE_CLOUD_PROJECT=" "$REPO_ROOT/.env" | cut -d= -f2 | tr -d '"' || true)
-    fi
-    
-    if [[ -n "$project_id" ]]; then
-      info "Building images for project: $project_id"
-      export PROJECT_ID="$project_id"
-      
-      # Execute the new bash script for building images
-      if [[ -x "$REPO_ROOT/scripts/build_images.sh" ]]; then
-        "$REPO_ROOT/scripts/build_images.sh"
-      else
-        bash "$REPO_ROOT/scripts/build_images.sh"
-      fi
-      
-      # Set SKIP_BUILD=true so the inner call (inside Terraform) doesn't rebuild
-      export TF_VAR_skip_build=true
-      # Also export for the local-exec provisioner
-      export SKIP_BUILD=true
-    else
-      warn "Could not determine project_id for pre-build. Skipping."
-    fi
-  fi
-  
   # Apply Terraform configuration
   if [[ "$auto_approve" == "true" ]]; then
     header "Terraform Apply (auto-approved)"

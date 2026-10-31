@@ -195,9 +195,14 @@ curl http://localhost:18080/health
 
 ### 6. Tear down
 
+Destroy takes the same inputs as the plan, including the digests file
+`deploy_all.sh` rendered for the apply (it stays in `infra/targets/gcp-gke/`):
+
 ```bash
 cd infra/targets/gcp-gke
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=dev.tfvars \
+  -var-file=image_digests.<short_sha>.tfvars.json \
+  -var project_id=<YOUR_GCP_PROJECT_ID> -auto-approve
 ```
 
 ---
@@ -237,13 +242,29 @@ terraform init -reconfigure \
   -backend-config="prefix=cage/gcp-gke/cage-dev"   # cluster_name in dev.tfvars
 ```
 
+### Render image digests (gcp-gke)
+
+No image digest or project ID is committed (POAM-2026-131), so the gcp-gke target
+needs both from you. `deploy_all.sh` does this itself. By hand, build the images
+(`PROJECT_ID=<YOUR_GCP_PROJECT_ID> bash scripts/build_images.sh`), then render the
+digests for that commit. That writes `image_digests.<short_sha>.tfvars.json`
+(gitignored) into `infra/targets/gcp-gke/`:
+
+```bash
+PROJECT_ID=<YOUR_GCP_PROJECT_ID> scripts/render_image_digests.sh   # defaults to HEAD's short SHA
+export TF_VAR_project_id=<YOUR_GCP_PROJECT_ID>
+```
+
+Without it, a plan stops with `No value for required variable` and quotes the
+render command.
+
 ### Plan
 
 ```bash
-terraform plan -var-file=dev.tfvars
+terraform plan -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvars.json
 
 # Override specific variables
-terraform plan -var-file=dev.tfvars \
+terraform plan -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvars.json \
   -var="enable_gpu_node_pool=false"
 ```
 
@@ -251,16 +272,16 @@ terraform plan -var-file=dev.tfvars \
 
 ```bash
 # Interactive (prompts for confirmation)
-terraform apply -var-file=dev.tfvars
+terraform apply -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvars.json
 
 # Non-interactive
-terraform apply -var-file=dev.tfvars -auto-approve
+terraform apply -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvars.json -auto-approve
 ```
 
 ### Destroy
 
 ```bash
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvars.json -auto-approve
 ```
 
 ---
@@ -366,12 +387,18 @@ gcloud services enable container.googleapis.com \
 
 ### `ImagePullBackOff` on GKE
 
-Images must be built via Cloud Build before Terraform apply. `deploy_all.sh` handles this automatically; for manual builds:
+Every image is pinned by the digest rendered for the commit that was built, in the
+project that built it. `deploy_all.sh` builds, renders and plans in that order. By
+hand, build first, then render for the same SHA and project, and plan with the file:
 
 ```bash
 export PROJECT_ID=<YOUR_GCP_PROJECT_ID>
 bash scripts/build_images.sh
+scripts/render_image_digests.sh        # writes infra/targets/gcp-gke/image_digests.<short_sha>.tfvars.json
 ```
+
+An image pulled from a different project or SHA than the one built means the
+rendered file belongs to another build. Render it again rather than editing it.
 
 ### Backend connection refused on port-forward
 

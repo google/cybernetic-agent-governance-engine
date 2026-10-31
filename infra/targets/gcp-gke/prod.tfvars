@@ -27,10 +27,10 @@
 #     --var-file=infra/targets/gcp-gke/prod.tfvars
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-# REPLACE with your production project ID
-project_id = "your-production-project"
-region     = "us-central1"
-zone       = "us-central1-a"
+# project_id is not committed (POAM-2026-131): set GOOGLE_CLOUD_PROJECT in .env
+# (deploy_all.sh maps it to TF_VAR_project_id) or pass --var project_id=<project>.
+region = "us-central1"
+zone   = "us-central1-a"
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
 cluster_name = "cage-prod"

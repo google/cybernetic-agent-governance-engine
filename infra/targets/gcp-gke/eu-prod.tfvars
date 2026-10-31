@@ -42,8 +42,8 @@
 #   5. EBA/GL/2023/02 independent model validation report
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-# REPLACE with your EU production project ID
-project_id = "your-eu-production-project"
+# project_id is not committed (POAM-2026-131): set GOOGLE_CLOUD_PROJECT in .env
+# (deploy_all.sh maps it to TF_VAR_project_id) or pass --var project_id=<project>.
 
 # EEA data residency — GDPR Art. 44
 # europe-west1 = Belgium (EEA) | europe-west4 = Netherlands (EEA)

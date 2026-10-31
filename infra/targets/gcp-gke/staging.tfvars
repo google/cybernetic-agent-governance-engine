@@ -44,17 +44,21 @@
 #   4. Cluster-scoped controls (BinAuthz, PSS, CMEK, audit logs) active
 #   5. Regional compliance postures (US_FED, EU_ECB, APAC_MAS) validated
 #
-# Deployment:
+# Deployment (project from GOOGLE_CLOUD_PROJECT in .env, or --var project_id=...):
 #   ./deploy_all.sh --target gcp-gke --env staging --auto-approve
+#   deploy_all.sh builds the images this profile deploys, renders their digests to
+#   image_digests.<short_sha>.tfvars.json (gitignored) and passes it to terraform.
 #
-# Teardown:
-#   terraform destroy -var-file=staging.tfvars -auto-approve
-#   (or use the staged wrapper once implemented in step 15)
+# Teardown needs the same inputs as the plan, including the rendered digests file
+# the apply used (deploy_all.sh leaves it next to this file):
+#   terraform destroy -var-file=staging.tfvars \
+#     -var-file=image_digests.<short_sha>.tfvars.json -var project_id=<project>
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-project_id = "YOUR_GCP_PROJECT_ID"
-region     = "us-central1"
-zone       = "us-central1-a"
+# project_id is not committed (POAM-2026-131): a value here would outrank the
+# TF_VAR_project_id that deploy_all.sh maps from GOOGLE_CLOUD_PROJECT.
+region = "us-central1"
+zone   = "us-central1-a"
 
 # ─── Jurisdiction (DEP-12) ───────────────────────────────────────────────────
 cage_deployment_region = "US_FED"
@@ -97,15 +101,15 @@ enable_high_availability = false # Single-replica scale (cost optimization)
 enable_deletion_protection = false
 
 # Cluster-scoped security controls (§1.1 staging posture: full security, 1-replica scale)
-regional_cluster               = false
+regional_cluster                      = false
 enable_binary_authorization           = true
 binary_authorization_enforcement_mode = "DRYRUN_AUDIT_LOG_ONLY"
-enable_audit_logging           = true
-enable_cmek                    = true
-enable_pod_security_standards  = true
-pod_security_level             = "restricted"
-enable_private_master_endpoint = false # public endpoint, limited to authorized_networks (see below)
-enable_private_nodes           = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
+enable_audit_logging                  = true
+enable_cmek                           = true
+enable_pod_security_standards         = true
+pod_security_level                    = "restricted"
+enable_private_master_endpoint        = false # public endpoint, limited to authorized_networks (see below)
+enable_private_nodes                  = true  # REQUIRED: master_ipv4_cidr_block needs private_cluster_config
 
 # §1.1 & §5.3: GKE Dataplane V2 + FQDN network policy enabled in every posture.
 enable_dataplane_v2        = true
@@ -204,27 +208,16 @@ vllm_replicas          = 1
 # Override via TF_VAR_nemo_image if you want a specific tag
 nemo_image = ""
 
-# Presidio — mirrored into Artifact Registry and pinned by @sha256: digest via var.image_digests
+# Presidio images are mirrored into the project registry; their digests are rendered
+# into var.image_digests like every other image. Only the NeMo server reads them.
 presidio_analyzer_image   = ""
 presidio_anonymizer_image = ""
 
-image_digests = {
-  "gateway"                    = "gcr.io/cage-reference/gateway@sha256:323ac12fe58d7302912486a482e9657cf35a5dcf892a2c3b37e0543ed468878f"
-  "governed-financial-advisor" = "gcr.io/cage-reference/governed-financial-advisor@sha256:bae1efacd2a61750248bae7654a20af2fda1442d8c30314e56bfc13c5b13a561"
-  "vllm-streamer"              = "gcr.io/cage-reference/vllm-streamer@sha256:0e7938c6b8dd96eee62c20a1e91292c201d12a81243ee56ecf754c25f589ed87"
-  "nemo-guardrails"            = "gcr.io/cage-reference/nemo-guardrails@sha256:aae1205864547968d640eddd8cb42ca53aabd1087e9264638db7681803ddd225"
-  "compliance-bridge"          = "gcr.io/cage-reference/compliance-bridge@sha256:947677cd3f4ecf6f4460648c2e52700dcfad4790057327053a812ae36ee8b5cf"
-  "agentsight-ui"              = "gcr.io/cage-reference/agentsight-ui@sha256:6a58539ecb967c04f5c45c3cbb15c1f8dfeeb504ff8b1bcac1ece33d9ab89499"
-  "presidio-analyzer"          = "gcr.io/cage-reference/presidio-analyzer@sha256:7b7add0ea5d226f7f6c35f9e5a8927214e84cc7f5e84f67dee154b594b79e195"
-  "presidio-anonymizer"        = "gcr.io/cage-reference/presidio-anonymizer@sha256:00ac4c3f6f85473de6c3120615c878310c14a07eeba9a4233705e6f8fab7c81d"
-  "opa"                        = "gcr.io/cage-reference/opa@sha256:bd9909283897aaf8e4409efb6fcb049f08fe6466f32467545157b66a39f4879f"
-  "langfuse"                   = "gcr.io/cage-reference/langfuse@sha256:bd6f8de1482c56e31b360fe7a14109f07e9083a370feeb37d6e4afb2f693b8a7"
-  "langfuse-worker"            = "gcr.io/cage-reference/langfuse-worker@sha256:43858560677507ed37946eb0ad7a1d835aa9e685ae774ee8a9c99401c0fef1a3"
-  "cloud-sql-proxy"            = "gcr.io/cage-reference/cloud-sql-proxy@sha256:c80e265fdf62108468cdb688af9737775f2a875a470bd99f83f88c7f93e82dfc"
-  "clickhouse-server"          = "gcr.io/cage-reference/clickhouse-server@sha256:3a52e89091e2f5e9471ca4860fd91ba9da855efcbad605073a5d2f8817023018"
-  "clickhouse-keeper"          = "gcr.io/cage-reference/clickhouse-keeper@sha256:602384a626262c4fab92e442612406f40b620b8a78c7dd11785b0d61a1840e27"
-  "redis"                      = "gcr.io/cage-reference/redis@sha256:41a05f1df0e41913c765714bcc4e2b7b61bad98686c3f8577fb5370306bd1efe"
-}
+# image_digests is not committed (POAM-2026-131). A digest names an image in one
+# registry, so every deployment renders its own: deploy_all.sh writes
+# image_digests.<short_sha>.tfvars.json beside this file and passes it with
+# -var-file. Under inference_backend = "none" it holds no vLLM, advisor or NeMo
+# image, because none is deployed (local.required_image_digests in main.tf).
 
 memorystore_governance_instance_id = "cage-valkey-gov-staging-v2"
 memorystore_app_instance_id        = "cage-valkey-app-staging-v3"

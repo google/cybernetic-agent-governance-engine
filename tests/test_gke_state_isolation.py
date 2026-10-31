@@ -28,6 +28,7 @@ name. These tests run the real ``deploy_all.sh`` against stub ``terraform`` and
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -50,15 +51,20 @@ _SHARED_CLUSTERS = {"cage-dev": {"dev.tfvars", "us-dev.tfvars"}}
 _TERRAFORM_STUB = """#!/bin/sh
 echo "terraform $*" >> "$STUB_LOG"
 """
-# `gcloud storage ls` succeeds only when the test plants the legacy state file.
+# `gcloud storage ls` succeeds only when the test plants the legacy state file;
+# `gcloud container images describe` answers every image with one fixed digest.
 _GCLOUD_STUB = """#!/bin/sh
 echo "gcloud $*" >> "$STUB_LOG"
 if [ "$1 $2" = "storage ls" ]; then
   [ "${LEGACY_STATE:-0}" = 1 ]
   exit $?
 fi
+if [ "$1 $2 $3" = "container images describe" ]; then
+  echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+fi
 exit 0
 """
+_IMAGE_SHA = "abc1234"
 
 
 def _tfvars_files() -> list[pathlib.Path]:
@@ -94,16 +100,30 @@ def test_backend_block_commits_no_shared_prefix() -> None:
 
 @pytest.fixture
 def deploy(tmp_path: pathlib.Path):
-    """Run a copy of deploy_all.sh with stub terraform/gcloud and no .env."""
+    """Run a copy of deploy_all.sh with stub terraform/gcloud and no .env.
+
+    The copy is not a git checkout, so runs name the image build with
+    --image-sha (which skips the build) and render its digests through the
+    stub gcloud before planning.
+    """
     root = tmp_path / "repo"
     shutil.copytree(
         _GKE_DIR,
         root / "infra" / "targets" / "gcp-gke",
         ignore=shutil.ignore_patterns(
-            ".terraform", "*.tfstate*", "*.auto.tfvars", "tfplan"
+            ".terraform",
+            "*.tfstate*",
+            "*.auto.tfvars",
+            "tfplan",
+            "image_digests.*.tfvars.json",
         ),
     )
     shutil.copy2(_REPO_ROOT / "deploy_all.sh", root / "deploy_all.sh")
+    (root / "scripts").mkdir()
+    shutil.copy2(
+        _REPO_ROOT / "scripts" / "render_image_digests.sh",
+        root / "scripts" / "render_image_digests.sh",
+    )
     stubs = tmp_path / "bin"
     stubs.mkdir()
     for name, body in (("terraform", _TERRAFORM_STUB), ("gcloud", _GCLOUD_STUB)):
@@ -113,7 +133,10 @@ def deploy(tmp_path: pathlib.Path):
     log = tmp_path / "calls.log"
 
     def run(
-        *args: str, legacy_state: bool = False, extra_env: dict[str, str] | None = None
+        *args: str,
+        legacy_state: bool = False,
+        extra_env: dict[str, str] | None = None,
+        build_args: tuple[str, ...] = (f"--image-sha={_IMAGE_SHA}",),
     ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         log.write_text("")
         env = {
@@ -131,7 +154,7 @@ def deploy(tmp_path: pathlib.Path):
                 "--target",
                 "gcp-gke",
                 *args,
-                "--skip-build",
+                *build_args,
                 "--auto-approve",
             ],
             cwd=root,
@@ -277,3 +300,60 @@ def test_region_variable_is_the_fallback_without_a_profile_region(deploy) -> Non
     assert "STAGING MODE" in result.stdout
     assert "ignored" not in result.stdout
     assert "-var=enable_nist_compliance=true" in _plan_args(calls)
+
+
+# ── POAM-2026-131: images are rendered per deployment, before the plan ───────
+
+
+def test_plan_reads_the_digests_rendered_before_it(deploy) -> None:
+    root, run = deploy
+    result, calls = run("--env", "staging")
+    assert result.returncode == 0, result.stderr
+
+    rendered = (
+        root
+        / "infra"
+        / "targets"
+        / "gcp-gke"
+        / f"image_digests.{_IMAGE_SHA}.tfvars.json"
+    )
+    digests = json.loads(rendered.read_text())["image_digests"]
+    assert digests["gateway"] == "gcr.io/proj-x/gateway@sha256:" + "a" * 64
+
+    plan_at = next(
+        i for i, c in enumerate(calls) if c.startswith("terraform ") and " plan " in c
+    )
+    describes = [
+        i
+        for i, c in enumerate(calls)
+        if c.startswith("gcloud container images describe")
+    ]
+    assert describes and max(describes) < plan_at, (
+        "digests must be rendered before the plan"
+    )
+    assert f"-var-file={rendered}" in calls[plan_at]
+    assert f"gcr.io/proj-x/gateway:{_IMAGE_SHA}" in " ".join(
+        calls[i] for i in describes
+    )
+
+
+@pytest.mark.parametrize(
+    "env_name",
+    ["staging", "prod", "eu-prod", "apac-prod", "us-dev", "eu-dev", "apac-dev"],
+)
+def test_every_profile_takes_its_project_from_the_environment(
+    deploy, env_name: str
+) -> None:
+    # A committed placeholder project would outrank TF_VAR_project_id.
+    _, run = deploy
+    result, calls = run("--env", env_name)
+    assert result.returncode == 0, result.stderr
+    assert "-backend-config=bucket=proj-x-tfstate" in _init_args(calls)
+
+
+def test_skip_build_outside_a_git_checkout_names_the_fix(deploy) -> None:
+    _, run = deploy
+    result, calls = run("--env", "staging", build_args=("--skip-build",))
+    assert result.returncode != 0
+    assert "--image-sha" in result.stderr
+    assert not [c for c in calls if c.startswith("terraform ")]

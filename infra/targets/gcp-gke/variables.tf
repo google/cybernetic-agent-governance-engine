@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-variable "project_id" {
-  description = "GCP project ID"
+variable "project_id" { # No default and no committed value: set GOOGLE_CLOUD_PROJECT in .env, or pass --var project_id=<project>.
+  description = "GCP project ID. No profile commits one (POAM-2026-131): a placeholder in a -var-file outranks TF_VAR_project_id, so it would defeat deploy_all.sh's GOOGLE_CLOUD_PROJECT -> TF_VAR_project_id mapping (DEP-22). Set GOOGLE_CLOUD_PROJECT in .env, or pass --var project_id=<project>."
   type        = string
 }
 
@@ -448,52 +448,23 @@ variable "enable_nemo_guardrails" {
   default     = false
 }
 
-variable "image_digests" {
-  description = "Immutable container image references pinned by @sha256: digest (name -> repo@sha256:<64-hex>). Required for Binary Authorization enforcement (CM-7, SI-7, POAM-2026-083)."
+variable "image_digests" { # No default. Render it: PROJECT_ID=<project> scripts/render_image_digests.sh [short_sha], then pass the file it writes with -var-file.
+  description = <<-EOT
+    Container images pinned by digest (name -> repo@sha256:<64-hex>), required for
+    Binary Authorization (CM-7, SI-7, POAM-2026-083). There is no default and no
+    committed value (POAM-2026-131): a digest names an image in one registry, so
+    every deployment renders its own. deploy_all.sh builds, renders and passes it.
+    By hand, after scripts/build_images.sh:
+      PROJECT_ID=<project> scripts/render_image_digests.sh [short_sha]
+      terraform plan -var-file=staging.tfvars -var-file=image_digests.<short_sha>.tfvars.json
+  EOT
   type        = map(string)
-  default = {
-    "gateway"                    = "gcr.io/cage-reference/gateway@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    "governed-financial-advisor" = "gcr.io/cage-reference/governed-financial-advisor@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    "vllm-streamer"              = "gcr.io/cage-reference/vllm-streamer@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    "nemo-guardrails"            = "gcr.io/cage-reference/nemo-guardrails@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    "compliance-bridge"          = "gcr.io/cage-reference/compliance-bridge@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    "agentsight-ui"              = "gcr.io/cage-reference/agentsight-ui@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    "presidio-analyzer"          = "gcr.io/cage-reference/presidio-analyzer@sha256:7d3c6513bc188a92c67ca068346bf2ef042d3726c243217ce9fb3a57960d3234"
-    "presidio-anonymizer"        = "gcr.io/cage-reference/presidio-anonymizer@sha256:562be3cb2e5c15f17c10935721459ef0d10cc2f28209f1f925b86dc7d40a2146"
-    "opa"                        = "gcr.io/cage-reference/opa@sha256:cc4efcabce6d6ebfa2dc8efdb2edaf4dbdeaa4e11f2be5a4a01a6661c82fc1b8"
-    "langfuse"                   = "gcr.io/cage-reference/langfuse@sha256:6b21a5086a07d9df332f7ecfc46778b3eb098b34df602ab80a0cd32a5f6c1134"
-    "langfuse-worker"            = "gcr.io/cage-reference/langfuse-worker@sha256:41f5785e862bf7e114cdbd8342be524c78dc8c88f6df5bd2c7debb3de98ec43b"
-    "cloud-sql-proxy"            = "gcr.io/cage-reference/cloud-sql-proxy@sha256:a77c72c56747cf2f431a4ed5e4a45e62003ca0fb94dc9f0c9cd390e84be2fa0e"
-    "clickhouse-server"          = "gcr.io/cage-reference/clickhouse-server@sha256:93f94e0c86d78c1ef8be33339d7dc8dc8c8e27c1b30d828ffab3893bf950d895"
-    "clickhouse-keeper"          = "gcr.io/cage-reference/clickhouse-keeper@sha256:77026fa37cc6922d10a25a8cd827cf3682e3fb0942dc162e490fa991bdbf0224"
-    "redis"                      = "gcr.io/cage-reference/redis@sha256:1f885a1088573222b2b34614878726658c71ff7f68db3b8ef07bd0ca57a2909e"
-  }
 
+  # Every image the profile deploys, whatever the Binary Authorization mode:
+  # main.tf indexes this map for each deployed workload (local.required_image_digests).
   validation {
-    condition = !var.enable_binary_authorization || (
-      alltrue([
-        for name, ref in var.image_digests :
-        can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", ref)) && !can(regex(":latest(@|$)", ref))
-        ]) && alltrue([
-        for req in [
-          "gateway",
-          "governed-financial-advisor",
-          "vllm-streamer",
-          "nemo-guardrails",
-          "compliance-bridge",
-          "agentsight-ui",
-          "presidio-analyzer",
-          "presidio-anonymizer",
-          "opa",
-          "langfuse",
-          "langfuse-worker",
-          "cloud-sql-proxy",
-          "clickhouse-server",
-          "clickhouse-keeper",
-        ] : contains(keys(var.image_digests), req)
-      ])
-    )
-    error_message = "When enable_binary_authorization = true, image_digests must include all workload images and every reference must be pinned by an immutable @sha256:<64-hex> digest (tag-only and :latest references are rejected — CM-7, SI-7, POAM-2026-083)."
+    condition     = length(setsubtract(local.required_image_digests, keys(var.image_digests))) == 0
+    error_message = "image_digests lacks images this profile deploys: ${join(", ", sort(setsubtract(local.required_image_digests, keys(var.image_digests))))}. Build them and render the digests for that SHA: PROJECT_ID=<project> scripts/render_image_digests.sh [short_sha]."
   }
 
   validation {
@@ -501,7 +472,17 @@ variable "image_digests" {
       for name, ref in var.image_digests :
       can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", ref)) && !can(regex(":latest(@|$)", ref))
     ])
-    error_message = "Every entry in image_digests must be a digest-pinned image reference (repo@sha256:<64-hex>); tag-only and :latest references are prohibited."
+    error_message = "Every entry in image_digests must be a digest-pinned image reference (repo@sha256:<64-hex>); tag-only and :latest references are prohibited (CM-7, SI-7, POAM-2026-083)."
+  }
+
+  # sha256:e3b0c442... is the SHA-256 of empty input. No image manifest hashes to
+  # it, so a reference that carries it is a placeholder, not a pin.
+  validation {
+    condition = alltrue([
+      for name, ref in var.image_digests :
+      !endswith(ref, "@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    ])
+    error_message = "image_digests contains sha256:e3b0c442...b855, the SHA-256 of empty input, which no image has: a placeholder, not a pin (POAM-2026-131). Render real digests: PROJECT_ID=<project> scripts/render_image_digests.sh [short_sha]."
   }
 }
 

@@ -122,17 +122,18 @@ proves full security posture at dev-scale cost:
 - **HA**: Decoupled (`enable_high_availability=false`, 1 replica per service).
 - **Deletion protection**: Disabled (`enable_deletion_protection=false`, allows teardown).
 
-**Deployment**:
+**Deployment** (project from `GOOGLE_CLOUD_PROJECT` in `.env`, or `--var project_id=<PROJECT_ID>`):
 ```bash
 # Automated lifecycle (recommended)
 ./scripts/staging_lifecycle.sh
 
-# Manual deployment
+# Manual deployment: builds the images staging deploys, renders their digests, then plans
 ./deploy_all.sh --target gcp-gke --env staging --auto-approve
 
-# Manual teardown
+# Manual teardown: the same inputs as the plan, including the rendered digests file
 cd infra/targets/gcp-gke
-terraform destroy -var-file=staging.tfvars -auto-approve
+terraform destroy -var-file=staging.tfvars \
+  -var-file=image_digests.<short_sha>.tfvars.json -var project_id=<PROJECT_ID> -auto-approve
 ```
 
 See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)
@@ -176,17 +177,17 @@ All Cloud Build configs live under `deployment/docker/`.
 | [`deployment/docker/cloudbuild.vllm.yaml`](../../deployment/docker/cloudbuild.vllm.yaml) | vLLM streamer (`E2_HIGHCPU_32`, `2400s` timeout) | `_SHORT_SHA` (optional: `_ENVIRONMENT`, `_KMS_LOCATION`, `_KMS_KEY_VERSION`) |
 | [`deployment/docker/cloudbuild.lula.yaml`](../../deployment/docker/cloudbuild.lula.yaml) | Lula validation runner (`0.9.5`) | Optional: `_ENVIRONMENT`, `_KMS_LOCATION`, `_KMS_KEY_VERSION` |
 | [`scripts/attest_image.sh`](../../scripts/attest_image.sh) | Canonical Binary Authorization attestation step | `<image:tag> [environment] [kms_location] [kms_key_version]` (`PROJECT_ID` env); runs `gcloud beta container binauthz attestations sign-and-create` and fails closed if `binauthz attestations list` returns no occurrence |
-| [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh) | Emits HCL `image_digests = { ... }` block for a built git SHA | `[short_sha]` (`PROJECT_ID` env) |
+| [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh) | Resolves each image built for a git SHA (and each mirrored third-party image) to its `@sha256:` digest and writes the `image_digests` var file Terraform reads. No fallback to another build's image: an image not built for that SHA is left out and named, and the plan refuses a map missing an image the profile deploys | `[--output PATH\|-] [short_sha]` (`PROJECT_ID` env); default output `infra/targets/gcp-gke/image_digests.<short_sha>.tfvars.json` (gitignored) |
 
-`scripts/build_images.sh` builds and attests the following images in parallel via Cloud Build:
-1. `governed-financial-advisor` (root `Dockerfile`)
+`scripts/build_images.sh` builds and attests, in parallel via Cloud Build, the images named in `IMAGES` (default: all six). `deploy_all.sh` passes the images the profile deploys, so staging under `inference_backend = "none"` builds no vLLM, advisor or NeMo image:
+1. `governed-financial-advisor` (root `Dockerfile`; both the `geap` and `gke` advisor runtimes consume it)
 2. `gateway` (`src/gateway/Dockerfile`)
 3. `agentsight-ui` (`src/agentsight-ui/Dockerfile`)
 4. `compliance-bridge` (`src/compliance_bridge/Dockerfile`)
 5. `nemo-guardrails` (`deployment/docker/Dockerfile.nemo`)
 6. `vllm-streamer` (`deployment/docker/cloudbuild.vllm.yaml`)
 
-All images are tagged strictly with immutable `:<short-sha>` tags (never `:latest` or fallback `"v1"`), pushed to `gcr.io/<PROJECT_ID>/<image-name>`, attested via [`scripts/attest_image.sh`](../../scripts/attest_image.sh), and rendered as an `image_digests` HCL map by [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh).
+All images are tagged strictly with immutable `:<short-sha>` tags (never `:latest` or fallback `"v1"`), pushed to `gcr.io/<PROJECT_ID>/<image-name>`, and attested via [`scripts/attest_image.sh`](../../scripts/attest_image.sh). No digest, registry path or project ID is committed (POAM-2026-131): a digest names an image in one registry, so `deploy_all.sh` builds, then renders the digests with [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh), and only then plans. The saved plan pins exactly what was built. `var.image_digests` has no default, so a plan without the rendered file stops with `No value for required variable`, quoting the render command from the declaration line. To deploy an earlier build without rebuilding, pass `--image-sha=<sha>`. To reuse one image across builds (for example the 40-minute vLLM image), pass its digest-pinned reference through the matching override, such as `--var vllm_image=gcr.io/<PROJECT_ID>/vllm-streamer@sha256:<digest>`.
 
 ---
 

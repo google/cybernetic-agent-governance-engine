@@ -48,8 +48,8 @@
 #   5. SGX Securities and Futures Act compliance review
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-# REPLACE with your APAC GCP project ID (may be same project as US dev)
-project_id = "YOUR_GCP_PROJECT_ID"
+# project_id is not committed (POAM-2026-131): set GOOGLE_CLOUD_PROJECT in .env
+# (deploy_all.sh maps it to TF_VAR_project_id) or pass --var project_id=<project>.
 
 # MAS TRM §4.2 data residency — Singapore
 # asia-southeast1 = Singapore (MAS-approved jurisdiction)
