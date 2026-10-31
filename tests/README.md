@@ -311,10 +311,11 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `test_trades_mcp.py`                  | `integration`              | `execute_trade_action` MCP tool full governance pipeline           |
 | `test_gateway_connectivity.py`        | `unit` / `local` / `regression` | Mocked golden-question regression check — no gateway required      |
 | `test_gateway_connectivity_live.py`   | `integration`              | Live gateway MCP/chat-proxy reachability and TLS 1.2+ enforcement (POAM-011 / SC-8) |
-| `test_provider_01_live.py`            | `partner_integration` / `live_external` / `partner` | FlowSignal (Provider 01) live baseline, FRIA validation, evidence submission |
+| `test_provider_01_live.py`            | `partner_integration` / `live_external` / `partner` | FlowSignal (Provider 01) `/cage/validate` ALLOW, REFUSE and ESCALATE over the wire; Cloud Run ID token and application key both enforced; fail-closed on the baseline and evidence routes FlowSignal does not serve |
 | `test_provider_02_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 02 CER attestation, Ed25519 signature verification, JWK sync |
 | `test_provider_03_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 03 normative baseline, cache staleness, evidence sealing |
-| `test_provider_05_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 05 AO warrant retrieval, blueprint drift detection, JCS canonical binding |
+| `test_provider_05_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 05 VEIP v0.2: key manifest root verification, all eight warrant scenarios, JCAR-001 alignment |
+| `test_provider_05_blueprint_live.py`  | `live_external` / `partner` | Provider 05 VEIP v0.3 blueprint registry. Not deployed, so outside the partner harness |
 | `test_actuator_01_live.py`            | `partner_integration` / `live_external` / `partner` | Actuator 01 execution gateway, mTLS wire dispatch, quorum signatures, JCS canonicalization |
 | `test_compliance_bridge_infra_events.py` | `unit` / `local`         | `POST /v1/infra/events` — Bearer auth, secret scrubbing, 422 on unregistered event type or cross-jurisdiction mismatch, `evidence_class='INFRA'` persistence |
 | `test_agent_accuracy.py`              | `integration`              | End-to-end agent response accuracy                                 |

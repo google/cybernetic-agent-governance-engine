@@ -16,10 +16,11 @@
 
 `.github/workflows/ci-partner-integration.yml` runs one job per partner against
 the partner's live sandbox (AGENTS.md, Tier 1). This module is the single
-source for three things the workflow depends on:
+source for four things the workflow depends on:
 
 * the partner list and each partner's pytest target;
 * the secrets each partner's job receives;
+* the credentials a job mints during the run instead of storing;
 * the variables its live tests read that the workflow deliberately leaves out.
 
 The harness itself runs only on dispatch and on a weekly schedule, so drift
@@ -60,11 +61,7 @@ PARTNER_SECRETS: dict[str, tuple[str, ...]] = {
         "PROVIDER_02_TEST_CERT_HASH",
     ),
     "provider_03": ("PROVIDER_03_ENDPOINT", "PROVIDER_03_API_KEY"),
-    "provider_05": (
-        "PROVIDER_05_BLUEPRINT_REGISTRY_URL",
-        "PROVIDER_05_API_KEY",
-        "PROVIDER_05_ATTESTATION_ENDPOINT",
-    ),
+    "provider_05": ("PROVIDER_05_ATTESTATION_ENDPOINT",),
     "provider_07": (
         "PROVIDER_07_ENDPOINT",
         "PROVIDER_07_API_KEY",
@@ -99,6 +96,27 @@ ACTUATOR_01_GCP_AUTH: dict[str, str] = {
     "kms_governance_key": "ACTUATOR_01_KMS_KEY",
 }
 
+#: provider_01's Cloud Run ingress (Domain Restricted Sharing) requires a Google
+#: ID token next to the FlowSignal key. An ID token expires within the hour, so
+#: the job mints one per run through Workload Identity Federation instead of
+#: storing it. FlowSignal grants run.invoker to one CAGE service account, the
+#: invoker. The federated principal reaches it through the delegate, which holds
+#: Token Creator on the invoker. Values are GitHub Actions repository variable
+#: names, so no project ID appears in source.
+PROVIDER_01_GCP_AUTH: dict[str, str] = {
+    "workload_identity_provider": "PROVIDER_01_WIF_PROVIDER",
+    "delegates": "PROVIDER_01_WIF_DELEGATE",
+    "service_account": "PROVIDER_01_INVOKER_SERVICE_ACCOUNT",
+}
+
+#: Variables a job mints during the run instead of reading a secret.
+MINTED: dict[str, str] = {
+    "PROVIDER_01_GCP_ID_TOKEN": (
+        "Google ID token for FlowSignal's Cloud Run ingress, audience "
+        "PROVIDER_01_ENDPOINT, minted per run with PROVIDER_01_GCP_AUTH."
+    ),
+}
+
 _EMPTY_REPLACES_DEFAULT = (
     "Test parameter with a default. GitHub sets a missing secret to an empty "
     "string, which would replace the default."
@@ -106,13 +124,7 @@ _EMPTY_REPLACES_DEFAULT = (
 
 #: Variables a partner's live tests read that the workflow does not supply.
 UNSUPPLIED: dict[str, str] = {
-    "PROVIDER_01_GCP_ID_TOKEN": (
-        "Optional short-lived Cloud Run IAM ID token; FlowSignal's sandbox "
-        "authenticates via PROVIDER_01_API_KEY."
-    ),
     "PROVIDER_03_TEST_REGION": _EMPTY_REPLACES_DEFAULT,
-    "PROVIDER_05_TEST_THRESHOLD_ID": _EMPTY_REPLACES_DEFAULT,
-    "PROVIDER_05_TEST_THR_FIN_006": _EMPTY_REPLACES_DEFAULT,
     "ACTUATOR_01_SIGNING_KEYS_DIR": (
         "Local Ed25519 private key directory. Left unset in CI so "
         "Actuator01Adapter.from_env() signs via Cloud KMS (KMS_GOVERNANCE_KEY) "
