@@ -1,5 +1,13 @@
 # FlowSignal Integration Hostile Test Plan
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 > **Canonical Specification Notice:** This hostile test plan is consolidated into the authoritative
 > [**FlowSignal Partner Integration Specification & Runbook**](../docs/partners/FLOWSIGNAL_PARTNER_SPECIFICATION.md).
 > Refer to that document for the complete specification combining schema, Cloud Run DRS dual-header auth, and hostile validation.

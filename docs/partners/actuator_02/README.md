@@ -1,5 +1,13 @@
 # NVIDIA OpenShell Partner Integration (actuator_02)
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 > **Architecture Standard — Generic in Code, Specific in Prose.**  
 > In accordance with CAGE architecture standards (ADR-008), the runtime implementation in
 > `src/integrations/` uses the anonymized identifier `actuator_02`. This document contains the

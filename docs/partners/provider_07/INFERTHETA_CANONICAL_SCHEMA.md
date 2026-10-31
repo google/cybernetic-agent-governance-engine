@@ -1,5 +1,13 @@
 # InferTheta Canonical Wire Contract & Normative Seam Specification
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 **Audience**: Integration engineers, compliance auditors, security architects  
 **Status**: Step 4 Validated (Production Live) — Production Cutover, Cryptographic Hardening, Evidence Chain & Baseline Versioning Complete  
 **Last Updated**: 2026-10-14  

@@ -1,5 +1,13 @@
 # CAGE × VEIP v0.2 — Conformance Bundle & Live Sandbox Artifacts
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 Frozen VEIP v0.2 conformance bundle artifacts (delivery ZIP SHA-256: `47c1ed5fee93a82dbfcd855e1a25fb55dec2c5a795c248f21422c91fa21ea8e4`).
 
 ## Live Interoperability Sandbox

@@ -1,5 +1,13 @@
 # FlowSignal (provider_01) Partner Integration Specification & Runbook
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 **Document Version:** 1.0  
 **Status:** CANONICAL SPECIFICATION — PHASE 3 PRE-STAGING & HOSTILE VALIDATION  
 **Integration Slot:** `provider_01` (External Normative Authority Provider)  

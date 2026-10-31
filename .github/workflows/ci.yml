@@ -269,6 +269,13 @@ jobs:
         # mainline commit (`<sha>^:<path>`), which this gate verifies against history.
         run: |
           uv run python scripts/check_doc_references.py
+      - name: Partner content banner check (docs/partners)
+        # Every docs/partners document carries a banner saying it is third-party
+        # integration material, not a Google certification or endorsement of the
+        # partner, and linking to the Live Verification Status table, which must list
+        # every partner. Manifest-pinned deposits and non-Markdown records are exempt.
+        run: |
+          uv run python scripts/check_partner_headers.py
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

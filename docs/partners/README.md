@@ -9,6 +9,13 @@
 This directory houses partner-specific documentation, wire contracts, compliance alignment
 specifications, and technical exchange artifacts.
 
+Every document here except this index and digest-pinned deposits opens with a banner: it is
+third-party integration material, its presence here is not a Google certification or
+endorsement of the partner, and the integration's verification status is in
+[Live Verification Status](#live-verification-status). CI enforces the banner with
+[`check_partner_headers.py`](../../scripts/check_partner_headers.py); run it with `--apply` to
+insert or refresh it.
+
 ---
 
 ## Directory Index
@@ -42,6 +49,10 @@ Latest over-the-wire result per adapter, as of 2026-10-31. A harness run ([`ci-p
 | `provider_07` InferTheta | Local: 2 of 8 passed (`/health`, JWKS); the other 6 got HTTP 401 `Invalid API key.` | none | A current `PROVIDER_07_API_KEY` |
 | `provider_03` Veritas | Not run | none | No sandbox endpoint or key |
 | `actuator_01` Archytan | Not run on `main`. Run `41125558418` on the #598 branch authenticated through WIF, then failed closed (5 skipped) | none | `ACTUATOR_01_ENDPOINT`, `ACTUATOR_01_TENANT_ID` and the mTLS PEM secrets |
+| `actuator_02` NVIDIA OpenShell | Not run | none | No harness target; never deployed against a live OpenShell Supervisor ([seal profile](actuator_02/SEAL_VERIFICATION_PROFILE.md)) |
+| `actuator_03` NVIDIA Sentry / DOCA | Not run | none | No harness target |
+| `provider_06` Guardian Cyber Agent Integrity | Not run over the wire. Offline, the vendored `1-alpha` CLI matched 7 of 7 required scenarios ([result](provider_06/CONFORMANCE_RESULT.md)), a verification-capability result only | none | No harness target |
+| `provider_09` OpsCanvas | Not run | none | No adapter yet ([decision points](provider_09/DECISION_POINTS.md)) |
 
 ---
 

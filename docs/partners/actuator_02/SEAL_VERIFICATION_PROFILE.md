@@ -1,5 +1,13 @@
 # Seal Verification Profile `cage-seal/1` — NVIDIA OpenShell Supervisor (actuator_02)
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 > **Status: default and only profile for actuator_02.** actuator_02 has never
 > been deployed against a live OpenShell Supervisor, so there is no earlier
 > wire format to stay compatible with. Every actuation CAGE sends to the

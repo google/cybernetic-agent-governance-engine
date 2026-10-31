@@ -1,5 +1,13 @@
 # FlowSignal Phase 3 v0.2 — Response to Graham's Context Field Question
 
+<!-- CAGE-PARTNER-CONTENT-HEADER: v1 -->
+> [!NOTE]
+> **Third-party integration material.** Its presence in this repository is not
+> a Google certification or endorsement of the partner or its products. For the
+> integration's current verification status, see
+> [Live Verification Status](../README.md#live-verification-status).
+<!-- /CAGE-PARTNER-CONTENT-HEADER -->
+
 **Date:** 2026-09-15  
 **Re:** `context` field semantics in CageAuthorityDetermineRequest
 
