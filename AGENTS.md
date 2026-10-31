@@ -295,6 +295,7 @@ Always launch parallel test suites with `--dist loadscope` to isolate modules ac
 ### Verification Rules (fail-closed)
 - **Full-gate before green**: A change is not green until `make test-fast` passes across the entire suite.
 - **Uncommitted code & security review before commit**: Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo code review and security review via [`AGENTS.md`](#mandatory-pre-commit-code--security-review) and [`.agents/rules/security.md`](.agents/rules/security.md) (plus `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`) with zero unresolved `HIGH` or `MEDIUM` findings before committing or declaring completion.
+- **Re-derive every identifier after context compaction**: After context compaction, any identifier — commit SHA, branch name, PR number, workflow run ID, or check-run ID — must be re-derived from a tool call (`gh pr list`, `git rev-parse`, `gh run list --json databaseId`), never recalled from memory or reconstructed from a truncated prefix.
 - **Attribute failures to the merge base**: Before characterizing a failure as pre-existing, verify against the merge base and quote the result.
 - **Grep after renaming**: After renaming any symbol crossing module boundaries, run `rg -n '<old_symbol>' src/` and require zero results before declaring done.
 - **Every fail-closed path needs a test observing it fail**: Happy-path tests prove mechanisms run, not that they block. Never leave placeholder tests (`pass # TODO`).
