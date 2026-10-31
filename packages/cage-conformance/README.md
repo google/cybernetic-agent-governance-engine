@@ -3,8 +3,9 @@
 A standalone verifier for the Cybernetic Agent Governance Engine (CAGE). It lets
 a partner, a counterparty or an independent auditor check CAGE's governance
 traces and tamper-evident evidence streams without a CAGE checkout and without
-trusting any third-party code: the package uses only the Python standard
-library.
+trusting any third-party code: checking traces, streams and reports uses only
+the Python standard library. Checking an attestation's signature is the one
+step that needs a third-party package, `cryptography`, from the `attest` extra.
 
 It applies exactly the checks CAGE's own test suite applies. `model.py`,
 `trace_conformance.py` and `stream_invariants.py` are byte-identical copies of
@@ -14,7 +15,8 @@ the repository's `proof/` modules, and CAGE's CI fails if they ever differ
 ## Install
 
 ```bash
-pip install ./packages/cage-conformance   # from a CAGE checkout, or the built wheel
+pip install ./packages/cage-conformance            # from a CAGE checkout, or the built wheel
+pip install './packages/cage-conformance[attest]'  # to attest reports or check attested ones
 ```
 
 ## Verify a governance trace
@@ -68,8 +70,83 @@ report covers it. `verify-report` does not re-run the checks; to reproduce a
 result, run `verify` on the same input.
 
 Exit codes: `verify` returns 0 if conformant, 1 if not, 2 on unreadable input
-or bad arguments. `verify-report` returns 0 for a valid report, 2 otherwise.
-A run that checked nothing is never conformant.
+or bad arguments. `audience`, `attest` and `verify-report` return 0 on success,
+2 otherwise. A run that checked nothing is never conformant.
+
+## Attest a report
+
+A report's runner is self-declared. To prove who ran it, bind an OIDC ID token
+whose audience is the report digest, so that it attests exactly that report:
+
+```bash
+pip install './packages/cage-conformance[attest]'   # cryptography, for the RSA check
+cage-conformance audience report.json               # cage-conformance:sha256:<digest>
+# obtain an ID token with that audience (below), then:
+cage-conformance attest report.json --token-file token --output attested.json
+```
+
+`attest` reads the token from `--token-file` or `$CAGE_CONFORMANCE_OIDC_TOKEN`,
+never from the command line, and accepts it only if:
+
+- its issuer is pinned: GitHub Actions, naming `github:<owner>/<repo>`, or
+  Google, naming `google:<email>` for verified emails only;
+- it is RS256-signed under a key of at least 2048 bits, fetched by `kid` from
+  that issuer's published JWKS, never from the token;
+- it is current, and its audience is this report's digest.
+
+In GitHub Actions, with `permissions: id-token: write`:
+
+```bash
+curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$(cage-conformance audience report.json)" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])' > token
+```
+
+With a Google service account, call the IAM Credentials `generateIdToken`
+method with that audience and `includeEmail: true`.
+
+An attested report exists before any verifier has judged it, so a signature on
+it is not an endorsement. Its face says so: a fixed `notice`, which
+`verify-report` requires verbatim, states that the attestation proves only who
+signed the report and grants no verification posture. Each relying party
+derives the posture with its own party pins, and a signer those pins do not
+recognize earns none.
+
+`verify-report attested.json` re-verifies the token. Expiry no longer matters,
+because the audience already binds the token to one report, so it verifies for
+as long as the issuer publishes the key. The posture comes from the verified
+principal and the party pins you trust, never from the organizations the runner
+declared, and the output names the pins used (`pins=package-defaults` or your
+file):
+
+| Verified principal | Posture |
+|---|---|
+| One of the profile's author principals | `AUTHOR_SELF_TEST` |
+| One of its counterparty principals | `COUNTERPARTY_VERIFIED` |
+| Neither, with both roles pinned or no counterparty role | `INDEPENDENT_PARTY_VERIFIED` |
+| Neither, while a role's principals are unpinned | None: it could hold that role |
+
+The package pins the CAGE repository as the author of `trace-v1` and
+`stream-v1`, and leaves the counterparty, the deploying operator, unpinned. So
+only a verifier who knows the operator can grant `COUNTERPARTY_VERIFIED` or
+`INDEPENDENT_PARTY_VERIFIED`, by passing its own pins with `--parties`:
+
+```json
+{
+  "schema_version": "cage-conformance-parties/1",
+  "profiles": {
+    "trace-v1": {
+      "author": ["github:google/cybernetic-agent-governance-engine"],
+      "counterparty": ["github:example-bank/governance-ci"]
+    }
+  }
+}
+```
+
+The embedded token's audience is specific to one report, so it authenticates
+nowhere that checks its audience, and it expires within the hour. A Google
+token carries the account's email, so attest with a service account rather than
+a person's account.
 
 ## Verification posture
 
@@ -84,11 +161,10 @@ never taken from it:
 | `INDEPENDENT_PARTY_VERIFIED` | A third party, with a verified identity bound to the report |
 
 The runner's organization is self-declared, so a report on its own proves
-nothing about who produced it. This version can therefore produce only the
-first two postures, and `verify-report` rejects a report that claims either of
-the others. Claiming them needs an attestation: an OIDC token from a pinned
-issuer whose audience is the report digest. That arrives with the `attest`
-command (`docs/architecture/CONFORMANCE_VERIFIER_SPEC.md` §3).
+nothing about who produced it. A report's own provenance therefore carries
+only the first two postures, and `verify-report` rejects a report that claims
+either of the others. Only an attested report earns them (above;
+`docs/architecture/CONFORMANCE_VERIFIER_SPEC.md` §3.1).
 
 ## License
 

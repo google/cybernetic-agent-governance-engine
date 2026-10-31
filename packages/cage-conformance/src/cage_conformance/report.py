@@ -21,12 +21,12 @@ is derived from those fields alone and never taken from the report as written
 (CONFORMANCE_VERIFIER_SPEC.md §3).
 
 The runner's organization in a report is self-declared, so nothing in the
-report proves who produced it. Without an attestation, a report can therefore
-carry only ``AUTHOR_SELF_TEST`` or ``UNVERIFIED_LOCAL``. ``COUNTERPARTY_VERIFIED``
-and ``INDEPENDENT_PARTY_VERIFIED`` need a verified runner identity bound to the
-report digest. This version of the package has no attestation, so no report can
-be built with either, and :func:`validate_report` rejects any report that
-claims one.
+report proves who produced it. A report's own provenance can therefore carry
+only ``AUTHOR_SELF_TEST`` or ``UNVERIFIED_LOCAL``: no report can be built with
+``COUNTERPARTY_VERIFIED`` or ``INDEPENDENT_PARTY_VERIFIED``, and
+:func:`validate_report` rejects one that claims either. Those need a verified
+identity bound to the report digest, which only an attestation supplies
+(``attestation.py``).
 """
 
 from __future__ import annotations
@@ -372,7 +372,7 @@ def _parse_provenance(raw: Any) -> Provenance:
     if recorded in ATTESTED_POSTURES:
         raise ReportError(
             f"{recorded.value} requires a verified runner identity bound to the "
-            "report digest, and this report carries no attestation"
+            "report digest; a report's own provenance never carries one (attest it)"
         )
     derived = build_provenance(adapter, runner)
     if recorded is not derived.verification_posture:

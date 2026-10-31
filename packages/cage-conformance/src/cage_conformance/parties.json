@@ -1,0 +1,13 @@
+{
+  "schema_version": "cage-conformance-parties/1",
+  "profiles": {
+    "trace-v1": {
+      "author": ["github:google/cybernetic-agent-governance-engine"],
+      "counterparty": []
+    },
+    "stream-v1": {
+      "author": ["github:google/cybernetic-agent-governance-engine"],
+      "counterparty": []
+    }
+  }
+}
