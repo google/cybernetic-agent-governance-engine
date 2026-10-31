@@ -186,6 +186,22 @@ the canonical snapshot (the preimage), which it now does:
 
 ## Open items
 
+- **Resolve-by-hash verification cannot pass (live, 2026-10-31).**
+  `test_live_cer_verification_signature` in
+  [`test_provider_02_live.py`](../../../../tests/integrations/provider_02/test_provider_02_live.py)
+  fails against the live node with `CER_DIGEST_MISMATCH`.
+  `Provider02CERResolver` in [`resolver.py`](../../../../src/integrations/provider_02/resolver.py)
+  hashes the raw body of `GET /v1/resolve/cer/:certificateHash`. That body is an
+  envelope (`ok`, `schemaVersion`, `artifactType`, `certificateHash`,
+  `identity`, `proof`, `verification`, `bundle`, `canonical`, `timestamp`,
+  `links`), not the CER, so the digest can never match. For the
+  `cer.ai.execution.v1` record tested, no RFC 8785 projection of the returned
+  `bundle` or `canonical.certificate` reproduced `certificateHash` either. The
+  fix needs the node's preimage definition per bundle type. The check fails
+  closed, so it rejects every CER rather than admitting one. The same run passed
+  `test_live_jwk_sync` and `test_live_verify_bundle_with_cyclic_topology`.
+  `PROVIDER_02_TEST_CERT_HASH` takes the bare 64-hex digest: the resolver rejects
+  the `sha256:` prefix.
 - **Live WORM verification of state preimages.** Run
   `test_state_commitment_worm_live.py` against the locked staging bucket
   (`CAGE_LIVE_WORM_BUCKET`) and record the result here and in POAM-2026-084.
