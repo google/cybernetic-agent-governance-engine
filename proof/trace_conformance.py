@@ -54,7 +54,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from proof.model import (
+from .model import (
     KERNEL_TIERS,
     PHASES,
     PROFILES,

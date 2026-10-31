@@ -85,6 +85,10 @@ uv run python scripts/check_trace_conformance.py events.jsonl   # exit 1 on find
 
 `tests/test_governance_trace_conformance.py` drives the real `SymbolicGovernor` through `govern`, `validate_action` and `revalidate_post_hitl` over 265 single- and double-fault configurations (795 decisions plus a simulated actuation per seal), checks every trace, and includes a mutation control (a governor that seals over findings is caught) and one negative control per rule.
 
+### Standalone Verifier Copies
+
+`model.py`, `trace_conformance.py` and `stream_invariants.py` ship byte-for-byte in [`packages/cage-conformance/`](../packages/cage-conformance/), a standard-library-only CLI that lets a partner or auditor run these checks without a CAGE checkout ([specification](../docs/architecture/CONFORMANCE_VERIFIER_SPEC.md)). The three modules therefore import each other relatively (`from .model import ...`) and nothing outside the standard library. After editing one, copy it into `packages/cage-conformance/src/cage_conformance/`: [`scripts/check_conformance_sync.py`](../scripts/check_conformance_sync.py) fails CI until the copies match.
+
 ### Running the Proof
 
 ```bash
