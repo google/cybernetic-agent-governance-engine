@@ -79,7 +79,8 @@ dev = [
     "langgraph-cli[inmem]>=0.1.0",
     # Security: pin transitive deps to versions that fix known CVEs
     # pyasn1 0.6.3: CVE-2026-59884/59885/59886 (DoS in BER/OID/Real decode) — fixed in 0.6.4
-    "pyasn1>=0.6.4",
+    # pyasn1 0.6.4: CVE-2026-119194/119195/119196/119197 — fixed in 0.6.5
+    "pyasn1>=0.6.5",
     # setuptools 82.0.1: CVE-2026-59890 (MANIFEST.in NFC/NFD bypass on macOS APFS) — fixed in 83.0.0
     # setuptools 83.0.0: GHSA-xmj3-9gf7-h52w — fixed in 84.1.0
     "setuptools>=84.1.0",
