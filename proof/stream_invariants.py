@@ -78,8 +78,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from proof.model import PROFILES, narrow_valid, reachable_over
-from proof.trace_conformance import (
+from .model import PROFILES, narrow_valid, reachable_over
+from .trace_conformance import (
     SEALING_PHASES,
     Finding,
     _coverage,

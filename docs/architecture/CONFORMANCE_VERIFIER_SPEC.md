@@ -38,33 +38,47 @@ All Python modules in [`proof/`](../../proof/) are pure-stdlib verification arti
 `packages/cage-conformance/` must **never fork** the formal model or invariant checkers. When packaged as a standalone wheel:
 
 1. **Authoritative Source**: [`proof/model.py`](../../proof/model.py), [`proof/trace_conformance.py`](../../proof/trace_conformance.py), and [`proof/stream_invariants.py`](../../proof/stream_invariants.py) remain the single authoritative implementations in the repository.
-2. **Byte-for-Byte Sync Gate (`SYNC_PAIRS`)**: The CI sync check (`check_conformance_sync.py`) must verify SHA-256 byte equality across **all three** modules:
+2. **Byte-for-Byte Sync Gate (`SYNC_PAIRS`)**: The CI sync check ([`scripts/check_conformance_sync.py`](../../scripts/check_conformance_sync.py)) must verify SHA-256 byte equality across **all three** modules:
    - [`proof/model.py`](../../proof/model.py)
    - [`proof/trace_conformance.py`](../../proof/trace_conformance.py)
    - [`proof/stream_invariants.py`](../../proof/stream_invariants.py)
-3. **AST Isolation Gate**: No module under `packages/cage-conformance/` may import `src` or `src.*`.
+3. **AST Isolation Gate**: No module under `packages/cage-conformance/` may import `src`, `src.*`, `proof` or `proof.*`. The `proof/` modules therefore import each other relatively (`from .model import ...`), so the same bytes resolve both in the repository and in the installed package.
 
 ### 2.3 CLI Surface (`cage-conformance`)
 
-The standalone CLI exposes four subcommands backed by [`proof/`](../../proof/) and `provenance.py`:
+[`packages/cage-conformance/`](../../packages/cage-conformance/) ships the CLI. It uses only the Python standard library, so an auditor runs it without trusting third-party code.
 
-1. `cage-conformance verify --trace <events.jsonl>`: Runs `check_trace_stream()` from [`proof/trace_conformance.py`](../../proof/trace_conformance.py) and emits a provenance-stamped report.
-2. `cage-conformance verify --stream <evidence_stream.jsonl>`: Runs `check_stream()` from [`proof/stream_invariants.py`](../../proof/stream_invariants.py) (matching [`scripts/check_trace_conformance.py`](../../scripts/check_trace_conformance.py) `--stream`) and emits a provenance-stamped report.
-3. `cage-conformance verify --endpoint <url> --profile <profile>`: Executes black-box HTTP conformance vectors against a live partner adapter or CAGE gateway endpoint.
-4. `cage-conformance verify-report <report.json>`: Re-computes and validates the report's `provenance` posture and digest integrity.
+| Command | Status | Behavior |
+|---|---|---|
+| `verify --trace <events.jsonl>` | Shipped | Runs `check_trace()` from [`proof/trace_conformance.py`](../../proof/trace_conformance.py) and emits a provenance-stamped report |
+| `verify --stream <evidence.jsonl>` | Shipped | Runs `check_stream()` from [`proof/stream_invariants.py`](../../proof/stream_invariants.py), with the options of [`scripts/check_trace_conformance.py`](../../scripts/check_trace_conformance.py) `--stream` |
+| `verify-report <report.json>` | Shipped | Re-derives the posture and summary from the report's own fields, rejects any disagreement, and prints the report digest |
+| `attest <report.json>` | Planned | Binds an attestation to the report (§3.1) |
+| `verify --endpoint <url> --profile <profile>` | Planned | Black-box HTTP vectors against a live partner adapter or gateway endpoint; `substrate-v1` asserts `/governance/policy-version`'s `thresholds_digest` contract |
+
+Each report holds one assertion per checker rule. A finding under a rule the package does not list still fails the report under its own name, and a run that checked nothing is not conformant. A report names each input by its file name and the SHA-256 of its bytes, never by its path, so an attestation over the report digest (§3.1) also commits to exactly what was verified.
 
 ---
 
 ## 3. Attributable Provenance & Verification Posture Schema
 
-Every report emitted by `cage-conformance` embeds a mandatory `provenance` block. Verification posture is derived deterministically from four inputs — `adapter_author_org`, `counterparty_org`, `runner_org`, and `identity_proof` (`OIDC` vs. `NONE`):
+Every report emitted by `cage-conformance` embeds a mandatory `provenance` block. The posture is derived from the report's fields, never taken from them. A runner's organization is self-declared until an attestation (§3.1) verifies it:
 
 | Posture | Condition | Evidentiary Meaning |
 |---|---|---|
-| `AUTHOR_SELF_TEST` | `runner_org == adapter_author_org` | Run by the organization that authored the adapter; proves author-side wire execution, not counterparty sign-off |
-| `COUNTERPARTY_VERIFIED` | `runner_org == counterparty_org` and `identity_proof != "NONE"` | Run by the counterparty organization on the other side of the seam with verified OIDC identity |
-| `INDEPENDENT_PARTY_VERIFIED` | `runner_org not in {adapter_author_org, counterparty_org}` and `identity_proof != "NONE"` | Run by an independent third party (auditor, evaluator, or regulatory sandbox) with verified OIDC identity |
-| `UNVERIFIED_LOCAL` | `identity_proof == "NONE"` and `runner_org != adapter_author_org` | Local or unauthenticated run without cryptographic/OIDC runner identity proof; cannot claim counterparty or independent verification |
+| `AUTHOR_SELF_TEST` | The runner is the adapter author | Run by the organization that authored the adapter; proves author-side execution, not counterparty sign-off |
+| `COUNTERPARTY_VERIFIED` | Attested, and the verified principal is one of the profile's pinned counterparty principals | Run by the organization on the other side of the seam, with a verified identity |
+| `INDEPENDENT_PARTY_VERIFIED` | Attested, and the verified principal is neither the author's nor the counterparty's | Run by a third party (auditor, evaluator, regulatory sandbox), with a verified identity |
+| `UNVERIFIED_LOCAL` | Not attested, and the self-declared runner is not the author | Cannot claim counterparty or independent verification |
+
+`feat/cage-conformance` (`6e46ca00`) set its identity flag by parsing a runner's OIDC token without verifying the signature, so anyone could mint a token that claimed `COUNTERPARTY_VERIFIED`. The rebuilt package derives verified postures only from an attestation.
+
+### 3.1 Attestation (`attest`, planned)
+
+1. `verify` emits an unattested report, which can derive only `AUTHOR_SELF_TEST` or `UNVERIFIED_LOCAL`. `verify-report` rejects an unattested report that claims a verified posture.
+2. `attest` binds an OIDC ID token whose audience is the report digest: `sha256:` over the report's RFC 8785 canonical JSON. The token must come from a pinned issuer (GitHub Actions, Google). Its key is resolved by `kid` from the issuer's published JWKS, never from the token, and an unknown `kid` fails closed.
+3. The token is embedded in the report, so `verify-report` re-verifies it while the issuer still publishes the key.
+4. The verified principal is compared with the party principals the contract profile pins, never with names the runner supplies. A runner therefore cannot name itself the counterparty.
 
 ---
 
@@ -93,7 +107,7 @@ Instead of merging `6e46ca00`, its four bundled workstreams are disposed of as f
 
 | Component in `6e46ca00` | Files in `6e46ca00` | Disposition | Rationale & Action |
 |---|---|---|---|
-| **1. Standalone `packages/cage-conformance/` CLI & Provenance Model (`W4`)** | `packages/cage-conformance/**`, `check_conformance_sync.py`, `test_cage_conformance.py`, `.github/workflows/publish-client-sdk.yml` | **Salvage & Rebuild on `main`'s `proof/`** | Build `packages/cage-conformance/` directly from `main`'s [`proof/model.py`](../../proof/model.py) (7-tier), [`proof/trace_conformance.py`](../../proof/trace_conformance.py), and [`proof/stream_invariants.py`](../../proof/stream_invariants.py) (`SYNC_PAIRS` covering all 3 modules), retain `provenance.py` and `cli.py` (adding `--stream`), and update `substrate_v1.json` to assert `main`'s `/governance/policy-version` (`thresholds_digest`) contract instead of `/governance/ingest-policy`. |
+| **1. Standalone `packages/cage-conformance/` CLI & Provenance Model (`W4`)** | `packages/cage-conformance/**`, `check_conformance_sync.py`, `test_cage_conformance.py`, `.github/workflows/publish-client-sdk.yml` | **Salvage & Rebuild on `main`'s `proof/`** | Rebuilt on `main`'s [`proof/model.py`](../../proof/model.py) (7-tier), [`proof/trace_conformance.py`](../../proof/trace_conformance.py), and [`proof/stream_invariants.py`](../../proof/stream_invariants.py) (`SYNC_PAIRS` covering all 3 modules); `verify --trace`, `verify --stream` and `verify-report` are shipped (§2.3). `provenance.py` is not retained: its OIDC inspection never verified a signature (§3), so the rebuilt [`report.py`](../../packages/cage-conformance/src/cage_conformance/report.py) derives only unattested postures. `attest` (§3.1), the endpoint profiles (with `substrate_v1.json` asserting `main`'s `/governance/policy-version` `thresholds_digest` contract instead of `/governance/ingest-policy`) and the `publish-client-sdk.yml` release step remain planned. |
 | **2. Partner Document Provenance Banners & CI Linter** | `check_partner_headers.py`, `docs/partners/**` (25 files) | **Salvage Separately (Optional Docs/CI PR)** | Self-contained documentation hygiene (adds explicit status headers to partner design docs in `docs/partners/`). Has zero coupling to `src/` or `packages/cage-conformance/` and must not be bundled with code changes. |
 | **3. `importlib.metadata.entry_points` Partner SPI** | `PARTNER_SPI.md`, `contrib/example-normative-provider/**`, [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py), [`src/gateway/governance/attestation_aggregator.py`](../../src/gateway/governance/attestation_aggregator.py), [`src/gateway/governance/execution_actuator.py`](../../src/gateway/governance/execution_actuator.py), [`src/gateway/governance/estate_provider.py`](../../src/gateway/governance/estate_provider.py), [`src/gateway/governance/seams/normative.py`](../../src/gateway/governance/seams/normative.py), [`src/gateway/governance/seams/estate.py`](../../src/gateway/governance/seams/estate.py) | **Defer** | In-tree Tier 1 adapters (`provider_01`–`provider_08`, `actuator_01`) already resolve cleanly via allowlisted lazy factories enforced by Gate G3 ([`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)). Defer `entry_points` discovery until an external partner distributes an out-of-tree wheel. |
 | **4. `POST /governance/ingest-policy` Endpoint & `SPACY_MODEL` Dockerfile Churn** | [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py), [`tests/test_policy_pinning.py`](../../tests/test_policy_pinning.py), [`Dockerfile`](../../Dockerfile), [`src/gateway/Dockerfile`](../../src/gateway/Dockerfile) | **Drop (Reject)** | `POST /governance/ingest-policy` depends on deleted `e5376b58^:src/gateway/governance/ingress/policy_translator.py` and overwrites `POAM-2026-151`'s `/governance/policy-version` payload. CAGE compiles STPA and OPA artifacts offline and verifies them in CI (`stpa-freshness-check`), never via unauthenticated runtime HTTP ingestion. |

@@ -1,0 +1,89 @@
+{
+  "profile": "trace-v1",
+  "description": "A conformant GOVERNANCE_TRACE over main's 7-tier model: one sealed FULL-profile decision that plans every tier, then its single execution.",
+  "conformant_trace": [
+    {
+      "type": "GOVERNANCE_TRACE",
+      "schema_version": 1,
+      "action": "example_action",
+      "path": "govern",
+      "profile": "FULL",
+      "verdict": "ALLOW",
+      "phase": "SEAL_ISSUED",
+      "seal_present": true,
+      "seal_ref": "seal-0001",
+      "governed": true,
+      "narrower_present": false,
+      "clamped_params_valid": false,
+      "plan": [
+        [
+          "ftra",
+          1
+        ],
+        [
+          "stpa",
+          1
+        ],
+        [
+          "opa",
+          1
+        ],
+        [
+          "confidence",
+          1
+        ],
+        [
+          "consensus",
+          1
+        ],
+        [
+          "cbf",
+          2
+        ],
+        [
+          "fiscal",
+          2
+        ]
+      ],
+      "outcomes": [
+        [
+          "ftra",
+          "PASS"
+        ],
+        [
+          "stpa",
+          "PASS"
+        ],
+        [
+          "opa",
+          "PASS"
+        ],
+        [
+          "confidence",
+          "PASS"
+        ],
+        [
+          "consensus",
+          "PASS"
+        ],
+        [
+          "cbf",
+          "PASS"
+        ],
+        [
+          "fiscal",
+          "PASS"
+        ]
+      ]
+    },
+    {
+      "type": "GOVERNANCE_TRACE",
+      "schema_version": 1,
+      "action": "example_action",
+      "path": "actuation",
+      "phase": "EXECUTED",
+      "seal_present": true,
+      "seal_ref": "seal-0001"
+    }
+  ]
+}

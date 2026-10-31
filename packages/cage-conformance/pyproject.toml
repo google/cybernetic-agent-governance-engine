@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cage-conformance"
+version = "0.1.0"
+description = "Standalone conformance verifier for CAGE governance traces and evidence streams"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Google LLC" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+]
+# Standard library only: an auditor can verify without trusting third-party code.
+dependencies = []
+
+[project.scripts]
+cage-conformance = "cage_conformance.cli:main"
+
+[project.urls]
+Repository = "https://github.com/google/cybernetic-agent-governance-engine"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cage_conformance = ["py.typed", "vectors/*.json"]
