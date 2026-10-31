@@ -202,6 +202,7 @@ def test_runs_on_the_standard_library_alone(tmp_path: Path) -> None:
             f"code = main({argv!r})",
             "leaked = sorted(m for m in sys.modules if m.split('.')[0] in {'src', 'proof'})",
             "assert not leaked, leaked",
+            "assert 'cryptography' not in sys.modules",
             "raise SystemExit(code)",
         ]
     )
