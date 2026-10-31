@@ -254,6 +254,15 @@ def test_runs_weekly() -> None:
     )
 
 
+def test_each_partner_selection_has_its_own_concurrency_group() -> None:
+    """A newer run supersedes a pending one in its group, whatever cancel-in-progress
+    says, so a shared group let one partner's dispatch cancel another's queued run."""
+    concurrency = _workflow()["concurrency"]
+    assert concurrency["cancel-in-progress"] is False, "never cancel a running check"
+    group = concurrency["group"]
+    assert "inputs.partner_filter" in group and "github.ref" in group, group
+
+
 def test_every_target_exists_and_selects_partner_tests() -> None:
     for partner, target in harness.PARTNER_TARGETS.items():
         assert (_REPO_ROOT / target).exists(), f"{partner}: {target} does not exist"
