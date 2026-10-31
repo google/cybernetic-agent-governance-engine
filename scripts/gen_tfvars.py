@@ -14,13 +14,16 @@
 
 """gen_tfvars.py — .env → terraform.auto.tfvars bridge.
 
-Reads a .env file and emits a terraform.auto.tfvars file containing the two
-sensitive Terraform variables that must be populated before ``terraform apply``:
+Reads a .env file and emits a terraform.auto.tfvars file containing the
+sensitive Terraform variable that must be populated before ``terraform apply``:
 
-    kms_governance_key           ← KMS_GOVERNANCE_KEY
     otel_exporter_otlp_headers   ← OTEL_EXPORTER_OTLP_HEADERS
                                     (derived from LANGFUSE_PUBLIC_KEY +
                                      LANGFUSE_SECRET_KEY if not set directly)
+
+Note: Asymmetric KMS signing keys are provisioned and wired directly by
+``infra/targets/gcp-gke/kms_signing.tf`` (POAM-2026-079); ``KMS_GOVERNANCE_KEY``
+is no longer required in ``.env`` or emitted to ``terraform.auto.tfvars``.
 
 Secret hygiene (AGENTS.md — non-negotiable):
   • No secret value is ever embedded as a Python string literal in this file.
@@ -194,20 +197,21 @@ _TFVARS_HEADER = """\
 
 
 def build_tfvars_content(
-    kms_governance_key: str,
     otel_exporter_otlp_headers: str,
     source_path: Path,
+    kms_governance_key: str | None = None,
 ) -> str:
     """Return the full content of the terraform.auto.tfvars file as a string.
 
     Args:
-        kms_governance_key:         Value for ``kms_governance_key``.
         otel_exporter_otlp_headers: Value for ``otel_exporter_otlp_headers``.
         source_path:                Path of the originating .env file.
+        kms_governance_key:         Deprecated/ignored; retained only for call-site compatibility.
 
     Returns:
         Formatted HCL string ready to write to ``terraform.auto.tfvars``.
     """
+    _ = kms_governance_key
 
     def _hcl_str(v: str) -> str:
         # Escape backslashes and double-quotes for HCL string literals.
@@ -215,7 +219,6 @@ def build_tfvars_content(
 
     lines = [
         _TFVARS_HEADER.format(source=source_path.resolve()),
-        f"kms_governance_key         = {_hcl_str(kms_governance_key)}",
         f"otel_exporter_otlp_headers = {_hcl_str(otel_exporter_otlp_headers)}",
         "",  # trailing newline
     ]
@@ -232,8 +235,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Generate terraform.auto.tfvars from a .env file.\n\n"
-            "Reads KMS_GOVERNANCE_KEY and OTEL_EXPORTER_OTLP_HEADERS from\n"
-            "the given .env file and writes\n"
+            "Reads OTEL_EXPORTER_OTLP_HEADERS from the given .env file and writes\n"
             "a gitignored terraform.auto.tfvars file suitable for use with\n"
             "'terraform apply'.\n\n"
             "If OTEL_EXPORTER_OTLP_HEADERS is absent, derives it from\n"
@@ -266,7 +268,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: C901
+def main(argv: list[str] | None = None) -> int:
     """Entry point.
 
     Args:
@@ -283,19 +285,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     log.info("Reading env vars from: %s", env_path)
     env = parse_env_file(env_path)
 
-    # ── 1. kms_governance_key ────────────────────────────────────────────
-    kms_governance_key = env.get("KMS_GOVERNANCE_KEY", "").strip()
-    if not kms_governance_key:
-        log.error(
-            "KMS_GOVERNANCE_KEY is missing or empty in %s.\n"
-            "  Expected format:\n"
-            "    projects/PROJECT/locations/LOCATION/keyRings/RING"
-            "/cryptoKeys/KEY/cryptoKeyVersions/VERSION",
-            env_path,
-        )
-        return 1
-
-    # ── 2. otel_exporter_otlp_headers (direct or derived) ────────────────
+    # ── otel_exporter_otlp_headers (direct or derived) ────────────────────
     otlp_headers = env.get("OTEL_EXPORTER_OTLP_HEADERS", "").strip()
     otlp_source = "OTEL_EXPORTER_OTLP_HEADERS"
 
@@ -322,7 +312,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
 
     # ── Masked preview (always emitted for operator confirmation) ─────────
     log.info("Variable resolution summary (values masked):")
-    log.info("  kms_governance_key         = %s", _mask(kms_governance_key))
     log.info(
         "  otel_exporter_otlp_headers = %s  [source: %s]",
         _mask(otlp_headers),
@@ -335,7 +324,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
 
     # ── Write output file ─────────────────────────────────────────────────
     content = build_tfvars_content(
-        kms_governance_key=kms_governance_key,
         otel_exporter_otlp_headers=otlp_headers,
         source_path=env_path,
     )

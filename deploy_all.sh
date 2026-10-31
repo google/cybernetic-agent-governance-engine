@@ -237,10 +237,6 @@ load_env() {
       export TF_VAR_cage_kms_provider="$_cage_kms_provider"
     fi
 
-    _secret_val=$(_read_env_var KMS_GOVERNANCE_KEY)
-    [[ -n "$_secret_val" ]] && export TF_VAR_kms_governance_key="$_secret_val"
-    unset _secret_val
-
     # ── Secrets — mapped directly to TF_VAR_* (never exported as bare vars) ─
     # These are read and immediately assigned to TF_VAR_* names.  The raw
     # secret values are never exported as standalone env vars, preventing them
@@ -499,8 +495,7 @@ deploy_terraform_target() {
   fi
 
   # ── Auto-generate terraform.auto.tfvars from .env (gitignored) ───────────
-  # Reads KMS_GOVERNANCE_KEY and
-  # OTEL_EXPORTER_OTLP_HEADERS (or derives it from LANGFUSE_PUBLIC_KEY +
+  # Reads OTEL_EXPORTER_OTLP_HEADERS (or derives it from LANGFUSE_PUBLIC_KEY +
   # LANGFUSE_SECRET_KEY) and writes infra/targets/gcp-gke/terraform.auto.tfvars.
   # The output file is gitignored — it must never be committed.
   if [[ "$target" == "gcp-gke" ]]; then
@@ -535,6 +530,17 @@ deploy_terraform_target() {
       exit 1
     fi
     if [[ "${SKIP_BUILD:-false}" != "true" ]]; then
+      if [[ -f "$REPO_ROOT/scripts/bootstrap_gcp_project.sh" ]]; then
+        local _gcp_region
+        _gcp_region="$(_effective_tf_var region "${tf_args[@]}")"
+        _gcp_region="${_gcp_region:-${TF_VAR_region:-us-central1}}"
+        header "Bootstrapping GCP Project ($_project / $_tier)"
+        bash "$REPO_ROOT/scripts/bootstrap_gcp_project.sh" \
+          --project "$_project" \
+          --env "$_tier" \
+          --region "$_gcp_region" \
+          --bucket "$_bucket"
+      fi
       # The images this profile deploys. Keep in step with
       # local.required_image_digests in infra/targets/gcp-gke/main.tf; a
       # mismatch fails closed at plan time (var.image_digests validation).
@@ -570,6 +576,18 @@ deploy_terraform_target() {
     terraform -chdir="$tf_dir" init "${backend_config_args[@]}"
   else
     terraform -chdir="$tf_dir" init
+  fi
+
+  if [[ "$target" == "gcp-gke" && ( "${SKIP_BUILD:-false}" != "true" || "${BOOTSTRAP_IMPORT_STATE:-false}" == "true" ) && -f "$REPO_ROOT/scripts/bootstrap_gcp_project.sh" ]]; then
+    local _gcp_region
+    _gcp_region="$(_effective_tf_var region "${tf_args[@]}")"
+    _gcp_region="${_gcp_region:-${TF_VAR_region:-us-central1}}"
+    bash "$REPO_ROOT/scripts/bootstrap_gcp_project.sh" \
+      --project "$_project" \
+      --env "$_tier" \
+      --region "$_gcp_region" \
+      --tf-dir "$tf_dir" \
+      --import-state
   fi
   
   # Run Terraform plan

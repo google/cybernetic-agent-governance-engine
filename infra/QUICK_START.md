@@ -124,18 +124,15 @@ GOOGLE_CLOUD_LOCATION=us-central1       # or your preferred region
 CAGE_DEPLOYMENT_REGION=US_FED           # US_FED | EU_ECB | APAC_MAS
 ```
 
-### 3. Enable required GCP APIs
+### 3. Bootstrap the GCP project & enable required APIs
+
+Run [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) once on a new or recycled GCP project (or let `deploy_all.sh` run it automatically before building images). It enables all 21 required GCP APIs (`W1`), creates the versioned Terraform state bucket `gs://<YOUR_GCP_PROJECT_ID>-tfstate` (`W2`), creates the `gcr.io` Artifact Registry repository and Cloud Build staging bucket (`W4`), pre-creates the dedicated Cloud Build service account (`cage-cloudbuild-<env>`), `cage-signing-<env>` KMS keyring, `binauthz-attestor` key, and Binary Authorization attestor so Cloud Build can attest images before the first `terraform apply` (`W3`), and optionally grants `roles/cloudkms.publicKeyViewer` to a deployer service account (`W10`):
 
 ```bash
-gcloud services enable \
-  container.googleapis.com \
-  compute.googleapis.com \
-  storage.googleapis.com \
-  artifactregistry.googleapis.com \
-  containerfilesystem.googleapis.com \
-  cloudbuild.googleapis.com \
-  cloudkms.googleapis.com \
-  --project=<YOUR_GCP_PROJECT_ID>
+bash scripts/bootstrap_gcp_project.sh \
+  --project=<YOUR_GCP_PROJECT_ID> \
+  --env=staging \
+  --region=us-central1
 ```
 
 ### 4. Deploy
@@ -319,7 +316,6 @@ terraform destroy -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvar
 | `LANGFUSE_PUBLIC_KEY` | `TF_VAR_langfuse_public_key` |
 | `LANGFUSE_SECRET_KEY` | `TF_VAR_langfuse_secret_key` |
 | `GOVERNANCE_SALT` | `TF_VAR_governance_salt` |
-| `KMS_GOVERNANCE_KEY` | `TF_VAR_kms_governance_key` |
 
 ---
 
@@ -377,12 +373,10 @@ gcloud compute project-info describe --project=<YOUR_GCP_PROJECT_ID>
 
 ### `GCP API not enabled`
 
+Run [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) to enable all 21 required APIs (GKE, Compute, Storage, Artifact Registry, Cloud Build, Cloud KMS, Binary Authorization, Container Analysis, Memorystore, Cloud SQL, Service Networking, Network Connectivity, Private CA, Secret Manager, IAM, Cloud Resource Manager, Logging, Monitoring, Cloud DNS, Access Context Manager):
+
 ```bash
-gcloud services enable container.googleapis.com \
-  compute.googleapis.com \
-  storage.googleapis.com \
-  cloudbuild.googleapis.com \
-  --project=<YOUR_GCP_PROJECT_ID>
+bash scripts/bootstrap_gcp_project.sh --project=<YOUR_GCP_PROJECT_ID> --env=staging
 ```
 
 ### `ImagePullBackOff` on GKE
@@ -414,7 +408,7 @@ If `kubectl` or Terraform's `kubernetes` / `helm` providers time out against the
 
 ### Deploying under a service account (`sa-cage-deployer`)
 
-Staging deployments have been verified only under human credentials (`gcloud auth application-default login`). The automated path under a deployer service account (`sa-cage-deployer` in the staging probe) is unverified end-to-end; the probe found that account lacked `cloudkms.cryptoKeyVersions.viewPublicKey` (which is not included in `roles/cloudkms.admin` or `roles/editor`). Grant `roles/cloudkms.publicKeyViewer` at the project level (not on the `binauthz-attestor` key itself, which uses an authoritative `google_kms_crypto_key_iam_policy`). See [Unverified Deployer Service Account](../docs/operations/DEPLOYMENT_RULES.md#unverified-deployer-service-account-sa-cage-deployer).
+When deploying under a service account, pass `--deployer-sa=<SA_EMAIL>` to [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) (or run `bootstrap_gcp_project.sh` while authenticated as that service account) so `roles/cloudkms.publicKeyViewer` (`cloudkms.cryptoKeyVersions.viewPublicKey`, which is not included in `roles/cloudkms.admin` or `roles/editor`) is granted at the project level rather than on `binauthz-attestor` itself (which uses an authoritative `google_kms_crypto_key_iam_policy`). See [Unverified Deployer Service Account](../docs/operations/DEPLOYMENT_RULES.md#unverified-deployer-service-account-sa-cage-deployer).
 
 ### `linkerd-network-validator` CrashLoopBackOff (exit 95)
 
