@@ -52,7 +52,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: partner-integration
+  # One group per partner selection and ref. GitHub lets a newer run in a group
+  # supersede a pending one even with cancel-in-progress: false, so a single
+  # shared group let a dispatch for one partner cancel another partner's queued
+  # run. Scheduled runs have no inputs and share the "all" group.
+  group: partner-integration-${{ github.ref }}-${{ inputs.partner_filter || 'all' }}
   cancel-in-progress: false
 
 jobs:
