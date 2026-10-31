@@ -52,7 +52,9 @@ _NON_SECRET_ENV = {
     "LANGSMITH_TRACING",
     "LANGCHAIN_TRACING_V2",
     "KMS_GOVERNANCE_KEY",
+    "PROVIDER_01_GCP_ID_TOKEN",
 }
+_MINT_STEP = "Mint provider_01 Cloud Run ID token"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -234,6 +236,8 @@ def test_partner_tables_agree() -> None:
     secrets = [name for names in harness.PARTNER_SECRETS.values() for name in names]
     assert len(secrets) == len(set(secrets)), "a secret is listed for two partners"
     assert not set(secrets) & set(harness.UNSUPPLIED)
+    assert not set(secrets) & set(harness.MINTED)
+    assert not set(harness.MINTED) & set(harness.UNSUPPLIED)
 
 
 # ── The workflow matches the harness module and the live tests ────────────────
@@ -318,8 +322,42 @@ def test_actuator_01_wif_and_kms_signing() -> None:
     )
 
 
+def test_provider_01_id_token_is_minted_not_stored() -> None:
+    """FlowSignal's Cloud Run ID token is minted per run via WIF, never stored.
+
+    The token's audience is the endpoint the tests call, so the mint step reads
+    that one secret and nothing else. It writes no credentials file and exports
+    no environment: the job's only GCP credential is the ID token itself.
+    """
+    auth = harness.PROVIDER_01_GCP_AUTH
+    assert set(auth) == {"workload_identity_provider", "delegates", "service_account"}
+    assert "PROVIDER_01_ENDPOINT" in harness.PARTNER_SECRETS["provider_01"]
+
+    step = _live_steps()[_MINT_STEP]
+    assert step["id"] == "provider_01_id_token"
+    assert step["if"] == (
+        f"matrix.partner == 'provider_01' && vars.{auth['workload_identity_provider']} != ''"
+    )
+    assert step["uses"].startswith("google-github-actions/auth@")
+    assert re.search(r"@[0-9a-f]{40}$", step["uses"])
+    assert step["with"] == {
+        **{key: f"${{{{ vars.{var} }}}}" for key, var in auth.items()},
+        "token_format": "id_token",
+        "id_token_audience": "${{ secrets.PROVIDER_01_ENDPOINT }}",
+        "id_token_include_email": True,
+        "create_credentials_file": False,
+        "export_environment_variables": False,
+    }
+
+    env = _live_steps()["Run live tests"]["env"]
+    assert set(harness.MINTED) == {"PROVIDER_01_GCP_ID_TOKEN"}
+    assert env["PROVIDER_01_GCP_ID_TOKEN"] == (
+        "${{ steps.provider_01_id_token.outputs.id_token }}"
+    )
+
+
 def test_no_other_step_sees_a_secret() -> None:
-    allowed = {"Run live tests", "Stage actuator_01 mTLS material"}
+    allowed = {"Run live tests", "Stage actuator_01 mTLS material", _MINT_STEP}
     for job_name, job in _workflow()["jobs"].items():
         for step in job["steps"]:
             if step.get("name") in allowed and job_name == "live":
@@ -336,7 +374,10 @@ def test_live_tests_read_only_what_the_harness_supplies() -> None:
     staged = set(harness.STAGED_FILES.values())
     for partner, target in harness.PARTNER_TARGETS.items():
         supplied = (
-            set(harness.PARTNER_SECRETS[partner]) | staged | set(harness.UNSUPPLIED)
+            set(harness.PARTNER_SECRETS[partner])
+            | staged
+            | set(harness.MINTED)
+            | set(harness.UNSUPPLIED)
         )
         prefix = partner.upper() + "_"
         for path in _files_under(target):

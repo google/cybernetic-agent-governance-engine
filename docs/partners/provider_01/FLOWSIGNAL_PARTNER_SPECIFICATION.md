@@ -119,6 +119,18 @@ class CageAuthorityDetermineRequest(BaseModel):
    - CAGE internally seals envelopes using RFC 8785 (JCS) SHA-256 digests over `SubjectMetadata`.
    - FlowSignal communicates via standard JSON REST and **does not unpack or verify CAGE GovernanceEnvelopes in Phase 3**.
 
+### 2.4 Live Contract (Observed 2026-10-31)
+CAGE's live suite ([`test_provider_01_live.py`](../../../tests/integrations/provider_01/test_provider_01_live.py)) pins the contract FlowSignal's Phase 4 staging service serves. It is narrower than the generic three-endpoint `NormativeProvider` contract:
+
+| Route | Served | Authentication and behaviour |
+|---|---|---|
+| `GET /health` | Yes | Cloud Run ID token alone |
+| `POST /cage/validate` | Yes | ID token and FlowSignal key; 401 without either. 422 for a malformed body or one carrying `decision` / `authority_record_id` |
+| `POST /authority/determine` | Yes | FlowSignal's native contract; CAGE does not call it |
+| `GET /legal-baseline/{region}`, `GET /evidence-chain/{thread_id}` | No (404) | — |
+
+FlowSignal serves no baseline or evidence-chain route, so the adapter's `fetch_baseline` and `submit_evidence` fail closed against it: an error, an empty profile, an empty seal. The live suite asserts this, so a change on either side surfaces as a failing test.
+
 ---
 
 ## §3 — Authentication, Transport & Cloud Run Ingress
@@ -185,6 +197,8 @@ export CAGE_NORMATIVE_API_KEY_SECRET="<flowsignal-application-key>"
 export CAGE_NORMATIVE_GCP_ID_TOKEN=$(gcloud auth print-identity-token --audiences="https://<flowsignal-service-url>")
 ```
 
+The live suite reads `PROVIDER_01_ENDPOINT`, `PROVIDER_01_API_KEY` and `PROVIDER_01_GCP_ID_TOKEN` instead. The CI harness never stores the ID token: it mints one per run through Workload Identity Federation, as the service account FlowSignal granted `roles/run.invoker` (`PROVIDER_01_GCP_AUTH` in [`partner_harness.py`](../../../scripts/partner_harness.py)).
+
 ---
 
 ## §4 — Decision Mapping Rules
@@ -244,7 +258,7 @@ Hostile testing deliberately attacks the composition boundary across 7 vectors t
 * **4.3 Parameter Tampering:** Modifying any payload field (e.g. `amount: 100` $\to$ `amount: 1000`) changes RFC 8785 JCS SHA-256 digest $\to$ token `act` claim mismatch $\to$ emits `ACTION_BINDING_MISMATCH`, blocks execution.
 
 ### Vector 5: Fencing & Monotonic Epoch Integrity
-* **5.1 Evidence Stream Fence:** Evidence hashes appended to durable storage (`/evidence-chain/{thread_id}`); cold store is append-only and immutable across pod restarts.
+* **5.1 Evidence Stream Fence:** Evidence hashes are appended to CAGE's own durable evidence stream; the cold store is append-only and immutable across pod restarts. FlowSignal serves no `/evidence-chain/{thread_id}` route (§2.4).
 * **5.2 Monotonic Epochs:** Redis consensus epoch counters increment monotonically (`INCR`) and never roll back.
 
 ### Vector 6: Non-Bypassability & Provider Binding
@@ -262,19 +276,17 @@ Hostile testing deliberately attacks the composition boundary across 7 vectors t
 ### 6.1 Baseline Smoke Test Sequence
 Before running hostile vectors, execute the baseline health suite:
 ```bash
-# 1. Baseline fetch
-curl -H "Authorization: Bearer $CAGE_NORMATIVE_API_KEY_SECRET" \
-     -H "X-Serverless-Authorization: Bearer $CAGE_NORMATIVE_GCP_ID_TOKEN" \
-     $CAGE_NORMATIVE_ENDPOINT/legal-baseline/US_FED
+# 1. Health through Cloud Run IAM (the ID token alone suffices)
+curl -H "X-Serverless-Authorization: Bearer $PROVIDER_01_GCP_ID_TOKEN" \
+     "$PROVIDER_01_ENDPOINT/health"
 
-# 2. Hermetic unit tests
-uv run pytest tests/test_provider_01.py -v
+# 2. Hermetic adapter and Phase 3 37-field schema tests
+uv run pytest tests/integrations/provider_01/test_provider_01.py \
+  tests/integrations/provider_01/test_provider_01_phase3_schema.py -v
 
-# 3. Phase 3 37-field schema tests
-uv run pytest tests/test_provider_01_phase3_schema.py -v
-
-# 4. Live partner integration harness
-uv run pytest tests/test_provider_01_live.py -v
+# 3. Live over-the-wire suite; fails if any test cannot run, as CI does
+uv run pytest tests/integrations/provider_01 -m partner_integration \
+  --run-partner-integration -p tests.fixtures.require_live -n 0 -v
 ```
 
 ### 6.2 Quantitative Production Gates
