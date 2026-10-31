@@ -19,8 +19,9 @@ Validates fail-closed invariant: execute_trade() must reject calls with
 missing, empty, or whitespace-only routing seals.
 """
 
+import os
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -154,3 +155,45 @@ class TestExecuteTradeRoutingSealEnforcement:
             # Should reach mock broker execution without raising seal error
             assert "EXECUTED" in result
             assert "AMZN" in result
+
+
+class TestExecuteTradeOrderSizing:
+    """The broker order must carry the same dollar amount governance priced."""
+
+    @pytest.mark.asyncio
+    async def test_execute_trade_sends_amount_as_notional(self):
+        """amount is a USD notional (fiscal tier, CBF, UCA-6), never a share count."""
+        order = TradeOrder(
+            symbol="NVDA",
+            amount=1000,
+            currency="USD",
+            side="buy",
+            type="market",
+            confidence=0.99,
+            transaction_id=str(uuid.uuid4()),
+        )
+        captured_payload: dict = {}
+
+        def _fake_post(url, json=None, headers=None, **kwargs):
+            captured_payload.update(json or {})
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"id": "order-notional-001"}
+            mock_resp.raise_for_status.return_value = None
+            return mock_resp
+
+        with (
+            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
+            patch("src.cage_finance.tools.trade_executor._USE_MOCK_BROKER", False),
+            patch("requests.post", side_effect=_fake_post),
+            patch.dict(
+                os.environ,
+                {"BROKER_API_KEY": "test-key", "BROKER_API_SECRET": "test-secret"},
+            ),
+        ):
+            mock_redis.get.return_value = None
+
+            result = await execute_trade(order, routing_seal="valid-seal-notional")
+
+        assert "EXECUTED" in result
+        assert captured_payload.get("notional") == 1000
+        assert "qty" not in captured_payload
