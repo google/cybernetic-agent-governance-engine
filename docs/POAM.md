@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-10-30
+**Last Updated:** 2026-10-31
 
 ---
 
@@ -113,6 +113,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-161 | RA-5 / SI-2 / CA-7 | The pip-audit gate is configured around findings rather than detecting them: the shape POAM-2026-120 records for test fixtures, here in a security gate (see also POAM-2026-163 for Bandit `exclude_dirs`). The pip-audit step in [`security-scan.yml`](../.github/workflows/security-scan.yml) passed four `--ignore-vuln` flags, all four dead at `34709d55`: `GHSA-rg7c-g689-fr3x` is `google-adk`'s `CVE-2026-4810` (`82dc4847` relabelled its comment as diskcache's `CVE-2025-69872` / `GHSA-w8v5-vhqr-4h9v`, and `d72034ab` removed `--ignore-vuln CVE-2026-4810` when upgrading `google-adk` to 2.2.0 while keeping this GHSA alias; `uv.lock` pins unaffected `google-adk` 2.3.0); `torch` (`PYSEC-2026-139`, `GHSA-rrmf-rvhw-rf47`) left `uv.lock` in `7ab1acd5`; `pip`'s `PYSEC-2026-3721` is fixed in 26.2; `GHSA-rrmf-rvhw-rf47` had no comment since `e429b230`; and "Scan compliance extras" discarded pip-audit's exit status (POAM-2026-150 class). `#599` (`4970e187`, branch head `7faee848`) removed all four flags from `security-scan.yml` and added [`test_workflow_vuln_suppressions.py`](../tests/test_workflow_vuln_suppressions.py), which immediately caught `#602` (`319c702d`, merged 53 s after `#599` without rebase) copying the four uncommented flags into [`dependency-review.yml`](../.github/workflows/dependency-review.yml) (`run 41143961049`); `#604` (`260c4189`, branch head `26a7231e`, `2026-10-31`) removed the four flags from `dependency-review.yml` and bumped `pyasn1` to `>=0.6.5` for `CVE-2026-119194`–`CVE-2026-119197` caught by the un-suppressed nightly scan (`run 41158877040`, 2026-10-31; detail section) | Low | 2026-11-15 |
 | POAM-2026-163 | SA-11 / RA-5 / CA-7 | The Bandit SAST gate excluded `scripts/` via `exclude_dirs = ["tests", "scripts", "examples"]` in [`pyproject.toml`](../pyproject.toml) even though [`Makefile`](../Makefile), [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), and [`.github/workflows/security-scan.yml`](../.github/workflows/security-scan.yml) pass `bandit -r src/ scripts/ -c pyproject.toml -ll -ii`, because Bandit applies `exclude_dirs` after expanding positional targets. Removing `"scripts"` (leaving `["tests", "examples"]`) exposed 8 medium-severity findings across 5 scripts: 1× `B310` (`urllib.request.urlopen` without scheme validation in [`automated_auditor.py`](../scripts/automated_auditor.py)) and 7× `B108` (`/tmp` defaults in diagnostic/validation scripts). Remediated and merged on `main` in #601 (`7f0c1c4b`, branch head `a19a97cb`; detail section) | Moderate | 2026-11-15 |
 | POAM-2026-164 | CM-2 / SA-11 / CA-2 | A clean GCP project has never been deployed end-to-end from [`QUICK_START.md`](../infra/QUICK_START.md). While `POAM-2026-131` closed on the live `cage-staging` apply from rendered digests (`3afda5b7`), every live GKE apply to date has targeted the long-lived `<project>` project whose state bucket, APIs, Cloud Build SA, KMS signing keyring (`cage-signing-staging`), and Binary Authorization attestor already existed. Clean-project bootstrap ([`bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh), `#605`, `b66c7344`) and `--fresh-project` lifecycle teardown ([`staging_lifecycle.sh`](../scripts/staging_lifecycle.sh), `#606`, `d599fc04`) have only been tested against hermetic `gcloud`/`terraform` stubs (`test_gcp_project_bootstrap.py`, `test_staging_lifecycle.py`) and have never created or torn down a real GCP resource. Code inspection prior to the first walk already identified a teardown collision in `#606`: under `POAM-2026-159`'s 1-day locked staging retention (`retention_period = 86400`, `is_locked = true`), objects written during Phases 2–5 cannot be deleted at `t + 20m` (causing `terraform destroy` and the immediate `W9` bucket/lien survivor check in `staging_lifecycle.sh` to fail before 24 hours elapse), and undeletable KMS keyrings / HSM key versions require a project budget alert and post-retention project deletion. Requires a manual clean-project walk (`Step A2`) first to record empirical failures, followed by updating `staging_lifecycle.sh` (`Step A3`) against the empirical failure list (detail section) | High | 2026-11-15 |
+| POAM-2026-165 | AC-6 / CM-5 / SI-7 | Any branch of this repository can impersonate the staging deployer, `sa-cage-deployer`, which is owner-equivalent and controls the image-signing chain. The GitHub Actions Workload Identity provider checks only `assertion.repository` and maps no ref or environment, and the deployer grants `roles/iam.workloadIdentityUser` and `roles/iam.serviceAccountTokenCreator` to the whole repository's principal set. Anyone with write access, or a leaked credential for them, can push a branch whose workflow requests an ID token and take the deployer's project roles, which include `roles/resourcemanager.projectIamAdmin`, `roles/cloudkms.admin`, `roles/cloudbuild.builds.editor` with `roles/iam.serviceAccountUser`, and `roles/artifactregistry.admin`. With those it can sign Binary Authorization attestations through the attestor's Cloud Build identity, or grant itself the signer role, and push the images they admit. The partner harness runs as the same identity, so restricting the one binding would also block branch-dispatched partner runs. The fix is two identities with different conditions (detail section) | High | 2026-11-07 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -1464,6 +1465,66 @@ Code inspection of `#605` and `#606` prior to the first walk already identified 
 1. A sanitized step-by-step walk log from a newly created throwaway GCP project (recording timestamps, commands, outcomes, and every divergence from [`infra/QUICK_START.md`](../infra/QUICK_START.md)) is committed to the repository.
 2. Every documentation and script divergence surfaced by the manual walk is fixed and merged on `main`, and [`scripts/staging_lifecycle.sh`](../scripts/staging_lifecycle.sh) reflects the empirically verified teardown and post-retention project deletion sequence.
 3. Complete teardown and deletion of the throwaway walk project (including post-retention bucket/lien clearance and `gcloud projects delete` reaching `DELETE_REQUESTED` with zero surviving billable resources) is verified and recorded here alongside the merge commit SHAs.
+
+### POAM-2026-165: Any Branch Can Impersonate the Owner-Equivalent Deployer Through Workload Identity Federation
+
+**Control:** NIST AC-6 (Least Privilege), CM-5 (Access Restrictions for Change), SI-7 (Software, Firmware, and Information Integrity)
+**Risk Level:** High
+**Status:** Open. Configuration verified 2026-10-31 with read-only `gcloud` queries against the staging project; no remediation applied yet
+**Date Opened:** 2026-10-31
+**Target Closure:** 2026-11-07
+
+**Description:**
+GitHub Actions authenticates to the staging project (`<PROJECT_ID>`) through the `github` provider of the `github-actions` Workload Identity pool. As configured on 2026-10-31:
+
+1. **The provider's condition names only the repository.** Its attribute condition is `assertion.repository == 'google/cybernetic-agent-governance-engine'`. Its mapping carries `google.subject`, `attribute.actor`, `attribute.repository` and `attribute.repository_owner`, but no ref and no environment, so no binding can tell `main` from any other branch.
+2. **The deployer trusts the whole repository.** `sa-cage-deployer` grants `roles/iam.workloadIdentityUser` and `roles/iam.serviceAccountTokenCreator` to the principal set `attribute.repository/google/cybernetic-agent-governance-engine`, which is every workflow run in the repository from any ref. Anyone with write access can push a branch whose workflow sets `permissions: id-token: write` and runs on `push`, and GitHub issues that run a token the provider accepts. So can anyone holding a leaked token or session for such a person. Fork pull requests receive no ID token, and no workflow uses `pull_request_target`, so the exposure is the repository's writers and their credentials, not the public.
+3. **The deployer is owner-equivalent.** It holds these project-level roles:
+   - `roles/editor`
+   - `roles/resourcemanager.projectIamAdmin`
+   - `roles/iam.serviceAccountAdmin`, `roles/iam.serviceAccountUser` and `roles/iam.serviceAccountCreator`
+   - `roles/cloudkms.admin` and `roles/cloudkms.publicKeyViewer`
+   - `roles/cloudbuild.builds.editor`
+   - `roles/artifactregistry.admin`
+   - `roles/secretmanager.admin`
+   - `roles/container.admin`, `roles/compute.admin` and `roles/run.admin`
+   - `roles/storage.admin` and `roles/storage.hmacKeyAdmin`
+   - `roles/servicenetworking.networksAdmin`
+
+   `roles/resourcemanager.projectIamAdmin` alone lets it grant itself any role.
+4. **The deployer reaches the image-signing chain** (`POAM-2026-083`). [`kms_signing.tf`](../infra/targets/gcp-gke/kms_signing.tf) holds the `binauthz-attestor` key's policy authoritatively, and only `cage-cloudbuild-staging` is a signer on it, which matches the live key policy. The deployer can still sign in two ways:
+   - it can submit a Cloud Build that runs as that identity (`roles/cloudbuild.builds.editor` with `roles/iam.serviceAccountUser`);
+   - it can grant itself the signer role (`roles/cloudkms.admin`, `roles/resourcemanager.projectIamAdmin`).
+
+   It can then push the images those attestations admit (`roles/artifactregistry.admin`). A branch push can therefore defeat the deploy-time supply-chain control.
+5. **The partner harness runs as the deployer.** Two repository variables name `sa-cage-deployer`:
+   - `ACTUATOR_01_WIF_SERVICE_ACCOUNT`, which actuator_01 impersonates directly;
+   - `PROVIDER_01_WIF_DELEGATE`, which provider_01 delegates through to mint its Cloud Run ID token.
+
+   Every partner run, including the branch-dispatched runs that verified `#610` before merge, therefore holds deployer authority. Restricting the single binding to `main` would close the hole but break those runs.
+6. **A second path reaches the deployer.** The project's Compute Engine default service account also holds `roles/iam.serviceAccountTokenCreator` on `sa-cage-deployer`, and every `cage-staging` node pool runs as that account. Pods use `GKE_METADATA` workload identity and cannot read the node credential, so this path needs a node compromise.
+7. **None of this has a reviewed source of truth.** Neither the pool and provider nor `sa-cage-deployer` is defined in `infra/` ([`DEPLOYMENT_RULES.md`](operations/DEPLOYMENT_RULES.md) § Unverified Deployer Service Account).
+
+**Remediation Plan:**
+Signing authority and test execution need different conditions, so give them different identities rather than restricting the one binding:
+1. **Deployer: `main` or a reviewed environment only.** Map `attribute.ref = assertion.ref` (and `attribute.environment = assertion.environment` if a protected GitHub environment gates deploys) on the provider. Replace the deployer's repository-wide bindings with one on `principalSet://…/attribute.ref/refs/heads/main`, or on the environment, keeping the provider's repository condition.
+2. **A separate low-privilege identity for partner tests, from any branch.** Bind it to the repository principal set and grant only what the harness uses:
+   - `roles/cloudkms.signer` on the `actuator-01-signing` key;
+   - `roles/iam.serviceAccountTokenCreator` on `cage-gateway`, to mint provider_01's Cloud Run ID token.
+
+   Then repoint `ACTUATOR_01_WIF_SERVICE_ACCOUNT` and `PROVIDER_01_WIF_DELEGATE` at it.
+3. **Remove the Compute Engine default service account's Token Creator grant** on `sa-cage-deployer`.
+4. **Reduce the deployer toward least privilege.** Drop `roles/editor` and `roles/resourcemanager.projectIamAdmin` unless a `terraform apply` is shown to need them, and record why any broad role stays.
+5. **Codify the pool, provider, both service accounts and their bindings in `infra/`**, so that the next change is reviewed and `terraform plan` detects drift.
+
+**Closure Criteria:**
+1. A run from a branch other than `main` that tries to impersonate `sa-cage-deployer` fails with `PERMISSION_DENIED`. Its run ID is recorded here.
+2. A branch-dispatched partner run passes under the partner-test identity. Its run ID is recorded here.
+3. `gcloud` output, recorded here with the date, shows:
+   - the deployer's bindings require `refs/heads/main` or the reviewed environment;
+   - the Compute Engine default service account no longer holds Token Creator on it;
+   - the deployer's remaining roles, each with its justification.
+4. Steps 1–3 are defined in `infra/`, and `terraform plan` shows no drift against the live project. The merge commit SHAs are recorded here.
 
 ### POAM-2026-121: Validation Report Makes a False Composition Claim
 
