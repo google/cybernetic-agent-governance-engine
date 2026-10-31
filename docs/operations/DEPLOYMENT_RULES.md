@@ -169,9 +169,10 @@ one-day lock. On the live staging project it was locked on 2026-09-29 and holds
 storage lien stay until at least 2033-09-27**, the lock date plus 2555 days, and
 the bucket stays longer if anything was written to it after the lock.
 
-1. Before any teardown, plan and apply once with Terraform 1.7 or later:
-   `./deploy_all.sh --target gcp-gke --env staging`, without `--auto-approve`, so
-   that it stops for review after the plan. The plan shows
+1. Before any teardown, plan and apply once with Terraform 1.7 or later, without
+   `--auto-approve` so that `deploy_all.sh` stops for review after the plan:
+   `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>`.
+   The plan shows
    `google_storage_bucket.langfuse_events will no longer be managed by Terraform,
    but will not be destroyed`; a new
    `google_storage_bucket.langfuse_event_upload`
