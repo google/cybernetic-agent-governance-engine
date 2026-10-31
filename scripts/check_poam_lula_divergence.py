@@ -141,6 +141,17 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
     "POAM-2026-136": ("tests/infrastructure/test_inference_backend_gke.py",),
     # Healthcare declares no causal graph and ships no causal_graph.yaml.
     "POAM-2026-143": ("tests/test_healthcare_plugin.py",),
+    # No profile commits image_digests or project_id; deploy_all.sh builds -> renders -> plans.
+    "POAM-2026-131": (
+        "tests/infrastructure/test_image_digests_rendered.py",
+        "tests/infrastructure/test_gcp_project_bootstrap.py",
+        "tests/infrastructure/test_staging_lifecycle.py",
+    ),
+    # Staging advisor deployment drift resolved (out-of-band Deployment/Service removed; advisor_enabled gated on inference_backend).
+    "POAM-2026-158": (
+        "tests/infrastructure/test_inference_backend_gke.py",
+        "tests/test_gke_state_isolation.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
