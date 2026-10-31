@@ -29,6 +29,22 @@ specifications, and technical exchange artifacts.
 
 ---
 
+## Live Verification Status
+
+Latest over-the-wire result per adapter, as of 2026-10-31. A harness run ([`ci-partner-integration.yml`](../../.github/workflows/ci-partner-integration.yml)) passes only if every selected live test ran and passed ([`require_live`](../../tests/fixtures/require_live.py)), so a passing run means the tests ran rather than skipped. Results without a run ID come from a local run and are labelled as such.
+
+| Adapter | Result | Run on `main` | What blocks a passing run |
+|---|---|---|---|
+| `provider_01` FlowSignal | 8 passed, 0 not run | [`41233853779`](https://github.com/google/cybernetic-agent-governance-engine/actions/runs/41233853779) at `5b0055ad` | — |
+| `provider_05` VEIP v0.2 | 10 passed, 0 not run | [`41234042599`](https://github.com/google/cybernetic-agent-governance-engine/actions/runs/41234042599) at `5b0055ad` | — (the v0.3 blueprint registry isn't deployed; its tests sit outside the harness) |
+| `provider_08` Verdict Systems | 4 passed, 0 not run | [`41233869303`](https://github.com/google/cybernetic-agent-governance-engine/actions/runs/41233869303) at `5b0055ad` | — |
+| `provider_02` NexArt | Local: 2 of 3 `test_provider_02_live.py` tests passed | none | A CAGE-side resolver defect fails `test_live_cer_verification_signature` ([open items](provider_02/nexart/HITL_INTEROP_STATUS.md#open-items)); `test_staging_e2e.py` needs `PROVIDER_02_API_KEY_SECRET` |
+| `provider_07` InferTheta | Local: 2 of 8 passed (`/health`, JWKS); the other 6 got HTTP 401 `Invalid API key.` | none | A current `PROVIDER_07_API_KEY` |
+| `provider_03` Veritas | Not run | none | No sandbox endpoint or key |
+| `actuator_01` Archytan | Not run on `main`. Run `41125558418` on the #598 branch authenticated through WIF, then failed closed (5 skipped) | none | `ACTUATOR_01_ENDPOINT`, `ACTUATOR_01_TENANT_ID` and the mTLS PEM secrets |
+
+---
+
 ## Boundaries & Isolation Guidelines
 
 1. **Vendor Isolation:** Partner-specific technical documentation and protocols must remain in `docs/partners/provider_XX/`. They must not mix into core engine architecture (`docs/architecture/`) or internal governance policies (`docs/governance/`).
