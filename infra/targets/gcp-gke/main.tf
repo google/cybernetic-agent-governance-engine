@@ -13,6 +13,7 @@
 # limitations under the License.
 
 terraform {
+  # 1.7: the removed block that forgets the pre-POAM-2026-159 Langfuse bucket.
   # 1.9: variable validations reference other variables and locals
   # (image_digests follows local.required_image_digests).
   required_version = ">= 1.9.0"
@@ -188,27 +189,46 @@ module "service_mesh" {
   depends_on = [module.gke]
 }
 
-# ─── GCS Bucket for Langfuse Events ───────────────────────────────────────────
+# ─── Retention Posture (§1.1, NIST AU-9 / AU-11, POAM-2026-159) ──────────────
+# The one source of the retention lock on both retention-locked buckets: the
+# Langfuse event-upload bucket and the evidence WORM bucket. The tier
+# (var.environment, which variables.tf limits to dev, staging and prod) selects
+# it, and only the exact tier "staging" gets the short period: every other value,
+# the dev default included, keeps 2555 days. Staging is locked whatever the
+# compliance flags say, because GCS refuses to shorten or remove a locked policy
+# and the provider replaces a bucket whose lock is turned off.
+#
+#   tier      retention period          locked
+#   dev       220752000 s (2555 days)   only while a compliance flag is set
+#   staging   86400 s (1 day)           always
+#   prod      220752000 s (2555 days)   always
+locals {
+  retention_period_seconds = var.environment == "staging" ? 86400 : 220752000
+  retention_locked         = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active
+}
+
+# ─── GCS Bucket for Langfuse Event Uploads ────────────────────────────────────
+# Langfuse writes every raw ingestion event here (LANGFUSE_S3_EVENT_UPLOAD_BUCKET)
+# and its worker reads the events back into ClickHouse. The events stay for at
+# least the retention period above: one day in staging, 2555 days elsewhere.
 
 resource "random_id" "bucket_suffix" {
   byte_length = 4
 }
 
-resource "google_storage_bucket" "langfuse_events" {
-  name          = "langfuse-events-${var.project_id}-${random_id.bucket_suffix.hex}"
+resource "google_storage_bucket" "langfuse_event_upload" {
+  name          = "langfuse-event-upload-${var.project_id}-${random_id.bucket_suffix.hex}"
   location      = var.region
   project       = var.project_id
   force_destroy = var.environment == "dev" ? true : false
 
   uniform_bucket_level_access = true
 
-  # AU-9: WORM retention (B5 fix) — 2555 days (7 years) immutable retention.
-  # Prevents deletion before 2555 days AND locks the policy irreversibly.
-  # Compounding with downgraded writer SA (objectCreator instead of objectAdmin)
-  # ensures even the compliance bridge cannot erase evidence it writes.
+  # AU-9 / AU-11: no object can be deleted or overwritten before it is
+  # local.retention_period_seconds old. Locking is irreversible.
   retention_policy {
-    retention_period = 220752000 # 2555 days in seconds
-    is_locked        = local.any_compliance_active ? true : false
+    retention_period = local.retention_period_seconds
+    is_locked        = local.retention_locked
   }
 
   # Lifecycle rule now transitions to cold storage, not deletes
@@ -246,15 +266,30 @@ resource "google_storage_bucket" "langfuse_events" {
   }
 }
 
+# POAM-2026-159: this bucket used to be google_storage_bucket.langfuse_events,
+# locked for 2555 days whenever a compliance flag was set, staging included.
+# GCS refuses to shorten a locked policy, so that bucket can never take the
+# staging lock. This block makes the next apply forget it without deleting it,
+# and the same apply creates the bucket above under its new name. The forgotten
+# bucket keeps its objects and its locked policy until its newest object's
+# retention expires, and the project keeps its Cloud Storage lien at least that
+# long. A destroy plan ignores this block (verified on Terraform 1.15.8), so
+# apply once before any teardown. The migration is in
+# docs/operations/DEPLOYMENT_RULES.md.
+removed {
+  from = google_storage_bucket.langfuse_events
+
+  lifecycle {
+    destroy = false
+  }
+}
+
 # ─── Evidence WORM Bucket — System of Record (§1.1, §2.6, NIST AU-9) ─────────
 # Durable tamper-evident cold store for hash-chained governance evidence and
 # OSCAL assessment artifacts. ClickHouse is only the query plane (§2.6); losing
 # ClickHouse nodes never loses evidence persisted to this retention-locked bucket.
-#
-# Posture matrix (§1.1):
-#   - dev:     is_locked = false, retention = 220752000s (unlocked for teardown)
-#   - staging: is_locked = true,  retention = 86400s (1 day — locked short)
-#   - prod:    is_locked = true,  retention = 220752000s (2555 days / 7 years)
+# Its retention lock is the shared posture above (local.retention_period_seconds,
+# local.retention_locked).
 module "worm_bucket" {
   source = "../../modules/worm_bucket"
 
@@ -265,8 +300,8 @@ module "worm_bucket" {
   bucket_name              = "${var.project_id}-evidence-worm-${var.environment}"
   enable_cmek              = var.enable_cmek
   kms_key_id               = local.cmek_key_id
-  retention_period_seconds = var.environment == "staging" ? 86400 : 220752000
-  is_locked                = var.environment == "prod" || var.environment == "staging" || var.enable_nist_compliance || local.any_compliance_active
+  retention_period_seconds = local.retention_period_seconds
+  is_locked                = local.retention_locked
   force_destroy            = var.environment == "dev" && !local.any_compliance_active
 }
 
@@ -279,21 +314,24 @@ resource "google_service_account" "langfuse_gcs" {
   project      = var.project_id
 }
 
-# B5 fix — least-privilege objectUser (create/get/list/overwrite) on transient Langfuse S3 event queue bucket
+# B5 fix — least-privilege objectUser on the Langfuse event-upload bucket. The
+# role can create, read, list, overwrite and delete objects; the bucket's
+# retention policy refuses an overwrite or a delete until the object is older
+# than local.retention_period_seconds.
 resource "google_storage_bucket_iam_member" "langfuse_gcs_creator" {
-  bucket = google_storage_bucket.langfuse_events.name
+  bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
 }
 
 resource "google_storage_bucket_iam_member" "langfuse_gcs_reader" {
-  bucket = google_storage_bucket.langfuse_events.name
+  bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
 }
 
 resource "google_storage_bucket_iam_member" "langfuse_gcs_viewer" {
-  bucket = google_storage_bucket.langfuse_events.name
+  bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
 }
@@ -797,7 +835,7 @@ module "langfuse" {
 
   # S3-compatible blob storage via GCS HMAC keys
   s3_endpoint   = var.langfuse_s3_endpoint
-  s3_bucket     = var.langfuse_s3_bucket != "" ? var.langfuse_s3_bucket : google_storage_bucket.langfuse_events.name
+  s3_bucket     = var.langfuse_s3_bucket != "" ? var.langfuse_s3_bucket : google_storage_bucket.langfuse_event_upload.name
   s3_access_key = var.langfuse_s3_access_key != "" ? var.langfuse_s3_access_key : google_storage_hmac_key.langfuse_key.access_id
   s3_secret_key = var.langfuse_s3_secret_key != "" ? var.langfuse_s3_secret_key : google_storage_hmac_key.langfuse_key.secret
   s3_region     = var.region
@@ -1110,7 +1148,7 @@ module "app_secrets" {
   aws_access_key_id     = var.aws_access_key
   aws_secret_access_key = var.aws_secret_key
   s3_endpoint_url       = "https://storage.googleapis.com"
-  s3_bucket_name        = google_storage_bucket.langfuse_events.name
+  s3_bucket_name        = google_storage_bucket.langfuse_event_upload.name
 
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
   # Dev posture: pass the key as-is (may be empty → module skips secret creation

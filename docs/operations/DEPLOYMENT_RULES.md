@@ -140,6 +140,81 @@ See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging
 for full configuration and [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)
 for automated validation workflow.
 
+#### Langfuse event bucket retention (POAM-2026-159)
+
+The Langfuse event-upload bucket and the evidence WORM bucket take their retention
+lock from one pair of locals in [`main.tf`](../../infra/targets/gcp-gke/main.tf),
+`local.retention_period_seconds` and `local.retention_locked`, which the tier
+(`environment`) selects:
+
+| Tier | Retention period | Locked |
+|---|---|---|
+| `dev` (the variable default) | 220752000 s (2555 days) | Only while a compliance flag is set (`eu-dev`, `apac-dev`) |
+| `staging` | 86400 s (1 day) | Always |
+| `prod` | 220752000 s (2555 days) | Always |
+
+Only the exact tier `staging` gets the short period.
+[`retention_posture.tftest.hcl`](../../infra/targets/gcp-gke/tests/retention_posture.tftest.hcl)
+plans every committed profile from its file and holds each prod profile to 2555
+days. Locking a policy places a Cloud Storage lien on the project, and no object
+in either bucket can be deleted before it is a day old.
+
+**One-time migration for a staging project applied before this change.** Its
+Langfuse bucket is `google_storage_bucket.langfuse_events`
+(`langfuse-events-<project>-<suffix>`), locked at 220752000 s whenever a
+compliance flag was set, which `deploy_all.sh` does for US_FED staging. GCS
+refuses to shorten a locked retention period, so that bucket can never take the
+one-day lock. On the live staging project it was locked on 2026-09-29 and holds
+35,639 objects (read-only check, 2026-10-30): **the old bucket and the project's
+storage lien stay until at least 2033-09-27**, the lock date plus 2555 days, and
+the bucket stays longer if anything was written to it after the lock.
+
+1. Before any teardown, plan and apply once with Terraform 1.7 or later, without
+   `--auto-approve` so that `deploy_all.sh` stops for review after the plan:
+   `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>`.
+   The plan shows
+   `google_storage_bucket.langfuse_events will no longer be managed by Terraform,
+   but will not be destroyed`; a new
+   `google_storage_bucket.langfuse_event_upload`
+   (`langfuse-event-upload-<project>-<suffix>`, 86400 s, locked); the three
+   `google_storage_bucket_iam_member.langfuse_gcs_*` bindings replaced on the new
+   bucket; and the Langfuse deployments and application secret updated to the new
+   name. If it shows the old bucket destroyed or replaced, do not apply it.
+2. Record the old bucket outside Terraform, which no longer tracks it:
+   `gcloud storage buckets describe gs://langfuse-events-<project>-<suffix> --format="value(retention_policy)"`.
+   Langfuse stops writing to it, and its lifecycle rule moves its objects to the
+   ARCHIVE storage class after 365 days.
+
+A destroy plan ignores the `removed` block (verified on Terraform 1.15.8): run
+before step 1, it would try to delete the old bucket. The provider refuses to
+delete a locked bucket whose objects are still under retention, so no data would
+be lost, but the destroy would fail. After step 1, Terraform no longer knows the
+old bucket and cannot try to destroy it.
+
+The same apply moves every other deployment made before this change to a new
+`langfuse-event-upload-*` bucket and leaves the old one in place. A prod
+project's old bucket keeps its events under its 2555-day lock. A `dev` project's
+old bucket is unlocked unless a compliance flag was set (`eu-dev`, `apac-dev`),
+and can be removed by hand: `gcloud storage buckets update gs://<old-bucket> --clear-retention-period`,
+then `gcloud storage rm --recursive gs://<old-bucket>`.
+
+**What a full staging teardown still meets.** A walk project created after this
+change needs no migration, and objects in both buckets become deletable a day
+after they are written. `terraform destroy -var-file=staging.tfvars` still does
+not complete, for reasons this change leaves alone:
+
+- The five signing keys in [`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf)
+  set `prevent_destroy = true`, so Terraform rejects any destroy plan that
+  includes them.
+- In staging, neither retention-locked bucket sets `force_destroy`, so the
+  provider refuses to delete either one while it holds objects; the WORM bucket
+  also keeps noncurrent versions. Once the lock has expired, empty both first:
+  `gcloud storage rm --all-versions "gs://<bucket>/**"`.
+- Google documents removing a project lien as a step for a project owner or an
+  organization administrator (`gcloud alpha resource-manager liens list`, then
+  `gcloud alpha resource-manager liens delete`). Check for the lien once the
+  buckets are gone.
+
 ---
 
 ## Deployment Target Matrix

@@ -158,7 +158,7 @@ langfuse_nextauth_url = "http://localhost:3000"
 
 # ─── Langfuse S3-compatible storage (EU: GCS bucket in europe-west1) ──────────
 # GCS HMAC keys and bucket are created in europe-west1 via var.region above.
-# The bucket name is auto-generated: langfuse-events-${project_id}-${random_hex}
+# The bucket name is auto-generated: langfuse-event-upload-${project_id}-${random_hex}
 langfuse_s3_endpoint = "https://storage.googleapis.com"
 langfuse_s3_bucket   = "" # Auto-generated from GCS bucket resource
 langfuse_s3_access_key = "" # Auto-generated from google_storage_hmac_key

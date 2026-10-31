@@ -29,7 +29,7 @@
 #     --var-file=infra/targets/gcp-gke/apac-prod.tfvars
 #
 # Data residency: asia-southeast1 (Singapore) — MAS TRM Guidelines §4.2.
-# The Terraform precondition on the langfuse_events bucket (DEP-10) validates
+# The Terraform precondition on the langfuse_event_upload bucket (DEP-10) validates
 # that region starts with "asia-" for APAC_MAS deployments.
 # DO NOT change region without a formal MAS outsourcing arrangement notification.
 #
@@ -62,7 +62,7 @@ master_ipv4_cidr_block = "172.16.2.0/28"
 # ─── Jurisdiction (DEP-12: explicit APAC_MAS scope) ───────────────────────────
 # This must always be set explicitly — no default in variables.tf (DEP-09).
 # Activates APAC_MAS_BASELINE.json compliance posture.
-# The Terraform precondition on the langfuse_events bucket (DEP-10) will validate
+# The Terraform precondition on the langfuse_event_upload bucket (DEP-10) will validate
 # that region starts with "asia-" for APAC_MAS deployments.
 cage_deployment_region = "APAC_MAS"
 
@@ -162,7 +162,7 @@ langfuse_nextauth_url = "http://localhost:3000"
 
 # ─── Langfuse S3-compatible storage (APAC: GCS bucket in asia-southeast1) ─────
 # GCS HMAC keys and bucket are created in asia-southeast1 via var.region above.
-# The bucket name is auto-generated: langfuse-events-${project_id}-${random_hex}
+# The bucket name is auto-generated: langfuse-event-upload-${project_id}-${random_hex}
 langfuse_s3_endpoint   = "https://storage.googleapis.com"
 langfuse_s3_bucket     = "" # Auto-generated from GCS bucket resource
 langfuse_s3_access_key = "" # Auto-generated from google_storage_hmac_key

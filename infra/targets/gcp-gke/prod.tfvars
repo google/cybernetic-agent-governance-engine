@@ -40,7 +40,7 @@ namespace    = "governance-stack"
 # ─── Jurisdiction (DEP-12: explicit US_FED scope) ─────────────────────────────
 # This must always be set explicitly — no default in variables.tf (DEP-09).
 # Activates US_FED_BASELINE.json compliance posture and NIST SP 800-53 hardening.
-# The Terraform precondition on the langfuse_events bucket (DEP-10) will validate
+# The Terraform precondition on the langfuse_event_upload bucket (DEP-10) will validate
 # that region = "us-central1" is consistent with cage_deployment_region = "US_FED".
 cage_deployment_region = "US_FED"
 

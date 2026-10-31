@@ -130,14 +130,53 @@ def test_worm_bucket_configured_as_system_of_record() -> None:
     assert "enable_cmek              = var.enable_cmek" in block
     assert "kms_key_id               = local.cmek_key_id" in block
 
-    # Posture matrix (§1.1):
+    # Posture matrix (§1.1), shared with the Langfuse event-upload bucket through
+    # one pair of locals (POAM-2026-159; tests/retention_posture.tftest.hcl
+    # plans it per profile):
     # - staging: short retention lock (86400s)
     # - prod: 7yr retention lock (220752000s = 2555 days)
-    # - dev: unlocked (is_locked = false)
-    assert 'var.environment == "staging" ? 86400 : 220752000' in block
+    # - dev: unlocked unless a compliance flag is set
+    assert "retention_period_seconds = local.retention_period_seconds" in block
+    assert "is_locked                = local.retention_locked" in block
     assert (
-        'is_locked                = var.environment == "prod" || var.environment == "staging" || var.enable_nist_compliance'
-        in block
+        'retention_period_seconds = var.environment == "staging" ? 86400 : 220752000'
+        in gke_main
+    )
+    assert (
+        'retention_locked         = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active'
+        in gke_main
+    )
+
+
+def test_langfuse_event_bucket_shares_the_worm_retention_locals() -> None:
+    """POAM-2026-159: both retention-locked buckets read one source, never a copied literal."""
+    gke_main = _GKE_MAIN.read_text()
+    bucket = _extract_resource_block(
+        "google_storage_bucket", "langfuse_event_upload", gke_main
+    )
+    bucket = "\n".join(
+        line for line in bucket.splitlines() if not line.lstrip().startswith("#")
+    )
+
+    assert "retention_period = local.retention_period_seconds" in bucket
+    assert "is_locked        = local.retention_locked" in bucket
+    assert not re.search(r"retention_period\s*=\s*\d", bucket), (
+        "the Langfuse event-upload bucket must not carry its own retention literal"
+    )
+
+
+def test_an_unset_tier_resolves_to_dev_not_the_staging_lock() -> None:
+    """POAM-2026-159: an unset environment is dev, which keeps 2555 days.
+
+    terraform test cannot leave the tier unset, because CI passes staging.tfvars
+    to every run. The default is pinned here, and the dev runs in
+    infra/targets/gcp-gke/tests/retention_posture.tftest.hcl plan its retention.
+    """
+    variables_tf = (_REPO / "infra/targets/gcp-gke/variables.tf").read_text()
+    block = re.search(r'^variable "environment" \{\n.*?^\}', variables_tf, re.S | re.M)
+    assert block, 'variable "environment" not found in the gcp-gke target'
+    assert re.search(r'^\s*default\s*=\s*"dev"\s*$', block.group(0), re.M), (
+        "an unset tier must default to dev, which never takes the staging lock"
     )
 
 
