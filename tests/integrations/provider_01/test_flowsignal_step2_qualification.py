@@ -40,6 +40,7 @@ import respx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
+from opentelemetry.sdk.trace import TracerProvider
 
 from src.gateway.governance.consequence_authority_store import ConsequenceAuthorityStore
 from src.gateway.governance.consequence_gateway import (
@@ -49,11 +50,13 @@ from src.gateway.governance.consequence_gateway import (
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
+from src.gateway.governance.jurisdiction.eu_ai_act.fria_tier import FriaTier
 from src.gateway.governance.kms_signer import (
     GCPKMSProvider,
     KMSGovernanceSigner,
     reset_governance_signer,
 )
+from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
@@ -62,6 +65,7 @@ _MAGNITUDES = ConsequenceMagnitudes(
     (ConsequenceMagnitude("payment.release", (MagnitudePath(("amount",), 2),)),)
 )
 
+_TRACER = TracerProvider().get_tracer(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _STEP1_RECORD_PATH = (
     _REPO_ROOT
@@ -229,21 +233,31 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
     )
     signer = _make_mock_signer()
     redis_stub = _InMemoryAsyncRedis()
-    store = ConsequenceAuthorityStore(redis_stub, ttl_seconds=90)
+    store = ConsequenceAuthorityStore(
+        redis_stub, replication=ReplicationPolicy.standalone(), ttl_seconds=90
+    )
     gateway = ConsequenceGateway(store=store, signer=signer, magnitudes=_MAGNITUDES)
 
-    base_payload: dict[str, Any] = {
-        "action": "payment.release",
-        "actor_id": "agent-treasury-01",
-        "thread_id": "thread-step2-tc01",
-        "prefer_receipt_id_for_rec": True,
-        "params": {
-            "amount": 250000.0,
-            "currency": "GBP",
-            "mandate_id": "MANDATE-TREASURY-001",
-            "beneficiary": "SUPPLIER-ALPHA",
-        },
-    }
+    fria_tier = FriaTier(
+        provider,
+        region="EU_ECB",
+        assessment_lookup=lambda _action: None,
+        reassessment_interval_days=365,
+        gate_timeout_seconds=5.0,
+        caller_identity=lambda: "agent-treasury-01",
+    )
+    with _TRACER.start_as_current_span("validate"):
+        base_payload: dict[str, Any] = fria_tier._payload(
+            "payment.release",
+            {
+                "thread_id": "thread-step2-tc01",
+                "correlation_id": "corr-step2-tc01",
+                "amount": 250000.0,
+                "currency": "GBP",
+                "mandate_id": "MANDATE-TREASURY-001",
+                "beneficiary": "SUPPLIER-ALPHA",
+            },
+        )
 
     try:
         with patch(
@@ -266,7 +280,11 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
             assert val_res.admitted is True
             finding = val_res.findings[0]
             assert finding["code"] == "CONSEQUENCE_TOKEN"
-            assert finding["authority_record_id"] == "rcpt-step2-0001"
+            assert finding["authority_record_id"] == "MANDATE-TREASURY-001"
+            assert (
+                ConsequenceToken.verify(finding["token"], signer=signer).rec
+                == "rcpt-step2-0001"
+            )
             assert finding["authority_receipt_id"] == "rcpt-step2-0001"
             assert finding["mandate_id"] == "MANDATE-TREASURY-001"
             token_1 = finding["token"]
@@ -323,11 +341,16 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
 
             # TC-06: Second distinct transaction under the SAME mandate_id
             # with a fresh authority_receipt.id succeeds without false collision
-            second_payload: dict[str, Any] = {
-                **base_payload,
-                "thread_id": "thread-step2-tc06",
-                "params": {**base_payload["params"], "amount": 125000.0},
-            }
+            with _TRACER.start_as_current_span("validate"):
+                second_payload: dict[str, Any] = fria_tier._payload(
+                    "payment.release",
+                    {
+                        **base_payload["params"],
+                        "thread_id": "thread-step2-tc06",
+                        "correlation_id": "corr-step2-tc06",
+                        "amount": 125000.0,
+                    },
+                )
             respx.post("https://flowsignal.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
@@ -347,3 +370,51 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
             assert eval_ok_2.reason_code == "OK"
     finally:
         reset_governance_signer()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_allow_without_authority_receipt_id_fails_closed_even_when_mandate_present() -> (
+    None
+):
+    """ALLOW omitting authority_receipt.id / authority_receipt_id fails closed
+    with CONSEQUENCE_TOKEN_MINT_FAILED even when authority_record_id is present.
+    """
+    provider = FlowSignalNormativeProvider(
+        endpoint="https://flowsignal.example.com",
+        api_key="test-key",
+    )
+    fria_tier = FriaTier(
+        provider,
+        region="EU_ECB",
+        assessment_lookup=lambda _action: None,
+        reassessment_interval_days=365,
+        gate_timeout_seconds=5.0,
+        caller_identity=lambda: "agent-treasury-01",
+    )
+    with _TRACER.start_as_current_span("validate"):
+        payload = fria_tier._payload(
+            "payment.release",
+            {
+                "thread_id": "thread-missing-receipt",
+                "correlation_id": "corr-missing-receipt",
+                "amount": 250000.0,
+                "currency": "GBP",
+                "mandate_id": "MANDATE-TREASURY-001",
+            },
+        )
+    respx.post("https://flowsignal.example.com/cage/validate").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "decision": "ALLOW",
+                "authority_record_id": "MANDATE-TREASURY-001",
+                "authority_state_version": "2",
+            },
+        )
+    )
+    result = await provider.validate_fria(payload)
+    assert result.admitted is False
+    assert len(result.findings) == 1
+    assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
+    assert "no authority receipt id" in result.findings[0]["message"]

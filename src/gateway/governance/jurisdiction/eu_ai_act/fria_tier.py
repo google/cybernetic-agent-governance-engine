@@ -46,9 +46,11 @@ an unavailable provider or a stale artefact then denies. A
 
 The provider payload (:meth:`FriaTier._payload`) names the request: the
 verified workload identity of the caller as ``actor_id`` / ``operator_urn``
-(empty when there is none), the active trace id as ``correlation_id``, and a
-``thread_id`` falling back from the request's ``thread_id`` to its
-``transaction_id`` to that trace id.
+(empty when there is none), the active trace id as ``correlation_id``
+(raising :class:`ValueError` when no recording OpenTelemetry span is active,
+so ``evaluate()`` fails closed locally with ``FRIA_PROVIDER_UNAVAILABLE``
+without calling the provider), and a ``thread_id`` falling back from the
+request's ``thread_id`` to its ``transaction_id`` to that trace id.
 
 Model confidence plays no part: a confident model is not an impact
 assessment, so the old confidence fast path that skipped the provider is
@@ -200,8 +202,17 @@ class FriaTier(ReadOnlyTier):
         stale = self._staleness(action)
         if stale is not None:
             return [self._violation(CODE_STALE, ViolationKind.HARD, stale)]
-        # Built once: the payload checked is the payload sent.
-        payload = self._payload(action, params)
+        # Built once: the payload checked is the payload sent. Building it
+        # needs an active trace span for the correlation id; without one
+        # the tier refuses here, before the provider is consulted.
+        try:
+            payload = self._payload(action, params)
+        except Exception as exc:
+            return [
+                self._unavailable(
+                    f"FRIA payload not built ({type(exc).__name__}: {exc})"
+                )
+            ]
         refused = magnitude_violations(self._magnitudes, payload)
         if refused:
             return [
@@ -285,9 +296,16 @@ class FriaTier(ReadOnlyTier):
 
         The caller and the correlation id sit at the top level, where
         adapters read them; they are never taken from ``params``, which the
-        caller controls.
+        caller controls. Requires an active OpenTelemetry trace span; raises
+        :class:`ValueError` when ``_trace_id()`` is empty so ``evaluate()``
+        fails closed locally without calling the provider.
         """
         correlation_id = _trace_id()
+        if not correlation_id:
+            raise ValueError(
+                "FRIA payload requires a non-empty correlation_id "
+                "(no active OpenTelemetry trace span)"
+            )
         thread_id = (
             params.get("thread_id") or params.get("transaction_id") or correlation_id
         )

@@ -333,6 +333,9 @@ class _HealthyRedis:
 @pytest.fixture()
 def posture_probes(monkeypatch):
     """Every startup probe except the signer healthy; tests choose the signer."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
+
     from src.gateway.governance.governor import posture as posture_mod
 
     class _Verifier:
@@ -344,6 +347,8 @@ def posture_probes(monkeypatch):
         "RECONCILER_KMS_KEY", "projects/p/locations/l/keyRings/r/cryptoKeys/reconciler"
     )
     monkeypatch.setenv("RECONCILIATION_PROVIDER", "ledger")
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "memory")
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", SDKTracerProvider())
     monkeypatch.setattr(
         "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False
     )

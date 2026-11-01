@@ -49,6 +49,12 @@ from src.gateway.governance.safety.debit_ledger import (
 )
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.infrastructure.redis_client import redis_client, sync_redis_client
+from src.gateway.infrastructure.redis_replication import (
+    ReplicationPolicy,
+    acknowledged_replicas,
+    pinned_connection,
+    write_socket,
+)
 from src.gateway.infrastructure.telemetry import get_tracer
 
 logger = logging.getLogger("SafetyLayer")
@@ -90,12 +96,14 @@ _FENCE_EPOCH_ENABLED: bool = os.environ.get(
 _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
 _REDIS_KEY_FENCE_EPOCH_HWM = "safety:fence_epoch_hwm"
 
-_WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "1"))
-_WAIT_TIMEOUT_MS: int = int(os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS", "1000"))
-
-_STRICT_REPLICATION: bool = os.environ.get(
-    "CAGE_STRICT_REPLICATION", "true" if _IS_PRODUCTION else "false"
-).lower() in ("true", "1", "yes")
+# The replica-acknowledgement (WAIT) policy is shared with the consequence
+# authority store (redis_replication.ReplicationPolicy). Read per call through
+# these three names, which tests patch.
+_replication = ReplicationPolicy.from_env()
+_WAIT_REPLICAS: int = _replication.replicas
+_WAIT_TIMEOUT_MS: int = _replication.timeout_ms
+_STRICT_REPLICATION: bool = _replication.strict
+del _replication
 
 _COMMIT_ATTEMPTS: int = max(1, int(os.environ.get("CAGE_CBF_COMMIT_ATTEMPTS", "3")))
 _COMMIT_RETRY_BASE_DELAY_SECONDS: float = float(
@@ -211,36 +219,6 @@ def _is_mock(obj: Any) -> bool:
         return isinstance(obj, (unittest.mock.NonCallableMock, unittest.mock.Mock))
     except ImportError:
         return False
-
-
-async def _get_pinned_connection(client: Any) -> tuple[Any, bool]:
-    """Obtain a pinned connection client if supported, to run EVALSHA and WAIT together.
-
-    Returns:
-        (connection_client, should_close)
-    """
-    if client is None:
-        return None, False
-    # If client is fakeredis, it is an in-memory client; calling client() spawns an unpatched replica
-    if type(client).__module__.startswith("fakeredis"):
-        return client, False
-    # If client is already a single-connection client
-    if getattr(client, "single_connection_client", False) is True:
-        return client, False
-    # If client is a mock that hasn't explicitly configured client(), don't auto-invoke
-    if hasattr(client, "_mock_children") and "client" not in getattr(
-        client, "_mock_children", {}
-    ):
-        return client, False
-    if hasattr(client, "client") and callable(client.client):
-        try:
-            pinned = client.client()
-            if inspect.isawaitable(pinned):
-                pinned = await pinned
-            return pinned, (pinned is not client and hasattr(pinned, "aclose"))
-        except Exception:
-            return client, False
-    return client, False
 
 
 def _ledgered_amount(entry: Any) -> float:
@@ -886,6 +864,8 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         num_replicas: int | None = None,
         timeout_ms: int | None = None,
         client: Any = None,
+        *,
+        socket: object | None = None,
     ) -> bool:
         replicas = num_replicas if num_replicas is not None else _WAIT_REPLICAS
         timeout = timeout_ms if timeout_ms is not None else _WAIT_TIMEOUT_MS
@@ -911,18 +891,25 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         start_time = time.time()
 
         try:
-            cmd = target_client.execute_command("WAIT", replicas, timeout)
-            if inspect.isawaitable(cmd):
-                acks = await cmd
-            else:
-                acks = cmd
+            from redis.asyncio import Redis as AsyncRedis
 
-            if _is_mock(acks):
-                acks = replicas
-            elif acks is not None and isinstance(acks, (int, float, str)):
-                acks = int(acks)
+            if socket is not None or type(target_client) is AsyncRedis:
+                acks = await acknowledged_replicas(
+                    target_client, socket, replicas, timeout
+                )
             else:
-                acks = 0
+                cmd = target_client.execute_command("WAIT", replicas, timeout)
+                if inspect.isawaitable(cmd):
+                    acks = await cmd
+                else:
+                    acks = cmd
+
+                if _is_mock(acks):
+                    acks = replicas
+                elif acks is not None and isinstance(acks, (int, float, str)):
+                    acks = int(acks)
+                else:
+                    acks = 0
 
             elapsed = time.time() - start_time
 
@@ -1783,170 +1770,188 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         if target_client is None:
             raise RuntimeError("Redis client unavailable — cannot rollback CBF state.")
 
-        use_lua = hasattr(target_client, "eval") and not _is_mock(target_client)
-        if use_lua:
-            keys = [
-                self.redis_key,
-                "audit:state_ledger",
-                _REDIS_KEY_FENCE_EPOCH,
-                self._debit_ledger.DEBITS_KEY,
-                _REDIS_KEY_FENCE_EPOCH_HWM,
-                self._debit_ledger.DEBITS_BY_TIME_KEY,
-                self._debit_ledger.DEBITS_TOTAL_KEY,
-                self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
-                self._debit_ledger.DEBITS_PENDING_KEY,
-            ]
-            argv = [
-                repr(float(magnitude)),
-                governance_signature or "",
-                debit_id or "",
-                repr(time.time()),
-            ]
-            try:
-                res = target_client.eval(self.LUA_ROLLBACK_CBF, len(keys), *keys, *argv)
-                res_list = await res if inspect.isawaitable(res) else res
-                if (
-                    res_list
-                    and isinstance(res_list, (list, tuple))
-                    and not _is_mock(res_list)
-                    and len(res_list) > 3
-                ):
-                    rb_status = self._decode_lua_str(res_list[1])
-                    restored_val = float(self._decode_lua_str(res_list[2]))
-                    new_epoch = int(res_list[3])
-                    if len(res_list) > 5:
-                        current_val = float(self._decode_lua_str(res_list[4]))
-                        restore_val = float(self._decode_lua_str(res_list[5]))
-                    else:
-                        restore_val = (
-                            float(magnitude) if rb_status == "ROLLED_BACK" else 0.0
+        pinned_client, should_close = await pinned_connection(target_client)
+        active_client = pinned_client if pinned_client is not None else target_client
+        try:
+            use_lua = hasattr(active_client, "eval") and not _is_mock(active_client)
+            if use_lua:
+                keys = [
+                    self.redis_key,
+                    "audit:state_ledger",
+                    _REDIS_KEY_FENCE_EPOCH,
+                    self._debit_ledger.DEBITS_KEY,
+                    _REDIS_KEY_FENCE_EPOCH_HWM,
+                    self._debit_ledger.DEBITS_BY_TIME_KEY,
+                    self._debit_ledger.DEBITS_TOTAL_KEY,
+                    self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
+                    self._debit_ledger.DEBITS_PENDING_KEY,
+                ]
+                argv = [
+                    repr(float(magnitude)),
+                    governance_signature or "",
+                    debit_id or "",
+                    repr(time.time()),
+                ]
+                try:
+                    res = active_client.eval(
+                        self.LUA_ROLLBACK_CBF, len(keys), *keys, *argv
+                    )
+                    res_list = await res if inspect.isawaitable(res) else res
+                    rb_socket = write_socket(active_client)
+                    if (
+                        res_list
+                        and isinstance(res_list, (list, tuple))
+                        and not _is_mock(res_list)
+                        and len(res_list) > 3
+                    ):
+                        rb_status = self._decode_lua_str(res_list[1])
+                        restored_val = float(self._decode_lua_str(res_list[2]))
+                        new_epoch = int(res_list[3])
+                        if len(res_list) > 5:
+                            current_val = float(self._decode_lua_str(res_list[4]))
+                            restore_val = float(self._decode_lua_str(res_list[5]))
+                        else:
+                            restore_val = (
+                                float(magnitude) if rb_status == "ROLLED_BACK" else 0.0
+                            )
+                            current_val = restored_val - restore_val
+                        if new_epoch > 0:
+                            self._last_seen_epoch = new_epoch
+                            if _CURRENT_FENCE_EPOCH_GAUGE is not None:
+                                _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
+                        await self._emit_cbf_rollback(
+                            debit_id=debit_id or "",
+                            status=rb_status,
+                            state_before=current_val,
+                            restore=restore_val,
+                            state_after=restored_val,
+                            fence_epoch=new_epoch,
                         )
-                        current_val = restored_val - restore_val
-                    if new_epoch > 0:
+                        await self._sync_to_replicas(
+                            client=active_client, socket=rb_socket
+                        )
+                        return
+                except Exception as lua_exc:
+                    logger.warning(
+                        "Lua rollback script failed, falling back to WATCH/MULTI/EXEC: %s",
+                        lua_exc,
+                    )
+
+            for attempt in range(self._MAX_RETRIES):
+                try:
+                    pipe_ctx = (
+                        active_client.pipeline()
+                        if hasattr(active_client, "pipeline")
+                        else redis_client.pipeline()
+                    )
+                    if inspect.isawaitable(pipe_ctx):
+                        pipe_ctx = await pipe_ctx
+                    async with pipe_ctx as pipe:
+                        ledgered = bool(debit_id) and hasattr(pipe, "hget")
+                        if ledgered:
+                            await pipe.watch(
+                                self.redis_key,
+                                self._debit_ledger.DEBITS_KEY,
+                                self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
+                            )
+                        else:
+                            await pipe.watch(self.redis_key)
+                        raw = await pipe.get(self.redis_key)
+                        current = (
+                            float(raw)
+                            if raw is not None
+                            else self._initial_state_scalar()
+                        )
+                        restore = float(magnitude)
+                        rb_status = "ROLLED_BACK"
+                        if ledgered:
+                            # Same rules as LUA_ROLLBACK_CBF: a tombstoned id is a
+                            # no-op; only a ledgered amount is restored.
+                            if await pipe.hexists(
+                                self._debit_ledger.DEBITS_ROLLED_BACK_KEY, debit_id
+                            ):
+                                await pipe.reset()
+                                await self._emit_cbf_rollback(
+                                    debit_id=debit_id or "",
+                                    status="NOOP",
+                                    state_before=current,
+                                    restore=0.0,
+                                    state_after=current,
+                                    fence_epoch=self._last_seen_epoch or 0,
+                                )
+                                return
+                            entry = await pipe.hget(
+                                self._debit_ledger.DEBITS_KEY, debit_id
+                            )
+                            if not entry:
+                                rb_status = "ROLLED_BACK_UNLEDGERED"
+                            restore = _ledgered_amount(entry)
+                        restored = current + restore
+                        pipe.multi()
+                        pipe.set(self.redis_key, str(restored))
+                        pipe.incr(_REDIS_KEY_FENCE_EPOCH)
+                        if ledgered:
+                            pipe.hdel(self._debit_ledger.DEBITS_KEY, debit_id)
+                            pipe.zrem(self._debit_ledger.DEBITS_BY_TIME_KEY, debit_id)
+                            pipe.zrem(self._debit_ledger.DEBITS_PENDING_KEY, debit_id)
+                            if restore:
+                                pipe.incrbyfloat(
+                                    self._debit_ledger.DEBITS_TOTAL_KEY, -restore
+                                )
+                            pipe.hset(
+                                self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
+                                debit_id,
+                                repr(time.time()),
+                            )
+                        if governance_signature:
+                            ledger_entry = json.dumps(
+                                {
+                                    "ts": time.time(),
+                                    "cost": restore,
+                                    "new_balance": restored,
+                                    "governance_signature": governance_signature,
+                                    "rollback": True,
+                                }
+                            )
+                            pipe.rpush("audit:state_ledger", ledger_entry)
+                        results = await pipe.execute()
+                        rb_socket = write_socket(active_client)
+                        new_epoch = results[1] if results and len(results) > 1 else 0
                         self._last_seen_epoch = new_epoch
                         if _CURRENT_FENCE_EPOCH_GAUGE is not None:
                             _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
-                    await self._emit_cbf_rollback(
-                        debit_id=debit_id or "",
-                        status=rb_status,
-                        state_before=current_val,
-                        restore=restore_val,
-                        state_after=restored_val,
-                        fence_epoch=new_epoch,
-                    )
-                    await self._sync_to_replicas(client=target_client)
-                    return
-            except Exception as lua_exc:
-                logger.warning(
-                    "Lua rollback script failed, falling back to WATCH/MULTI/EXEC: %s",
-                    lua_exc,
-                )
 
-        for attempt in range(self._MAX_RETRIES):
-            try:
-                pipe_ctx = (
-                    target_client.pipeline()
-                    if hasattr(target_client, "pipeline")
-                    else redis_client.pipeline()
-                )
-                if inspect.isawaitable(pipe_ctx):
-                    pipe_ctx = await pipe_ctx
-                async with pipe_ctx as pipe:
-                    ledgered = bool(debit_id) and hasattr(pipe, "hget")
-                    if ledgered:
-                        await pipe.watch(
-                            self.redis_key,
-                            self._debit_ledger.DEBITS_KEY,
-                            self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
+                        await self._emit_cbf_rollback(
+                            debit_id=debit_id or "",
+                            status=rb_status,
+                            state_before=current,
+                            restore=restore,
+                            state_after=restored,
+                            fence_epoch=int(new_epoch)
+                            if isinstance(new_epoch, (int, float))
+                            and not _is_mock(new_epoch)
+                            else 0,
                         )
-                    else:
-                        await pipe.watch(self.redis_key)
-                    raw = await pipe.get(self.redis_key)
-                    current = (
-                        float(raw) if raw is not None else self._initial_state_scalar()
-                    )
-                    restore = float(magnitude)
-                    rb_status = "ROLLED_BACK"
-                    if ledgered:
-                        # Same rules as LUA_ROLLBACK_CBF: a tombstoned id is a
-                        # no-op; only a ledgered amount is restored.
-                        if await pipe.hexists(
-                            self._debit_ledger.DEBITS_ROLLED_BACK_KEY, debit_id
-                        ):
-                            await pipe.reset()
-                            await self._emit_cbf_rollback(
-                                debit_id=debit_id or "",
-                                status="NOOP",
-                                state_before=current,
-                                restore=0.0,
-                                state_after=current,
-                                fence_epoch=self._last_seen_epoch or 0,
-                            )
-                            return
-                        entry = await pipe.hget(self._debit_ledger.DEBITS_KEY, debit_id)
-                        if not entry:
-                            rb_status = "ROLLED_BACK_UNLEDGERED"
-                        restore = _ledgered_amount(entry)
-                    restored = current + restore
-                    pipe.multi()
-                    pipe.set(self.redis_key, str(restored))
-                    pipe.incr(_REDIS_KEY_FENCE_EPOCH)
-                    if ledgered:
-                        pipe.hdel(self._debit_ledger.DEBITS_KEY, debit_id)
-                        pipe.zrem(self._debit_ledger.DEBITS_BY_TIME_KEY, debit_id)
-                        pipe.zrem(self._debit_ledger.DEBITS_PENDING_KEY, debit_id)
-                        if restore:
-                            pipe.incrbyfloat(
-                                self._debit_ledger.DEBITS_TOTAL_KEY, -restore
-                            )
-                        pipe.hset(
-                            self._debit_ledger.DEBITS_ROLLED_BACK_KEY,
-                            debit_id,
-                            repr(time.time()),
+                        await self._sync_to_replicas(
+                            client=active_client, socket=rb_socket
                         )
-                    if governance_signature:
-                        ledger_entry = json.dumps(
-                            {
-                                "ts": time.time(),
-                                "cost": restore,
-                                "new_balance": restored,
-                                "governance_signature": governance_signature,
-                                "rollback": True,
-                            }
+                        return
+                except Exception as exc:
+                    if "WatchError" in type(exc).__name__:
+                        logger.warning(
+                            "CBF WATCH conflict on rollback attempt %d/%d — retrying.",
+                            attempt + 1,
+                            self._MAX_RETRIES,
                         )
-                        pipe.rpush("audit:state_ledger", ledger_entry)
-                    results = await pipe.execute()
-                    new_epoch = results[1] if results and len(results) > 1 else 0
-                    self._last_seen_epoch = new_epoch
-                    if _CURRENT_FENCE_EPOCH_GAUGE is not None:
-                        _CURRENT_FENCE_EPOCH_GAUGE.set(new_epoch)
+                        continue
+                    raise
 
-                    await self._emit_cbf_rollback(
-                        debit_id=debit_id or "",
-                        status=rb_status,
-                        state_before=current,
-                        restore=restore,
-                        state_after=restored,
-                        fence_epoch=int(new_epoch)
-                        if isinstance(new_epoch, (int, float))
-                        and not _is_mock(new_epoch)
-                        else 0,
-                    )
-                    await self._sync_to_replicas(client=target_client)
-                    return
-            except Exception as exc:
-                if "WatchError" in type(exc).__name__:
-                    logger.warning(
-                        "CBF WATCH conflict on rollback attempt %d/%d — retrying.",
-                        attempt + 1,
-                        self._MAX_RETRIES,
-                    )
-                    continue
-                raise
-
-        raise RuntimeError(
-            f"CBF rollback_state failed after {self._MAX_RETRIES} retries due to concurrent writes."
-        )
+            raise RuntimeError(
+                f"CBF rollback_state failed after {self._MAX_RETRIES} retries due to concurrent writes."
+            )
+        finally:
+            if should_close and hasattr(pinned_client, "aclose"):
+                await pinned_client.aclose()
 
     async def confirm_debit(self, debit_id: str, *, client: Any = None) -> bool:
         """ADR-009 ``confirm``: the action behind ``debit_id`` executed.
@@ -2120,7 +2125,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 expected_payload,
             ]
 
-            pinned_client, should_close = await _get_pinned_connection(client)
+            pinned_client, should_close = await pinned_connection(client)
             active_client = pinned_client if pinned_client is not None else client
 
             async def _run_evalsha(
@@ -2172,6 +2177,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                     result_list = await self._evalsha_with_noscript_retry(
                         active_client, keys, argv, _run_evalsha, _load_and_run
                     )
+                    commit_socket = write_socket(active_client)
                     status_code = int(result_list[0])
                     committed, message = self._parse_lua_result(result_list, span)
 
@@ -2217,7 +2223,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
 
                         if committed and _WAIT_REPLICAS > 0:
                             wait_result = await self._sync_to_replicas(
-                                client=active_client
+                                client=active_client, socket=commit_socket
                             )
                             if span:
                                 span.set_attribute("cage.cbf.wait_success", wait_result)
@@ -2231,7 +2237,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                                         cost,
                                         governance_signature=governance_signature,
                                         debit_id=debit_id,
-                                        client=active_client,
+                                        client=client,
                                     )
                                     if span:
                                         span.set_attribute(

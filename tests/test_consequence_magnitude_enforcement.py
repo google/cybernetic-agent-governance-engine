@@ -33,12 +33,14 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import fakeredis.aioredis
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 from src.cage_finance import (
     CONSEQUENCE_MAGNITUDES as FINANCE_MAGNITUDES,
@@ -104,12 +106,23 @@ from src.gateway.governance.jurisdiction.eu_ai_act.fria_tier import (
 from src.gateway.governance.normative_provider import get_normative_provider
 from src.gateway.governance.plugin_loader import domain_config_of
 from src.gateway.governance.seams.normative import ValidationResult
+from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 from src.integrations.provider_08.adapter import Provider08NormativeProvider
 from tests.fixtures.governor import allow_opa, clean_stpa
 from tests.test_consequence_gateway import _make_mock_signer_with_keypair
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+_TRACER = TracerProvider().get_tracer(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _active_otel_span() -> Iterator[None]:
+    """FriaTier builds its payload only under an active trace span."""
+    with _TRACER.start_as_current_span("test"):
+        yield
+
 
 _NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 _FRESH = {"assessed_at": (_NOW - timedelta(days=10)).isoformat()}
@@ -193,7 +206,11 @@ def signer():
 @pytest.fixture
 async def store() -> ConsequenceAuthorityStore:
     redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    return ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    return ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
 
 @pytest.fixture

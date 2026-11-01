@@ -251,12 +251,24 @@ class TestFlowSignalDecisionMapping:
     @pytest.fixture
     def provider(self):
         """Instantiate FlowSignal with mock endpoint."""
+        from src.gateway.governance.consequence_magnitude import (
+            ConsequenceMagnitudes,
+        )
+        from src.gateway.governance.contracts import ConsequenceMagnitude
         from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
         return FlowSignalNormativeProvider(
             endpoint="https://mock.flowsignal.example.com",
             api_key="test-key",
             timeout=5.0,
+            # Declared magnitude-free, so an ALLOW reaches the signer that
+            # the minting tests make fail.
+            consequence_magnitudes=ConsequenceMagnitudes(
+                (
+                    ConsequenceMagnitude("test_allow", ()),
+                    ConsequenceMagnitude("test_case", ()),
+                )
+            ),
         )
 
     @pytest.mark.asyncio
@@ -268,11 +280,13 @@ class TestFlowSignalDecisionMapping:
         with (
             respx.mock,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer"
+                "src.gateway.governance.consequence_token_service.get_governance_signer"
             ) as mock_get_signer,
         ):
             # Mock signer that fails (to test token minting is attempted)
             mock_signer = MagicMock()
+            mock_signer.jose_alg = "ES256"
+            mock_signer.key_id = "test-key-id"
             mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
             mock_signer.sign_raw_async = AsyncMock(
                 side_effect=RuntimeError("KMS not active in test")
@@ -286,6 +300,7 @@ class TestFlowSignalDecisionMapping:
                         "decision": "ALLOW",
                         "message": "Transaction approved by FlowSignal",
                         "authority_record_id": "test-auth-rec",
+                        "authority_receipt": {"id": "test-auth-rcpt"},
                     },
                 )
             )
@@ -303,6 +318,8 @@ class TestFlowSignalDecisionMapping:
             assert result.admitted is False
             assert len(result.findings) == 1
             assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
+            assert "KMS not active in test" in result.findings[0]["message"]
+            mock_get_signer.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_flowsignal_decision_refuse(self, provider) -> None:
@@ -461,11 +478,13 @@ class TestFlowSignalDecisionMapping:
         with (
             respx.mock,
             patch(
-                "src.gateway.governance.kms_signer.get_governance_signer"
+                "src.gateway.governance.consequence_token_service.get_governance_signer"
             ) as mock_get_signer,
         ):
             # Mock signer that fails (to test token minting is attempted)
             mock_signer = MagicMock()
+            mock_signer.jose_alg = "ES256"
+            mock_signer.key_id = "test-key-id"
             mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
             mock_signer.sign_raw_async = AsyncMock(
                 side_effect=RuntimeError("KMS not active in test")
@@ -480,6 +499,7 @@ class TestFlowSignalDecisionMapping:
                         "decision": "allow",  # lowercase
                         "message": "lowercase",
                         "authority_record_id": "test-auth-rec",
+                        "authority_receipt": {"id": "test-auth-rcpt"},
                     },
                 )
             )
@@ -496,3 +516,4 @@ class TestFlowSignalDecisionMapping:
             assert result.admitted is False
             assert len(result.findings) == 1
             assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
+            assert "KMS not active in test" in result.findings[0]["message"]

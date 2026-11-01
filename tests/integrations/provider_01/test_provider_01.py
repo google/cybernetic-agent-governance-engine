@@ -401,6 +401,7 @@ class TestConsequenceTokenMinting:
         flowsignal_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-record-xyz",
+            "authority_receipt": {"id": "rcpt-record-xyz"},
             "authority_state_version": "v1.2.3",
             "message": "Transaction approved",
         }
@@ -434,6 +435,7 @@ class TestConsequenceTokenMinting:
         assert finding["severity"] == "info"
         assert "token" in finding, "Finding must contain the JWS token"
         assert finding["authority_record_id"] == "auth-record-xyz"
+        assert finding["authority_receipt_id"] == "rcpt-record-xyz"
 
         # Verify the token is a well-formed JWS (3 base64url segments)
         token = finding["token"]
@@ -463,6 +465,7 @@ class TestConsequenceTokenMinting:
         flowsignal_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-rec-12345",
+            "authority_receipt": {"id": "rcpt-rec-12345"},
             "authority_state_version": "v2.0.0",
         }
 
@@ -490,8 +493,8 @@ class TestConsequenceTokenMinting:
         # Assertions: claims match the expected inputs
         assert claims.sub == "user-99999", "sub claim must match actor_id"
         assert claims.tid == "thread-xyz", "tid claim must match thread_id"
-        assert claims.rec == "auth-rec-12345", (
-            "rec claim must match authority_record_id"
+        assert claims.rec == "rcpt-rec-12345", (
+            "rec claim must match authority_receipt.id"
         )
         assert claims.ver == "v2.0.0", "ver claim must match authority_state_version"
         assert claims.jti == claims.rec, "jti must equal rec"
@@ -539,6 +542,7 @@ class TestConsequenceTokenMinting:
         flowsignal_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-integration-test",
+            "authority_receipt": {"id": "rcpt-integration-test"},
             "authority_state_version": "v1.0",
         }
 
@@ -563,7 +567,13 @@ class TestConsequenceTokenMinting:
 
         # Consume the token via ConsequenceGateway (with fakeredis)
         fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-        store = ConsequenceAuthorityStore(fake_redis, ttl_seconds=90)
+        from src.gateway.infrastructure.redis_replication import ReplicationPolicy
+
+        store = ConsequenceAuthorityStore(
+            fake_redis,
+            replication=ReplicationPolicy.standalone(),
+            ttl_seconds=90,
+        )
         gateway = ConsequenceGateway(
             store=store, signer=mock_signer, magnitudes=_MAGNITUDES
         )
@@ -601,6 +611,7 @@ class TestConsequenceTokenMinting:
         flowsignal_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-fail",
+            "authority_receipt": {"id": "rcpt-fail"},
         }
 
         mock_response = _mock_response(flowsignal_response)
@@ -765,7 +776,7 @@ class TestConsequenceTokenMinting:
         assert result.admitted is False
         assert len(result.findings) == 1
         assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
-        assert "authority_record_id missing" in result.findings[0]["message"]
+        assert "no authority receipt id" in result.findings[0]["message"]
         mock_signer.sign_raw.assert_not_called()
         mock_signer.sign_raw_async.assert_not_called()
 

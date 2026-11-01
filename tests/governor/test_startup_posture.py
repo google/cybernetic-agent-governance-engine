@@ -119,6 +119,14 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
     ("check", "breakage"),
     [
         (
+            "otel_tracer.*OTEL_TRACES_EXPORTER=none",
+            lambda mp: mp.setenv("OTEL_TRACES_EXPORTER", "none"),
+        ),
+        (
+            "otel_tracer.*TracerProvider",
+            lambda mp: mp.setattr("opentelemetry.trace._TRACER_PROVIDER", None),
+        ),
+        (
             "kms_signing_mode",
             lambda mp: mp.setattr(posture_mod, "_signer", lambda: _Signer(kms=False)),
         ),

@@ -294,39 +294,52 @@ class _RecordingBarrier(MutatingTier):
         return None
 
 
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+
+_SCRIPT_TRACER = TracerProvider().get_tracer(__name__)
+_SCRIPT_FRIA_TIER = FriaTier(
+    object(),  # type: ignore[arg-type]  # _payload() never calls the provider
+    region="EU_ECB",
+    assessment_lookup=lambda _action: None,
+    reassessment_interval_days=365,
+    gate_timeout_seconds=5.0,
+    caller_identity=lambda: "agent-treasury-01",
+)
+
+
 def _base_allow_payload() -> dict[str, Any]:
-    """Return the canonical AP-001 ALLOW envelope payload for FlowSignal staging."""
-    return {
-        "thread_id": "thread-live-wire-allow-001",
-        "correlation_id": "exec-live-wire-allow-001",
-        "approval_id": "APPROVAL-TREASURY-001",
-        "action": "payment.release",
-        "target": "TREASURY_GATEWAY",
-        "operator_urn": "agent-treasury-01",
-        "actor_id": "agent-treasury-01",
-        "params": {
-            "purpose": "Invoice 78431",
-            "actor_role": "treasury_agent",
-            "principal_id": "institution-001",
-            "principal_name": "Example Financial Institution",
-            "mandate_id": "MANDATE-TREASURY-001",
-            "mandate_max_amount": 1000000.0,
-            "currency": "GBP",
-            "permitted_source_accounts": ["TREASURY-001"],
-            "permitted_counterparty_class": "APPROVED_SUPPLIERS",
-            "mandate_valid_until": "2026-12-31T23:59:59Z",
-            "amount": 500000.0,
-            "source_account": "TREASURY-001",
-            "beneficiary": "SUPPLIER-X",
-            "counterparty_status": "APPROVED",
-            "account_status": "ACTIVE",
-            "risk_state": "NORMAL",
-            "approval_required": False,
-            "screening_status": "CLEAR",
-            "screening_max_age_seconds": 3600,
-            "screening_source": "SCREENING-SERVICE-01",
-        },
-    }
+    """Return the canonical AP-001 ALLOW envelope payload via FriaTier._payload."""
+    with _SCRIPT_TRACER.start_as_current_span("validate"):
+        payload = _SCRIPT_FRIA_TIER._payload(
+            "payment.release",
+            {
+                "thread_id": "thread-live-wire-allow-001",
+                "approval_id": "APPROVAL-TREASURY-001",
+                "target": "TREASURY_GATEWAY",
+                "purpose": "Invoice 78431",
+                "actor_role": "treasury_agent",
+                "principal_id": "institution-001",
+                "principal_name": "Example Financial Institution",
+                "mandate_id": "MANDATE-TREASURY-001",
+                "mandate_max_amount": 1000000.0,
+                "currency": "GBP",
+                "permitted_source_accounts": ["TREASURY-001"],
+                "permitted_counterparty_class": "APPROVED_SUPPLIERS",
+                "mandate_valid_until": "2026-12-31T23:59:59Z",
+                "amount": 500000.0,
+                "source_account": "TREASURY-001",
+                "beneficiary": "SUPPLIER-X",
+                "counterparty_status": "APPROVED",
+                "account_status": "ACTIVE",
+                "risk_state": "NORMAL",
+                "approval_required": False,
+                "screening_status": "CLEAR",
+                "screening_max_age_seconds": 3600,
+                "screening_source": "SCREENING-SERVICE-01",
+            },
+        )
+    payload["correlation_id"] = "exec-live-wire-allow-001"
+    return payload
 
 
 async def main() -> None:
@@ -425,7 +438,7 @@ async def main() -> None:
         assert res_allow.admitted is True, f"Expected ALLOW admission, got {res_allow}"
         assert token_finding is not None, "Expected CONSEQUENCE_TOKEN finding on ALLOW"
         live_consequence_token: str = token_finding["token"]
-        live_authority_record_id: str = token_finding["authority_record_id"]
+        live_authority_record_id: str = token_finding["authority_receipt_id"]
         verified_claims = ConsequenceToken.verify(live_consequence_token, signer=signer)
         print(
             f"  [1B] Provider Live ALLOW -> admitted={res_allow.admitted}, "
@@ -582,7 +595,7 @@ async def main() -> None:
         mutated_composed_payload = copy.deepcopy(allow_payload)
         mutated_composed_payload["params"]["amount"] = 750000.0
         mutated_composed_payload["params"]["beneficiary"] = "UNAPPROVED-COUNTERPARTY-99"
-        mutated_composed_payload["target"] = "SHADOW_SETTLEMENT_GATEWAY"
+        mutated_composed_payload["params"]["target"] = "SHADOW_SETTLEMENT_GATEWAY"
         eval_mut_composed = await consequence_gateway.evaluate(
             live_consequence_token, mutated_composed_payload
         )
@@ -692,7 +705,7 @@ async def main() -> None:
             decision="ALLOW",
             decision_path="DIRECT",
             action="payment.release",
-            target=allow_payload["target"],
+            target=allow_payload["params"]["target"],
             operator_urn=allow_payload["operator_urn"],
             issued_at=now_epoch,
             issued_at_provenance="CONSTRUCTION_TIME",
@@ -726,7 +739,7 @@ async def main() -> None:
             decision="ALLOW",
             decision_path="DIRECT",
             action="payment.release",
-            target=allow_payload["target"],
+            target=allow_payload["params"]["target"],
             operator_urn=allow_payload["operator_urn"],
             issued_at=now_epoch,
             issued_at_provenance="CONSTRUCTION_TIME",
@@ -803,33 +816,34 @@ async def main() -> None:
             "thread_id": allow_payload["thread_id"],
         }
         kernel_payload = fria_live._payload
-        built = kernel_payload("payment.release", fria_allow_params)
-        assert (
-            built["actor_id"] == built["operator_urn"] == allow_payload["operator_urn"]
-        )
-        # Overlay only what the kernel payload does not carry (the adapter's
-        # approval_id and target) and pin the correlation and thread ids, so the
-        # wire request matches the recorded envelope; the actor is the kernel's.
-        with patch.object(
-            fria_live,
-            "_payload",
-            side_effect=lambda act, prms: {
-                **kernel_payload(act, prms),
-                "correlation_id": allow_payload["correlation_id"],
-                "thread_id": allow_payload["thread_id"],
-                "approval_id": allow_payload["approval_id"],
-                "target": allow_payload["target"],
-            },
-        ):
-            v_live_allow = await fria_live.evaluate(
-                "payment.release", fria_allow_params
+        with _SCRIPT_TRACER.start_as_current_span("validate"):
+            built = kernel_payload("payment.release", fria_allow_params)
+            assert (
+                built["actor_id"]
+                == built["operator_urn"]
+                == allow_payload["operator_urn"]
             )
-            v_live_refuse = await fria_live.evaluate(
-                "DELETE_ACCOUNT", fria_allow_params
-            )
-            v_live_escalate = await fria_live.evaluate(
-                "payment.release", escalate_payload["params"]
-            )
+            # Pin correlation_id and thread_id so the wire request matches the
+            # recorded envelope; approval_id and target travel in params as
+            # FriaTier._payload sends them, and the actor is the kernel's.
+            with patch.object(
+                fria_live,
+                "_payload",
+                side_effect=lambda act, prms: {
+                    **kernel_payload(act, prms),
+                    "correlation_id": allow_payload["correlation_id"],
+                    "thread_id": allow_payload["thread_id"],
+                },
+            ):
+                v_live_allow = await fria_live.evaluate(
+                    "payment.release", fria_allow_params
+                )
+                v_live_refuse = await fria_live.evaluate(
+                    "DELETE_ACCOUNT", fria_allow_params
+                )
+                v_live_escalate = await fria_live.evaluate(
+                    "payment.release", escalate_payload["params"]
+                )
 
         print(f"  [5B.1] FriaTier Live ALLOW -> violations={v_live_allow}")
         print(

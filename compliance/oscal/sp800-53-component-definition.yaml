@@ -808,10 +808,17 @@ component-definition:
                 it to the 'act' claim in the ConsequenceToken. Digest mismatch triggers
                 ACTION_BINDING_MISMATCH rejection, closing the TOCTOU gap where the
                 action payload could be modified between governance evaluation and
-                execution. Step 5 verifies the binding hash (SHA-256 of
-                thread_id:actor_id:action_digest:authority_state_version) matches
-                the consumed marker in Redis, detecting substitution attacks where
-                a different binding is replayed under the same authority record ID.
+                execution. Step 5 atomically consumes the per-determination authority
+                receipt ID (rec = authority_receipt.id; provider_01 fails closed at
+                mint if authority_receipt.id is absent, POAM-2026-156 / POAM-2026-157)
+                via ConsequenceAuthorityStore.consume_once() on a pinned connection
+                (src/gateway/infrastructure/redis_replication.py), verifies that the
+                binding hash (SHA-256 of thread_id:actor_id:action_digest:authority_state_version)
+                matches the consumed marker in Redis, and issues Redis WAIT on the
+                same write socket (re-asserting our marker via _REASSERT_IF_OURS_LUA
+                after a lost-reply retry). Under strict replication (CAGE_STRICT_REPLICATION),
+                an unacknowledged write leaves the marker set on the primary and fails
+                closed with BLOCK and reason code CONSUMPTION_NOT_REPLICATED.
                 All integrity failures fail closed with BLOCK decision and structured
                 reason codes. The deterministic RFC 8785 JCS canonicalization ensures
                 identical digest computation across Python/Go/JavaScript runtimes,
@@ -1537,7 +1544,9 @@ component-definition:
                 too-early/too-late, stopped-too-soon/applied-too-long). Control Barrier
                 Functions (CBF) in src/gateway/governance/safety/cbf_engine.py define
                 formal discrete-time safety constraints (h(S(t+1)) >= (1 - gamma) h(S(t)))
-                and commit them in one Redis Lua hop with the fence-epoch check. In
+                and commit them (as well as LUA_ROLLBACK_CBF rollbacks) in one Redis Lua
+                hop with the fence-epoch check, followed by Redis WAIT on the same pinned
+                write socket via src/gateway/infrastructure/redis_replication.py. In
                 reconciled mode the hop nets the custodian-attested scalar against the
                 settlement-aware local-debit ledger (cbf:debits, cbf:debits:total in
                 src/gateway/governance/safety/debit_ledger.py): debits are ledgered by

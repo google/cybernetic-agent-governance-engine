@@ -146,6 +146,11 @@ def healthy_probes(monkeypatch):
     monkeypatch.setattr(
         "src.gateway.governance.routing_seal._USING_DEFAULT_SALT", False
     )
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", TracerProvider())
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "memory")
     monkeypatch.delenv("CBF_FAIL_OPEN", raising=False)
     return monkeypatch
 

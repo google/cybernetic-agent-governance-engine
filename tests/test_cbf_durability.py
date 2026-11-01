@@ -627,53 +627,62 @@ class TestPinnedConnection:
     """Verifies that EVALSHA and WAIT execute on one pinned connection."""
 
     @pytest.mark.asyncio
-    async def test_evalsha_and_wait_use_same_pinned_client(self, cbf_finance):
+    async def test_evalsha_and_wait_use_same_pinned_client(
+        self, cbf_finance, monkeypatch
+    ):
         """atomic_verify_and_commit must pin a connection and run both EVALSHA and WAIT on it."""
-        mock_raw_client = MagicMock()
-        mock_pinned_client = MagicMock()
-        mock_pinned_client.evalsha = AsyncMock(
-            return_value=[1, "COMMITTED", "99000.0", 2]
-        )
-        mock_pinned_client.script_load = AsyncMock(return_value="mock_sha")
-        mock_pinned_client.execute_command = AsyncMock(return_value=1)
-        mock_pinned_client.aclose = AsyncMock()
+        from tests.fixtures.replicated_valkey import ReplicatedValkey, build_client
 
-        # client() returns the pinned connection
-        mock_raw_client.client = MagicMock(return_value=mock_pinned_client)
-
-        with (
-            patch(
-                "src.gateway.governance.safety.cbf_engine.redis_client", mock_raw_client
-            ),
-            patch(
-                "src.gateway.governance.safety.cbf_engine._get_raw_redis",
-                AsyncMock(return_value=mock_raw_client),
-            ),
-            patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
-            patch.object(
-                cbf_finance,
-                "_resolve_ground_truth_balance",
-                AsyncMock(
-                    return_value=(
-                        100000.0,
-                        {"source": "reconciliation", "sequence": 1, "fence_epoch": 1},
-                    )
-                ),
-            ),
+        for name in (
+            "REDIS_PASSWORD",
+            "REDIS_TLS",
+            "REDIS_AUTH_MODE",
+            "REDIS_IAM_AUTH",
         ):
-            committed, _msg, _ = await cbf_finance.atomic_verify_and_commit(
-                "execute_trade",
-                {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0},
-            )
+            monkeypatch.delenv(name, raising=False)
 
-        assert committed is True
-        # Both EVALSHA and WAIT must have executed on mock_pinned_client!
-        assert mock_pinned_client.evalsha.called
-        assert mock_pinned_client.execute_command.called
-        # And neither on mock_raw_client directly
-        assert (
-            not hasattr(mock_raw_client.evalsha, "called")
-            or not mock_raw_client.evalsha.called
-        )
-        # Pinned client was closed/released
-        assert mock_pinned_client.aclose.called
+        valkey = await ReplicatedValkey(replicas=1).start()
+        raw_client = build_client(valkey)
+        try:
+            await raw_client.set(cbf_finance.redis_key, "100000.0")
+            await raw_client.set(_REDIS_KEY_FENCE_EPOCH, "1")
+            await raw_client.set(_REDIS_KEY_FENCE_EPOCH_HWM, "1")
+
+            with (
+                patch(
+                    "src.gateway.governance.safety.cbf_engine.redis_client",
+                    raw_client,
+                ),
+                patch(
+                    "src.gateway.governance.safety.cbf_engine._get_raw_redis",
+                    AsyncMock(return_value=raw_client),
+                ),
+                patch("src.gateway.governance.safety.cbf_engine._WAIT_REPLICAS", 1),
+                patch.object(
+                    cbf_finance,
+                    "_resolve_ground_truth_balance",
+                    AsyncMock(
+                        return_value=(
+                            100000.0,
+                            {
+                                "source": "self_reported",
+                                "mode": "self_reported",
+                                "fence_epoch": 1,
+                            },
+                        )
+                    ),
+                ),
+            ):
+                committed, _msg, _ = await cbf_finance.atomic_verify_and_commit(
+                    "execute_trade",
+                    {"symbol": "AAPL", "shares": 10, "price": 100.0, "amount": 1000.0},
+                )
+
+            assert committed is True
+            assert valkey.connections_running("WAIT") == valkey.connections_running(
+                "EVALSHA"
+            )
+            assert len(valkey.connections_running("WAIT")) == 1
+        finally:
+            await raw_client.aclose()
+            await valkey.stop()

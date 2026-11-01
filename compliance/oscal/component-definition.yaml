@@ -366,13 +366,15 @@ component-definition:
       is verify_and_consume_seal: verify the routing seal, then consume its nonce)
       6-step evaluation (src/gateway/governance/consequence_gateway.py): JWS signature
       verification, TTL check, action digest recomputation via RFC 8785 JCS canonicalization,
-      digest comparison (TOCTOU closure), atomic single-use consumption, EXECUTE/HOLD/BLOCK
-      decision with reason codes (OK, TOKEN_INVALID, ACTION_BINDING_MISMATCH, REDIS_ERROR,
-      ALREADY_CONSUMED, AUTHORITY_RECORD_BINDING_MISMATCH). Evidence pipeline migrated
-      to RFC 8785 JCS (JSON Canonicalization Scheme) for deterministic cross-platform
-      hashing. R5 mitigation: JWS token log-scrubbing via pii_sanitizer.py regex pattern
-      (eyJ-anchored 3-segment base64url) and key-based denylist (token, consequence_token,
-      jws, jwt, bearer_token).
+      digest comparison (TOCTOU closure), atomic single-use consumption on a pinned
+      connection with Redis WAIT replica acknowledgement (src/gateway/infrastructure/redis_replication.py;
+      POAM-2026-156), EXECUTE/HOLD/BLOCK decision with reason codes (OK, TOKEN_INVALID,
+      ACTION_BINDING_MISMATCH, REDIS_ERROR, CONSUMPTION_NOT_REPLICATED, ALREADY_CONSUMED,
+      AUTHORITY_RECORD_BINDING_MISMATCH). Evidence pipeline migrated to RFC 8785 JCS
+      (JSON Canonicalization Scheme) for deterministic cross-platform hashing. R5
+      mitigation: JWS token log-scrubbing via pii_sanitizer.py regex pattern (eyJ-anchored
+      3-segment base64url) and key-based denylist (token, consequence_token, jws,
+      jwt, bearer_token).
 
       '
     purpose: 'Provides cryptographically-verifiable consequence authority for high-stakes
@@ -434,7 +436,8 @@ component-definition:
 
           Phase 2 extensions: ConsequenceToken JWS (src/gateway/governance/consequence_token.py)
           provides KMS-signed cryptographic binding between governance evaluation
-          and execution. 8-claim structure (sub=actor_id, tid=thread_id, rec=authority_record_id,
+          and execution. 8-claim structure (sub=actor_id, tid=thread_id, rec=authority_receipt_id
+          keyed per determination rather than per mandate [POAM-2026-156, POAM-2026-157],
           act=SHA256(JCS(action_payload)), ver=authority_state_version, iat/exp, jti)
           enforces temporal validity (60s TTL with 5s clock-skew tolerance), action
           integrity (recomputed digest comparison), and single-use semantics (rec
@@ -445,15 +448,18 @@ component-definition:
           6-step evaluation: (1) JWS signature verification via KMSGovernanceSigner.verify_raw(),
           (2) TTL check, (3-4) action digest recomputation and comparison (TOCTOU
           closure), (5) atomic consumption via ConsequenceAuthorityStore.consume_once()
-          with binding-hash verification (substitution defense), (6) EXECUTE/HOLD/BLOCK
-          decision with structured reason codes. Fails closed on all errors (TOKEN_INVALID,
-          REDIS_ERROR, ACTION_BINDING_MISMATCH, ALREADY_CONSUMED, AUTHORITY_RECORD_BINDING_MISMATCH).
-          Evidence pipeline migrated to RFC 8785 JSON Canonicalization Scheme (JCS)
-          for deterministic cross-platform/cross-language evidence hashing (replaces
-          json.dumps(sort_keys=True) in the former normative_provider.py async FRIA
-          attestation, removed by refactor/fria-jurisdiction). R5 mitigation: pii_sanitizer.py
-          JWS log-scrubbing via eyJ-anchored regex pattern plus key-based denylist
-          (token, consequence_token, jws, jwt, bearer_token) prevents ConsequenceToken
+          with binding-hash verification (substitution defense) and Redis WAIT replica
+          acknowledgement on the same pinned socket (src/gateway/infrastructure/redis_replication.py,
+          retaining the marker on the primary and raising ConsumptionNotReplicatedError
+          on replica shortfall under strict replication), (6) EXECUTE/HOLD/BLOCK decision
+          with structured reason codes. Fails closed on all errors (TOKEN_INVALID,
+          REDIS_ERROR, CONSUMPTION_NOT_REPLICATED, ACTION_BINDING_MISMATCH, ALREADY_CONSUMED,
+          AUTHORITY_RECORD_BINDING_MISMATCH). Evidence pipeline migrated to RFC 8785
+          JSON Canonicalization Scheme (JCS) for deterministic cross-platform/cross-language
+          evidence hashing (replaces json.dumps(sort_keys=True) in the former normative_provider.py
+          async FRIA attestation, removed by refactor/fria-jurisdiction). R5 mitigation:
+          pii_sanitizer.py JWS log-scrubbing via eyJ-anchored regex pattern plus key-based
+          denylist (token, consequence_token, jws, jwt, bearer_token) prevents ConsequenceToken
           leakage in audit logs and Langfuse telemetry.
 
           '

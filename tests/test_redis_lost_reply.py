@@ -56,6 +56,7 @@ from src.gateway.governance.defer_queue import (
     DeferReason,
     DeferToken,
 )
+from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 from src.gateway.infrastructure.redis_single_use import new_op_id, set_nx_retry_safe
 from src.gateway.server.dpop_validator import DPoPValidator, TokenBindingError
 from src.gateway.server.rate_limit import LUA_GCRA_DUAL_BUCKET, SharedRateLimiter
@@ -334,15 +335,21 @@ BINDING = ConsequenceAuthorityStore.binding_hash("thread-1", "agent-a", "digest"
 class TestConsequenceAuthorityStore:
     async def test_consume_survives_lost_reply(self):
         redis = fakeredis.FakeRedis(decode_responses=True)
-        store = ConsequenceAuthorityStore(LostReply(redis, "set"))
+        store = ConsequenceAuthorityStore(
+            LostReply(redis, "set"), replication=ReplicationPolicy.standalone()
+        )
         assert await store.consume_once("rec-1", BINDING) is True
         assert await store.get_binding("rec-1") == BINDING
 
     async def test_replay_and_substitution_still_refused(self):
         redis = fakeredis.FakeRedis(decode_responses=True)
-        lossy = ConsequenceAuthorityStore(LostReply(redis, "set"))
+        lossy = ConsequenceAuthorityStore(
+            LostReply(redis, "set"), replication=ReplicationPolicy.standalone()
+        )
         assert await lossy.consume_once("rec-2", BINDING) is True
-        store = ConsequenceAuthorityStore(redis)
+        store = ConsequenceAuthorityStore(
+            redis, replication=ReplicationPolicy.standalone()
+        )
         assert await store.consume_once("rec-2", BINDING) is False
         other = ConsequenceAuthorityStore.binding_hash(
             "thread-1", "agent-b", "digest", "v1"
@@ -351,7 +358,9 @@ class TestConsequenceAuthorityStore:
         assert await store.get_binding("rec-2") == BINDING
 
     async def test_read_back_failure_fails_closed(self):
-        store = ConsequenceAuthorityStore(ConflictReadFails())
+        store = ConsequenceAuthorityStore(
+            ConflictReadFails(), replication=ReplicationPolicy.standalone()
+        )
         with pytest.raises(ConnectionError):
             await store.consume_once("rec-3", BINDING)
 

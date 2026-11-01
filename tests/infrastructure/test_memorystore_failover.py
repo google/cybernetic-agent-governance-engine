@@ -274,15 +274,12 @@ class TestNoevictionCeilingError:
     ):
         """When memory is at ceiling, Redis raises OOM under noeviction; CBF must fail closed."""
         mock_raw_client = MagicMock()
-        mock_pinned_client = MagicMock()
-        mock_pinned_client.evalsha = AsyncMock(
+        mock_raw_client.evalsha = AsyncMock(
             side_effect=redis.exceptions.ResponseError(
                 "OOM command not allowed when used memory > 'maxmemory'."
             )
         )
-        mock_pinned_client.script_load = AsyncMock(return_value="mock_sha")
-        mock_pinned_client.aclose = AsyncMock()
-        mock_raw_client.client = MagicMock(return_value=mock_pinned_client)
+        mock_raw_client.script_load = AsyncMock(return_value="mock_sha")
 
         with (
             patch(
