@@ -13,11 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ─── Staging Lifecycle Manager (Release-Validation Gate — Track A / A3) ───────
+# ─── Staging Lifecycle Manager (Release-Validation Gate) ──────────────────────
 #
 # Purpose: Provision, validate, and destroy the ephemeral staging environment
 #          in a single fail-closed automated cycle (POAM-024 / POAM-2026-131 /
 #          POAM-2026-159).
+#
+# --fresh-project is the automation for Track A's Step A3 (POAM-2026-164). It
+# has run only against stubs, and Step A3 is not done: it waits for the manual
+# Step A2 walk, and then for this script to match what the walk found.
 #
 # Usage:
 #   ./scripts/staging_lifecycle.sh [OPTIONS]
@@ -159,7 +163,7 @@ READINESS_FAILED=false
 LULA_FAILURES=0
 POSTURE_FAILURES=0
 
-# ─── Phase 0 (Optional): Fresh-Project Bootstrap (A2 / A3) ────────────────────
+# ─── Phase 0 (Optional): Fresh-Project Bootstrap ──────────────────────────────
 if [[ "$FRESH_PROJECT" == "true" ]]; then
   echo ""
   echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
@@ -184,7 +188,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
     --region="$REGION"
 fi
 
-# W5: Ensure control-plane authorized_networks is populated so staging compliance
+# PF5: Ensure control-plane authorized_networks is populated so staging compliance
 # posture (enable_private_nodes=true) does not fail plan or lock out kubectl/helm.
 if [[ -z "${TF_VAR_authorized_networks:-}" ]]; then
   EGRESS_IP="${DEPLOYER_EGRESS_IP:-}"
@@ -393,12 +397,12 @@ elif [[ -f "$TF_DIR/tests/fixtures/image_digests.tfvars" ]]; then
   DIGESTS_FILE="$TF_DIR/tests/fixtures/image_digests.tfvars"
 fi
 
-# W8: GCP KMS keyrings and keys cannot be deleted and carry lifecycle.prevent_destroy = true
+# PF8: GCP KMS keyrings and keys cannot be deleted and carry lifecycle.prevent_destroy = true
 # in kms_signing.tf (and destroying a CryptoKey destroys cryptoKeyVersions/1, which is
 # pinned by perimeter.tf and kms_signing.tf). Detach them from Terraform state prior to
 # `terraform destroy`; scripts/bootstrap_gcp_project.sh --import-state re-imports them on
 # the next lifecycle run.
-info "Detaching persistent KMS keyrings and signing keys from Terraform state before destroy (W8)..."
+info "Detaching persistent KMS keyrings and signing keys from Terraform state before destroy (PF8)..."
 PERSISTENT_KMS_STATE_ADDRS=(
   "google_kms_crypto_key_iam_policy.signing_key"
   "google_kms_crypto_key.gateway_seal"
@@ -433,7 +437,7 @@ fi
 
 success "Staging environment destroyed successfully"
 
-# W9: In --fresh-project mode, verify that no workload resources or deletion liens
+# PF9: In --fresh-project mode, verify that no workload resources or deletion liens
 # survived `terraform destroy` (confirming POAM-2026-159 bucket teardown and clean
 # project deletion readiness).
 if [[ "$FRESH_PROJECT" == "true" ]]; then
