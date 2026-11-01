@@ -26,6 +26,7 @@ import pytest
 
 from src.gateway.governance.consensus import ConsensusGate
 from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
+from src.gateway.governance.seams.critic import CriticRequest
 
 pytestmark = [pytest.mark.local, pytest.mark.unit]
 
@@ -42,7 +43,7 @@ class TestConsensusContextSignature:
             ),
             threshold=1000.0,
             magnitude_extractor=lambda p: float(p.get("amount", 0.0)),
-            registry=MagicMock(),
+            critic_backend=MagicMock(),
         )
 
         result = await gate.check_consensus(
@@ -62,7 +63,7 @@ class TestConsensusContextSignature:
             ),
             threshold=1000.0,
             magnitude_extractor=lambda p: float(p.get("amount", 0.0)),
-            registry=MagicMock(),
+            critic_backend=MagicMock(),
         )
 
         result = await gate.check_consensus(
@@ -83,7 +84,7 @@ class TestConsensusContextSignature:
             ),
             threshold=1000.0,
             magnitude_extractor=lambda p: float(p.get("dose_mg", 0.0)),
-            registry=MagicMock(),
+            critic_backend=MagicMock(),
         )
 
         result = await gate.check_consensus(
@@ -103,7 +104,7 @@ class TestConsensusFailClosedOnEmptyCritics:
             critics=(),
             threshold=100.0,
             magnitude_extractor=lambda p: float(p.get("value", 0.0)),
-            registry=MagicMock(),
+            critic_backend=MagicMock(),
             critics_enabled=True,
         )
 
@@ -123,7 +124,7 @@ class TestConsensusFailClosedOnEmptyCritics:
             threshold=10000.0,
             magnitude_extractor=lambda _p: 0.0,
             high_stakes_actions=frozenset({"override_contraindication"}),
-            registry=MagicMock(),
+            critic_backend=MagicMock(),
             critics_enabled=True,
         )
 
@@ -161,15 +162,12 @@ class TestDomainInjectedCriticPrompts:
 
         captured_prompts: list[str] = []
 
-        async def _fake_generate(prompt: str, **kwargs):
-            captured_prompts.append(prompt)
-            return '{"decision": "APPROVE", "reason": "Clinically appropriate"}'
+        class _CapturingBackend:
+            async def complete(self, request: CriticRequest) -> str:
+                captured_prompts.append(request.prompt)
+                return '{"decision": "APPROVE", "reason": "Clinically appropriate"}'
 
-        gate._registry = MagicMock()
-        gate._registry.get_client.return_value = None
-        gate._registry.get_model.return_value = "gemini-2.5-flash"
-        gate._default_client = MagicMock()
-        gate._default_client.generate = AsyncMock(side_effect=_fake_generate)
+        gate._critic_backend = _CapturingBackend()
 
         with patch(
             "src.gateway.governance.consensus.engine.genai_span"
@@ -205,7 +203,7 @@ class TestDomainInjectedCriticPrompts:
             magnitude_extractor=lambda p: float(p.get("speed", 0.0)),
             high_stakes_actions=frozenset({"disengage_e_stop"}),
         )
-        gate = ConsensusGate.from_contribution(contrib, registry=MagicMock())
+        gate = ConsensusGate.from_contribution(contrib, critic_backend=MagicMock())
         assert gate.threshold == 42.0
         assert not hasattr(gate, "quorum")
         assert gate.high_stakes_actions == frozenset({"disengage_e_stop"})
@@ -241,11 +239,11 @@ class TestKernelAndConsumerTiersFailClosed:
             build_physical_consensus_gate,
         )
 
-        fin_gate = build_finance_consensus_gate(registry=MagicMock())
+        fin_gate = build_finance_consensus_gate(critic_backend=MagicMock())
         hc_gate = build_healthcare_consensus_gate()
-        hc_gate._registry = MagicMock()
+        hc_gate._critic_backend = MagicMock()
         phys_gate = build_physical_consensus_gate()
-        phys_gate._registry = MagicMock()
+        phys_gate._critic_backend = MagicMock()
 
         fin_res = await fin_gate.check_consensus(
             "execute_trade", context={"amount": bad_value}

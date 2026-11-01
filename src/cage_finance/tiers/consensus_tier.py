@@ -18,7 +18,6 @@ from typing import Any
 
 from src.gateway.governance.consensus.engine import (
     ConsensusGate,
-    ConsensusModelRegistry,
     consensus_admits,
     consensus_violation_code,
     extract_field_magnitude,
@@ -32,6 +31,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
+from src.gateway.governance.seams.critic import CriticBackend
 
 _CRITICS_YAML_PATH = Path(__file__).resolve().parents[1] / "config" / "critics.yaml"
 
@@ -81,12 +81,12 @@ def build_finance_consensus_contribution(
 
 def build_finance_consensus_gate(
     threshold: float | None = None,
-    registry: ConsensusModelRegistry | None = None,
+    critic_backend: CriticBackend | None = None,
 ) -> ConsensusGate:
     """Build a ``ConsensusGate`` configured with the finance domain's critics and threshold."""
     return ConsensusGate.from_contribution(
         build_finance_consensus_contribution(threshold=threshold),
-        registry=registry,
+        critic_backend=critic_backend,
     )
 
 

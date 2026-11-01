@@ -66,8 +66,10 @@ COPY pyproject.toml uv.lock ./
 # --extra advisor pulls langgraph, langchain, yfinance, google-adk,
 #                  opentelemetry-exporter-gcp-trace etc.
 # --extra langfuse pulls the langfuse SDK and observability helpers.
+# --extra nemo pulls nemoguardrails for the advisor's opt-in rail nodes
+#   (CAGE_NEMO_ENABLED); it left the gateway extra in POAM-2026-168.
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
-RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --extra compliance --no-install-project
+RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --extra nemo --extra compliance --no-install-project
 
 # Install spaCy large model via direct wheel URL (avoids CDN redirect failures).
 # Target the venv explicitly so the package lands in /app/.venv.

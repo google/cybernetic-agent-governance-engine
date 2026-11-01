@@ -97,6 +97,14 @@ class TestImportBoundaryDetection:
             ("from botocore.exceptions import ClientError\n", "botocore"),
             ("import azure.storage.blob\n", "azure"),
             ("import langfuse\n", "langfuse"),
+            # LLM clients and model runtimes (POAM-2026-168)
+            ("from openai import AsyncOpenAI\n", "openai"),
+            ("import litellm\n", "litellm"),
+            ("from anthropic import AsyncAnthropic\n", "anthropic"),
+            ("from google.genai import Client\n", "google.genai"),
+            ("from langchain_openai import ChatOpenAI\n", "langchain_openai"),
+            ("import transformers\n", "transformers"),
+            ("from huggingface_hub import hf_hub_download\n", "huggingface_hub"),
         ],
     )
     def test_evidence_kernel_vendor_sdk_violations(

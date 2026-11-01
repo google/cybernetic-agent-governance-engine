@@ -15,7 +15,9 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "networkx>=3.3",
     "redis>=5.0.0",
-    "litellm>=1.104.0",
+    # No LLM client, model runtime or LLM framework belongs here: no model sits
+    # in the decision path (POAM-2026-168). scripts/check_model_free_install.py
+    # fails the build if this install, or the gateway image's, resolves one.
     # Core OTEL — shared across gateway, advisor, compliance
     "opentelemetry-api>=1.38.0",
     "opentelemetry-sdk>=1.38.0",
@@ -27,7 +29,6 @@ dependencies = [
     "uvloop>=0.21.0; sys_platform != 'win32'",
     "httptools>=0.6.1",
     "sse-starlette>=1.0.0",
-    "openai>=1.0.0",
     # cryptography>=50.0.0: fixes PYSEC-2026-3552 / CVE-2026-69247 / GHSA-g6cj-pr64-35w5
     "cryptography>=50.0.0",
     # aiohttp>=3.14.4: fixes PYSEC-2026-3545/3546/3547 and GHSA-2g87-pp6c-29x5.
@@ -35,7 +36,6 @@ dependencies = [
     # version even though aiohttp is pulled in transitively.
     "aiohttp>=3.14.4",
     "prometheus-client>=0.20.0",
-    "pytest-cov>=7.1.0",
 ]
 
 requires-python = ">=3.10,<3.13"
@@ -57,6 +57,9 @@ test = [
     "respx>=0.22.0",
     "freezegun>=1.5.0",
     "pandas>=2.2.0",
+    # The coverage plugin behind CI's --cov gate: a test tool, not a runtime
+    # dependency (it was in the base install until POAM-2026-168).
+    "pytest-cov>=7.1.0",
 ]
 dev = [
     { include-group = "test" },
@@ -110,7 +113,6 @@ gateway = [
     # explicitly here so the requirement is not silently dropped if mcp's own
     # dependency spec changes.
     "PyJWT[crypto]>=2.9.0",
-    "nemoguardrails>=0.20.0,<1.0.0",
     # pyahocorasick: O(n) Aho-Corasick automaton for the Tier-1 keyword scanner
     # (src/gateway/governance/text_filter.py). Without this, text_filter falls back
     # to an O(n*m) any() loop and logs a WARN on every import. The package is an
@@ -138,8 +140,25 @@ finance = [
     "yfinance>=0.2.0",
 ]
 
+# nemo: the optional, off-by-default NeMo Colang semantic rails
+# (CAGE_NEMO_ENABLED). litellm is the model client src/integrations/nemo/
+# vllm_client.py uses. Not in the gateway image by default.
+nemo = [
+    "nemoguardrails>=0.20.0,<1.0.0",
+    "litellm>=1.104.0",
+]
+
+# inference: the OpenAI-compatible client for the optional, off-by-default
+# consensus critics (CAGE_CONSENSUS_CRITICS_ENABLED, src/integrations/
+# inference_client/) and for the compliance bridge's remediation advisory.
+inference = [
+    "openai>=1.0.0",
+]
+
 advisor = [
     "cybernetic-governance-engine[finance]",
+    # litellm: model alias registry in src/governed_financial_advisor/infrastructure/llm/config.py
+    "litellm>=1.104.0",
     "langgraph>=1.1.0",
     "langgraph-checkpoint-redis",
     # langchain>=1.3.9: fixes GHSA-gr75-jv2w-4656 (prompt injection via

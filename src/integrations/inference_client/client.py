@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Routed OpenAI-compatible chat-completions client (Layer 3).
+
+Moved out of the kernel (formerly ``src/gateway/core/llm.py``, class
+``GatewayClient``) so that no model client sits in Layer 1 (POAM-2026-168).
+The consensus critic backend in this package uses it as the fallback route
+for critics without a dedicated endpoint.
+"""
+
 import logging
 
 from openai import AsyncOpenAI
@@ -50,7 +58,7 @@ def _route_client(routed_base: str | None) -> AsyncOpenAI | None:
     return AsyncOpenAI(base_url=base, api_key=Config.VLLM_API_KEY or "EMPTY")
 
 
-class GatewayClient:
+class InferenceClient:
     def __init__(self):  # type: ignore[no-untyped-def]
         # Mode 1: Kubernetes Inference Gateway (Unified Endpoint) - Production
         # Supports any Kubernetes-hosted vLLM/inference server (GKE, EKS, AKS, on-prem, etc.)

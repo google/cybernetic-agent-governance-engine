@@ -107,12 +107,11 @@ async def test_high_stakes_action_denies_under_none_when_critics_enabled(
 
 
 @pytest.mark.asyncio
-async def test_no_critic_is_consulted_and_no_client_built_under_none(
+async def test_no_critic_is_consulted_and_no_backend_bound_under_none(
     critics_enabled_backend_none,
 ) -> None:
     gate = _gate()
-    assert gate._registry is None
-    assert gate._default_client is None
+    assert gate._critic_backend is None
     with patch.object(ConsensusGate, "_get_critic_vote", AsyncMock()) as vote:
         await gate.check_consensus("act", {}, magnitude=_THRESHOLD * 5)
     vote.assert_not_awaited()

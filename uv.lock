@@ -1011,17 +1011,14 @@ dependencies = [
     { name = "fastapi", marker = "python_full_version >= '3.11'" },
     { name = "httptools", marker = "python_full_version >= '3.11'" },
     { name = "httpx", marker = "python_full_version >= '3.11'" },
-    { name = "litellm", marker = "python_full_version >= '3.11'" },
     { name = "nest-asyncio", marker = "python_full_version >= '3.11'" },
     { name = "networkx", marker = "python_full_version >= '3.11'" },
-    { name = "openai", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-api", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-exporter-otlp", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-sdk", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-semantic-conventions-ai", marker = "python_full_version >= '3.11'" },
     { name = "prometheus-client", marker = "python_full_version >= '3.11'" },
     { name = "pydantic", marker = "python_full_version >= '3.11'" },
-    { name = "pytest-cov", marker = "python_full_version >= '3.11'" },
     { name = "python-dotenv", marker = "python_full_version >= '3.11'" },
     { name = "python-json-logger", marker = "python_full_version >= '3.11'" },
     { name = "redis", marker = "python_full_version >= '3.11'" },
@@ -1039,6 +1036,7 @@ advisor = [
     { name = "langchain-openai", marker = "python_full_version >= '3.11'" },
     { name = "langgraph", marker = "python_full_version >= '3.11'" },
     { name = "langgraph-checkpoint-redis", marker = "python_full_version >= '3.11'" },
+    { name = "litellm", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-exporter-gcp-trace", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-instrumentation-langchain", marker = "python_full_version >= '3.11'" },
     { name = "tabulate", marker = "python_full_version >= '3.11'" },
@@ -1064,7 +1062,6 @@ gateway = [
     { name = "grpcio", marker = "python_full_version >= '3.11'" },
     { name = "httptools", marker = "python_full_version >= '3.11'" },
     { name = "mcp", marker = "python_full_version >= '3.11'" },
-    { name = "nemoguardrails", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-instrumentation-fastapi", marker = "python_full_version >= '3.11'" },
     { name = "opentelemetry-instrumentation-requests", marker = "python_full_version >= '3.11'" },
     { name = "presidio-analyzer", marker = "python_full_version >= '3.11'" },
@@ -1078,6 +1075,9 @@ gateway = [
 gcs = [
     { name = "google-cloud-storage", marker = "python_full_version >= '3.11'" },
 ]
+inference = [
+    { name = "openai", marker = "python_full_version >= '3.11'" },
+]
 langfuse = [
     { name = "langfuse", marker = "python_full_version >= '3.11'" },
 ]
@@ -1087,6 +1087,10 @@ lint = [
     { name = "ruff", marker = "python_full_version >= '3.11'" },
     { name = "types-pyyaml", marker = "python_full_version >= '3.11'" },
     { name = "types-requests", marker = "python_full_version >= '3.11'" },
+]
+nemo = [
+    { name = "litellm", marker = "python_full_version >= '3.11'" },
+    { name = "nemoguardrails", marker = "python_full_version >= '3.11'" },
 ]
 s3 = [
     { name = "boto3", marker = "python_full_version >= '3.11'" },
@@ -1112,6 +1116,7 @@ dev = [
     { name = "pyasn1", marker = "python_full_version >= '3.11'" },
     { name = "pytest", marker = "python_full_version >= '3.11'" },
     { name = "pytest-asyncio", marker = "python_full_version >= '3.11'" },
+    { name = "pytest-cov", marker = "python_full_version >= '3.11'" },
     { name = "pytest-randomly", marker = "python_full_version >= '3.11'" },
     { name = "pytest-timeout", marker = "python_full_version >= '3.11'" },
     { name = "pytest-xdist", marker = "python_full_version >= '3.11'" },
@@ -1125,6 +1130,7 @@ test = [
     { name = "pandas", marker = "python_full_version >= '3.11'" },
     { name = "pytest", marker = "python_full_version >= '3.11'" },
     { name = "pytest-asyncio", marker = "python_full_version >= '3.11'" },
+    { name = "pytest-cov", marker = "python_full_version >= '3.11'" },
     { name = "pytest-timeout", marker = "python_full_version >= '3.11'" },
     { name = "pytest-xdist", marker = "python_full_version >= '3.11'" },
     { name = "respx", marker = "python_full_version >= '3.11'" },
@@ -1158,13 +1164,14 @@ requires-dist = [
     { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=2.0.0" },
     { name = "langgraph", marker = "extra == 'advisor'", specifier = ">=1.1.0" },
     { name = "langgraph-checkpoint-redis", marker = "extra == 'advisor'" },
-    { name = "litellm", specifier = ">=1.104.0" },
+    { name = "litellm", marker = "extra == 'advisor'", specifier = ">=1.104.0" },
+    { name = "litellm", marker = "extra == 'nemo'", specifier = ">=1.104.0" },
     { name = "mcp", marker = "extra == 'gateway'", specifier = ">=1.30.0,<2.0.0" },
     { name = "mypy", marker = "extra == 'lint'", specifier = ">=1.15.0" },
-    { name = "nemoguardrails", marker = "extra == 'gateway'", specifier = ">=0.20.0,<1.0.0" },
+    { name = "nemoguardrails", marker = "extra == 'nemo'", specifier = ">=0.20.0,<1.0.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "networkx", specifier = ">=3.3" },
-    { name = "openai", specifier = ">=1.0.0" },
+    { name = "openai", marker = "extra == 'inference'", specifier = ">=1.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.38.0" },
     { name = "opentelemetry-exporter-gcp-trace", marker = "extra == 'advisor'" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.38.0" },
@@ -1180,7 +1187,6 @@ requires-dist = [
     { name = "pyahocorasick", marker = "extra == 'gateway'", specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'gateway'", specifier = ">=2.9.0" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-json-logger", specifier = ">=2.0.7" },
     { name = "pyyaml", marker = "extra == 'compliance'", specifier = ">=6.0.0" },
@@ -1196,7 +1202,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'gateway'", specifier = ">=0.21.0" },
     { name = "yfinance", marker = "extra == 'finance'", specifier = ">=0.2.0" },
 ]
-provides-extras = ["gateway", "finance", "advisor", "gcs", "s3", "clickhouse", "compliance", "langfuse", "lint"]
+provides-extras = ["gateway", "finance", "nemo", "inference", "advisor", "gcs", "s3", "clickhouse", "compliance", "langfuse", "lint"]
 
 [package.metadata.requires-dev]
 deployment = [{ name = "absl-py", specifier = ">=2.2.1" }]
@@ -1216,6 +1222,7 @@ dev = [
     { name = "pyasn1", specifier = ">=0.6.5" },
     { name = "pytest", specifier = ">=8.3.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.7" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-randomly", specifier = ">=3.15.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
@@ -1229,6 +1236,7 @@ test = [
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pytest", specifier = ">=8.3.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.7" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "respx", specifier = ">=0.22.0" },

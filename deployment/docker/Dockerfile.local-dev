@@ -39,9 +39,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Copy dependency definitions
 COPY pyproject.toml uv.lock ./
 
-# Install locked dependencies with advisor, gateway, and langfuse extras.
+# Install locked dependencies with advisor, gateway, langfuse and the opt-in
+# model extras (nemo, inference), so every local path can be exercised.
 # --group dev pulls langgraph-cli[inmem] and other dev tools.
-RUN uv sync --frozen --group dev --extra advisor --extra gateway --extra langfuse --no-install-project
+RUN uv sync --frozen --group dev --extra advisor --extra gateway --extra nemo --extra inference --extra langfuse --no-install-project
 
 # Copy project files (source mounts will override src/ at runtime)
 COPY . .

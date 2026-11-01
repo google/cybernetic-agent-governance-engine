@@ -232,6 +232,14 @@ jobs:
         # Violations indicate a regression in the plugin seam architecture.
         run: |
           uv run python scripts/check_import_boundaries.py --verbose
+      - name: Model-free install gate (POAM-2026-168)
+        # No model sits in CAGE's decision path. The base install and the
+        # gateway image (the extras src/gateway/Dockerfile installs) must
+        # resolve no LLM client, model runtime or LLM framework, and G3's
+        # FORBIDDEN_VENDOR_SDKS must still list every LLM client, so the
+        # kernel import check cannot be narrowed without failing here.
+        run: |
+          uv run python scripts/check_model_free_install.py
       - name: Conformance package sync check (W4)
         # packages/cage-conformance must apply exactly proof/'s checks: its
         # copies of model.py, trace_conformance.py and stream_invariants.py are

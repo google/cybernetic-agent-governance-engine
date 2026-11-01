@@ -19,10 +19,13 @@ on:
     paths:
       - 'src/gateway/**'
       - 'src/compliance_bridge/**'
+      - 'src/cage_finance/**'
       - 'tests/test_symbolic_governor.py'
       - 'tests/test_cbf_*.py'
       - 'tests/test_routing_seal.py'
       - 'tests/test_governance_*.py'
+      - 'tests/test_kernel_assembly_model_free.py'
+      - 'scripts/check_model_free_install.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/test-hermetic.yml'
@@ -76,7 +79,13 @@ jobs:
           if pathlib.Path(sys.prefix).resolve() != venv:
               sys.exit(f"FAIL: running in {sys.prefix}, not the locked environment {venv}")
 
-          ml = ["torch", "sentence_transformers", "transformers", "tensorflow", "jax"]
+          # ML frameworks, and (POAM-2026-168) the LLM clients and frameworks
+          # this list did not check while the base install carried two of them.
+          ml = [
+              "torch", "sentence_transformers", "transformers", "tensorflow", "jax",
+              "openai", "litellm", "anthropic", "nemoguardrails", "langchain",
+              "langchain_core", "langgraph", "tiktoken", "tokenizers", "huggingface_hub",
+          ]
           installed = [name for name in ml if importlib.util.find_spec(name)]
           if installed:
               sys.exit(f"FAIL: ML packages installed in hermetic mode: {installed}")
@@ -98,12 +107,16 @@ jobs:
         run: |
           # Run core governance tests WITHOUT any ML dependencies
           # This proves Stage 2.5 is truly optional
+          # test_kernel_assembly_model_free.py assembles a finance governor
+          # here, with no model package installed (POAM-2026-168). Its positive
+          # control skips: it needs the inference extra, and there is none.
           uv run --frozen --no-sync pytest \
             tests/test_cbf_*.py \
             tests/test_symbolic_governor*.py \
             tests/test_routing_seal*.py \
             tests/test_governance_envelope.py \
             tests/test_consequence_gateway*.py \
+            tests/test_kernel_assembly_model_free.py \
             -m "local or unit" \
             --tb=short \
             -v \

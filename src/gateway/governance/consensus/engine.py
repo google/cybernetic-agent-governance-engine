@@ -17,21 +17,23 @@ Consensus Engine — Tier 5: Multi-Critic Consensus Gate.
 
 High-stakes actions (meeting or exceeding the domain magnitude threshold or
 listed in ``high_stakes_actions``) require synchronous, unanimous approval
-across all configured LLM critic personas. Completed consensus audit records
+across all configured critic personas. Completed consensus audit records
 are pushed to a background ``asyncio.Queue`` for asynchronous audit logging.
 
-Priority 4 (Evidentiary Independence): Heterogeneous Model Infrastructure.
-  The consensus engine routes each domain-injected critic persona to a
-  distinct model backend via ``ConsensusModelRegistry``.
+This module is the deterministic half of consensus. It decides:
 
-  In production, each critic should run on:
-    - A different model family (e.g., DeepSeek-R1 vs Llama 3.1)
-    - Different GPU hardware (to eliminate correlated hardware faults)
-    - Ideally different infrastructure (separate clusters or providers)
+- when a check triggers;
+- what context each critic may see;
+- how the prompt is rendered;
+- how a reply parses into a vote;
+- how votes become a decision.
 
-  Configure via environment variables per role ``{ROLE}`` (upper-snake-case):
-    CONSENSUS_{ROLE}_URL   — vLLM base URL for the critic role
-    CONSENSUS_{ROLE}_MODEL — model name for the critic role
+It imports no model client. The model call crosses the
+:class:`~src.gateway.governance.seams.critic.CriticBackend` seam. The backend
+is bound through ``critic_backend_factory`` only when critics are enabled
+(``CAGE_CONSENSUS_CRITICS_ENABLED=true``) and an inference backend exists.
+Per-role model routing (Priority 4, Evidentiary Independence: a distinct
+model backend per critic persona) belongs to the Layer 3 backend.
 """
 
 from __future__ import annotations
@@ -50,11 +52,12 @@ from typing import Any, Final
 import yaml
 from opentelemetry import trace
 
-from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
+from src.gateway.governance.critic_backend_factory import load_critic_backend
 from src.gateway.governance.feature_flags import consensus_critics_enabled
 from src.gateway.governance.inference_backend import inference_disabled
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.critic import CriticBackend, CriticRequest
 from src.gateway.infrastructure.telemetry_client import genai_span
 from src.gateway.observability.attributes import (
     TRACE_METADATA_CONSENSUS_DECISION,
@@ -303,106 +306,6 @@ async def _background_audit_worker() -> None:
             _AUDIT_QUEUE.task_done()
 
 
-# ---------------------------------------------------------------------------
-# ConsensusModelRegistry (Priority 4 — Heterogeneous Model Infrastructure)
-# ---------------------------------------------------------------------------
-
-
-class ConsensusModelRegistry:
-    """Maps each consensus critic persona to a distinct model backend.
-
-    Ensures that each persona runs on a different model family and/or
-    infrastructure, providing genuine algorithmic diversity rather than
-    the illusion of consensus from a single model with different prompts.
-
-    Creates dedicated ``AsyncOpenAI`` clients per persona rather than
-    using the shared ``GatewayClient`` (which reads from ``Config`` at
-    init time and does not support per-call base_url overrides).
-
-    Args:
-        persona_configs: Dict mapping persona role name to a dict with
-                         "base_url" and "model" keys.
-    """
-
-    def __init__(self, persona_configs: dict[str, dict[str, str]]) -> None:
-        from openai import AsyncOpenAI
-
-        from config.settings import Config
-
-        self._clients: dict[str, AsyncOpenAI] = {}
-        self._models: dict[str, str] = {}
-        self._has_dedicated: dict[str, bool] = {}
-
-        for role, config in persona_configs.items():
-            base_url = config.get("base_url", "")
-            model = config.get("model", "")
-
-            if base_url:
-                self._clients[role] = AsyncOpenAI(
-                    base_url=base_url,
-                    api_key=Config.VLLM_API_KEY or "EMPTY",
-                )
-                self._models[role] = model
-                self._has_dedicated[role] = True
-                logger.info(
-                    "[ConsensusRegistry] %s → %s (model=%s)",
-                    role,
-                    base_url,
-                    model or "default",
-                )
-            else:
-                # No dedicated URL — fall back to default GatewayClient
-                self._clients[role] = None  # type: ignore[assignment]
-                self._models[role] = model
-                self._has_dedicated[role] = False
-                logger.warning(
-                    "[ConsensusRegistry] %s has no dedicated URL — "
-                    "will use default GatewayClient. This reduces model "
-                    "diversity and weakens consensus independence.",
-                    role,
-                )
-
-    def get_client(self, role: str) -> Any:
-        """Return the AsyncOpenAI client for a given persona role, or None."""
-        return self._clients.get(role)
-
-    def get_model(self, role: str) -> str:
-        """Return the model name for a given persona role."""
-        return self._models.get(role, "")
-
-    def has_dedicated_backend(self, role: str) -> bool:
-        """True if the role has a dedicated model backend (not shared)."""
-        return self._has_dedicated.get(role, False)
-
-    @classmethod
-    def from_env(cls, roles: Sequence[str] = ()) -> ConsensusModelRegistry:
-        """Construct from environment variables for the supplied critic roles.
-
-        Reads ``CONSENSUS_{ROLE}_URL`` and ``CONSENSUS_{ROLE}_MODEL`` for each
-        persona. Falls back to the split-brain reasoning/fast vLLM endpoints
-        and then to ``GatewayClient`` when dedicated URLs are unset.
-        """
-        default_fallbacks = (
-            ("VLLM_REASONING_API_BASE", "MODEL_REASONING"),
-            ("VLLM_FAST_API_BASE", "MODEL_FAST"),
-        )
-        persona_configs: dict[str, dict[str, str]] = {}
-        for idx, role in enumerate(roles):
-            role_key = role.upper().replace(" ", "_").replace("-", "_")
-            fb_url_var, fb_model_var = default_fallbacks[idx % len(default_fallbacks)]
-            persona_configs[role] = {
-                "base_url": os.environ.get(
-                    f"CONSENSUS_{role_key}_URL",
-                    os.environ.get(fb_url_var, ""),
-                ),
-                "model": os.environ.get(
-                    f"CONSENSUS_{role_key}_MODEL",
-                    os.environ.get(fb_model_var, ""),
-                ),
-            }
-        return cls(persona_configs)
-
-
 class ConsensusGate:
     """
     Domain-agnostic multi-critic consensus gate for high-stakes actions.
@@ -418,7 +321,7 @@ class ConsensusGate:
         threshold: float = 0.0,
         magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None,
         high_stakes_actions: AbstractSet[str] = frozenset(),
-        registry: ConsensusModelRegistry | None = None,
+        critic_backend: CriticBackend | None = None,
         critics_enabled: bool | None = None,
     ) -> None:
         self.critics: tuple[CriticSpec, ...] = tuple(critics)
@@ -427,31 +330,33 @@ class ConsensusGate:
             magnitude_extractor
         )
         self.high_stakes_actions: frozenset[str] = frozenset(high_stakes_actions)
-        # Resolved once, at composition time. By default
-        # (CAGE_CONSENSUS_CRITICS_ENABLED=false) a triggered check escalates
-        # deterministically with NOTIONAL_THRESHOLD_ESCALATION and no model
-        # client is built. When critics are enabled under
-        # CAGE_INFERENCE_BACKEND=none, a triggered check is refused before any
-        # critic is consulted, and no model client is built.
+        # Resolved once, at composition time.
+        # - By default (CAGE_CONSENSUS_CRITICS_ENABLED=false), a triggered
+        #   check escalates deterministically with NOTIONAL_THRESHOLD_ESCALATION.
+        # - With critics enabled under CAGE_INFERENCE_BACKEND=none, a triggered
+        #   check is refused before any critic is consulted.
+        # On both paths no critic backend is bound, so no model client package
+        # is imported. A backend passed in is ignored there too: the gate
+        # cannot consult critics.
         self._critics_enabled: bool = (
             consensus_critics_enabled()
             if critics_enabled is None
             else bool(critics_enabled)
         )
         self._inference_disabled: bool = inference_disabled()
-        self._registry: ConsensusModelRegistry | None = registry
-        self._default_client: GatewayClient | None = None
+        self._critic_backend: CriticBackend | None = None
         if self._critics_enabled and not self._inference_disabled:
-            self._registry = registry or ConsensusModelRegistry.from_env(
-                [c.role for c in self.critics]
+            self._critic_backend = (
+                critic_backend
+                if critic_backend is not None
+                else load_critic_backend([c.role for c in self.critics])
             )
-            self._default_client = GatewayClient()
 
     @classmethod
     def from_contribution(
         cls,
         contribution: ConsensusContribution,
-        registry: ConsensusModelRegistry | None = None,
+        critic_backend: CriticBackend | None = None,
         critics_enabled: bool | None = None,
     ) -> ConsensusGate:
         """Build a ``ConsensusGate`` from a domain ``ConsensusContribution``."""
@@ -460,7 +365,7 @@ class ConsensusGate:
             threshold=contribution.threshold,
             magnitude_extractor=contribution.magnitude_extractor,
             high_stakes_actions=contribution.high_stakes_actions,
-            registry=registry,
+            critic_backend=critic_backend,
             critics_enabled=critics_enabled,
         )
 
@@ -479,7 +384,11 @@ class ConsensusGate:
         context: Mapping[str, Any],
         magnitude: float | None,
     ) -> str:
-        """Consult an LLM critic persona and return a strictly parsed decision."""
+        """Consult a critic persona and return a strictly parsed decision.
+
+        The kernel chooses the context the critic sees, renders the prompt
+        and parses the reply. The critic backend only carries the request.
+        """
         spec = self._resolve_critic_spec(critic)
         role = spec.role if spec is not None else str(critic)
         if spec is None or not spec.prompt:
@@ -489,9 +398,10 @@ class ConsensusGate:
             )
             return "ERROR"
 
-        if self._registry is None or self._default_client is None:
+        backend = getattr(self, "_critic_backend", None)
+        if backend is None:
             logger.error(
-                "No model client for critic '%s' — failing closed with ERROR", role
+                "No critic backend for critic '%s' — failing closed with ERROR", role
             )
             return "ERROR"
 
@@ -521,62 +431,27 @@ class ConsensusGate:
                 spec.system_instruction or "You are a strict {role}."
             ).format_map(fmt_ctx)
 
-            dedicated_client = self._registry.get_client(role)
-            model = self._registry.get_model(role) or spec.model
-
-            _CRITIC_TIMEOUT_S: float = float(
-                os.getenv("CONSENSUS_CRITIC_TIMEOUT_S", "10.0")
+            timeout_s = float(os.getenv("CONSENSUS_CRITIC_TIMEOUT_S", "10.0"))
+            request = CriticRequest(
+                role=role,
+                model=spec.model,
+                system_instruction=system_instruction,
+                prompt=prompt,
+                timeout_s=timeout_s,
+                response_format=_CRITIC_VOTE_RESPONSE_FORMAT,
             )
-
-            raw_content: str | None
-            if dedicated_client is not None:
-                try:
-                    response = await asyncio.wait_for(
-                        dedicated_client.chat.completions.create(
-                            model=model or "default",
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": system_instruction,
-                                },
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=0.0,
-                            response_format=_CRITIC_VOTE_RESPONSE_FORMAT,
-                            timeout=_CRITIC_TIMEOUT_S,
-                        ),
-                        timeout=_CRITIC_TIMEOUT_S,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "⏱️ Consensus critic %s (dedicated client) timed out "
-                        "after %.0fs — returning ERROR verdict.",
-                        role,
-                        _CRITIC_TIMEOUT_S,
-                    )
-                    return "ERROR"
-                choices = getattr(response, "choices", None)
-                raw_content = choices[0].message.content if choices else None
-            else:
-                try:
-                    raw_content = await asyncio.wait_for(
-                        self._default_client.generate(
-                            prompt=prompt,
-                            system_instruction=system_instruction,
-                            mode="verifier",
-                            temperature=0.0,
-                            response_format=_CRITIC_VOTE_RESPONSE_FORMAT,
-                        ),
-                        timeout=_CRITIC_TIMEOUT_S,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "⏱️ Consensus critic %s (GatewayClient fallback) timed out "
-                        "after %.0fs — returning ERROR verdict.",
-                        role,
-                        _CRITIC_TIMEOUT_S,
-                    )
-                    return "ERROR"
+            try:
+                raw_content = await asyncio.wait_for(
+                    backend.complete(request), timeout=timeout_s
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "⏱️ Consensus critic %s timed out after %.0fs — returning "
+                    "ERROR verdict.",
+                    role,
+                    timeout_s,
+                )
+                return "ERROR"
 
             return _parse_critic_vote(raw_content)
 
