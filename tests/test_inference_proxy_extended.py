@@ -946,11 +946,11 @@ async def test_output_filter_exception_triggers_quota_rollback(proxy_deps, monke
 
 
 @pytest.mark.asyncio
-async def test_gateway_client_generate_extra_headers_not_duplicated():
-    """GatewayClient.generate() pops extra_headers without mutating caller dict or raising TypeError."""
-    from src.gateway.core.llm import GatewayClient
+async def test_inference_client_generate_extra_headers_not_duplicated():
+    """InferenceClient.generate() pops extra_headers without mutating caller dict or raising TypeError."""
+    from src.integrations.inference_client.client import InferenceClient
 
-    gw = GatewayClient.__new__(GatewayClient)
+    gw = InferenceClient.__new__(InferenceClient)
     gw.mode = "gateway"
     fake_choice = MagicMock()
     fake_choice.message.content = "ok"

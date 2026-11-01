@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for src/gateway/core/llm.py — GatewayClient.
+Unit tests for src/integrations/inference_client/client.py — InferenceClient.
 
 All tests are hermetic: no live vLLM, OpenAI, or OTel collector required.
 Heavy dependencies (openai, config, telemetry helpers) are mocked at import
@@ -71,11 +71,11 @@ _PATCHES = {
 
 
 @pytest.mark.local
-class TestGatewayClientInit:
-    """Tests for GatewayClient.__init__ routing logic."""
+class TestInferenceClientInit:
+    """Tests for InferenceClient.__init__ routing logic."""
 
     def test_gateway_mode_when_vllm_gateway_url_set(self):
-        """GatewayClient selects 'gateway' mode when VLLM_GATEWAY_URL is present."""
+        """InferenceClient selects 'gateway' mode when VLLM_GATEWAY_URL is present."""
         with (
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
@@ -99,16 +99,16 @@ class TestGatewayClientInit:
             mock_cfg.MODEL_REASONING = "reasoning"
             mock_cfg.MODEL_FAST = "fast"
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
 
             assert client.mode == "gateway"
             assert hasattr(client, "gateway_client")
 
     def test_local_mode_when_vllm_gateway_url_empty(self):
-        """GatewayClient selects 'local' mode when VLLM_GATEWAY_URL is absent."""
+        """InferenceClient selects 'local' mode when VLLM_GATEWAY_URL is absent."""
         with (
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
@@ -132,10 +132,10 @@ class TestGatewayClientInit:
             mock_cfg.MODEL_REASONING = "reasoning"
             mock_cfg.MODEL_FAST = "fast"
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
 
             assert client.mode == "local"
             assert hasattr(client, "reasoning_client")
@@ -143,11 +143,11 @@ class TestGatewayClientInit:
 
 
 @pytest.mark.local
-class TestGatewayClientRouting:
-    """Tests for GatewayClient._get_route()."""
+class TestInferenceClientRouting:
+    """Tests for InferenceClient._get_route()."""
 
     def _make_client_gateway_mode(self):
-        """Return a GatewayClient configured in gateway mode with mocked sub-clients."""
+        """Return a InferenceClient configured in gateway mode with mocked sub-clients."""
         with (
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
@@ -169,10 +169,10 @@ class TestGatewayClientRouting:
             mock_cfg.MODEL_REASONING = "reasoning-model"
             mock_cfg.MODEL_FAST = "fast-model"
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
             return client
 
     def test_planner_mode_routes_to_reasoning_model(self):
@@ -203,11 +203,11 @@ class TestGatewayClientRouting:
 
 
 @pytest.mark.local
-class TestGatewayClientGenerate:
-    """Tests for GatewayClient.generate()."""
+class TestInferenceClientGenerate:
+    """Tests for InferenceClient.generate()."""
 
     def _make_gateway_client_with_mock_completions(self):
-        """Return (GatewayClient, mock_completions_create)."""
+        """Return (InferenceClient, mock_completions_create)."""
         mock_create = AsyncMock(return_value=_make_mock_response("test response"))
         mock_openai = MagicMock()
         mock_openai.return_value.chat.completions.create = mock_create
@@ -232,10 +232,10 @@ class TestGatewayClientGenerate:
             span_mock.__exit__ = MagicMock(return_value=False)
             mock_span_ctx.return_value = span_mock
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
             return client, mock_create, mock_span_ctx
 
     @pytest.mark.asyncio
@@ -266,10 +266,10 @@ class TestGatewayClientGenerate:
             span_mock.__exit__ = MagicMock(return_value=False)
             mock_span_ctx.return_value = span_mock
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
             result = await client.generate("Hello", mode="chat")
 
             assert isinstance(result, str)
@@ -303,10 +303,10 @@ class TestGatewayClientGenerate:
             span_mock.__exit__ = MagicMock(return_value=False)
             mock_span_ctx.return_value = span_mock
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
             await client.generate(
                 "Question", system_instruction="Be concise.", mode="chat"
             )
@@ -347,10 +347,10 @@ class TestGatewayClientGenerate:
             span_mock.__exit__ = MagicMock(return_value=False)
             mock_span_ctx.return_value = span_mock
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
 
             with pytest.raises(ConnectionError, match="vLLM down"):
                 await client.generate("Prompt", mode="chat")
@@ -384,10 +384,10 @@ class TestGatewayClientGenerate:
             span_mock.__exit__ = MagicMock(return_value=False)
             mock_span_ctx.return_value = span_mock
 
-            sys.modules.pop("src.gateway.core.llm", None)
-            from src.gateway.core.llm import GatewayClient
+            sys.modules.pop("src.integrations.inference_client.client", None)
+            from src.integrations.inference_client.client import InferenceClient
 
-            client = GatewayClient()
+            client = InferenceClient()
             result = await client.generate("Think step by step.", mode="reasoning")
 
             assert result == think_content

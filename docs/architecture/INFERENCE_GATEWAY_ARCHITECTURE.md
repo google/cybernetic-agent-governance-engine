@@ -8,7 +8,7 @@ This document analyzes the feasibility and impact of migrating the current "Sove
 
 > **US_FED Only:** SR 26-2 (Federal Reserve supervisory guidance, April 17, 2026) applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. SR 26-2 has no legal force outside the US Federal Reserve system (see `.roo/rules` §12.4). References to SR 26-2 in this document are scoped to US_FED deployments only.
 
-The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer when `VLLM_GATEWAY_URL` is set, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance. When it is unset — the default in the `gcp-gke` Terraform target (`vllm_gateway_url = ""`) — the client connects directly to the two vLLM Services.
+The `InferenceClient` (`src/integrations/inference_client/client.py`) supports routing traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer when `VLLM_GATEWAY_URL` is set, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance. When it is unset — the default in the `gcp-gke` Terraform target (`vllm_gateway_url = ""`) — the client connects directly to the two vLLM Services. The client is a Layer 3 integration, installed with the `inference` extra and used only by the opt-in consensus critics. The kernel imports no model client (POAM-2026-168).
 
 **Status:** **OPTIONAL** — client-side Gateway Mode implemented; the `deployment/k8s/inference-gateway/` manifests are applied manually and are not provisioned by the `gcp-gke` Terraform target, which runs **DIRECT** mode by default
 **Version:** v3.2.0
@@ -27,7 +27,7 @@ The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through
 
 ### Current State (Application-Side Routing)
 
-- **Logic:** `src/gateway/core/llm.py` (`GatewayClient`) contains if/else logic to select the backend based on `mode` (e.g., `planner` -> `vllm-reasoning`, `fast` -> `vllm-service`).
+- **Logic:** `src/integrations/inference_client/client.py` (`InferenceClient`) contains if/else logic to select the backend based on `mode` (e.g., `planner` -> `vllm-reasoning`, `fast` -> `vllm-service`).
 - **Infrastructure:** Two separate Kubernetes Services (`vllm-reasoning`, `vllm-service`) provisioned via `infra/modules/vllm_inference/main.tf` (instantiated as `module.vllm` and `module.vllm_reasoning` in `infra/targets/gcp-gke/main.tf`).
   - **Weights:** Loaded from the GCS model bucket with vLLM's `runai_streamer` load format when the model path is `gs://…`; `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` forbid runtime egress to Hugging Face, and no HF token is baked into images.
   - **Nodes:** The `gpu-l4` pool (`g2-standard-8`, 1× NVIDIA L4, on-demand — no Spot) scales 0–2 by default with image streaming (`gcfs_config`) enabled and autoscaler `location_policy = "ANY"`; vLLM CPU/memory defaults are sized to `g2-standard-8` allocatable. Terraform does not wait for vLLM rollout (`wait_for_rollout = false`), so GPU cold starts do not block `terraform apply`.
@@ -36,7 +36,7 @@ The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through
 
 ### Proposed State (Kubernetes Inference Gateway)
 
-- **Logic:** `GatewayClient` points to a single endpoint (the Inference Gateway). It specifies a `model` name (e.g., `llama-3.1-8b-instruct`, `deepseek-r1-distill-llama-8b`).
+- **Logic:** `InferenceClient` points to a single endpoint (the Inference Gateway). It specifies a `model` name (e.g., `llama-3.1-8b-instruct`, `deepseek-r1-distill-llama-8b`).
 - **Infrastructure:**
   - **Gateway:** A unified Kubernetes Gateway resource.
   - **InferencePools:** Custom resources defining the backend pools (`vllm-reasoning`, `vllm-service`).
@@ -59,7 +59,7 @@ The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through
 
 3.  **Simplified Client Code**
     - **Feature:** Single endpoint URL.
-    - **Impact:** `GatewayClient` becomes a standard OpenAI client. We remove the custom "Dual-Client" logic, reducing coupling and making it easier to swap underlying models without code changes.
+    - **Impact:** `InferenceClient` becomes a standard OpenAI client. We remove the custom "Dual-Client" logic, reducing coupling and making it easier to swap underlying models without code changes.
 
 4.  **LoRA Adapter Support**
     - **Feature:** Efficiently serves multiple fine-tuned adapters on a shared base model.
@@ -69,7 +69,7 @@ The `GatewayClient` (`src/gateway/core/llm.py`) supports routing traffic through
 
 1.  **Environment Divergence (Local vs. Prod)**
     - **Risk:** The Inference Gateway does not exist in Docker Compose.
-    - **Mitigation:** We must maintain the `GatewayClient`'s ability to support "Direct Mode" (current logic) for local development, while switching to "Gateway Mode" (single URL) in production via `Config`.
+    - **Mitigation:** We must maintain the `InferenceClient`'s ability to support "Direct Mode" (current logic) for local development, while switching to "Gateway Mode" (single URL) in production via `Config`.
 
 2.  **Infrastructure Complexity**
     - **Cost:** Requires installing Gateway API CRDs (via Helm) and managing new manifests (`InferencePool`, `InferenceGateway`).
@@ -93,7 +93,7 @@ To adopt this without disrupting the current workflow, we recommend a phased app
 
 ### Phase 2: Application Update (Code) — done
 
-`src/gateway/core/llm.py` reads `VLLM_GATEWAY_URL` (`config/settings.py`):
+`src/integrations/inference_client/client.py` reads `VLLM_GATEWAY_URL` (`config/settings.py`):
 - If `VLLM_GATEWAY_URL` is set: a single `AsyncOpenAI` client, routing by `model` name (`MODEL_REASONING` / `MODEL_FAST`).
 - If not set (Local / default GKE): dual-client logic against `VLLM_REASONING_API_BASE` and `VLLM_FAST_API_BASE`.
 
@@ -104,7 +104,7 @@ To adopt this without disrupting the current workflow, we recommend a phased app
 3.  Verify routing and priority handling.
 
 > [!WARNING]
-> The manifests in `deployment/k8s/inference-gateway/` have not been realigned with the Terraform-provisioned vLLM pools. `http-route.yaml` routes on an `x-model-id` header (which `GatewayClient` does not send) to model IDs (`deepseek-ai/DeepSeek-R1-Distill-Qwen-32B`, `Qwen/Qwen2.5-7B-Instruct`) and a `vllm-inference` Service that differ from the `gcp-gke` defaults (`served_model_reasoning`, `served_model_fast`, Service `vllm-service`), and the `pool-governance` InferencePool selects `app: vllm-governance`. Align them before cutover.
+> The manifests in `deployment/k8s/inference-gateway/` have not been realigned with the Terraform-provisioned vLLM pools. `http-route.yaml` routes on an `x-model-id` header (which `InferenceClient` does not send) to model IDs (`deepseek-ai/DeepSeek-R1-Distill-Qwen-32B`, `Qwen/Qwen2.5-7B-Instruct`) and a `vllm-inference` Service that differ from the `gcp-gke` defaults (`served_model_reasoning`, `served_model_fast`, Service `vllm-service`), and the `pool-governance` InferencePool selects `app: vllm-governance`. Align them before cutover.
 
 ---
 
@@ -123,7 +123,7 @@ The Inference Gateway works in conjunction with the DEFER queue (AARM-V7) to han
 - **AARM Coverage:** The 11-vector CSA AARM v1.0 threat model is enforced across the gateway layer:
   - AARM-V1: SHA-256 hash-chained context accumulator prevents context poisoning across inference calls.
   - AARM-V7: DEFER queue (Redis db=1 noeviction) handles confidence starvation.
-  - AARM-V10: ConsensusModelRegistry ensures heterogeneous multi-model consensus for trades ≥$10,000 USD.
+  - AARM-V10: `RoutedCriticBackend` (`src/integrations/inference_client/critic_backend.py`) routes each consensus critic to its own model for trades ≥$10,000 USD.
 
 **Next Steps:**
 
@@ -174,7 +174,7 @@ Then point the deployment at it:
 ./deploy_all.sh --target gcp-gke --env dev
 ```
 
-Once this variable is set, `GatewayClient` automatically switches to **Gateway Mode**, routing all LLM requests through this single endpoint.
+Once this variable is set, `InferenceClient` automatically switches to **Gateway Mode**, routing all LLM requests through this single endpoint.
 
 ---
 

@@ -66,6 +66,29 @@ FORBIDDEN_VENDOR_SDKS = (
     "nemoguardrails",
     "presidio_analyzer",
     "presidio_anonymizer",
+    # LLM clients and model runtimes (POAM-2026-168). No model sits in the
+    # kernel's decision path, so no model client may be imported there.
+    # scripts/check_model_free_install.py fails if any of these is removed.
+    "openai",
+    "litellm",
+    "anthropic",
+    "google.genai",
+    "google.generativeai",
+    "google.adk",
+    "mistralai",
+    "cohere",
+    "langchain",
+    "langchain_openai",
+    "langchain_community",
+    "transformers",
+    "sentence_transformers",
+    "vllm",
+    "torch",
+    "tiktoken",
+    "tokenizers",
+    "huggingface_hub",
+    "onnxruntime",
+    "fastembed",
 )
 
 # Rule 1: Forbidden path literals inside Layer 1 (src/gateway/)
@@ -135,6 +158,7 @@ INTEGRATIONS_FACTORY_ALLOWLIST = frozenset(
         "src/gateway/governance/telemetry_provider.py",  # lazy-loads telemetry_langfuse
         "src/gateway/governance/semantic_rail_factory.py",  # lazy-loads integrations.nemo semantic rail provider
         "src/gateway/governance/pii_redactor_factory.py",  # lazy-loads integrations.presidio PII redactor provider
+        "src/gateway/governance/critic_backend_factory.py",  # lazy-loads integrations.inference_client critic backend
         "src/gateway/infrastructure/redis_credential_factory.py",  # lazy-loads gcp Memorystore IAM credential provider
     ]
 )

@@ -35,7 +35,7 @@ class TestFinanceConsensusContextSignature:
         """check_consensus accepts the context-based signature."""
         gate = build_finance_consensus_gate()
         gate.threshold = 1000.0
-        gate._registry = MagicMock()
+        gate._critic_backend = MagicMock()
 
         result = await gate.check_consensus(
             "execute_trade",
@@ -50,7 +50,7 @@ class TestFinanceConsensusContextSignature:
         """When magnitude is provided, it takes precedence for threshold check."""
         gate = build_finance_consensus_gate()
         gate.threshold = 1000.0
-        gate._registry = MagicMock()
+        gate._critic_backend = MagicMock()
 
         result = await gate.check_consensus(
             "execute_trade",
@@ -64,7 +64,7 @@ class TestFinanceConsensusContextSignature:
         """When magnitude is None, falls back to finance magnitude_extractor (params['amount'])."""
         gate = build_finance_consensus_gate()
         gate.threshold = 1000.0
-        gate._registry = MagicMock()
+        gate._critic_backend = MagicMock()
 
         result = await gate.check_consensus(
             "execute_trade",
