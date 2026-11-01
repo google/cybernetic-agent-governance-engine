@@ -38,7 +38,10 @@ dependencies = [
     "prometheus-client>=0.20.0",
 ]
 
-requires-python = ">=3.10,<3.13"
+# The kernel uses asyncio.timeout (src/gateway/governance/kms_signer.py) and
+# the compliance bridge uses asyncio.TaskGroup (src/compliance_bridge/sla_monitor.py),
+# both added in Python 3.11.
+requires-python = ">=3.11,<3.13"
 
 [dependency-groups]
 # test: the test runner and fixtures. CI's hermetic job installs only this group
@@ -320,7 +323,6 @@ url = "https://pypi.org/simple"
 default = true
 
 [tool.uv]
-environments = ["python_version >= '3.11'"]
 override-dependencies = [
     # Force patched opentelemetry (>=1.45.1 / >=0.66b0) past google-adk's <=1.42.1 pin (CVE-2026-114603)
     "opentelemetry-api>=1.45.1",

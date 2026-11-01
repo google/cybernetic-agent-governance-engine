@@ -839,6 +839,50 @@ component-definition:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-7"
                   rel: reference
 
+            - uuid: "c1680001-cm07-4e47-bbc8-modelfree0168"
+              control-id: cm-7
+              description: |
+                Least functionality is enforced in the Layer 1 governance kernel, the base
+                install, and the shipped gateway container image (POAM-2026-168, a3ab1b52).
+                The kernel (src/gateway/) contains no LLM client or model runtime code:
+                multi-model critic evaluation routes through the CriticBackend seam
+                (src/gateway/governance/seams/critic.py) and its allowlisted factory
+                (src/gateway/governance/critic_backend_factory.py) to Layer 3
+                (src/integrations/inference_client/), and a backend is constructed only
+                when CAGE_CONSENSUS_CRITICS_ENABLED=true and CAGE_INFERENCE_BACKEND is not
+                "none". Gate G3 (FORBIDDEN_VENDOR_SDKS in scripts/check_import_boundaries.py)
+                rejects any import of the 21 forbidden LLM client and model runtime modules
+                across src/gateway/. The base dependency set in pyproject.toml and the
+                gateway container image (src/gateway/Dockerfile, which installs only the
+                gateway, compliance, and langfuse extras) resolve zero of the 23 forbidden
+                model distributions (verified at 168 total installed distributions in the
+                built image); optional LLM integrations live in the explicit inference and
+                nemo extras. scripts/check_model_free_install.py enforces both properties on
+                every commit and CI run by running uv export --frozen --no-dev for the base
+                install and the Dockerfile's exact extra set and asserting that Gate G3
+                forbids every LLM client and runtime import.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-168"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=CM-7"
+                  rel: reference
+                - href: "../../src/gateway/governance/seams/critic.py"
+                  rel: implementation
+                  text: "CriticBackend seam decoupling Layer 1 consensus from LLM clients"
+                - href: "../../src/gateway/governance/critic_backend_factory.py"
+                  rel: implementation
+                  text: "Allowlisted lazy factory binding RoutedCriticBackend only when critics are enabled"
+                - href: "../../scripts/check_model_free_install.py"
+                  rel: implementation
+                  text: "CI and pre-commit gate verifying zero model packages in base install and gateway image"
+                - href: "../../tests/test_check_model_free_install.py"
+                  rel: test
+
     # -----------------------------------------------------------------------
     # Component 2: Deterministic Input Screening and PII Redaction
     # (src/gateway/governance/text_filter.py, src/integrations/presidio/)
