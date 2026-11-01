@@ -659,7 +659,10 @@ async def test_mcp_execute_tool_attaches_proof_hash_on_refusal(
     monkeypatch.setattr(mcp_mod, "_check_rate_limit", _allow_rate_limit)
 
     req = MagicMock()
-    req.scope = {"headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))]}
+    req.scope = {
+        "headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))],
+        "client": ("127.0.0.1", 50000),  # through the pod's own Linkerd proxy
+    }
     req.client = MagicMock(host="127.0.0.1")
     body = await mcp_mod.execute_tool_endpoint(
         mcp_mod.ToolExecutionRequest(

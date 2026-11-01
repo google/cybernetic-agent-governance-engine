@@ -42,7 +42,10 @@ metadata:
     # POAM-2026-080: every pod gets a Linkerd proxy, so gateway callers carry
     # a verified mTLS identity (l5d-client-id). The restricted profile forbids
     # proxy-init's NET_ADMIN, so the mesh must run with linkerd2-cni here
-    # (infra/modules/service_mesh enable_cni).
+    # (infra/modules/service_mesh enable_cni). The injector's webhook fails
+    # open, so this annotation alone does not guarantee the proxy: the
+    # service_mesh module's cage-mesh-proxy-required admission policy refuses
+    # pods created here without it (proxy_required_namespaces, POAM-2026-167).
     linkerd.io/inject: enabled
 ---
 # Langfuse Namespace — Baseline Security Profile

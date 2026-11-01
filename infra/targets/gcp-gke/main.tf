@@ -165,7 +165,9 @@ module "namespace" {
 
   # POAM-2026-080: every pod in the namespace gets a Linkerd proxy, so every
   # call carries a verified mTLS identity. Pods started before the injector
-  # exists have no proxy; restart them after the first mesh install.
+  # exists have no proxy; restart them after the first mesh install. The
+  # service_mesh module refuses pods created here without the proxy
+  # (proxy_required_namespaces, POAM-2026-167).
   annotations = {
     "linkerd.io/inject" = "enabled"
   }
@@ -185,6 +187,10 @@ module "service_mesh" {
   # proxy-init needs NET_ADMIN, which 'restricted' Pod Security forbids; the
   # CNI plugin sets up the redirect on the node instead.
   enable_cni = var.enable_pod_security_standards && var.pod_security_level != "privileged"
+  # The injector's webhook fails open. Without this, a pod created in the
+  # namespace while the injector is down runs without a proxy, and the gateway
+  # then has no proxy to vouch for its callers (POAM-2026-167).
+  proxy_required_namespaces = [var.namespace]
 
   depends_on = [module.gke]
 }

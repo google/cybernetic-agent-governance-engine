@@ -120,7 +120,7 @@ cp .env.example .env
 
 # 3. Start compliance-bridge first (Python FastAPI SSE source)
 cd ../compliance_bridge
-uv run uvicorn compliance_bridge.main:app --host 0.0.0.0 --port 3001 &
+uv run uvicorn compliance_bridge.main:app --host 0.0.0.0 --port 3001 --no-proxy-headers &
 
 # 4. Start Vite dev server
 cd ../agentsight-ui

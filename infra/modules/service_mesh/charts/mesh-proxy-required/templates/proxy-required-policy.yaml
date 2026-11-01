@@ -1,0 +1,59 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# The Linkerd proxy injector's webhook fails open (failurePolicy: Ignore, the
+# chart default), so a pod created while no injector replica is ready is
+# admitted without the proxy and runs outside the mesh until it is recreated.
+# On staging on 2026-10-29, a gateway replica was admitted that way while the
+# injector was stuck (POAM-2026-167). Validating admission runs after the
+# mutating webhooks, so this policy sees what the injector did: in the listed
+# namespaces, a pod without the linkerd-proxy container is refused. Its
+# controller retries, and the pod is created, meshed, once the injector is
+# back. No pod in these namespaces can opt out of the proxy.
+{{- if empty .Values.namespaces }}{{ fail "namespaces must list at least one namespace" }}{{ end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: cage-mesh-proxy-required
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  validations:
+    # The injector adds the proxy as a native sidecar (an init container with
+    # restartPolicy: Always), or as an ordinary container when native sidecars
+    # are off.
+    - expression: >-
+        (has(object.spec.initContainers) &&
+        object.spec.initContainers.exists(c, c.name == 'linkerd-proxy')) ||
+        object.spec.containers.exists(c, c.name == 'linkerd-proxy')
+      message: pods in this namespace must run the Linkerd proxy, and the proxy injector did not add one; if the injector is not ready, retry once it is
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: cage-mesh-proxy-required
+spec:
+  policyName: cage-mesh-proxy-required
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: {{ toJson .Values.namespaces }}

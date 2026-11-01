@@ -984,9 +984,10 @@ jobs:
 
   terraform-test:
     # Plan-time contracts of the gcp-gke target (W6, AG-7): what each inference
-    # backend deploys, and what the plan refuses. Mock providers only, so no
-    # cloud credentials and no state. It must be able to fail (POAM-2026-150):
-    # never continue-on-error.
+    # backend deploys, and what the plan refuses. Also the service_mesh
+    # module's contracts: the proxy-required admission policy (POAM-2026-167).
+    # Mock providers only, so no cloud credentials and no state. It must be
+    # able to fail (POAM-2026-150): never continue-on-error.
     name: "Terraform Tests (gcp-gke, mock providers)"
     runs-on: ubuntu-latest
     steps:
@@ -1003,3 +1004,7 @@ jobs:
         # image_digests has no default and no committed value (POAM-2026-131);
         # the mock-provider tests plan with a test-only fixture map.
         run: terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars -var-file=tests/fixtures/image_digests.tfvars
+      - name: Initialise the service_mesh module without a backend
+        run: terraform -chdir=infra/modules/service_mesh init -backend=false -input=false
+      - name: Run terraform test against the service_mesh module
+        run: terraform -chdir=infra/modules/service_mesh test

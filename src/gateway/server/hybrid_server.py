@@ -31,7 +31,10 @@ To start the gateway:
     python src/gateway/server/hybrid_server.py
 
 Or via Docker/Kubernetes:
-    uvicorn src.gateway.server.hybrid_server:root_app --host 0.0.0.0 --port 8080 --loop uvloop --http httptools
+    uvicorn src.gateway.server.hybrid_server:root_app --host 0.0.0.0 --port 8080 --loop uvloop --http httptools --no-proxy-headers
+
+Proxy headers stay off on every launch path: the workload-identity check
+needs the TCP peer, not an address taken from ``X-Forwarded-For``.
 """
 
 import json
@@ -1124,6 +1127,9 @@ def run_gateway_server(host: str = "0.0.0.0", port: int | None = None) -> None:
         port=http_port,
         loop="uvloop",
         http="httptools",
+        # WorkloadIdentityMiddleware trusts l5d-client-id only from the pod's
+        # own Linkerd proxy, which it recognises by the TCP peer address.
+        proxy_headers=False,
     )
 
 

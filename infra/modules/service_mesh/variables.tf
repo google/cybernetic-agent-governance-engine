@@ -50,3 +50,9 @@ variable "cluster_domain" {
   default     = "cluster.local"
 }
 
+
+variable "proxy_required_namespaces" {
+  description = "Namespaces whose pods must run the Linkerd proxy. An admission policy refuses any pod created there without it, so a pod created while the proxy injector is down waits for the injector instead of running outside the mesh. Empty installs no policy."
+  type        = list(string)
+  default     = []
+}

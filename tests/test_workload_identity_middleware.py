@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
 from starlette.applications import Starlette
@@ -33,6 +35,7 @@ from src.gateway.server.workload_identity import (
     current_client_identity,
     extract_client_identity,
     is_open_path,
+    is_pod_local_connection,
     is_workload_identity,
     load_identity_policy,
 )
@@ -67,14 +70,30 @@ async def _ws(websocket):
     await websocket.close()
 
 
-def _client(policy: IdentityPolicy) -> TestClient:
+#: The Linkerd inbound proxy connects to the container from inside the pod.
+#: Loopback stands in for that here; the pod-IP form is tested separately.
+PROXY_PEER = ("127.0.0.1", 50000)
+#: Another pod reaching the container directly, as it can when the pod runs
+#: without its proxy.
+OTHER_POD = ("10.112.3.7", 51000)
+#: The gateway pod's own address: the peer of every request its proxy forwards.
+POD_IP = "10.112.0.43"
+
+
+def _client(
+    policy: IdentityPolicy,
+    peer: tuple[str, int] = PROXY_PEER,
+    base_url: str = "http://testserver",
+) -> TestClient:
     inner = Starlette(
         routes=[
             Route("/{path:path}", _ok, methods=["GET", "POST"]),
             WebSocketRoute("/ws", _ws),
         ]
     )
-    return TestClient(WorkloadIdentityMiddleware(inner, policy))
+    return TestClient(
+        WorkloadIdentityMiddleware(inner, policy), client=peer, base_url=base_url
+    )
 
 
 ENFORCED = IdentityPolicy(trusted=frozenset({ADVISOR}))
@@ -168,11 +187,14 @@ def test_empty_or_malformed_identity_policy_is_rejected() -> None:
 
 
 def test_extract_client_identity_validates_single_linkerd_header() -> None:
-    scope = {"headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))]}
+    scope = {
+        "headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))],
+        "client": PROXY_PEER,
+    }
     assert extract_client_identity(scope) == ADVISOR
 
     with pytest.raises(ValueError, match="l5d-client-id"):
-        extract_client_identity({"headers": []})
+        extract_client_identity({"headers": [], "client": PROXY_PEER})
 
     with pytest.raises(ValueError, match="l5d-client-id"):
         extract_client_identity(
@@ -180,7 +202,8 @@ def test_extract_client_identity_validates_single_linkerd_header() -> None:
                 "headers": [
                     (b"l5d-client-id", ADVISOR.encode("latin-1")),
                     (b"l5d-client-id", ADVISOR.encode("latin-1")),
-                ]
+                ],
+                "client": PROXY_PEER,
             }
         )
 
@@ -192,9 +215,122 @@ def test_extract_client_identity_validates_single_linkerd_header() -> None:
                         b"l5d-client-id",
                         b"spiffe://cluster.local/ns/governance-stack/sa/cage-advisor-sa",
                     )
-                ]
+                ],
+                "client": PROXY_PEER,
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Where the header came from (POAM-2026-167). Only the pod's own Linkerd proxy
+# writes l5d-client-id, so the header counts only on a connection from inside
+# the pod. A pod running without its proxy can be reached directly, and there a
+# caller can send any identity it likes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", GATED)
+def test_trusted_identity_from_another_pod_is_refused(path: str) -> None:
+    resp = _client(ENFORCED, peer=OTHER_POD).post(
+        path, headers={CLIENT_IDENTITY_HEADER: ADVISOR}
+    )
+    assert resp.status_code == 403
+
+
+def test_request_from_another_pod_without_identity_is_refused() -> None:
+    assert _client(ENFORCED, peer=OTHER_POD).post("/tools/execute").status_code == 403
+
+
+def test_proxy_connection_from_the_pods_own_address_is_admitted() -> None:
+    # The Linkerd proxy connects to the container from the pod's own IP: on
+    # staging, the gateway's access log shows its own address as the peer of
+    # every proxied request.
+    client = _client(ENFORCED, peer=(POD_IP, 40000), base_url=f"http://{POD_IP}:8080")
+    resp = client.post("/tools/execute", headers={CLIENT_IDENTITY_HEADER: ADVISOR})
+    assert resp.status_code == 200
+
+
+def test_identity_from_another_pod_is_logged_as_not_from_the_proxy(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(
+        logging.WARNING, logger="src.gateway.server.workload_identity"
+    ):
+        _client(ENFORCED, peer=OTHER_POD).post(
+            "/tools/execute", headers={CLIENT_IDENTITY_HEADER: ADVISOR}
+        )
+    assert any(
+        "INGRESS_IDENTITY_NOT_FROM_PROXY" in r.getMessage()
+        and OTHER_POD[0] in r.getMessage()
+        and ADVISOR in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_open_paths_answer_any_peer() -> None:
+    resp = _client(ENFORCED, peer=OTHER_POD).get(
+        "/health", headers={CLIENT_IDENTITY_HEADER: ADVISOR}
+    )
+    assert resp.status_code == 200
+
+
+def test_websocket_identity_from_another_pod_is_closed() -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with _client(ENFORCED, peer=OTHER_POD).websocket_connect(
+            "/ws", headers={CLIENT_IDENTITY_HEADER: ADVISOR}
+        ) as ws:
+            ws.receive_text()
+    assert exc.value.code == 1008
+
+
+async def test_a_header_from_another_pod_never_becomes_the_caller() -> None:
+    seen: list[str | None] = []
+    app = WorkloadIdentityMiddleware(_recording(seen), ENFORCED)
+
+    status = await _status(
+        app, "/tools/execute", ADVISOR, client=OTHER_POD, server=(POD_IP, 8080)
+    )
+
+    assert status == 403
+    assert seen == []
+
+
+def test_extract_client_identity_refuses_a_header_from_another_pod() -> None:
+    scope = {
+        "headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))],
+        "client": OTHER_POD,
+        "server": (POD_IP, 8080),
+    }
+    with pytest.raises(ValueError, match=r"10\.112\.3\.7, not through the pod's"):
+        extract_client_identity(scope)
+
+
+@pytest.mark.parametrize(
+    ("client", "server", "expected"),
+    [
+        (("127.0.0.1", 1), None, True),
+        (("127.8.9.10", 1), None, True),  # all of 127.0.0.0/8 is loopback
+        (("::1", 1), None, True),
+        (("::ffff:127.0.0.1", 1), None, True),  # IPv4-mapped loopback
+        ((POD_IP, 1), (POD_IP, 8080), True),  # the proxy, from the pod's own IP
+        ((POD_IP, 1), [POD_IP, 8080], True),  # servers may pass lists
+        ((f"::ffff:{POD_IP}", 1), (POD_IP, 8080), True),
+        (OTHER_POD, (POD_IP, 8080), False),  # another pod
+        (("10.112.0.1", 1), (POD_IP, 8080), False),  # any other peer
+        ((POD_IP, 1), None, False),  # no local address to compare with
+        ((POD_IP, 1), ("testserver", 80), False),
+        (("testclient", 50000), ("testserver", 80), False),  # TestClient default
+        (None, (POD_IP, 8080), False),
+        ("127.0.0.1", None, False),  # not a (host, port) pair
+        ((), None, False),
+    ],
+)
+def test_is_pod_local_connection(
+    client: object, server: object, expected: bool
+) -> None:
+    assert is_pod_local_connection({"client": client, "server": server}) is expected
 
 
 # --- load_identity_policy ---------------------------------------------------
@@ -295,7 +431,13 @@ def _recording(seen: list[str | None]):  # type: ignore[no-untyped-def]
     return app
 
 
-async def _status(app, path: str, identity: str | None = None) -> int:  # type: ignore[no-untyped-def]
+async def _status(  # type: ignore[no-untyped-def]
+    app,
+    path: str,
+    identity: str | None = None,
+    client: tuple[str, int] | None = PROXY_PEER,
+    server: tuple[str, int] | None = None,
+) -> int:
     headers = (
         []
         if identity is None
@@ -309,7 +451,14 @@ async def _status(app, path: str, identity: str | None = None) -> int:  # type: 
     async def send(message: dict) -> None:
         sent.append(message)
 
-    scope = {"type": "http", "method": "POST", "path": path, "headers": headers}
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": path,
+        "headers": headers,
+        "client": client,
+        "server": server,
+    }
     await app(scope, receive, send)
     return next(m["status"] for m in sent if m["type"] == "http.response.start")
 

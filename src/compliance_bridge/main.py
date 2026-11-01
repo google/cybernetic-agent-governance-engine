@@ -24,7 +24,10 @@ Ports src/langfuse-bridge/src/index.ts (Express service) → FastAPI + uvicorn.
   GET  /v1/prompts/{name}?label=production&cache_ttl_seconds=300
 
 Entry point:
-  uvicorn compliance_bridge.main:app --host 0.0.0.0 --port 3001
+  uvicorn compliance_bridge.main:app --host 0.0.0.0 --port 3001 --no-proxy-headers
+
+Proxy headers stay off: the operator-identity check (auth.py) needs the TCP
+peer, not an address taken from ``X-Forwarded-For``.
 """
 
 from __future__ import annotations
@@ -2224,4 +2227,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         log_config=None,  # use our logging config above
+        proxy_headers=False,  # auth.py needs the TCP peer
     )
