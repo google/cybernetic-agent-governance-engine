@@ -42,6 +42,10 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.11"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12"
+    }
   }
 }
 
@@ -329,10 +333,13 @@ resource "helm_release" "linkerd_cni" {
     }
   })]
 
-  # The guard is in place before the chart grants the delete permission.
+  # The chart grants the delete permission only after the guard is enforced:
+  # Terraform finishes the guard release, then waits out the API server's
+  # policy load before upgrading this release.
   depends_on = [
     helm_release.linkerd_crds,
     helm_release.linkerd_cni_repair_guard,
+    time_sleep.linkerd_cni_repair_guard_enforced,
   ]
 }
 
@@ -352,6 +359,22 @@ resource "helm_release" "linkerd_cni_repair_guard" {
     # The linkerd2-cni chart names its service account linkerd-cni.
     serviceAccountUsername = "system:serviceaccount:${local.linkerd_cni_namespace}:linkerd-cni"
   })]
+}
+
+# The API server enforces a new admission policy only once it has loaded it:
+# 0.36 to 0.73 seconds after the apply returned, in six runs on staging on
+# 2026-11-01. On an upgrade, running linkerd-cni pods gain the delete
+# permission the moment the chart's ClusterRole changes, so an unpaused apply
+# could grant it inside that gap. The pause is taken again whenever the guard's
+# values change.
+resource "time_sleep" "linkerd_cni_repair_guard_enforced" {
+  count = var.enable_cni ? 1 : 0
+
+  create_duration = "30s"
+
+  triggers = {
+    guard_values = sha256(join("", helm_release.linkerd_cni_repair_guard[0].values))
+  }
 }
 
 # GoogleCASIssuer + the linkerd-identity-issuer Certificate. Rendered from a

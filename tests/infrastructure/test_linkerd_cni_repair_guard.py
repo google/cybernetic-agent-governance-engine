@@ -26,7 +26,8 @@ installed:
    namespace rather than warning or auditing.
 3. It allows a deletion only when the requesting token's node is the pod's node
    and the pod's ``linkerd-network-validator`` last exited 95.
-4. The module installs it before the linkerd2-cni chart grants the permission.
+4. The module installs it, and waits for the API server to enforce it, before
+   the linkerd2-cni chart grants the permission.
 """
 
 from __future__ import annotations
@@ -72,11 +73,11 @@ def _expressions(policy: dict) -> list[str]:
     return [" ".join(v["expression"].split()) for v in policy["spec"]["validations"]]
 
 
-def _resource_block(text: str, address: str) -> str:
+def _resource_block(text: str, rtype: str, name: str) -> str:
     match = re.search(
-        rf'^resource "helm_release" "{address}" \{{\n(.*?)^\}}', text, re.S | re.M
+        rf'^resource "{rtype}" "{name}" \{{\n(.*?)^\}}', text, re.S | re.M
     )
-    assert match, f"helm_release.{address} not found in {_MAIN.name}"
+    assert match, f"{rtype}.{name} not found in {_MAIN.name}"
     return match.group(1)
 
 
@@ -129,13 +130,21 @@ def test_policy_requires_a_validator_that_exited_95() -> None:
     )
 
 
-def test_module_installs_the_guard_before_the_cni_chart() -> None:
+def test_module_grants_deletion_only_after_the_guard_is_enforced() -> None:
     main = _MAIN.read_text()
-    guard = _resource_block(main, "linkerd_cni_repair_guard")
+    guard = _resource_block(main, "helm_release", "linkerd_cni_repair_guard")
     assert 'chart     = "${path.module}/charts/cni-repair-guard"' in guard
-    cni = _resource_block(main, "linkerd_cni")
+    pause = _resource_block(main, "time_sleep", "linkerd_cni_repair_guard_enforced")
+    assert "helm_release.linkerd_cni_repair_guard[0]" in pause, (
+        "the pause must be keyed to the guard release, so it starts after the guard exists"
+    )
+    cni = _resource_block(main, "helm_release", "linkerd_cni")
     depends_on = re.search(r"depends_on = \[(.*?)\]", cni, re.S)
     assert depends_on, "helm_release.linkerd_cni declares no depends_on"
-    assert "helm_release.linkerd_cni_repair_guard" in depends_on.group(1), (
-        "linkerd2-cni must depend on the guard, so the delete grant never exists unconfined"
-    )
+    for prerequisite in (
+        "helm_release.linkerd_cni_repair_guard",
+        "time_sleep.linkerd_cni_repair_guard_enforced",
+    ):
+        assert prerequisite in depends_on.group(1), (
+            f"linkerd2-cni must depend on {prerequisite}, so the delete grant never exists unconfined"
+        )

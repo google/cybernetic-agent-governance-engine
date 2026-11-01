@@ -24,6 +24,7 @@
 mock_provider "google" {}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
+mock_provider "time" {}
 
 variables {
   project_id             = "mesh-test-project"
@@ -71,6 +72,12 @@ run "cni_release_runs_the_repair_controller" {
     condition     = yamldecode(helm_release.linkerd_cni_repair_guard[0].values[0]).serviceAccountUsername == "system:serviceaccount:linkerd-cni:linkerd-cni"
     error_message = "the repair-scope policy must match the service account the linkerd2-cni chart binds to its ClusterRole"
   }
+  assert {
+    # A new policy took up to 0.73 s to start denying on staging; the grant
+    # waits for it rather than racing it.
+    condition     = length(time_sleep.linkerd_cni_repair_guard_enforced) == 1 && time_sleep.linkerd_cni_repair_guard_enforced[0].create_duration == "30s"
+    error_message = "linkerd2-cni must wait 30s after the repair-scope policy is created, so the policy is enforced before the chart grants pod deletion"
+  }
 }
 
 run "no_cni_installs_no_cni_release" {
@@ -85,7 +92,7 @@ run "no_cni_installs_no_cni_release" {
     error_message = "enable_cni = false must install neither linkerd2-cni nor its namespace"
   }
   assert {
-    condition     = length(helm_release.linkerd_cni_repair_guard) == 0
-    error_message = "enable_cni = false must not install the repair-scope policy"
+    condition     = length(helm_release.linkerd_cni_repair_guard) == 0 && length(time_sleep.linkerd_cni_repair_guard_enforced) == 0
+    error_message = "enable_cni = false must not install the repair-scope policy or wait for it"
   }
 }
