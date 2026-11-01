@@ -450,9 +450,39 @@ def test_a_second_interrupt_cannot_abort_the_restore(tmp_path: Path) -> None:
     assert _scales(_calls(log)) == [_PIN, _RESTORE]
 
 
+def test_closed_stdout_restores_the_original_count(tmp_path: Path) -> None:
+    # Nothing but a closed stdout: the script's next write raises SIGPIPE.
+    # Before SIGPIPE was trapped, bash died of it (returncode -13) without
+    # running cleanup, and the gateway stayed pinned.
+    env, log = _environment(tmp_path, STUB_REAL_SLEEP="0.2")
+    process = subprocess.Popen(
+        ["bash", str(SCRIPT)],
+        cwd=REPO_ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for(log, "rollout status", process)
+        assert process.stdout is not None
+        process.stdout.close()
+        returncode = process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+    assert returncode == 141
+    assert _scales(_calls(log)) == [_PIN, _RESTORE]
+
+
 def test_closed_stdout_pipe_still_restores_the_original_count(
     tmp_path: Path,
 ) -> None:
+    # `run_gke_load_test.sh | tee` interrupted: the pipe closes and SIGTERM
+    # arrives. Which one bash handles first depends on whether the script
+    # writes before the signal lands, so 141 and 143 are both correct. The
+    # restore must happen either way. Under load the write used to win, and
+    # the script died of SIGPIPE before cleanup.
     env, log = _environment(tmp_path, STUB_REAL_SLEEP="0.2")
     process = subprocess.Popen(
         ["bash", str(SCRIPT)],
@@ -471,5 +501,27 @@ def test_closed_stdout_pipe_still_restores_the_original_count(
         if process.poll() is None:
             process.kill()
 
-    assert returncode == 143
+    assert returncode in (141, 143)
+    assert _scales(_calls(log)) == [_PIN, _RESTORE]
+
+
+def test_hangup_restores_the_original_count(tmp_path: Path) -> None:
+    # A closed terminal sends SIGHUP.
+    env, log = _environment(tmp_path, STUB_REAL_SLEEP="0.2")
+    process = subprocess.Popen(
+        ["bash", str(SCRIPT)],
+        cwd=REPO_ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for(log, "rollout status", process)
+        process.send_signal(signal.SIGHUP)
+        returncode = process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+    assert returncode == 129
     assert _scales(_calls(log)) == [_PIN, _RESTORE]
