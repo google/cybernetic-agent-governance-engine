@@ -102,3 +102,22 @@ def test_documented_uvicorn_commands_turn_proxy_headers_off(path: str) -> None:
     assert lines, f"{path} no longer documents a uvicorn command"
     for line in lines:
         assert "--no-proxy-headers" in line, line.strip()
+
+
+def _workflow_launches() -> list[tuple[str, str]]:
+    # A shell command continued with a backslash counts as one line.
+    launches: list[tuple[str, str]] = []
+    for path in sorted((_REPO / ".github/workflows").glob("*.yml")):
+        for line in path.read_text().replace("\\\n", " ").splitlines():
+            if "uvicorn " in line and (
+                "src.gateway." in line or "compliance_bridge." in line
+            ):
+                launches.append((path.name, " ".join(line.split())))
+    return launches
+
+
+def test_workflow_uvicorn_launches_turn_proxy_headers_off() -> None:
+    launches = _workflow_launches()
+    assert launches, "no workflow launches the gateway or the bridge with uvicorn"
+    for name, line in launches:
+        assert "--no-proxy-headers" in line, f"{name}: {line}"

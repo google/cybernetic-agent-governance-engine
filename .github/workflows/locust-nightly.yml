@@ -31,6 +31,8 @@ permissions:
 env:
   # Mesh identity the gateway trusts and locustfile.py sends as l5d-client-id
   # (unmeshed run: the header stands in for the Linkerd proxy, POAM-2026-080).
+  # The gateway accepts it because Locust connects over loopback, which counts
+  # as inside the gateway's pod (POAM-2026-167).
   CLIENT_ID: "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
 
 jobs:
@@ -102,7 +104,7 @@ jobs:
           LANGCHAIN_TRACING_V2: "false"
         run: |
           uv run python -m uvicorn src.gateway.server.hybrid_server:root_app \
-            --host 127.0.0.1 --port 8080 > /tmp/gateway.log 2>&1 &
+            --host 127.0.0.1 --port 8080 --no-proxy-headers > /tmp/gateway.log 2>&1 &
           ok=0
           for _ in $(seq 1 30); do
             if curl -sf http://localhost:8080/health >/dev/null; then ok=1; break; fi
