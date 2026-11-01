@@ -13,7 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Bootstrap a clean or recycled GCP project for CAGE GKE deployment (Track A / A2).
+# Bootstrap a clean or recycled GCP project for CAGE GKE deployment.
+#
+# This is tooling, not Track A's Step A2. Step A2 is the clean-project walk: a
+# person deploying a new project from infra/QUICK_START.md by hand and
+# recording what fails (POAM-2026-164). The W-numbered items below are the
+# walk's predicted failures, handled here from code reading before any walk
+# has confirmed them.
 #
 # Resolves the clean-project bootstrap prerequisites before `deploy_all.sh` runs
 # Cloud Build or `terraform apply`:

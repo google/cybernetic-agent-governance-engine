@@ -13,11 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ─── Staging Lifecycle Manager (Release-Validation Gate — Track A / A3) ───────
+# ─── Staging Lifecycle Manager (Release-Validation Gate) ──────────────────────
 #
 # Purpose: Provision, validate, and destroy the ephemeral staging environment
 #          in a single fail-closed automated cycle (POAM-024 / POAM-2026-131 /
 #          POAM-2026-159).
+#
+# --fresh-project is the automation for Track A's Step A3 (POAM-2026-164). It
+# has run only against stubs, and Step A3 is not done: it waits for the manual
+# Step A2 walk, and then for this script to match what the walk found.
 #
 # Usage:
 #   ./scripts/staging_lifecycle.sh [OPTIONS]
@@ -159,7 +163,7 @@ READINESS_FAILED=false
 LULA_FAILURES=0
 POSTURE_FAILURES=0
 
-# ─── Phase 0 (Optional): Fresh-Project Bootstrap (A2 / A3) ────────────────────
+# ─── Phase 0 (Optional): Fresh-Project Bootstrap ──────────────────────────────
 if [[ "$FRESH_PROJECT" == "true" ]]; then
   echo ""
   echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
