@@ -948,6 +948,7 @@ async def test_output_filter_exception_triggers_quota_rollback(proxy_deps, monke
 @pytest.mark.asyncio
 async def test_inference_client_generate_extra_headers_not_duplicated():
     """InferenceClient.generate() pops extra_headers without mutating caller dict or raising TypeError."""
+    pytest.importorskip("openai", reason="InferenceClient needs the inference extra")
     from src.integrations.inference_client.client import InferenceClient
 
     gw = InferenceClient.__new__(InferenceClient)

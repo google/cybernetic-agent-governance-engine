@@ -29,6 +29,9 @@ from __future__ import annotations
 import pytest
 
 from config.settings import Config
+
+pytest.importorskip("openai", reason="InferenceClient needs the inference extra")
+
 from src.integrations.inference_client.client import (
     InferenceClient,
     InferenceEndpointMissing,

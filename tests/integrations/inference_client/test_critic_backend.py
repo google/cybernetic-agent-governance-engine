@@ -27,6 +27,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.gateway.governance.seams.critic import CriticBackend, CriticRequest
+
+pytest.importorskip("openai", reason="RoutedCriticBackend needs the inference extra")
+
 from src.integrations.inference_client.critic_backend import RoutedCriticBackend
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -24,10 +24,15 @@ pin the import-level claim:
 - the critic backend is bound only when critics are on and a model exists;
 - a missing ``inference`` extra fails assembly closed.
 
-Each subprocess checks ``sys.modules`` after a real assembly. The positive
-control proves the probe sees an import when one happens. The test
-environment has every extra installed, so an import would succeed and be
-visible.
+Each subprocess checks ``sys.modules`` after a real assembly. Two environments
+run this file:
+
+- CI's logic job installs every extra, so an import would succeed and be
+  visible. The positive control proves the probe sees an import when one
+  happens.
+- The hermetic job installs no model package. There the assembly tests prove
+  assembly needs none, and the positive control skips because it has nothing
+  to import. The fail-closed test still runs.
 """
 
 from __future__ import annotations
@@ -123,6 +128,9 @@ def test_finance_assembly_loads_no_model_client_under_inference_none() -> None:
 
 
 def test_positive_control_enabled_critics_with_a_model_do_load_the_client() -> None:
+    pytest.importorskip(
+        "openai", reason="the positive control needs the inference extra"
+    )
     loaded = _model_modules_after_assembly(
         CAGE_CONSENSUS_CRITICS_ENABLED="true", CAGE_INFERENCE_BACKEND="vllm"
     )
