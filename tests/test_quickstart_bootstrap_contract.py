@@ -29,6 +29,7 @@ Prevents regressions on the documented `docs/QUICKSTART.md` onboarding path:
 
 from __future__ import annotations
 
+import os
 import pathlib
 from unittest.mock import patch
 
@@ -332,7 +333,7 @@ def test_quickstart_documents_dev_only_ed25519_and_seal_mint_verify_step() -> No
     quickstart = (_REPO_ROOT / "docs" / "QUICKSTART.md").read_text(encoding="utf-8")
     assert "Software Ed25519 signing is dev-only." in quickstart
     assert "require Cloud KMS" in quickstart
-    assert "http://localhost:8080/tools/execute" in quickstart
+    assert "scripts/compose_gateway_call.sh /tools/execute" in quickstart
     assert '"tool_name":"execute_trade_action"' in quickstart
     assert "mint → verify → consume" in quickstart
 
@@ -364,3 +365,40 @@ def test_quickstart_smoke_workflow_exercises_live_seal_and_ledger_replay() -> No
     assert "--expected-refusal-count 2" in script
     assert 'counts["ACTUATION_RECEIPT"] == 1' in script
     assert 'counts["GOVERNANCE_SEAL_CONSUMED"] == 2' in script
+
+
+def test_quickstart_sends_identified_requests_from_inside_the_gateway() -> None:
+    """QUICKSTART shows an identity header set from the host only as a refusal.
+
+    The gateway believes ``l5d-client-id`` only on a connection from inside its
+    own pod (POAM-2026-167), so a curl from the host that sets it gets 403.
+    Identified requests go through ``scripts/compose_gateway_call.sh``, which
+    sends them from inside the gateway container.
+    """
+    quickstart = (_REPO_ROOT / "docs" / "QUICKSTART.md").read_text(encoding="utf-8")
+    lines = quickstart.replace("\\\n", " ").splitlines()
+    host_set = [
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("curl ") and "l5d-client-id" in line
+    ]
+    assert host_set, "QUICKSTART no longer shows a host-set identity refused"
+    for i in host_set:
+        assert lines[i + 1] == "# Expected: 403", lines[i]
+    assert "scripts/compose_gateway_call.sh /mcp/" in quickstart
+    assert os.access(_REPO_ROOT / "scripts" / "compose_gateway_call.sh", os.X_OK)
+
+
+def test_quickstart_smoke_workflow_refuses_a_host_set_identity() -> None:
+    """quickstart-smoke shows a trusted identity set on the runner refused (POAM-2026-167)."""
+    ci_workflow = yaml.safe_load(
+        (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    steps = ci_workflow["jobs"]["quickstart-smoke"]["steps"]
+    script = "\n".join(s.get("run", "") for s in steps)
+    assert 'if [ "$forged_status" != "403" ]' in script
+    assert 'grep -q "INGRESS_IDENTITY_NOT_FROM_PROXY"' in script
+    assert "scripts/compose_gateway_call.sh /mcp/" in script
+    for line in script.replace("\\\n", " ").splitlines():
+        if "curl " in line and "l5d-client-id" in line:
+            assert line.strip().startswith("forged_status=$(curl "), line.strip()
