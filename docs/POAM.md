@@ -116,6 +116,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-165 | AC-6 / CM-5 / SI-7 | Any branch of this repository can impersonate the staging deployer, `sa-cage-deployer`, which is owner-equivalent and controls the image-signing chain. The GitHub Actions Workload Identity provider checks only `assertion.repository` and maps no ref or environment, and the deployer grants `roles/iam.workloadIdentityUser` and `roles/iam.serviceAccountTokenCreator` to the whole repository's principal set. Anyone with write access, or a leaked credential for them, can push a branch whose workflow requests an ID token and take the deployer's project roles, which include `roles/resourcemanager.projectIamAdmin`, `roles/cloudkms.admin`, `roles/cloudbuild.builds.editor` with `roles/iam.serviceAccountUser`, and `roles/artifactregistry.admin`. With those it can sign Binary Authorization attestations through the attestor's Cloud Build identity, or grant itself the signer role, and push the images they admit. The partner harness runs as the same identity, so restricting the one binding would also block branch-dispatched partner runs. The fix is two identities with different conditions (detail section) | High | 2026-11-07 |
 | POAM-2026-166 | AU-10 / SC-7 / SA-11 | Over-the-wire partner sandbox verification for `actuator_03` (`QuarantineDirective` `refusal_proof_hash` / `governance_decision_digest` signed wire body). `POAM-2026-149` (`#617`) changed `actuator_03`'s signed `POST /v1/dpu/quarantine` body (`CAGE_QUARANTINE_ASSERTION_V1:`, `X-CAGE-Envelope-Digest`) so a kernel-issued quarantine carries `refusal_proof_hash` while a clearance-triggered quarantine carries `governance_decision_digest` ([wire change notice](partners/actuator_03/README.md#wire-change-notice-decision-digest-fields)). `actuator_03` (NVIDIA Sentry / DOCA) is at the specification and conformance stage with no live partner sandbox endpoint and no `actuator_03` target in [`scripts/partner_harness.py`](../scripts/partner_harness.py) ([Live Verification Status](partners/README.md#live-verification-status)). Split from `POAM-2026-149` so the external partner infrastructure dependency is tracked explicitly without blocking closure of the internal CAGE writer and conformance-suite remediation (detail section) | Moderate | 2026-12-31 |
 | POAM-2026-167 | IA-9 / AC-3 / SC-8 | The gateway and the compliance bridge took the caller's identity from the `l5d-client-id` header without checking that the pod's own Linkerd proxy wrote it. Through the proxy the header is sound: the proxy replaces it with the identity from the caller's certificate, or removes it. A pod running without its proxy can be reached directly, though, and there any pod in the cluster could name any identity, including the approver identities on the gateway's approval routes and the operator identity on the bridge's dual-control path. Such pods get created: the proxy injector's webhook fails open, and on 2026-10-29 a gateway replica was admitted without the proxy while the injector was stuck. Remediation in progress: governance pods without the proxy are refused at admission, and the header is accepted only from inside the pod (detail section) | High | 2026-11-08 |
+| POAM-2026-168 | CM-7 / SA-8 / CA-7 | CAGE claims that no model sits in its decision path, and its dependency set said otherwise. `[project.dependencies]` declared `litellm` and `openai`. The base install resolved 5 model packages (`litellm`, `openai`, and `tiktoken`, `tokenizers` and `huggingface-hub` via litellm), and the gateway image 14 (adding `nemoguardrails` and the advisor extra's LLM stack). The claim was also false at the import level. The kernel's consensus engine imported the openai SDK, and `assemble_governor()` loads that engine for any plugin contributing consensus (finance does). So a finance gateway loaded an LLM client during assembly even under `CAGE_INFERENCE_BACKEND=none`, where consensus can only refuse. Two checks that should have caught it were configured not to look, the shape of POAM-2026-160, -161 and -163: G3's `FORBIDDEN_VENDOR_SDKS` listed no LLM client, and neither did the hermetic job's "no ML" check. litellm also loads `.env` on import in its default mode (detail section) | High | 2026-11-08 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -1714,6 +1715,67 @@ Split from `POAM-2026-149` on `2026-10-31` so the external partner sandbox depen
 1. The service_mesh module is applied to staging. The policy is bound to governance-stack, and a pod created there with `linkerd.io/inject: disabled` is refused. Recorded here with the date.
 2. Gateway and compliance-bridge images built from the remediation run on staging. An unmeshed copy of the gateway, in a namespace outside the policy, refuses a trusted `l5d-client-id` sent from another pod and logs `INGRESS_IDENTITY_NOT_FROM_PROXY`. A meshed caller is still admitted through the proxy. Recorded here with the date.
 3. The merge commit SHA is recorded here.
+
+### POAM-2026-168: The Base Install and the Kernel Carried LLM Clients the Deterministic Core Claims Not to Need
+
+**Control:** NIST CM-7 (Least Functionality), SA-8 (Security and Privacy Engineering Principles), CA-7 (Continuous Monitoring)
+**Risk Level:** High. This is a reference-correctness defect: the artefact asserts a property it does not have, rated High for the same reason as POAM-2026-165. The property is the project's central claim, and anyone who lists the installed packages sees it fail before reading any code.
+**Status:** Open — remediated on `fix/llm-clients-out-of-kernel` (2026-11-01); closes on merge against the criteria below
+**Date Opened:** 2026-11-01
+**Target Closure:** 2026-11-08
+
+**Description:**
+CAGE's claim is seven deterministic tiers, no model in the decision path, and no GPU required. Two subsystems are optional and off by default: LLM critic consensus (`CAGE_CONSENSUS_CRITICS_ENABLED`) and the NeMo rails (`CAGE_NEMO_ENABLED`).
+
+- **The dependency set** (measured from `uv.lock` at `5b2d4593`, ignoring environment markers):
+  - The base install resolved 102 packages, 5 of them model packages: `litellm` and `openai`, plus `tiktoken`, `tokenizers` and `huggingface-hub` via litellm.
+  - The gateway image (extras `gateway`, `advisor`, `compliance`, `langfuse`) resolved 253 packages, 14 of them model packages. These included `nemoguardrails`, with `fastembed` and `onnxruntime`, and through the `advisor` extra `langchain`, `langchain-core`, `langchain-openai`, `langgraph`, `google-adk` and `google-genai`.
+- **The import level.**
+  - The kernel's `GatewayClient` imported `openai` at module level, and `src/gateway/governance/consensus/engine.py` imported that client.
+  - `assemble_governor()` imports the consensus engine for any plugin that contributes `ConsensusContribution`, and finance does.
+  - So a finance gateway loaded the openai SDK during assembly with `CAGE_INFERENCE_BACKEND=none`, where consensus can only refuse (`CONSENSUS_NO_INFERENCE_BACKEND`). No client was ever built on that path, but the module was imported anyway.
+- **The gateway image's stated reason was false.** `src/gateway/Dockerfile` installed the `advisor` extra and copied `src/governed_financial_advisor`, on the stated ground that the "gateway imports from governed_financial_advisor". Nothing in the image imports it.
+- **litellm configured the process from `.env`.**
+  - litellm 1.104.0 calls `load_dotenv()` on import whenever `LITELLM_MODE` is unset or `DEV`, which is the default.
+  - With `LITELLM_DEV_ENV_HOT_RELOAD=True` it also overrides variables that are already set.
+  - Any process that imported it from inside the tree took `.env` into its environment, a configuration source no operator chose. The test-session case is POAM-2026-120's, closed by #627.
+
+**Why nothing caught it.** Two checks were configured not to look. This is the shape of POAM-2026-160 (gitleaks with no rules), POAM-2026-161 (dead pip-audit suppressions) and POAM-2026-163 (Bandit excluding `scripts/`).
+1. G3's `FORBIDDEN_VENDOR_SDKS` listed eight vendor SDKs, `nemoguardrails` among them, and no LLM client. AGENTS.md described only five of the eight.
+2. The hermetic job, "Hermetic Test (No ML Dependencies)", asserted that torch, transformers, sentence-transformers, tensorflow and jax were absent, in an environment that held `openai` and `litellm`.
+
+**Remediation (on `fix/llm-clients-out-of-kernel`):**
+1. **Kernel.**
+   - The consensus gate keeps its deterministic half: the trigger, context selection, prompt rendering, vote parsing, aggregation and refusal codes.
+   - The model call crosses a new seam, `CriticBackend` ([`seams/critic.py`](../src/gateway/governance/seams/critic.py)).
+   - The client and the per-role routing moved to Layer 3, in [`src/integrations/inference_client/`](../src/integrations/inference_client/__init__.py). `InferenceClient` was the kernel's `GatewayClient`, and `RoutedCriticBackend` was the kernel's `ConsensusModelRegistry`.
+   - The allowlisted [`critic_backend_factory.py`](../src/gateway/governance/critic_backend_factory.py) binds the backend only when critics are enabled and an inference backend exists.
+   - If the `inference` extra is missing, assembly fails closed with `CONSENSUS_CRITIC_BACKEND_UNAVAILABLE`.
+2. **Packaging.**
+   - `litellm` and `openai` left the base install, as did a test tool, the coverage plugin.
+   - Two new extras: `nemo` (`nemoguardrails`, `litellm`) and `inference` (`openai`).
+   - The `advisor` extra declares the `litellm` it imports.
+   - The gateway image installs only `gateway`, `compliance` and `langfuse`.
+   - The NeMo, advisor, local-dev and compliance-bridge images add the extras they use.
+3. **Gates.**
+   - G3 forbids LLM clients and model runtimes in `src/gateway/`.
+   - [`check_model_free_install.py`](../scripts/check_model_free_install.py), in the required Lint job, fails in any of these cases:
+     - the base install or the gateway image resolves one of 23 model packages;
+     - the gateway Dockerfile installs one with `pip install`;
+     - `FORBIDDEN_VENDOR_SDKS` stops listing an LLM client or is reassigned.
+   - The hermetic job now checks for LLM clients too.
+4. **Tests.**
+   - [`test_kernel_assembly_model_free.py`](../tests/test_kernel_assembly_model_free.py) assembles a finance governor in a subprocess. It asserts that no LLM client or model runtime is in `sys.modules`, both by default and under `none`.
+   - A positive control (critics enabled, model present) shows that the probe sees `openai` when it is loaded.
+   - [`test_check_model_free_install.py`](../tests/test_check_model_free_install.py) plants each regression in a copy of the real inputs.
+
+**Residual risk:**
+- Presidio's spaCy model (`en_core_web_lg`) stays in the gateway image. It redacts evidence and is not in the decision path, which is why the claim says "decision path".
+- Turning on critics or the NeMo rails needs an image built with the `inference` or `nemo` extra.
+
+**Closure Criteria:**
+1. The merge commit SHA is recorded here, with the green Lint run that includes the model-free install gate.
+2. A gateway image built from the merge commit lists none of the gate's model packages (`uv pip list` in the image), and the quickstart smoke job passes against it. Both are recorded with the date.
 
 ### POAM-2026-121: Validation Report Makes a False Composition Claim
 

@@ -336,7 +336,7 @@ Trades with `amount ≥ THRESHOLDS.consensus.threshold_usd` (**$10,000 USD** per
 
 ### Boolean Consensus via Parallel Critic Evaluation
 
-Two critic personas are evaluated **concurrently** via `asyncio.gather`, each routed to a distinct model backend via `ConsensusModelRegistry`:
+Two critic personas are evaluated **concurrently** via `asyncio.gather`, each routed to a distinct model backend via `RoutedCriticBackend`:
 
 ```python
 vote1, vote2 = await asyncio.gather(

@@ -219,7 +219,7 @@ The External Normative Provider (`src/gateway/governance/normative_provider.py`)
 - After a human approval the tier re-runs before the seal (`revalidated_after_approval`): a HARD finding denies, and a `FRIA_EXTERNAL_HOLD` the approval was not given against is refused (`APPROVAL_CONTEXT_DRIFT`).
 
 ### 6.4 Heterogeneous Consensus (AARM-V9)
-For trades $\ge \$10,000\text{ USD}$, `ConsensusModelRegistry` queries two heterogeneous models concurrently via `asyncio.gather()`:
+For trades $\ge \$10,000\text{ USD}$, when consensus critics are enabled (`CAGE_CONSENSUS_CRITICS_ENABLED`, off by default), the kernel's `ConsensusGate` queries two heterogeneous models concurrently via `asyncio.gather()`, through the Layer 3 `RoutedCriticBackend`:
 - **Risk Manager**: `DeepSeek-R1-Distill-Llama-8B`
 - **Compliance Officer**: `Meta-Llama-3.1-8B-Instruct`
 Split votes or errors trigger HITL escalation, eliminating single-model blind spots. Critic personas and prompt templates are domain-owned (`src/cage_finance/config/critics.yaml`). Each critic is asked for a strict JSON-schema `{decision, reason}` response, and `_parse_critic_vote()` in `src/gateway/governance/consensus/engine.py` parses it strictly: anything other than a well-formed `APPROVE` / `REJECT` / `ESCALATE` (including leftover `<think>` tags) becomes `ERROR`, and an `APPROVE` whose reason contains the whole word `REJECT` counts as `REJECT`. Each critic call is bounded by `CONSENSUS_CRITIC_TIMEOUT_S` (default 10 s).
