@@ -28,13 +28,14 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
 from proof.model import REVALIDATED_TIERS
@@ -55,6 +56,7 @@ from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.governance.governor import posture as posture_mod
 from src.gateway.governance.governor.assembly import (
     DecisionFlags,
+    GovernorAssemblyError,
     GovernorComponents,
     assemble_governor,
     kernel_stages,
@@ -100,6 +102,15 @@ _MAGNITUDES = ConsequenceMagnitudes(CONSEQUENCE_MAGNITUDES)
 _TIER_MAGNITUDES = ConsequenceMagnitudes(
     (*CONSEQUENCE_MAGNITUDES, ConsequenceMagnitude("rebalance_portfolio", ()))
 )
+
+
+_TRACER = TracerProvider().get_tracer(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _active_otel_span() -> Iterator[None]:
+    with _TRACER.start_as_current_span("test"):
+        yield
 
 
 class _FakeProvider:
@@ -1004,6 +1015,85 @@ async def test_eu_contribution_presents_the_workload_identity_it_verified() -> N
         await tier.evaluate("execute_trade", dict(_TRADE))
     await tier.evaluate("execute_trade", dict(_TRADE))  # outside a request: no caller
     assert [c["actor_id"] for c in provider.calls] == [_CALLER, ""]
+
+
+@pytest.mark.asyncio
+async def test_missing_trace_span_refuses_locally_without_calling_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.gateway.governance.governor import governor as governor_module
+    from src.gateway.governance.governor.stages import (
+        domain_tiers as domain_tiers_module,
+    )
+
+    provider = _FakeProvider()
+    tier = _tier(provider, caller_identity=lambda: _CALLER)
+    with trace.use_span(trace.INVALID_SPAN, end_on_exit=False):
+        with pytest.raises(ValueError, match="correlation_id"):
+            tier._payload("execute_trade", {"amount": 10})
+        [violation] = await tier.evaluate("execute_trade", {"amount": 10})
+    assert violation.code == CODE_UNAVAILABLE
+    assert violation.kind == ViolationKind.HARD
+    assert "correlation_id" in violation.message
+    assert provider.calls == []
+
+    # Through the governor pipeline when no SDK TracerProvider is installed
+    # (permissive posture): DomainTierStage._span yields a NonRecordingSpan
+    # (trace_id == 0), and FriaTier._payload refuses locally without calling
+    # the normative provider.
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", trace.NoOpTracerProvider())
+    monkeypatch.setattr(
+        governor_module,
+        "tracer",
+        trace.get_tracer(governor_module.__name__),
+    )
+    monkeypatch.setattr(
+        domain_tiers_module,
+        "tracer",
+        trace.get_tracer(domain_tiers_module.__name__),
+    )
+    governor = _fria_only_governor(provider)
+    with trace.use_span(trace.INVALID_SPAN, end_on_exit=False):
+        with pytest.raises(GovernanceError, match="correlation_id"):
+            await governor.validate_action("execute_trade", {"amount": 10})
+    assert provider.calls == []
+
+
+def test_enforcing_posture_refuses_assembly_without_configured_tracer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "none")
+    with pytest.raises(GovernorAssemblyError, match="OTEL_TRACES_EXPORTER=none"):
+        assemble_governor(
+            [FinanceCagePlugin()],
+            posture=DeploymentPosture.PRODUCTION,
+            opa=allow_opa(),
+            stpa_validator=clean_stpa(),
+            flags=DecisionFlags(defer=False, narrow=False),
+            jurisdiction=resolve_jurisdiction("US_FED"),
+        )
+
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "otlp")
+    monkeypatch.setattr(trace, "_TRACER_PROVIDER", None)
+    with pytest.raises(GovernorAssemblyError, match="TracerProvider"):
+        assemble_governor(
+            [FinanceCagePlugin()],
+            posture=DeploymentPosture.PRODUCTION,
+            opa=allow_opa(),
+            stpa_validator=clean_stpa(),
+            flags=DecisionFlags(defer=False, narrow=False),
+            jurisdiction=resolve_jurisdiction("US_FED"),
+        )
+
+    # Permissive postures still assemble without a configured tracer.
+    assemble_governor(
+        [FinanceCagePlugin()],
+        posture=DeploymentPosture.DEV,
+        opa=allow_opa(),
+        stpa_validator=clean_stpa(),
+        flags=DecisionFlags(defer=False, narrow=False),
+        jurisdiction=resolve_jurisdiction("US_FED"),
+    )
 
 
 # --- Posture: an enforcing EU posture refuses the stub --------------------------

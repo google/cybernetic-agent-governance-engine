@@ -56,11 +56,14 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
+
+from opentelemetry import trace
 
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
@@ -82,6 +85,7 @@ from src.gateway.governance.env_posture import (
     DeploymentPosture,
     is_cage_defer_enabled,
     is_cage_narrow_enabled,
+    is_enforcing,
 )
 from src.gateway.governance.execution_idempotency import ExecutionLedger
 from src.gateway.governance.ftra.autonomy import MagnitudeExtractor
@@ -398,6 +402,7 @@ def assemble_governor(
             consequence_magnitudes=consequence_magnitudes
         )
     _reject_region_mismatch(jurisdiction)
+    _require_configured_tracer(posture)
     _reject_foreign_magnitude_policy(jurisdiction, consequence_magnitudes)
     _reject_duplicates(
         "threshold section", (s for c in contributions for s in c.threshold_sections)
@@ -656,6 +661,28 @@ def _effective_thresholds() -> GovernanceThresholds:
     from src.gateway.governance.schemas import thresholds as thresholds_module
 
     return thresholds_module.THRESHOLDS
+
+
+def _require_configured_tracer(posture: DeploymentPosture) -> None:
+    """Fail closed at assembly when an enforcing posture has no active OTel tracer."""
+    if not is_enforcing(posture):
+        return
+    exporter = os.environ.get("OTEL_TRACES_EXPORTER", "otlp").strip().lower()
+    if exporter == "none":
+        raise GovernorAssemblyError(
+            f"enforcing posture {posture.value!r} requires OpenTelemetry tracing, "
+            "but OTEL_TRACES_EXPORTER=none"
+        )
+    with trace.get_tracer(__name__).start_as_current_span(
+        "cage.assembly.tracer_probe"
+    ) as span:
+        if not span.is_recording() or not span.get_span_context().is_valid:
+            raise GovernorAssemblyError(
+                f"enforcing posture {posture.value!r} requires a configured "
+                "OpenTelemetry TracerProvider "
+                f"(got {type(trace.get_tracer_provider()).__name__}); "
+                "call setup_tracing() before assembling the governor"
+            )
 
 
 def _reject_region_mismatch(jurisdiction: JurisdictionContribution) -> None:

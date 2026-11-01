@@ -238,8 +238,29 @@ def _check_nemo_rails_backend(components: GovernorComponents) -> None:
         )
 
 
+def _check_otel_tracer(components: GovernorComponents) -> None:
+    from opentelemetry import trace
+
+    exporter = os.environ.get("OTEL_TRACES_EXPORTER", "otlp").strip().lower()
+    if exporter == "none":
+        raise RuntimeError(
+            "OTEL_TRACES_EXPORTER=none disables OpenTelemetry span creation; "
+            "set OTEL_TRACES_EXPORTER=otlp and call setup_tracing() before startup"
+        )
+    with trace.get_tracer(__name__).start_as_current_span(
+        "cage.posture.tracer_probe"
+    ) as span:
+        if not span.is_recording() or not span.get_span_context().is_valid:
+            raise RuntimeError(
+                "OpenTelemetry TracerProvider is not configured "
+                f"(got {type(trace.get_tracer_provider()).__name__}); "
+                "call setup_tracing() before startup"
+            )
+
+
 CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("required_tiers", _check_required_tiers),
+    ("otel_tracer", _check_otel_tracer),
     ("tier_runtime_requirements", _check_tier_runtime_requirements),
     ("jurisdiction_requirements", _check_jurisdiction_requirements),
     ("consensus_critics_backend", _check_consensus_critics_backend),

@@ -52,10 +52,10 @@ class TestPhase3SchemaMapping:
             "correlation_id": "exec-123",
             "thread_id": "thread-456",
             "action": "payment.release",
-            "target": "TREASURY_GATEWAY",
             "operator_urn": "agent-treasury-01",
-            "approval_id": "approval-789",
             "params": {
+                "target": "TREASURY_GATEWAY",
+                "approval_id": "approval-789",
                 "amount": 750000.0,
                 "currency": "GBP",
                 "symbol": "Invoice 78431",
@@ -152,7 +152,6 @@ class TestPhase3SchemaMapping:
             "correlation_id": "exec-minimal",
             "thread_id": "thread-minimal",
             "action": "test.action",
-            "target": "TEST_TARGET",
             "operator_urn": "agent-test",
             "params": {},
         }
@@ -162,6 +161,7 @@ class TestPhase3SchemaMapping:
         # Verify defaults per schema spec
         assert payload["approval_id"] == "exec-minimal"  # fallback to correlation_id
         assert payload["platform"] == "GOOGLE-CAGE-REFERENCE"
+        assert payload["target"] == ""  # empty when not in params
         assert payload["context"] == ""  # empty when no symbol/purpose
         assert payload["actor_type"] == "autonomous_agent"
         assert payload["actor_role"] == "agent"
@@ -225,7 +225,6 @@ class TestPhase3SchemaMapping:
                 "correlation_id": "exec-123",
                 "thread_id": "thread-456",
                 "action": "test.action",
-                "target": "TEST",
                 "operator_urn": "agent-1",
                 "params": {"amount": 100.0, "currency": "USD"},
             }

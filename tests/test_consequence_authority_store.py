@@ -41,6 +41,7 @@ import fakeredis.aioredis  # type: ignore[import]
 from src.gateway.governance.consequence_authority_store import (
     ConsequenceAuthorityStore,
 )
+from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -60,7 +61,11 @@ async def store(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> ConsequenceAuthorityStore:
     """ConsequenceAuthorityStore with default 90s TTL."""
-    return ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    return ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +182,11 @@ async def test_ttl_expiry_allows_re_consumption(
 ) -> None:
     """After TTL expiry, the key is gone and consumption succeeds again."""
     # Use a very short TTL for test speed
-    store = ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=1)
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=1,
+    )
 
     binding = ConsequenceAuthorityStore.binding_hash(
         thread_id="thread-1",
@@ -258,7 +267,11 @@ async def test_redis_error_propagates_fail_closed(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
     """Redis connection/timeout error propagates as exception (no silent success)."""
-    store = ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
     binding = ConsequenceAuthorityStore.binding_hash(
         thread_id="thread-1",
@@ -285,7 +298,11 @@ async def test_redis_timeout_propagates_fail_closed(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
     """Redis timeout error propagates as exception."""
-    store = ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
     binding = ConsequenceAuthorityStore.binding_hash(
         thread_id="thread-1",
@@ -414,7 +431,11 @@ async def test_get_binding_redis_error_returns_none(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
     """get_binding() returns None on Redis error (diagnostic use, don't propagate)."""
-    store = ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
     # Simulate Redis error
     with patch.object(
@@ -491,7 +512,11 @@ async def test_key_schema_format(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
     """Verify the Redis key schema is flowsignal:token:<authority_record_id>."""
-    store = ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
     binding = ConsequenceAuthorityStore.binding_hash(
         thread_id="thread-1",

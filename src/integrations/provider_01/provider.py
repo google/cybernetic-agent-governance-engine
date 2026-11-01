@@ -163,6 +163,7 @@ async def _map_flowsignal_decision(
         # Delegate to kernel minting service (relocated from this adapter),
         # which also checks the declared consequence magnitudes.
         from src.gateway.governance.consequence_token_service import (
+            FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
             mint_consequence_token_finding,
         )
 
@@ -179,10 +180,22 @@ async def _map_flowsignal_decision(
             receipt_obj.get("id") or data.get("authority_receipt_id") or ""
         ).strip()
         record_id = str(data.get("authority_record_id") or "").strip()
-        if action_payload.get("prefer_receipt_id_for_rec") and receipt_id:
-            consumption_id = receipt_id
-        else:
-            consumption_id = record_id or receipt_id
+        # Single use is keyed per determination: rec is always the partner's
+        # receipt id. authority_record_id may name the mandate, so it never
+        # keys single use (two payments under one mandate would collide).
+        if not receipt_id:
+            return False, [
+                {
+                    "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+                    "severity": "blocked",
+                    "message": (
+                        "FlowSignal ALLOW carries no authority receipt id "
+                        "(authority_receipt.id or authority_receipt_id); single "
+                        "use is keyed per determination"
+                    ),
+                }
+            ]
+        consumption_id = receipt_id
 
         actor_id = str(
             action_payload.get("actor_id") or action_payload.get("operator_urn") or ""
@@ -196,8 +209,14 @@ async def _map_flowsignal_decision(
             authority_state_version=data.get("authority_state_version"),
             ttl_seconds=60,
         )
-        if receipt_id:
-            consequence_token_finding["authority_receipt_id"] = receipt_id
+        consequence_token_finding["authority_receipt_id"] = receipt_id
+        # The kernel finding names its single-use key authority_record_id, and
+        # here that key is the receipt id. Report the partner's own
+        # authority_record_id under that name instead, for audit only.
+        if record_id:
+            consequence_token_finding["authority_record_id"] = record_id
+        else:
+            consequence_token_finding.pop("authority_record_id", None)
         mandate_id = str(
             data.get("mandate_id") or params.get("mandate_id") or ""
         ).strip()
@@ -252,14 +271,19 @@ def _build_cage_authority_request(envelope: dict[str, Any]) -> dict[str, Any]:
 
     return {
         # Core Request Identifiers (3 fields)
-        "approval_id": envelope.get("approval_id")
-        or envelope.get("correlation_id", ""),
+        # Caller-supplied action arguments arrive inside envelope["params"]
+        # (FriaTier._payload); fall back to correlation_id when absent.
+        "approval_id": str(
+            params.get("approval_id") or envelope.get("correlation_id", "")
+        ),
         "platform": "GOOGLE-CAGE-REFERENCE",
         "execution_id": envelope.get("correlation_id", ""),
         # Scenario & Action Context (4 fields)
         "scenario_id": envelope.get("thread_id", ""),
         "action": envelope.get("action", ""),
-        "target": envelope.get("target", ""),
+        # Sourced from envelope["params"] (never from a top-level envelope key
+        # that FriaTier._payload does not emit; see POAM-2026-113 / POAM-2026-157).
+        "target": str(params.get("target", "")),
         "context": params.get("symbol") or params.get("purpose", ""),
         # Actor Identity & Authorization (5 fields)
         "actor_id": envelope.get("operator_urn", ""),

@@ -36,6 +36,7 @@ from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 from tests.test_consequence_gateway import _make_mock_signer_with_keypair
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -56,7 +57,9 @@ def mock_signer():
 async def consequence_store():
     """Fresh ConsequenceAuthorityStore for each test."""
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    return ConsequenceAuthorityStore(fake_redis)
+    return ConsequenceAuthorityStore(
+        fake_redis, replication=ReplicationPolicy.standalone()
+    )
 
 
 @pytest.mark.asyncio

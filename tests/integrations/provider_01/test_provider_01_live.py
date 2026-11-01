@@ -52,11 +52,13 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.jurisdiction.eu_ai_act.fria_tier import FriaTier
 from src.gateway.governance.kms_signer import (
     KMSGovernanceSigner,
     SoftwareEd25519Provider,
@@ -142,50 +144,63 @@ def signer() -> Iterator[KMSGovernanceSigner]:
         yield run_signer
 
 
+_TRACER = TracerProvider().get_tracer(__name__)
+_FRIA_TIER = FriaTier(
+    object(),  # type: ignore[arg-type]  # _payload() never calls the provider
+    region="EU_ECB",
+    assessment_lookup=lambda _action: None,
+    reassessment_interval_days=365,
+    gate_timeout_seconds=5.0,
+    caller_identity=lambda: "agent-treasury-01",
+)
+
+
 def _payment(
     case: str, *, action: str = "payment.release", **params: Any
 ) -> dict[str, Any]:
     """AP-001: a 500,000 GBP treasury payment inside an active mandate.
 
     This is the vector FlowSignal's Step 1 qualification used
-    (``CAGE_FLOWSIGNAL_PHASE3_STEP1_RECORD.json``). The mandate expiry is set
+    (``CAGE_FLOWSIGNAL_PHASE3_STEP1_RECORD.json``), built through
+    ``FriaTier._payload()`` under an active OTel span so the live test
+    exercises the exact kernel envelope shape. The mandate expiry is set
     relative to now so the vector cannot age into a refusal. Keyword arguments
     override single ``params`` fields.
     """
     run = f"{case}-{uuid.uuid4().hex[:12]}"
     mandate_valid_until = datetime.now(timezone.utc) + timedelta(days=365)
-    return {
-        "thread_id": f"thread-cage-live-{run}",
-        "correlation_id": f"exec-cage-live-{run}",
-        "approval_id": "APPROVAL-TREASURY-001",
-        "action": action,
-        "target": "TREASURY_GATEWAY",
-        "operator_urn": "agent-treasury-01",
-        "actor_id": "agent-treasury-01",
-        "params": {
-            "purpose": "Invoice 78431",
-            "actor_role": "treasury_agent",
-            "principal_id": "institution-001",
-            "principal_name": "Example Financial Institution",
-            "mandate_id": "MANDATE-TREASURY-001",
-            "mandate_max_amount": 1000000.0,
-            "currency": "GBP",
-            "permitted_source_accounts": ["TREASURY-001"],
-            "permitted_counterparty_class": "APPROVED_SUPPLIERS",
-            "mandate_valid_until": mandate_valid_until.isoformat(timespec="seconds"),
-            "amount": 500000.0,
-            "source_account": "TREASURY-001",
-            "beneficiary": "SUPPLIER-X",
-            "counterparty_status": "APPROVED",
-            "account_status": "ACTIVE",
-            "risk_state": "NORMAL",
-            "approval_required": False,
-            "screening_status": "CLEAR",
-            "screening_max_age_seconds": 3600,
-            "screening_source": "SCREENING-SERVICE-01",
-            **params,
-        },
-    }
+    with _TRACER.start_as_current_span("validate"):
+        return _FRIA_TIER._payload(
+            action,
+            {
+                "thread_id": f"thread-cage-live-{run}",
+                "approval_id": "APPROVAL-TREASURY-001",
+                "target": "TREASURY_GATEWAY",
+                "purpose": "Invoice 78431",
+                "actor_role": "treasury_agent",
+                "principal_id": "institution-001",
+                "principal_name": "Example Financial Institution",
+                "mandate_id": "MANDATE-TREASURY-001",
+                "mandate_max_amount": 1000000.0,
+                "currency": "GBP",
+                "permitted_source_accounts": ["TREASURY-001"],
+                "permitted_counterparty_class": "APPROVED_SUPPLIERS",
+                "mandate_valid_until": mandate_valid_until.isoformat(
+                    timespec="seconds"
+                ),
+                "amount": 500000.0,
+                "source_account": "TREASURY-001",
+                "beneficiary": "SUPPLIER-X",
+                "counterparty_status": "APPROVED",
+                "account_status": "ACTIVE",
+                "risk_state": "NORMAL",
+                "approval_required": False,
+                "screening_status": "CLEAR",
+                "screening_max_age_seconds": 3600,
+                "screening_source": "SCREENING-SERVICE-01",
+                **params,
+            },
+        )
 
 
 def _codes(result: ValidationResult) -> list[str]:
@@ -230,7 +245,7 @@ async def test_live_each_credential_is_enforced(credentials: _Credentials) -> No
 async def test_live_allow_mints_a_bound_consequence_token(
     provider: FlowSignalNormativeProvider, signer: KMSGovernanceSigner
 ) -> None:
-    """ALLOW admits, and the token binds FlowSignal's authority record to the exact action."""
+    """ALLOW admits, and the token binds FlowSignal's authority receipt to the exact action."""
     payload = _payment("allow")
     result = await provider.validate_fria(payload)
     assert result.admitted is True, result
@@ -240,7 +255,7 @@ async def test_live_allow_mints_a_bound_consequence_token(
 
     claims = ConsequenceToken.verify(finding["token"], signer=signer)
     assert claims.rec
-    assert claims.rec == finding["authority_record_id"]
+    assert claims.rec == finding["authority_receipt_id"]
     assert claims.act == hashlib.sha256(jcs_canonicalize_plan(payload)).hexdigest()
     assert (claims.sub, claims.tid) == (payload["actor_id"], payload["thread_id"])
 

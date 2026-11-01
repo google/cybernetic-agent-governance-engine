@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 
 from src.gateway.governance.consequence_authority_store import (
     ConsequenceAuthorityStore,
+    ConsumptionNotReplicatedError,
 )
 from src.gateway.governance.consequence_magnitude import (
     ConsequenceMagnitudes,
@@ -334,6 +335,24 @@ class ConsequenceGateway:
 
         try:
             consumed = await self._store.consume_once(claims.rec, binding)
+        except ConsumptionNotReplicatedError as exc:
+            # Strict replication and the marker was not replica-acknowledged:
+            # a failover could lose it. The marker stays, so the record stays
+            # consumed, and nothing executes.
+            logger.error(
+                "[ConsequenceGateway] CONSUMPTION_NOT_REPLICATED rec=%s: %s",
+                claims.rec,
+                exc.detail,
+            )
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code="CONSUMPTION_NOT_REPLICATED",
+                    detail=str(exc),
+                ),
+                claims=claims,
+                recomputed_digest=recomputed_digest,
+            )
         except Exception as exc:
             # Fail-closed: Redis error → BLOCK (never silently EXECUTE on Redis failure)
             logger.error("[ConsequenceGateway] Redis error during consumption: %s", exc)

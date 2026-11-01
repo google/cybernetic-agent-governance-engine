@@ -133,6 +133,7 @@ async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> N
             json={
                 "decision": "ALLOW",
                 "authority_record_id": "auth-record-xyz",
+                "authority_receipt": {"id": "receipt-xyz"},
                 "authority_state_version": "v1.2.3",
             },
         )

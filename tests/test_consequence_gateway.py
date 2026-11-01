@@ -64,6 +64,7 @@ from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.contracts import ConsequenceMagnitude
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -184,7 +185,11 @@ async def store(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> ConsequenceAuthorityStore:
     """ConsequenceAuthorityStore with default 90s TTL."""
-    return ConsequenceAuthorityStore(redis_client=redis_client, ttl_seconds=90)
+    return ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
 
 
 @pytest.fixture
