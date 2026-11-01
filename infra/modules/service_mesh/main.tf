@@ -364,3 +364,23 @@ resource "helm_release" "linkerd_control_plane" {
     google_compute_firewall.mesh_webhooks,
   ]
 }
+
+# Refuses pods created without the Linkerd proxy in the namespaces that must be
+# meshed. The injector's webhook fails open, so without this a pod created
+# while the injector is down runs outside the mesh (see the chart's template).
+# Installed after the control plane, so the injector exists before any pod in
+# those namespaces depends on it.
+resource "helm_release" "mesh_proxy_required" {
+  count = length(var.proxy_required_namespaces) > 0 ? 1 : 0
+
+  name      = "cage-mesh-proxy-required"
+  chart     = "${path.module}/charts/mesh-proxy-required"
+  namespace = kubernetes_namespace.linkerd.metadata[0].name
+  wait      = true
+
+  values = [yamlencode({
+    namespaces = var.proxy_required_namespaces
+  })]
+
+  depends_on = [helm_release.linkerd_control_plane]
+}

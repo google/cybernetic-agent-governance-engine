@@ -542,7 +542,10 @@ class TestExecuteToolEndpointWorkloadIdentity:
 
             mod._rate_limit_buckets = {}
             req = MagicMock()
-            req.scope = {"headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))]}
+            req.scope = {
+                "headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))],
+                "client": ("127.0.0.1", 50000),  # through the pod's Linkerd proxy
+            }
             req.client = MagicMock(host="127.0.0.1")
             body = mod.ToolExecutionRequest(
                 tool_name="trigger_safety_intervention",

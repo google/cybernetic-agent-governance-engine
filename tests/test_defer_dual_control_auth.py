@@ -41,6 +41,12 @@ from src.gateway.governance.defer_queue import ApprovalRecord, DeferReason, Defe
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
+#: The pod's own Linkerd proxy connects from inside the pod; loopback stands in.
+PROXY_PEER = ("127.0.0.1", 50000)
+#: Another pod reaching the bridge directly, as it can when the bridge runs
+#: without its proxy (POAM-2026-167).
+OTHER_POD = ("10.112.3.7", 51000)
+
 
 def _make_mock_pipe():
     pipe = MagicMock()
@@ -68,6 +74,7 @@ class TestOperatorIdentityProvenance:
             ]
         )
         mock_request.attributes = None  # No gRPC attributes in HTTP mode
+        mock_request.scope = {"client": PROXY_PEER}
 
         principal = await require_operator_identity(mock_request)
 
@@ -197,13 +204,58 @@ class TestOperatorIdentityProvenance:
 class TestOperatorIdentitySvidHardening:
     """The SVID channel must only trust a single, well-formed Linkerd l5d-client-id header or transport principal."""
 
-    def _request(self, raw_headers: list[tuple[bytes, bytes]]) -> MagicMock:
+    def _request(
+        self,
+        raw_headers: list[tuple[bytes, bytes]],
+        peer: tuple[str, int] = PROXY_PEER,
+    ) -> MagicMock:
         from starlette.datastructures import Headers
 
         request = MagicMock()
         request.headers = Headers(raw=raw_headers)
         request.attributes = None
+        request.scope = {"client": peer, "server": ("10.112.0.42", 3001)}
+        request.client.host = peer[0]
         return request
+
+    @pytest.mark.asyncio
+    async def test_svid_from_another_pod_is_refused(self, monkeypatch):
+        # Without its proxy, the bridge can be reached directly, and the header
+        # names whichever operator the caller chose.
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
+        request = self._request(
+            [
+                (
+                    b"l5d-client-id",
+                    b"operator-alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                )
+            ],
+            peer=OTHER_POD,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(request)
+
+        assert exc_info.value.status_code == 401
+        assert "did not come through the Linkerd proxy" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_svid_from_the_pods_own_address_is_accepted(self):
+        # The Linkerd proxy connects from the pod's own IP.
+        request = self._request(
+            [
+                (
+                    b"l5d-client-id",
+                    b"operator-alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                )
+            ],
+            peer=("10.112.0.42", 40000),
+        )
+
+        principal = await require_operator_identity(request)
+
+        assert principal.channel_provenance == "SVID"
 
     @pytest.mark.asyncio
     async def test_single_well_formed_svid_accepted(self):

@@ -428,7 +428,8 @@ def test_gateway_tools_execute_reaches_plugin_registered_tool() -> None:
 
     mod.mcp.tool(name="plugin_probe_poam079")(plugin_probe)
     with patch.object(mod, "_check_rate_limit", AsyncMock(return_value=True)):
-        resp = TestClient(mod.app).post(
+        # client: the call arrives through the pod's own Linkerd proxy.
+        resp = TestClient(mod.app, client=("127.0.0.1", 50000)).post(
             "/tools/execute",
             json={"tool_name": "plugin_probe_poam079", "params": {"x": 3}},
             headers={

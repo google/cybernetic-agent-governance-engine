@@ -27,6 +27,24 @@ client identity it verified from the peer certificate, or **removes** the
 header when the connection carried no verified identity. A caller therefore
 cannot forge the header through the proxy.
 
+A caller that reaches the container without passing through the proxy can
+send any ``l5d-client-id`` it likes. That is the position of every caller of a
+pod running without its proxy, for example one admitted while the proxy
+injector was down (POAM-2026-167). So the header is believed only on a
+connection from inside the pod's own network namespace
+(:func:`is_pod_local_connection`): the proxy connects to the container from the
+pod's own IP address, and only a process in the same pod can use that address
+or loopback. A request that carries the header from any other peer is
+refused. A pod without its proxy therefore refuses every caller, instead of
+believing whichever identity a caller names.
+
+This depends on ``scope["client"]`` being the TCP peer, so the servers run
+with uvicorn's proxy-header handling off (``proxy_headers=False``). With it
+on, a peer that uvicorn trusts could set the client address through
+``X-Forwarded-For``. ``kubectl port-forward`` also connects from inside the
+pod, so permission to port-forward to a gateway pod amounts to holding every
+identity the gateway trusts.
+
 The identity is Linkerd's DNS-style name, not a ``spiffe://`` URI::
 
     <service-account>.<namespace>.serviceaccount.identity.linkerd.<trust-domain>
@@ -34,8 +52,10 @@ The identity is Linkerd's DNS-style name, not a ``spiffe://`` URI::
 This check is the application half of a two-layer control. The mesh half is
 the gateway ``Server`` / ``HTTPRoute`` / ``AuthorizationPolicy`` set, which
 refuses unauthorized connections before they reach the container. If that
-policy is deleted, or the pod runs without a proxy, this middleware still
-refuses the request: no proxy means no header, and no header means 403.
+policy is deleted, this middleware still refuses identities it does not
+trust. If the pod runs without a proxy, there is no mesh half at all, and
+this middleware refuses every request on a gated path: one without the header
+for lacking it, one with the header because it did not come through a proxy.
 
 Always enforced
 ---------------
@@ -62,6 +82,7 @@ This module is domain-agnostic kernel code (Layer 1).
 from __future__ import annotations
 
 import contextvars
+import ipaddress
 import json
 import logging
 import os
@@ -229,18 +250,63 @@ def _client_identities(scope: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _address(
+    endpoint: object,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The IP address of an ASGI ``(host, port)`` pair, or ``None``."""
+    if not isinstance(endpoint, (tuple, list)) or not endpoint:
+        return None
+    try:
+        address = ipaddress.ip_address(str(endpoint[0]))
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return address.ipv4_mapped
+    return address
+
+
+def is_pod_local_connection(scope: Mapping[str, Any]) -> bool:
+    """True if the request's TCP peer is inside the pod's own network namespace.
+
+    The peer must be a loopback address, or the address the connection arrived
+    on, which is the pod's own IP. The Linkerd inbound proxy connects to the
+    container from the pod's own IP, and no caller outside the pod can open a
+    TCP connection from either address. ``scope["client"]`` must be the TCP
+    peer, which is why the servers run with uvicorn's proxy-header handling off.
+    """
+    peer = _address(scope.get("client"))
+    if peer is None:
+        return False
+    if peer.is_loopback:
+        return True
+    return peer == _address(scope.get("server"))
+
+
+def _peer(scope: Mapping[str, Any]) -> str:
+    client = scope.get("client")
+    if isinstance(client, (tuple, list)) and client:
+        return str(client[0])
+    return "<none>"
+
+
 def extract_client_identity(scope: Mapping[str, Any]) -> str:
     """Return the verified Linkerd client identity from an ASGI ``scope``.
 
     Raises:
         ValueError: if the request does not carry exactly one valid
-            ``l5d-client-id`` header.
+            ``l5d-client-id`` header, or the header did not arrive on a
+            connection from inside the pod (:func:`is_pod_local_connection`).
     """
     presented = _client_identities(scope)
     if len(presented) != 1 or not _LINKERD_IDENTITY.match(presented[0]):
         raise ValueError(
             f"Request must carry exactly one valid {CLIENT_IDENTITY_HEADER} header "
             f"(got {len(presented)})."
+        )
+    if not is_pod_local_connection(scope):
+        raise ValueError(
+            f"{CLIENT_IDENTITY_HEADER} arrived from {_peer(scope)}, not through "
+            "the pod's Linkerd proxy."
         )
     return presented[0]
 
@@ -287,6 +353,18 @@ class WorkloadIdentityMiddleware:
                 await self.app(scope, receive, send)
             return
         presented = _client_identities(scope)
+        if presented and not is_pod_local_connection(scope):
+            # Through the proxy, the header is the identity the proxy verified.
+            # From any other peer, it is whatever the caller chose to send, so
+            # it is logged with repr().
+            logger.warning(
+                "INGRESS_IDENTITY_NOT_FROM_PROXY path=%s peer=%s claimed=%r",
+                path,
+                _peer(scope),
+                presented[0] if len(presented) == 1 else f"<{len(presented)} headers>",
+            )
+            await _refuse(scope, send)
+            return
         # Exactly one header, and it must be trusted. Several headers mean
         # something other than the proxy wrote one of them.
         if (

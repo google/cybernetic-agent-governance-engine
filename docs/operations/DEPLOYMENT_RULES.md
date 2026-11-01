@@ -427,8 +427,15 @@ make advisor-watch      # monitors recovery
 ### Linkerd Network Validator CrashLoopBackOff (Mitigation vs. Root Cause)
 
 If pods (e.g., `gateway`, `compliance-bridge`, or the advisor) stay in `Init:CrashLoopBackOff` because the `linkerd-network-validator` init container exits with code 95 (`Failed to validate networking configuration`):
-- **Mitigation**: Delete the affected pods so their controllers reschedule them (`kubectl delete pod -l app=gateway -n governance-stack`; use `app=compliance-bridge` and so on for other workloads), and/or cordon and cycle the node pool. In staging, deleting pods and scaling the node pools ended a 31-hour crash loop.
+- **Mitigation**: Delete the affected pods so their controllers reschedule them (`kubectl delete pod -l app=gateway -n governance-stack`; use `app=compliance-bridge` and so on for other workloads), and/or cordon and cycle the node pool. In staging, deleting pods and scaling the node pools ended a 31-hour crash loop. If Linkerd's own pods in the `linkerd` namespace are stuck too, delete them first and wait for `linkerd-proxy-injector` to be Ready: governance pods recreated before then are refused until it is ([below](#governance-pods-refused-without-the-linkerd-proxy)).
 - **Root cause: not established.** The leading hypothesis is a race during node initialization, in which application pods schedule before `linkerd2-cni` (installed by [`infra/modules/service_mesh`](../../infra/modules/service_mesh/main.tf)) has chained its plugin into the node's CNI configuration in `/etc/cni/net.d`. That a restart clears the loop is consistent with this hypothesis but does not prove it. **This is a mitigation, not a structural fix**: the condition can recur on node restarts, pool scaling, or cluster upgrades. If it does, deleting the pods or cycling the node clears it; do not spend a day rediscovering that a restart resolves the condition.
+
+### Governance Pods Refused Without the Linkerd Proxy
+
+If a workload in `governance-stack` has no pods and its ReplicaSet records `FailedCreate` with `ValidatingAdmissionPolicy 'cage-mesh-proxy-required' ... denied request: pods in this namespace must run the Linkerd proxy`:
+- **Why**: [`infra/modules/service_mesh`](../../infra/modules/service_mesh/main.tf) installs this admission policy for `proxy_required_namespaces`. The proxy injector's webhook fails open, so without the policy a pod created while the injector is down would run without a proxy. The gateway would then have no proxy to vouch for its callers' identities (POAM-2026-167 in [`POAM.md`](../POAM.md)).
+- **Usual cause**: the proxy injector is not ready (`kubectl -n linkerd get pods -l linkerd.io/control-plane-component=proxy-injector`), or the namespace has lost its `linkerd.io/inject=enabled` annotation. A pod that sets `linkerd.io/inject: disabled` is always refused here.
+- **Recovery**: once the injector is Ready, the controllers retry and create the pods with the proxy. In a staging test, a ReplicaSet did so 21 seconds after injection resumed. Do not remove the policy to get pods running: a governance pod without its proxy is what it exists to prevent.
 
 ### Unverified Deployer Service Account (`sa-cage-deployer`)
 

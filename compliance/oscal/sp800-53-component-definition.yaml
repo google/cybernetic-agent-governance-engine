@@ -76,6 +76,9 @@ component-definition:
                 unless its Linkerd-verified l5d-client-id is listed in
                 CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only), verified in CI by
                 tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
+                The header counts only on a connection from inside the pod, where the
+                pod's own Linkerd proxy writes it, and an admission policy refuses
+                governance pods created without the proxy (POAM-2026-167).
                 OPA allow/deny decisions are recorded in
                 structured audit logs with full request context and user identity.
 
@@ -167,6 +170,9 @@ component-definition:
 
                    `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` validate:
                    - Presence of a single Linkerd-verified `l5d-client-id` header in ASGI scope
+                   - Arrival on a connection from inside the pod (`is_pod_local_connection`):
+                     only the pod's own Linkerd proxy writes the header, and a pod running
+                     without its proxy refuses every caller (POAM-2026-167)
                    - Match against Linkerd workload identity syntax (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`)
                    - Membership in `CAGE_TRUSTED_CLIENT_IDENTITIES` (required and enforced in every environment)
                    - Fails closed on any validation error (403 Forbidden / 401 Unauthorized)
@@ -1063,7 +1069,8 @@ component-definition:
 
                 3. **Gateway Workload-Identity Ingress Check** (POAM-2026-080):
                    The gateway trusts the l5d-client-id header set by its Linkerd inbound
-                   proxy after mTLS, and admits only identities in
+                   proxy after mTLS, only on a connection from inside the pod (the proxy
+                   connects from the pod's own address; POAM-2026-167), and admits only identities in
                    CAGE_TRUSTED_CLIENT_IDENTITIES (src/gateway/server/workload_identity.py),
                    which is required and enforced in every environment.
                    Linkerd identities are DNS-style
@@ -1081,7 +1088,9 @@ component-definition:
                    extracts SVID from request.attributes.source.principal (gRPC transport) or
                    Linkerd's proxy-verified l5d-client-id header (converted to a canonical
                    spiffe:// URI), extending mTLS workload identity to the defer escalation
-                   approval path. Self-asserted x-cage-source-principal headers are rejected.
+                   approval path. The header is accepted only on a connection from inside
+                   the pod, and refused with 401 from any other peer (POAM-2026-167).
+                   Self-asserted x-cage-source-principal headers are rejected.
 
                 BREAKING CHANGE (2026-09-22): Removed X-Agent-ID and X-SPIFFE-ID header
                 parsing. All requests must present a verified Linkerd mTLS workload identity.
@@ -1615,7 +1624,8 @@ component-definition:
                    a. SPIFFE SVID (primary): Extracted from mTLS client certificate SAN via
                       Linkerd service mesh. SVID format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
                       The identity is populated by the Linkerd inbound proxy into the
-                      l5d-client-id header (or request.attributes.source.principal on gRPC)
+                      l5d-client-id header (or request.attributes.source.principal on gRPC),
+                      accepted only on a connection from inside the pod (POAM-2026-167),
                       and optionally checked against CAGE_TRUSTED_OPERATOR_IDENTITIES.
                       Principal hash derived via SHA-256 of complete SVID URI.
 

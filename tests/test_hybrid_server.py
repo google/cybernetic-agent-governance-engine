@@ -576,6 +576,8 @@ def test_run_gateway_server_uses_uvloop_and_httptools(monkeypatch):
         port=18080,
         loop="uvloop",
         http="httptools",
+        # The identity check needs the TCP peer (POAM-2026-167).
+        proxy_headers=False,
     )
 
 

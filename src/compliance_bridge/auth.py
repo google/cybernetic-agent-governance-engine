@@ -26,6 +26,8 @@ from typing import Literal
 
 from fastapi import Header, HTTPException, Request
 
+from src.gateway.server.workload_identity import is_pod_local_connection
+
 logger = logging.getLogger(__name__)
 
 _CAGE_ENV = os.environ.get("CAGE_ENV", "production")
@@ -52,8 +54,10 @@ def _linkerd_client_id_header(request: Request) -> tuple[str | None, bool]:
 
     The Linkerd inbound proxy terminates mTLS and either sets ``l5d-client-id``
     from the verified peer certificate SAN or strips it when no verified peer
-    certificate is present. Multiple ``l5d-client-id`` headers indicate header
-    smuggling and fail closed.
+    certificate is present. That holds only for requests that came through the
+    proxy, so :func:`require_operator_identity` also requires the connection to
+    come from inside the pod (``is_pod_local_connection``). Multiple
+    ``l5d-client-id`` headers indicate header smuggling and fail closed.
 
     Note (GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39): ``x-cage-source-principal``
     is a client-controllable HTTP header not managed by Linkerd and is never
@@ -178,9 +182,10 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
 
     Identity precedence (fail-closed, evaluated not negotiated):
     1. **SPIFFE SVID / Linkerd mTLS** (primary): Extracted from Linkerd inbound
-       proxy ``l5d-client-id`` header or transport-level
-       ``request.attributes.source.principal`` (never from client-controlled
-       ``x-cage-source-principal`` headers; GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39).
+       proxy ``l5d-client-id`` header, accepted only on a connection from inside
+       the pod, or transport-level ``request.attributes.source.principal``
+       (never from client-controlled ``x-cage-source-principal`` headers;
+       GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39).
     2. **OIDC JWT** (fallback): Only if ``CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true``.
     3. **Dev synthetic** (dev-only): If ``CAGE_ENV=dev`` AND
        ``CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true``.
@@ -210,6 +215,21 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
         raise HTTPException(
             status_code=401,
             detail="Multiple l5d-client-id headers presented",
+        )
+    if l5d_id is not None and not is_pod_local_connection(
+        getattr(request, "scope", {})
+    ):
+        # Only the pod's own Linkerd proxy writes this header. From any other
+        # peer it names whichever operator the caller chose.
+        client = getattr(request, "client", None)
+        logger.warning(
+            "Refused l5d-client-id from %s: it did not come through the pod's "
+            "Linkerd proxy",
+            getattr(client, "host", "<none>"),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="l5d-client-id did not come through the Linkerd proxy",
         )
     try:
         svid: str | None = None

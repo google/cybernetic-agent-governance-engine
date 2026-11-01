@@ -58,7 +58,8 @@ class TestPrincipalSanitizationAndHeaderTrust:
     def test_extract_rate_limit_keys_trusts_principal_only_with_linkerd_id(
         self,
     ) -> None:
-        # Request with verified Linkerd workload identity trusts x-cage-principal
+        # Request with verified Linkerd workload identity trusts x-cage-principal.
+        # The pod's Linkerd proxy connects from the pod's own address.
         trusted_scope = {
             "type": "http",
             "headers": [
@@ -66,6 +67,7 @@ class TestPrincipalSanitizationAndHeaderTrust:
                 (b"x-cage-principal", b"trader-42"),
             ],
             "client": ("10.244.0.10", 54321),
+            "server": ("10.244.0.10", 8080),
         }
         req_trusted = Request(trusted_scope)
         identity, principal = extract_rate_limit_keys(req_trusted)
@@ -85,6 +87,21 @@ class TestPrincipalSanitizationAndHeaderTrust:
         assert u_id == "untrusted:198.51.100.7"
         assert u_principal == "untrusted:198.51.100.7"
         assert "spoofed" not in u_principal
+
+        # A Linkerd identity sent by another pod, not written by this pod's
+        # proxy, is not a verified identity either (POAM-2026-167).
+        forged_scope = {
+            "type": "http",
+            "headers": [
+                (b"l5d-client-id", _TRUSTED_SPIFFE.encode("latin-1")),
+                (b"x-cage-principal", b"spoofed-principal-99"),
+            ],
+            "client": ("10.244.3.7", 54321),
+            "server": ("10.244.0.10", 8080),
+        }
+        f_id, f_principal = extract_rate_limit_keys(Request(forged_scope))
+        assert f_id == "untrusted:10.244.3.7"
+        assert "spoofed" not in f_principal
 
     @pytest.mark.asyncio
     async def test_mcp_tool_server_honors_cage_rate_limit_env_vars(

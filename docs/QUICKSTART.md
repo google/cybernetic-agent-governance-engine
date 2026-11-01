@@ -47,7 +47,9 @@ gateway always enforces workload identity. `WorkloadIdentityMiddleware` and
 [`src/gateway/server/workload_identity.py`](../src/gateway/server/workload_identity.py)
 refuse to start if `CAGE_TRUSTED_CLIENT_IDENTITIES` is unset, and refuse
 (HTTP 403) every request that does not carry exactly one trusted Linkerd
-`l5d-client-id` header. The only exemptions are the exact URL paths in
+`l5d-client-id` header. The header counts only on a connection from inside the
+gateway's own pod, where the Linkerd proxy that sets it runs. The only
+exemptions are the exact URL paths in
 `OPEN_EXACT_PATHS` (no prefix match; a non-canonical form such as `//health`
 is not exempt):
 
@@ -75,6 +77,8 @@ This starts:
 
 `/health` is one of the open paths listed in §1, so it needs no `l5d-client-id` header. Every other route does.
 
+Compose has no Linkerd proxy, and a request from your shell reaches the gateway from outside its container, so the gateway refuses one that carries the header. [`scripts/compose_gateway_call.sh`](../scripts/compose_gateway_call.sh) sends a request from inside the gateway container instead, where the proxy would run, with the advisor identity that `.env` trusts.
+
 ```bash
 curl http://localhost:8080/health
 # Expected: {"status":"ok","mode":"mcp-tool-server","nemo":"off"}
@@ -85,30 +89,24 @@ curl http://localhost:8080/health
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8080/mcp/
 # Expected: 403
 
-# Verify the Stateless FastMCP Streamable HTTP transport is ready.
-# Locally you supply the header that the Linkerd proxy sets inside the mesh.
-curl -s -X POST http://localhost:8080/mcp/ \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+# So is one whose identity header was set outside the gateway container
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8080/mcp/ \
+  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+# Expected: 403
+
+# Verify the Stateless FastMCP Streamable HTTP transport is ready
+scripts/compose_gateway_call.sh /mcp/ '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 
 # Exercise the governance loop end to end (mint → verify → consume):
 # evaluates OPA + STPA + CBF + Fiscal, commits GOVERNANCE_DECISION to
 # cage:evidence:stream, mints an EdDSA JWT routing seal, verifies its signature
 # against /governance/jwks and its committed record_hash, atomically consumes
 # the single-use nonce in Redis, runs the simulated broker, and settles CBF.
-curl -s -X POST http://localhost:8080/tools/execute \
-  -H "Content-Type: application/json" \
-  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
-  -d '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}'
+scripts/compose_gateway_call.sh /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}'
 # Expected: {"status":"SUCCESS","output":"EXECUTED: AAPL x 250.0 (Receipt ID: ...)"}
 
 # Verify a policy denial commits a signed refusal receipt and returns its 64-hex proof_hash
-curl -s -X POST http://localhost:8080/tools/execute \
-  -H "Content-Type: application/json" \
-  -H "l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
-  -d '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"transaction_id":"33333333-3333-4333-8333-333333333333","side":"buy"}}'
+scripts/compose_gateway_call.sh /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"transaction_id":"33333333-3333-4333-8333-333333333333","side":"buy"}}'
 # Expected: {"status":"SUCCESS","output":"BLOCKED: Governance Blocked: ...","proof_hash":"<64-hex>"}
 ```
 

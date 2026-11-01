@@ -768,4 +768,5 @@ if __name__ == "__main__":
     app.add_middleware(WorkloadIdentityMiddleware, policy=load_identity_policy())
     http_port = int(os.getenv("PORT", "8080"))
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(app, host="0.0.0.0", port=http_port)
+    # The identity middleware needs the TCP peer (see workload_identity).
+    uvicorn.run(app, host="0.0.0.0", port=http_port, proxy_headers=False)

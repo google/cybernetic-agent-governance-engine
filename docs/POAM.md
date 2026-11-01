@@ -114,6 +114,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-163 | SA-11 / RA-5 / CA-7 | The Bandit SAST gate excluded `scripts/` via `exclude_dirs = ["tests", "scripts", "examples"]` in [`pyproject.toml`](../pyproject.toml) even though [`Makefile`](../Makefile), [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), and [`.github/workflows/security-scan.yml`](../.github/workflows/security-scan.yml) pass `bandit -r src/ scripts/ -c pyproject.toml -ll -ii`, because Bandit applies `exclude_dirs` after expanding positional targets. Removing `"scripts"` (leaving `["tests", "examples"]`) exposed 8 medium-severity findings across 5 scripts: 1× `B310` (`urllib.request.urlopen` without scheme validation in [`automated_auditor.py`](../scripts/automated_auditor.py)) and 7× `B108` (`/tmp` defaults in diagnostic/validation scripts). Remediated and merged on `main` in #601 (`7f0c1c4b`, branch head `a19a97cb`; detail section) | Moderate | 2026-11-15 |
 | POAM-2026-164 | CM-2 / SA-11 / CA-2 | A clean GCP project has never been deployed end-to-end from [`QUICK_START.md`](../infra/QUICK_START.md). While `POAM-2026-131` closed on the live `cage-staging` apply from rendered digests (`3afda5b7`), every live GKE apply to date has targeted the long-lived `<project>` project whose state bucket, APIs, Cloud Build SA, KMS signing keyring (`cage-signing-staging`), and Binary Authorization attestor already existed. Clean-project bootstrap ([`bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh), `#605`, `b66c7344`) and `--fresh-project` lifecycle teardown ([`staging_lifecycle.sh`](../scripts/staging_lifecycle.sh), `#606`, `d599fc04`) have only been tested against hermetic `gcloud`/`terraform` stubs (`test_gcp_project_bootstrap.py`, `test_staging_lifecycle.py`) and have never created or torn down a real GCP resource. Code inspection prior to the first walk already identified a teardown collision in `#606`: under `POAM-2026-159`'s 1-day locked staging retention (`retention_period = 86400`, `is_locked = true`), objects written during Phases 2–5 cannot be deleted at `t + 20m` (causing `terraform destroy` and the immediate `PF9` bucket/lien survivor check in `staging_lifecycle.sh` to fail before 24 hours elapse), and undeletable KMS keyrings / HSM key versions require a project budget alert and post-retention project deletion. Requires a manual clean-project walk (`Step A2`) first to record empirical failures, followed by updating `staging_lifecycle.sh` (`Step A3`) against the empirical failure list (detail section) | High | 2026-11-15 |
 | POAM-2026-165 | AC-6 / CM-5 / SI-7 | Any branch of this repository can impersonate the staging deployer, `sa-cage-deployer`, which is owner-equivalent and controls the image-signing chain. The GitHub Actions Workload Identity provider checks only `assertion.repository` and maps no ref or environment, and the deployer grants `roles/iam.workloadIdentityUser` and `roles/iam.serviceAccountTokenCreator` to the whole repository's principal set. Anyone with write access, or a leaked credential for them, can push a branch whose workflow requests an ID token and take the deployer's project roles, which include `roles/resourcemanager.projectIamAdmin`, `roles/cloudkms.admin`, `roles/cloudbuild.builds.editor` with `roles/iam.serviceAccountUser`, and `roles/artifactregistry.admin`. With those it can sign Binary Authorization attestations through the attestor's Cloud Build identity, or grant itself the signer role, and push the images they admit. The partner harness runs as the same identity, so restricting the one binding would also block branch-dispatched partner runs. The fix is two identities with different conditions (detail section) | High | 2026-11-07 |
+| POAM-2026-167 | IA-9 / AC-3 / SC-8 | The gateway and the compliance bridge took the caller's identity from the `l5d-client-id` header without checking that the pod's own Linkerd proxy wrote it. Through the proxy the header is sound: the proxy replaces it with the identity from the caller's certificate, or removes it. A pod running without its proxy can be reached directly, though, and there any pod in the cluster could name any identity, including the approver identities on the gateway's approval routes and the operator identity on the bridge's dual-control path. Such pods get created: the proxy injector's webhook fails open, and on 2026-10-29 a gateway replica was admitted without the proxy while the injector was stuck. Remediation in progress: governance pods without the proxy are refused at admission, and the header is accepted only from inside the pod (detail section) | High | 2026-11-08 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -1525,6 +1526,60 @@ Signing authority and test execution need different conditions, so give them dif
    - the Compute Engine default service account no longer holds Token Creator on it;
    - the deployer's remaining roles, each with its justification.
 4. Steps 1–3 are defined in `infra/`, and `terraform plan` shows no drift against the live project. The merge commit SHAs are recorded here.
+
+### POAM-2026-167: Mesh Identity Header Trusted From Any Peer, and Governance Pods Admitted Without the Proxy
+
+**Control:** NIST IA-9 (Service Identification and Authentication), AC-3 (Access Enforcement), SC-8 (Transmission Confidentiality and Integrity)
+**Risk Level:** High
+**Status:** Open. Remediation implemented and verified in hermetic tests and on staging probes (below); not yet applied to the running staging deployment
+**Date Opened:** 2026-11-01
+**Target Closure:** 2026-11-08
+
+**Description:**
+1. **The header was trusted from any peer.** [`workload_identity.py`](../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware`, `extract_client_identity`) took the caller's identity from `l5d-client-id`. In the compliance bridge, [`auth.py`](../src/compliance_bridge/auth.py) (`require_operator_identity`) turned the same header into an operator SVID. The header is sound only when the pod's own Linkerd inbound proxy wrote it. The middleware's docstring promised more: "no proxy means no header, and no header means 403". That holds only for callers that don't send the header themselves.
+2. **What the header decides.** On the gateway:
+   - the proposer and approver identities on the refinement approval routes;
+   - the caller of `/tools/execute` and of MCP tool calls;
+   - rate-limit principals;
+   - the domain role bound to the caller (`current_client_identity`).
+
+   On the bridge, it decides the operator identity on the defer-escalation (dual-control) path.
+3. **The proxy's behaviour, tested on staging on 2026-11-01.** A header-echo server ran in a meshed pod, built from the attested gateway image.
+   - A meshed caller that sent a forged `l5d-client-id` was seen with its own certificate identity only.
+   - An unmeshed caller's forged header was removed.
+   - Every request reached the app from the pod's own IP address.
+
+   So a pod with its proxy cannot be fed a forged identity, and a pod without one can.
+4. **Pods without the proxy get created.** The proxy injector's webhook has `failurePolicy: Ignore` (the chart default), and the injector runs one replica, so a pod created while it is not ready is admitted without the proxy. In each of the three October `linkerd-cni` crash loops, the injector was one of the stuck pods ([runbook](operations/DEPLOYMENT_RULES.md#linkerd-network-validator-crashloopbackoff-mitigation-vs-root-cause)).
+
+   On 2026-10-29 at 22:25:01 UTC, during the manual recovery, the ReplicaSet controller recreated a gateway pod 1 second after the stuck one was deleted. That was 13 seconds before the stuck injector was deleted. The Kubernetes audit log records the gateway pod admitted with no init containers and only the `gateway` container. It was deleted two minutes later, before it passed its startup probe.
+5. **Who could reach such a pod.** On staging, the governance-stack NetworkPolicies restrict egress only, so any pod in the cluster could reach an unmeshed gateway on port 8080. Neither of the repository's gateway ingresses is deployed on staging. Neither of them removes the header, and nothing in front of the gateway would remove it either:
+   - [`ingress.yaml`](../deployment/k8s/ingress.yaml) (ingress-nginx);
+   - [`ingress-gke.yaml`](../deployment/k8s/gcp/ingress-gke.yaml) (GKE load balancer).
+
+   Where one of them is deployed, an unmeshed gateway would take the header from the internet.
+6. **Automatic repair would make it routine.** The `linkerd2-cni` repair controller proposed in #622 deletes stuck pods as their validators fail. In the October incidents, the application pods' validators failed 3 to 17 seconds before the injector's, so their replacements would have been created while it was still stuck.
+
+**Remediation:**
+1. **Refuse unmeshed governance pods at admission.** [`infra/modules/service_mesh`](../infra/modules/service_mesh/main.tf) installs the `cage-mesh-proxy-required` ValidatingAdmissionPolicy ([chart](../infra/modules/service_mesh/charts/mesh-proxy-required/templates/proxy-required-policy.yaml)) for `proxy_required_namespaces`. The gcp-gke target lists the namespace it meshes. A pod created there without the `linkerd-proxy` container is refused (`failurePolicy: Fail`, `Deny`), with no exemption. Its controller retries, and the pod is created with the proxy once the injector is back. The rendered policy was tested on staging on 2026-11-01 against a probe namespace:
+   - A pod without the proxy was refused.
+   - So was a pod with `linkerd.io/inject: disabled`.
+   - The same pod in an unbound namespace was admitted.
+   - A Deployment's ReplicaSet recorded `FailedCreate` with the policy's message. After injection was turned on, it created a meshed pod 21 seconds later.
+2. **Accept the header only from inside the pod.** `is_pod_local_connection` accepts a connection only when the peer is loopback or the pod's own address, which is where the proxy connects from (item 3). For a header from any other peer:
+   - the middleware refuses the request and logs `INGRESS_IDENTITY_NOT_FROM_PROXY`;
+   - `extract_client_identity` raises;
+   - the bridge returns 401.
+
+   The gateway, the standalone MCP server and the bridge run uvicorn with proxy headers off, so `X-Forwarded-For` cannot set the peer. Tests: [`test_workload_identity_middleware.py`](../tests/test_workload_identity_middleware.py), [`test_defer_dual_control_auth.py`](../tests/test_defer_dual_control_auth.py), [`test_servers_keep_proxy_headers_off.py`](../tests/test_servers_keep_proxy_headers_off.py), [`test_mesh_proxy_required_policy.py`](../tests/infrastructure/test_mesh_proxy_required_policy.py) and [`mesh_proxy_required.tftest.hcl`](../infra/modules/service_mesh/tests/mesh_proxy_required.tftest.hcl).
+3. **The middleware's docstring now states the guarantee it gives.**
+
+**Residual Risk:** `kubectl port-forward` connects from inside the pod. Permission to port-forward to a gateway or bridge pod therefore still amounts to holding every identity that pod trusts.
+
+**Closure Criteria:**
+1. The service_mesh module is applied to staging. The policy is bound to governance-stack, and a pod created there with `linkerd.io/inject: disabled` is refused. Recorded here with the date.
+2. Gateway and compliance-bridge images built from the remediation run on staging. An unmeshed copy of the gateway, in a namespace outside the policy, refuses a trusted `l5d-client-id` sent from another pod and logs `INGRESS_IDENTITY_NOT_FROM_PROXY`. A meshed caller is still admitted through the proxy. Recorded here with the date.
+3. The merge commit SHA is recorded here.
 
 ### POAM-2026-121: Validation Report Makes a False Composition Claim
 

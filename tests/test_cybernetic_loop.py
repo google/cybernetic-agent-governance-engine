@@ -300,6 +300,7 @@ class TestApplyRefinementProposalFlow:
             gw_srv.root_app,
             raise_server_exceptions=False,
             headers={"l5d-client-id": self._TRUSTED_ID},
+            client=("127.0.0.1", 50000),  # through the pod's own Linkerd proxy
         )
         return tc
 
@@ -393,7 +394,11 @@ class TestApplyRefinementProposalFlow:
             fakeredis.aioredis.FakeRedis(decode_responses=True),
             raising=False,
         )
-        tc = TestClient(gw_srv.root_app, raise_server_exceptions=False)
+        tc = TestClient(
+            gw_srv.root_app,
+            raise_server_exceptions=False,
+            client=("127.0.0.1", 50000),  # through the pod's own Linkerd proxy
+        )
 
         prop = tc.post(
             "/v1/nemo/apply-refinement",
