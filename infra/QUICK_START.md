@@ -412,7 +412,7 @@ When deploying under a service account, pass `--deployer-sa=<SA_EMAIL>` to [`scr
 
 ### `linkerd-network-validator` CrashLoopBackOff (exit 95)
 
-If pods stay in `Init:CrashLoopBackOff` because `linkerd-network-validator` exits with code 95 (`Failed to validate networking configuration`), delete them so they reschedule (`kubectl delete pod -l app=gateway -n governance-stack`), or cycle the node pool. The root cause is not established (a CNI-chaining race on new or scaling nodes is the leading hypothesis), and the condition can recur. See [Linkerd Network Validator CrashLoopBackOff](../docs/operations/DEPLOYMENT_RULES.md#linkerd-network-validator-crashloopbackoff-mitigation-vs-root-cause).
+If pods stay in `Init:CrashLoopBackOff` because `linkerd-network-validator` exits with code 95 (`Failed to validate networking configuration`), the `linkerd2-cni` repair controller that [`infra/modules/service_mesh`](modules/service_mesh/main.tf) enables deletes them so they are recreated, within one crash-loop back-off interval. If they stay stuck (for example on a cluster last applied before the controller was enabled), delete them so they reschedule (`kubectl delete pod -l app=gateway -n governance-stack`), or cycle the node pool. The root cause is not established (a CNI-chaining race on new or scaling nodes is the leading hypothesis), and the condition can recur. See [Linkerd Network Validator CrashLoopBackOff](../docs/operations/DEPLOYMENT_RULES.md#linkerd-network-validator-crashloopbackoff-mitigation-vs-root-cause).
 
 ### Backend connection refused on port-forward
 

@@ -21,6 +21,7 @@
 mock_provider "google" {}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
+mock_provider "time" {}
 
 variables {
   project_id             = "mesh-test-project"
