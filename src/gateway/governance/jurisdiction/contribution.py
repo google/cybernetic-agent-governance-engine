@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import ReadOnlyTier
 
 
@@ -48,20 +49,36 @@ class JurisdictionContribution:
     jurisdiction tier before an approved request is sealed
     (``proof/model.py`` claim 10, ``post_hitl_rechecks_jurisdiction``).
 
+    ``consequence_magnitudes`` is the declared consequence-magnitude policy
+    the region's tiers check, or ``None`` when they check none (or were
+    built without one, which refuses every action they claim).
+    ``assemble_governor()`` refuses a contribution whose policy is not the
+    one the domain contributions declare.
+
     Raises:
-        TypeError: A contributed tier is not a ``ReadOnlyTier``.
+        TypeError: A contributed tier is not a ``ReadOnlyTier``, or
+            ``consequence_magnitudes`` is neither ``None`` nor a
+            ``ConsequenceMagnitudes``.
         ValueError: A contributed tier is not ``revalidated_after_approval``.
     """
 
     region: str
     tiers: tuple[ReadOnlyTier, ...] = ()
     runtime_requirements: tuple[PostureRequirement, ...] = ()
+    consequence_magnitudes: ConsequenceMagnitudes | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tiers", tuple(self.tiers))
         object.__setattr__(
             self, "runtime_requirements", tuple(self.runtime_requirements)
         )
+        if self.consequence_magnitudes is not None and not isinstance(
+            self.consequence_magnitudes, ConsequenceMagnitudes
+        ):
+            raise TypeError(
+                f"jurisdiction {self.region!r}: consequence_magnitudes must be a "
+                "ConsequenceMagnitudes or None"
+            )
         for tier in self.tiers:
             if not isinstance(tier, ReadOnlyTier):
                 raise TypeError(

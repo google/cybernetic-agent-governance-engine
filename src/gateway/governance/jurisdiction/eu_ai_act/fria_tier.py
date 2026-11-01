@@ -21,7 +21,13 @@ claims, ``evaluate()``:
    for the action — or the system-wide ``"*"`` artefact — is missing,
    unparseable, future-dated, or older than the reassessment interval
    (Art. 27(2)); no provider call is made for an unassessed action;
-2. consults the normative provider's ``validate_fria()`` under a timeout:
+2. refuses (HARD ``FRIA_MAGNITUDE_INVALID``, carrying the ``MAGNITUDE_*``
+   reason) when the payload it would send breaks the domain's declared
+   consequence magnitudes (``ConsequenceMagnitudes``): an undeclared action, a
+   declared magnitude that is absent, or one that is not a whole, positive
+   number of minor units. No provider call is made, and a tier built without
+   a policy refuses every action;
+3. consults the normative provider's ``validate_fria()`` under a timeout:
 
    * unreachable, timed out, raised, or returned ``error`` → HARD
      ``FRIA_PROVIDER_UNAVAILABLE`` (an EU deployment never runs unassessed);
@@ -61,6 +67,11 @@ from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.consequence_magnitude import (
+    ConsequenceMagnitudes,
+    describe,
+    magnitude_violations,
+)
 from src.gateway.governance.constants import GovernanceControl
 from src.gateway.governance.contracts import ReadOnlyTier, Violation, ViolationKind
 from src.gateway.governance.seams.normative import NormativeProvider
@@ -74,6 +85,7 @@ FRIA_TIER_ORDER = 7
 SYSTEM_WIDE_ASSESSMENT = "*"
 
 CODE_STALE = "FRIA_ASSESSMENT_STALE"
+CODE_MAGNITUDE = "FRIA_MAGNITUDE_INVALID"
 CODE_UNAVAILABLE = "FRIA_PROVIDER_UNAVAILABLE"
 CODE_HOLD = "FRIA_EXTERNAL_HOLD"
 CODE_REJECTED = "FRIA_REJECTED"
@@ -120,6 +132,10 @@ class FriaTier(ReadOnlyTier):
             gateway's workload identity; the default knows no caller, so the
             provider sees an empty actor (provider_01 then cannot mint a
             ConsequenceToken and refuses an admission).
+        consequence_magnitudes: The domain's declared consequence-magnitude
+            policy, checked against the provider payload before the provider
+            is consulted. The EU contribution passes the governor's; without
+            one every action is refused (``MAGNITUDE_UNDECLARED``).
 
     Raises:
         ValueError: The interval or timeout is not a positive finite number.
@@ -144,6 +160,7 @@ class FriaTier(ReadOnlyTier):
         claims: ActionClaim | None = None,
         clock: Callable[[], datetime] = _utcnow,
         caller_identity: CallerIdentity = _no_caller,
+        consequence_magnitudes: ConsequenceMagnitudes | None = None,
     ) -> None:
         for name, value in (
             ("reassessment_interval_days", reassessment_interval_days),
@@ -165,10 +182,16 @@ class FriaTier(ReadOnlyTier):
         self._claims = claims
         self._clock = clock
         self._caller_identity = caller_identity
+        self._magnitudes = consequence_magnitudes
 
     @property
     def provider(self) -> NormativeProvider:
         return self._provider
+
+    @property
+    def consequence_magnitudes(self) -> ConsequenceMagnitudes | None:
+        """The declared policy the pre-flight checks, or ``None`` (refuse all)."""
+        return self._magnitudes
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         return True if self._claims is None else bool(self._claims(action, params))
@@ -177,9 +200,21 @@ class FriaTier(ReadOnlyTier):
         stale = self._staleness(action)
         if stale is not None:
             return [self._violation(CODE_STALE, ViolationKind.HARD, stale)]
+        # Built once: the payload checked is the payload sent.
+        payload = self._payload(action, params)
+        refused = magnitude_violations(self._magnitudes, payload)
+        if refused:
+            return [
+                self._violation(
+                    CODE_MAGNITUDE,
+                    ViolationKind.HARD,
+                    "consequence magnitude refused before the provider was "
+                    f"consulted: {describe(refused)}",
+                )
+            ]
         try:
             result = await asyncio.wait_for(
-                self._provider.validate_fria(self._payload(action, params)),
+                self._provider.validate_fria(payload),
                 timeout=self._timeout,
             )
         except asyncio.TimeoutError:

@@ -26,14 +26,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token_service import (
     FINDING_CODE_CONSEQUENCE_TOKEN,
     FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
     mint_consequence_token_finding,
 )
+from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+_MAGNITUDES = ConsequenceMagnitudes(
+    (
+        ConsequenceMagnitude("execute_trade", (MagnitudePath(("quantity",), 0),)),
+        ConsequenceMagnitude("test", ()),
+    )
+)
 
 
 class TestConsequenceTokenService:
@@ -52,8 +61,7 @@ class TestConsequenceTokenService:
 
         action_payload = {
             "action": "execute_trade",
-            "symbol": "AAPL",
-            "quantity": 100,
+            "params": {"symbol": "AAPL", "quantity": 100},
         }
 
         with patch(
@@ -67,6 +75,7 @@ class TestConsequenceTokenService:
                 action_payload=action_payload,
                 authority_state_version="v1",
                 ttl_seconds=60,
+                magnitudes=_MAGNITUDES,
             )
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN
@@ -90,6 +99,7 @@ class TestConsequenceTokenService:
             thread_id="thread-abc",
             authority_record_id="",  # Missing!
             action_payload=action_payload,
+            magnitudes=_MAGNITUDES,
         )
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
@@ -107,6 +117,7 @@ class TestConsequenceTokenService:
             thread_id="thread-abc",
             authority_record_id="rec-xyz",
             action_payload=action_payload,
+            magnitudes=_MAGNITUDES,
         )
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
@@ -134,8 +145,7 @@ class TestConsequenceTokenService:
 
         action_payload = {
             "action": "execute_trade",
-            "symbol": "AAPL",
-            "quantity": 100,
+            "params": {"symbol": "AAPL", "quantity": 100},
             "actor_id": "user-deterministic",
             "thread_id": "thread-deterministic",
         }
@@ -154,6 +164,7 @@ class TestConsequenceTokenService:
                 action_payload=action_payload,
                 authority_state_version="v1",
                 ttl_seconds=60,
+                magnitudes=_MAGNITUDES,
             )
 
         token_new = finding["token"]
@@ -199,7 +210,7 @@ class TestConsequenceTokenService:
             side_effect=lambda msg: mock_signer.sign_raw(msg)
         )
 
-        action_payload = {"action": "execute_trade"}
+        action_payload = {"action": "execute_trade", "params": {"quantity": 100}}
 
         with patch(
             "src.gateway.governance.consequence_token_service.get_governance_signer",
@@ -210,6 +221,7 @@ class TestConsequenceTokenService:
                 thread_id="thread-abc",
                 authority_record_id="rec-xyz",
                 action_payload=action_payload,
+                magnitudes=_MAGNITUDES,
             )
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
@@ -239,6 +251,7 @@ class TestConsequenceTokenService:
                 authority_record_id="rec-xyz",
                 action_payload=action_payload,
                 authority_state_version=None,  # Nullable
+                magnitudes=_MAGNITUDES,
             )
 
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN
@@ -257,6 +270,7 @@ class TestConsequenceTokenService:
             thread_id="thread-abc",
             authority_record_id="rec-xyz",
             action_payload={"action": "transfer", "amount_minor_units": unsafe_int},
+            magnitudes=_MAGNITUDES,
         )
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"

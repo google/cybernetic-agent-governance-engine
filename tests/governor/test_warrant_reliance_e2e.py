@@ -75,10 +75,12 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 import src.gateway.governance.routing_seal as rs
+from src.cage_finance import CONSEQUENCE_MAGNITUDES
 from src.cage_finance.tiers.trade_confidence_tier import TRADE_CONFIDENCE_NORM_ID
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance import constants
 from src.gateway.governance import defer_queue as defer_queue_mod
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import PluginContribution
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.defer_queue import ApprovalRecord, DeferQueue, DeferReason
@@ -189,6 +191,7 @@ def _eu_jurisdiction() -> Any:
     return eu_ai_act.contribution(
         provider=_AdmittingFria(),  # type: ignore[arg-type]
         assessment_lookup=lambda action: {"assessed_at": assessed},
+        consequence_magnitudes=ConsequenceMagnitudes(CONSEQUENCE_MAGNITUDES),
     )
 
 

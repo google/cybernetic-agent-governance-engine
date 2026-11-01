@@ -615,6 +615,99 @@ class NormBinding:
         return action in self.actions
 
 
+#: Upper bound on :attr:`MagnitudePath.minor_unit_digits`. ISO 4217 minor
+#: units are 0 to 4; 18 also admits units such as 10**-18 of a token.
+MAX_MINOR_UNIT_DIGITS = 18
+
+
+@dataclass(frozen=True)
+class MagnitudePath:
+    """Where one consequence magnitude sits in an action's ``params``.
+
+    ``keys`` is the key path inside the action's ``params`` mapping, for
+    example ``("amount",)`` or ``("payment", "amount")``. The value there is
+    a number of major units; ``minor_unit_digits`` is how many decimal
+    places its minor unit has (ISO 4217: 2 for USD, 0 for JPY), so the
+    kernel can require a whole, positive number of minor units.
+    """
+
+    keys: tuple[str, ...]
+    minor_unit_digits: int
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.keys, tuple)
+            or not self.keys
+            or not all(isinstance(k, str) and k for k in self.keys)
+        ):
+            raise ValueError(
+                "MagnitudePath.keys must be a non-empty tuple of non-empty "
+                f"strings, got {self.keys!r}"
+            )
+        digits = self.minor_unit_digits
+        if (
+            isinstance(digits, bool)
+            or not isinstance(digits, int)
+            or not 0 <= digits <= MAX_MINOR_UNIT_DIGITS
+        ):
+            raise ValueError(
+                f"MagnitudePath {self.dotted}: minor_unit_digits must be an int "
+                f"in 0..{MAX_MINOR_UNIT_DIGITS}, got {digits!r}"
+            )
+
+    @property
+    def dotted(self) -> str:
+        """The path as written in refusals, e.g. ``params.amount``."""
+        return ".".join(("params", *self.keys))
+
+
+@dataclass(frozen=True)
+class ConsequenceMagnitude:
+    """The magnitudes one action's consequence carries, declared as data.
+
+    A plugin declares one per action. ``paths`` lists every magnitude in the
+    action's ``params``; ``paths=()`` is the explicit declaration that the
+    action carries none (a read, for example). The kernel refuses, at every
+    point it checks a consequence, an action with no declaration, a declared
+    path that is absent, and a magnitude that is not a whole, positive number
+    of minor units within 2**53-1
+    (:class:`~src.gateway.governance.consequence_magnitude.ConsequenceMagnitudes`).
+    """
+
+    action: str
+    paths: tuple[MagnitudePath, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action, str) or not self.action:
+            raise ValueError(
+                "ConsequenceMagnitude.action must be a non-empty string, "
+                f"got {self.action!r}"
+            )
+        if not isinstance(self.paths, tuple) or not all(
+            isinstance(p, MagnitudePath) for p in self.paths
+        ):
+            raise ValueError(
+                f"ConsequenceMagnitude {self.action!r}: paths must be a tuple "
+                f"of MagnitudePath, got {self.paths!r}"
+            )
+        keys = [p.keys for p in self.paths]
+        for i, path in enumerate(keys):
+            for other in keys[i + 1 :]:
+                if path == other:
+                    raise ValueError(
+                        f"ConsequenceMagnitude {self.action!r}: path "
+                        f"{'.'.join(path)!r} is declared twice"
+                    )
+                shorter, longer = sorted((path, other), key=len)
+                if longer[: len(shorter)] == shorter:
+                    # No payload satisfies both: the shorter path's value
+                    # would have to be a number and a mapping at once.
+                    raise ValueError(
+                        f"ConsequenceMagnitude {self.action!r}: path "
+                        f"{'.'.join(shorter)!r} contains path {'.'.join(longer)!r}"
+                    )
+
+
 @runtime_checkable
 class ServerInputResolver(Protocol):
     """Supplies, from server-side sources, the params a domain never trusts.
@@ -685,6 +778,15 @@ class PluginContribution:
         server_inputs: Per-action resolvers for params that only the gateway
             may supply (:class:`ServerInputResolver`); an action has at most
             one across contributions.
+        consequence_magnitudes: One :class:`ConsequenceMagnitude` per action
+            whose consequence the kernel may be asked to authorize: where its
+            magnitudes sit in ``params`` and their minor unit, or ``paths=()``
+            for an action that carries none. ``assemble_governor()`` rejects a
+            declaration for an action this domain does not register, or one
+            declared twice across contributions. An action left undeclared is
+            refused wherever a consequence is checked: a jurisdiction tier's
+            pre-flight, ConsequenceToken minting and ``ConsequenceGateway``
+            consumption.
         required_tiers: ``tier_name`` of every tier in ``tiers`` this domain
             cannot be governed without. ``assemble_governor()`` rejects a name
             the contribution does not contribute; ``assert_production_posture()``
@@ -716,6 +818,7 @@ class PluginContribution:
     rail_providers: tuple[Any, ...] = ()
     norm_bindings: tuple[NormBinding, ...] = ()
     server_inputs: Mapping[str, ServerInputResolver] = field(default_factory=dict)
+    consequence_magnitudes: tuple[ConsequenceMagnitude, ...] = ()
     required_tiers: frozenset[str] = frozenset()
     disabled_tiers: tuple[Any, ...] = ()
 

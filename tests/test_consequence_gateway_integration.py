@@ -32,11 +32,17 @@ from src.gateway.governance.consequence_gateway import (
     ConsequenceDecision,
     ConsequenceGateway,
 )
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
+from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from tests.test_consequence_gateway import _make_mock_signer_with_keypair
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+_MAGNITUDES = ConsequenceMagnitudes(
+    (ConsequenceMagnitude("execute_trade", (MagnitudePath(("amount",), 2),)),)
+)
 
 
 @pytest.fixture
@@ -56,12 +62,17 @@ async def consequence_store():
 @pytest.mark.asyncio
 async def test_consequence_gateway_blocks_invalid_token(consequence_store, mock_signer):
     """ConsequenceGateway blocks execution when token is invalid."""
-    gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
+    gateway = ConsequenceGateway(
+        store=consequence_store, signer=mock_signer, magnitudes=_MAGNITUDES
+    )
 
     action_payload = {
-        "symbol": "AAPL",
-        "amount": 100.0,
-        "transaction_id": "test-123",
+        "action": "execute_trade",
+        "params": {
+            "symbol": "AAPL",
+            "amount": 100.0,
+            "transaction_id": "test-123",
+        },
     }
 
     # Invalid token (malformed JWS)
@@ -78,12 +89,17 @@ async def test_consequence_gateway_blocks_consumed_token(
     consequence_store, mock_signer
 ):
     """ConsequenceGateway blocks replay of consumed tokens."""
-    gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
+    gateway = ConsequenceGateway(
+        store=consequence_store, signer=mock_signer, magnitudes=_MAGNITUDES
+    )
 
     action_payload = {
-        "symbol": "AAPL",
-        "amount": 100.0,
-        "transaction_id": "test-123",
+        "action": "execute_trade",
+        "params": {
+            "symbol": "AAPL",
+            "amount": 100.0,
+            "transaction_id": "test-123",
+        },
     }
 
     # Mint a valid consequence token
@@ -115,12 +131,17 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(
     consequence_store, mock_signer
 ):
     """ConsequenceGateway blocks when action payload doesn't match token."""
-    gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
+    gateway = ConsequenceGateway(
+        store=consequence_store, signer=mock_signer, magnitudes=_MAGNITUDES
+    )
 
     original_payload = {
-        "symbol": "AAPL",
-        "amount": 100.0,
-        "transaction_id": "test-123",
+        "action": "execute_trade",
+        "params": {
+            "symbol": "AAPL",
+            "amount": 100.0,
+            "transaction_id": "test-123",
+        },
     }
 
     # Token bound to original payload
@@ -138,9 +159,12 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(
 
     # Attempt execution with different payload (TOCTOU attack)
     modified_payload = {
-        "symbol": "AAPL",
-        "amount": 500.0,  # Modified amount
-        "transaction_id": "test-123",
+        "action": "execute_trade",
+        "params": {
+            "symbol": "AAPL",
+            "amount": 500.0,  # Modified amount
+            "transaction_id": "test-123",
+        },
     }
 
     evaluation = await gateway.evaluate(token_jws, modified_payload)
@@ -152,12 +176,17 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(
 @pytest.mark.asyncio
 async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_signer):
     """ConsequenceGateway blocks expired tokens."""
-    gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
+    gateway = ConsequenceGateway(
+        store=consequence_store, signer=mock_signer, magnitudes=_MAGNITUDES
+    )
 
     action_payload = {
-        "symbol": "AAPL",
-        "amount": 100.0,
-        "transaction_id": "test-123",
+        "action": "execute_trade",
+        "params": {
+            "symbol": "AAPL",
+            "amount": 100.0,
+            "transaction_id": "test-123",
+        },
     }
 
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
@@ -186,12 +215,17 @@ async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_
 @pytest.mark.asyncio
 async def test_consequence_gateway_success_path(consequence_store, mock_signer):
     """ConsequenceGateway permits valid, unconsumed tokens."""
-    gateway = ConsequenceGateway(store=consequence_store, signer=mock_signer)
+    gateway = ConsequenceGateway(
+        store=consequence_store, signer=mock_signer, magnitudes=_MAGNITUDES
+    )
 
     action_payload = {
-        "symbol": "AAPL",
-        "amount": 100.0,
-        "transaction_id": "test-123",
+        "action": "execute_trade",
+        "params": {
+            "symbol": "AAPL",
+            "amount": 100.0,
+            "transaction_id": "test-123",
+        },
     }
 
     action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()

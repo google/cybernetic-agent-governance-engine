@@ -25,6 +25,11 @@ claim inputs as plain data; the kernel mints, signs, and returns a finding.
 This eliminates the service-locator anti-pattern (adapter calling
 get_governance_signer()) and ensures cryptographic operations remain in the
 kernel with centralized security controls.
+
+The service mints only for a payload whose magnitudes satisfy the declared
+:class:`~src.gateway.governance.consequence_magnitude.ConsequenceMagnitudes`
+policy the adapter passes in. It checks them itself rather than trusting an
+earlier check, and no policy refuses every mint.
 """
 
 from __future__ import annotations
@@ -33,6 +38,12 @@ import hashlib
 import logging
 from typing import Any
 
+from src.gateway.governance.consequence_magnitude import (
+    ConsequenceMagnitudes,
+    MagnitudeViolation,
+    describe,
+    magnitude_violations,
+)
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
@@ -51,6 +62,7 @@ async def mint_consequence_token_finding(
     thread_id: str,
     authority_record_id: str,
     action_payload: dict[str, Any],
+    magnitudes: ConsequenceMagnitudes | None,
     authority_state_version: str | None = None,
     ttl_seconds: int = 60,
 ) -> dict[str, Any]:
@@ -69,6 +81,9 @@ async def mint_consequence_token_finding(
         thread_id: Thread ID (conversation/request identifier).
         authority_record_id: Authority record ID (single-use consumption key).
         action_payload: Full action context for digest computation (JCS-canonicalized).
+        magnitudes: The declared consequence-magnitude policy. Required, so
+            every adapter passes it explicitly; ``None`` (an adapter built
+            without one) refuses every mint.
         authority_state_version: Optional authority state version.
         ttl_seconds: Token time-to-live (default 60s per FlowSignal plan §5.4).
 
@@ -76,11 +91,14 @@ async def mint_consequence_token_finding(
         A finding dict with code=CONSEQUENCE_TOKEN, severity=info, and the JWS
         token in the 'token' field. On mint failure (KMS error, validation),
         returns a fail-closed finding with code=CONSEQUENCE_TOKEN_MINT_FAILED,
-        severity=blocked.
+        severity=blocked. A magnitude refusal also carries ``reason_code``
+        (``MAGNITUDE_UNDECLARED`` / ``MAGNITUDE_ABSENT`` / ``MAGNITUDE_INVALID``).
 
     Fail-closed behavior:
-        If minting fails (KMS unavailable, missing required fields), returns a
-        blocking finding rather than silently allowing execution without a token.
+        If minting fails (KMS unavailable, missing required fields, magnitudes
+        the policy refuses), returns a blocking finding rather than silently
+        allowing execution without a token. Nothing is signed for a refused
+        magnitude.
     """
     try:
         # Validate required inputs (fail-fast before KMS call)
@@ -97,6 +115,12 @@ async def mint_consequence_token_finding(
         # before RFC 8785 JCS canonicalization so two distinct large integers
         # cannot collide on the same action_digest.
         _strict_json(action_payload, "action_payload")
+
+        # The declared magnitudes, checked here and not inherited from any
+        # earlier check: a token authorizes exactly the payload it binds.
+        refused = magnitude_violations(magnitudes, action_payload)
+        if refused:
+            return _magnitude_refusal(refused)
 
         # Compute action digest: SHA-256 over JCS-canonicalized action_payload
         action_digest = hashlib.sha256(
@@ -140,3 +164,18 @@ async def mint_consequence_token_finding(
             "severity": "blocked",
             "message": f"ConsequenceToken minting failed: {exc}",
         }
+
+
+def _magnitude_refusal(refused: tuple[MagnitudeViolation, ...]) -> dict[str, Any]:
+    """The blocking finding for a payload whose magnitudes the policy refuses."""
+    detail = describe(refused)
+    logger.warning(
+        "Consequence authority mint refused: %s — fail-closed",
+        detail,
+    )
+    return {
+        "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+        "severity": "blocked",
+        "reason_code": refused[0].reason.value,
+        "message": f"ConsequenceToken minting failed: {detail}",
+    }

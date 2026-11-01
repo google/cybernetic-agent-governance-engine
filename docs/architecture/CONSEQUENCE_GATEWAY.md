@@ -9,14 +9,14 @@ The `ConsequenceGateway` acts as the vendor-agnostic post-FRIA (Fundamental Righ
 Its primary role is to ensure that no action is executed unless it possesses a valid, unexpired, mathematically bound, and cryptographically signed `ConsequenceToken` (JWS). It enforces exactly-once execution semantics by atomizing authority consumption against a central `ConsequenceAuthorityStore`.
 
 **Trust Boundaries**:
-- **Upstream (Governance Layer)**: Tokens are minted only by the async kernel service [`mint_consequence_token_finding()`](../../src/gateway/governance/consequence_token_service.py) (via `ConsequenceToken.mint()` and `KMSGovernanceSigner.sign_jws_async()`), which the external normative-provider adapters await when the provider admits an action (e.g. [`provider_01`](../../src/integrations/provider_01/provider.py), [`provider_08`](../../src/integrations/provider_08/adapter.py)). A mint failure returns a blocking `CONSEQUENCE_TOKEN_MINT_FAILED` finding.
+- **Upstream (Governance Layer)**: Tokens are minted only by the async kernel service [`mint_consequence_token_finding()`](../../src/gateway/governance/consequence_token_service.py) (via `ConsequenceToken.mint()` and `KMSGovernanceSigner.sign_jws_async()`), which checks the domain's declared [`ConsequenceMagnitudes`](../../src/gateway/governance/consequence_magnitude.py) (`magnitudes=`) before signing and which the external normative-provider adapters await when the provider admits an action (e.g. [`provider_01`](../../src/integrations/provider_01/provider.py), [`provider_08`](../../src/integrations/provider_08/adapter.py)). A mint or magnitude failure returns a blocking `CONSEQUENCE_TOKEN_MINT_FAILED` finding.
 - **Downstream (Actuators)**: Cannot execute side-effects autonomously; they rely entirely on the Gateway's final `EXECUTE` emission.
 
-**Current wiring**: `ConsequenceGateway(store, signer)` is a library primitive. The gateway server does not construct one on the `SymbolicGovernor` ALLOW path. There, the governor issues a KMS-signed routing seal inside the request's `ReservationScope` ([`governor/sealing.py`](../../src/gateway/governance/governor/sealing.py)), and governed tools dispatch through `ActuatorRegistry`. The routing seal is not ingress authentication: callers are authenticated by Linkerd mTLS workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)). Behaviour of the gateway primitive is pinned by [`tests/test_consequence_gateway.py`](../../tests/test_consequence_gateway.py).
+**Current wiring**: `ConsequenceGateway(store, signer, *, magnitudes)` is a library primitive. The gateway server does not construct one on the `SymbolicGovernor` ALLOW path. There, the governor issues a KMS-signed routing seal inside the request's `ReservationScope` ([`governor/sealing.py`](../../src/gateway/governance/governor/sealing.py)), and governed tools dispatch through `ActuatorRegistry`. The routing seal is not ingress authentication: callers are authenticated by Linkerd mTLS workload identity ([`workload_identity.py`](../../src/gateway/server/workload_identity.py)). Behaviour of the gateway primitive is pinned by [`tests/test_consequence_gateway.py`](../../tests/test_consequence_gateway.py) and [`tests/test_consequence_magnitude_enforcement.py`](../../tests/test_consequence_magnitude_enforcement.py).
 
 ## 2. Data & Execution Flow
 
-The gateway evaluates requests using a strict 6-step sequence to verify cryptographically-bound execution rights.
+The gateway evaluates requests using a strict 7-step sequence to verify cryptographically-bound execution rights and declared consequence magnitudes.
 
 ```mermaid
 sequenceDiagram
@@ -32,6 +32,7 @@ sequenceDiagram
     Gateway->>Gateway: JCS-canonicalize action_payload
     Gateway->>Gateway: Hash SHA256(canonical_payload)
     Gateway->>Gateway: Assert Hash == claims.act (TOCTOU Defense)
+    Gateway->>Gateway: Verify declared ConsequenceMagnitudes (Step 5)
     Gateway->>Store: consume_once(rec, binding_hash)
     Store-->>Gateway: Result: Consumed Successfully
     Gateway->>Evidence: _emit_evaluation() -> CONSEQUENCE_GATEWAY_DECISION / REFUSAL
@@ -114,6 +115,7 @@ The lifecycle revolves around the `ConsequenceToken` and its corresponding autho
 - **Rejection States**:
   - `TOKEN_INVALID`: Cryptographic signature failure or TTL expiration.
   - `ACTION_BINDING_MISMATCH`: The hash of the presented payload does not match the signed `act` claim.
+  - `MAGNITUDE_UNDECLARED` / `MAGNITUDE_ABSENT` / `MAGNITUDE_INVALID`: The action has no declared [`ConsequenceMagnitude`](../../src/gateway/governance/contracts.py), a declared [`MagnitudePath`](../../src/gateway/governance/contracts.py) is missing under `params`, or the value is not a finite, strictly positive integer number of minor units in `1 .. 2^53 - 1` (checked at Step 5 before `consume_once()`, so a refused payload leaves the authority record unconsumed).
   - `ALREADY_CONSUMED`: The token was previously consumed (Replay attempt).
   - `AUTHORITY_RECORD_BINDING_MISMATCH`: The record was consumed by a different payload/thread (Substitution attempt).
   - `REDIS_ERROR`: Authority store unreachable or errored during consumption.

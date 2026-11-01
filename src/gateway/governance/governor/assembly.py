@@ -28,7 +28,16 @@ contribution together and fails at startup, never at the first request, if:
 * a contributed :class:`NormBinding` requires a warrant but no
   ``WarrantSource`` is configured, DEFER is disabled (the only remaining
   outcome of a warrant failure would be a fabricated DENY), or one of its
-  actions is unknown or claimed by no domain tier (it would never be gated).
+  actions is unknown or claimed by no domain tier (it would never be gated);
+* a contributed :class:`ConsequenceMagnitude` names an action its domain
+  does not register, or two contributions declare one action, or the
+  jurisdiction checks a different consequence-magnitude policy than the
+  one the contributions declare.
+
+Contributions are collected before the jurisdiction is resolved, so the
+assembled :class:`ConsequenceMagnitudes` policy is threaded into the
+jurisdiction it resolves (``resolve_jurisdiction(consequence_magnitudes=...)``)
+and exposed, read-only, as ``components.consequence_magnitudes``.
 
 Warranted norms add the kernel :class:`WarrantStage` after the universal
 kernel stages; a governor with no warranted norm runs exactly
@@ -54,10 +63,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from src.gateway.governance.classification_engine import ClassificationEngine
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import (
     CagePlugin,
     ConsensusContribution,
     ConsensusProvider,
+    ConsequenceMagnitude,
     GovernanceTier,
     InvariantModel,
     Narrower,
@@ -151,10 +162,21 @@ class GovernorComponents:
     )
     # Contributed tiers that are not enabled. Never in ``domain_tiers``.
     disabled_tiers: tuple[DisabledTier, ...] = ()
+    # The declared consequence-magnitude policy (read-only). Empty when
+    # composed by hand, which declares nothing and so refuses every action
+    # wherever a consequence is checked.
+    consequence_magnitudes: ConsequenceMagnitudes = field(
+        default_factory=ConsequenceMagnitudes
+    )
 
     def __post_init__(self) -> None:
         if self.classifier is None:
             raise TypeError("GovernorComponents requires a classifier")  # fail closed
+        if not isinstance(self.consequence_magnitudes, ConsequenceMagnitudes):
+            raise TypeError(  # fail closed
+                "GovernorComponents.consequence_magnitudes must be a "
+                "ConsequenceMagnitudes"
+            )
         for name in (
             "core_stages",
             "domain_tiers",
@@ -248,6 +270,57 @@ def _collect_server_inputs(
     return resolvers
 
 
+def _collect_consequence_magnitudes(
+    contributions: Sequence[PluginContribution],
+) -> ConsequenceMagnitudes:
+    """One policy from every contribution's declarations, validated together.
+
+    Each declaration must name an action its own domain registers, and an
+    action is declared at most once across contributions.
+    """
+    declarations: list[ConsequenceMagnitude] = []
+    for c in contributions:
+        for declaration in c.consequence_magnitudes:
+            if not isinstance(declaration, ConsequenceMagnitude):
+                raise GovernorAssemblyError(
+                    f"domain {c.domain!r}: consequence_magnitudes must hold "
+                    f"ConsequenceMagnitude declarations, got {type(declaration).__name__}"
+                )
+            if declaration.action not in c.registered_actions:
+                raise GovernorAssemblyError(
+                    f"domain {c.domain!r} declares a consequence magnitude for "
+                    f"{declaration.action!r}, which it does not register"
+                )
+            declarations.append(declaration)
+    _reject_duplicates("consequence magnitude", (d.action for d in declarations))
+    return ConsequenceMagnitudes(tuple(declarations))
+
+
+def _reject_foreign_magnitude_policy(
+    jurisdiction: JurisdictionContribution, declared: ConsequenceMagnitudes
+) -> None:
+    """Fail closed when the jurisdiction checks a policy nobody declared.
+
+    A jurisdiction resolved here is built over ``declared``. One passed in
+    must have been built over the same policy, or over none (its tiers then
+    refuse every action they claim).
+    """
+    enforced = jurisdiction.consequence_magnitudes
+    if enforced is not None and enforced != declared:
+        raise GovernorAssemblyError(
+            f"jurisdiction {jurisdiction.region!r} checks a consequence-magnitude "
+            "policy the domain contributions did not declare"
+        )
+    for tier in jurisdiction.tiers:
+        tier_policy = getattr(tier, "consequence_magnitudes", None)
+        if tier_policy is not None and tier_policy != declared:
+            raise GovernorAssemblyError(
+                f"jurisdiction {jurisdiction.region!r} tier {tier.tier_name!r} "
+                "checks a consequence-magnitude policy the domain contributions "
+                "did not declare"
+            )
+
+
 def kernel_stages(
     opa: PolicyClient,
     stpa_validator: STPAValidator | None,
@@ -297,20 +370,35 @@ def assemble_governor(
     (``components.execution_ledger``); without it the ledger refuses claims
     under an enforcing posture.
 
+    The contributions' :class:`ConsequenceMagnitude` declarations become one
+    :class:`ConsequenceMagnitudes` policy (``components.consequence_magnitudes``).
+    A jurisdiction resolved here is built over it; a ``jurisdiction`` passed
+    in must carry the same policy or none.
+
     Raises:
         GovernorAssemblyError: The contributions collide, leave an
             irreversible action ungoverned, declare a warranted norm the
-            governor cannot gate, or the jurisdiction's region is not the
-            region the effective thresholds were resolved for.
+            governor cannot gate, declare a consequence magnitude for an
+            action their domain does not register (or one action twice), or
+            the jurisdiction's region is not the region the effective
+            thresholds were resolved for, or it checks a different
+            consequence-magnitude policy.
         ValueError: A contributed invariant fails V1-V4, or two tiers share a
             ``tier_name``.
     """
-    # ``jurisdiction=None`` means "the active region", never "no jurisdiction":
-    # every governor built here has one, so the region check always runs.
-    jurisdiction = jurisdiction if jurisdiction is not None else resolve_jurisdiction()
-    _reject_region_mismatch(jurisdiction)
     contributions = tuple(_contribution_of(plugin) for plugin in plugins)
     _reject_duplicates("domain", (c.domain for c in contributions))
+    # Collected before the jurisdiction is resolved, so the jurisdiction's
+    # tiers and provider are built over the policy the domains declared.
+    consequence_magnitudes = _collect_consequence_magnitudes(contributions)
+    # ``jurisdiction=None`` means "the active region", never "no jurisdiction":
+    # every governor built here has one, so the region check always runs.
+    if jurisdiction is None:
+        jurisdiction = resolve_jurisdiction(
+            consequence_magnitudes=consequence_magnitudes
+        )
+    _reject_region_mismatch(jurisdiction)
+    _reject_foreign_magnitude_policy(jurisdiction, consequence_magnitudes)
     _reject_duplicates(
         "threshold section", (s for c in contributions for s in c.threshold_sections)
     )
@@ -436,6 +524,7 @@ def assemble_governor(
         server_inputs=server_inputs,
         execution_ledger=ExecutionLedger(execution_ledger_redis),
         disabled_tiers=disabled_tiers,
+        consequence_magnitudes=consequence_magnitudes,
     )
     governor = SymbolicGovernor(components)
     logger.info(

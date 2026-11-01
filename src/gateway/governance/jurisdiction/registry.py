@@ -16,27 +16,45 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import Protocol
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.jurisdiction.contribution import JurisdictionContribution
 
 
-def _no_obligations(region: str) -> Callable[[], JurisdictionContribution]:
-    return lambda: JurisdictionContribution(region=region)
+class JurisdictionFactory(Protocol):
+    """Builds a region's contribution over the domain's declared magnitudes."""
+
+    def __call__(
+        self, *, consequence_magnitudes: ConsequenceMagnitudes | None
+    ) -> JurisdictionContribution: ...
 
 
-def _eu_ai_act() -> JurisdictionContribution:
+def _no_obligations(region: str) -> JurisdictionFactory:
+    def build(
+        *, consequence_magnitudes: ConsequenceMagnitudes | None
+    ) -> JurisdictionContribution:
+        # No tier here checks a consequence; the policy has nothing to reach.
+        return JurisdictionContribution(region=region)
+
+    return build
+
+
+def _eu_ai_act(
+    *, consequence_magnitudes: ConsequenceMagnitudes | None
+) -> JurisdictionContribution:
     # Lazy: only an EU deployment resolves (and constructs) a normative provider.
     from src.gateway.governance.jurisdiction.eu_ai_act import contribution
 
-    return contribution()
+    return contribution(consequence_magnitudes=consequence_magnitudes)
 
 
 #: Region → factory. ``US_FED`` and ``APAC_MAS`` contribute no tiers; other
 #: jurisdiction obligations (e.g. MAS FEAT, SR 11-7 attestations) need their
 #: own decision before they appear here (D-L item 4).
-JURISDICTIONS: Mapping[str, Callable[[], JurisdictionContribution]] = MappingProxyType(
+JURISDICTIONS: Mapping[str, JurisdictionFactory] = MappingProxyType(
     {
         "US_FED": _no_obligations("US_FED"),
         "APAC_MAS": _no_obligations("APAC_MAS"),
@@ -56,8 +74,17 @@ def active_region() -> str:
     return ControlRegistry().active_region
 
 
-def resolve_jurisdiction(region: str | None = None) -> JurisdictionContribution:
+def resolve_jurisdiction(
+    region: str | None = None,
+    *,
+    consequence_magnitudes: ConsequenceMagnitudes | None = None,
+) -> JurisdictionContribution:
     """Build the contribution for ``region`` (default: :func:`active_region`).
+
+    ``consequence_magnitudes`` is the domain's declared policy, threaded to
+    every tier and provider the region builds that checks a consequence
+    (``assemble_governor()`` passes the one it assembled). Without it those
+    tiers refuse every action.
 
     Raises:
         ValueError: ``region`` has no entry in :data:`JURISDICTIONS` — a
@@ -70,4 +97,4 @@ def resolve_jurisdiction(region: str | None = None) -> JurisdictionContribution:
         raise ValueError(
             f"no jurisdiction entry for region {resolved!r}; known: {sorted(JURISDICTIONS)}"
         )
-    return factory()
+    return factory(consequence_magnitudes=consequence_magnitudes)

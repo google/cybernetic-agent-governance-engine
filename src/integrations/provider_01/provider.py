@@ -65,7 +65,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from src.gateway.governance.seams.normative import (
@@ -73,6 +73,9 @@ from src.gateway.governance.seams.normative import (
     NormativeBaseline,
     ValidationResult,
 )
+
+if TYPE_CHECKING:
+    from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 
 logger = logging.getLogger("cage.integrations.provider_01")
 
@@ -116,7 +119,11 @@ FINDING_CODE_TLS_CONFIG_ERROR = "TLS_CONFIG_ERROR"
 
 
 async def _map_flowsignal_decision(
-    decision: str, data: dict[str, Any], action_payload: dict[str, Any]
+    decision: str,
+    data: dict[str, Any],
+    action_payload: dict[str, Any],
+    *,
+    magnitudes: ConsequenceMagnitudes | None,
 ) -> tuple[bool, list[dict[str, Any]]]:
     """Map FlowSignal tri-state decision to CAGE (admitted, findings).
 
@@ -137,6 +144,10 @@ async def _map_flowsignal_decision(
         data: The full response payload (for extracting authority record context).
         action_payload: The original FRIA request payload (for extracting actor/thread
             context and computing the action digest).
+        magnitudes: The declared consequence-magnitude policy, handed to the
+            kernel mint service, which refuses to mint for magnitudes it
+            rejects (and for every payload when it is ``None``). This adapter
+            validates no domain magnitudes itself.
 
     Returns:
         Tuple of (admitted: bool, findings: list[dict]).
@@ -149,11 +160,9 @@ async def _map_flowsignal_decision(
 
     if decision_upper == _FLOWSIGNAL_ALLOW:
         # ALLOW: admitted=True, with ConsequenceToken finding (Phase 2 ST-4)
-        # Delegate to kernel minting service (relocated from this adapter)
-        import math
-
+        # Delegate to kernel minting service (relocated from this adapter),
+        # which also checks the declared consequence magnitudes.
         from src.gateway.governance.consequence_token_service import (
-            FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
             mint_consequence_token_finding,
         )
 
@@ -162,36 +171,6 @@ async def _map_flowsignal_decision(
             if isinstance(action_payload.get("params"), dict)
             else {}
         )
-        raw_mag = None
-        for source in (params, action_payload):
-            if "amount" in source:
-                raw_mag = source["amount"]
-                break
-            if "magnitude" in source:
-                raw_mag = source["magnitude"]
-                break
-        if raw_mag is not None:
-            try:
-                mag_val = float(raw_mag)
-                is_valid_mag = (
-                    not isinstance(raw_mag, bool)
-                    and math.isfinite(mag_val)
-                    and mag_val > 0.0
-                )
-            except (TypeError, ValueError):
-                is_valid_mag = False
-            if not is_valid_mag:
-                return False, [
-                    {
-                        "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
-                        "severity": "blocked",
-                        "message": (
-                            f"Invalid financial magnitude {raw_mag!r}: "
-                            "must be strictly positive and finite"
-                        ),
-                    }
-                ]
-
         raw_receipt_obj = data.get("authority_receipt")
         receipt_obj: dict[str, Any] = (
             raw_receipt_obj if isinstance(raw_receipt_obj, dict) else {}
@@ -213,6 +192,7 @@ async def _map_flowsignal_decision(
             thread_id=action_payload.get("thread_id", ""),
             authority_record_id=consumption_id,
             action_payload=action_payload,
+            magnitudes=magnitudes,
             authority_state_version=data.get("authority_state_version"),
             ttl_seconds=60,
         )
@@ -357,7 +337,18 @@ class FlowSignalNormativeProvider:
         ca_bundle: str = "",
         client_cert: str = "",
         client_key: str = "",
+        *,
+        consequence_magnitudes: ConsequenceMagnitudes | None = None,
     ) -> None:
+        """Configure the adapter.
+
+        ``consequence_magnitudes`` is the domain's declared policy
+        (``get_normative_provider(consequence_magnitudes=...)`` passes the
+        governor's). The kernel mint service applies it on every ALLOW;
+        without it no ConsequenceToken is minted and every ALLOW fails
+        closed.
+        """
+        self._consequence_magnitudes = consequence_magnitudes
         self._endpoint = (endpoint or _ENDPOINT).rstrip("/")
         self._api_key = api_key or _API_KEY_SECRET
         self._gcp_id_token = gcp_id_token or _GCP_ID_TOKEN
@@ -493,9 +484,9 @@ class FlowSignalNormativeProvider:
                 ],
             )
 
-        # Pre-flight strict JSON and positive finite magnitude validation
-        import math
-
+        # Pre-flight strict JSON validation. Magnitudes are not validated
+        # here: the kernel checks the declared ones before the call (the
+        # jurisdiction tier) and again at minting.
         from src.gateway.governance.consequence_token_service import (
             FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
         )
@@ -516,39 +507,6 @@ class FlowSignalNormativeProvider:
                 ],
             )
 
-        params = (
-            payload.get("params", {}) if isinstance(payload.get("params"), dict) else {}
-        )
-        for source in (params, payload):
-            if "amount" in source or "magnitude" in source:
-                raw_mag = source.get("amount", source.get("magnitude"))
-                try:
-                    mag_val = float(raw_mag) if raw_mag is not None else float("nan")
-                    valid_mag = (
-                        not isinstance(raw_mag, bool)
-                        and math.isfinite(mag_val)
-                        and mag_val > 0.0
-                    )
-                except (TypeError, ValueError):
-                    valid_mag = False
-                if not valid_mag:
-                    msg = (
-                        f"Invalid financial magnitude {raw_mag!r}: "
-                        "must be strictly positive and finite"
-                    )
-                    return ValidationResult(
-                        admitted=False,
-                        error=msg,
-                        findings=[
-                            {
-                                "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
-                                "severity": "blocked",
-                                "message": msg,
-                            }
-                        ],
-                    )
-                break
-
         # Build full 37-field payload per Phase 3 v0.2 schema
         cage_payload = _build_cage_authority_request(payload)
 
@@ -566,7 +524,10 @@ class FlowSignalNormativeProvider:
                     decision = data["decision"]
                     try:
                         admitted, findings = await _map_flowsignal_decision(
-                            decision, data, payload
+                            decision,
+                            data,
+                            payload,
+                            magnitudes=self._consequence_magnitudes,
                         )
                         # Check if minting failed (fail-closed finding present)
                         from src.gateway.governance.consequence_token_service import (

@@ -33,6 +33,8 @@ import httpx
 import pytest
 import respx
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
+from src.gateway.governance.contracts import ConsequenceMagnitude
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
     NormativeBaseline,
@@ -85,9 +87,17 @@ def fria(decision: str, **overrides: Any) -> dict[str, Any]:
     return body
 
 
+_MAGNITUDES = ConsequenceMagnitudes((ConsequenceMagnitude("execute_transfer", ()),))
+
+
 @pytest.fixture
 def provider() -> Provider08NormativeProvider:
-    return Provider08NormativeProvider(endpoint=BASE, api_key=KEY, timeout_seconds=2.0)
+    return Provider08NormativeProvider(
+        endpoint=BASE,
+        api_key=KEY,
+        timeout_seconds=2.0,
+        consequence_magnitudes=_MAGNITUDES,
+    )
 
 
 # -- fetch_baseline -----------------------------------------------------------

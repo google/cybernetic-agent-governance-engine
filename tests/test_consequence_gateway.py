@@ -15,13 +15,14 @@
 """
 Unit tests for ConsequenceGateway — Post-FRIA consequence evaluation gateway.
 
-Covers all branches of the 6-step evaluation sequence:
+Covers all branches of the 7-step evaluation sequence:
   1. JWS signature verification (via ConsequenceToken.verify)
   2. TTL / expiry check
   3. Recompute JCS digest of the action payload
   4. Compare recomputed digest to the `act` claim
-  5. Atomic single-use consumption (ConsequenceAuthorityStore)
-  6. Emit EXECUTE / HOLD / BLOCK decision with reason code
+  5. Declared magnitude check (ConsequenceMagnitudes.violations)
+  6. Atomic single-use consumption (ConsequenceAuthorityStore)
+  7. Emit EXECUTE / HOLD / BLOCK decision with reason code
 
 Test cases:
   - Happy path: valid token + matching payload → EXECUTE / "OK"
@@ -59,10 +60,14 @@ from src.gateway.governance.consequence_gateway import (
     ConsequenceEvaluation,
     ConsequenceGateway,
 )
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
+from src.gateway.governance.contracts import ConsequenceMagnitude
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+_MAGNITUDES = ConsequenceMagnitudes((ConsequenceMagnitude("deploy_model", ()),))
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +197,7 @@ def signer():
 @pytest.fixture
 def gateway(store: ConsequenceAuthorityStore, signer) -> ConsequenceGateway:
     """ConsequenceGateway instance with fakeredis store and mock signer."""
-    return ConsequenceGateway(store=store, signer=signer)
+    return ConsequenceGateway(store=store, signer=signer, magnitudes=_MAGNITUDES)
 
 
 @pytest.fixture
@@ -510,7 +515,9 @@ async def test_redis_error_fail_closed(
     mock_store = AsyncMock(spec=ConsequenceAuthorityStore)
     mock_store.consume_once.side_effect = RuntimeError("Redis connection timeout")
 
-    gateway_with_failing_redis = ConsequenceGateway(store=mock_store, signer=signer)
+    gateway_with_failing_redis = ConsequenceGateway(
+        store=mock_store, signer=signer, magnitudes=_MAGNITUDES
+    )
 
     result = await gateway_with_failing_redis.evaluate(
         token=token, action_payload=action_payload

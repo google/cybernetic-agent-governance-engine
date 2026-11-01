@@ -16,7 +16,8 @@
 
 from pathlib import Path
 
-from src.cage_healthcare.constants import REGISTERED_ACTIONS
+from src.cage_healthcare import create_healthcare_tiers
+from src.cage_healthcare.constants import CONSEQUENCE_MAGNITUDES, REGISTERED_ACTIONS
 from src.cage_healthcare.ground_truth import (
     SimulatedSerumAssayProvider,
     healthcare_cost_resolver,
@@ -25,49 +26,43 @@ from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.thresholds import HealthcareThresholds
 from src.cage_healthcare.tiers.clinical_consensus_tier import (
-    ClinicalConsensusTier,
     build_healthcare_consensus_contribution,
 )
-from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
+from src.gateway.governance import contracts
 from src.gateway.governance.consensus import extract_field_magnitude
-from src.gateway.governance.contracts import (
-    CagePlugin,
-    DomainConfig,
-    PluginContribution,
-)
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
-class HealthcareCagePlugin(CagePlugin):
+class HealthcareCagePlugin(contracts.CagePlugin):
     """Healthcare domain capability plugin."""
 
     name = "healthcare"
     api_version = "2.0"
-    domain_config = DomainConfig(
+    domain_config = contracts.DomainConfig(
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",
         opa_required_rules=("allow",),
     )
 
-    def contribute(self) -> PluginContribution:
+    def contribute(self) -> contracts.PluginContribution:
         barrier = SerumConcentrationBarrier()
         cbf = ControlBarrierFunction(
             invariant=barrier,
             cost_resolver=healthcare_cost_resolver,
             skip_epoch_seed=True,
         )
-        assay_provider = SimulatedSerumAssayProvider(
-            invariant_id=barrier.invariant_id, state_key=barrier.state_key
-        )
-        return PluginContribution(
+        return contracts.PluginContribution(
             domain=self.name,
-            tiers=(DoseBarrierTier(cbf), ClinicalConsensusTier()),
+            tiers=create_healthcare_tiers(cbf),
             invariants=(barrier,),  # declarative, no logic
-            ground_truth_providers={barrier.invariant_id: assay_provider},
+            ground_truth_providers={
+                barrier.invariant_id: SimulatedSerumAssayProvider()
+            },
             registered_actions=REGISTERED_ACTIONS,
+            consequence_magnitudes=CONSEQUENCE_MAGNITUDES,
             magnitude_extractor=extract_field_magnitude("dose_mg"),
             safety_filter=cbf,
             consensus=build_healthcare_consensus_contribution(),
@@ -78,5 +73,5 @@ class HealthcareCagePlugin(CagePlugin):
         )
 
 
-def get_plugin() -> CagePlugin:
+def get_plugin() -> contracts.CagePlugin:
     return HealthcareCagePlugin()

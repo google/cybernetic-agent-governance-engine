@@ -53,7 +53,9 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
+from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import (
     KMSGovernanceSigner,
@@ -79,6 +81,9 @@ _REQUIRED = (
 )
 _TIMEOUT = 15.0
 _EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_MAGNITUDES = ConsequenceMagnitudes(
+    (ConsequenceMagnitude("payment.release", (MagnitudePath(("amount",), 2),)),)
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,7 @@ def provider(credentials: _Credentials) -> FlowSignalNormativeProvider:
         api_key=credentials.api_key,
         gcp_id_token=credentials.id_token,
         timeout=_TIMEOUT,
+        consequence_magnitudes=_MAGNITUDES,
     )
 
 
@@ -296,6 +302,32 @@ async def test_live_validate_rejects_malformed_and_forged_bodies(
         injected = await client.post(url, json=forged, headers=credentials.headers())
     assert malformed.status_code == 422, malformed.text
     assert injected.status_code == 422, injected.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_amount",
+    [
+        pytest.param(500000.005, id="sub-cent-dust"),
+        pytest.param(0.0, id="zero"),
+        pytest.param(-500.0, id="negative"),
+    ],
+)
+async def test_live_invalid_magnitude_fails_closed_whatever_partner_decides(
+    provider: FlowSignalNormativeProvider,
+    signer: KMSGovernanceSigner,
+    bad_amount: float,
+) -> None:
+    """Calling validate_fria directly with an invalid magnitude crosses the wire and never admits or mints."""
+    result = await provider.validate_fria(
+        _payment("invalid-magnitude", amount=bad_amount)
+    )
+    assert result.admitted is False
+    assert "CONSEQUENCE_TOKEN" not in _codes(result)
+    assert set(_codes(result)) <= {
+        "FLOWSIGNAL_REFUSE",
+        "CONSEQUENCE_TOKEN_MINT_FAILED",
+    }
 
 
 @pytest.mark.asyncio
