@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 
 from src.cage_finance import (
+    CONSEQUENCE_MAGNITUDES,
     REGISTERED_ACTIONS,
     create_finance_tiers,
     is_causal_tier_enabled,
@@ -209,6 +210,7 @@ class FinanceCagePlugin(CagePlugin):
             background_tasks=background_tasks,
             norm_bindings=(trade_confidence,),
             server_inputs=dict.fromkeys(TRADE_ACTIONS, trade_inputs),
+            consequence_magnitudes=CONSEQUENCE_MAGNITUDES,
             rail_providers=(FinancialRailsProvider(),),
             required_tiers=required_tiers,
             disabled_tiers=disabled_tiers,

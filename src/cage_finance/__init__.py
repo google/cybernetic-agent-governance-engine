@@ -39,7 +39,12 @@ from src.cage_finance.tiers.trade_confidence_tier import (
 )
 from src.gateway.governance.causal.gatekeeper import CausalGatekeeper
 from src.gateway.governance.causal.world_model_refresher import WorldModelRefresher
-from src.gateway.governance.contracts import GovernanceTier, NormBinding
+from src.gateway.governance.contracts import (
+    ConsequenceMagnitude,
+    GovernanceTier,
+    MagnitudePath,
+    NormBinding,
+)
 from src.gateway.governance.feature_flags import opt_in_enabled
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
@@ -90,6 +95,26 @@ REGISTERED_ACTIONS: frozenset[str] = frozenset(
         "check_market_status",  # READ_ONLY — planner's market-open check
         "prompt_injection_check",  # READ_ONLY — safety pre-screen
     }
+)
+
+#: A trade's ``amount``: a float number of major units of ``currency``. Two
+#: minor-unit digits is this domain's own convention for every currency
+#: (``TradeOrder.amount_minor`` is ``round(amount * 100)``), so a fraction of
+#: a cent is refused rather than rounded.
+TRADE_AMOUNT = MagnitudePath(("amount",), minor_unit_digits=2)
+
+#: One declaration per REGISTERED_ACTIONS entry (the kernel refuses an
+#: undeclared action wherever it checks a consequence). Both trade actions
+#: move cash by ``amount`` (``finance_cost_resolver``); the four reads move
+#: nothing, so they are declared magnitude-free and stay admissible under a
+#: jurisdiction that checks every action (EU_ECB).
+CONSEQUENCE_MAGNITUDES: tuple[ConsequenceMagnitude, ...] = (
+    ConsequenceMagnitude("execute_trade", (TRADE_AMOUNT,)),
+    ConsequenceMagnitude("execute_trade_bounded", (TRADE_AMOUNT,)),
+    ConsequenceMagnitude("check_balance", ()),
+    ConsequenceMagnitude("market_analysis", ()),
+    ConsequenceMagnitude("check_market_status", ()),
+    ConsequenceMagnitude("prompt_injection_check", ()),
 )
 
 

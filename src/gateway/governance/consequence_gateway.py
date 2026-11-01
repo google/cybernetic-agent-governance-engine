@@ -17,16 +17,18 @@ consequence_gateway.py — Post-Validation Consequence Evaluation Gateway
 
 Vendor-agnostic consequence boundary after a normative provider's validation, ported from FlowSignal's
 production integration candidate. Verifies a ConsequenceToken, re-derives
-the action digest, and atomically consumes the authority record before
-permitting execution.
+the action digest, checks the declared magnitudes, and atomically consumes
+the authority record before permitting execution.
 
-6-step evaluation sequence:
+7-step evaluation sequence:
   1. JWS signature verification (via ConsequenceToken.verify)
   2. TTL / expiry check
   3. Recompute JCS digest of the action payload
   4. Compare recomputed digest to the `act` claim
-  5. Atomic single-use consumption (ConsequenceAuthorityStore)
-  6. Emit EXECUTE / HOLD / BLOCK decision with reason code
+  5. Declared-magnitude check (ConsequenceMagnitudes): a refusal BLOCKs with
+     its MAGNITUDE_* reason code before the single-use marker is touched
+  6. Atomic single-use consumption (ConsequenceAuthorityStore)
+  7. Emit EXECUTE / HOLD / BLOCK decision with reason code
 
 Steps 1-2 are both handled inside ConsequenceToken.verify(), which raises
 ConsequenceTokenError on any failure (bad signature, expired, alg: none,
@@ -43,6 +45,10 @@ from typing import TYPE_CHECKING
 
 from src.gateway.governance.consequence_authority_store import (
     ConsequenceAuthorityStore,
+)
+from src.gateway.governance.consequence_magnitude import (
+    ConsequenceMagnitudes,
+    describe,
 )
 from src.gateway.governance.consequence_token import (
     ConsequenceToken,
@@ -83,17 +89,19 @@ class ConsequenceEvaluation:
 class ConsequenceGateway:
     """Vendor-agnostic post-validation consequence boundary.
 
-    Preserves FlowSignal's 6-step check sequence while applying CAGE-side
+    Preserves FlowSignal's check sequence while applying CAGE-side
     substitutions (ConsequenceToken instead of vendor's AuthorityRecordBinding,
-    ConsequenceAuthorityStore instead of SQLite/in-memory stores).
+    ConsequenceAuthorityStore instead of SQLite/in-memory stores), and adds
+    the declared-magnitude check before consumption.
 
-    The 6 steps:
+    The 7 steps:
       1. JWS signature verification (via ConsequenceToken.verify)
       2. TTL / expiry check
       3. Recompute JCS digest of the action payload
       4. Compare recomputed digest to the `act` claim
-      5. Atomic single-use consumption (ConsequenceAuthorityStore)
-      6. Emit EXECUTE / HOLD / BLOCK decision with reason code
+      5. Declared-magnitude check (ConsequenceMagnitudes)
+      6. Atomic single-use consumption (ConsequenceAuthorityStore)
+      7. Emit EXECUTE / HOLD / BLOCK decision with reason code
 
     Steps 1-2 are both handled inside ConsequenceToken.verify(), which raises
     ConsequenceTokenError on any failure (bad signature, expired, alg: none,
@@ -104,15 +112,29 @@ class ConsequenceGateway:
         self,
         store: ConsequenceAuthorityStore,
         signer: KMSGovernanceSigner,
+        magnitudes: ConsequenceMagnitudes,
     ) -> None:
         """Initialize the consequence gateway.
 
         Args:
             store: ConsequenceAuthorityStore for atomic single-use consumption.
             signer: KMSGovernanceSigner for token verification.
+            magnitudes: The declared consequence-magnitude policy (the
+                governor's ``components.consequence_magnitudes``). Checked on
+                every evaluation, independently of the mint's own check.
+
+        Raises:
+            TypeError: ``magnitudes`` is not a ``ConsequenceMagnitudes``; the
+                gateway never runs without a policy.
         """
+        if not isinstance(magnitudes, ConsequenceMagnitudes):
+            raise TypeError(
+                "ConsequenceGateway requires the declared ConsequenceMagnitudes "
+                f"policy, got {type(magnitudes).__name__}"
+            )
         self._store = store
         self._signer = signer
+        self._magnitudes = magnitudes
 
     async def _emit_evaluation(
         self,
@@ -278,7 +300,29 @@ class ConsequenceGateway:
                 recomputed_digest=recomputed_digest,
             )
 
-        # Step 5: atomic single-use consumption
+        # Step 5: declared magnitudes, checked here rather than inherited from
+        # the mint through the digest binding. A refusal never touches the
+        # single-use marker, so the authority record stays unconsumed.
+        refused = self._magnitudes.violations(action_payload)
+        if refused:
+            detail = describe(refused)
+            logger.warning(
+                "[ConsequenceGateway] %s rec=%s: %s",
+                refused[0].reason.value,
+                claims.rec,
+                detail,
+            )
+            return await self._emit_evaluation(
+                ConsequenceEvaluation(
+                    decision=ConsequenceDecision.BLOCK,
+                    reason_code=refused[0].reason.value,
+                    detail=detail,
+                ),
+                claims=claims,
+                recomputed_digest=recomputed_digest,
+            )
+
+        # Step 6: atomic single-use consumption
         # Binding hash combines thread_id, actor_id, action_digest, state_version
         # Mapping: claims.tid→thread_id, claims.sub→actor_id, claims.act→action_digest, claims.ver→state_version
         binding = ConsequenceAuthorityStore.binding_hash(
@@ -325,7 +369,7 @@ class ConsequenceGateway:
                 recomputed_digest=recomputed_digest,
             )
 
-        # Step 6: EXECUTE
+        # Step 7: EXECUTE
         logger.info(
             "[ConsequenceGateway] EXECUTE granted rec=%s",
             claims.rec,

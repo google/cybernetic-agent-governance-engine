@@ -97,9 +97,12 @@ from src.gateway.governance.consequence_gateway import (
     ConsequenceDecision,
     ConsequenceGateway,
 )
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
 from src.gateway.governance.contracts import (
     CommitReceipt,
+    ConsequenceMagnitude,
+    MagnitudePath,
     MutatingTier,
     Violation,
     ViolationKind,
@@ -136,6 +139,15 @@ from src.gateway.governance.seams.normative import ValidationResult
 from src.integrations.provider_01.provider import (
     FlowSignalNormativeProvider,
     _build_cage_authority_request,
+)
+
+#: The declared magnitudes of the actions this suite sends: AP-001's GBP
+#: amount (two minor-unit digits), and DELETE_ACCOUNT, which moves no value.
+_MAGNITUDES = ConsequenceMagnitudes(
+    (
+        ConsequenceMagnitude("payment.release", (MagnitudePath(("amount",), 2),)),
+        ConsequenceMagnitude("DELETE_ACCOUNT", ()),
+    )
 )
 
 
@@ -339,7 +351,9 @@ async def main() -> None:
     signer = _build_ephemeral_kms_signer()
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     authority_store = ConsequenceAuthorityStore(fake_redis, ttl_seconds=90)
-    consequence_gateway = ConsequenceGateway(store=authority_store, signer=signer)
+    consequence_gateway = ConsequenceGateway(
+        store=authority_store, signer=signer, magnitudes=_MAGNITUDES
+    )
 
     recorded_evidence_events: list[dict[str, Any]] = []
     mock_evidence_sink = MagicMock()
@@ -367,6 +381,7 @@ async def main() -> None:
             api_key=bearer,
             gcp_id_token=id_token,
             timeout=15.0,
+            consequence_magnitudes=_MAGNITUDES,
         )
 
         # =====================================================================
@@ -760,6 +775,7 @@ async def main() -> None:
             reassessment_interval_days=365,
             gate_timeout_seconds=15.0,
             clock=lambda: now_utc,
+            consequence_magnitudes=_MAGNITUDES,
         )
         v_stale = await fria_stale.evaluate("payment.release", allow_payload["params"])
         print(
@@ -780,6 +796,7 @@ async def main() -> None:
             gate_timeout_seconds=15.0,
             clock=lambda: now_utc,
             caller_identity=lambda: allow_payload["operator_urn"],
+            consequence_magnitudes=_MAGNITUDES,
         )
         fria_allow_params = {
             **allow_payload["params"],

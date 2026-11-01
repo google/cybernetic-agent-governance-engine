@@ -16,7 +16,8 @@
 
 :func:`contribution` builds the ``fria`` tier (Art. 27) over the deployment's
 ``NormativeProvider`` and the posture requirement that an enforcing posture
-never runs it on the development stub.
+never runs it on the development stub. The domain's declared consequence
+magnitudes reach the tier and the provider through it, explicitly.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.jurisdiction.contribution import (
     JurisdictionContribution,
     PostureRequirement,
@@ -122,18 +124,24 @@ def contribution(
     assessment_lookup: AssessmentLookup = registry_assessment_lookup,
     claims: ActionClaim | None = None,
     caller_identity: CallerIdentity = current_client_identity,
+    consequence_magnitudes: ConsequenceMagnitudes | None = None,
 ) -> JurisdictionContribution:
     """The EU contribution: one ``fria`` tier plus its posture requirement.
 
-    ``provider`` defaults to ``get_normative_provider()`` (``CAGE_NORMATIVE_PROVIDER``).
-    ``caller_identity`` defaults to the workload identity the gateway verified
-    for the request being served (``current_client_identity``), so the
-    provider is told who is acting, never a value from the request body.
+    ``provider`` defaults to ``get_normative_provider()`` (``CAGE_NORMATIVE_PROVIDER``),
+    built with ``consequence_magnitudes`` so the ConsequenceTokens it mints
+    are held to the same policy; a ``provider`` passed in must have been
+    built with it. ``caller_identity`` defaults to the workload identity the
+    gateway verified for the request being served (``current_client_identity``),
+    so the provider is told who is acting, never a value from the request body.
+    ``consequence_magnitudes`` is the domain's declared policy, which
+    ``assemble_governor()`` passes in; the tier checks it before every
+    provider call and refuses every action without one.
     """
     if provider is None:
         from src.gateway.governance.normative_provider import get_normative_provider
 
-        provider = get_normative_provider()
+        provider = get_normative_provider(consequence_magnitudes=consequence_magnitudes)
     tier = FriaTier(
         provider,
         region=REGION,
@@ -142,6 +150,7 @@ def contribution(
         gate_timeout_seconds=gate_timeout_seconds(),
         claims=claims,
         caller_identity=caller_identity,
+        consequence_magnitudes=consequence_magnitudes,
     )
     return JurisdictionContribution(
         region=REGION,
@@ -151,6 +160,7 @@ def contribution(
                 "fria_normative_provider", lambda: require_real_provider(provider)
             ),
         ),
+        consequence_magnitudes=consequence_magnitudes,
     )
 
 

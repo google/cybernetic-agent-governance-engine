@@ -38,11 +38,14 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
 from proof.model import REVALIDATED_TIERS
+from src.cage_finance import CONSEQUENCE_MAGNITUDES
 from src.cage_finance.plugin import FinanceCagePlugin
 from src.gateway.governance import defer_queue as defer_queue_mod
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import (
     CommitReceipt,
+    ConsequenceMagnitude,
     MutatingTier,
     ReadOnlyTier,
     Violation,
@@ -93,6 +96,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 _NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 _FRESH = {"assessed_at": (_NOW - timedelta(days=30)).isoformat()}
+_MAGNITUDES = ConsequenceMagnitudes(CONSEQUENCE_MAGNITUDES)
+_TIER_MAGNITUDES = ConsequenceMagnitudes(
+    (*CONSEQUENCE_MAGNITUDES, ConsequenceMagnitude("rebalance_portfolio", ()))
+)
 
 
 class _FakeProvider:
@@ -145,6 +152,7 @@ def _tier(
         reassessment_interval_days=kwargs.pop("interval", 365),
         gate_timeout_seconds=kwargs.pop("timeout", 0.05),
         clock=lambda: _NOW,
+        consequence_magnitudes=kwargs.pop("consequence_magnitudes", _TIER_MAGNITUDES),
         **kwargs,
     )
 
@@ -219,7 +227,10 @@ def test_eu_governor_runs_fria_once_in_phase_one_after_causal(
 ) -> None:
     _use_region_thresholds(monkeypatch, "EU_ECB")
     governor = _assemble(
-        jurisdiction=eu_ai_act.contribution(provider=_FakeProvider()),  # type: ignore[arg-type]
+        jurisdiction=eu_ai_act.contribution(
+            provider=_FakeProvider(),  # type: ignore[arg-type]
+            consequence_magnitudes=_MAGNITUDES,
+        ),
         warranted=True,
     )
     names = _domain_stage_names(governor)
@@ -378,7 +389,9 @@ async def test_admitted_assessment_passes_and_always_consults_the_provider() -> 
     tier = _tier(provider)
     # A confident model does not skip the provider: there is no fast path.
     assert (
-        await tier.evaluate("execute_trade", {"confidence": 0.99, "thread_id": "t-1"})
+        await tier.evaluate(
+            "execute_trade", {"amount": 10, "confidence": 0.99, "thread_id": "t-1"}
+        )
         == []
     )
     assert len(provider.calls) == 1
@@ -397,7 +410,7 @@ async def test_human_review_finding_is_a_hitl_hold() -> None:
             findings=[{"needs_human_review": True, "message": "Annex III"}],
         )
     )
-    [violation] = await _tier(provider).evaluate("execute_trade", {})
+    [violation] = await _tier(provider).evaluate("execute_trade", dict(_TRADE))
     assert (violation.code, violation.kind) == (CODE_HOLD, ViolationKind.HITL)
     assert violation.message.startswith("[CTRL_FRIA_006]")
     assert "Annex III" in violation.message
@@ -408,7 +421,7 @@ async def test_refusal_without_review_is_hard() -> None:
     provider = _FakeProvider(
         ValidationResult(admitted=False, findings=[{"rule": "art27"}])
     )
-    [violation] = await _tier(provider).evaluate("execute_trade", {})
+    [violation] = await _tier(provider).evaluate("execute_trade", dict(_TRADE))
     assert (violation.code, violation.kind) == (CODE_REJECTED, ViolationKind.HARD)
 
 
@@ -423,7 +436,7 @@ async def test_refusal_without_review_is_hard() -> None:
     ids=["timeout", "raises", "error_field"],
 )
 async def test_unavailable_provider_fails_closed(provider: _FakeProvider) -> None:
-    [violation] = await _tier(provider).evaluate("execute_trade", {})
+    [violation] = await _tier(provider).evaluate("execute_trade", dict(_TRADE))
     assert (violation.code, violation.kind) == (CODE_UNAVAILABLE, ViolationKind.HARD)
 
 
@@ -767,6 +780,7 @@ async def test_artefact_expiring_during_review_denies(defer_redis: Any) -> None:
         reassessment_interval_days=365,
         gate_timeout_seconds=0.05,
         clock=lambda: now[0],
+        consequence_magnitudes=_MAGNITUDES,
     )
     governor = SymbolicGovernor(
         GovernorComponents(
@@ -899,7 +913,10 @@ def test_only_jurisdiction_and_mutating_stages_are_revalidated(
     tiers are not re-run after approval; fria and every barrier are."""
     _use_region_thresholds(monkeypatch, "EU_ECB")
     governor = _assemble(
-        jurisdiction=eu_ai_act.contribution(provider=_FakeProvider()),  # type: ignore[arg-type]
+        jurisdiction=eu_ai_act.contribution(
+            provider=_FakeProvider(),  # type: ignore[arg-type]
+            consequence_magnitudes=_MAGNITUDES,
+        ),
         warranted=True,
     )
     declared = {
@@ -946,7 +963,7 @@ async def test_payload_thread_prefers_the_request_ids(
     params: dict[str, Any], expected: str
 ) -> None:
     provider = _FakeProvider()
-    await _tier(provider).evaluate("execute_trade", params)
+    await _tier(provider).evaluate("execute_trade", {**params, **_TRADE})
     assert provider.calls[0]["thread_id"] == expected
 
 
@@ -954,7 +971,8 @@ async def test_payload_thread_prefers_the_request_ids(
 async def test_caller_is_never_taken_from_request_params() -> None:
     provider = _FakeProvider()
     await _tier(provider).evaluate(
-        "execute_trade", {"actor_id": "attacker", "operator_urn": "attacker"}
+        "execute_trade",
+        {"amount": 10, "actor_id": "attacker", "operator_urn": "attacker"},
     )
     payload = provider.calls[0]
     assert payload["actor_id"] == payload["operator_urn"] == ""
@@ -966,7 +984,7 @@ async def test_unreadable_caller_identity_is_no_caller() -> None:
         raise RuntimeError("identity store unavailable")
 
     provider = _FakeProvider()
-    await _tier(provider, caller_identity=_boom).evaluate("execute_trade", {})
+    await _tier(provider, caller_identity=_boom).evaluate("execute_trade", dict(_TRADE))
     assert provider.calls[0]["actor_id"] == ""
 
 
@@ -979,11 +997,12 @@ async def test_eu_contribution_presents_the_workload_identity_it_verified() -> N
     contribution = eu_ai_act.contribution(
         provider=provider,  # type: ignore[arg-type]
         assessment_lookup=_lookup({"execute_trade": fresh}),
+        consequence_magnitudes=_MAGNITUDES,
     )
     [tier] = contribution.tiers
     with _serving(_CALLER):
-        await tier.evaluate("execute_trade", {})
-    await tier.evaluate("execute_trade", {})  # outside a request: no caller
+        await tier.evaluate("execute_trade", dict(_TRADE))
+    await tier.evaluate("execute_trade", dict(_TRADE))  # outside a request: no caller
     assert [c["actor_id"] for c in provider.calls] == [_CALLER, ""]
 
 

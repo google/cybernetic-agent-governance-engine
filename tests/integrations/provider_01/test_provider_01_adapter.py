@@ -20,9 +20,15 @@ import httpx
 import pytest
 import respx
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
+from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
+
+_MAGNITUDES = ConsequenceMagnitudes(
+    (ConsequenceMagnitude("trade", (MagnitudePath(("amount",), 2),)),)
+)
 
 
 @pytest.fixture
@@ -31,6 +37,7 @@ def provider() -> FlowSignalNormativeProvider:
         endpoint="https://provider01.example.com",
         api_key="test-api-key",
         timeout=2.0,
+        consequence_magnitudes=_MAGNITUDES,
     )
 
 
@@ -137,7 +144,12 @@ async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> N
             return_value=mock_signer,
         ):
             result = await provider.validate_fria(
-                {"action": "trade", "actor_id": "user-123", "thread_id": "thread-abc"}
+                {
+                    "action": "trade",
+                    "actor_id": "user-123",
+                    "thread_id": "thread-abc",
+                    "params": {"amount": 100},
+                }
             )
         assert result.admitted is True
         assert len(result.findings) == 1

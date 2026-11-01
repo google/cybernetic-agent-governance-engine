@@ -52,7 +52,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import quote
 
 import httpx
@@ -69,6 +69,9 @@ from .schema import (
     VerdictEvidenceSealResponse,
     VerdictFriaResponse,
 )
+
+if TYPE_CHECKING:
+    from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 
 logger = logging.getLogger("cage.integrations.provider_08")
 
@@ -115,7 +118,16 @@ class Provider08NormativeProvider:
         api_key: str = "",
         timeout_seconds: float = 5.0,
         require_anchor: bool = False,
+        *,
+        consequence_magnitudes: ConsequenceMagnitudes | None = None,
     ) -> None:
+        """Configure the adapter.
+
+        ``consequence_magnitudes`` is the domain's declared policy, handed to
+        the kernel mint service on every ALLOW; without it no ConsequenceToken
+        is minted and every ALLOW fails closed.
+        """
+        self._consequence_magnitudes = consequence_magnitudes
         self._endpoint = (endpoint or _DEFAULT_ENDPOINT).rstrip("/")
         self._api_key = api_key
         self._timeout = timeout_seconds
@@ -127,8 +139,13 @@ class Provider08NormativeProvider:
             )
 
     @classmethod
-    def from_env(cls) -> Provider08NormativeProvider:
-        """Construct from ``PROVIDER_08_*`` (falling back to ``CAGE_NORMATIVE_*``)."""
+    def from_env(
+        cls, *, consequence_magnitudes: ConsequenceMagnitudes | None = None
+    ) -> Provider08NormativeProvider:
+        """Construct from ``PROVIDER_08_*`` (falling back to ``CAGE_NORMATIVE_*``).
+
+        ``consequence_magnitudes`` is passed through to the constructor.
+        """
         return cls(
             endpoint=_env(
                 "PROVIDER_08_ENDPOINT",
@@ -139,6 +156,7 @@ class Provider08NormativeProvider:
             timeout_seconds=float(_env("PROVIDER_08_TIMEOUT_SECONDS", default="5.0")),
             require_anchor=_env("PROVIDER_08_REQUIRE_ANCHOR", default="false").lower()
             in {"1", "true", "yes"},
+            consequence_magnitudes=consequence_magnitudes,
         )
 
     @property
@@ -225,6 +243,7 @@ class Provider08NormativeProvider:
                 thread_id=_first_str(payload, "thread_id", "correlation_id"),
                 authority_record_id=parsed.authority_record_id,
                 action_payload=payload,
+                magnitudes=self._consequence_magnitudes,
                 authority_state_version=parsed.authority_state_version,
                 ttl_seconds=_CONSEQUENCE_TOKEN_TTL_SECONDS,
             )

@@ -46,7 +46,9 @@ from src.gateway.governance.consequence_gateway import (
     ConsequenceDecision,
     ConsequenceGateway,
 )
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.consequence_token import ConsequenceToken
+from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.gateway.governance.kms_signer import (
     GCPKMSProvider,
     KMSGovernanceSigner,
@@ -55,6 +57,10 @@ from src.gateway.governance.kms_signer import (
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
+
+_MAGNITUDES = ConsequenceMagnitudes(
+    (ConsequenceMagnitude("payment.release", (MagnitudePath(("amount",), 2),)),)
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _STEP1_RECORD_PATH = (
@@ -188,6 +194,7 @@ async def test_zero_negative_or_nonfinite_magnitude_fails_closed_on_allow(
     provider = FlowSignalNormativeProvider(
         endpoint="https://flowsignal.example.com",
         api_key="test-key",
+        consequence_magnitudes=_MAGNITUDES,
     )
     respx.post("https://flowsignal.example.com/cage/validate").mock(
         return_value=httpx.Response(
@@ -218,11 +225,12 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
     provider = FlowSignalNormativeProvider(
         endpoint="https://flowsignal.example.com",
         api_key="test-key",
+        consequence_magnitudes=_MAGNITUDES,
     )
     signer = _make_mock_signer()
     redis_stub = _InMemoryAsyncRedis()
     store = ConsequenceAuthorityStore(redis_stub, ttl_seconds=90)
-    gateway = ConsequenceGateway(store=store, signer=signer)
+    gateway = ConsequenceGateway(store=store, signer=signer, magnitudes=_MAGNITUDES)
 
     base_payload: dict[str, Any] = {
         "action": "payment.release",

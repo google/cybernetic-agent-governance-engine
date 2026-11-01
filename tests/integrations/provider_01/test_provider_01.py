@@ -30,10 +30,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
+from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.integrations.provider_01.provider import FlowSignalNormativeProvider
 
 # Hermetic: tests FlowSignal adapter with mocks, no live services.
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
+
+_MAGNITUDES = ConsequenceMagnitudes(
+    (
+        ConsequenceMagnitude("trade", (MagnitudePath(("amount",), 2),)),
+        ConsequenceMagnitude("transfer", (MagnitudePath(("amount",), 2),)),
+        ConsequenceMagnitude("high_value_trade", (MagnitudePath(("value",), 2),)),
+        ConsequenceMagnitude("test", ()),
+    )
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -47,6 +58,7 @@ def adapter() -> FlowSignalNormativeProvider:
         endpoint="http://localhost:8080",
         api_key="test-api-key",
         timeout=5.0,
+        consequence_magnitudes=_MAGNITUDES,
     )
 
 
@@ -383,7 +395,7 @@ class TestConsequenceTokenMinting:
             "actor_id": "user-12345",
             "thread_id": "thread-abc",
             "action": "trade",
-            "amount": 50000,
+            "params": {"amount": 50000},
         }
 
         flowsignal_response = {
@@ -445,7 +457,7 @@ class TestConsequenceTokenMinting:
             "actor_id": "user-99999",
             "thread_id": "thread-xyz",
             "action": "transfer",
-            "destination": "account-456",
+            "params": {"destination": "account-456", "amount": 100},
         }
 
         flowsignal_response = {
@@ -521,7 +533,7 @@ class TestConsequenceTokenMinting:
             "actor_id": "user-integration",
             "thread_id": "thread-integration",
             "action": "high_value_trade",
-            "value": 100000,
+            "params": {"value": 100000},
         }
 
         flowsignal_response = {
@@ -552,7 +564,9 @@ class TestConsequenceTokenMinting:
         # Consume the token via ConsequenceGateway (with fakeredis)
         fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         store = ConsequenceAuthorityStore(fake_redis, ttl_seconds=90)
-        gateway = ConsequenceGateway(store=store, signer=mock_signer)
+        gateway = ConsequenceGateway(
+            store=store, signer=mock_signer, magnitudes=_MAGNITUDES
+        )
 
         evaluation = await gateway.evaluate(token, action_payload)
 

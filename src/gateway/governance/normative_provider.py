@@ -66,7 +66,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.normative import (
@@ -75,6 +75,9 @@ from src.gateway.governance.seams.normative import (
     NormativeProvider,
     ValidationResult,
 )
+
+if TYPE_CHECKING:
+    from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 
 logger = logging.getLogger("cage.normative_provider")
 
@@ -491,12 +494,21 @@ _PROVIDERS: dict[str, type] = {
 }
 
 
-def get_normative_provider(name: str | None = None) -> NormativeProvider:
+def get_normative_provider(
+    name: str | None = None,
+    *,
+    consequence_magnitudes: ConsequenceMagnitudes | None = None,
+) -> NormativeProvider:
     """Resolve and instantiate a NormativeProvider by name.
 
     Args:
         name: Provider name.  If None, reads from CAGE_NORMATIVE_PROVIDER
               environment variable (default: "static").
+        consequence_magnitudes: The domain's declared consequence-magnitude
+              policy, passed to the providers that mint ConsequenceTokens
+              (``provider_01``, ``provider_08``), which hand it to the kernel
+              mint service. Without one, those providers mint nothing: every
+              admission fails closed at minting.
 
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
@@ -551,7 +563,9 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     if provider_name == "provider_01":
         from src.integrations.provider_01 import FlowSignalNormativeProvider
 
-        return FlowSignalNormativeProvider()
+        return FlowSignalNormativeProvider(
+            consequence_magnitudes=consequence_magnitudes
+        )
 
     if provider_name == "provider_03":
         from src.integrations.provider_03 import Provider03NormativeProvider
@@ -570,7 +584,9 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     if provider_name == "provider_08":
         from src.integrations.provider_08 import Provider08NormativeProvider
 
-        return Provider08NormativeProvider.from_env()
+        return Provider08NormativeProvider.from_env(
+            consequence_magnitudes=consequence_magnitudes
+        )
 
     valid = [
         *_PROVIDERS.keys(),
