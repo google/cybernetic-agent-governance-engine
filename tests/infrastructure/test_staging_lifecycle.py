@@ -191,12 +191,12 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     assert proc.returncode == 0, proc.stderr
 
     calls = log_file.read_text(encoding="utf-8")
-    # W5: Auto-populated deployer /32 authorized_networks
+    # PF5: Auto-populated deployer /32 authorized_networks
     assert (
         'TF_VAR_authorized_networks=[{"cidr":"203.0.113.42/32","display_name":"deployer-egress"}]'
         in calls
     )
-    # W8: Persistent KMS resources detached before destroy
+    # PF8: Persistent KMS resources detached before destroy
     assert "state rm google_kms_key_ring.signing" in calls
     assert "state rm google_kms_crypto_key.binauthz_attestor" in calls
     assert "state rm module.kms" in calls

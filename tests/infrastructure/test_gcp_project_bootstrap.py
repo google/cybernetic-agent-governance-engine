@@ -192,22 +192,22 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
 
     calls = log_file.read_text(encoding="utf-8")
 
-    # W1: All 21 required APIs are enabled.
+    # PF1: All 21 required APIs are enabled.
     for api in EXPECTED_APIS:
         assert api in calls, f"Missing required API in bootstrap: {api}"
 
-    # W2: Remote Terraform state bucket created and versioned.
+    # PF2: Remote Terraform state bucket created and versioned.
     assert "gcloud storage buckets create gs://clean-proj-01-tfstate" in calls
     assert (
         "gcloud storage buckets update gs://clean-proj-01-tfstate --project=clean-proj-01 --versioning"
         in calls
     )
 
-    # W4: Artifact Registry gcr.io repository and Cloud Build bucket created.
+    # PF4: Artifact Registry gcr.io repository and Cloud Build bucket created.
     assert "gcloud artifacts repositories create gcr.io" in calls
     assert "gcloud storage buckets create gs://clean-proj-01_cloudbuild" in calls
 
-    # W3: Dedicated Cloud Build SA, KMS keyring/key, Container Analysis note, and BinAuthz attestor created.
+    # PF3: Dedicated Cloud Build SA, KMS keyring/key, Container Analysis note, and BinAuthz attestor created.
     assert "gcloud iam service-accounts create cage-cloudbuild-staging" in calls
     assert "gcloud kms keyrings create cage-signing-staging" in calls
     assert "gcloud kms keys create binauthz-attestor" in calls
@@ -219,7 +219,7 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
     )
     assert "gcloud container binauthz attestors public-keys add" in calls
 
-    # W10: Deployer SA granted roles/cloudkms.publicKeyViewer on the project.
+    # PF10: Deployer SA granted roles/cloudkms.publicKeyViewer on the project.
     assert (
         "gcloud projects add-iam-policy-binding clean-proj-01 "
         "--member=serviceAccount:sa-cage-deployer@clean-proj-01.iam.gserviceaccount.com "
@@ -271,7 +271,7 @@ def test_bootstrap_import_state_imports_missing_and_skips_existing(
     assert "google_service_account.cloudbuild" not in calls
     assert "google_kms_key_ring.signing " not in calls
 
-    # Missing from state -> imported into Terraform state (W8 / W3).
+    # Missing from state -> imported into Terraform state (PF8 / PF3).
     assert (
         "google_kms_crypto_key.binauthz_attestor "
         "projects/recycled-proj/locations/us-central1/keyRings/cage-signing-staging/cryptoKeys/binauthz-attestor"

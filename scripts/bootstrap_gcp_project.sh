@@ -17,36 +17,36 @@
 #
 # This is tooling, not Track A's Step A2. Step A2 is the clean-project walk: a
 # person deploying a new project from infra/QUICK_START.md by hand and
-# recording what fails (POAM-2026-164). The W-numbered items below are the
+# recording what fails (POAM-2026-164). The PF-numbered items below are the
 # walk's predicted failures, handled here from code reading before any walk
 # has confirmed them.
 #
 # Resolves the clean-project bootstrap prerequisites before `deploy_all.sh` runs
 # Cloud Build or `terraform apply`:
-#   W1  Enable all required GCP APIs (GKE, Compute, Storage, Artifact Registry,
-#       Cloud Build, Cloud KMS, Binary Authorization, Container Analysis,
-#       Memorystore, Cloud SQL, Service Networking, Network Connectivity,
-#       Private CA, Secret Manager, IAM, Cloud Resource Manager, Logging,
-#       Monitoring, Cloud DNS, Access Context Manager).
-#   W2  Create the remote Terraform state GCS bucket (`gs://<project>-tfstate`)
-#       with uniform bucket-level access and object versioning enabled.
-#   W3  Break the Cloud Build <-> Terraform bootstrap paradox: pre-create the
-#       dedicated Cloud Build service account (`cage-cloudbuild-<env>`),
-#       signing KMS keyring (`cage-signing-<env>`), `binauthz-attestor` EC P-256
-#       key, Container Analysis note (`cage-build-attestor-note-<env>`), and
-#       Binary Authorization attestor (`cage-build-attestor-<env>`) so
-#       `scripts/build_images.sh` can build and attest images on a brand-new
-#       project before the first `terraform apply`.
-#   W4  Ensure the `gcr.io` Artifact Registry Docker repository and
-#       `gs://<project>_cloudbuild` staging bucket exist.
-#   W8  With `--import-state`, idempotently import pre-existing foundational
-#       resources (Cloud Build SA, KMS keyrings/keys that survive `terraform destroy`
-#       in GCP, Container Analysis note, and Binary Authorization attestor) into
-#       Terraform state after `terraform init`.
-#   W10 Grant `roles/cloudkms.publicKeyViewer` to the deployer service account
-#       (when `--deployer-sa` is provided or active gcloud account is a GSA) so
-#       `data.google_kms_crypto_key_version.binauthz_attestor` succeeds during
-#       `terraform plan`.
+#   PF1  Enable all required GCP APIs (GKE, Compute, Storage, Artifact Registry,
+#        Cloud Build, Cloud KMS, Binary Authorization, Container Analysis,
+#        Memorystore, Cloud SQL, Service Networking, Network Connectivity,
+#        Private CA, Secret Manager, IAM, Cloud Resource Manager, Logging,
+#        Monitoring, Cloud DNS, Access Context Manager).
+#   PF2  Create the remote Terraform state GCS bucket (`gs://<project>-tfstate`)
+#        with uniform bucket-level access and object versioning enabled.
+#   PF3  Break the Cloud Build <-> Terraform bootstrap paradox: pre-create the
+#        dedicated Cloud Build service account (`cage-cloudbuild-<env>`),
+#        signing KMS keyring (`cage-signing-<env>`), `binauthz-attestor` EC P-256
+#        key, Container Analysis note (`cage-build-attestor-note-<env>`), and
+#        Binary Authorization attestor (`cage-build-attestor-<env>`) so
+#        `scripts/build_images.sh` can build and attest images on a brand-new
+#        project before the first `terraform apply`.
+#   PF4  Ensure the `gcr.io` Artifact Registry Docker repository and
+#        `gs://<project>_cloudbuild` staging bucket exist.
+#   PF8  With `--import-state`, idempotently import pre-existing foundational
+#        resources (Cloud Build SA, KMS keyrings/keys that survive `terraform destroy`
+#        in GCP, Container Analysis note, and Binary Authorization attestor) into
+#        Terraform state after `terraform init`.
+#   PF10 Grant `roles/cloudkms.publicKeyViewer` to the deployer service account
+#        (when `--deployer-sa` is provided or active gcloud account is a GSA) so
+#        `data.google_kms_crypto_key_version.binauthz_attestor` succeeds during
+#        `terraform plan`.
 #
 # Usage:
 #   scripts/bootstrap_gcp_project.sh --project <project-id> [--env staging] [--region us-central1]
@@ -77,9 +77,9 @@ Options:
   --region=<region>       GCP region (default: us-central1)
   --bucket=<name>         Terraform state GCS bucket name (default: <project>-tfstate)
   --deployer-sa=<email>   Optional deployer service account email to grant
-                          roles/cloudkms.publicKeyViewer (W10)
+                          roles/cloudkms.publicKeyViewer (PF10)
   --import-state          Import existing foundational GCP resources into Terraform
-                          state (run after 'terraform init') (W3 / W8)
+                          state (run after 'terraform init') (PF3 / PF8)
   --tf-dir=<path>         Path to GKE Terraform target directory
                           (default: infra/targets/gcp-gke)
   -h, --help              Show this help message
@@ -185,7 +185,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Mode: --import-state (W3 / W8)
+# Mode: --import-state (PF3 / PF8)
 # ---------------------------------------------------------------------------
 import_foundational_state() {
   echo "🔄 Inspecting Terraform state for pre-existing foundational GCP resources (project=${PROJECT_ID}, env=${ENV})..."
@@ -303,11 +303,11 @@ if [[ "$IMPORT_STATE" == "true" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Default Mode: Project Bootstrap (W1, W2, W3, W4, W10)
+# Default Mode: Project Bootstrap (PF1, PF2, PF3, PF4, PF10)
 # ---------------------------------------------------------------------------
 echo "🚀 Bootstrapping GCP project '${PROJECT_ID}' (env=${ENV}, region=${REGION})..."
 
-# --- W1: Enable all required GCP APIs ---
+# --- PF1: Enable all required GCP APIs ---
 REQUIRED_APIS=(
   "container.googleapis.com"
   "compute.googleapis.com"
@@ -332,11 +332,11 @@ REQUIRED_APIS=(
   "accesscontextmanager.googleapis.com"
 )
 
-echo "🔌 [W1] Enabling ${#REQUIRED_APIS[@]} required GCP APIs on '${PROJECT_ID}'..."
+echo "🔌 [PF1] Enabling ${#REQUIRED_APIS[@]} required GCP APIs on '${PROJECT_ID}'..."
 gcloud services enable "${REQUIRED_APIS[@]}" --project="$PROJECT_ID" --quiet
 
-# --- W2: Ensure remote Terraform state GCS bucket exists ---
-echo "🪣 [W2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."
+# --- PF2: Ensure remote Terraform state GCS bucket exists ---
+echo "🪣 [PF2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."
 if ! gcloud storage buckets describe "gs://${STATE_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
   gcloud storage buckets create "gs://${STATE_BUCKET}" \
     --project="$PROJECT_ID" \
@@ -350,8 +350,8 @@ gcloud storage buckets update "gs://${STATE_BUCKET}" \
   --versioning \
   --quiet
 
-# --- W4: Ensure Artifact Registry gcr.io repository & Cloud Build staging bucket exist ---
-echo "📦 [W4] Ensuring Artifact Registry 'gcr.io' Docker repository and Cloud Build staging bucket exist..."
+# --- PF4: Ensure Artifact Registry gcr.io repository & Cloud Build staging bucket exist ---
+echo "📦 [PF4] Ensuring Artifact Registry 'gcr.io' Docker repository and Cloud Build staging bucket exist..."
 if ! gcloud artifacts repositories describe "gcr.io" --location="us" --project="$PROJECT_ID" >/dev/null 2>&1; then
   gcloud artifacts repositories create "gcr.io" \
     --repository-format=docker \
@@ -371,8 +371,8 @@ if ! gcloud storage buckets describe "gs://${CB_BUCKET}" --project="$PROJECT_ID"
     --quiet
 fi
 
-# --- W3: Pre-create Cloud Build SA, KMS binauthz-attestor key, and BinAuthz attestor ---
-echo "🔐 [W3] Ensuring dedicated Cloud Build service account '${CB_SA_EMAIL}' exists..."
+# --- PF3: Pre-create Cloud Build SA, KMS binauthz-attestor key, and BinAuthz attestor ---
+echo "🔐 [PF3] Ensuring dedicated Cloud Build service account '${CB_SA_EMAIL}' exists..."
 if ! gcloud iam service-accounts describe "$CB_SA_EMAIL" --project="$PROJECT_ID" >/dev/null 2>&1; then
   gcloud iam service-accounts create "$CB_SA_NAME" \
     --project="$PROJECT_ID" \
@@ -397,7 +397,7 @@ gcloud storage buckets add-iam-policy-binding "gs://${CB_BUCKET}" \
   --role="roles/storage.objectViewer" \
   --quiet >/dev/null
 
-echo "🔑 [W3] Ensuring KMS KeyRing '${SIGNING_KEYRING}' and asymmetric key 'binauthz-attestor' exist..."
+echo "🔑 [PF3] Ensuring KMS KeyRing '${SIGNING_KEYRING}' and asymmetric key 'binauthz-attestor' exist..."
 if ! gcloud kms keyrings describe "$SIGNING_KEYRING" --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
   gcloud kms keyrings create "$SIGNING_KEYRING" \
     --location="$REGION" \
@@ -434,7 +434,7 @@ for kms_role in \
 done
 
 if [[ "$ENV" != "dev" ]]; then
-  echo "🛡️  [W3] Ensuring Container Analysis note '${NOTE_ID}' and Binary Authorization attestor '${ATTESTOR_ID}' exist..."
+  echo "🛡️  [PF3] Ensuring Container Analysis note '${NOTE_ID}' and Binary Authorization attestor '${ATTESTOR_ID}' exist..."
   ACCESS_TOKEN="$(gcloud auth print-access-token 2>/dev/null || true)"
   if [[ -n "$ACCESS_TOKEN" ]]; then
     NOTE_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' \
@@ -484,7 +484,7 @@ if [[ "$ENV" != "dev" ]]; then
     --quiet >/dev/null
 fi
 
-# --- W10: Ensure deployer service account has roles/cloudkms.publicKeyViewer ---
+# --- PF10: Ensure deployer service account has roles/cloudkms.publicKeyViewer ---
 if [[ -z "$DEPLOYER_SA" ]]; then
   ACTIVE_ACCOUNT="$(gcloud config get-value account 2>/dev/null || true)"
   if [[ "$ACTIVE_ACCOUNT" == *.gserviceaccount.com ]]; then
@@ -493,7 +493,7 @@ if [[ -z "$DEPLOYER_SA" ]]; then
 fi
 
 if [[ -n "$DEPLOYER_SA" ]]; then
-  echo "🔑 [W10] Granting roles/cloudkms.publicKeyViewer to deployer SA '${DEPLOYER_SA}'..."
+  echo "🔑 [PF10] Granting roles/cloudkms.publicKeyViewer to deployer SA '${DEPLOYER_SA}'..."
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${DEPLOYER_SA}" \
     --role="roles/cloudkms.publicKeyViewer" \

@@ -126,7 +126,7 @@ CAGE_DEPLOYMENT_REGION=US_FED           # US_FED | EU_ECB | APAC_MAS
 
 ### 3. Bootstrap the GCP project & enable required APIs
 
-Run [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) once on a new or recycled GCP project (or let `deploy_all.sh` run it automatically before building images). It enables all 21 required GCP APIs (`W1`), creates the versioned Terraform state bucket `gs://<YOUR_GCP_PROJECT_ID>-tfstate` (`W2`), creates the `gcr.io` Artifact Registry repository and Cloud Build staging bucket (`W4`), pre-creates the dedicated Cloud Build service account (`cage-cloudbuild-<env>`), `cage-signing-<env>` KMS keyring, `binauthz-attestor` key, and Binary Authorization attestor so Cloud Build can attest images before the first `terraform apply` (`W3`), and optionally grants `roles/cloudkms.publicKeyViewer` to a deployer service account (`W10`):
+Run [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) once on a new or recycled GCP project (or let `deploy_all.sh` run it automatically before building images). It enables all 21 required GCP APIs (`PF1`), creates the versioned Terraform state bucket `gs://<YOUR_GCP_PROJECT_ID>-tfstate` (`PF2`), creates the `gcr.io` Artifact Registry repository and Cloud Build staging bucket (`PF4`), pre-creates the dedicated Cloud Build service account (`cage-cloudbuild-<env>`), `cage-signing-<env>` KMS keyring, `binauthz-attestor` key, and Binary Authorization attestor so Cloud Build can attest images before the first `terraform apply` (`PF3`), and optionally grants `roles/cloudkms.publicKeyViewer` to a deployer service account (`PF10`):
 
 ```bash
 bash scripts/bootstrap_gcp_project.sh \

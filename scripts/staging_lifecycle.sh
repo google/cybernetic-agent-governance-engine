@@ -188,7 +188,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
     --region="$REGION"
 fi
 
-# W5: Ensure control-plane authorized_networks is populated so staging compliance
+# PF5: Ensure control-plane authorized_networks is populated so staging compliance
 # posture (enable_private_nodes=true) does not fail plan or lock out kubectl/helm.
 if [[ -z "${TF_VAR_authorized_networks:-}" ]]; then
   EGRESS_IP="${DEPLOYER_EGRESS_IP:-}"
@@ -397,12 +397,12 @@ elif [[ -f "$TF_DIR/tests/fixtures/image_digests.tfvars" ]]; then
   DIGESTS_FILE="$TF_DIR/tests/fixtures/image_digests.tfvars"
 fi
 
-# W8: GCP KMS keyrings and keys cannot be deleted and carry lifecycle.prevent_destroy = true
+# PF8: GCP KMS keyrings and keys cannot be deleted and carry lifecycle.prevent_destroy = true
 # in kms_signing.tf (and destroying a CryptoKey destroys cryptoKeyVersions/1, which is
 # pinned by perimeter.tf and kms_signing.tf). Detach them from Terraform state prior to
 # `terraform destroy`; scripts/bootstrap_gcp_project.sh --import-state re-imports them on
 # the next lifecycle run.
-info "Detaching persistent KMS keyrings and signing keys from Terraform state before destroy (W8)..."
+info "Detaching persistent KMS keyrings and signing keys from Terraform state before destroy (PF8)..."
 PERSISTENT_KMS_STATE_ADDRS=(
   "google_kms_crypto_key_iam_policy.signing_key"
   "google_kms_crypto_key.gateway_seal"
@@ -437,7 +437,7 @@ fi
 
 success "Staging environment destroyed successfully"
 
-# W9: In --fresh-project mode, verify that no workload resources or deletion liens
+# PF9: In --fresh-project mode, verify that no workload resources or deletion liens
 # survived `terraform destroy` (confirming POAM-2026-159 bucket teardown and clean
 # project deletion readiness).
 if [[ "$FRESH_PROJECT" == "true" ]]; then
