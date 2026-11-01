@@ -47,12 +47,24 @@ unchanged:
    ``evidence_loss``): every refusal record carries a 64-hex ``proof_hash``
    (or ``receipt_digest``), every caller-observed refusal hash appears on the
    stream, observed distinct refusals cover ``expected_refusal_count``, and
-   ``publish_failures == 0``.
+   ``publish_failures == 0``. On a log read from genesis, a
+   ``WORKLOAD_QUARANTINE_RECEIPT`` that names a ``refusal_proof_hash`` follows
+   that refusal's record: the kernel appends the refusal before it dispatches
+   the quarantine the refusal triggered.
 
 In addition, ``chain_schema``, ``chain_hash``, and ``chain_continuity`` verify
 the ``cage-audit/3.0`` RFC 8785 JCS SHA-256 link hashes, contiguous sequences,
 and ``prev_hash`` linkage across the stream, while ``thresholds`` checks the
 loaded ``GovernanceThresholds`` digest (POAM-2026-151 Option 2).
+
+``digest_format`` (POAM-2026-149) holds on every record of every event type:
+each ``governance_decision_digest`` and ``refusal_proof_hash``, at any depth of
+the payload (nested objects and arrays included), is 64 lowercase hex
+characters, matched in full. Each field has one meaning: the SHA-256 of the
+routing seal that authorised an action, and the ``proof_hash`` of the refusal
+that triggered a quarantine. A finding names the field's path and never
+echoes its value, which may be a bearer credential. The rule binds writers
+the other invariants never read, including writers that do not exist yet.
 
 Shared specification lineage
 ----------------------------
@@ -102,8 +114,11 @@ ACTUATION_EVENT_TYPES = frozenset(
 )
 ROLLBACK_STATUSES = frozenset({"ROLLED_BACK", "ROLLED_BACK_UNLEDGERED", "NOOP"})
 SETTLEMENT_STATUSES = frozenset({"CONFIRMED", "ROLLED_BACK", "FAILED"})
+#: Fields that name a governance decision by digest (``digest_format``).
+DECISION_DIGEST_FIELDS = frozenset({"governance_decision_digest", "refusal_proof_hash"})
 
-_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+# Matched with fullmatch: an anchored match with ``$`` admits a trailing newline.
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
 _ESCAPE_RE = re.compile(r'[\x00-\x1f\\"]')
 _ESCAPE_MAP: dict[str, str] = {
     "\\": "\\\\",
@@ -119,7 +134,7 @@ _EPS = 1e-9
 
 
 def _is_hex64(value: Any) -> bool:
-    return isinstance(value, str) and bool(_HEX64_RE.match(value))
+    return isinstance(value, str) and bool(_HEX64_RE.fullmatch(value))
 
 
 def _is_number(value: Any) -> bool:
@@ -455,6 +470,26 @@ def verify_chain_record(
 # ---------------------------------------------------------------------------
 # Per-invariant validators
 # ---------------------------------------------------------------------------
+
+
+def _digest_format_problems(value: Any, path: str = "") -> list[str]:
+    """Each decision-digest field, at any depth of ``value``, that is not 64-hex.
+
+    Names the field's path and the value's type, never the value itself.
+    """
+    problems: list[str] = []
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            where = f"{path}.{key}" if path else str(key)
+            if key in DECISION_DIGEST_FIELDS and not _is_hex64(item):
+                problems.append(
+                    f"{where} ({type(item).__name__}) is not a lowercase SHA-256 hex digest"
+                )
+            problems.extend(_digest_format_problems(item, where))
+    elif isinstance(value, (list, tuple)):
+        for position, item in enumerate(value):
+            problems.extend(_digest_format_problems(item, f"{path}[{position}]"))
+    return problems
 
 
 def _pair_list_problems(payload: Mapping[str, Any], key: str) -> list[str]:
@@ -831,6 +866,10 @@ def check_stream(
 
         genesis_complete = first_seq == 0
 
+        # -- Decision digests, on every event type (POAM-2026-149) --
+        for detail in _digest_format_problems(payload):
+            findings.append(Finding(index, "digest_format", f"{event_type} {detail}"))
+
         # -- Thresholds baseline (POAM-2026-151 Option 2) --
         if event_type == "GOVERNANCE_THRESHOLDS_LOADED":
             seen_thresholds_loaded = True
@@ -1181,6 +1220,22 @@ def check_stream(
                 )
             else:
                 observed_refusal_hashes.add(str(ph))
+
+        # -- Invariant 5: a refusal-triggered quarantine follows its refusal --
+        elif event_type == "WORKLOAD_QUARANTINE_RECEIPT":
+            ph = payload.get("refusal_proof_hash")
+            if (
+                genesis_complete
+                and _is_hex64(ph)
+                and str(ph) not in observed_refusal_hashes
+            ):
+                findings.append(
+                    Finding(
+                        index,
+                        "refusal_evidence",
+                        f"WORKLOAD_QUARANTINE_RECEIPT names refusal {str(ph)[:16]}... with no earlier refusal record",
+                    )
+                )
 
     # -- Post-stream completeness checks --
     if require_thresholds_loaded and not seen_thresholds_loaded:

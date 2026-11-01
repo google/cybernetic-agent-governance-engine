@@ -16,7 +16,9 @@
 
 Validates OpenShell sandbox file (1001), process (1007), and network (4001)
 events, strips any potential secret/credential keys, and writes hash-chained
-records into CAGE's ``EvidenceStreamSink`` bound to ``governance_decision_digest``.
+records into CAGE's ``EvidenceStreamSink`` bound to ``governance_decision_digest``:
+the SHA-256 of the routing seal that authorised the sandboxed action
+(``seal_digest(seal)``), lowercase hex (POAM-2026-149).
 """
 
 from __future__ import annotations
@@ -26,8 +28,13 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.gateway.governance.seams.digests import (
+    DECISION_DIGEST_FIELDS,
+    GOVERNANCE_DECISION_DIGEST,
+    require_sha256_hex,
+)
 from src.integrations.actuator_02.constants import ALLOWED_OCSF_CLASS_UIDS
 
 MAX_OCSF_METADATA_BYTES = 64 * 1024
@@ -37,6 +44,23 @@ _SENSITIVE_KEY_RE = re.compile(
     r"(?:secret|token|password|credential|authorization|api_key|private_key)",
     re.IGNORECASE,
 )
+
+
+def _require_nested_digests(value: Any) -> None:
+    """Refuse a decision-digest key, at any depth of ``value``, that holds no digest.
+
+    ``metadata`` reaches the evidence record verbatim, so a nested
+    ``governance_decision_digest`` or ``refusal_proof_hash`` is checked like the
+    top-level field. The error names the field, never the value or the path.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in DECISION_DIGEST_FIELDS:
+                require_sha256_hex(item, field=f"{key} inside metadata")
+            _require_nested_digests(item)
+    elif isinstance(value, list):
+        for item in value:
+            _require_nested_digests(item)
 
 
 def _sanitize_mapping(data: dict[str, Any]) -> dict[str, Any]:
@@ -58,7 +82,19 @@ def _sanitize_mapping(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class OcsfEventModel(BaseModel):
-    """Validated OCSF event emitted by the sandbox supervisor."""
+    """Validated OCSF event emitted by the sandbox supervisor.
+
+    ``governance_decision_digest`` must be ``seal_digest(seal)``: 64 lowercase
+    hex characters, checked by the shared validator
+    (``src.gateway.governance.seams.digests``), as is any decision-digest key
+    nested in ``metadata``. ``hide_input_in_errors`` keeps a refused value out
+    of the ``ValidationError``'s string and repr. Its ``errors()`` and
+    ``json()`` still carry the input unless called with
+    ``include_input=False``, so a caller that serializes the errors must pass
+    that.
+    """
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     class_uid: int
     category_uid: int = Field(default=1, ge=0)
@@ -68,7 +104,7 @@ class OcsfEventModel(BaseModel):
     disposition: str = Field(default="Allowed", min_length=1, max_length=64)
     sandbox_id: str = Field(min_length=1, max_length=128)
     thread_id: str = Field(min_length=1, max_length=128)
-    governance_decision_digest: str = Field(min_length=8, max_length=128)
+    governance_decision_digest: str
     trace_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -81,6 +117,11 @@ class OcsfEventModel(BaseModel):
             )
         return v
 
+    @field_validator("governance_decision_digest")
+    @classmethod
+    def _v_governance_decision_digest(cls, v: str) -> str:
+        return require_sha256_hex(v, field=GOVERNANCE_DECISION_DIGEST)
+
     @field_validator("metadata")
     @classmethod
     def _v_metadata_size(cls, v: dict[str, Any]) -> dict[str, Any]:
@@ -89,6 +130,12 @@ class OcsfEventModel(BaseModel):
             raise ValueError(
                 f"OCSF metadata is {len(serialized)} bytes; limit {MAX_OCSF_METADATA_BYTES}"
             )
+        return v
+
+    @field_validator("metadata")
+    @classmethod
+    def _v_metadata_digests(cls, v: dict[str, Any]) -> dict[str, Any]:
+        _require_nested_digests(v)
         return v
 
 

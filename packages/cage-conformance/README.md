@@ -53,6 +53,11 @@ This checks the hash chain (RFC 8785 canonical JSON, SHA-256 links, contiguous
 sequences) and the five stream invariants: no action binds without a routing
 seal, the control barrier is never breached, a seal implies every stage passed,
 rollback conserves the balance, and every denial produces an evidence record.
+It also checks `digest_format` on every record, whatever its type: each
+`governance_decision_digest` and `refusal_proof_hash`, at any depth, is 64
+lowercase hex characters. A finding names the field's path, never its value.
+Reports from 0.3.0 on carry this assertion, so a stream that 0.2.0 found
+conformant can fail it.
 
 ## Check a report
 
