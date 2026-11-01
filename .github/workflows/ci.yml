@@ -988,9 +988,10 @@ jobs:
   terraform-test:
     # Plan-time contracts of the gcp-gke target (W6, AG-7): what each inference
     # backend deploys, and what the plan refuses. Also the service_mesh
-    # module's contracts: the proxy-required admission policy (POAM-2026-167).
-    # Mock providers only, so no cloud credentials and no state. It must be
-    # able to fail (POAM-2026-150): never continue-on-error.
+    # module's contracts: the proxy-required admission policy (POAM-2026-167),
+    # and the linkerd2-cni repair controller with the admission policy that
+    # scopes it. Mock providers only, so no cloud credentials and no state. It
+    # must be able to fail (POAM-2026-150): never continue-on-error.
     name: "Terraform Tests (gcp-gke, mock providers)"
     runs-on: ubuntu-latest
     steps:

@@ -305,9 +305,53 @@ resource "helm_release" "linkerd_cni" {
     # GKE keeps CNI binaries in /home/kubernetes/bin, not /opt/cni/bin.
     destCNIBinDir = "/home/kubernetes/bin"
     destCNINetDir = "/etc/cni/net.d"
+
+    # A meshed pod whose sandbox is created before linkerd-cni has chained
+    # itself into the node's conflist gets no traffic redirect, so its
+    # linkerd-network-validator init container exits 95. Retries reuse the
+    # same sandbox, so the pod never recovers on its own. The repair
+    # controller deletes such pods on its node so their controllers recreate
+    # them with the plugin in place (docs/operations/DEPLOYMENT_RULES.md,
+    # "Linkerd Network Validator CrashLoopBackOff").
+    #
+    # It adds `delete` on pods and `create` on events.k8s.io events to the
+    # chart's linkerd-cni ClusterRole, which binds the DaemonSet's service
+    # account cluster-wide. helm_release.linkerd_cni_repair_guard confines the
+    # deletions to what the controller does: pods on its own node whose
+    # validator last exited 95.
+    repairController = {
+      enabled = true
+      # The upstream template gates the container's command, args, env,
+      # probes and admin port on this flag, not only its securityContext.
+      # Turning it off would run the image's default entrypoint, the
+      # installer, in place of the controller.
+      enableSecurityContext = true
+    }
   })]
 
-  depends_on = [helm_release.linkerd_crds]
+  # The guard is in place before the chart grants the delete permission.
+  depends_on = [
+    helm_release.linkerd_crds,
+    helm_release.linkerd_cni_repair_guard,
+  ]
+}
+
+# A ValidatingAdmissionPolicy that limits the linkerd-cni service account's
+# pod deletions to exit-95 pods on the requesting pod's node (see the
+# chart's template). Rendered from a local chart, like mesh_identity, so the
+# plan does not need the cluster's API.
+resource "helm_release" "linkerd_cni_repair_guard" {
+  count = var.enable_cni ? 1 : 0
+
+  name      = "cage-cni-repair-guard"
+  chart     = "${path.module}/charts/cni-repair-guard"
+  namespace = kubernetes_namespace.linkerd_cni[0].metadata[0].name
+  wait      = true
+
+  values = [yamlencode({
+    # The linkerd2-cni chart names its service account linkerd-cni.
+    serviceAccountUsername = "system:serviceaccount:${local.linkerd_cni_namespace}:linkerd-cni"
+  })]
 }
 
 # GoogleCASIssuer + the linkerd-identity-issuer Certificate. Rendered from a

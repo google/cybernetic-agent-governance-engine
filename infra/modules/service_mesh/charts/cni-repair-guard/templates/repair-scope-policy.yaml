@@ -1,0 +1,65 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# With its repair controller enabled, the linkerd2-cni chart grants its service
+# account `delete` on pods cluster-wide. RBAC cannot scope that to a node, and
+# the account's token is mounted into every linkerd-cni pod, which writes to its
+# node's CNI directories. Unscoped, whoever controls one such pod could delete
+# any pod in the cluster, for example to pull a workload onto the node they
+# control. This policy allows the account only the deletions the controller
+# makes: pods bound to the requester's own node whose linkerd-network-validator
+# last exited 95.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: cage-linkerd-cni-repair-scope
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: linkerd-cni-service-account
+      expression: >-
+        request.userInfo.username == {{ required "serviceAccountUsername is required" .Values.serviceAccountUsername | squote }}
+  validations:
+    # A service account token bound to a pod names the pod's node
+    # (Kubernetes 1.32+). A token that names no node is refused.
+    - expression: >-
+        has(request.userInfo.extra) &&
+        'authentication.kubernetes.io/node-name' in request.userInfo.extra &&
+        has(oldObject.spec.nodeName) &&
+        oldObject.spec.nodeName in request.userInfo.extra['authentication.kubernetes.io/node-name']
+      message: linkerd-cni may delete only pods bound to its own node
+      reason: Forbidden
+    # The controller's own selection (cni-plugin v1.7.0): the validator's last
+    # termination exited 95.
+    - expression: >-
+        has(oldObject.status.initContainerStatuses) &&
+        oldObject.status.initContainerStatuses.exists(s,
+        s.name == 'linkerd-network-validator' &&
+        has(s.lastState) && has(s.lastState.terminated) &&
+        s.lastState.terminated.exitCode == 95)
+      message: linkerd-cni may delete only pods whose linkerd-network-validator last exited 95
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: cage-linkerd-cni-repair-scope
+spec:
+  policyName: cage-linkerd-cni-repair-scope
+  validationActions: [Deny]
