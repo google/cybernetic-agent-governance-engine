@@ -61,6 +61,7 @@ DOC_SCOPE = (
     "SECURITY.md",
     "CONTRIBUTING.md",
     "docs/POAM.md",
+    "docs/BREAKING_CHANGES_v3.md",
     "docs/architecture",
     "compliance",
 )

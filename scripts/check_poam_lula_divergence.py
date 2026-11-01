@@ -152,6 +152,26 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/infrastructure/test_inference_backend_gke.py",
         "tests/test_gke_state_isolation.py",
     ),
+    # Decision digest 64-hex SHA-256 contract across routing_seal, consequence_gateway, and provider_01.
+    "POAM-2026-149": (
+        "tests/test_decision_digest_format.py",
+        "tests/test_seal_digest_evidence.py",
+        "tests/test_cage_conformance.py",
+    ),
+    # All nine pull-request workflows trigger on every base branch and Makefile lint runs mypy src/.
+    "POAM-2026-153": ("tests/test_workflow_pr_triggers.py",),
+    # ConsequenceMagnitudes enforces positive integer minor units in 1..2^53-1 across FRIA pre-flight, mint, and consume.
+    "POAM-2026-155": (
+        "tests/test_consequence_magnitude.py",
+        "tests/test_consequence_magnitude_enforcement.py",
+        "tests/integrations/provider_01/test_provider_01_live.py",
+    ),
+    # Base install and gateway image ship zero LLM/model packages; enforced by check_model_free_install.py.
+    "POAM-2026-168": (
+        "tests/test_kernel_assembly_model_free.py",
+        "tests/test_check_model_free_install.py",
+        "tests/test_import_boundaries.py",
+    ),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
