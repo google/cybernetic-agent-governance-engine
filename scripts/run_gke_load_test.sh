@@ -107,7 +107,16 @@ cleanup() {
   exit "${rc}"
 }
 trap cleanup EXIT
+# Every terminating signal the script can receive while it runs ends through
+# cleanup. A closed stdout (a `| tee` or `| head` reader gone, a dropped SSH
+# session) raises SIGPIPE on the script's next write. Untrapped, SIGPIPE kills
+# bash outright, the EXIT trap never runs, and the gateway stays pinned at
+# GATEWAY_REPLICAS; the closed-stdout test died that way under load on
+# 2026-11-01. Bash happens to run the EXIT trap for an untrapped SIGHUP, but
+# only through its own signal handling, so HUP is trapped explicitly as well.
+trap 'exit 129' HUP
 trap 'exit 130' INT
+trap 'exit 141' PIPE
 trap 'exit 143' TERM
 
 echo -e "${CYAN}🎛️  Pinning deployment/gateway to ${GATEWAY_REPLICAS} replica (was ${ORIGINAL_REPLICAS})...${NC}"
