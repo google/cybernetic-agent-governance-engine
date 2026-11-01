@@ -48,6 +48,24 @@ resource "google_memorystore_instance" "instance" {
     "maxmemory-policy" = "noeviction"
   }
 
+  # POAM-2026-156 item 3: persistence is always explicit, never the service's
+  # default, and AOF always names its fsync policy. It covers the loss of every
+  # node in the shard; a failover to a replica that missed a write is covered
+  # by the replica acknowledgement (WAIT), not by persistence. A change applies
+  # in place: nothing under persistence_config is ForceNew in the provider, and
+  # its update sends persistenceConfig in the PATCH update mask
+  # (resource_memorystore_instance.go, checked in v6.43.0 and v6.50.0).
+  persistence_config {
+    mode = var.persistence_mode
+
+    dynamic "aof_config" {
+      for_each = var.persistence_mode == "AOF" ? [var.aof_append_fsync] : []
+      content {
+        append_fsync = aof_config.value
+      }
+    }
+  }
+
   kms_key                     = var.enable_cmek ? var.kms_key_id : null
   deletion_protection_enabled = var.deletion_protection_enabled
 
@@ -61,5 +79,10 @@ resource "google_memorystore_instance" "instance" {
       desired_psc_auto_connections,
       desired_auto_created_endpoints,
     ]
+
+    precondition {
+      condition     = (var.persistence_mode == "AOF") == (var.aof_append_fsync != null)
+      error_message = "aof_append_fsync must be set when persistence_mode is AOF, and only then: AOF without it takes the service's default fsync, and a policy without AOF persists nothing."
+    }
   }
 }

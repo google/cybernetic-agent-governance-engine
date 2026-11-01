@@ -354,7 +354,7 @@ if cost > 0 and (h_next < required or h_next < 0):
 
 ### Atomic Redis Implementation
 
-The CBF state is shared across gateway replicas via Redis (GCP Memorystore on the GKE target, `noeviction` in every environment). To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
+The CBF state is shared across gateway replicas via Redis (GCP Memorystore on the GKE target, `noeviction` in every environment, AOF persistence with `append_fsync = ALWAYS` on the governance instance in every enforcing posture). To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
 
 **Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`_update_state_unsafe()`, and `rollback_state()` when the Lua rollback is unavailable):
 

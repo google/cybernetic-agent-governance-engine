@@ -38,6 +38,16 @@ def _tf_files() -> list[Path]:
     return [p for p in _INFRA.rglob("*.tf*") if ".terraform" not in p.parts]
 
 
+def _resource_starts(text: str, resource_type: str) -> list[int]:
+    """Offsets of real ``resource "<type>"`` blocks in ``text``.
+
+    Anchored to the start of a line, so a test file's ``mock_resource "<type>"``
+    (mock-provider defaults, not an instance) is not mistaken for one.
+    """
+    pattern = rf'^[ \t]*resource\s+"{resource_type}"'
+    return [m.start() for m in re.finditer(pattern, text, re.MULTILINE)]
+
+
 def test_redis_cache_module_hardcodes_noeviction() -> None:
     main_tf = (_INFRA / "modules/redis_cache/main.tf").read_text()
     assert "maxmemory-policy noeviction" in main_tf
@@ -62,8 +72,8 @@ def test_memorystore_instances_set_noeviction() -> None:
     for p in _tf_files():
         text = p.read_text()
         for resource_type in ("google_redis_instance", "google_memorystore_instance"):
-            for match in re.finditer(rf'resource\s+"{resource_type}"', text):
-                block = text[match.start() : match.start() + 4000]
+            for start in _resource_starts(text, resource_type):
+                block = text[start : start + 4000]
                 assert re.search(r'"maxmemory-policy"\s*=\s*"noeviction"', block), (
                     f"{p.relative_to(_REPO)}: {resource_type} without noeviction"
                 )
@@ -74,3 +84,14 @@ def test_guard_detects_evicting_policy() -> None:
     assert _EVICTING.search('maxmemory_policy = "allkeys-lru"')
     assert _EVICTING.search("maxmemory-policy volatile-lru")
     assert not _EVICTING.search("maxmemory-policy noeviction")
+
+
+def test_instance_scan_finds_resources_and_skips_test_mocks() -> None:
+    """The instance scan must see a real resource block, not a mock-provider default."""
+    text = (
+        'resource "google_memorystore_instance" "instance" {\n}\n'
+        'mock_provider "google" {\n'
+        '  mock_resource "google_memorystore_instance" {\n  }\n'
+        "}\n"
+    )
+    assert _resource_starts(text, "google_memorystore_instance") == [0]

@@ -49,3 +49,18 @@ output "replica_count" {
   value       = google_memorystore_instance.instance.replica_count
 }
 
+# POAM-2026-156 item 3: the persistence the instance is planned with, read back
+# from the resource rather than from the inputs, so a test of these outputs
+# checks what the provider is asked to configure.
+output "persistence_mode" {
+  description = "Persistence mode the instance is planned with: DISABLED or AOF"
+  value       = one(google_memorystore_instance.instance.persistence_config[*].mode)
+}
+
+output "aof_append_fsync" {
+  description = "AOF fsync policy the instance is planned with, or null unless persistence_mode is AOF"
+  value = one(flatten([
+    for p in google_memorystore_instance.instance.persistence_config :
+    p.mode == "AOF" ? [for a in p.aof_config : a.append_fsync] : []
+  ]))
+}

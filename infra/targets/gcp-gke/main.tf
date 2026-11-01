@@ -195,6 +195,22 @@ module "service_mesh" {
   depends_on = [module.gke]
 }
 
+# ─── Enforcing Posture ────────────────────────────────────────────────────────
+# The one predicate for the controls that hold whenever this deployment
+# enforces: the prod and staging tiers always, whatever the compliance flags
+# say, and dev only while a compliance flag is set. Staging enforces like prod
+# so that it stays a rehearsal of it. The predicate locks both retention-locked
+# buckets (below, POAM-2026-159) and gives the governance Valkey instance AOF
+# persistence with append_fsync = ALWAYS (POAM-2026-156 item 3).
+#
+#   tier      enforcing
+#   dev       only while a compliance flag is set
+#   staging   always
+#   prod      always
+locals {
+  enforcing_posture = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active
+}
+
 # ─── Retention Posture (§1.1, NIST AU-9 / AU-11, POAM-2026-159) ──────────────
 # The one source of the retention lock on both retention-locked buckets: the
 # Langfuse event-upload bucket and the evidence WORM bucket. The tier
@@ -210,7 +226,7 @@ module "service_mesh" {
 #   prod      220752000 s (2555 days)   always
 locals {
   retention_period_seconds = var.environment == "staging" ? 86400 : 220752000
-  retention_locked         = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active
+  retention_locked         = local.enforcing_posture
 }
 
 # ─── GCS Bucket for Langfuse Event Uploads ────────────────────────────────────
@@ -434,6 +450,13 @@ module "memorystore_governance" {
 
   deletion_protection_enabled = var.enable_deletion_protection
 
+  # POAM-2026-156 item 3: whenever the posture enforces, governance state (CBF
+  # commits, single-use markers, deferrals, the evidence stream) is persisted
+  # with AOF, and every write is saved to durable storage. Dev without a
+  # compliance flag keeps persistence off.
+  persistence_mode = local.enforcing_posture ? "AOF" : "DISABLED"
+  aof_append_fsync = local.enforcing_posture ? "ALWAYS" : null
+
   depends_on = [module.gke]
 }
 
@@ -462,6 +485,10 @@ module "memorystore_app" {
   kms_key_id  = local.cmek_key_id
 
   deletion_protection_enabled = var.enable_deletion_protection
+
+  # No governance state lives here (D6), so persistence stays off, stated
+  # explicitly rather than left to a default.
+  persistence_mode = "DISABLED"
 
   depends_on = [module.gke]
 }
@@ -1246,7 +1273,7 @@ resource "terraform_data" "poam_019_shared_key_guard" {
   }
 }
 
-# POAM-2026-126 (AC-3 / SC-7): an enforcing posture must name who may reach the
+# POAM-2026-126 (AC-3 / SC-7): a compliance posture must name who may reach the
 # control plane. With an empty list the cluster module emits no authorized-networks
 # block, so GKE leaves its allowlist off and the endpoint accepts any address; a /0
 # entry does the same explicitly. staging.tfvars shipped 0.0.0.0/0 under a header

@@ -24,6 +24,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   An unknown value fails startup. Unset keeps the behaviour from before the setting existed: a backend is required. No infrastructure profile changes here; choosing `none` per profile is a separate change.
 - **A pre-merge double-check of every required status check** (`feat(compliance)`, [`check_pr_mergeable.sh`](scripts/check_pr_mergeable.sh)). The script reads the required checks GitHub applies to the base branch, verifies each on the exact head SHA through the REST check-runs and commit-status APIs, fails closed on an empty rule set or any API error, and posts the result on the pull request.
+- **AOF persistence with `append_fsync = ALWAYS` on the governance Valkey instance in every enforcing posture (`POAM-2026-156` item 3)** (`feat(infra)`, [`memorystore_valkey`](infra/modules/memorystore_valkey/main.tf), [`main.tf`](infra/targets/gcp-gke/main.tf)).
+  - The module always renders `persistence_config` (`DISABLED`, or `AOF` with an explicit `append_fsync`) from two validated inputs, and refuses AOF without a policy and a policy without AOF.
+  - The gcp-gke target names its enforcing predicate once, `local.enforcing_posture` (prod or staging, or any compliance flag), which the retention lock now reads too. The governance instance plans `AOF` + `ALWAYS` under it and an explicit `DISABLED` otherwise; the app instance plans an explicit `DISABLED`.
+  - Applying it updates an existing instance in place: nothing under `persistence_config` is `ForceNew` in the google provider (checked at `v6.43.0` and `v6.50.0`), and Google notes the instance might need maintenance. [`governance_persistence.tftest.hcl`](infra/targets/gcp-gke/tests/governance_persistence.tftest.hcl) plans every committed profile. Not yet applied to staging; `POAM-2026-156` closes only on the measured latency delta.
+  - The `enable_apac_mas_compliance` description now states what the flag does: exactly what the other two compliance flags do (`POAM-2026-130`).
 
 ### Changed
 

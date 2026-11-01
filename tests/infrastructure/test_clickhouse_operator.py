@@ -136,14 +136,17 @@ def test_worm_bucket_configured_as_system_of_record() -> None:
     # - staging: short retention lock (86400s)
     # - prod: 7yr retention lock (220752000s = 2555 days)
     # - dev: unlocked unless a compliance flag is set
+    # The lock is the enforcing-posture predicate, which also gives the
+    # governance Valkey instance AOF persistence (POAM-2026-156).
     assert "retention_period_seconds = local.retention_period_seconds" in block
     assert "is_locked                = local.retention_locked" in block
     assert (
         'retention_period_seconds = var.environment == "staging" ? 86400 : 220752000'
         in gke_main
     )
+    assert "retention_locked         = local.enforcing_posture" in gke_main
     assert (
-        'retention_locked         = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active'
+        'enforcing_posture = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active'
         in gke_main
     )
 
