@@ -594,6 +594,68 @@ component-definition:
                 - href: "../../tests/test_actuator_01_receipt_verification.py"
                   rel: test
 
+            - uuid: "c6fc7ee5-7041-49cf-bdb2-815b6bdf97b4"
+              control-id: au-3
+              description: |
+                Evidence records name the governance decision they belong to by a
+                SHA-256 digest, with one meaning per field and one format checked
+                by every writer (POAM-2026-149). governance_decision_digest is the
+                routing seal's digest (seal_digest(seal) in
+                src/gateway/governance/routing_seal.py), recorded by the actuation
+                receipts, by a clearance-triggered WORKLOAD_QUARANTINE_RECEIPT and
+                by actuator_02's SANDBOX_OCSF_TELEMETRY; it equals the decision
+                trace's seal_ref, so a seal's issuance and its actuation join on
+                it. refusal_proof_hash is the proof_hash of the RefusalReceipt whose
+                DENY triggered a kernel quarantine, and equals that refusal's
+                GOVERNANCE_REFUSAL record. Every writer applies one validator,
+                require_sha256_hex() (src/gateway/governance/seams/digests.py): 64
+                lowercase hex characters matched in full, with an error that names
+                the field and never echoes the value. ExecutionClearance,
+                QuarantineDirective (exactly one of the two fields, and to_dict()
+                emits only that one) and actuator_02's OcsfEventModel (including
+                keys nested in metadata, with pydantic hide_input_in_errors) refuse
+                anything else when the record is built, so a bearer seal cannot
+                reach the WORM-archived stream under either name (SC-28, IA-5).
+                handle_deny() (src/gateway/governance/governor/verdicts.py) would
+                refuse the quarantine, never the DENY, if a refusal hash were
+                malformed. The stream oracle's digest_format rule
+                (proof/stream_invariants.py, copied byte for byte into
+                packages/cage-conformance) checks both fields at any depth of every
+                record of every event type, and its refusal_evidence rule requires
+                a refusal-triggered quarantine receipt to follow its refusal on a
+                log read from genesis. Verified by the DD-M mutation table in
+                docs/POAM.md.
+                Residual: actuator_03's signed directive body changed (a
+                kernel-triggered directive now carries refusal_proof_hash), and no
+                over-the-wire run against the partner's sandbox covers it, because
+                actuator_03 is at the specification/conformance stage with no live
+                partner sandbox endpoint and no target in the partner harness
+                (tracked in POAM-2026-166).
+              props:
+                - name: implementation-status
+                  value: partial
+                - name: control-origination
+                  value: system-specific
+                - name: poam-reference
+                  value: "POAM-2026-149"
+              links:
+                - href: "../../src/gateway/governance/seams/digests.py"
+                  rel: implementation
+                  text: "require_sha256_hex() shared decision-digest validator"
+                - href: "../../src/gateway/governance/seams/quarantine.py"
+                  rel: implementation
+                  text: "QuarantineDirective carries exactly one decision digest"
+                - href: "../../src/integrations/actuator_02/ocsf_ingestor.py"
+                  rel: implementation
+                  text: "OcsfEventModel decision-digest validation"
+                - href: "../../proof/stream_invariants.py"
+                  rel: implementation
+                  text: "digest_format stream oracle rule"
+                - href: "../../tests/test_decision_digest_format.py"
+                  rel: test
+                - href: "../../tests/test_seal_digest_evidence.py"
+                  rel: test
+
             - uuid: "61c43f8a-6693-4049-ae09-edd8b22f500a"
               control-id: sc-12
               description: |

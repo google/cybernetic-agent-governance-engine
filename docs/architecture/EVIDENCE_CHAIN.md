@@ -1,6 +1,6 @@
 # Evidence Stream & Cold Storage Chain
 
-**Last Updated:** 2026-10-24
+**Last Updated:** 2026-10-31
 
 ## 1. Architectural Role & Domain Boundary
 
@@ -206,6 +206,42 @@ because two states that differ only in redacted values get the same `stateHash`:
   fixed in POAM-2026-100 (§4.4) by requiring a contextual cue and country code;
 - some UUIDs whose groups are all digits match the card patterns (about 1.3e-4
   of uuid4 values).
+
+### 4.6 Decision Digests (`governance_decision_digest`, `refusal_proof_hash`)
+
+Two evidence fields name the governance decision a record belongs to, and
+each has one meaning (POAM-2026-149):
+
+- **`governance_decision_digest`** is
+  [`seal_digest(seal)`](../../src/gateway/governance/routing_seal.py), the
+  SHA-256 of the routing seal that authorised an action. The actuation
+  receipts carry it (from `ExecutionClearance`), and so do actuator_02's
+  `SANDBOX_OCSF_TELEMETRY` records and a `WORKLOAD_QUARANTINE_RECEIPT` for a
+  quarantine requested by a clearance. It is also the decision trace's
+  `seal_ref`, so a seal's issuance and its actuation join on it.
+- **`refusal_proof_hash`** is the `proof_hash` of the `RefusalReceipt` whose
+  DENY triggered a kernel quarantine. `WORKLOAD_QUARANTINE_RECEIPT` carries it,
+  and it equals the `receipt.proof_hash` of that refusal's `GOVERNANCE_REFUSAL`
+  record. A refusal has no seal, so it has no `governance_decision_digest`.
+
+Every writer checks both with one validator,
+[`require_sha256_hex()`](../../src/gateway/governance/seams/digests.py): 64
+lowercase hex characters, matched in full. Both seal formats contain `.`, so a
+seal in either field fails when the record is built, and the refusal names the
+field without echoing the value. A
+[`QuarantineDirective`](../../src/gateway/governance/seams/quarantine.py)
+carries exactly one of the two fields, and its `to_dict()`, which is also
+actuator_03's signed wire body, emits only that one. actuator_02 checks the
+fields nested anywhere in an OCSF event's `metadata` too.
+
+The stream oracle ([`stream_invariants.py`](../../proof/stream_invariants.py))
+checks the same format with its `digest_format` rule, for both fields, at any
+depth of every record, whatever its event type. On a log read from genesis,
+its `refusal_evidence` rule also requires each `WORKLOAD_QUARANTINE_RECEIPT`
+to follow the refusal its `refusal_proof_hash` names. A record that echoes
+structure a caller or partner supplied, such as a refusal's
+`attempted_params` or an actuator's findings, can still carry one of these
+keys with any value, and the oracle reports that record like any other.
 
 ## 5. Configuration Contracts & Runtime Matrix
 

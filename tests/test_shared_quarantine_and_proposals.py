@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis
@@ -54,7 +55,8 @@ def _make_directive(
         violation_codes=("CBF_BREACH",),
         issued_at=1700000000,
         correlation_id="corr-1",
-        governance_decision_digest="digest-1",
+        # A refusal-triggered directive names the refusal receipt it acts on.
+        refusal_proof_hash=hashlib.sha256(b"refusal-receipt-1").hexdigest(),
         nonce="nonce-1",
         ttl_seconds=ttl_seconds,
     )

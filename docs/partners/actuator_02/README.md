@@ -24,7 +24,7 @@ The CAGE integration bridges OpenShell with CAGE's **STERA Admissibility Engine*
 
 1. **Downstream Execution Adapter (`src/integrations/actuator_02/`)**:
    - `Actuator02Adapter`: Implements `ExecutionActuator`, brokering dynamic pre-credentials via `CredentialBroker` and dispatching signed actuation clearances (`CAGE_SANDBOX_ASSERTION_V1:`) over mTLS.
-   - `OcsfEvidenceIngestor`: Normalizes OCSF v1.1.0 audit telemetry (`class_uid in {1001, 1007, 4001}`) and commits records to CAGE's tamper-evident evidence stream (`controlId: "AU-2"` / `"AC-3"`).
+   - `OcsfEvidenceIngestor`: Normalizes OCSF v1.1.0 audit telemetry (`class_uid in {1001, 1007, 4001}`) and commits records to CAGE's tamper-evident evidence stream (`controlId: "AU-2"` / `"AC-3"`). From CAGE's next major release, each event's `governance_decision_digest` must be the SHA-256 of the routing seal that authorised the sandboxed action, as 64 lowercase hex characters, and so must any `governance_decision_digest` or `refusal_proof_hash` nested in `metadata`. CAGE refuses any other event. Before, any string of 8 to 128 characters passed.
    - `PolicyAdvisorBridge`: Bridges dynamic sandbox permission proposals to `SymbolicGovernor.validate_action(..., profile=Profile.DRY_RUN)` and parks dual-control (`required_quorum >= 2`) `DeferToken`s in `DeferQueue`.
 
 2. **Upstream Contribution Package (`contrib/openshell-provider-cage/`)**:

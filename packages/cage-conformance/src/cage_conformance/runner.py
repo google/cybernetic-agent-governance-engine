@@ -60,8 +60,9 @@ STREAM_RULES: dict[str, str] = {
     "cbf_barrier": "No CBF_COMMIT breaches the control barrier",
     "cbf_rollback": "A rollback restores exactly its ledgered cost, once",
     "settlement": "Settlements agree with rollback and actuation records",
-    "refusal_evidence": "Every refusal carries a proof hash, and expected refusals appear",
+    "refusal_evidence": "Every refusal carries a proof hash, expected refusals appear, and a refusal-triggered quarantine follows its refusal",
     "evidence_loss": "No evidence was dropped or failed to publish",
+    "digest_format": "Every governance_decision_digest and refusal_proof_hash, at any depth of any record, is lowercase SHA-256 hex",
 }
 
 INPUT_ASSERTION = "input"

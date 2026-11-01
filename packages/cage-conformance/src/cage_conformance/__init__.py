@@ -24,7 +24,7 @@ package, ``cryptography``, installed with the ``attest`` extra.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .attestation import (  # noqa: E402
     ATTESTED_NOTICE,

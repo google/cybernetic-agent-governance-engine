@@ -100,7 +100,8 @@ def _make_directive(
         violation_codes=("CBF_SAFETY_BARRIER_BREACH",),
         issued_at=1710000000,
         correlation_id="corr-q-001",
-        governance_decision_digest="digest-abc-123",
+        # A refusal-triggered directive names the refusal receipt it acts on.
+        refusal_proof_hash=hashlib.sha256(b"refusal-receipt-q-001").hexdigest(),
         nonce="nonce-q-001",
         ttl_seconds=900,
     )

@@ -423,7 +423,10 @@ async def dispatch_quarantine(
                 "reason": directive.reason.value,
                 "violation_codes": list(directive.violation_codes),
                 "correlation_id": directive.correlation_id,
-                "governance_decision_digest": directive.governance_decision_digest,
+                # The one digest the directive carries, under its own name:
+                # refusal_proof_hash for a refusal-triggered quarantine,
+                # governance_decision_digest for a clearance-triggered one.
+                **directive.decision_reference(),
                 "findings": list(receipt.findings),
                 "envelope_digest": receipt.envelope_digest,
                 "timestamp_utc": receipt.timestamp_utc

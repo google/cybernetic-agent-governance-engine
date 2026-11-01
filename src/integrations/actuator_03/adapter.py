@@ -503,7 +503,12 @@ class Actuator03Adapter:
         )
 
     async def actuate(self, clearance: ExecutionClearance) -> ActuationReceipt:
-        """ExecutionActuator bridge converting an ExecutionClearance into a QuarantineDirective."""
+        """ExecutionActuator bridge converting an ExecutionClearance into a QuarantineDirective.
+
+        The directive names the clearance's decision by the seal digest the
+        clearance carries (``governance_decision_digest``), never by a
+        refusal hash: a clearance is an ALLOW, so its decision has a seal.
+        """
         directive = QuarantineDirective(
             thread_id=clearance.thread_id,
             agent_svid=clearance.operator_urn,

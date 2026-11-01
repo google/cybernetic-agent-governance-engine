@@ -19,6 +19,7 @@ Per `AGENTS.md` (*Generic in Code, Specific in Prose*), the package path and run
 2. **OCSF Telemetry Hash-Chain Ingestion (`OcsfEvidenceIngestor`)**:
    - Ingests OpenShell **OCSF (Open Cybersecurity Schema Framework)** events (`class_uid` `1001` File System Activity, `1007` Process Activity, `4001` Network Activity).
    - Sanitizes credential/PII fields and commits `SANDBOX_OCSF_TELEMETRY` records (`controlId: "AU-2"` / `"AC-3"`) into [`EvidenceStreamSink`](../../gateway/governance/evidence/stream.py) bound to `governance_decision_digest`.
+   - `governance_decision_digest` must be the SHA-256 of the routing seal that authorised the sandboxed action (`seal_digest(seal)`): 64 lowercase hex characters, checked by the shared validator in [`digests.py`](../../gateway/governance/seams/digests.py). Before the next major release any string of 8 to 128 characters passed, so a seal itself could reach the WORM-archived stream. The same check applies to a `governance_decision_digest` or `refusal_proof_hash` key nested anywhere in `metadata`. A refused event raises a `ValidationError` whose message names the field and omits the value; its `errors()` and `json()` still include the input unless called with `include_input=False`.
 
 3. **Policy Advisor Dynamic Escalation Bridge (`PolicyAdvisorBridge`)**:
    - Evaluates OpenShell Policy Advisor (`SubmitPolicyAnalysis` / `ApproveDraftChunk`) permission proposals against [`SymbolicGovernor.validate_action()`](../../gateway/governance/governor/governor.py) (`Profile.DRY_RUN`).

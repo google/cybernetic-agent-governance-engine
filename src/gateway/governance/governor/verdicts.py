@@ -751,28 +751,51 @@ async def handle_deny(
         )
         thread_id = str(params.get("thread_id") or "default-thread")
         sandbox_id = str(params.get("sandbox_id") or "default-sandbox")
-        directive = QuarantineDirective(
-            thread_id=thread_id,
-            agent_svid=agent_svid,
-            sandbox_id=sandbox_id,
-            reason=trigger_reason,
-            violation_codes=tuple(v.code for v in ordered),
-            issued_at=int(_time.time()),
-            correlation_id=str(params.get("correlation_id") or uuid.uuid4()),
-            governance_decision_digest=receipt.proof_hash,
-            nonce=uuid.uuid4().hex,
-        )
-        active_q_redis = (
-            redis_client if redis_client is not None else get_quarantine_redis()
-        )
-        q_receipt = await dispatch_quarantine(directive, redis_client=active_q_redis)
-        span.set_attribute("cage.quarantine.rule_id", q_receipt.rule_id or "")
-        span.set_attribute("cage.quarantine.quarantined", q_receipt.quarantined)
-        quarantine_meta = {
-            "quarantine_rule_id": q_receipt.rule_id,
-            "quarantined": q_receipt.quarantined,
-            "quarantine_enforcement_plane": q_receipt.enforcement_plane,
-        }
+        try:
+            # A DENY has no seal: the directive names the refusal receipt
+            # that triggered it (POAM-2026-149). build_refusal_receipt()
+            # never supplies proof_hash, so RefusalReceipt.__post_init__
+            # computes it as a SHA-256 hex digest and the directive accepts
+            # it. Should that ever change, the quarantine is refused, never
+            # the DENY: no directive is dispatched or archived, and the
+            # GovernanceError below is still raised.
+            directive = QuarantineDirective(
+                thread_id=thread_id,
+                agent_svid=agent_svid,
+                sandbox_id=sandbox_id,
+                reason=trigger_reason,
+                violation_codes=tuple(v.code for v in ordered),
+                issued_at=int(_time.time()),
+                correlation_id=str(params.get("correlation_id") or uuid.uuid4()),
+                refusal_proof_hash=receipt.proof_hash,
+                nonce=uuid.uuid4().hex,
+            )
+        except ValueError as exc:
+            logger.error(
+                "Quarantine refused for action=%s: the refusal receipt's proof_hash "
+                "is not a SHA-256 digest (%s)",
+                action,
+                exc,
+            )
+            span.set_attribute("cage.quarantine.quarantined", False)
+            quarantine_meta = {
+                "quarantined": False,
+                "quarantine_error": "QUARANTINE_DIRECTIVE_INVALID",
+            }
+        else:
+            active_q_redis = (
+                redis_client if redis_client is not None else get_quarantine_redis()
+            )
+            q_receipt = await dispatch_quarantine(
+                directive, redis_client=active_q_redis
+            )
+            span.set_attribute("cage.quarantine.rule_id", q_receipt.rule_id or "")
+            span.set_attribute("cage.quarantine.quarantined", q_receipt.quarantined)
+            quarantine_meta = {
+                "quarantine_rule_id": q_receipt.rule_id,
+                "quarantined": q_receipt.quarantined,
+                "quarantine_enforcement_plane": q_receipt.enforcement_plane,
+            }
 
     raise GovernanceError(
         _error_message(ordered[0]),

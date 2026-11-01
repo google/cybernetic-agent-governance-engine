@@ -30,13 +30,14 @@ Architectural Invariant:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-#: The only form ``ExecutionClearance.governance_decision_digest`` may take.
-_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+from src.gateway.governance.seams.digests import (
+    GOVERNANCE_DECISION_DIGEST,
+    require_sha256_hex,
+)
 
 
 class ActuatorCapability(str, Enum):
@@ -145,13 +146,9 @@ class ExecutionClearance:
         # seal placed here would reach a WORM archive that cannot be redacted
         # (POAM-2026-149). Both domains once did exactly that; the contract now
         # refuses it for every domain. The seal itself travels in routing_seal.
-        digest = self.governance_decision_digest
-        if not isinstance(digest, str) or not _SHA256_HEX.fullmatch(digest):
-            raise ValueError(
-                "governance_decision_digest must be a lowercase SHA-256 hex digest "
-                "(routing_seal.seal_digest(seal)); a seal or any other bearer value "
-                "must not enter evidence"
-            )
+        require_sha256_hex(
+            self.governance_decision_digest, field=GOVERNANCE_DECISION_DIGEST
+        )
 
     def to_dict(self) -> dict:
         """Convert clearance to dictionary, preserving all v3.0 routing fields."""
