@@ -776,6 +776,11 @@ jobs:
           python-version-file: "pyproject.toml"
       - name: Install Dependencies
         run: uv sync --extra gateway --group dev
+      # Before the next step creates .env: a hermetic test session refuses to
+      # start while a .env file can reach it (tests/fixtures/dotenv_guard.py).
+      - name: Run Quickstart Bootstrap Contract Suite
+        run: |
+          uv run pytest tests/test_quickstart_bootstrap_contract.py -v -p no:langsmith -p no:langsmith_plugin --no-cov
       - name: Validate Docker Compose config & boot stack (finance domain)
         run: |
           cp .env.example .env
@@ -975,9 +980,6 @@ jobs:
       - name: Run Quickstart Step 4 (examples/governance_demo.py --no-pause)
         run: |
           uv run python examples/governance_demo.py --no-pause
-      - name: Run Quickstart Bootstrap Contract Suite
-        run: |
-          uv run pytest tests/test_quickstart_bootstrap_contract.py -v -p no:langsmith -p no:langsmith_plugin --no-cov
       - name: Tear down Docker Compose
         if: always()
         run: docker compose down -v || true

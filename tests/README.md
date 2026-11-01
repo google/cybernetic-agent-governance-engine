@@ -186,11 +186,14 @@ valid selection markers. Do not work around it by excluding the file from collec
 
 ## Environment Variables
 
-All variables are read from the shell environment or a `.env` file at the project root.
-Copy [`.env.example`](../.env.example) to `.env` and fill in your values.
-
-`conftest.py` loads `.env` automatically at the start of every test run using
-`python-dotenv` with `override=False`, meaning **shell / CI env vars always win**.
+Tests read variables from the process environment only. No `.env` file is
+loaded, and a hermetic session (no live opt-in flag) refuses to start while a
+`.env` file can reach it: litellm loads the first `.env` above its install
+directory when it is imported, so the file would change results partway through
+the run ([`dotenv_guard.py`](fixtures/dotenv_guard.py)). For a live run, export
+the variables or pass a file explicitly:
+`uv run --env-file .env pytest tests/ --run-integration`.
+[`.env.example`](../.env.example) lists the variable names.
 
 ### Service URLs
 
