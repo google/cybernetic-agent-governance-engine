@@ -68,7 +68,9 @@ COPY pyproject.toml uv.lock ./
 #   boto3 (S3-compat fallback for non-GCP targets, activated via STORAGE_BACKEND=s3),
 #   and PyYAML (?format=yaml support)
 # --extra langfuse pulls the langfuse SDK
-RUN uv sync --frozen --no-dev --no-install-project --no-build --extra compliance --extra langfuse
+# --extra inference pulls the OpenAI-compatible client for the remediation
+#   advisory and AARM narratives (no longer in the base install, POAM-2026-168)
+RUN uv sync --frozen --no-dev --no-install-project --no-build --extra compliance --extra langfuse --extra inference
 
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime

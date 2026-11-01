@@ -59,11 +59,17 @@ ENV VIRTUAL_ENV=/app/.venv \
 # Install locked dependencies exactly as resolved by uv lock.
 # --frozen enforces the lockfile; --no-dev skips test/lint extras.
 # --no-install-project installs only deps before the source tree is copied.
-# Install both gateway AND advisor extras (gateway imports from governed_financial_advisor)
+# No model client, runtime or LLM framework is installed (POAM-2026-168);
+# scripts/check_model_free_install.py checks the closure of these extras.
+# The advisor extra is not installed: nothing in this image imports
+# src/governed_financial_advisor (an earlier comment here said the gateway did).
+# The opt-in nemo (CAGE_NEMO_ENABLED) and inference
+# (CAGE_CONSENSUS_CRITICS_ENABLED) extras are not installed either; enabling
+# either switch needs an image built with that extra.
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
 # --extra langfuse: every gateway manifest selects CAGE_TELEMETRY_PROVIDER=remote,
 #   whose adapter (src/integrations/telemetry_langfuse) imports langfuse at startup.
-RUN uv sync --frozen --no-dev --extra gateway --extra advisor --extra compliance --extra langfuse --no-install-project
+RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra langfuse --no-install-project
 
 # Download spaCy large model via direct wheel URL (avoids CDN redirect failures).
 # Target the venv explicitly so the package lands in /app/.venv.
@@ -77,7 +83,6 @@ COPY src/gateway /app/src/gateway
 COPY src/cage_finance /app/src/cage_finance
 COPY src/cage_healthcare /app/src/cage_healthcare
 COPY src/cage_physical_ai /app/src/cage_physical_ai
-COPY src/governed_financial_advisor /app/src/governed_financial_advisor
 COPY src/compliance_bridge /app/src/compliance_bridge
 COPY src/integrations /app/src/integrations
 COPY config /app/config

@@ -50,11 +50,13 @@ RUN uv venv
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Install gateway extras which include nemoguardrails, grpcio, presidio, spaCy.
+# Install gateway extras (grpcio, presidio, spaCy) and the nemo extra
+# (nemoguardrails and the litellm client it uses; POAM-2026-168 moved both out
+# of the gateway extra).
 # --no-dev skips test/lint extras; --no-install-project avoids the project
 # package install step (source is imported directly via PYTHONPATH=/app).
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
-RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra advisor --no-install-project
+RUN uv sync --frozen --no-dev --extra gateway --extra nemo --extra compliance --extra advisor --no-install-project
 
 # Copy NeMo Guardrails source and config
 COPY src/cybernetic_governance_engine /app/src/cybernetic_governance_engine

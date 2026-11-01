@@ -117,6 +117,8 @@ lint:
 	@uv run mypy src/
 	@echo "==> Validating dependency lockfile..."
 	@uv lock --check
+	@echo "==> Checking the base install and gateway image are model-free..."
+	@uv run python scripts/check_model_free_install.py
 	@echo "✅ Lint checks passed."
 
 ## Run security scanning (lockfile check, Bandit SAST, pip-audit CVEs, Semgrep)

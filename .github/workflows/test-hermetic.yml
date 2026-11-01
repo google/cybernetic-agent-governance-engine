@@ -76,7 +76,13 @@ jobs:
           if pathlib.Path(sys.prefix).resolve() != venv:
               sys.exit(f"FAIL: running in {sys.prefix}, not the locked environment {venv}")
 
-          ml = ["torch", "sentence_transformers", "transformers", "tensorflow", "jax"]
+          # ML frameworks, and (POAM-2026-168) the LLM clients and frameworks
+          # this list did not check while the base install carried two of them.
+          ml = [
+              "torch", "sentence_transformers", "transformers", "tensorflow", "jax",
+              "openai", "litellm", "anthropic", "nemoguardrails", "langchain",
+              "langchain_core", "langgraph", "tiktoken", "tokenizers", "huggingface_hub",
+          ]
           installed = [name for name in ml if importlib.util.find_spec(name)]
           if installed:
               sys.exit(f"FAIL: ML packages installed in hermetic mode: {installed}")
