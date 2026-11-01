@@ -91,3 +91,29 @@ variable "deletion_protection_enabled" {
   type        = bool
   default     = false
 }
+
+# POAM-2026-156 item 3: persistence is always rendered, never left to the
+# provider's or the service's default. RDB is not offered: its snapshots are an
+# hour or more apart, so a restore loses writes callers were told succeeded.
+variable "persistence_mode" {
+  description = "Persistence mode: DISABLED or AOF. Always rendered as persistence_config.mode."
+  type        = string
+  default     = "DISABLED"
+  nullable    = false
+
+  validation {
+    condition     = contains(["DISABLED", "AOF"], var.persistence_mode)
+    error_message = "persistence_mode must be DISABLED or AOF."
+  }
+}
+
+variable "aof_append_fsync" {
+  description = "AOF fsync policy: NEVER, EVERY_SEC or ALWAYS (ALWAYS saves every write to durable storage). Required when persistence_mode is AOF, and must be null otherwise."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.aof_append_fsync == null ? true : contains(["NEVER", "EVERY_SEC", "ALWAYS"], var.aof_append_fsync)
+    error_message = "aof_append_fsync must be NEVER, EVERY_SEC or ALWAYS (the provider's spelling, not gcloud's no, everysec or always)."
+  }
+}

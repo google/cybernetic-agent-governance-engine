@@ -259,7 +259,7 @@ CAGE's offline evaluation, 3P skill certification, and post-training alignment s
 | Store                   | Technology                     | Purpose & Invariants                                                       |
 | ----------------------- | ------------------------------ | -------------------------------------------------------------------------- |
 | **State / Checkpoints** | Redis (`AsyncRedisSaver`)      | LangGraph graph checkpoints; HITL interrupt state persistence. On GKE: app Memorystore for Valkey instance (`module.memorystore_app`, shared with Langfuse) |
-| **CBF Cash Balance**    | Redis (Lua script check+commit)| Atomic Control Barrier Function enforcement (`atomic_verify_and_commit.lua`). On GKE: dedicated governance Memorystore for Valkey instance (`module.memorystore_governance`, IAM auth, `noeviction`) |
+| **CBF Cash Balance**    | Redis (Lua script check+commit)| Atomic Control Barrier Function enforcement (`atomic_verify_and_commit.lua`). On GKE: dedicated governance Memorystore for Valkey instance (`module.memorystore_governance`, IAM auth, `noeviction`, AOF persistence with `append_fsync = ALWAYS` in enforcing postures) |
 | **Compliance Cache**    | `TTLCache` (in-memory)         | 5-minute TTL per compliance control metric; reduces OPA round-trips        |
 | **Audit Logs**          | Langfuse (ClickHouse + GCS blob storage + Cloud SQL PostgreSQL) | OTLP ingestion; dual-project telemetry. On GKE, Langfuse metadata lives in Cloud SQL PostgreSQL 15 reached through the Cloud SQL Auth Proxy with IAM database auth |
 | **Evidence Query Plane** | ClickHouse ([`clickhouse_operator`](../../infra/modules/clickhouse_operator)) | Analytical mirror of evidence; the GCS WORM bucket is the system of record |

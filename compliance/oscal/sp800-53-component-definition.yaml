@@ -1692,6 +1692,52 @@ component-definition:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-8"
                   rel: reference
 
+            - uuid: "34dedd4e-aa78-4976-a329-72da887391f7"
+              control-id: sc-24
+              description: |
+                Fail in known state for the governance state held on the governance
+                Memorystore for Valkey instance (module.memorystore_governance in
+                infra/targets/gcp-gke/main.tf): CBF commits, single-use consumption
+                markers, deferrals, and evidence-stream records not yet in custody.
+                Whenever the posture enforces (local.enforcing_posture: the prod and
+                staging tiers always, dev only under a compliance flag), the instance
+                runs AOF persistence with append_fsync = ALWAYS, which saves every write
+                to durable storage. infra/modules/memorystore_valkey always renders
+                persistence_config (DISABLED, or AOF with an explicit fsync policy), so
+                persistence is never left to a provider or service default, and it
+                refuses AOF without a policy and a policy without AOF. The app instance
+                holds no governance state and plans an explicit DISABLED.
+
+                Scope: persistence recovers from the loss of every node in the shard.
+                A failover to a replica that missed a write is covered by the replica
+                acknowledgement (WAIT) that CBF commits use, and for single-use markers
+                by POAM-2026-156 item 1, not by persistence. Changing persistence_config
+                updates the instance in place (nothing under it is ForceNew in the
+                google provider), so applying it keeps the state the instance holds.
+
+                Status remains partial until the AOF setting is applied to staging and
+                the measured p50/p99 latency delta for marker consumption and CBF commits
+                is recorded (POAM-2026-156, closure criterion 3).
+              props:
+                - name: implementation-status
+                  value: partial
+                - name: control-origination
+                  value: hybrid
+                - name: poam-reference
+                  value: "POAM-2026-156"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-24"
+                  rel: reference
+                - href: "../../infra/modules/memorystore_valkey/main.tf"
+                  rel: implementation
+                  text: "Explicit persistence_config from validated inputs"
+                - href: "../../infra/targets/gcp-gke/main.tf"
+                  rel: configuration
+                  text: "local.enforcing_posture selects AOF + ALWAYS on the governance instance"
+                - href: "../../infra/targets/gcp-gke/tests/governance_persistence.tftest.hcl"
+                  rel: test
+                  text: "Mock-provider plan of every committed profile and the module's refusals"
+
   back-matter:
     resources:
       # -----------------------------------------------------------------------
