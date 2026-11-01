@@ -19,9 +19,12 @@ Environment defaults
 --------------------
 Variables are resolved in this priority order (highest → lowest):
 
-  1. Shell environment (``export VAR=...`` or CI secrets)
-  2. ``.env`` file at the project root (loaded with override=False)
-  3. Hard-coded defaults set in ``pytest_configure`` below
+  1. Shell environment (``export VAR=...``, CI secrets, or
+     ``uv run --env-file <file>``)
+  2. Hard-coded defaults set in ``pytest_configure`` below
+
+No ``.env`` file is read. A hermetic session refuses to start while one can
+reach it, because litellm loads it at import (``tests/fixtures/dotenv_guard.py``).
 
 Integration-marked tests are **skipped by default**.
 Pass ``--run-integration`` on the CLI to include them:
@@ -37,26 +40,6 @@ Integration tests require live Kubernetes services.  Start them with:
 
 import logging
 import os
-import pathlib
-
-# ── Load .env KMS key before any governor is built ───────────────────────────
-# Importing the governor is side-effect free; KMS readiness is checked by the
-# startup posture check (governor/posture.py) when a governor is bootstrapped.
-# Integration runs against staging/production still need KMS_GOVERNANCE_KEY in
-# the environment before that happens, so load it from .env first.
-_env_file = pathlib.Path(__file__).parent.parent / ".env"
-if _env_file.exists() and not os.environ.get("KMS_GOVERNANCE_KEY"):
-    try:
-        for _line in _env_file.read_text().splitlines():
-            if _line.startswith("KMS_GOVERNANCE_KEY=") and not _line.strip().startswith(
-                "#"
-            ):
-                _kms_key = _line.split("=", 1)[1].strip()
-                if _kms_key:
-                    os.environ["KMS_GOVERNANCE_KEY"] = _kms_key
-                    break
-    except Exception:
-        pass  # Best effort - will fail later if actually needed
 
 # Set test environment defaults BEFORE any application imports
 os.environ.setdefault("CAGE_ENV", "test")
@@ -84,6 +67,12 @@ os.environ.setdefault(
 import pytest
 
 from tests.fixtures.deployment_region import REGION_MARKERS
+from tests.fixtures.dotenv_guard import (
+    LIVE_RUN_OPTIONS,
+    reachable_dotenv_files,
+    refusal,
+    search_starts,
+)
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
 os.environ.setdefault("LANGSMITH_TRACING", "false")
@@ -91,19 +80,10 @@ os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("EVIDENCE_STREAM_ENABLED", "true")
 
-# ── Load .env early (before any test module is imported) ─────────────────────
-# override=False means existing shell env vars always win.
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv(override=False)
-except ImportError:
-    pass  # python-dotenv not installed — rely on shell env only
-
 # ── KMS key requirement for staging/production integration tests ─────────────
-# If CAGE_ENV is staging/production and KMS_GOVERNANCE_KEY is not set, load it
-# from .env or fail with a clear message, rather than failing later in the
-# startup posture check / KMS signer during integration tests.
+# If CAGE_ENV is staging/production and KMS_GOVERNANCE_KEY is not set, fail now
+# with a clear message, rather than later in the startup posture check / KMS
+# signer during integration tests.
 if os.environ.get("CAGE_ENV", "test").lower() not in (
     "development",
     "test",
@@ -111,28 +91,11 @@ if os.environ.get("CAGE_ENV", "test").lower() not in (
     "ci",
 ):
     if not os.environ.get("KMS_GOVERNANCE_KEY"):
-        # Try to load from .env file explicitly
-        try:
-            import pathlib
-
-            env_file = pathlib.Path(__file__).parent.parent / ".env"
-            if env_file.exists():
-                for line in env_file.read_text().splitlines():
-                    if line.startswith("KMS_GOVERNANCE_KEY="):
-                        kms_key = line.split("=", 1)[1].strip()
-                        if kms_key and not kms_key.startswith("#"):
-                            os.environ["KMS_GOVERNANCE_KEY"] = kms_key
-                            break
-        except Exception:
-            pass  # Best effort
-
-        # If still not set, fail now with a clear configuration error
-        if not os.environ.get("KMS_GOVERNANCE_KEY"):
-            raise RuntimeError(
-                f"[TEST CONFIG] CAGE_ENV={os.environ.get('CAGE_ENV')} requires KMS_GOVERNANCE_KEY. "
-                "Either set it in your shell environment or ensure it's in .env file. "
-                "For local testing without KMS, set CAGE_ENV=test."
-            )
+        raise RuntimeError(
+            f"[TEST CONFIG] CAGE_ENV={os.environ.get('CAGE_ENV')} requires KMS_GOVERNANCE_KEY. "
+            "Export it, or pass it with `uv run --env-file <file>`; tests never read .env. "
+            "For local testing without KMS, set CAGE_ENV=test."
+        )
 
 # Sanitize cluster-internal Kubernetes DNS URLs that cannot be resolved outside GKE
 _cluster_internal_replacements = {
@@ -213,8 +176,8 @@ for _ns in _OTLP_LOGGER_NAMESPACES:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Set environment variable defaults that tests expect."""
-    # Ensure auth tokens are loaded from .env for integration tests
-    _ensure_env_loaded()
+    # Before anything else: no .env file may reach a hermetic session.
+    _refuse_reachable_dotenv(config)
 
     # One region for the whole session: US_FED for hermetic runs, the
     # deployment's ConfigMap value for live runs (fails closed on mismatch).
@@ -246,7 +209,7 @@ def pytest_configure(config: pytest.Config) -> None:
     # compliance-bridge port-forward runs on :3002 (Langfuse occupies :3001)
     _setdefault("COMPLIANCE_BRIDGE_URL", "http://localhost:3002")
     # Integration tests: force OPA_URL to the locally port-forwarded instance.
-    # The .env file may contain the cluster-internal address (http://opa:8181)
+    # The shell may export the cluster-internal address (http://opa:8181),
     # which is unreachable from the developer workstation — always override to localhost.
     # OPA_URL is a base URL; the decision package comes from the active
     # domain's DomainConfig.opa_package.
@@ -302,23 +265,14 @@ def pytest_configure(config: pytest.Config) -> None:
             pass
 
 
-def _ensure_env_loaded() -> None:
-    """Ensure .env file is loaded for auth tokens and other config.
-
-    This is called early in pytest_configure to ensure worker processes
-    have access to CAGE_API_KEY, COMPLIANCE_BRIDGE_INTERNAL_TOKEN, etc.
-    """
-    if not os.environ.get("CAGE_API_KEY") or not os.environ.get(
-        "COMPLIANCE_BRIDGE_INTERNAL_TOKEN"
-    ):
-        try:
-            from dotenv import load_dotenv
-
-            _env_file = pathlib.Path(__file__).parent.parent / ".env"
-            if _env_file.exists():
-                load_dotenv(_env_file, override=False)
-        except Exception:
-            pass  # Best effort
+def _refuse_reachable_dotenv(config: pytest.Config) -> None:
+    """Refuse a hermetic session that a ``.env`` file can reach (``dotenv_guard``)."""
+    live_run = any(
+        config.getoption(option, default=False) for option in LIVE_RUN_OPTIONS
+    )
+    reason = refusal(reachable_dotenv_files(search_starts()), live_run=live_run)
+    if reason is not None:
+        raise pytest.UsageError(reason)
 
 
 def _setdefault(key: str, value: str) -> None:

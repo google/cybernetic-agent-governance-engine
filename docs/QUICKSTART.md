@@ -144,7 +144,7 @@ uv sync --all-groups --all-extras
 uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
 ```
 
-> **Run the hermetic suite without the §1 `.env`.** `tests/conftest.py` loads `.env` from the repository root. The template's runtime values (for example `CAGE_ENV=dev`, `CAGE_KMS_PROVIDER=ed25519`, and placeholder provider API keys) then replace the hermetic defaults the tests expect, and tests asserting unset defaults fail. Move `.env` aside while the tests run (`mv .env .env.local-stack`) and restore it afterwards.
+> **The hermetic suite refuses to start beside the §1 `.env`.** Tests take configuration from the process environment only. A `.env` that any code loads would change their results without appearing in the command, and litellm loads one when it is imported. Move `.env` aside while the tests run (`mv .env .env.local-stack`) and restore it afterwards. Live runs (`--run-integration` and the other opt-in flags) are exempt and take their values from the shell, or from `uv run --env-file .env`.
 
 > **Local Development Postures:** For details on developing with the offline hermetic test loop vs. the full containerized LangGraph SDK runtime with host Ollama, see [`docs/guides/LOCAL_DEVELOPMENT_POSTURES.md`](guides/LOCAL_DEVELOPMENT_POSTURES.md).
 
