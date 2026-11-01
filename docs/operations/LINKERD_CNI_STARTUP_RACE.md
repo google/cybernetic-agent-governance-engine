@@ -2,7 +2,7 @@
 
 **Status:** Reproduced twice on staging on 2026-11-01 by having the cluster autoscaler add a node. The three October incidents were the same race, started by GKE node-pool upgrades instead of a scale-up, as their logs show ([below](#the-october-incidents)). Auto-repair and node reboots were not tested.
 **Runbook entry:** [Linkerd Network Validator CrashLoopBackOff](DEPLOYMENT_RULES.md#linkerd-network-validator-crashloopbackoff-mitigation-vs-root-cause)
-**Mitigation:** the `linkerd2-cni` repair controller and the repair-scope admission policy in [`infra/modules/service_mesh`](../../infra/modules/service_mesh/main.tf)
+**Mitigation:** the `linkerd2-cni` repair controller and the repair-scope admission policy in [`infra/modules/service_mesh`](../../infra/modules/service_mesh/main.tf), with the module's proxy-required admission policy keeping repaired governance pods on the mesh
 
 ## Summary
 
@@ -108,6 +108,8 @@ Cloud Logging keeps node and container logs for 30 days and the Kubernetes audit
 
 Every meshed pod that moved to the new node was stuck: the governance-stack workloads, and Linkerd's destination, identity and proxy-injector controllers. Each failed under the same name until it was deleted.
 
+The stuck proxy injector mattered beyond its own pod. Its admission webhook fails open, so a pod created while no injector replica is ready is admitted without the proxy. During the 10-29 recovery, the ReplicaSet controller recreated a gateway pod 1 second after the stuck one was deleted and 13 seconds before the stuck injector was deleted. The Kubernetes audit log records that pod admitted with only the `gateway` container. It ran without the proxy until it was deleted two minutes later, before it passed its startup probe. The `cage-mesh-proxy-required` admission policy now refuses such pods in governance-stack (POAM-2026-167 in [`POAM.md`](../POAM.md)).
+
 Containerd logs a pod sandbox once it has been set up, after the network plugins have run (`RunPodSandbox ... returns sandbox id`). On 10-27, all 12 meshed sandboxes were set up 28 to 40 seconds before `linkerd2-cni` wrote its entry. On 10-24, 11 were set up before it; the twelfth, the proxy injector's, was set up 0.29 seconds after it. On 10-07, 9 were set up before it, and Linkerd's destination and identity controllers 45 and 329 milliseconds after it. Those three failed like the rest: their network setup had started from the configuration without the entry. `linkerd2-cni` wrote its entry 30 seconds after the node turned Ready on 10-07 and 10-24, as in Run 1, and 54 seconds after on 10-27.
 
 **A fourth upgrade did not trigger it.** GKE upgraded the same pool in the same way on 2026-10-15, from 04:09:37 to 04:16:00. That time, `linkerd2-cni` wrote its entry 23 seconds after the new node turned Ready, and the meshed pods' sandboxes were set up 11 to 17 seconds after that, so none failed. A margin of seconds decides whether an upgrade causes an incident.
@@ -122,3 +124,4 @@ Four more came later: one on a node that joined just after the 10-27 control-pla
 - **Surge upgrades were matched against logs, not repeated.** The October incidents show the race under GKE surge upgrades, but the repair controller and the admission policy have been tested only after scale-ups.
 - **Only one control-plane upgrade was examined for conflist rewrites.** A sandbox set up in the gap before `linkerd2-cni` restores its entry would miss the chain like any other victim, and the repair controller would handle it the same way.
 - **The repair controller mitigates; it does not prevent.** Holding meshed pods off a node until `linkerd2-cni` is ready would need a startup taint and something that removes it once the plugin is installed, and the `linkerd2-cni` chart CAGE pins (`2026.9.3`) ships nothing that does. Running the proxy's own init container instead needs `NET_ADMIN`, which the restricted Pod Security level CAGE enforces forbids ([`pod-security-admission.yaml`](../../deployment/k8s/pod-security-admission.yaml)). Each victim therefore still loses up to one crash-loop back-off interval before it is repaired.
+- **Repair follows the validators' order.** In each October incident, the application pods' validators failed 3 to 17 seconds before the injector's. So the controller recreates application pods while the injector is still stuck. In governance-stack, the admission policy refuses those replacements until the injector is Ready, and their controllers retry. In a namespace without the policy, they would run without the proxy.
