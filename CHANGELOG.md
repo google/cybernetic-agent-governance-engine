@@ -77,6 +77,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`tlc-model-check` runs on every pull request and every push to `main`; POAM-2026-090 and POAM-2026-091 now say TLC was verified locally (`POAM-2026-090`, `POAM-2026-091`)** (`ci(ci)`, [`tlc-model-check.yml`](.github/workflows/tlc-model-check.yml), [`POAM.md`](docs/POAM.md), [`FORMAL_VERIFICATION.md`](docs/architecture/FORMAL_VERIFICATION.md), [`proof/README.md`](proof/README.md)).
+  - The workflow had only a `workflow_dispatch` trigger from 2026-10-02 and first ran on 2026-11-01 (run `41362761903`). That run reproduced every pinned count, and every negative control failed as pinned. Both closures had cited the workflow as if it ran.
+  - Each POAM row now records local verification on its original closure date and the first CI run. The closure dates are unchanged.
+  - `FORMAL_VERIFICATION.md` Step 12 cited `12,184` states for the N=2 suite. That is the pre-#351 model's N=4 pin. The figure is now 8,171 distinct states (1,811 + 3,972 + 2,388) from that run, and the sentence no longer credits TLC with SP-4, which `verify_tla.py` does not parse.
+  - [`tests/test_workflow_pr_triggers.py`](tests/test_workflow_pr_triggers.py) fails if either trigger is removed.
 - **No LLM client sits in the kernel, the base install or the gateway image (`POAM-2026-168`)** (`fix(governance)!`, [`consensus/engine.py`](src/gateway/governance/consensus/engine.py), [`seams/critic.py`](src/gateway/governance/seams/critic.py), [`critic_backend_factory.py`](src/gateway/governance/critic_backend_factory.py), [`inference_client/`](src/integrations/inference_client/__init__.py), [`check_model_free_install.py`](scripts/check_model_free_install.py)).
   - Before this fix, `assemble_governor()` loaded the openai SDK for any plugin contributing consensus (finance does). It did so even under `CAGE_INFERENCE_BACKEND=none`, where consensus can only refuse. The base install resolved five model packages and the gateway image fourteen.
   - The consensus gate keeps its deterministic half in the kernel: trigger, context selection, prompt rendering, vote parsing and aggregation. The model call crosses the new `CriticBackend` seam.

@@ -18,10 +18,16 @@
 # violated invariants pinned in proof/tla_pins.py (POAM-2026-091). The BFS
 # and the cfg/spec parity run on every PR in pytest-logic
 # (tests/test_distributed_cbf_proof.py, tests/test_tla_specs_proof.py); this
-# job adds the TLC runs.
+# job adds the TLC runs, on every PR and every push to main.
 name: tlc-model-check
 
 on:
+  push:
+    branches:
+      # PR validation runs via the pull_request event. Pushing to a
+      # feature branch does not double-trigger this workflow.
+      - main
+  pull_request:
   workflow_dispatch:
 
 permissions:

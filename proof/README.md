@@ -218,7 +218,7 @@ java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/Distribut
    - ✅ Temporal logic (liveness, fairness, eventually properties)
    - ✅ Mature distributed systems verification (Raft, Paxos, etc.)
    - ✅ Expressive language for concurrency and non-determinism
-   - ❌ Needs Java and `tla2tools.jar` (manual `tlc-model-check` workflow, not per PR)
+   - ❌ Needs Java and `tla2tools.jar` locally (CI fetches a sha256-pinned jar in the `tlc-model-check` workflow on every PR)
    - ❌ Requires TLA+ expertise to interpret traces
 
 ### Proof/Implementation Divergence (ARCH-1)
@@ -259,7 +259,7 @@ Regression tests pin the governance model counts — gated 34 / ungated 17 / ski
 
 ### TLA+ (TLC)
 
-TLC runs in the manually dispatched [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow and locally via `make verify-tla`; it is not a per-PR gate because it needs Java and the jar. The PR gate still catches drift: `tests/test_distributed_cbf_proof.py` and `tests/test_tla_specs_proof.py` fail if a cfg names a constant or invariant the spec does not define or a `proof/*.cfg` is not pinned, and run TLC themselves when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
+TLC runs in the [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow on every pull request and every push to `main`, and locally via `make verify-tla`. pytest-logic also catches drift without Java: `tests/test_distributed_cbf_proof.py` and `tests/test_tla_specs_proof.py` fail if a cfg names a constant or invariant the spec does not define or a `proof/*.cfg` is not pinned, and run TLC themselves when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
 
 ## References
 
