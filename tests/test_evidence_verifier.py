@@ -458,6 +458,272 @@ class TestContinuityFailsClosed:
 
 
 # ---------------------------------------------------------------------------
+# Stream-ID ordering
+# ---------------------------------------------------------------------------
+
+_DAY_MS = 86_400_000
+
+
+def _shift_stream_id(stream_id: str, delta_ms: int) -> str:
+    ms, seq = stream_id.split("-")
+    return f"{int(ms) + delta_ms}-{seq}"
+
+
+async def _rewrite_stream_ids(store, signer, outcome, rewrite) -> None:
+    """Rewrite a custodied batch's stream IDs as a holder of the signing key would.
+
+    ``rewrite(index, stream_id) -> str`` returns each record's new stream ID.
+    Record hashes exclude ``stream_id``, so the hash chain stays intact; the
+    data object's SHA-256 and the attestation (first/last stream ID, signature)
+    are brought back in line so only the ordering checks can object.
+    """
+    lines = [
+        json.loads(line)
+        for line in store._entries[outcome.data_key].decode().splitlines()
+    ]
+    for index, record in enumerate(lines):
+        record["stream_id"] = rewrite(index, record["stream_id"])
+    content = (
+        "\n".join(json.dumps(r, sort_keys=True, separators=(",", ":")) for r in lines)
+        + "\n"
+    ).encode()
+    store._entries[outcome.data_key] = content
+    att = json.loads(store._entries[outcome.attestation_key])
+    att["content_sha256"] = hashlib.sha256(content).hexdigest()
+    att["first_stream_id"] = lines[0]["stream_id"]
+    att["last_stream_id"] = lines[-1]["stream_id"]
+    await _resign(store, signer, outcome.attestation_key, att)
+
+
+class TestStreamIdOrderingFailsClosed:
+    """Stream IDs carry the only time the archive records, and no record hash
+    covers them. The verifier must therefore refuse IDs that are malformed or
+    out of order, even under a valid signature."""
+
+    @pytest.mark.asyncio
+    async def test_honest_consecutive_batches_verify(
+        self, server, store, signer, provider
+    ):
+        await _custody_batches(server, store, signer, [3, 3, 2])
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok and report.citable
+
+    @pytest.mark.asyncio
+    async def test_interior_id_that_is_not_a_stream_id_fails(
+        self, server, store, signer, provider
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [5])
+        await _rewrite_stream_ids(
+            store, signer, outcome, lambda i, sid: "not-an-id" if i == 2 else sid
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "stream" in _reasons(report).lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_id", ["1-0", "99999999999999-0"], ids=["before_batch", "after_batch"]
+    )
+    async def test_interior_id_outside_the_batch_range_fails(
+        self, server, store, signer, provider, bad_id
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [5])
+        await _rewrite_stream_ids(
+            store, signer, outcome, lambda i, sid: bad_id if i == 2 else sid
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "stream" in _reasons(report).lower()
+
+    @pytest.mark.asyncio
+    async def test_ids_not_strictly_increasing_within_a_batch_fail(
+        self, server, store, signer, provider
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [4])
+        # Swap the two interior IDs: first and last still match the attestation.
+        ids: list[str] = []
+
+        def swap(i, sid):
+            ids.append(sid)
+            return sid
+
+        await _rewrite_stream_ids(store, signer, outcome, swap)
+        swapped = {1: ids[2], 2: ids[1]}
+        await _rewrite_stream_ids(
+            store, signer, outcome, lambda i, sid: swapped.get(i, sid)
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "stream" in _reasons(report).lower()
+
+    @pytest.mark.asyncio
+    async def test_backdating_one_batch_below_its_predecessor_fails(
+        self, server, store, signer, provider
+    ):
+        _first, second = await _custody_batches(server, store, signer, [3, 3])
+        await _rewrite_stream_ids(
+            store,
+            signer,
+            second,
+            lambda i, sid: _shift_stream_id(sid, -365 * _DAY_MS),
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "stream" in _reasons(report).lower()
+
+    @pytest.mark.asyncio
+    async def test_backdating_an_earlier_batch_leaves_a_later_batch_below_it(
+        self, server, store, signer, provider
+    ):
+        first, _second = await _custody_batches(server, store, signer, [3, 3])
+        await _rewrite_stream_ids(
+            store,
+            signer,
+            first,
+            lambda i, sid: _shift_stream_id(sid, +30 * _DAY_MS),
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "stream" in _reasons(report).lower()
+
+    @pytest.mark.asyncio
+    async def test_consistent_shift_of_the_whole_archive_is_out_of_scope(
+        self, server, store, signer, provider
+    ):
+        """Documents the limit of an ordering check: shifting every batch by the
+        same amount preserves order. Catching that needs a time from outside the
+        operator (an anchor), not a check inside the archive."""
+        outcomes = await _custody_batches(server, store, signer, [3, 3])
+        for outcome in outcomes:
+            await _rewrite_stream_ids(
+                store,
+                signer,
+                outcome,
+                lambda i, sid: _shift_stream_id(sid, -90 * _DAY_MS),
+            )
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok and report.citable
+
+
+def _bump_stream_id(stream_id: str, by: int) -> str:
+    ms, seq = stream_id.split("-")
+    return f"{ms}-{int(seq) + by}"
+
+
+async def _rotated_archive(server, store, signer, *, new_count: int = 1):
+    """Custody a batch, rotate the chain, custody a batch on the new chain.
+
+    Returns ``(old_chain_id, new_outcome, old_last_stream_id)``.
+    """
+    old = await _sink(server)
+    custodian = _custodian(server, store, signer)
+    await _ingest(old, 2)
+    old_outcome = await custodian.flush_once()
+    await _redis(server).delete(STREAM_KEY)
+    await asyncio.sleep(0.002)  # new stream IDs must sort after the cursor
+    new = await _sink(server)
+    await _ingest(new, new_count)
+    new_outcome = await custodian.flush_once()
+    old_att = json.loads(store._entries[old_outcome.attestation_key])
+    return old.chain_id, new_outcome, old_att["last_stream_id"]
+
+
+class TestRotationStreamIdTie:
+    """The tie rule at a chain rotation (``ev.ROTATION_EQUAL_ALLOWED``).
+
+    Whether a rotated chain's first stream ID may equal the replaced chain's
+    last is the rotation owner's decision. Both rules are written as separate
+    cases so adopting either is a one-line change of the switch. Neither rule
+    relaxes ordering within a chain.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_real_rotation_verifies_under_the_strict_rule(
+        self, server, store, signer, provider, monkeypatch
+    ):
+        monkeypatch.setattr(ev, "ROTATION_EQUAL_ALLOWED", False)
+        await _rotated_archive(server, store, signer)
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok, _reasons(report)
+        assert len(report.verified) == 2
+
+    @pytest.mark.asyncio
+    async def test_equal_id_at_rotation_fails_under_the_strict_rule(
+        self, server, store, signer, provider, monkeypatch
+    ):
+        monkeypatch.setattr(ev, "ROTATION_EQUAL_ALLOWED", False)
+        _old, new, old_last = await _rotated_archive(server, store, signer)
+        await _rewrite_stream_ids(store, signer, new, lambda i, sid: old_last)
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "rotated from" in _reasons(report)
+
+    @pytest.mark.asyncio
+    async def test_equal_id_at_rotation_verifies_when_equal_is_allowed(
+        self, server, store, signer, provider, monkeypatch
+    ):
+        monkeypatch.setattr(ev, "ROTATION_EQUAL_ALLOWED", True)
+        _old, new, old_last = await _rotated_archive(server, store, signer)
+        await _rewrite_stream_ids(store, signer, new, lambda i, sid: old_last)
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok, _reasons(report)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("equal_allowed", [False, True])
+    async def test_lower_id_at_rotation_fails_under_either_rule(
+        self, server, store, signer, provider, monkeypatch, equal_allowed
+    ):
+        monkeypatch.setattr(ev, "ROTATION_EQUAL_ALLOWED", equal_allowed)
+        _old, new, old_last = await _rotated_archive(server, store, signer)
+        await _rewrite_stream_ids(
+            store, signer, new, lambda i, sid: _shift_stream_id(old_last, -_DAY_MS)
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "rotated from" in _reasons(report)
+
+    @pytest.mark.asyncio
+    async def test_allowing_a_tie_does_not_relax_ordering_within_the_new_chain(
+        self, server, store, signer, provider, monkeypatch
+    ):
+        monkeypatch.setattr(ev, "ROTATION_EQUAL_ALLOWED", True)
+        _old, new, old_last = await _rotated_archive(server, store, signer, new_count=2)
+        await _rewrite_stream_ids(store, signer, new, lambda i, sid: old_last)
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "stream" in _reasons(report).lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("equal_allowed", "ok"), [(False, False), (True, True)])
+    async def test_a_tie_then_increasing_ids_depend_only_on_the_rotation_rule(
+        self, server, store, signer, provider, monkeypatch, equal_allowed, ok
+    ):
+        monkeypatch.setattr(ev, "ROTATION_EQUAL_ALLOWED", equal_allowed)
+        _old, new, old_last = await _rotated_archive(server, store, signer, new_count=2)
+        await _rewrite_stream_ids(
+            store, signer, new, lambda i, sid: _bump_stream_id(old_last, i)
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok is ok, _reasons(report)
+
+    @pytest.mark.asyncio
+    async def test_replaced_chain_absent_from_the_archive_is_not_ordered(
+        self, server, store, signer, provider
+    ):
+        """Documents a limit: with no verified batch of the replaced chain there is
+        nothing to compare, so only ordering inside the surviving chain is checked."""
+        old_chain, new, old_last = await _rotated_archive(server, store, signer)
+        for key in [k for k in store._entries if f"/{old_chain}/" in k]:
+            del store._entries[key]
+        await _rewrite_stream_ids(
+            store, signer, new, lambda i, sid: _shift_stream_id(old_last, -_DAY_MS)
+        )
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok, _reasons(report)
+        assert len(report.verified) == 1
+
+
+# ---------------------------------------------------------------------------
 # Backend errors, trust-anchor loading, CLI
 # ---------------------------------------------------------------------------
 
