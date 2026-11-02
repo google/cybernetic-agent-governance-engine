@@ -219,9 +219,17 @@ jobs:
         env:
           CAGE_ENV: ${{ matrix.environment }}
           CAGE_REGION: ${{ matrix.region }}
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          # Gate 0.3 is the same Langfuse posture dry-run the universal job runs
+          # above, with the same values: the repository's Langfuse secrets are
+          # unset in CI, so the placeholders below make it a dry-run of the
+          # verifier, not a check of any credential. The script sets the Google
+          # Cloud project and location itself (per region).
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST || 'http://localhost:3000' }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY || 'pk-lf-mock' }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY || 'sk-lf-mock' }}
+          LANGFUSE_COMPLIANCE_HOST: "http://localhost:3001"
+          LANGFUSE_COMPLIANCE_PUBLIC_KEY: "pk-lf-comp-mock"
+          LANGFUSE_COMPLIANCE_SECRET_KEY: "sk-lf-comp-mock"
           # US_FED credentials (only used when CAGE_REGION=US_FED)
           KUBECONFIG: ${{ secrets.KUBECONFIG_US_FED }}
           # EU_ECB credentials (only used when CAGE_REGION=EU_ECB)
