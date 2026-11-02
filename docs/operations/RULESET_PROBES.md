@@ -50,6 +50,8 @@ P=spike/probe-$TOPIC                # the disposable branch
 RULESET=<id of the ruleset whose rule is under test>
 OK=<commit the rule should accept>  # the positive control's target
 NO=<commit the rule should refuse>  # the negative case's target
+# Step 6 deletes refs/heads/$P: refuse anything that is not a probe ref
+[[ "$P" == spike/probe-* ]] || { echo "refusing: $P is not a spike/probe-* ref" >&2; exit 1; }
 ```
 
 Pick `OK` and `NO` so that they differ only in what the rule examines. For example,
@@ -58,8 +60,8 @@ Pick `OK` and `NO` so that they differ only in what the rule examines. For examp
 ### Step 1: Preflight
 
 ```bash
+gh api "$R/branches/$P" >/dev/null 2>&1 && { echo "refusing: $P already exists" >&2; exit 1; }
 gh api "$R/rules/branches/$P"       # expect []: no rule applies to the probe ref yet
-gh api "$R/branches/$P"             # expect 404: the ref does not exist
 gh api "$R/rulesets" --jq '.[] | "\(.id) \(.name) \(.enforcement)"' > rulesets.before
 gh api "$R/rules/branches/main" --jq '[.[] | "\(.type)@\(.ruleset_id)"]' > main-rules.before
 ```
