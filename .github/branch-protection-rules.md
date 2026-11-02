@@ -35,9 +35,12 @@ What that enforces:
   approving review, except that a repository admin bypasses the rule. The maintainer cannot
   approve their own pull requests, so each of their merges is such a bypass. This is an
   accepted risk (POAM-2026-115).
-- **Required checks.** No commit reaches `main` unless the eight checks in §3 passed on it.
-  The admin bypass does not reach this ruleset. The checks are not re-run when `main` moves
-  between their run and the merge.
+- **Required checks.** A pull request merges only after the eight checks in §3 passed on its
+  head, and the admin bypass does not reach this ruleset. Each run tests the head merged into
+  `main` as it stood when the run started, and the checks are not re-run when `main` moves
+  before the merge, so the commit that lands may never have been tested; its own runs start
+  after it lands. #598's head passed `Pytest Logic Tests`, and its squash commit `43528275`
+  failed it on `main` (POAM-2026-171).
 - **History.** `main` cannot be force-pushed or deleted, by anyone, since 2026-11-02. Before
   that, nothing blocked either (POAM-2026-170).
 - **Not enforced.** Up-to-date branches, review-thread resolution, signed commits, and any push
