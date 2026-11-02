@@ -122,9 +122,16 @@ PHASE0_FAILURES=0
 # so the marker alone selects and configures the posture under test.
 # ---------------------------------------------------------------------------
 REGION_MARKER="$(echo "${CAGE_REGION}" | tr '[:upper:]' '[:lower:]')"
-echo "=== Phase: Pytest unit tests (-m \"local and ${REGION_MARKER}\") ==="
+# tests/conftest.py refuses CAGE_ENV=prod without a KMS key, and the hermetic
+# suite needs none: the prod legs run it as `test`. The posture gates in the
+# phases below keep CAGE_ENV as given.
+PYTEST_CAGE_ENV="${CAGE_ENV}"
+if [[ "${CAGE_ENV}" == "prod" ]]; then
+  PYTEST_CAGE_ENV="test"
+fi
+echo "=== Phase: Pytest unit tests (-m \"local and ${REGION_MARKER}\", CAGE_ENV=${PYTEST_CAGE_ENV}) ==="
 mkdir -p pytest-results
-uv run pytest tests/ -m "local and ${REGION_MARKER}" \
+CAGE_ENV="${PYTEST_CAGE_ENV}" uv run pytest tests/ -m "local and ${REGION_MARKER}" \
     --tb=short -q \
     --junitxml="pytest-results/pytest-${CAGE_REGION}-${CAGE_ENV}.xml" \
   || { echo "Pytest failed for region ${CAGE_REGION}"; exit 1; }
@@ -133,7 +140,7 @@ uv run pytest tests/ -m "local and ${REGION_MARKER}" \
 echo ""
 info "Gate 0.1 — Core unit tests (tests/test_symbolic_governor.py)"
 if [[ -f "tests/test_symbolic_governor.py" ]]; then
-  if uv run pytest -p no:langsmith -p no:langsmith_plugin tests/test_symbolic_governor.py -q; then
+  if CAGE_ENV="${PYTEST_CAGE_ENV}" uv run pytest -p no:langsmith -p no:langsmith_plugin tests/test_symbolic_governor.py -q; then
     success "Gate 0.1 passed — core unit tests"
   else
     error "Gate 0.1 FAILED — core unit tests"

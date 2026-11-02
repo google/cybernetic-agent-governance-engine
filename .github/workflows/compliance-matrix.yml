@@ -203,11 +203,17 @@ jobs:
 
       - name: Install OPA binary (US_FED only)
         if: matrix.region == 'US_FED'
+        env:
+          # The version security-scan.yml's required OPA job runs the same
+          # `opa test` with. `latest` resolved to OPA 1.x, whose parser rejects
+          # the v0 syntax in config/opa/agent_catalog.rego.
+          OPA_VERSION: v0.61.0
+          OPA_SHA256: 24a15b66a054b9e836a5dc1e07dff622999470eeb0c6e746340b4ccabde5663c
         run: |
-          echo "Installing OPA for US_FED posture..."
-          curl -sSL \
-            "https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static" \
+          curl -fsSL \
+            "https://openpolicyagent.org/downloads/${OPA_VERSION}/opa_linux_amd64_static" \
             -o /usr/local/bin/opa
+          echo "${OPA_SHA256}  /usr/local/bin/opa" | sha256sum -c -
           chmod +x /usr/local/bin/opa
           opa version
 
