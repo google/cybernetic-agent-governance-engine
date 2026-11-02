@@ -317,7 +317,10 @@ def test_document_names_every_workflow_that_reports_each_check() -> None:
     """
     reporters = _reporting_workflows()
     wrong = {
-        context: {"documented": sorted(named), "reported_by": sorted(reporters.get(context, ()))}
+        context: {
+            "documented": sorted(named),
+            "reported_by": sorted(reporters.get(context, ())),
+        }
         for context, named, _ in _section_3_rows()
         if named != reporters.get(context, frozenset())
     }
