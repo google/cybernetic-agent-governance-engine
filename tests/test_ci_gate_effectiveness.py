@@ -1060,3 +1060,89 @@ def test_gate_compliance_matrix_script_has_valid_paths_and_no_silent_skips() -> 
     assert (REPO_ROOT / "src" / "cage_finance" / "opa").is_dir()
     assert 'warn "Gate 0.1 SKIPPED' not in script_text
     assert 'warn "Gate 1.2 SKIPPED' not in script_text
+
+
+def test_gate_tlc_model_check_rejects_unpinned_tlc_verdicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tlc-model-check (`scripts/verify_tla.py`) must fail on any TLC verdict no pin covers.
+
+    TLC reports `SP4_FenceEpochMonotonic`, declared under PROPERTIES, as an
+    action property, not an invariant. Until 2026-11-02 the runner read only
+    invariant violations: with SP-4 planted false, TLC v1.7.4 printed 768
+    `Action property` errors on DistributedCBF.cfg and the runner printed OK on
+    all 8 cfgs. Under -continue TLC also exits 0 and prints its no-error line
+    after reporting violations, so neither can stand in for its Error lines.
+    """
+    from proof.distributed_cbf_model import EXPECTED_STATE_COUNTS
+    from proof.tla_pins import TLC_PINS
+    from scripts import verify_tla
+
+    # Verdict lines as TLC v1.7.4 prints them (tlc2/output/MP).
+    trace = "Error: The behavior up to this point is:\nState 1: <Initial predicate>\n"
+    completed = "Model checking completed. No error has been found.\n"
+
+    def tlc_output(states: int, violated: frozenset[str]) -> str:
+        errors = "".join(
+            f"Error: Invariant {inv} is violated.\n{trace}" for inv in sorted(violated)
+        )
+        return (
+            f"{errors}{completed}{3 * states} states generated, "
+            f"{states} distinct states found, 0 states left on queue.\n"
+        )
+
+    recorded = {
+        name: tlc_output(
+            states,
+            frozenset(
+                inv
+                for inv, holds in (
+                    ("SP1_NoDoubleSpend", sp1),
+                    ("SP2_NoOvercommit", sp2),
+                )
+                if not holds
+            ),
+        )
+        for (name, n), (states, sp1, sp2) in EXPECTED_STATE_COUNTS.items()
+        if n == 2
+    }
+    recorded |= {
+        name: tlc_output(pin.distinct_states, pin.violated)
+        for name, pin in TLC_PINS.items()
+    }
+    outputs = dict(recorded)
+
+    def fake_run_tlc(
+        java: str, jar: str, cfg: Path, spec: Path
+    ) -> tuple[int, set[str], str]:
+        out = outputs[cfg.stem]
+        states = int(verify_tla._DISTINCT.findall(out)[-1])
+        return states, set(verify_tla._VIOLATED.findall(out)), out
+
+    monkeypatch.setattr(verify_tla, "_tools", lambda: ("java", "tla2tools.jar"))
+    monkeypatch.setattr(verify_tla, "run_tlc", fake_run_tlc)
+    assert verify_tla.main() == 0, "the recorded results must pass as pinned"
+
+    sp4 = f"Error: Action property SP4_FenceEpochMonotonic is violated.\n{trace}"
+    plants = {
+        "SP-4 violated, shipped cfg": ("DistributedCBF", sp4),
+        "SP-4 violated, negative control": ("DistributedCBF_nosync", sp4),
+        "liveness violated": (
+            "FtraBoundary",
+            "Error: Temporal properties were violated.\n",
+        ),
+        "deadlock": ("LangGraphHarness", "Error: Deadlock reached.\n"),
+    }
+    for label, (cfg, error) in plants.items():
+        outputs.clear()
+        outputs.update(recorded, **{cfg: error + recorded[cfg]})
+        assert verify_tla.main() == 1, f"tlc-model-check passed a planted {label}"
+
+    outputs.clear()
+    outputs.update(recorded)
+    outputs["FtraBoundary_nonetpol"] = recorded["FtraBoundary_nonetpol"].replace(
+        completed, ""
+    )
+    assert verify_tla.main() == 1, (
+        "tlc-model-check passed a search that never completed"
+    )

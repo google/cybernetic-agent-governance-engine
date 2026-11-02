@@ -152,12 +152,12 @@ def _tools() -> tuple[str, str] | None:
 @pytest.mark.skipif(_tools() is None, reason="TLA_TOOLS_JAR not set")
 @pytest.mark.parametrize("name", PINNED)
 def test_tlc_reproduces_pin(name: str) -> None:
-    from scripts.verify_tla import run_tlc
+    from scripts.verify_tla import run_tlc, unpinned_verdicts
 
     java, jar = _tools()  # type: ignore[misc]
     pin = TLC_PINS[name]
     states, violated, out = run_tlc(
         java, jar, PROOF / f"{name}.cfg", PROOF / f"{pin.spec}.tla"
     )
-    assert "Temporal properties were violated" not in out
+    assert unpinned_verdicts(out) == []
     assert (states, violated) == (pin.distinct_states, set(pin.violated))

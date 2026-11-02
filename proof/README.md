@@ -122,7 +122,7 @@ PROVED:
 
 ### Distributed CBF: Results
 
-One agent is one gateway process; Redis is one primary replicating asynchronously to one replica. `distributed_cbf_model.py` documents the mapping of every action to `cbf_engine.py`. Bounds: pool 2, one in-flight debit per process, epoch ≤ 4, one stale failover. TLC on each cfg (N = 2, `-continue`) reports exactly the BFS distinct-state count and verdicts (`scripts/verify_tla.py`).
+One agent is one gateway process; Redis is one primary replicating asynchronously to one replica. `distributed_cbf_model.py` documents the mapping of every action to `cbf_engine.py`. Bounds: pool 2, one in-flight debit per process, epoch ≤ 4, one stale failover. TLC on each cfg (N = 2, `-continue`) must report exactly the BFS distinct-state count and SP-1/SP-2 verdicts, and no other violation, SP-4 included (`scripts/verify_tla.py`).
 
 | cfg | Posture | States (N=1 / 2 / 3) | SP-1 | SP-2 |
 |-----|---------|----------------------|------|------|
@@ -201,7 +201,7 @@ TLA_TOOLS_JAR=/path/to/tla2tools.jar make verify-tla
 java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla
 ```
 
-`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails only on a count or verdict that differs from the BFS. `FtraBoundary*.cfg` and `LangGraphHarness*.cfg` must match `tla_pins.py` exactly; a violated temporal property or a TLC exception also fails the run. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
+`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. Under `-continue` TLC prints that line, and exits 0, even after reporting violations (`DistributedCBF_nosync.cfg` prints it after 1,986 invariant violations), so `verify_tla.py` reads TLC's `Error:` lines instead. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails on a count or invariant verdict that differs from the BFS. `FtraBoundary*.cfg` and `LangGraphHarness*.cfg` must match `tla_pins.py` exactly. On every cfg, any other `Error:` line fails the run, whatever it reports: a violated action property (TLC reports `SP4_FenceEpochMonotonic` as `Action property … is violated`, not as an invariant), a temporal property, a deadlock or an exception. So does a run that never reports completion. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
 
 ## Architectural Notes
 
