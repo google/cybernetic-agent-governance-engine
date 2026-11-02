@@ -65,9 +65,10 @@ We follow a **coordinated disclosure** model:
 ## Landing an Advisory Fix (Maintainers)
 
 An advisory's fix lands from GitHub's temporary private fork, where GitHub
-Actions does not run. Ruleset 25966171 requires six status checks on `main`
+Actions does not run. Ruleset 25966171 requires eight status checks on `main`
 and has no bypass actor, so it blocks that merge. Do not add a bypass actor.
-For that one merge:
+Ruleset 26377312, which blocks force pushes to `main` and its deletion, stays
+enabled throughout: the merge is a fast-forward. For that one merge:
 
 1. Run the test suite on the frozen fix commit and record the result in the
    advisory's release record, since the private fork gets no CI.
