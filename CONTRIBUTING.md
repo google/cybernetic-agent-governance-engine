@@ -196,47 +196,22 @@ Examples: `v3.2.0`, `v3.2.0-rc.1`, `v3.2.0-dev.1`
 
 ## Protected Branches
 
-| Branch | Protection |
-|---|---|
-| `main` | No direct push; requires PR + CI green + 1 CODEOWNERS review |
-| `rc-v*` | No direct push; requires PR + CI green |
-| `release/**` | No direct push; requires PR + CI green + 1 CODEOWNERS review |
+GitHub enforces three rulesets on `main`: one approving review (repository admins bypass
+it, so the maintainer's own merges are admin merges; POAM-2026-115), the eight required
+status checks, each pinned to GitHub Actions, and no force push or deletion. No ruleset
+covers `rc-v*` or `release/**`; create one before creating such a branch. Release tags
+(`v*`, `client-v*`) cannot be deleted, moved or force-pushed.
 
-The local pre-push hook refuses pushes to `main`, and to `rc-v*` through its branch-name check, whichever branch is checked out. Tags pass, so step 3 of the release process works from `main`. GitHub enforces `main` server-side with a repository ruleset.
+The local pre-push hook refuses pushes to `main`, and to `rc-v*` through its branch-name check, whichever branch is checked out. Tags pass, so step 3 of the release process works from `main`. The hook runs only where it is installed; the rulesets are what GitHub enforces.
 
 ### Repository Protection Setup (Maintainer)
 
-The full specification for GitHub repository-level protection settings is in
-[`.github/branch-protection-rules.md`](.github/branch-protection-rules.md).
-Apply these settings when initialising the repository or after any protection
-rule is accidentally removed.
-
-**Quick reference — minimum required GitHub UI settings:**
-
-1. **Settings → Branches → `main`:**
-   - Require pull request (1 approval)
-   - Require review from Code Owners (CODEOWNERS file to be created)
-   - Required status checks: `Lint`, `Pytest Logic Tests`, `Squash Merge Guard`, `Branch Name Validator`, `Marker Contract Check`, `Secret Scanning (Gitleaks)`, `License Guard / license-check`
-   - Require branches to be up to date
-   - Require conversation resolution
-   - Restrict who can push (maintainer only)
-   - Disable force pushes and deletions
-
-2. **Settings → Tags → Protected tags:**
-   - Pattern `v*-ref` → maintainer only
-   - Pattern `v*-cage-*` → maintainer only
-   - Pattern `v[0-9]*` → maintainer only
-
-3. **Settings → Security → Code security and analysis:**
-   - Enable Dependency graph, Dependabot alerts, GitHub Advanced Security
-   - Required to unblock the hard gate in `.github/workflows/dependency-review.yml`
-
-4. **Settings → Actions → General → Workflow permissions:**
-   - Read and write permissions (Releases are created manually via git tag and GitHub UI per GIT_WORKFLOW_STANDARDS.md.)
-
-See [`.github/branch-protection-rules.md`](.github/branch-protection-rules.md)
-for the complete settings table, required status check names, and a
-code-enforcement → GitHub UI mapping.
+[`.github/branch-protection-rules.md`](.github/branch-protection-rules.md) is the one
+description of the repository's protection: the rulesets, the required check names, merge
+settings, security features and workflow permissions, each as the GitHub API returned it,
+with the commands that read it. `repo-rules.yml` compares its rulesets and required checks
+with the live configuration on every pull request, every push to `main` and daily. Change
+the ruleset, `scripts/check_repo_rules.py` and that document together.
 
 ---
 
