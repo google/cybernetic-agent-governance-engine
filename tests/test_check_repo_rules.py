@@ -33,12 +33,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "repo_rules"
 DOC = REPO_ROOT / ".github" / "branch-protection-rules.md"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
 
 def _load_module():
@@ -268,13 +270,55 @@ def test_fetch_refuses_anything_but_the_github_api(url: str) -> None:
         rules_mod.fetch_json(url)
 
 
-def test_document_lists_exactly_the_pinned_required_checks() -> None:
-    """§3 of the document and the checker's pins are one list, not two."""
+def _section_3_rows() -> list[tuple[str, frozenset[str], int]]:
+    """§3's rows as (check context, workflow files named, integration pin)."""
     text = DOC.read_text(encoding="utf-8")
     section = text.split("## 3. Required Status Checks", 1)[1].split("###", 1)[0]
     rows = re.findall(
-        r"^\| `([^`]+)` \| `[^`]+` \| `integration_id: (\d+)`", section, re.MULTILINE
+        r"^\| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+) \| `integration_id: (\d+)`",
+        section,
+        re.MULTILINE,
     )
-    assert {context: int(app) for context, app in rows} == dict(
+    return [
+        (context, frozenset(re.findall(r"`([^`]+)`", workflows)), int(app))
+        for context, workflows, app in rows
+    ]
+
+
+def _reporting_workflows() -> dict[str, frozenset[str]]:
+    """Every check name a workflow job reports, mapped to the files that report it.
+
+    A job reports its ``name``, or its id when it has none.
+    """
+    reporters: dict[str, set[str]] = {}
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            name = str((job or {}).get("name", job_id))
+            reporters.setdefault(name, set()).add(path.name)
+    return {name: frozenset(files) for name, files in reporters.items()}
+
+
+def test_document_lists_exactly_the_pinned_required_checks() -> None:
+    """§3 of the document and the checker's pins are one list, not two."""
+    rows = _section_3_rows()
+    assert {context: app for context, _, app in rows} == dict(
         rules_mod.EXPECTED_REQUIRED_CHECKS
     )
+
+
+def test_document_names_every_workflow_that_reports_each_check() -> None:
+    """§3's workflow column names exactly the workflows whose jobs report the check.
+
+    A workflow the column omits reports the check where no reader of §3 looks,
+    and a workflow the column names but that does not report it points the
+    reader at the wrong file. §3 named ``ci.yml`` for a job in
+    ``security-scan.yml`` until this test compared the column.
+    """
+    reporters = _reporting_workflows()
+    wrong = {
+        context: {"documented": sorted(named), "reported_by": sorted(reporters.get(context, ()))}
+        for context, named, _ in _section_3_rows()
+        if named != reporters.get(context, frozenset())
+    }
+    assert not wrong, wrong
