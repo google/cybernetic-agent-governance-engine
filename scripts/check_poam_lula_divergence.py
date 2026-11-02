@@ -172,6 +172,12 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
         "tests/test_check_model_free_install.py",
         "tests/test_import_boundaries.py",
     ),
+    # The live release-tag ruleset and the rules on main are compared with the
+    # documented configuration in CI (scripts/check_repo_rules.py), and the one
+    # documented required-check list is held equal to the checker's pins.
+    "POAM-2026-116": ("tests/test_check_repo_rules.py",),
+    "POAM-2026-133": ("tests/test_check_repo_rules.py",),
+    "POAM-2026-170": ("tests/test_check_repo_rules.py",),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

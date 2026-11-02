@@ -103,13 +103,7 @@ Read at `d830249c`; nothing was planned.
 
 ## 6. CI per jurisdiction
 
-- **Required checks** (branch ruleset, verified 2026-10-28):
-  - Lint
-  - AI 600-1 Unit Tests
-  - OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)
-  - Secret Scanning (Gitleaks)
-  - license-check
-  - Pytest Logic Tests
+- **Required checks:** the eight in [`.github/branch-protection-rules.md`](../../.github/branch-protection-rules.md) §3, which `repo-rules.yml` compares with the live ruleset in CI. This section listed six, verified 2026-10-28, until 2026-11-02 (POAM-2026-133).
 - **Region-pinned tests in the required job:** US_FED 18, EU_ECB 48, APAC_MAS 7, plus about 150 region-parametrized items per region (verified, collection). The asymmetry is POAM-2026-122.
 - **Regional workflows that cannot fail the build:**
   - the EU and APAC legs of [`regional-posture.yml`](../../.github/workflows/regional-posture.yml), which are hermetic, marker-pinned pytest runs;
@@ -148,7 +142,7 @@ Each has a one-line POA&M entry except the stale numbers. Several are one class:
 - **The EU and APAC compliance flags do in Terraform exactly what the NIST flag does (POAM-2026-130),** although the EU flag's description claims distinct effects (verified, grep). The APAC flag's description claimed Redis persistence that nothing set; POAM-2026-156 item 3 replaced it with what the flag does.
 - **Placeholder image digests (POAM-2026-131).** Every profile except staging inherits `sha256:e3b0c442…`, the hash of empty input. That includes the three Binary-Authorization-enforcing prod profiles (verified). *Update 2026-10-30:* staging's own committed digests named `gcr.io/cage-reference/`, a registry that does not resolve, so no profile was deployable from the repository. Remediated on `refactor/render-image-digests`: no profile commits digests or a project ID, and `var.image_digests` has no default (see POAM-2026-131).
 - **No L4 in one EU zone (POAM-2026-132, closed 2026-10-29).** `europe-west1-d` offers neither L4 nor `g2-standard-8`, and `eu-dev` and `eu-prod` used to list it alongside per-zone `initial`/`min`/`max` counts that multiplied across zones. `eu-dev` and `eu-prod` now list only `europe-west1-b` and `-c`, every profile starts at `initial = 0` / `min = 0` with pool-wide `total_min_node_count` / `total_max_node_count` (`location_policy = "ANY"`), and `google_container_node_pool.gpu_nodes` refuses non-L4 zones at plan time.
-- **The documented required-check lists disagree with the ruleset (POAM-2026-133).** See section 6.
+- **The documented required-check lists disagreed with the ruleset (POAM-2026-133, closed 2026-11-02).** One list remains, in `.github/branch-protection-rules.md` §3, and CI compares it with the ruleset. See section 6.
 - **Consensus on gcp-gke has never produced an automated verdict (POAM-2026-134).** The gateway pod has no `MODEL_*`, so both critics ask for `gemini-2.5-pro`, and every triggered consensus escalates. The 404 is inferred. The critics' prompt format also disagrees with their parser. `MODEL_CONSENSUS` and `CONSENSUS_<ROLE>_*` are set by no surface.
 - **The default advisor runtime (GEAP) can't call a model (POAM-2026-135).** It has no `OPENAI_API_KEY`, and its endpoints are cluster-local names (verified for the key; reachability open).
 - **Declared, never read (POAM-2026-136, closed 2026-10-29).** `vllm_fast_url`, `vllm_reasoning_url` and `vllm_gateway_url` were declared in `variables.tf` and filled by `deploy_all.sh`, but nothing read them. W6 removed them and their exports; on gcp-gke the vLLM endpoints now follow `inference_backend`.
