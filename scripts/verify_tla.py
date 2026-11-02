@@ -29,7 +29,9 @@ is one, declared under PROPERTIES), a property the initial state violates, a
 violated temporal property, a deadlock or a TLC exception. Every run must also
 report that model checking completed. Under ``-continue`` TLC prints that line,
 and exits 0, even after reporting violations, so it shows only that the search
-finished.
+finished. Every cfg must declare exactly the invariants and properties that
+``DECLARED_CHECKS`` in ``proof/tla_pins.py`` pins for it: a dropped line leaves
+the state count unchanged.
 
 Usage:
     TLA_TOOLS_JAR=/path/to/tla2tools.jar uv run python scripts/verify_tla.py
@@ -52,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from proof.distributed_cbf_model import CONFIGS, EXPECTED_STATE_COUNTS  # noqa: E402
-from proof.tla_pins import TLC_PINS  # noqa: E402
+from proof.tla_pins import DECLARED_CHECKS, TLC_PINS, declared_checks  # noqa: E402
 
 _DISTINCT = re.compile(r"(\d+) distinct states found")
 _VIOLATED = re.compile(r"Invariant (\w+) is violated")
@@ -79,6 +81,19 @@ def unpinned_verdicts(out: str) -> list[str]:
     if _COMPLETED not in out:
         found.append("TLC did not report that model checking completed")
     return found
+
+
+def declared_check_drift(cfg: Path) -> list[str]:
+    """Return how the cfg's INVARIANT/PROPERTY sections differ from its pin."""
+    got, want = declared_checks(cfg.read_text()), DECLARED_CHECKS[cfg.stem]
+    return [
+        f"{kind} missing {sorted(w - g)}, extra {sorted(g - w)}"
+        for kind, g, w in (
+            ("invariants", got.invariants, want.invariants),
+            ("properties", got.properties, want.properties),
+        )
+        if g != w
+    ]
 
 
 def _tools() -> tuple[str, str] | None:
@@ -145,13 +160,15 @@ def main() -> int:
         )
         unexpected = violated - {"SP1_NoDoubleSpend", "SP2_NoOvercommit"}
         unpinned = unpinned_verdicts(out)
-        match = got == expected and not unexpected and not unpinned
+        drift = declared_check_drift(cfg)
+        match = got == expected and not unexpected and not unpinned and not drift
         ok &= match
         print(
             f"{'OK ' if match else 'BAD'} {cfg.name}: TLC (states, SP-1, SP-2) = {got}; "
             f"BFS = {expected}"
             + (f"; other violations: {sorted(unexpected)}" if unexpected else "")
             + (f"; unpinned verdicts: {unpinned}" if unpinned else "")
+            + (f"; declared checks differ from pin: {drift}" if drift else "")
         )
     for name, pin in TLC_PINS.items():
         cfg = ROOT / "proof" / f"{name}.cfg"
@@ -159,8 +176,12 @@ def main() -> int:
             java, jar, cfg, ROOT / "proof" / f"{pin.spec}.tla"
         )
         unpinned = unpinned_verdicts(out)
+        drift = declared_check_drift(cfg)
         match = (
-            states == pin.distinct_states and violated == pin.violated and not unpinned
+            states == pin.distinct_states
+            and violated == pin.violated
+            and not unpinned
+            and not drift
         )
         ok &= match
         print(
@@ -168,6 +189,7 @@ def main() -> int:
             f"violated={sorted(violated)}; pinned states={pin.distinct_states}, "
             f"violated={sorted(pin.violated)}"
             + (f"; unpinned verdicts: {unpinned}" if unpinned else "")
+            + (f"; declared checks differ from pin: {drift}" if drift else "")
         )
     return 0 if ok else 1
 

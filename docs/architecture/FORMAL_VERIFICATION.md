@@ -605,7 +605,7 @@ Step 8 proves discrete-time invariance for one barrier evaluation. This step ask
 
 **Claim:** The controller `FtraStage` covers every caller that bypasses the advisor graph's in-graph `ftra_node`, so no irreversible action executes unreviewed; and an advisor thread never trades on a refused, paused or FTRA-parked turn, with each DeferQueue ticket resolved and consumed at most once.
 
-**Sources:** [`proof/FtraBoundary.tla`](../../proof/FtraBoundary.tla) and [`proof/LangGraphHarness.tla`](../../proof/LangGraphHarness.tla), pinned in [`proof/tla_pins.py`](../../proof/tla_pins.py), run by [`scripts/verify_tla.py`](../../scripts/verify_tla.py) (`make verify-tla`), cfg/spec parity in [`tests/test_tla_specs_proof.py`](../../tests/test_tla_specs_proof.py).
+**Sources:** [`proof/FtraBoundary.tla`](../../proof/FtraBoundary.tla) and [`proof/LangGraphHarness.tla`](../../proof/LangGraphHarness.tla), pinned in [`proof/tla_pins.py`](../../proof/tla_pins.py) (state counts, violated invariants, and the invariants and properties each cfg declares), run by [`scripts/verify_tla.py`](../../scripts/verify_tla.py) (`make verify-tla`), cfg/spec parity in [`tests/test_tla_specs_proof.py`](../../tests/test_tla_specs_proof.py), which also checks the table below against the pins.
 
 ### What is modelled
 

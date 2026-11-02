@@ -1073,12 +1073,21 @@ def test_gate_tlc_model_check_rejects_unpinned_tlc_verdicts(
     `Action property` errors on DistributedCBF.cfg and the runner printed OK on
     all 8 cfgs. Under -continue TLC also exits 0 and prints its no-error line
     after reporting violations, so neither can stand in for its Error lines.
+    The runner must also fail a cfg whose declared checks differ from its pin.
     """
+    # The verdict lines below are recorded from TLC v1.7.4, the
+    # TLA_TOOLS_VERSION pinned in tlc-model-check.yml. This test never runs
+    # TLC, so a jar bump cannot fail it even if real TLC words its verdicts
+    # differently. Whoever bumps the jar re-derives these strings from the new
+    # tla2tools.jar's tlc2/output/MP.class and pushes a planted violation
+    # through real TLC (POAM-2026-090 detail). verify_tla.py reads only
+    # "Error: " lines, so a verdict printed without that prefix would pass the
+    # gate silently, and no committed cfg produces an action-property
+    # violation that would expose it.
     from proof.distributed_cbf_model import EXPECTED_STATE_COUNTS
-    from proof.tla_pins import TLC_PINS
+    from proof.tla_pins import TLC_PINS, CfgChecks
     from scripts import verify_tla
 
-    # Verdict lines as TLC v1.7.4 prints them (tlc2/output/MP).
     trace = "Error: The behavior up to this point is:\nState 1: <Initial predicate>\n"
     completed = "Model checking completed. No error has been found.\n"
 
@@ -1145,4 +1154,18 @@ def test_gate_tlc_model_check_rejects_unpinned_tlc_verdicts(
     )
     assert verify_tla.main() == 1, (
         "tlc-model-check passed a search that never completed"
+    )
+
+    # A cfg that drops a pinned invariant: every TLC output is clean and pinned,
+    # and the state counts are unchanged.
+    outputs.clear()
+    outputs.update(recorded)
+    pin = verify_tla.DECLARED_CHECKS["DistributedCBF"]
+    monkeypatch.setitem(
+        verify_tla.DECLARED_CHECKS,
+        "DistributedCBF",
+        CfgChecks(pin.invariants | {"SP3_NotDeclared"}, pin.properties),
+    )
+    assert verify_tla.main() == 1, (
+        "tlc-model-check passed a cfg missing a pinned invariant"
     )

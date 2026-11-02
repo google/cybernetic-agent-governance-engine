@@ -191,7 +191,19 @@ Neither spec has a Python twin, so TLC's distinct-state count (`-continue`) and 
 
 ### Running TLC Model Checker
 
-TLC needs Java 11+ and `tla2tools.jar` (https://github.com/tlaplus/tlaplus/releases; CI pins v1.7.4 by sha256).
+TLC needs Java 11+ and `tla2tools.jar`, neither of which is in the repository or the uv environment. CI uses the runner's Temurin 21 and fetches the jar at `TLA_TOOLS_VERSION`, checked against `TLA_TOOLS_SHA256`; both values are in [`tlc-model-check.yml`](../.github/workflows/tlc-model-check.yml). To reproduce CI locally:
+
+```bash
+# The jar CI uses; take TLA_TOOLS_VERSION and TLA_TOOLS_SHA256 from tlc-model-check.yml
+curl -fsSL -o tla2tools.jar \
+  "https://github.com/tlaplus/tlaplus/releases/download/<TLA_TOOLS_VERSION>/tla2tools.jar"
+echo "<TLA_TOOLS_SHA256>  tla2tools.jar" | sha256sum -c -
+# Any Java 11+. Without one, unpack a Temurin 21 JRE (https://adoptium.net) into a user
+# directory after checking the archive against the sha256 Adoptium publishes for it.
+export JAVA=/path/to/jre/bin/java TLA_TOOLS_JAR="$PWD/tla2tools.jar"
+```
+
+**Without them, nothing fails.** `make verify-tla` runs the Python BFS only and exits 0. The live TLC tests in `tests/test_tla_specs_proof.py` and `tests/test_distributed_cbf_proof.py` skip (`TLA_TOOLS_JAR not set`), so pytest stays green. CI's pytest-logic job has no TLC and always runs them that way; only the `tlc-model-check` job runs TLC. A local run counts as TLC evidence only if pytest reports those tests passed rather than skipped (`-rs` lists the skips), or if `scripts/verify_tla.py` is run directly, which exits 2 when either tool is missing.
 
 ```bash
 # Python BFS, then TLC on every pinned cfg (DistributedCBF vs the BFS; the others vs tla_pins.py)
@@ -201,7 +213,7 @@ TLA_TOOLS_JAR=/path/to/tla2tools.jar make verify-tla
 java -cp tla2tools.jar tlc2.TLC -config proof/DistributedCBF.cfg proof/DistributedCBF.tla
 ```
 
-`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. Under `-continue` TLC prints that line, and exits 0, even after reporting violations (`DistributedCBF_nosync.cfg` prints it after 1,986 invariant violations), so `verify_tla.py` reads TLC's `Error:` lines instead. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails on a count or invariant verdict that differs from the BFS. `FtraBoundary*.cfg` and `LangGraphHarness*.cfg` must match `tla_pins.py` exactly. On every cfg, any other `Error:` line fails the run, whatever it reports: a violated action property (TLC reports `SP4_FenceEpochMonotonic` as `Action property … is violated`, not as an invariant), a temporal property, a deadlock or an exception. So does a run that never reports completion. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
+`DistributedCBF.cfg` reports `Model checking completed. No error has been found.` with 1811 distinct states. Under `-continue` TLC prints that line, and exits 0, even after reporting violations (`DistributedCBF_nosync.cfg` prints it after 1,986 invariant violations), so `verify_tla.py` reads TLC's `Error:` lines instead. The negative-control cfgs report `Invariant SP1_NoDoubleSpend is violated` and a counterexample trace; `make verify-tla` treats that as the expected result and fails on a count or invariant verdict that differs from the BFS. `FtraBoundary*.cfg` and `LangGraphHarness*.cfg` must match `tla_pins.py` exactly. On every cfg, any other `Error:` line fails the run, whatever it reports: a violated action property (TLC reports `SP4_FenceEpochMonotonic` as `Action property … is violated`, not as an invariant), a temporal property, a deadlock or an exception. So does a run that never reports completion. Every cfg must also declare exactly the invariants and properties `DECLARED_CHECKS` in [`tla_pins.py`](tla_pins.py) pins for it: dropping an `INVARIANTS` or `PROPERTIES` line leaves every state count unchanged, so the counts alone cannot show that one property fewer was checked. Without `TLA_TOOLS_JAR`, `make verify-tla` runs the BFS only.
 
 ## Architectural Notes
 
@@ -259,7 +271,7 @@ Regression tests pin the governance model counts — gated 34 / ungated 17 / ski
 
 ### TLA+ (TLC)
 
-TLC runs in the [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow on every pull request and every push to `main`, and locally via `make verify-tla`. pytest-logic also catches drift without Java: `tests/test_distributed_cbf_proof.py` and `tests/test_tla_specs_proof.py` fail if a cfg names a constant or invariant the spec does not define or a `proof/*.cfg` is not pinned, and run TLC themselves when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
+TLC runs in the [`tlc-model-check`](../.github/workflows/tlc-model-check.yml) workflow on every pull request and every push to `main`, and locally via `make verify-tla`. pytest-logic also catches drift without Java: `tests/test_distributed_cbf_proof.py` and `tests/test_tla_specs_proof.py` fail if a cfg names a constant or invariant the spec does not define, declares a different set of invariants or properties than `DECLARED_CHECKS`, or is not pinned, and if the Step 15 table in `FORMAL_VERIFICATION.md` stops matching the pins. They also run TLC themselves when `TLA_TOOLS_JAR` is set. Update both the spec and the Python twin whenever the CBF admission protocol changes (`LUA_ATOMIC_CBF`, `LUA_ROLLBACK`, `_check_fence_epoch`, `WAIT` handling).
 
 ## References
 
