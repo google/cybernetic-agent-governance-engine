@@ -1,0 +1,41 @@
+{
+  "id": 25965917,
+  "name": "Protect release tags",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "google/cybernetic-agent-governance-engine",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [
+
+      ],
+      "include": [
+        "refs/tags/v*",
+        "refs/tags/client-v*"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "update"
+    },
+    {
+      "type": "non_fast_forward"
+    }
+  ],
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5M9mHqzgGMNV0",
+  "created_at": "2026-10-27T14:33:04.934Z",
+  "updated_at": "2026-10-27T14:34:01.819Z",
+  "_links": {
+    "self": {
+      "href": "https://api.github.com/repos/google/cybernetic-agent-governance-engine/rulesets/25965917"
+    },
+    "html": {
+      "href": "https://github.com/google/cybernetic-agent-governance-engine/rules/25965917"
+    }
+  }
+}

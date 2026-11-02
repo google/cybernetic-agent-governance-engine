@@ -14,7 +14,7 @@
 
 """Meta-check regression suite ensuring every CI and Makefile gate actually enforces.
 
-Covers all 19 workflows in ``.github/workflows/*.yml`` (18 gate workflows + 1 release
+Covers all 20 workflows in ``.github/workflows/*.yml`` (19 gate workflows + 1 release
 workflow ``publish-client-sdk.yml``) plus ``Makefile`` and ``scripts/run_matrix_tests.sh``:
 
 1. Complete workflow inventory & classification (fails if a new workflow is added
@@ -69,7 +69,7 @@ MAKEFILE_PATH = REPO_ROOT / "Makefile"
 GITLEAKS_TOML_PATH = REPO_ROOT / ".gitleaks.toml"
 MATRIX_SCRIPT_PATH = REPO_ROOT / "scripts" / "run_matrix_tests.sh"
 
-# Complete classification of all 19 workflows in .github/workflows/
+# Complete classification of all 20 workflows in .github/workflows/
 NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
         "publish-client-sdk.yml",  # Tag/manual release workflow building & pushing cage-client wheel/GHCR package
@@ -92,6 +92,9 @@ GATE_WORKFLOWS: frozenset[str] = frozenset(
         "poam-drift.yml",
         "policy_compile.yml",
         "regional-posture.yml",
+        # Live repository rules vs .github/branch-protection-rules.md;
+        # planted-defect tests in tests/test_check_repo_rules.py.
+        "repo-rules.yml",
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",
@@ -147,7 +150,7 @@ def test_workflow_inventory_is_complete_and_classified() -> None:
         "Register new workflows in GATE_WORKFLOWS and add adversarial gate tests."
     )
     assert not missing, f"Classified workflow(s) missing from disk: {missing}"
-    assert len(on_disk) == 19, f"Expected 19 workflows, found {len(on_disk)}"
+    assert len(on_disk) == 20, f"Expected 20 workflows, found {len(on_disk)}"
 
     # Verify publish-client-sdk.yml is genuinely a release workflow, not a disguised test gate
     pub_data = yaml.safe_load(

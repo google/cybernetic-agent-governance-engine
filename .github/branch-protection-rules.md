@@ -173,7 +173,8 @@ automatically (§6).
 
 After any ruleset change:
 
-- [ ] Run the commands in §10 and compare the output with §1 to §6
+- [ ] Run `python scripts/check_repo_rules.py` and update its pins with the change; run the
+      §10 commands for §1.1, §5 and §6
 - [ ] Open a pull request and confirm the eight required checks in §3 are listed and must pass
 - [ ] Confirm the review requirement appears on a pull request by the maintainer
 - [ ] Confirm a direct push of a new commit to `main` is refused with `remote: error: GH013`
@@ -195,6 +196,13 @@ After any ruleset change:
 ---
 
 ## 10. How to verify
+
+`repo-rules.yml` runs `scripts/check_repo_rules.py` on every pull request, every push to
+`main` and daily. It compares the rules on `main` (§1), the required checks and their pins
+(§3) and the release-tag ruleset (§4) with the API, and fails on any difference in either
+direction; `tests/test_check_repo_rules.py` holds the §3 table equal to the checker's pins.
+An intended change updates the ruleset, the checker and this document together. The other
+sections are checked by hand with the commands below.
 
 Bypass actors are returned only to repository admins; everything else is readable without
 credentials on a public repository.

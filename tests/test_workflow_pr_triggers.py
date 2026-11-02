@@ -38,6 +38,8 @@ _EXPECTED_PR_WORKFLOWS = frozenset(
         "lula2-pr-compliance.yml",
         "poam-drift.yml",
         "policy_compile.yml",
+        # Reads live repository rules, so it also runs on a schedule.
+        "repo-rules.yml",
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",
@@ -154,6 +156,7 @@ def test_push_triggers_remain_scoped_on_unfiltered_pr_workflows() -> None:
         "ci.yml",
         "eu-ecb-compliance.yml",
         "license_guard.yml",
+        "repo-rules.yml",
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",

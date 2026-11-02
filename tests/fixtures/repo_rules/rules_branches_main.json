@@ -1,0 +1,86 @@
+[
+  {
+    "type": "pull_request",
+    "parameters": {
+      "required_approving_review_count": 1,
+      "dismiss_stale_reviews_on_push": true,
+      "required_reviewers": [
+
+      ],
+      "require_code_owner_review": false,
+      "dismissal_restriction": {
+        "enabled": false,
+        "allowed_actors": [
+
+        ]
+      },
+      "require_last_push_approval": false,
+      "required_review_thread_resolution": false,
+      "require_extra_approval_for_unattributed_changes": true,
+      "allowed_merge_methods": [
+        "merge",
+        "squash",
+        "rebase"
+      ]
+    },
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "google/cybernetic-agent-governance-engine",
+    "ruleset_id": 19769096
+  },
+  {
+    "type": "non_fast_forward",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "google/cybernetic-agent-governance-engine",
+    "ruleset_id": 26377312
+  },
+  {
+    "type": "deletion",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "google/cybernetic-agent-governance-engine",
+    "ruleset_id": 26377312
+  },
+  {
+    "type": "required_status_checks",
+    "parameters": {
+      "strict_required_status_checks_policy": false,
+      "do_not_enforce_on_create": false,
+      "required_status_checks": [
+        {
+          "context": "Lint",
+          "integration_id": 15368
+        },
+        {
+          "context": "AI 600-1 Unit Tests",
+          "integration_id": 15368
+        },
+        {
+          "context": "OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)",
+          "integration_id": 15368
+        },
+        {
+          "context": "Secret Scanning (Gitleaks)",
+          "integration_id": 15368
+        },
+        {
+          "context": "license-check",
+          "integration_id": 15368
+        },
+        {
+          "context": "Pytest Logic Tests",
+          "integration_id": 15368
+        },
+        {
+          "context": "Terraform Tests (gcp-gke, mock providers)",
+          "integration_id": 15368
+        },
+        {
+          "context": "Quickstart Bootstrap & First-DENY Smoke Gate",
+          "integration_id": 15368
+        }
+      ]
+    },
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "google/cybernetic-agent-governance-engine",
+    "ruleset_id": 25966171
+  }
+]
