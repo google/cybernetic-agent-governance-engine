@@ -21,8 +21,17 @@ and the same SP-1 / SP-2 verdicts.
 
 ``FtraBoundary*.cfg`` and ``LangGraphHarness*.cfg`` (POAM-2026-091) must
 reproduce ``TLC_PINS`` from ``proof/tla_pins.py``: the exact distinct-state
-count and the exact set of violated invariants. A violated temporal property
-or a TLC exception fails the run.
+count and the exact set of violated invariants.
+
+The pins cover state counts and invariants only, so on every cfg any other
+verdict fails the run: a violated action property (``SP4_FenceEpochMonotonic``
+is one, declared under PROPERTIES), a property the initial state violates, a
+violated temporal property, a deadlock or a TLC exception. Every run must also
+report that model checking completed. Under ``-continue`` TLC prints that line,
+and exits 0, even after reporting violations, so it shows only that the search
+finished. Every cfg must declare exactly the invariants and properties that
+``DECLARED_CHECKS`` in ``proof/tla_pins.py`` pins for it: a dropped line leaves
+the state count unchanged.
 
 Usage:
     TLA_TOOLS_JAR=/path/to/tla2tools.jar uv run python scripts/verify_tla.py
@@ -45,15 +54,46 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from proof.distributed_cbf_model import CONFIGS, EXPECTED_STATE_COUNTS  # noqa: E402
-from proof.tla_pins import TLC_PINS  # noqa: E402
+from proof.tla_pins import DECLARED_CHECKS, TLC_PINS, declared_checks  # noqa: E402
 
 _DISTINCT = re.compile(r"(\d+) distinct states found")
 _VIOLATED = re.compile(r"Invariant (\w+) is violated")
-_FAILURES = (
-    "Temporal properties were violated",
-    "unexpected exception",
-    "Error: Deadlock",
+# TLC prints every verdict on an "Error: " line. Under -continue its exit code
+# and completion line say nothing about them: a cfg with invariant violations
+# exits 0 and prints "No error has been found". The pins can account for an
+# invariant violation and the trace header TLC prints after it, so any other
+# Error line fails the run, whatever it reports: a violated action property
+# (SP4_FenceEpochMonotonic, declared under PROPERTIES), a property the initial
+# state violates, a temporal property, a deadlock or an exception.
+_ERROR_LINE = re.compile(r"^Error: (.*?)\s*$", re.MULTILINE)
+_PINNABLE_ERROR = re.compile(
+    r"Invariant \w+ is violated(?:\.| by the initial state:)"
+    r"|The behavior up to this point is:"
 )
+_COMPLETED = "Model checking completed."
+
+
+def unpinned_verdicts(out: str) -> list[str]:
+    """Return what in TLC's output no pin can account for (empty if nothing)."""
+    found = sorted(
+        {e for e in _ERROR_LINE.findall(out) if not _PINNABLE_ERROR.fullmatch(e)}
+    )
+    if _COMPLETED not in out:
+        found.append("TLC did not report that model checking completed")
+    return found
+
+
+def declared_check_drift(cfg: Path) -> list[str]:
+    """Return how the cfg's INVARIANT/PROPERTY sections differ from its pin."""
+    got, want = declared_checks(cfg.read_text()), DECLARED_CHECKS[cfg.stem]
+    return [
+        f"{kind} missing {sorted(w - g)}, extra {sorted(g - w)}"
+        for kind, g, w in (
+            ("invariants", got.invariants, want.invariants),
+            ("properties", got.properties, want.properties),
+        )
+        if g != w
+    ]
 
 
 def _tools() -> tuple[str, str] | None:
@@ -112,35 +152,44 @@ def main() -> int:
     for name in CONFIGS:
         cfg = ROOT / "proof" / f"{name}.cfg"
         expected = EXPECTED_STATE_COUNTS[(name, 2)]
-        states, violated, _ = run_tlc(java, jar, cfg, spec)
+        states, violated, out = run_tlc(java, jar, cfg, spec)
         got = (
             states,
             "SP1_NoDoubleSpend" not in violated,
             "SP2_NoOvercommit" not in violated,
         )
         unexpected = violated - {"SP1_NoDoubleSpend", "SP2_NoOvercommit"}
-        match = got == expected and not unexpected
+        unpinned = unpinned_verdicts(out)
+        drift = declared_check_drift(cfg)
+        match = got == expected and not unexpected and not unpinned and not drift
         ok &= match
         print(
             f"{'OK ' if match else 'BAD'} {cfg.name}: TLC (states, SP-1, SP-2) = {got}; "
             f"BFS = {expected}"
             + (f"; other violations: {sorted(unexpected)}" if unexpected else "")
+            + (f"; unpinned verdicts: {unpinned}" if unpinned else "")
+            + (f"; declared checks differ from pin: {drift}" if drift else "")
         )
     for name, pin in TLC_PINS.items():
         cfg = ROOT / "proof" / f"{name}.cfg"
         states, violated, out = run_tlc(
             java, jar, cfg, ROOT / "proof" / f"{pin.spec}.tla"
         )
-        failures = [f for f in _FAILURES if f in out]
+        unpinned = unpinned_verdicts(out)
+        drift = declared_check_drift(cfg)
         match = (
-            states == pin.distinct_states and violated == pin.violated and not failures
+            states == pin.distinct_states
+            and violated == pin.violated
+            and not unpinned
+            and not drift
         )
         ok &= match
         print(
             f"{'OK ' if match else 'BAD'} {cfg.name}: TLC states={states}, "
             f"violated={sorted(violated)}; pinned states={pin.distinct_states}, "
             f"violated={sorted(pin.violated)}"
-            + (f"; failures: {failures}" if failures else "")
+            + (f"; unpinned verdicts: {unpinned}" if unpinned else "")
+            + (f"; declared checks differ from pin: {drift}" if drift else "")
         )
     return 0 if ok else 1
 

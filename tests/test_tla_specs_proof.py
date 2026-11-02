@@ -18,7 +18,11 @@ The hermetic tests catch the failure modes that kept both specs from ever
 loading in TLC: cfg constants that the spec does not declare (or vice versa)
 and cfg invariants that the spec does not define. Every ``proof/*.cfg`` must
 be pinned either in ``proof/distributed_cbf_model.py`` or
-``proof/tla_pins.py``. The live test runs TLC when ``TLA_TOOLS_JAR`` is set.
+``proof/tla_pins.py``, and every cfg, DistributedCBF's included, must declare
+exactly the invariants and properties ``DECLARED_CHECKS`` pins, because state
+counts cannot see a dropped one. The Step 15 table in FORMAL_VERIFICATION.md
+must publish the pinned results. The live test runs TLC when
+``TLA_TOOLS_JAR`` is set.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ PROOF = ROOT / "proof"
 sys.path.insert(0, str(ROOT))
 
 from proof.distributed_cbf_model import CONFIGS  # noqa: E402
-from proof.tla_pins import TLC_PINS  # noqa: E402
+from proof.tla_pins import DECLARED_CHECKS, TLC_PINS, declared_checks  # noqa: E402
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -141,6 +145,55 @@ def test_every_cfg_is_pinned() -> None:
     assert cfgs == set(CONFIGS) | set(TLC_PINS)
 
 
+ALL_CFGS = sorted(p.stem for p in PROOF.glob("*.cfg"))
+FORMAL_VERIFICATION = ROOT / "docs" / "architecture" / "FORMAL_VERIFICATION.md"
+
+
+def test_declared_checks_cover_every_cfg() -> None:
+    assert set(DECLARED_CHECKS) == set(ALL_CFGS)
+
+
+@pytest.mark.parametrize("name", ALL_CFGS)
+def test_cfg_declares_exactly_its_pinned_checks(name: str) -> None:
+    """A dropped INVARIANT or PROPERTY line leaves every state count unchanged."""
+    cfg_text = (PROOF / f"{name}.cfg").read_text()
+    assert declared_checks(cfg_text) == DECLARED_CHECKS[name]
+
+
+@pytest.mark.parametrize("name", ALL_CFGS)
+def test_every_declared_check_is_load_bearing(name: str) -> None:
+    """Deleting any one INVARIANT or PROPERTY line from a cfg breaks its pin."""
+    lines = (PROOF / f"{name}.cfg").read_text().splitlines()
+    pin = DECLARED_CHECKS[name]
+    for check in sorted(pin.invariants | pin.properties):
+        kept = [ln for ln in lines if _strip_comment(ln) != check]
+        assert len(kept) == len(lines) - 1, f"{check}: not one line in {name}.cfg"
+        assert declared_checks("\n".join(kept)) != pin, f"dropping {check} passed"
+
+
+def test_step15_table_matches_pins() -> None:
+    """FORMAL_VERIFICATION.md Step 15 must publish the pinned results.
+
+    Distinct states, violated invariants and every "all N invariants" total.
+    """
+    text = FORMAL_VERIFICATION.read_text(encoding="utf-8")
+    section = text.split("\n## Step 15", 1)[1].split("\n## ", 1)[0]
+    rows = {
+        m.group(1): (int(m.group(2).replace(",", "")), m.group(3))
+        for m in re.finditer(
+            r"^\| `(\w+)`[^|]*\| ([\d,]+) \| ([^|\n]*)\|$", section, re.MULTILINE
+        )
+    }
+    assert set(rows) == set(TLC_PINS)
+    for name, (states, verdict) in rows.items():
+        pin = TLC_PINS[name]
+        assert states == pin.distinct_states, name
+        assert set(re.findall(r"`(\w+)` ❌", verdict)) == pin.violated, name
+        claimed = re.search(r"all (\d+) invariants", verdict)
+        if claimed:
+            assert int(claimed.group(1)) == len(DECLARED_CHECKS[name].invariants), name
+
+
 def _tools() -> tuple[str, str] | None:
     jar = os.environ.get("TLA_TOOLS_JAR", "")
     java = os.environ.get("JAVA") or shutil.which("java") or ""
@@ -152,12 +205,12 @@ def _tools() -> tuple[str, str] | None:
 @pytest.mark.skipif(_tools() is None, reason="TLA_TOOLS_JAR not set")
 @pytest.mark.parametrize("name", PINNED)
 def test_tlc_reproduces_pin(name: str) -> None:
-    from scripts.verify_tla import run_tlc
+    from scripts.verify_tla import run_tlc, unpinned_verdicts
 
     java, jar = _tools()  # type: ignore[misc]
     pin = TLC_PINS[name]
     states, violated, out = run_tlc(
         java, jar, PROOF / f"{name}.cfg", PROOF / f"{pin.spec}.tla"
     )
-    assert "Temporal properties were violated" not in out
+    assert unpinned_verdicts(out) == []
     assert (states, violated) == (pin.distinct_states, set(pin.violated))

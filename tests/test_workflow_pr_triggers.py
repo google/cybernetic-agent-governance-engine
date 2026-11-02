@@ -41,6 +41,8 @@ _EXPECTED_PR_WORKFLOWS = frozenset(
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",
+        # Was dispatch-only, and never ran, while POAM-2026-090/091 cited it.
+        "tlc-model-check.yml",
     }
 )
 
@@ -155,6 +157,7 @@ def test_push_triggers_remain_scoped_on_unfiltered_pr_workflows() -> None:
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",
+        "tlc-model-check.yml",
     )
     for wf_name in main_only_push_workflows:
         on_block = _load_on_block(_WORKFLOWS_DIR / wf_name)
