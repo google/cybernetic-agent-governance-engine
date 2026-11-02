@@ -91,16 +91,22 @@ Actions app, so a check run or commit status of the same name from any other sou
 satisfy it. Until 2026-11-02 only the last three were pinned. The check context must match
 what GitHub Actions reports exactly:
 
-| Check context (exact) | Workflow file | Integration pin |
+| Check context (exact) | Workflow files | Integration pin |
 |---|---|---|
 | `Lint` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `AI 600-1 Unit Tests` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
-| `OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
+| `OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)` | `security-scan.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Secret Scanning (Gitleaks)` | `security-scan.yml` | `integration_id: 15368` (GitHub Actions) |
-| `license-check` | `license_guard.yml` | `integration_id: 15368` (GitHub Actions) |
+| `license-check` | `ci.yml`, `license_guard.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Pytest Logic Tests` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Terraform Tests (gcp-gke, mock providers)` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Quickstart Bootstrap & First-DENY Smoke Gate` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
+
+Two jobs that check different things report `license-check`: `ci.yml` checks Apache 2.0
+headers and `license_guard.yml` audits dependency licences. Both reported on `f43efeba`
+(check runs `123570375167` and `123570378192`, read 2026-11-02). How GitHub evaluates the
+requirement when the two disagree has not been observed. `tests/test_check_repo_rules.py`
+fails unless the workflow column names exactly the workflows whose jobs report each check.
 
 ### Additional non-required pull-request workflows
 
@@ -181,6 +187,8 @@ After any ruleset change:
 - [ ] Open a pull request and confirm the eight required checks in §3 are listed and must pass
 - [ ] Confirm the review requirement appears on a pull request by the maintainer
 - [ ] Confirm a direct push of a new commit to `main` is refused with `remote: error: GH013`
+- [ ] Before a document states what a rule refuses or allows, probe it on a disposable ref
+      ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md))
 
 ---
 
@@ -189,9 +197,9 @@ After any ruleset change:
 | Code-level enforcement | Server-side setting that activates it |
 |---|---|
 | `.github/CODEOWNERS` | None while the project has one maintainer: code-owner review is off (§1), so the file is advisory (POAM-2026-115) |
-| `ci.yml` (`Lint`, `AI 600-1 Unit Tests`, `OPA Rego Policy Lint and Test ...`, `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock providers)`, `Quickstart Bootstrap & First-DENY Smoke Gate`) | §3 → ruleset `25966171` |
-| `security-scan.yml` `secret-scan` job | §3 → ruleset `25966171`: `Secret Scanning (Gitleaks)` |
-| `license_guard.yml` `license-check` job | §3 → ruleset `25966171`: `license-check` |
+| `ci.yml` (`Lint`, `AI 600-1 Unit Tests`, `license-check` (Apache 2.0 headers), `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock providers)`, `Quickstart Bootstrap & First-DENY Smoke Gate`) | §3 → ruleset `25966171` |
+| `security-scan.yml` `secret-scan` and `rego-policy-lint` jobs | §3 → ruleset `25966171`: `Secret Scanning (Gitleaks)`, `OPA Rego Policy Lint and Test ...` |
+| `license_guard.yml` `license-check` job (dependency licences) | §3 → ruleset `25966171`: `license-check` |
 | `dependency-review.yml` | §5 → dependency graph |
 | `scripts/setup_git_hooks.sh` pre-push hook (refuses pushes to `main`) | Local only. Server side, ruleset `19769096` requires pull requests and `26377312` blocks force pushes and deletion |
 | `dependabot.yml` weekly Actions scan | §5 → Dependabot alerts |
