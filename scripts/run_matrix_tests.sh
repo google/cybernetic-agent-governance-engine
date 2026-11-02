@@ -147,7 +147,7 @@ fi
 # Gate 0.2 — STPA freshness check
 echo ""
 info "Gate 0.2 — STPA freshness check"
-if python3 scripts/check_stpa_freshness.py; then
+if uv run python scripts/check_stpa_freshness.py; then
   success "Gate 0.2 passed — STPA artifacts are fresh"
 else
   error "Gate 0.2 FAILED — STPA freshness check"
@@ -163,7 +163,7 @@ export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-mock-location}"
 # All LANGFUSE_* vars (HOST, PUBLIC_KEY, SECRET_KEY, COMPLIANCE_*) are loaded
 # from .env above. Do NOT set fallback values here — missing vars must surface
 # as a real Gate 0.3 failure so operators know to populate .env.
-if python3 scripts/verify_langfuse_posture.py --dry-run --posture development; then
+if uv run python scripts/verify_langfuse_posture.py --dry-run --posture development; then
   success "Gate 0.3 passed — Langfuse posture verified"
 else
   error "Gate 0.3 FAILED — Langfuse posture verification"
