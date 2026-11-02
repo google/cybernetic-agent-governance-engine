@@ -16,9 +16,14 @@
 # configuration .github/branch-protection-rules.md documents: the rules on
 # main (review, required checks pinned to GitHub Actions, no force push, no
 # deletion) and the release-tag ruleset. It reads the live configuration, not
-# anything in the pull request, so it runs on a schedule as well: a ruleset
-# disabled or edited between pushes turns this red the next morning
-# (POAM-2026-169, POAM-2026-170).
+# anything in the pull request, so it is also scheduled daily. It fails on a
+# difference in what scripts/check_repo_rules.py compares: the rule types on
+# main, the review and required-check parameters it pins, and the tag
+# ruleset's target, enforcement, refs and rule types. Run live on 2026-11-02
+# against a branch no ruleset covers, the checker reported all four rules
+# missing and exited 1. Any other edit passes, including a bypass actor added
+# to a ruleset: the checker does not read bypass actors, which its docstring
+# says the API returns only to admins (POAM-2026-169, POAM-2026-170).
 name: repo-rules
 
 on:
