@@ -102,11 +102,12 @@ what GitHub Actions reports exactly:
 | `Terraform Tests (gcp-gke, mock providers)` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Quickstart Bootstrap & First-DENY Smoke Gate` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 
-Two jobs that check different things report `license-check`: `ci.yml` checks Apache 2.0
-headers and `license_guard.yml` audits dependency licences. Both reported on `f43efeba`
-(check runs `123570375167` and `123570378192`, read 2026-11-02). How GitHub evaluates the
-requirement when the two disagree has not been observed. `tests/test_check_repo_rules.py`
-fails unless the workflow column names exactly the workflows whose jobs report each check.
+Two jobs that check different things report `license-check` (POAM-2026-172): `ci.yml`
+checks Apache 2.0 headers and `license_guard.yml` audits dependency licences. Both
+reported on `f43efeba` (check runs `123570375167` and `123570378192`, read 2026-11-02).
+How GitHub evaluates the requirement when the two disagree has not been observed.
+`tests/test_check_repo_rules.py` fails unless the workflow column names exactly the
+workflows whose jobs report each check.
 
 ### Additional non-required pull-request workflows
 
