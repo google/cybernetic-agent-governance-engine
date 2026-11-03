@@ -47,7 +47,7 @@ This module mirrors the pattern proven in ``config/compliance/reconciliation_wor
 
 Environment variables
 ---------------------
-  CAGE_NORMATIVE_PROVIDER             — "static" (default), "provider_01", or "provider_02"
+  CAGE_NORMATIVE_PROVIDER             — "static" (default), "provider_01", "provider_03", "provider_06", "provider_07", or "provider_08"
   CAGE_NORMATIVE_ENDPOINT             — Provider base URL
   CAGE_NORMATIVE_POLL_INTERVAL_HOURS  — Background refresh interval (default: 6)
   CAGE_NORMATIVE_BOOT_TIMEOUT_SECONDS — Max wait at container init (default: 10)

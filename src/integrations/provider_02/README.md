@@ -11,11 +11,11 @@
 
 | Property | Value |
 |---|---|
-| Protocol | Vendor-specific attestation surface — **not** `NormativeProvider`, and **not** a subclass of the abstract [`AttestationProvider`](../../gateway/governance/attestation_provider.py:36) |
+| Protocol | [`AttestationProvider`](../../gateway/governance/seams/attestation.py) (`Provider02AttestationProvider` subclasses `AttestationProvider`) — **not** `NormativeProvider` |
 | Integration style | Out-of-band attestation; no per-transaction hot-path call |
-| Classes | `Provider02AttestationProvider` ([`provider.py`](provider.py:137)), `Provider02Client` and `Provider02AttestationCallback` ([`adapter.py`](adapter.py:408)) |
+| Classes | `Provider02AttestationProvider` ([`provider.py`](provider.py:201)), `Provider02Client` and `Provider02AttestationCallback` ([`adapter.py`](adapter.py:408)) |
 | Status | HTTP clients implemented; no endpoint configured |
-| Factory names | `provider_02`, alias `p02` (resolvable through `get_normative_provider()`, but it does not satisfy the `NormativeProvider` method set) |
+| Factory names | `provider_02`, alias `p02` (resolved through [`AttestationAggregator`](../../gateway/governance/attestation_aggregator.py); `get_normative_provider("provider_02")` raises `ValueError`) |
 | Conformance suite | Registered in `ATTESTATION_PROVIDERS`; covered by `test_attestation_providers_exist` ([`tests/test_normative_provider_conformance.py`](../../../tests/test_normative_provider_conformance.py:49)) |
 
 ## Verdict vocabulary

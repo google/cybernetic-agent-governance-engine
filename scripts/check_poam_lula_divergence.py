@@ -178,6 +178,8 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
     "POAM-2026-116": ("tests/test_check_repo_rules.py",),
     "POAM-2026-133": ("tests/test_check_repo_rules.py",),
     "POAM-2026-170": ("tests/test_check_repo_rules.py",),
+    # Partner identity, slot, and seam-role attributions enforced by check_partner_headers.py.
+    "POAM-2026-175": ("tests/test_check_partner_headers.py",),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {

@@ -12,36 +12,81 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""scripts/check_partner_headers.py: the banner on every docs/partners document.
+"""scripts/check_partner_headers.py: banners and canonical slot-to-vendor tables.
 
 The banner states only what holds for every partner document, sits directly
 under the title, and links to a status table that lists every partner. Files a
 MANIFEST.sha256 pins and anything that is not Markdown are never modified.
+The README tables (``## Directory Index`` and ``## Live Verification Status``)
+must match ``PARTNER_SLOTS``, which in turn matches the adapter classes in
+``src/integrations/``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from scripts import check_partner_headers as gate
+from src.gateway.governance.attestation_aggregator import _load_attestation_provider
+from src.gateway.governance.estate_provider import get_estate_provider
+from src.gateway.governance.normative_provider import get_normative_provider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _STATUS_README = """# Partners
 
+## Directory Index
+
+| Provider Namespace | Partner / Vendor | Integration Role & Protocol | Documentation Directory | Adapter Implementation |
+|---|---|---|---|---|
+| `provider_01` | **FlowSignal** | Synchronous Normative Provider (`NormativeProvider`) | [`provider_01/`](provider_01/) | [`src/integrations/provider_01/`](../../src/integrations/provider_01/) |
+| `provider_02` | **NexArt** | Attestation Provider & Cryptographic Evidence Resolver (`AttestationProvider`, CER) | [`provider_02/`](provider_02/) | [`src/integrations/provider_02/`](../../src/integrations/provider_02/) |
+
 ## Live Verification Status
 
 | Adapter | Result |
 |---|---|
-| `provider_01` Example | Not run |
-| `provider_02` Example | Not run |
+| `provider_01` FlowSignal | Not run |
+| `provider_02` NexArt | Not run |
 
 ## Next section
 """
+
+_SEAM_METHODS: dict[str, tuple[str, ...]] = {
+    "NormativeProvider": ("fetch_baseline", "validate_fria", "submit_evidence"),
+    "AttestationProvider": ("fetch_attestations",),
+    "WarrantSource": ("fetch", "provider_name"),
+    "EstateProvider": (
+        "get_resource_predicate",
+        "query_blast_radius",
+        "get_topology_snapshot",
+    ),
+    "ExecutionActuator": ("actuate", "get_capabilities", "health_check"),
+    "PolicyAdvisorBridge": ("evaluate_proposal",),
+    "QuarantineActuator": ("quarantine_workload", "health_check"),
+}
+
+
+def _classes_implemented_seams(classes: list[type]) -> frozenset[str]:
+    return frozenset(
+        seam_name
+        for seam_name, methods in _SEAM_METHODS.items()
+        if any(all(hasattr(cls, method) for method in methods) for cls in classes)
+    )
+
+
+def _module_implemented_seams(mod: object) -> frozenset[str]:
+    classes = [
+        getattr(mod, attr)
+        for attr in getattr(mod, "__all__", dir(mod))
+        if isinstance(getattr(mod, attr, None), type)
+    ]
+    return _classes_implemented_seams(classes)
 
 
 def _tree(tmp_path: Path) -> Path:
@@ -57,6 +102,19 @@ def _tree(tmp_path: Path) -> Path:
     (deposit / "NOTES.md").write_text("# Not pinned\n", encoding="utf-8")
     digest = hashlib.sha256((deposit / "README.md").read_bytes()).hexdigest()
     (deposit / "MANIFEST.sha256").write_text(f"{digest}  README.md\n", encoding="utf-8")
+    return root
+
+
+def _readme_tree(tmp_path: Path) -> Path:
+    """A docs/partners tree carrying the repository README.md and empty slot dirs."""
+    root = tmp_path / "docs" / "partners"
+    root.mkdir(parents=True)
+    for slot in gate.PARTNER_SLOTS:
+        (root / slot).mkdir()
+    (root / "README.md").write_text(
+        (gate.PARTNERS_ROOT / "README.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     return root
 
 
@@ -149,8 +207,9 @@ def test_the_status_table_must_list_every_partner_directory(tmp_path: Path) -> N
     gate.apply_banners(root)
     (root / "provider_03").mkdir()
     assert gate.violations(root) == [
+        "docs/partners/README.md: '## Directory Index' has no row for provider_03",
         "docs/partners/README.md: '## Live Verification Status' has no row for "
-        "provider_03"
+        "provider_03",
     ]
 
 
@@ -164,3 +223,207 @@ def test_the_status_heading_must_exist(tmp_path: Path) -> None:
     )
     (error,) = gate.violations(root)
     assert "no '## Live Verification Status' heading" in error
+
+
+README_PLANTS: dict[str, tuple[Callable[[Path], None], str]] = {
+    "provider_02 vendor cell carries InferTheta and Vector3 (#218 defect)": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "| `provider_02` | **NexArt** |",
+                "| `provider_02` | **InferTheta / NexArt / Vector3** |",
+            ),
+            encoding="utf-8",
+        ),
+        "row 'provider_02' has vendor '**InferTheta / NexArt / Vector3**', expected '**NexArt**'",
+    ),
+    "actuator_01 vendor cell misattributed to OpsCanvas": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "| `actuator_01` | **Archytan** |", "| `actuator_01` | **OpsCanvas** |"
+            ),
+            encoding="utf-8",
+        ),
+        "row 'actuator_01' has vendor '**OpsCanvas**', expected '**Archytan**'",
+    ),
+    "provider_07 role cell omits NormativeProvider (#218 defect)": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "Synchronous Normative Provider (`NormativeProvider`) — Bayesian Causal Suitability Oracle",
+                "Graph Topology & Governance Schema Provider",
+            ),
+            encoding="utf-8",
+        ),
+        "row 'provider_07' role cell is missing `NormativeProvider`",
+    ),
+    "provider_02 role cell claims NormativeProvider": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "(`AttestationProvider`, CER)",
+                "(`AttestationProvider`, `NormativeProvider`, CER)",
+            ),
+            encoding="utf-8",
+        ),
+        "row 'provider_02' role cell names `NormativeProvider`, which provider_02 does not implement",
+    ),
+    "actuator_01 documentation link is *(Reference)* instead of actuator_01/": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace("[`actuator_01/`](actuator_01/)", "*(Reference)*"),
+            encoding="utf-8",
+        ),
+        "row 'actuator_01' has documentation link '*(Reference)*', expected '[`actuator_01/`](actuator_01/)'",
+    ),
+    "status table pairs provider_02 with InferTheta": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace("| `provider_02` NexArt |", "| `provider_02` InferTheta |"),
+            encoding="utf-8",
+        ),
+        "row 'provider_02' has adapter label 'InferTheta', expected 'NexArt'",
+    ),
+    "directory index heading removed": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace("## Directory Index", "## Old Index"),
+            encoding="utf-8",
+        ),
+        "no '## Directory Index' heading",
+    ),
+    "unknown partner directory created": (
+        lambda root: (root / "vector3").mkdir(),
+        "unknown partner directory 'vector3' (not in PARTNER_SLOTS)",
+    ),
+    "duplicate row in directory index": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "| `provider_01` | **FlowSignal** | Synchronous Normative Provider (`NormativeProvider`) | [`provider_01/`](provider_01/) | [`src/integrations/provider_01/`](../../src/integrations/provider_01/) |",
+                "| `provider_01` | **FlowSignal** | Synchronous Normative Provider (`NormativeProvider`) | [`provider_01/`](provider_01/) | [`src/integrations/provider_01/`](../../src/integrations/provider_01/) |\n"
+                "| `provider_01` | **FlowSignal** | Synchronous Normative Provider (`NormativeProvider`) | [`provider_01/`](provider_01/) | [`src/integrations/provider_01/`](../../src/integrations/provider_01/) |",
+            ),
+            encoding="utf-8",
+        ),
+        "'## Directory Index' has duplicate row for provider_01",
+    ),
+    "duplicate row in status table": (
+        lambda root: (root / "README.md").write_text(
+            (root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "| `provider_02` NexArt |",
+                "| `provider_02` NexArt | Not run | none | none |\n| `provider_02` NexArt |",
+            ),
+            encoding="utf-8",
+        ),
+        "'## Live Verification Status' has duplicate row for provider_02",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(README_PLANTS))
+def test_partner_readme_attribution_and_role_drift_is_reported(
+    tmp_path: Path, name: str
+) -> None:
+    plant, expected = README_PLANTS[name]
+    root = _readme_tree(tmp_path)
+    assert gate.violations(root) == []
+    plant(root)
+    problems = gate.violations(root)
+    assert any(expected in problem for problem in problems), problems
+
+
+def test_partner_slots_match_adapter_classes_and_seam_factories() -> None:
+    """PARTNER_SLOTS in check_partner_headers.py agrees with src/integrations/ and kernel factories."""
+    assert set(_SEAM_METHODS) == gate.ALL_SEAM_PROTOCOLS
+
+    partner_dirs = {p.name for p in gate.PARTNERS_ROOT.iterdir() if p.is_dir()}
+    assert partner_dirs == set(gate.PARTNER_SLOTS)
+
+    integrations_root = gate.REPO_ROOT / "src" / "integrations"
+    integration_slots = {
+        p.name
+        for p in integrations_root.iterdir()
+        if p.is_dir() and p.name.startswith(("provider_", "actuator_"))
+    }
+    assert integration_slots <= set(gate.PARTNER_SLOTS)
+    # Only provider_09 may lack a src/integrations/<slot>/ package today; once
+    # src/integrations/provider_09/ lands, it enters integration_slots and runs
+    # through the same module-class check below without any skip.
+    assert set(gate.PARTNER_SLOTS) - integration_slots <= {"provider_09"}
+
+    for slot, spec in gate.PARTNER_SLOTS.items():
+        if slot in integration_slots:
+            mod = importlib.import_module(f"src.integrations.{slot}")
+            implemented = _module_implemented_seams(mod)
+        else:
+            provider = get_estate_provider(slot)
+            implemented = _classes_implemented_seams([type(provider)])
+        assert implemented == frozenset(spec.seams), (
+            f"{slot}: adapter classes implement {sorted(implemented)}, "
+            f"PARTNER_SLOTS declares {sorted(spec.seams)}"
+        )
+
+    with pytest.raises(ValueError, match="AttestationProvider"):
+        get_normative_provider("provider_02")
+    with pytest.raises(ValueError, match="Unknown attestation provider"):
+        _load_attestation_provider("provider_01")
+
+
+def test_seam_check_enforces_provider_09_when_package_is_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When src.integrations.provider_09 is installed, its exported classes must implement EstateProvider."""
+    import sys
+    import types
+
+    expected = frozenset(gate.PARTNER_SLOTS["provider_09"].seams)
+    assert expected == frozenset({"EstateProvider"})
+
+    wrong_mod = types.ModuleType("src.integrations.provider_09")
+
+    class WrongSeamAdapter:
+        async def fetch_baseline(self, region: str) -> object: ...
+        async def validate_fria(
+            self, action: str, params: dict, context: dict
+        ) -> object: ...
+        async def submit_evidence(
+            self, thread_id: str, evidence_hash: str
+        ) -> object: ...
+
+    wrong_mod.WrongSeamAdapter = WrongSeamAdapter  # type: ignore[attr-defined]
+    wrong_mod.__all__ = ["WrongSeamAdapter"]  # type: ignore[attr-defined]
+    assert _module_implemented_seams(wrong_mod) != expected
+
+    right_mod = types.ModuleType("src.integrations.provider_09")
+
+    class Provider09EstateProvider:
+        @classmethod
+        def from_env(cls) -> Provider09EstateProvider:
+            return cls()
+
+        async def get_resource_predicate(self, resource_urn: str) -> object: ...
+        async def query_blast_radius(
+            self, resource_urn: str, action: str
+        ) -> object: ...
+        async def get_topology_snapshot(self, scope: str) -> object: ...
+
+    right_mod.Provider09EstateProvider = Provider09EstateProvider  # type: ignore[attr-defined]
+    right_mod.__all__ = ["Provider09EstateProvider"]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "src.integrations.provider_09", right_mod)
+
+    assert _module_implemented_seams(right_mod) == expected
+    resolved = get_estate_provider("provider_09")
+    assert isinstance(resolved, Provider09EstateProvider)
+    assert _classes_implemented_seams([type(resolved)]) == expected

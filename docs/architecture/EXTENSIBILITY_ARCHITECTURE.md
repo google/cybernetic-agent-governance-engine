@@ -464,7 +464,7 @@ Execution actuators implement the [`ExecutionActuator`](../../src/gateway/govern
 CAGE_ACTIVE_ACTUATORS=actuator_01
 ```
 
-**Supported actuators:** `actuator_01` (Archytan mTLS execution gateway with quorum signatures).
+**Supported actuators:** `actuator_01` (Archytan mTLS execution gateway with quorum signatures), `actuator_02` (NVIDIA OpenShell dynamic sandbox supervisor), `actuator_03` (NVIDIA Sentry / DOCA out-of-band hardware quarantine).
 
 **Fail-closed semantics:** If no actuator claims an action, `ActuatorRegistry.get_actuator()` returns `None`. The consequence gateway ([`consequence_gateway.py`](../../src/gateway/governance/consequence_gateway.py)) must handle unclaimed actions explicitly (typically by raising `GovernanceError` or logging a warning).
 
@@ -521,7 +521,8 @@ Normative providers implement the [`NormativeProvider`](../../src/gateway/govern
 **Configuration:**
 
 ```bash
-# Provider name: "static" (default, load from config/compliance/*.json) or "provider_01"
+# Provider name: "static" (default, load from config/compliance/*.json),
+# "provider_01", "provider_03", "provider_06", "provider_07", or "provider_08"
 CAGE_NORMATIVE_PROVIDER=provider_01
 
 # Provider-specific configuration (example for provider_01)
@@ -549,13 +550,13 @@ All third-party compliance and attestation provider adapters, cloud KMS provider
 
 ```
 src/integrations/
-├── __init__.py                # Provider factory (lazy-loading)
+├── __init__.py                # Package boundary overview (lazy-loaded by kernel seam factories)
 ├── provider_01/
-│   └── provider.py            # Provider01 (3-endpoint normative provider adapter)
+│   └── provider.py            # FlowSignalNormativeProvider (NormativeProvider interface)
 ├── provider_02/
-│   ├── adapter.py             # AttestationCallback (LangGraph callback handler) + Client
-│   └── provider.py            # Provider02 (NormativeProvider interface, JWK-verifiable CERs)
-├── provider_03/, provider_05/ … provider_08/, actuator_01/
+│   ├── adapter.py             # Provider02AttestationCallback (LangGraph callback handler) + Provider02Client
+│   └── provider.py            # Provider02AttestationProvider (AttestationProvider interface, JWK-verifiable CERs)
+├── provider_03/, provider_05/ … provider_08/, actuator_01/ … actuator_03/
 ├── gcp/kms_provider.py        # GCPKMSProvider (Cloud KMS)
 ├── aws/kms_provider.py        # AWSKMSProvider (AWS KMS)
 ├── azure/kms_provider.py      # AzureKMSProvider (Azure Key Vault)
@@ -673,13 +674,16 @@ The `nemo_node_factory.py` in the LangGraph harness bridges §4.1 and §4.3: it 
 
 ### 4.4 Seams Contracts Layer — Kernel & Vendor Decoupling (`src/gateway/governance/seams/`)
 
-Added in the post-v3.0.1 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, execution actuation, graph topologies, and outbound credential brokering:
+Added in the post-v3.0.1 stabilization cycle, the Seams layer (`src/gateway/governance/seams/`) defines pure runtime protocols for normative checking, third-party attestations, institutional warrants, infrastructure estate topology, execution actuation, workload quarantine, graph topologies, and outbound credential brokering:
 
 | Seam Module | Protocol / Dataclass | Role |
 |---|---|---|
 | [`normative.py`](../../src/gateway/governance/seams/normative.py) | `NormativeProvider`, `NormativeBaseline`, `ValidationResult` | Defines normative constraint contracts without importing kernel or vendor modules |
 | [`attestation.py`](../../src/gateway/governance/seams/attestation.py) | `AttestationProvider`, `ExternalAttestation`, `AttestationStatus` | Standardizes external evidence attestation with attributable `provider_name` |
+| [`warrant.py`](../../src/gateway/governance/seams/warrant.py) | `WarrantSource` | Supplies institutional execution warrants and key manifests (`provider_05`) |
+| [`estate.py`](../../src/gateway/governance/seams/estate.py) | `EstateProvider`, `EstateSnapshot`, `EstateStatus` | Supplies dated infrastructure estate dependency snapshots (`provider_09`) |
 | [`actuation.py`](../../src/gateway/governance/seams/actuation.py) | `ExecutionActuator`, `ExecutionClearance`, `ActuationReceipt` | Decouples execution actuation and signing contracts from specific transport layers |
+| [`quarantine.py`](../../src/gateway/governance/seams/quarantine.py) | `QuarantineActuator`, `QuarantineDirective`, `QuarantineReceipt` | Decouples out-of-band workload quarantine directives and receipts (`actuator_03`) |
 | [`graph_topology.py`](../../src/gateway/governance/seams/graph_topology.py) | `GraphTopology` | Standardizes structural graph inspection across domain agent workflows |
 | [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py) | `CredentialBrokerAdapter`, `CredentialBrokerError`, `CredentialNotFound`, `CredentialAccessDenied` | Brokers outbound tool credentials at the dispatch edge so agents never hold raw API secrets; the kernel holds the protocol only |
 

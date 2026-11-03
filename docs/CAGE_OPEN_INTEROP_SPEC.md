@@ -1498,9 +1498,10 @@ contract CAGE **calls** — the outbound HTTP interface an external compliance
 vendor must implement to act as a synchronous FRIA gate.
 
 Providers are numbered and anonymized in this repository (`provider_01` …
-`provider_06`) and ship with **no configured live endpoints**. All URLs below
-are placeholders. Adapter sources live under `src/integrations/{provider}/`;
-each directory carries a `README.md` with its own verdict vocabulary.
+`provider_09`, `actuator_01` … `actuator_03`) and ship with **no configured live
+endpoints** in kernel defaults. All URLs below are placeholders. Adapter sources
+live under `src/integrations/{provider}/`; each directory carries a `README.md`
+with its own verdict vocabulary.
 
 > **Reference architecture note:** this contract is an illustrative integration
 > pattern for adopters to adapt, not a hosted service offered by this

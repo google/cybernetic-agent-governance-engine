@@ -987,11 +987,16 @@ adapter directory.
 | Provider | Protocol | Style |
 |---|---|---|
 | `provider_01` | `NormativeProvider` | Synchronous FRIA gate (HTTP) |
-| `provider_03` | `NormativeProvider` | Synchronous FRIA gate (HTTP) |
-| `provider_06` | `NormativeProvider` | Synchronous integrity verifier (HTTP) |
-| `provider_02` | Attestation surface | Out-of-band receipt certification |
-| `actuator_01` | `ExecutionActuator` + envelope mapper | Downstream execution actuator |
-| `provider_05` | `AttestationProvider` ×3 | Out-of-band, seeded/synthetic |
+| `provider_02` | `AttestationProvider` | Out-of-band CER receipt certification & verification |
+| `provider_03` | `NormativeProvider` | Synchronous FRIA gate & JCS bind receipts (HTTP) |
+| `provider_05` | `WarrantSource` + `AttestationProvider` ×3 | Live HTTP institutional warrant fetch (`GET /v0.2/warrants/{norm_id}`) + out-of-band 3-axiom attestations |
+| `provider_06` | `NormativeProvider` | Synchronous agent integrity verifier (`1-alpha`, HTTP) |
+| `provider_07` | `NormativeProvider` | Synchronous Bayesian causal suitability oracle (`POST /infer`, `GET /baseline/{region}`, `POST /evidence-chain/{thread_id}`) |
+| `provider_08` | `NormativeProvider` | Synchronous FRIA gate, regional baseline fetch, & Sigstore Rekor evidence custody (HTTPS) |
+| `provider_09` | `EstateProvider` | Infrastructure estate dependency graph snapshot & reconciliation seam (`seams/estate.py`) |
+| `actuator_01` | `ExecutionActuator` | Downstream mTLS execution actuator with JCS envelope & quorum signatures |
+| `actuator_02` | `ExecutionActuator` + `PolicyAdvisorBridge` | Dynamic sandbox supervisor over mTLS + OCSF telemetry ingestor |
+| `actuator_03` | `QuarantineActuator` + `ExecutionActuator` | Out-of-band DPU hardware quarantine (`POST /v1/dpu/quarantine` over mTLS) |
 
 ---
 
