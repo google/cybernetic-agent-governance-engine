@@ -185,12 +185,20 @@ class PlanGraphAnalyzer:
             )
 
         # ----------------------------------------------------------------
-        # Build directed graph
+        # Build directed graph (reject empty or duplicate step IDs)
         # ----------------------------------------------------------------
         G: nx.DiGraph = nx.DiGraph()
+        seen_step_ids: set[str] = set()
 
         # Add all step nodes with their action attribute
         for step in steps:
+            if not isinstance(step.id, str) or not step.id.strip():
+                raise ValueError("FTRA: step.id must be a non-empty string")
+            if step.id in seen_step_ids:
+                raise ValueError(
+                    f"FTRA: duplicate step.id '{step.id}' in execution plan"
+                )
+            seen_step_ids.add(step.id)
             G.add_node(step.id, action=step.action)
 
         # Determine edges: Phase 2 depends_on or Phase 1 linear chain

@@ -279,13 +279,33 @@ async def _park_defer_context(
     sealed ALLOW (Refusals Are Primary Evidence).
     """
     from src.gateway.governance.defer_queue import DeferToken, open_defer_queue
+    from src.gateway.server.workload_identity import current_client_identity
 
     effective_thread_id = thread_id or str(uuid.uuid4())
+    safe_params = params or {}
+    safe_meta = metadata or {}
+    tri_claims = (
+        safe_params.get("_tri_identity")
+        if isinstance(safe_params.get("_tri_identity"), dict)
+        else {}
+    )
+    resolved_initiator = (
+        safe_meta.get("initiator_urn")
+        or current_client_identity()
+        or tri_claims.get("agent_principal")
+        or safe_params.get("initiator_urn")
+        or safe_params.get("trader_id")
+    )
+    resolved_initiator_str = (
+        str(resolved_initiator).strip()
+        if isinstance(resolved_initiator, str) and resolved_initiator.strip()
+        else None
+    )
 
     opa_input_snapshot = {
         "action": action,
-        "params": params or {},
-        "metadata": metadata or {},
+        "params": safe_params,
+        "metadata": safe_meta,
         "violations": [
             v.to_dict() if isinstance(v, Violation) else v for v in violations
         ],
@@ -298,6 +318,8 @@ async def _park_defer_context(
         # Re-verified clamped params that would leave only the approval to give.
         "narrow_hint": classification_meta.get("narrow_hint"),
     }
+    if resolved_initiator_str:
+        opa_input_snapshot["initiator_urn"] = resolved_initiator_str
     if reliance:
         opa_input_snapshot["reliance"] = reliance_evidence(reliance)
 
@@ -307,6 +329,7 @@ async def _park_defer_context(
         opa_input_snapshot=opa_input_snapshot,
         confidence_score=min(max(confidence, 0.0), 1.0),
         aarm_vector="AARM-V7",
+        initiator_urn=resolved_initiator_str,
     )
 
     try:

@@ -1454,12 +1454,39 @@ def _resolve_defer_redis_url() -> str:
     return os.environ.get("EVIDENCE_STREAM_REDIS_URL", "redis://localhost:6379")
 
 
+async def _enforce_defer_read_auth(request: Request) -> bool:
+    """Enforce internal token auth on DEFER read endpoints when configured.
+
+    Returns True when a verified internal token was presented.
+    """
+    has_configured_token = bool(
+        os.environ.get("CAGE_INTERNAL_TOKEN")
+        or os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN")
+    )
+    explicit_prod = os.environ.get("CAGE_ENV") == "production"
+    has_header = bool(
+        request.headers.get("x-cage-internal-token")
+        or request.headers.get("X-Cage-Internal-Token")
+        or request.headers.get("authorization")
+        or request.headers.get("Authorization")
+    )
+    if has_configured_token or explicit_prod or has_header:
+        token_res = await require_internal_token(
+            request,
+            x_cage_internal_token=request.headers.get("x-cage-internal-token")
+            or request.headers.get("X-Cage-Internal-Token"),
+        )
+        return token_res != "dev-unauthenticated"
+    return False
+
+
 @app.get(
     "/v1/defer/pending",
     tags=["governance"],
     summary="List pending DEFER queue tokens (parked execution contexts)",
 )
 async def list_defer_pending(
+    request: Request,
     limit: int = Query(
         default=50, ge=1, le=200, description="Maximum tokens to return"
     ),
@@ -1469,6 +1496,7 @@ async def list_defer_pending(
     Tokens are returned in TTL-ascending order (soonest-expiring first).
     DEFER tokens are stored in Redis db=1 with noeviction policy.
     """
+    await _enforce_defer_read_auth(request)
     redis_url = _resolve_defer_redis_url()
     # Return a lightweight stub when Redis is unavailable in non-production environments
     if not redis_url:
@@ -1501,7 +1529,7 @@ async def list_defer_pending(
     tags=["governance"],
     summary="Poll deferred token status by ID",
 )
-async def get_defer_status(defer_id: str) -> JSONResponse:
+async def get_defer_status(defer_id: str, request: Request) -> JSONResponse:
     """Fetch the status of a single DEFER token by defer_id (ADR-008 Phase 4).
 
     This endpoint implements the defer status polling mechanism, allowing clients
@@ -1516,10 +1544,11 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
           - confidence_score: Model confidence at decision time
           - created_at: ISO-8601 timestamp when token was parked
           - ttl_seconds: Time-to-live window before auto-escalation
-          - routing_seal: HMAC-SHA256 seal (only when status=RESOLVED)
+          - routing_seal: HMAC-SHA256 seal (only when status=RESOLVED and authenticated)
 
         HTTP 404 if the token does not exist (never parked or already expired)
     """
+    is_authenticated = await _enforce_defer_read_auth(request)
     redis_url = _resolve_defer_redis_url()
     if not redis_url:
         raise HTTPException(
@@ -1563,7 +1592,7 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
             else str(getattr(token, "created_at_utc", "")),
             "ttl_seconds": token.ttl_seconds,
             "routing_seal": getattr(token, "routing_seal", None)
-            if status == "RESOLVED"
+            if (status == "RESOLVED" and is_authenticated)
             else None,
         }
 

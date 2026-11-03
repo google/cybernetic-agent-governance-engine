@@ -305,6 +305,15 @@ class ApprovalRecord(BaseModel):
         if not self.client_data_json or not self.challenge_binding:
             return False
 
+        if self.auth_method == "WEBAUTHN":
+            if (
+                not self.authenticator_data
+                or not self.authenticator_data.strip()
+                or not self.signature
+                or not self.signature.strip()
+            ):
+                return False
+
         try:
             # Decode client_data_json using canonical base64url padding
             b64_str = self.client_data_json
@@ -319,6 +328,11 @@ class ApprovalRecord(BaseModel):
 
             # Parse the JSON and extract the challenge field
             client_data = json.loads(client_data_bytes.decode("utf-8"))
+            if (
+                self.auth_method == "WEBAUTHN"
+                and client_data.get("type") != "webauthn.get"
+            ):
+                return False
             challenge_b64 = client_data.get("challenge", "")
 
             # Decode the challenge using canonical base64url padding

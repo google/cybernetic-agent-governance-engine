@@ -514,8 +514,14 @@ class AgwAdapter:
         governed_params = dict(req.parameters)
         governed_params["_tri_identity"] = tri_identity.to_envelope_claims()
 
+        from src.gateway.governance.governor.governor import SymbolicGovernor
+
+        is_symbolic_governor = isinstance(governor, SymbolicGovernor)
         try:
-            verdict = governor.validate_action(req.tool_name, governed_params)
+            if is_symbolic_governor:
+                verdict = governor.govern(req.tool_name, governed_params)
+            else:
+                verdict = governor.validate_action(req.tool_name, governed_params)
             if inspect.isawaitable(verdict):
                 verdict = await verdict
         except Exception as exc:
@@ -634,6 +640,10 @@ class AgwAdapter:
                 )
             elif isinstance(existing_seal, str) and existing_seal.strip():
                 seal = existing_seal.strip()
+            elif is_symbolic_governor:
+                raise RuntimeError(
+                    "SymbolicGovernor returned ALLOW without a committed routing seal"
+                )
             else:
                 seal = await generate_seal(
                     req.tool_name,
