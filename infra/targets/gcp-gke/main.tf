@@ -1184,10 +1184,10 @@ module "app_secrets" {
   s3_bucket_name        = google_storage_bucket.langfuse_event_upload.name
 
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
-  # Dev posture: pass the key as-is (may be empty → module skips secret creation
-  #   when any_compliance_active=false; compliance bridge handles None gracefully).
-  # Prod posture (any_compliance_active=true): the POAM-019 guards below enforce
-  #   that a real, distinct cage-compliance project key is provided.
+  # Dev posture: pass the key as-is. It may be empty: the module still writes the
+  #   secret, with empty values, and the compliance bridge only warns under dev.
+  # Compliance posture (any_compliance_active=true): the POAM-019 guards below
+  #   refuse an empty or shared key in untargeted plans only (POAM-2026-180).
   #   The silent fallback to module.langfuse.public_key has been removed to prevent
   #   circular evidence contamination in Step 5 (_fetch_failing_traces).
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
@@ -1299,14 +1299,28 @@ resource "terraform_data" "control_plane_access_guard" {
   }
 }
 
-# Teardown (POAM-2026-174): the three compliance guards above are resource
-# preconditions on purpose. A destroy plan refreshes state with them reported as
-# warnings, so `terraform destroy -var-file=staging.tfvars` needs neither
-# authorized_networks nor the compliance keys. The same check written as a
-# variable validation fails the destroy plan instead (both verified on Terraform
-# 1.15.8 and 1.17.1). Keep them out of variable validations. Being standalone,
-# they are skipped by a plan targeted at module.gke, which does not depend on
-# them (POAM-2026-180).
+# Where a plan-time check goes (POAM-2026-174, POAM-2026-180). Two plans decide
+# it: a plan targeted at the resource the check protects, and a destroy plan run
+# without the inputs the check reads. Every cell was run on Terraform 1.15.8 and
+# 1.17.1:
+#
+#   placement of the check                      plan -target=<it>   destroy plan
+#   standalone terraform_data guard             skipped             succeeds
+#   the protected resource depends_on a guard   refused             succeeds
+#   precondition on the protected resource      refused             succeeds
+#   variable validation                         refused             blocked
+#
+# A new check goes in one of the two middle rows. A precondition on the protected
+# resource cannot be separated from it, but when that resource is in a child
+# module, a root-level terraform test cannot name it in expect_failures (both
+# versions reject the reference), so the check is tested from the module's own
+# tests. A root guard keeps root-level tests, but only while every protected
+# resource keeps its depends_on; one that drops it is back in the first row.
+# A destroy plan reports resource preconditions only as warnings, so
+# `terraform destroy -var-file=staging.tfvars` needs neither authorized_networks
+# nor the compliance keys, while a variable validation fails the destroy plan.
+# Every terraform_data guard in this file is standalone: POAM-2026-180 tracks
+# moving them, and tests/infrastructure/test_guard_placement.py fails on a new one.
 
 # W6: what each inference backend deploys must be able to run. "vllm" schedules
 # its pods on the GPU pool, so it needs one (min 0 costs nothing while idle). The
