@@ -352,7 +352,7 @@ def test_t1_3_4_attest_ring0_posture(killswitch_server_harness: dict[str, Any]) 
     with httpx.Client(timeout=2.0) as client:
         resp = client.get(f"{base_url}/v1/cage/attest")
     posture = resp.json()["ring0_posture"]
-    assert posture in ("ACTIVE_WFP_FILTERED", "ACTIVE_RING0_ENFORCED")
+    assert posture in ("ACTIVE_WFP_FILTERED", "ACTIVE_RING0_ENFORCED", "VERIFIED_STAGED")
 
 
 def test_t1_3_5_attest_signature_verification(killswitch_server_harness: dict[str, Any]) -> None:

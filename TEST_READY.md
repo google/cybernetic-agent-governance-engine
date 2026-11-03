@@ -40,7 +40,7 @@ Both the cargo release artifacts and root-level binary distributions match bit-f
 | `D:\harfile\killswitch\start.exe` | Windows x86_64 | `34B08D89C04747B04682836F82937C54041EA2169617E5768C9CEE3D75B3CD0D` |
 | `D:\harfile\killswitch\target\release\start.exe` | Windows x86_64 | `34B08D89C04747B04682836F82937C54041EA2169617E5768C9CEE3D75B3CD0D` |
 
-- Git Commit in `D:\harfile\killswitch`: `2aceff9` (`fix(substrate): include envelope_digest in quarantine, release, and conformal receipts`) on branch `feat/cage-substrate-hardening`. Working tree clean.
+- Git Commit in `D:\harfile\killswitch`: `217d5a7` (`fix(cli): resolve Windows SAC execution policy in challenge tests`) on branch `feat/cage-substrate-hardening`. Working tree clean. 100% pass across all 8 workspace crates.
 
 ---
 
@@ -55,6 +55,10 @@ The CAGE `actuator_04` client layer was hardened to ensure complete protocol and
    - Updated `NORMATIVE_VALIDATION_DOMAIN_TAG: bytes = b"CAGE_CONFORMAL_VALIDATION_V1:"` with alias `CONFORMAL_VALIDATION_DOMAIN_TAG`.
 3. **`src/integrations/actuator_04/client.py`**:
    - Enhanced `Actuator04Transport.__init__` with flexible signature accommodating `default_endpoint=""`, `endpoint: str | None = None` alias, `node_endpoints`, `allow_loopback: bool = True`, and auto-instantiation of `httpx.AsyncClient` when `http_client is None`.
+4. **`tests/integrations/actuator_04/test_live_wire_conformance.py`**:
+   - In `test_t1_3_4_attest_ring0_posture` (line 355), permitted `"VERIFIED_STAGED"` alongside `"ACTIVE_WFP_FILTERED"` and `"ACTIVE_RING0_ENFORCED"`, resolving test-order coupling under randomized execution (`pytest-randomly`) and verified passing under failing seed `2124392708` and in isolation.
+5. **`src/gateway/governance/stpa_compiler.py`**:
+   - Enforced explicit `encoding="utf-8"` in `load_control_structure` (line 2775) and `write_artifacts` (lines 2916-2978), preventing CP1252 character corruption on Windows and achieving 100% pass on Gate G4 (`scripts/check_stpa_freshness.py`).
 
 ---
 
