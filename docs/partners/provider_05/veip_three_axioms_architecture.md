@@ -105,7 +105,7 @@ flowchart TB
 ```
 
 **Key principle:** VEIP integrates as a **NormativeProvider implementation**
-(the same seam used by Provider 01, Provider 02, and Provider 03 today — see
+(the same seam used by Provider 01 and Provider 03 today — see
 [`get_normative_provider()`](../src/gateway/governance/normative_provider.py:800)),
 plus a new **attestation-embedding hook** in the envelope builder. This keeps
 VEIP off the synchronous hot path for ALLOW-zone transactions and reuses
@@ -693,7 +693,7 @@ be confused:
 `ValidationResult.findings`
 ([`normative_provider.py:200-214`](../src/gateway/governance/normative_provider.py:200))
 is currently an untyped `list[dict[str, Any]]` with no enforced vocabulary —
-each provider (Provider 01, Provider 02, Provider 03, and now VEIP) is free to invent
+each provider (Provider 01, Provider 03, and now VEIP) is free to invent
 its own finding-status strings, which is exactly the kind of vocabulary drift
 `decisions.py`'s docstring (`:22-42`) describes CAGE having already suffered
 and fixed once for the gateway-decision vocabulary.
@@ -709,7 +709,7 @@ class FindingStatus(str, Enum):
     """OSCAL four-state assessment-result vocabulary.
 
     Maps 1:1 to NIST OSCAL `finding.status.state` / `observation.status`
-    values, ensuring every NormativeProvider (Provider 01, Provider 02, Provider 03,
+    values, ensuring every NormativeProvider (Provider 01, Provider 03,
     VEIP) emits findings the OSCAL SSP exporter can ingest without a
     translation layer.
     """
@@ -815,8 +815,9 @@ CAGE takes on.
   [`SUBSTRATE_CONTRACT.md §2.3`](../docs/SUBSTRATE_CONTRACT.md:156)'s 8-tier
   enumeration. It is evidence-embedding infrastructure, orthogonal to the
   ALLOW/DENY/REQUIRE_APPROVAL/DEFER decision path.
-- VEIP does **not** replace Provider 01/Provider 02/Provider 03 — those remain
-  `NormativeProvider` implementations for FRIA validation; VEIP is a
+- VEIP does **not** replace Provider 01 or Provider 03 — those remain
+  `NormativeProvider` implementations for FRIA validation (and Provider 02
+  remains an `AttestationProvider`); VEIP is a
   **cross-cutting attestation layer** that could, in principle, itself be
   registered as an additional `NormativeProvider` for the Blueprint axiom
   specifically (§3.3), while Key and Physics attestation live outside the

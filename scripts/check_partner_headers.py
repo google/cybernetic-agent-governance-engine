@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keep the partner-content banner on every document under docs/partners/.
+"""Keep the partner-content banner and canonical slot-to-vendor tables on docs/partners/.
 
 Each Markdown document under ``docs/partners/`` carries, directly under its
 title, a banner stating only what holds for all of them: the document is
@@ -27,8 +27,17 @@ Exempt from the banner:
   banner would break the deposit's digest;
 * everything that is not Markdown, so JSON records stay byte-for-byte.
 
-The gate also fails if the table disappears or lacks a row for a partner
-directory, since every banner points there.
+The gate also checks ``docs/partners/README.md`` against ``PARTNER_SLOTS``:
+
+* every ``docs/partners/<slot>/`` subdirectory is a registered slot in
+  ``PARTNER_SLOTS`` and has a row in both ``## Directory Index`` and
+  ``## Live Verification Status``;
+* every row in ``## Directory Index`` names its slot's exact canonical vendor
+  (rejecting foreign partner names or unknown vendor tokens), lists its required
+  kernel seam protocol(s) without claiming seams the slot does not implement,
+  and links to ``docs/partners/<slot>/``;
+* every row in ``## Live Verification Status`` pairs its slot with its canonical
+  adapter label.
 
 Usage:
     uv run python scripts/check_partner_headers.py           # check
@@ -41,12 +50,15 @@ import argparse
 import os
 import re
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PARTNERS_ROOT = REPO_ROOT / "docs" / "partners"
 
 STATUS_DOC = "README.md"
+INDEX_HEADING = "## Directory Index"
 STATUS_HEADING = "## Live Verification Status"
 STATUS_ANCHOR = "live-verification-status"
 MANIFEST = "MANIFEST.sha256"
@@ -57,6 +69,87 @@ _BANNER_BLOCK = re.compile(
     re.escape(BANNER_START) + r".*?" + re.escape(BANNER_END) + r"\n?", re.DOTALL
 )
 _MANIFEST_LINE = re.compile(r"^[0-9a-f]{64} [ *](?P<name>.+)$")
+_STATUS_ADAPTER_CELL = re.compile(r"^`(?P<slot>[^`]+)`\s*(?P<label>.*)$")
+
+
+@dataclass(frozen=True)
+class PartnerSlot:
+    """Canonical identity and kernel-seam role for one partner slot."""
+
+    vendor: str
+    status_label: str
+    seams: tuple[str, ...]
+
+
+ALL_SEAM_PROTOCOLS = frozenset(
+    {
+        "NormativeProvider",
+        "AttestationProvider",
+        "WarrantSource",
+        "EstateProvider",
+        "ExecutionActuator",
+        "PolicyAdvisorBridge",
+        "QuarantineActuator",
+    }
+)
+
+PARTNER_SLOTS: Mapping[str, PartnerSlot] = {
+    "provider_01": PartnerSlot(
+        vendor="FlowSignal",
+        status_label="FlowSignal",
+        seams=("NormativeProvider",),
+    ),
+    "provider_02": PartnerSlot(
+        vendor="NexArt",
+        status_label="NexArt",
+        seams=("AttestationProvider",),
+    ),
+    "provider_03": PartnerSlot(
+        vendor="Veritas",
+        status_label="Veritas",
+        seams=("NormativeProvider",),
+    ),
+    "provider_05": PartnerSlot(
+        vendor="Veraxis Execution Integrity Protocol (VEIP)",
+        status_label="VEIP v0.2",
+        seams=("WarrantSource", "AttestationProvider"),
+    ),
+    "provider_06": PartnerSlot(
+        vendor="Guardian Cyber Agent Integrity",
+        status_label="Guardian Cyber Agent Integrity",
+        seams=("NormativeProvider",),
+    ),
+    "provider_07": PartnerSlot(
+        vendor="InferTheta",
+        status_label="InferTheta",
+        seams=("NormativeProvider",),
+    ),
+    "provider_08": PartnerSlot(
+        vendor="Verdict Systems",
+        status_label="Verdict Systems",
+        seams=("NormativeProvider",),
+    ),
+    "provider_09": PartnerSlot(
+        vendor="OpsCanvas",
+        status_label="OpsCanvas",
+        seams=("EstateProvider",),
+    ),
+    "actuator_01": PartnerSlot(
+        vendor="Archytan",
+        status_label="Archytan",
+        seams=("ExecutionActuator",),
+    ),
+    "actuator_02": PartnerSlot(
+        vendor="NVIDIA OpenShell",
+        status_label="NVIDIA OpenShell",
+        seams=("ExecutionActuator", "PolicyAdvisorBridge"),
+    ),
+    "actuator_03": PartnerSlot(
+        vendor="NVIDIA Sentry / DOCA",
+        status_label="NVIDIA Sentry / DOCA",
+        seams=("QuarantineActuator", "ExecutionActuator"),
+    ),
+}
 
 
 def expected_banner(doc: Path, partners_root: Path = PARTNERS_ROOT) -> str:
@@ -112,24 +205,142 @@ def _display(path: Path, partners_root: Path) -> str:
     return Path(os.path.relpath(path, partners_root.parent.parent)).as_posix()
 
 
+def _section_lines(lines: list[str], heading: str) -> list[str] | None:
+    if heading not in lines:
+        return None
+    start = lines.index(heading) + 1
+    end = next(
+        (i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines)
+    )
+    return lines[start:end]
+
+
+def _index_table_violations(
+    shown: str, section: list[str], subdirs: list[str], partners_root: Path
+) -> list[str]:
+    errors: list[str] = []
+    for subdir in subdirs:
+        if subdir in PARTNER_SLOTS and not any(
+            line.startswith(f"| `{subdir}`") for line in section
+        ):
+            errors.append(f"{shown}: '{INDEX_HEADING}' has no row for {subdir}")
+
+    seen: set[str] = set()
+    for line in section:
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        slot = cells[0].strip("`")
+        if slot in seen:
+            errors.append(f"{shown}: '{INDEX_HEADING}' has duplicate row for {slot}")
+            continue
+        seen.add(slot)
+        if slot not in PARTNER_SLOTS:
+            errors.append(
+                f"{shown}: '{INDEX_HEADING}' row '{slot}' is not in PARTNER_SLOTS"
+            )
+            continue
+        if not (partners_root / slot).is_dir():
+            errors.append(
+                f"{shown}: '{INDEX_HEADING}' row '{slot}' has no {slot}/ directory"
+            )
+        if len(cells) < 5:
+            errors.append(
+                f"{shown}: '{INDEX_HEADING}' row '{slot}' has {len(cells)} column(s), expected 5"
+            )
+            continue
+        spec = PARTNER_SLOTS[slot]
+        vendor_cell, role_cell, doc_cell = cells[1], cells[2], cells[3]
+        expected_vendor = f"**{spec.vendor}**"
+        if vendor_cell != expected_vendor:
+            errors.append(
+                f"{shown}: '{INDEX_HEADING}' row '{slot}' has vendor {vendor_cell!r}, "
+                f"expected {expected_vendor!r}"
+            )
+        for seam in spec.seams:
+            if f"`{seam}`" not in role_cell:
+                errors.append(
+                    f"{shown}: '{INDEX_HEADING}' row '{slot}' role cell is missing `{seam}`"
+                )
+        for other_seam in sorted(ALL_SEAM_PROTOCOLS - set(spec.seams)):
+            if f"`{other_seam}`" in role_cell:
+                errors.append(
+                    f"{shown}: '{INDEX_HEADING}' row '{slot}' role cell names "
+                    f"`{other_seam}`, which {slot} does not implement"
+                )
+        expected_doc = f"[`{slot}/`]({slot}/)"
+        if doc_cell != expected_doc:
+            errors.append(
+                f"{shown}: '{INDEX_HEADING}' row '{slot}' has documentation link "
+                f"{doc_cell!r}, expected {expected_doc!r}"
+            )
+    return errors
+
+
 def _status_table_violations(partners_root: Path) -> list[str]:
     status_doc = partners_root / STATUS_DOC
     shown = _display(status_doc, partners_root)
     if not status_doc.is_file():
         return [f"{shown} does not exist"]
     lines = status_doc.read_text(encoding="utf-8").splitlines()
-    if STATUS_HEADING not in lines:
-        return [f"{shown} has no '{STATUS_HEADING}' heading for banners to link to"]
-    start = lines.index(STATUS_HEADING) + 1
-    end = next(
-        (i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines)
-    )
-    section = lines[start:end]
-    return [
-        f"{shown}: '{STATUS_HEADING}' has no row for {partner.name}"
-        for partner in sorted(p for p in partners_root.iterdir() if p.is_dir())
-        if not any(line.startswith(f"| `{partner.name}`") for line in section)
+    subdirs = [p.name for p in sorted(partners_root.iterdir()) if p.is_dir()]
+    errors: list[str] = [
+        f"{shown}: unknown partner directory '{subdir}' (not in PARTNER_SLOTS)"
+        for subdir in subdirs
+        if subdir not in PARTNER_SLOTS
     ]
+
+    index_section = _section_lines(lines, INDEX_HEADING)
+    if index_section is None:
+        errors.append(f"{shown} has no '{INDEX_HEADING}' heading")
+    else:
+        errors.extend(
+            _index_table_violations(shown, index_section, subdirs, partners_root)
+        )
+
+    status_section = _section_lines(lines, STATUS_HEADING)
+    if status_section is None:
+        errors.append(
+            f"{shown} has no '{STATUS_HEADING}' heading for banners to link to"
+        )
+        return errors
+
+    for subdir in subdirs:
+        if subdir in PARTNER_SLOTS and not any(
+            line.startswith(f"| `{subdir}`") for line in status_section
+        ):
+            errors.append(f"{shown}: '{STATUS_HEADING}' has no row for {subdir}")
+
+    seen: set[str] = set()
+    for line in status_section:
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        match = _STATUS_ADAPTER_CELL.match(cells[0])
+        if not match:
+            continue
+        slot = match["slot"]
+        label = match["label"]
+        if slot in seen:
+            errors.append(f"{shown}: '{STATUS_HEADING}' has duplicate row for {slot}")
+            continue
+        seen.add(slot)
+        if slot not in PARTNER_SLOTS:
+            errors.append(
+                f"{shown}: '{STATUS_HEADING}' row '{slot}' is not in PARTNER_SLOTS"
+            )
+            continue
+        if not (partners_root / slot).is_dir():
+            errors.append(
+                f"{shown}: '{STATUS_HEADING}' row '{slot}' has no {slot}/ directory"
+            )
+        spec = PARTNER_SLOTS[slot]
+        if label != spec.status_label:
+            errors.append(
+                f"{shown}: '{STATUS_HEADING}' row '{slot}' has adapter label "
+                f"{label!r}, expected {spec.status_label!r}"
+            )
+    return errors
 
 
 def violations(partners_root: Path = PARTNERS_ROOT) -> list[str]:

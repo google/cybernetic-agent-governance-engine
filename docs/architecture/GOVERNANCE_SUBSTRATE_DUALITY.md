@@ -447,10 +447,12 @@ exercised by
    US_FED (0.95) declare no warrant.
 2. **Source.** `CAGE_WARRANT_SOURCE` names the adapter
    ([`source_factory.py`](../../src/gateway/governance/warrant/source_factory.py)).
-   `provider_05` is the seeded VEIP source
+   `provider_05` is the VEIP warrant source
    ([`warrant_source.py`](../../src/integrations/provider_05/warrant_source.py)),
    behind the kernel `WarrantSource` seam
-   ([`WarrantSource`](../../src/gateway/governance/seams/warrant.py)).
+   ([`WarrantSource`](../../src/gateway/governance/seams/warrant.py)), supporting
+   both live HTTP (`GET /v0.2/warrants/{norm_id}` + `GET /.well-known/veip/key-manifest.json`)
+   and seeded hermetic mode.
 3. **Assembly.** [`bootstrap_governor()`](../../src/gateway/governance/governor/bootstrap.py)
    resolves the source and calls
    [`assemble_governor()`](../../src/gateway/governance/governor/assembly.py).
@@ -481,10 +483,14 @@ exercised by
    (the binding's version, kept apart from the warrant's). With no warrant
    every warrant-declared field is `""`.
 2. **Admit.** If the warrant is eligible and nothing else objects, the
-   response is a signed envelope carrying a `WARRANT` attestation with status
-   `UNVERIFIED`, derived from the same `RelianceRecord` (its metadata is the
-   record's evidence form), so the envelope and the evidence chain agree. The digest proves the fields are consistent, not who issued
-   them; issuer signatures arrive with VEIP v0.2.
+   response is a signed envelope carrying a `WARRANT` attestation derived from
+   the same `RelianceRecord` (its metadata is the record's evidence form), so
+   the envelope and the evidence chain agree. Under VEIP v0.2,
+   [`WarrantStandingVerifier`](../../src/gateway/governance/warrant/verifier.py)
+   verifies the warrant's Ed25519 signature against `warrant.kid` in the
+   out-of-band [`VerifiedKeyManifest`](../../src/gateway/governance/warrant/trust_anchor.py)
+   before emitting `verification_status: VERIFIED` (or `UNVERIFIED` for unsigned
+   seeded v0.1 vectors).
 3. **Commit.** The trade tool
    ([`tool_provider.py`](../../src/cage_finance/tools/tool_provider.py))
    runs the FULL profile. The seal's evidence record carries the reliance
@@ -537,16 +543,17 @@ exercised by
 
 ### 10.3 What the evidence does and does not show
 
-The end-to-end test runs every step above through CAGE code. The warrant
-source is the seeded adapter holding the VEIP v0.1 vectors, because VEIP has
-no live endpoint yet. Its deterministic fault injection (`inject_fault()`
-with the kernel `FaultMode`: timeout, connection error, malformed payload,
-fields rewritten in transit) drives every source-side fail-closed path:
-`INELIGIBLE_UNRESOLVED` with no trusted state, `INELIGIBLE_STALE` past the
-window, both DEFER. It is therefore not Tier 1 over-the-wire conformance
-evidence (see [`AGENTS.md`](../../AGENTS.md) and POAM-2026-104 / POAM-2026-107
-in [`POAM.md`](../POAM.md)). Warrant authenticity stays `UNVERIFIED` until a
-`kid`-resolved issuer signature is checked.
+[`test_warrant_reliance_e2e.py`](../../tests/governor/test_warrant_reliance_e2e.py)
+runs every step above hermetically against the seeded `Provider05WarrantSource`
+with deterministic fault injection (`inject_fault()` with the kernel
+`FaultMode`: timeout, connection error, malformed payload, fields rewritten in
+transit) to drive every source-side fail-closed path (`INELIGIBLE_UNRESOLVED`
+with no trusted state, `INELIGIBLE_STALE` past the window, both DEFER). Live
+Tier 1 over-the-wire conformance against the VEIP v0.2 sandbox
+(`GET /v0.2/warrants/{norm_id}` and `GET /.well-known/veip/key-manifest.json`
+with `kid`-resolved Ed25519 signature verification) is exercised separately in
+[`test_provider_05_live.py`](../../tests/integrations/provider_05/test_provider_05_live.py)
+(see POAM-2026-104 / POAM-2026-107 in [`POAM.md`](../POAM.md)).
 
 ---
 
