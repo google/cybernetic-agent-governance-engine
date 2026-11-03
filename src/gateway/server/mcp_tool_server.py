@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
+import json
 import logging
 import math
 import os
@@ -594,11 +595,98 @@ async def verify_content_safety(text: str) -> str:
 # Mount Stateless MCP Streamable HTTP with distributed tracing (A3)
 # ---------------------------------------------------------------------------
 
+class McpQuarantineMiddleware:
+    """ASGI middleware ensuring quarantined or stale-epoch workloads cannot reach /mcp."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http":
+            from src.gateway.server.workload_identity import extract_client_identity
+            from src.gateway.governance.quarantine_actuator import (
+                is_workload_quarantined,
+                get_workload_min_epoch,
+            )
+
+            try:
+                caller_identity = extract_client_identity(scope)
+            except Exception:
+                caller_identity = None
+
+            thread_id = None
+            raw_epoch = None
+            for k, v in scope.get("headers", []):
+                k_lower = k.lower()
+                if k_lower == b"x-cage-thread-id":
+                    thread_id = v.decode("latin-1", errors="ignore")
+                elif k_lower == b"x-cage-epoch":
+                    raw_epoch = v.decode("latin-1", errors="ignore")
+                elif k_lower == b"x-cage-agent-svid" and not caller_identity:
+                    caller_identity = v.decode("latin-1", errors="ignore")
+
+            if caller_identity or thread_id:
+                if await is_workload_quarantined(
+                    thread_id=thread_id,
+                    agent_svid=caller_identity,
+                ):
+                    body = json.dumps(
+                        {
+                            "error": "workload_quarantined",
+                            "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
+                            "agent_id": caller_identity,
+                            "thread_id": thread_id,
+                        }
+                    ).encode()
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 403,
+                            "headers": [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(body)).encode()),
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": body})
+                    return
+
+                if caller_identity and raw_epoch is not None:
+                    try:
+                        req_epoch = int(raw_epoch)
+                        min_epoch = await get_workload_min_epoch(caller_identity)
+                        if req_epoch < min_epoch:
+                            body = json.dumps(
+                                {
+                                    "error": "stale_workload_epoch",
+                                    "message": f"Workload generation epoch {req_epoch} is stale (minimum required: {min_epoch})",
+                                    "agent_id": caller_identity,
+                                    "min_epoch": min_epoch,
+                                }
+                            ).encode()
+                            await send(
+                                {
+                                    "type": "http.response.start",
+                                    "status": 403,
+                                    "headers": [
+                                        (b"content-type", b"application/json"),
+                                        (b"content-length", str(len(body)).encode()),
+                                    ],
+                                }
+                            )
+                            await send({"type": "http.response.body", "body": body})
+                            return
+                    except (ValueError, TypeError):
+                        pass
+
+        await self.app(scope, receive, send)
+
+
 patch_mcp_tools(mcp)
 logger.info(
-    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing)..."
+    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing and quarantine guard)..."
 )
-app.mount("/mcp", mcp.streamable_http_app())
+app.mount("/mcp", McpQuarantineMiddleware(mcp.streamable_http_app()))
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +752,52 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=403,
             detail="trusted workload identity required",
         )
+
+    # Out-of-Band Quarantine Enforcement (SC-7 / AC-3, CAGE-09)
+    from src.gateway.governance.quarantine_actuator import (
+        is_workload_quarantined,
+        get_workload_min_epoch,
+    )
+
+    request_thread_id = request.headers.get("x-cage-thread-id") or request_body.params.get("thread_id")
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    shared_redis = getattr(app_state, "redis", None)
+    if await is_workload_quarantined(
+        thread_id=str(request_thread_id) if request_thread_id else None,
+        agent_svid=caller_identity,
+        redis_client=shared_redis,
+    ):
+        logger.warning(
+            "🛑 Quarantined workload attempted /tools/execute (svid=%s, thread=%s)",
+            caller_identity,
+            request_thread_id,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "workload_quarantined",
+                "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
+                "agent_id": caller_identity,
+                "thread_id": request_thread_id,
+            },
+        )
+
+    min_epoch = await get_workload_min_epoch(caller_identity, redis_client=shared_redis)
+    raw_epoch = request.headers.get("x-cage-epoch") or request_body.params.get("epoch")
+    if raw_epoch is not None:
+        try:
+            if int(raw_epoch) < min_epoch:
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "stale_workload_epoch",
+                        "message": f"Workload generation epoch {raw_epoch} is stale (minimum required: {min_epoch})",
+                        "agent_id": caller_identity,
+                        "min_epoch": min_epoch,
+                    },
+                )
+        except (ValueError, TypeError):
+            pass
 
     # A4 / M-20: Shared dual-bucket GCRA rate limiting (identity + principal)
     if _check_rate_limit is not _default_check_rate_limit:

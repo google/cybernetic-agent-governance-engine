@@ -813,6 +813,72 @@ async def validate_action_endpoint(
             },
         )
 
+    # ── Out-of-Band Quarantine Enforcement (SC-7 / AC-3, CAGE-09) ───────────
+    from src.gateway.governance.quarantine_actuator import (
+        is_workload_quarantined,
+        get_workload_min_epoch,
+    )
+    from src.gateway.server.workload_identity import current_client_identity
+
+    caller_svid = current_client_identity()
+    if not caller_svid:
+        try:
+            from src.gateway.server.workload_identity import extract_client_identity
+
+            caller_svid = extract_client_identity(request.scope)
+        except Exception:
+            caller_svid = None
+    if not caller_svid:
+        caller_svid = request.headers.get("x-cage-agent-svid") or body.params.get("agent_svid")
+
+    req_thread_id = request.headers.get("x-cage-thread-id") or body.params.get("thread_id")
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    shared_redis = getattr(app_state, "redis", None)
+
+    if await is_workload_quarantined(
+        thread_id=str(req_thread_id) if req_thread_id else None,
+        agent_svid=str(caller_svid) if caller_svid else None,
+        redis_client=shared_redis,
+    ):
+        logger.warning(
+            "🛑 Quarantined workload attempted /governance/validate-action (svid=%s, thread=%s)",
+            caller_svid,
+            req_thread_id,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "workload_quarantined",
+                "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
+                "agent_id": caller_svid,
+                "thread_id": req_thread_id,
+            },
+        )
+
+    if caller_svid:
+        min_epoch = await get_workload_min_epoch(str(caller_svid), redis_client=shared_redis)
+        raw_epoch = request.headers.get("x-cage-epoch") or body.params.get("epoch")
+        if raw_epoch is not None:
+            try:
+                if int(raw_epoch) < min_epoch:
+                    logger.warning(
+                        "🛑 Stale workload epoch on /governance/validate-action: %s < min %s (svid=%s)",
+                        raw_epoch,
+                        min_epoch,
+                        caller_svid,
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "error": "stale_workload_epoch",
+                            "message": f"Workload generation epoch {raw_epoch} is stale (minimum required: {min_epoch})",
+                            "agent_id": caller_svid,
+                            "min_epoch": min_epoch,
+                        },
+                    )
+            except (ValueError, TypeError):
+                pass
+
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
     # here and attaching it as the current context means all spans opened by

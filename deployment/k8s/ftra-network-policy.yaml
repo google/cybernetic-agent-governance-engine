@@ -34,7 +34,7 @@ spec:
   # Target the cage-gateway pod
   podSelector:
     matchLabels:
-      app: cage-gateway
+      app: gateway
   policyTypes:
     - Ingress
   ingress:
@@ -70,7 +70,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: cage-gateway
+      app: gateway
   policyTypes:
     - Ingress
   ingress:
@@ -118,7 +118,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: cage-gateway
+      app: gateway
   policyTypes:
     - Ingress
   ingress:

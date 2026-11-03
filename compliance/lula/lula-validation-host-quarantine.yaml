@@ -1,0 +1,133 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+component-definition:
+  uuid: e8300001-lula-4000-8000-quarantine001
+  metadata:
+    title: CAGE Validation — Host OS Kernel Quarantine Substrate (actuator_04)
+    last-modified: '2026-11-03T01:30:00Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: |
+      Automated Lula validation for the Host OS Kernel Quarantine DaemonSet (actuator_04)
+      and its strict ingress NetworkPolicy in namespace governance-stack.
+      Verifies:
+      1. host-quarantine-daemon DaemonSet exists in namespace governance-stack.
+      2. Container securityContext drops ALL capabilities.
+      3. Container securityContext enforces readOnlyRootFilesystem == true.
+      4. Container image does not use :latest tag (immutable tag/digest enforced).
+      5. NetworkPolicy host-quarantine-ingress-gateway-only restricts TCP 3030 ingress strictly to app=gateway pods.
+  components:
+  - uuid: a0400001-4e47-bbc8-host-quarantine01
+    type: software
+    title: Host OS Kernel Quarantine Substrate (actuator_04)
+    description: Host OS Kernel runtime containment and attestation substrate providing dynamic socket severing, process suspension, and hardware TPM PCR validation.
+    control-implementations:
+    - uuid: a0400001-ctrl-impl-8000-actuator0401
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: Control implementation for Host Quarantine Substrate (SC-7, SI-4, IR-4, IA-3).
+      implemented-requirements:
+      - uuid: a0400001-sc07-8000-actuator00001
+        control-id: sc-7
+        description: Automated lula validation for Host OS Kernel Quarantine Substrate hardening and network boundary isolation.
+        links:
+        - href: '#a0400001-rsrc-8000-actuator00001'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: a0400001-rsrc-8000-actuator00001
+      title: Lula Validation — Host OS Kernel Quarantine Substrate Hardening
+      rlinks:
+      - href: lula.dev
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+            - name: host-quarantine-daemon
+              resource: daemonsets
+              namespace: governance-stack
+            - name: host-quarantine-ingress-gateway-only
+              resource: networkpolicies
+              namespace: governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              # Helper to normalize input resource to collection
+              get_objects(res_name) = objs if {
+                is_array(input[res_name])
+                objs := input[res_name]
+              } else = [input[res_name]] if {
+                is_object(input[res_name])
+              } else = []
+
+              # Check 1: host-quarantine-daemon DaemonSet exists in governance-stack
+              daemonset_exists if {
+                some ds in get_objects("host-quarantine-daemon")
+                ds.metadata.name == "host-quarantine-daemon"
+                ds.metadata.namespace == "governance-stack"
+              }
+
+              # Check 2: Container drops ALL capabilities
+              drops_all_capabilities if {
+                some ds in get_objects("host-quarantine-daemon")
+                some c in ds.spec.template.spec.containers
+                c.name == "host-quarantine-daemon"
+                some drop_cap in c.securityContext.capabilities.drop
+                upper(drop_cap) == "ALL"
+              }
+
+              # Check 3: readOnlyRootFilesystem is true
+              readonly_root_fs if {
+                some ds in get_objects("host-quarantine-daemon")
+                some c in ds.spec.template.spec.containers
+                c.name == "host-quarantine-daemon"
+                c.securityContext.readOnlyRootFilesystem == true
+              }
+
+              # Check 4: Zero :latest image tag
+              no_latest_tag if {
+                some ds in get_objects("host-quarantine-daemon")
+                some c in ds.spec.template.spec.containers
+                c.name == "host-quarantine-daemon"
+                not endswith(c.image, ":latest")
+                not contains(c.image, ":latest@")
+                contains(c.image, ":")
+              }
+
+              # Check 5: Ingress allowed strictly from app: gateway on port 3030
+              networkpolicy_gateway_only if {
+                some np in get_objects("host-quarantine-ingress-gateway-only")
+                np.metadata.name == "host-quarantine-ingress-gateway-only"
+                np.spec.podSelector.matchLabels.app == "host-quarantine-daemon"
+                some ing in np.spec.ingress
+                some from_rule in ing.from
+                from_rule.podSelector.matchLabels.app == "gateway"
+                some port_rule in ing.ports
+                port_rule.port == 3030
+              }
+
+              validate if {
+                daemonset_exists
+                drops_all_capabilities
+                readonly_root_fs
+                no_latest_tag
+                networkpolicy_gateway_only
+              }

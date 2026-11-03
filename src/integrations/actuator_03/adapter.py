@@ -185,13 +185,21 @@ class Actuator03Adapter:
         signer: RawMessageSigner,
         http_client: httpx.AsyncClient | None = None,
         receipt_key_resolver: Ed25519KeyResolver | None = None,
-        require_signed_receipts: bool = False,
+        require_signed_receipts: bool | None = None,
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("https", "http"):
             raise ValueError(
                 f"[actuator_03] Unsupported endpoint scheme: {parsed.scheme!r}"
             )
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        if require_signed_receipts is None:
+            # Finding CAGE-09: default require_signed_receipts=True in enforcing postures or when resolver configured
+            require_signed_receipts = is_enforcing(resolve_posture()) or (
+                receipt_key_resolver is not None
+            )
+
         if require_signed_receipts and receipt_key_resolver is None:
             raise ValueError(
                 "[actuator_03] require_signed_receipts requires a receipt_key_resolver"
@@ -237,9 +245,14 @@ class Actuator03Adapter:
         http_client = httpx.AsyncClient(verify=ssl_ctx, timeout=5.0)
 
         manifest_url = os.environ.get(_ENV_RECEIPT_KEY_MANIFEST_URL, "").strip()
-        require_signed = os.environ.get(
-            _ENV_REQUIRE_SIGNED_RECEIPTS, ""
-        ).strip().lower() in ("1", "true", "yes")
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        raw_flag = os.environ.get(_ENV_REQUIRE_SIGNED_RECEIPTS)
+        if raw_flag is not None:
+            require_signed = raw_flag.strip().lower() in ("1", "true", "yes")
+        else:
+            require_signed = is_enforcing(resolve_posture()) or bool(manifest_url)
+
         resolver: Ed25519KeyResolver | None = (
             Ed25519KeyManifestClient(manifest_url) if manifest_url else None
         )

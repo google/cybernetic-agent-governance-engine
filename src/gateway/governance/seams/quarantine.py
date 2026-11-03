@@ -41,6 +41,7 @@ from src.gateway.governance.seams.digests import (
 
 EnforcementPlane = Literal[
     "IN_SILICON_DPU",
+    "HOST_OS_KERNEL",
     "CAGE_INFERENCE_PROXY_SVID",
     "SIMULATED",
 ]
@@ -165,4 +166,121 @@ class QuarantineActuator(Protocol):
         self, directive: QuarantineDirective
     ) -> QuarantineReceipt: ...
 
+    async def release_workload(
+        self, directive: QuarantineReleaseDirective
+    ) -> QuarantineReleaseReceipt: ...
+
     async def health_check(self) -> bool: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class QuarantineReleaseDirective:
+    """CAGE-issued directive to lift quarantine and advance generation epoch.
+
+    Requires cryptographic quorum approval (quorum_count >= 2) from DeferQueue
+    operators.
+    """
+
+    thread_id: str
+    agent_svid: str
+    sandbox_id: str
+    quorum_approval_digest: str
+    quorum_count: int
+    issued_at: int
+    correlation_id: str
+    nonce: str
+    expected_min_epoch: int = 1
+    reason: str = "OPERATOR_QUORUM_APPROVAL"
+    ttl_seconds: int = 3600
+
+    def __post_init__(self) -> None:
+        require_sha256_hex(self.quorum_approval_digest, field="quorum_approval_digest")
+        if self.quorum_count < 2:
+            raise ValueError(
+                f"QuarantineReleaseDirective requires quorum_count >= 2; got {self.quorum_count}"
+            )
+        if self.expected_min_epoch < 0:
+            raise ValueError(
+                f"expected_min_epoch must be non-negative; got {self.expected_min_epoch}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "thread_id": self.thread_id,
+            "agent_svid": self.agent_svid,
+            "sandbox_id": self.sandbox_id,
+            "quorum_approval_digest": self.quorum_approval_digest,
+            "quorum_count": self.quorum_count,
+            "expected_min_epoch": self.expected_min_epoch,
+            "reason": self.reason,
+            "issued_at": self.issued_at,
+            "correlation_id": self.correlation_id,
+            "nonce": self.nonce,
+            "ttl_seconds": self.ttl_seconds,
+        }
+
+    def to_canonical_jcs(self) -> bytes:
+        import json
+
+        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+@dataclass(frozen=True)
+class QuarantineReleaseReceipt:
+    """Outcome receipt of an out-of-band quarantine release directive."""
+
+    released: bool
+    enforcement_plane: EnforcementPlane
+    epoch_before: int
+    epoch_after: int
+    outcome: ActuationOutcome
+    verification: ReceiptVerification = ReceiptVerification.UNVERIFIED
+    rule_id: str | None = None
+    latency_us: float | None = None
+    envelope_digest: str | None = None
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    timestamp_utc: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.released != (self.outcome is ActuationOutcome.ACCEPTED):
+            raise ValueError(
+                f"released={self.released} contradicts outcome={self.outcome.value}"
+            )
+        if (
+            self.verification is ReceiptVerification.INVALID
+            and self.outcome is not ActuationOutcome.UNKNOWN
+        ):
+            raise ValueError(
+                "an INVALID receipt signature leaves the release outcome UNKNOWN"
+            )
+        if self.released and self.epoch_after <= self.epoch_before:
+            raise ValueError(
+                f"Successful quarantine release requires monotonic epoch advancement: "
+                f"epoch_after ({self.epoch_after}) must be > epoch_before ({self.epoch_before})"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "released": self.released,
+            "enforcement_plane": str(self.enforcement_plane),
+            "epoch_before": self.epoch_before,
+            "epoch_after": self.epoch_after,
+            "outcome": self.outcome.value,
+            "verification": self.verification.value,
+        }
+        if self.rule_id is not None:
+            d["rule_id"] = self.rule_id
+        if self.latency_us is not None:
+            d["latency_us"] = self.latency_us
+        if self.envelope_digest is not None:
+            d["envelope_digest"] = self.envelope_digest
+        if self.findings:
+            d["findings"] = list(self.findings)
+        if self.timestamp_utc is not None:
+            d["timestamp_utc"] = self.timestamp_utc
+        return d
+
+    def to_canonical_jcs(self) -> bytes:
+        import json
+
+        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")

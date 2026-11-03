@@ -48,6 +48,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path.cwd().resolve()
 
 # The gate's scope, and the only copy of it: CI gate G9 and `make docs-check`
@@ -604,9 +609,24 @@ def verify_file_path(
     return False, f"Target path '{clean_target}' does not exist on disk"
 
 
+def _find_git() -> str | None:
+    for candidate in [
+        r"C:\Program Files\Git\cmd\git.exe",
+        shutil.which("git"),
+    ]:
+        if candidate and Path(candidate).exists():
+            try:
+                res = subprocess.run([candidate, "--version"], capture_output=True, timeout=2)
+                if res.returncode == 0:
+                    return str(candidate)
+            except Exception:
+                pass
+    return None
+
+
 def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
     """Run git with a fixed argument list (no shell) in *repo_root*."""
-    git = shutil.which("git")
+    git = _find_git()
     if git is None:
         return False, "git is not installed"
     try:
@@ -626,7 +646,7 @@ def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
 @functools.lru_cache(maxsize=8)
 def _history_unavailable(repo_root: Path) -> str:
     """Return why pinned paths cannot be verified in *repo_root*, or "" if they can."""
-    if shutil.which("git") is None:
+    if _find_git() is None:
         return "git is not installed, so pinned paths cannot be verified"
     ok, out = _git(repo_root, "rev-parse", "--is-shallow-repository")
     if not ok:
