@@ -91,6 +91,8 @@ CONCRETE_EXTENSIONS = {
     ".sql",
     ".proto",
     ".tf",
+    ".tfvars",
+    ".hcl",
 }
 
 # Literal words or tokens to ignore
@@ -285,6 +287,93 @@ class Issue:
 
 # Markdown link line anchor: #L<start> or #L<start>-L<end>
 LINE_ANCHOR_PATTERN = re.compile(r"#L(\d+)(?:-L(\d+))?$")
+# Inline colon line anchor: path/to/file.ext:<line_spec>
+COLON_LINE_SPEC_PATTERN = re.compile(
+    r"^(?P<path>[A-Za-z0-9_./-]+\.[a-z0-9]+):(?P<spec>\d+(?:[-\u2013]\d+)?(?:,\d+(?:[-\u2013]\d+)?)*)$"
+)
+# Prose line citation immediately following a file link or inline file path
+PROSE_LINE_REF_PATTERN = re.compile(
+    r"(?:\[(?P<label>[^\]]+)\]\((?P<link>[^)]+)\)|`(?P<codepath>[A-Za-z0-9_./-]+\.[a-z0-9]+)`)"
+    r"(?:\s*,\s*|\s+|\s*\(\s*|\s+at\s+|\s*\(`)(?:`?lines?\s+(?P<spec>\d+(?:[-\u2013]\d+)?(?:\s*,\s*\d+(?:[-\u2013]\d+)?)*)`?)"
+)
+# Standalone line range on a line that also links a YAML file and a UUID
+STANDALONE_LINE_RANGE_PATTERN = re.compile(r"`?lines\s+(?P<spec>\d+[-\u2013]\d+)`?")
+
+# HCL / Terraform block header in .tf files
+HCL_HEADER_PATTERN = re.compile(
+    r'^\s*(?:(?P<kind>resource|data)\s+"(?P<type>[a-zA-Z0-9_-]+)"\s+"(?P<name>[a-zA-Z0-9_-]+)"'
+    r'|(?P<kind2>module|variable|output|check)\s+"(?P<name2>[a-zA-Z0-9_-]+)"'
+    r"|(?P<kind3>locals|removed|moved))\s*\{",
+    re.MULTILINE,
+)
+# HCL citations in Markdown backticks
+HCL_DECL_SNIPPET_PATTERN = re.compile(
+    r'^(?:(?P<kind>resource|data)\s+"(?P<type>[a-z0-9_]+)"\s+"(?P<name>[a-z0-9_]+)"'
+    r'|(?P<kind2>module|variable|output|check)\s+"(?P<name2>[a-z0-9_]+)")$'
+)
+HCL_RES_SNIPPET_PATTERN = re.compile(
+    r"^(?P<type>(?:google|kubernetes|helm|random|tls|null|time|local|external|http|archive|terraform)_[a-z0-9_]+)"
+    r"\.(?P<name>[a-z0-9_]+)(?P<idx>\[[^\]]+\])?(?:\.(?P<attr>[a-z0-9_]+))*$"
+)
+HCL_DATA_SNIPPET_PATTERN = re.compile(
+    r"^data\.(?P<type>[a-z0-9_]+)\.(?P<name>[a-z0-9_]+)(?P<idx>\[[^\]]+\])?(?:\.(?P<attr>[a-z0-9_]+))*$"
+)
+HCL_MOD_SNIPPET_PATTERN = re.compile(
+    r"^module\.(?P<name>[a-z0-9_]+)(?P<idx>\[[^\]]+\])?(?:\.(?P<attr>[a-z0-9_]+))?$"
+)
+HCL_NAMED_SNIPPET_PATTERN = re.compile(
+    r"^(?P<prefix>var|variable|output|check|locals?)\.(?P<name>[a-z0-9_]+)$"
+)
+HCL_MOD_META_ARGS = {
+    "source",
+    "version",
+    "count",
+    "for_each",
+    "providers",
+    "depends_on",
+}
+
+# Contextual Python symbol patterns:
+# 1) `<sym>` in [`file.py`](path.py) or `<sym>` in `path.py`
+CTX_PY_IN_PATTERN = re.compile(
+    r"(?<!no\s)`(?P<sym>[A-Za-z_][A-Za-z0-9_]*(?:\(\))?)`\s+in\s+"
+    r"(?:\[`?(?P<label>[^`\]]+\.py)`?\]\((?P<link>[^)]+\.py(?:#L\d+(?:-L\d+)?)?)\)|`(?P<codepath>[^`]+\.py)`)"
+)
+# 2) [`file.py`](path.py) (`<sym>`, ...)
+CTX_PY_PAREN_PATTERN = re.compile(
+    r"\[[^\]]+\]\((?P<link>[^)]+\.py(?:#L\d+(?:-L\d+)?)?)\)\s*\((?P<parens>`[^)]+)\)"
+)
+PY_CHECKABLE_SYM_PATTERN = re.compile(
+    r"^(?:test_[a-zA-Z0-9_]+|Test[A-Za-z0-9_]+|_?[A-Z][A-Z0-9_]{2,}|_[a-z][a-zA-Z0-9_]+|[a-z_][a-zA-Z0-9_]*\(\))$"
+)
+PY_PAREN_SYM_PATTERN = re.compile(
+    r"^(?:test_[a-zA-Z0-9_]+|Test[A-Za-z0-9_]+|[a-z_][a-zA-Z0-9_]*\(\))$"
+)
+UUID_PATTERN = re.compile(
+    r"`(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`"
+)
+
+
+@dataclass(frozen=True)
+class TerraformBlock:
+    address: str
+    file_path: Path
+    start_line: int
+    end_line: int
+    has_index: bool
+    module_source: str = ""
+
+
+def _parse_line_spec(spec: str) -> list[tuple[int, int]]:
+    """Parse a line specification like '42', '10-20', or '12, 15-18' into (start, end) pairs."""
+    spans: list[tuple[int, int]] = []
+    for part in re.split(r"\s*,\s*", spec.strip()):
+        match = re.match(r"^(\d+)(?:[-\u2013](\d+))?$", part.strip())
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) is not None else start
+            spans.append((start, end))
+    return spans
 
 
 def find_markdown_files() -> list[Path]:
@@ -334,60 +423,84 @@ def is_template_or_pattern(text: str) -> bool:
 
 
 def _validate_line_anchor(
-    resolved_path: Path, target_path_str: str
+    resolved_path: Path, target_path_str: str, *, allow_colon: bool = False
 ) -> tuple[bool, str]:
-    """Validate optional #L<start> or #L<start>-L<end> line anchor against resolved file."""
+    """Validate optional #L<start>[-L<end>] or :<line_spec> anchor against resolved file."""
     stripped = target_path_str.strip().strip("'\"`")
     match = LINE_ANCHOR_PATTERN.search(stripped)
-    if not match:
+    colon_match = (
+        COLON_LINE_SPEC_PATTERN.match(stripped) if (allow_colon and not match) else None
+    )
+    if not match and not colon_match:
         return True, ""
+    anchor_label = match.group(0) if match else f":{colon_match.group('spec')}"  # type: ignore[union-attr]
     if not resolved_path.is_file():
         return (
             False,
-            f"Line anchor '{match.group(0)}' targets directory '{resolved_path.name}', not a file",
-        )
-    start = int(match.group(1))
-    end = int(match.group(2)) if match.group(2) is not None else None
-    if start < 1:
-        return False, f"Line anchor '{match.group(0)}' has start line {start} < 1"
-    if end is not None and end < start:
-        return (
-            False,
-            f"Line anchor '{match.group(0)}' has inverted range ({end} < {start})",
+            f"Line anchor '{anchor_label}' targets directory '{resolved_path.name}', not a file",
         )
     try:
-        total_lines = len(
-            resolved_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        )
+        file_lines = resolved_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
+        total_lines = len(file_lines)
     except Exception as err:
         return (
             False,
             f"Failed to read '{resolved_path.name}' for line anchor check: {err}",
         )
-    last_line = end if end is not None else start
-    if last_line > total_lines:
-        return (
-            False,
-            f"Line anchor '{match.group(0)}' exceeds file length ({total_lines} lines)",
-        )
+
+    if match:
+        start = int(match.group(1))
+        end = int(match.group(2)) if match.group(2) is not None else None
+        if start < 1:
+            return False, f"Line anchor '{anchor_label}' has start line {start} < 1"
+        if end is not None and end < start:
+            return (
+                False,
+                f"Line anchor '{anchor_label}' has inverted range ({end} < {start})",
+            )
+        last_line = end if end is not None else start
+        if last_line > total_lines:
+            return (
+                False,
+                f"Line anchor '{anchor_label}' exceeds file length ({total_lines} lines)",
+            )
+        return True, ""
+
+    for start, end in _parse_line_spec(colon_match.group("spec")):  # type: ignore[union-attr]
+        if start < 1:
+            return False, f"Line anchor '{anchor_label}' has start line {start} < 1"
+        if end < start:
+            return (
+                False,
+                f"Line anchor '{anchor_label}' has inverted range ({end} < {start})",
+            )
+        if end > total_lines:
+            return (
+                False,
+                f"Line anchor '{anchor_label}' exceeds file length ({total_lines} lines)",
+            )
     return True, ""
 
 
-def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
-    """Verify if a relative or repo-root path exists on disk and validate any #L line anchor."""
+def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None:
+    """Resolve a relative or repo-root path string to an existing Path on disk, or None."""
     stripped_target = target_path_str.strip().strip("'\"`")
     clean_target = re.split(r"[:#]", stripped_target)[0].strip()
-    if not clean_target or clean_target.lower() in IGNORED_TOKENS:
-        return True, ""
-
-    if is_template_or_pattern(clean_target):
-        return True, ""
-
-    # Normalize leading ./ without stripping ../
+    if (
+        not clean_target
+        or clean_target.lower() in IGNORED_TOKENS
+        or is_template_or_pattern(clean_target)
+    ):
+        return None
     norm = clean_target[2:] if clean_target.startswith("./") else clean_target
-
-    if clean_target in KNOWN_DOCUMENTED_GAPS or norm in KNOWN_DOCUMENTED_GAPS:
-        return True, ""
+    if (
+        clean_target in KNOWN_DOCUMENTED_GAPS
+        or norm in KNOWN_DOCUMENTED_GAPS
+        or stripped_target in KNOWN_DOCUMENTED_GAPS
+    ):
+        return None
 
     candidates = [
         # 1. Direct from repo root
@@ -424,7 +537,6 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
         REPO_ROOT / "src" / "gateway" / "governance" / "opa" / norm.replace("opa/", ""),
         REPO_ROOT / "src" / "cage_finance" / "opa" / norm.replace("opa/", ""),
         REPO_ROOT / "src" / "cage_healthcare" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT / "src" / norm,
         REPO_ROOT
         / "src"
         / "compliance_bridge"
@@ -435,35 +547,59 @@ def verify_file_path(base_dir: Path, target_path_str: str) -> tuple[bool, str]:
         / "gateway"
         / "compliance_bridge"
         / norm.replace("compliance_bridge/", ""),
-        REPO_ROOT / "docs" / "compliance" / norm,
         REPO_ROOT / "src" / "cage_healthcare" / "policy" / norm.replace("opa/", ""),
         REPO_ROOT / "config" / norm,
         REPO_ROOT / "local" / "plans" / norm.replace("plans/", ""),
         REPO_ROOT / "local" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / norm.replace("src/", ""),
-        REPO_ROOT
-        / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
         REPO_ROOT / "compliance" / "continuous-monitoring" / norm,
         REPO_ROOT / "local" / "plans" / "remediation" / norm,
-        REPO_ROOT / "docs" / "compliance" / "us_fed" / norm,
-        REPO_ROOT / "docs" / "compliance" / "universal" / norm,
+        REPO_ROOT / "scripts" / norm,
+        REPO_ROOT / "infra" / "targets" / "gcp-gke" / norm,
     ]
-
-    # If starts with compliance/, also check under docs/compliance/
     if norm.startswith("compliance/"):
         candidates.append(REPO_ROOT / "docs" / norm)
 
-    has_line_anchor = bool(LINE_ANCHOR_PATTERN.search(stripped_target))
+    has_line_anchor = bool(
+        LINE_ANCHOR_PATTERN.search(stripped_target)
+        or COLON_LINE_SPEC_PATTERN.match(stripped_target)
+    )
     for cand in candidates:
         try:
             resolved = cand.resolve()
             if resolved.exists():
                 if has_line_anchor and not resolved.is_file():
                     continue
-                return _validate_line_anchor(resolved, target_path_str)
+                return resolved
         except Exception:
             continue
+    return None
+
+
+def verify_file_path(
+    base_dir: Path, target_path_str: str, *, allow_colon_anchor: bool = False
+) -> tuple[bool, str]:
+    """Verify if a relative or repo-root path exists on disk and validate any #L or :line anchor."""
+    stripped_target = target_path_str.strip().strip("'\"`")
+    clean_target = re.split(r"[:#]", stripped_target)[0].strip()
+    if not clean_target or clean_target.lower() in IGNORED_TOKENS:
+        return True, ""
+
+    if is_template_or_pattern(clean_target):
+        return True, ""
+
+    norm = clean_target[2:] if clean_target.startswith("./") else clean_target
+    if (
+        clean_target in KNOWN_DOCUMENTED_GAPS
+        or norm in KNOWN_DOCUMENTED_GAPS
+        or stripped_target in KNOWN_DOCUMENTED_GAPS
+    ):
+        return True, ""
+
+    resolved = _resolve_candidate_path(base_dir, target_path_str)
+    if resolved is not None:
+        return _validate_line_anchor(
+            resolved, target_path_str, allow_colon=allow_colon_anchor
+        )
 
     return False, f"Target path '{clean_target}' does not exist on disk"
 
@@ -516,6 +652,347 @@ def verify_pinned_path(commit: str, parent: str, path: str) -> tuple[bool, str]:
     if not _git(REPO_ROOT, "cat-file", "-e", f"{revision}:{path}")[0]:
         return False, f"'{path}' does not exist at {revision}"
     return True, ""
+
+
+def _parse_tf_blocks(text: str, tf_path: Path) -> list[TerraformBlock]:
+    """Extract resource, data, module, variable, output, check, local, and removed/moved blocks."""
+    lines = text.splitlines()
+    blocks: list[TerraformBlock] = []
+    resolved_tf = tf_path.resolve() if tf_path.is_absolute() else tf_path
+    for match in HCL_HEADER_PATTERN.finditer(text):
+        start_line = text.count("\n", 0, match.start()) + 1
+        brace_pos = match.end() - 1
+        depth = 0
+        in_str = False
+        esc = False
+        end_pos = len(text)
+        idx = brace_pos
+        while idx < len(text):
+            ch = text[idx]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            else:
+                if ch == "#" or (
+                    ch == "/" and idx + 1 < len(text) and text[idx + 1] == "/"
+                ):
+                    nl = text.find("\n", idx)
+                    if nl == -1:
+                        break
+                    idx = nl
+                elif ch == '"':
+                    in_str = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = idx + 1
+                        break
+            idx += 1
+        end_line = text.count("\n", 0, end_pos) + 1
+        block_body = text[match.start() : end_pos]
+        has_index = bool(re.search(r"^\s*(?:count|for_each)\s*=", block_body, re.M))
+        if match.group("kind"):
+            kind = match.group("kind")
+            res_type = match.group("type")
+            res_name = match.group("name")
+            addr = (
+                f"{res_type}.{res_name}"
+                if kind == "resource"
+                else f"data.{res_type}.{res_name}"
+            )
+            blocks.append(
+                TerraformBlock(addr, resolved_tf, start_line, end_line, has_index)
+            )
+        elif match.group("kind2"):
+            kind2 = match.group("kind2")
+            name2 = match.group("name2")
+            if kind2 == "module":
+                src_match = re.search(r'^\s*source\s*=\s*"([^"]+)"', block_body, re.M)
+                mod_source = src_match.group(1) if src_match else ""
+                blocks.append(
+                    TerraformBlock(
+                        f"module.{name2}",
+                        resolved_tf,
+                        start_line,
+                        end_line,
+                        has_index,
+                        mod_source,
+                    )
+                )
+            elif kind2 == "variable":
+                blocks.append(
+                    TerraformBlock(
+                        f"var.{name2}", resolved_tf, start_line, end_line, False
+                    )
+                )
+                blocks.append(
+                    TerraformBlock(
+                        f"variable.{name2}", resolved_tf, start_line, end_line, False
+                    )
+                )
+            elif kind2 == "output":
+                blocks.append(
+                    TerraformBlock(
+                        f"output.{name2}", resolved_tf, start_line, end_line, False
+                    )
+                )
+            elif kind2 == "check":
+                blocks.append(
+                    TerraformBlock(
+                        f"check.{name2}", resolved_tf, start_line, end_line, False
+                    )
+                )
+        elif match.group("kind3") == "locals":
+            brace_depth = 0
+            local_starts: list[tuple[str, int]] = []
+            for l_idx in range(start_line, end_line + 1):
+                line_s = lines[l_idx - 1]
+                clean_l = re.sub(r"(#|//).*$", "", line_s)
+                if brace_depth == 1:
+                    key_m = re.match(r"^\s*([a-zA-Z0-9_]+)\s*=", clean_l)
+                    if key_m:
+                        local_starts.append((key_m.group(1), l_idx))
+                brace_depth += clean_l.count("{") - clean_l.count("}")
+            for idx_k, (key_name, l_start) in enumerate(local_starts):
+                l_end = (
+                    local_starts[idx_k + 1][1] - 1
+                    if idx_k + 1 < len(local_starts)
+                    else end_line - 1
+                )
+                l_end = max(l_start, l_end)
+                blocks.append(
+                    TerraformBlock(
+                        f"local.{key_name}", resolved_tf, l_start, l_end, False
+                    )
+                )
+                blocks.append(
+                    TerraformBlock(
+                        f"locals.{key_name}", resolved_tf, l_start, l_end, False
+                    )
+                )
+        elif match.group("kind3") in {"removed", "moved"}:
+            from_m = re.search(r"^\s*from\s*=\s*([a-zA-Z0-9_.-]+)", block_body, re.M)
+            if from_m:
+                blocks.append(
+                    TerraformBlock(
+                        from_m.group(1), resolved_tf, start_line, end_line, False
+                    )
+                )
+    return blocks
+
+
+@functools.lru_cache(maxsize=8)
+def _get_terraform_index(
+    repo_root: Path,
+) -> tuple[
+    dict[str, list[TerraformBlock]],
+    dict[Path, dict[str, tuple[int, int]]],
+    dict[Path, set[str]],
+]:
+    """Index all .tf files under repo_root/infra."""
+    by_addr: dict[str, list[TerraformBlock]] = {}
+    by_file: dict[Path, dict[str, tuple[int, int]]] = {}
+    mod_attrs: dict[Path, set[str]] = {}
+    infra_dir = repo_root / "infra"
+    if not infra_dir.is_dir():
+        return by_addr, by_file, mod_attrs
+    for tf_path in sorted(infra_dir.rglob("*.tf")):
+        try:
+            text = tf_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for block in _parse_tf_blocks(text, tf_path):
+            by_addr.setdefault(block.address, []).append(block)
+            by_file.setdefault(block.file_path, {})[block.address] = (
+                block.start_line,
+                block.end_line,
+            )
+            if block.address.startswith(("output.", "var.")):
+                mod_attrs.setdefault(block.file_path.parent.resolve(), set()).add(
+                    block.address.split(".", 1)[1]
+                )
+    return by_addr, by_file, mod_attrs
+
+
+def verify_terraform_snippet(
+    code_snippet: str, pinned_tf_addrs: set[str] | None = None
+) -> tuple[bool, str] | None:
+    """If *code_snippet* is a Terraform/HCL symbol or declaration, verify it against infra/*.tf."""
+    if any(code_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS):
+        return None
+    by_addr, _, mod_attrs = _get_terraform_index(REPO_ROOT)
+    if not by_addr:
+        return None
+    pinned = pinned_tf_addrs or set()
+
+    decl_m = HCL_DECL_SNIPPET_PATTERN.match(code_snippet)
+    if decl_m:
+        if decl_m.group("kind"):
+            addr = (
+                f"{decl_m.group('type')}.{decl_m.group('name')}"
+                if decl_m.group("kind") == "resource"
+                else f"data.{decl_m.group('type')}.{decl_m.group('name')}"
+            )
+        else:
+            kind2 = decl_m.group("kind2")
+            name2 = decl_m.group("name2")
+            addr = f"var.{name2}" if kind2 == "variable" else f"{kind2}.{name2}"
+        if addr not in by_addr and addr not in pinned:
+            return (
+                False,
+                f"Terraform declaration '{code_snippet}' ({addr}) does not exist in infra/*.tf",
+            )
+        return True, ""
+
+    res_m = HCL_RES_SNIPPET_PATTERN.match(code_snippet)
+    if res_m:
+        addr = f"{res_m.group('type')}.{res_m.group('name')}"
+        if addr not in by_addr and addr not in pinned:
+            return (
+                False,
+                f"Terraform resource '{addr}' does not exist in infra/*.tf",
+            )
+        if res_m.group("idx") and addr in by_addr:
+            if not any(b.has_index for b in by_addr[addr]):
+                return (
+                    False,
+                    f"Terraform resource '{addr}' has no count/for_each but is cited with index '{res_m.group('idx')}'",
+                )
+        return True, ""
+
+    data_m = HCL_DATA_SNIPPET_PATTERN.match(code_snippet)
+    if data_m:
+        addr = f"data.{data_m.group('type')}.{data_m.group('name')}"
+        if addr not in by_addr and addr not in pinned:
+            return (
+                False,
+                f"Terraform data source '{addr}' does not exist in infra/*.tf",
+            )
+        return True, ""
+
+    mod_m = HCL_MOD_SNIPPET_PATTERN.match(code_snippet)
+    if mod_m:
+        addr = f"module.{mod_m.group('name')}"
+        if addr not in by_addr and addr not in pinned:
+            return (
+                False,
+                f"Terraform module '{addr}' does not exist in infra/*.tf",
+            )
+        attr = mod_m.group("attr")
+        if attr and attr not in HCL_MOD_META_ARGS and addr in by_addr:
+            found_attr = False
+            for block in by_addr[addr]:
+                if block.module_source:
+                    mod_dir = (block.file_path.parent / block.module_source).resolve()
+                    if attr in mod_attrs.get(mod_dir, set()):
+                        found_attr = True
+                        break
+            if not found_attr:
+                return (
+                    False,
+                    f"Attribute/output '{attr}' not found in Terraform module '{addr}'",
+                )
+        return True, ""
+
+    named_m = HCL_NAMED_SNIPPET_PATTERN.match(code_snippet)
+    if named_m:
+        addr = f"{named_m.group('prefix')}.{named_m.group('name')}"
+        if addr not in by_addr and addr not in pinned:
+            return (
+                False,
+                f"Terraform symbol '{code_snippet}' does not exist in infra/*.tf",
+            )
+        return True, ""
+
+    return None
+
+
+@functools.lru_cache(maxsize=256)
+def _get_python_file_symbols(py_path: Path, _depth: int = 0) -> set[str]:
+    """Collect defined, imported, attribute, and identifier-constant symbols from a Python file."""
+    try:
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    syms: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            syms.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    syms.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            syms.add(node.target.id)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                syms.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                syms.add(alias.asname or alias.name)
+            if _depth == 0 and node.module and node.module.startswith("src."):
+                mod_file = (REPO_ROOT / Path(*node.module.split("."))).with_suffix(
+                    ".py"
+                )
+                if mod_file.is_file():
+                    syms.update(_get_python_file_symbols(mod_file, _depth=1))
+        elif isinstance(node, ast.arg):
+            syms.add(node.arg)
+        elif isinstance(node, ast.Attribute):
+            syms.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", node.value):
+                syms.add(node.value)
+    return syms
+
+
+@functools.lru_cache(maxsize=256)
+def _get_python_symbol_spans(py_path: Path) -> list[tuple[str, int, int]]:
+    """Return (name, start_line, end_line) for functions and classes in a Python file."""
+    try:
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    spans: list[tuple[str, int, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            end_l = getattr(node, "end_lineno", None) or node.lineno
+            spans.append((node.name.lower(), node.lineno, end_l))
+    return spans
+
+
+@functools.lru_cache(maxsize=64)
+def _get_yaml_uuid_span(yaml_path: Path, uuid_str: str) -> tuple[int, int] | None:
+    """Return the (start_line, end_line) of a `- uuid: <uuid_str>` list item in a YAML file."""
+    try:
+        lines = yaml_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return None
+    item_re = re.compile(r"^(\s*)-\s+uuid:\s*" + re.escape(uuid_str) + r"\s*$")
+    for idx, line in enumerate(lines):
+        match = item_re.match(line)
+        if match:
+            indent = len(match.group(1))
+            start_line = idx + 1
+            end_line = len(lines)
+            for j in range(idx + 1, len(lines)):
+                lj = lines[j]
+                if not lj.strip() or lj.lstrip().startswith("#"):
+                    continue
+                cur_indent = len(lj) - len(lj.lstrip())
+                if cur_indent < indent or (
+                    cur_indent == indent and lj.lstrip().startswith("- ")
+                ):
+                    end_line = j
+                    break
+            return start_line, end_line
+    return None
 
 
 def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
@@ -582,6 +1059,235 @@ def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
     return False, f"Could not resolve module path for symbol '{symbol_str}'"
 
 
+def _audit_line_references_and_contextual_symbols(
+    path: Path, line_idx: int, line: str, local_link_labels: list[tuple[int, int]]
+) -> list[Issue]:
+    """Validate prose line citations, YAML UUID block spans, and contextual Python symbols on *line*."""
+    issues: list[Issue] = []
+    historical_line = bool(
+        re.search(
+            r"(`#?\d+`\s+introduced|commits?\s+`[0-9a-f]{7,40}`|at\s+`[0-9a-f]{7,40}`)",
+            line,
+        )
+    )
+    code_spans = [
+        (cm.start(), cm.end(), cm.group(1).strip())
+        for cm in INLINE_CODE_PATTERN.finditer(line)
+        if not any(ls <= cm.start() and cm.end() <= le for ls, le in local_link_labels)
+    ]
+    line_uuids = [m.group("uuid") for m in UUID_PATTERN.finditer(line)]
+    if (
+        "_STPA_IMPL_UUID" in line
+        and "g7000099-stpa-4000-8000-compiler00001" not in line_uuids
+    ):
+        line_uuids.append("g7000099-stpa-4000-8000-compiler00001")
+
+    for pm in PROSE_LINE_REF_PATTERN.finditer(line):
+        target = pm.group("link") or pm.group("codepath")
+        spec = pm.group("spec")
+        if not target or is_template_or_pattern(target):
+            continue
+        resolved = _resolve_candidate_path(path.parent, target)
+        if resolved is None or not resolved.is_file():
+            continue
+        try:
+            flines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            continue
+        total_lines = len(flines)
+        spans = _parse_line_spec(spec)
+        if not spans:
+            continue
+        bounds_failed = False
+        for start, end in spans:
+            if start < 1 or end < start or end > total_lines:
+                issues.append(
+                    Issue(
+                        path,
+                        line_idx,
+                        "Line Reference",
+                        f"{target} (lines {spec})",
+                        f"Cited line range {start}-{end} exceeds file length ({total_lines} lines)",
+                    )
+                )
+                bounds_failed = True
+            elif not historical_line and start == end and not flines[start - 1].strip():
+                issues.append(
+                    Issue(
+                        path,
+                        line_idx,
+                        "Line Reference",
+                        f"{target} (line {start})",
+                        f"Cited line {start} in '{resolved.name}' is blank",
+                    )
+                )
+                bounds_failed = True
+        if bounds_failed or historical_line:
+            continue
+
+        # Check clause-local code identifiers against the cited lines (+/- 1 line)
+        window_chunks: list[str] = []
+        for start, end in spans:
+            lo = max(0, start - 2)
+            hi = min(total_lines, end + 1)
+            window_chunks.append("\n".join(flines[lo:hi]))
+        if resolved.suffix == ".py":
+            for sym_name, sym_s, sym_e in _get_python_symbol_spans(resolved):
+                if any(sym_s <= end and sym_e >= start for start, end in spans):
+                    window_chunks.append(sym_name)
+        window_text = "\n".join(window_chunks).lower()
+
+        tokens: set[str] = set()
+        label_str = pm.group("label") or ""
+        if label_str and not any(
+            label_str.strip("`").endswith(ext) for ext in CONCRETE_EXTENSIONS
+        ):
+            for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", label_str):
+                if ident.lower() not in IGNORED_TOKENS:
+                    tokens.add(ident.lower())
+
+        for cs_start, cs_end, cs in code_spans:
+            if cs_end < pm.start() - 90 or cs_start > pm.end() + 90:
+                continue
+            between = line[min(cs_end, pm.end()) : max(cs_start, pm.start())]
+            if (
+                ";" in between
+                or ". " in between
+                or " — " in between
+                or " | " in between
+            ):
+                continue
+            if (
+                cs.startswith(("line ", "lines "))
+                or cs == resolved.name
+                or cs in target
+            ):
+                continue
+            if re.match(
+                r"^(?:POAM-|EF\d|PF\d|W\d|Step\s|#\d+|[0-9a-f]{7,40}|\d+|rc=\d+)",
+                cs,
+                re.IGNORECASE,
+            ):
+                continue
+            for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", cs):
+                low = ident.lower()
+                if (
+                    low
+                    not in {
+                        "line",
+                        "lines",
+                        "true",
+                        "false",
+                        "none",
+                        "null",
+                        "staging",
+                        "prod",
+                        "main",
+                        "yaml",
+                        "json",
+                        "bash",
+                        "in",
+                        "on",
+                        "to",
+                        "of",
+                        "or",
+                        "if",
+                    }
+                    and low not in resolved.name.lower()
+                ):
+                    tokens.add(low)
+        if tokens and not any(tok in window_text for tok in tokens):
+            issues.append(
+                Issue(
+                    path,
+                    line_idx,
+                    "Line Reference",
+                    f"{target} (lines {spec})",
+                    f"Cited line(s) {spec} in '{resolved.name}' do not contain expected clause token(s) {sorted(tokens)[:4]}",
+                )
+            )
+
+    # Check YAML UUID span when a YAML link, UUID, and `(lines A-B)` appear on the same line
+    if line_uuids and not historical_line:
+        yaml_links = [
+            _resolve_candidate_path(path.parent, m.group(2).strip())
+            for m in MD_LINK_PATTERN.finditer(line)
+            if m.group(2).strip().endswith((".yaml", ".yml"))
+        ]
+        resolved_yamls = [y for y in yaml_links if y is not None and y.is_file()]
+        if len(resolved_yamls) == 1:
+            y_file = resolved_yamls[0]
+            for rm in STANDALONE_LINE_RANGE_PATTERN.finditer(line):
+                spans = _parse_line_spec(rm.group("spec"))
+                if len(spans) == 1:
+                    s_line, e_line = spans[0]
+                    for u_str in line_uuids:
+                        uuid_span = _get_yaml_uuid_span(y_file, u_str)
+                        if uuid_span is not None and (s_line, e_line) != uuid_span:
+                            issues.append(
+                                Issue(
+                                    path,
+                                    line_idx,
+                                    "Line Reference",
+                                    f"{y_file.name} (lines {rm.group('spec')})",
+                                    f"UUID '{u_str}' block in '{y_file.name}' spans lines {uuid_span[0]}-{uuid_span[1]}, not {s_line}-{e_line}",
+                                )
+                            )
+
+    # Contextual Python symbol checks:
+    for m_in in CTX_PY_IN_PATTERN.finditer(line):
+        raw_sym = m_in.group("sym")
+        if not PY_CHECKABLE_SYM_PATTERN.match(raw_sym):
+            continue
+        sym = raw_sym[:-2] if raw_sym.endswith("()") else raw_sym
+        target = m_in.group("link") or m_in.group("codepath")
+        py_file = _resolve_candidate_path(path.parent, target)
+        if py_file and py_file.suffix == ".py":
+            py_rel = (
+                py_file.relative_to(REPO_ROOT)
+                if py_file.is_relative_to(REPO_ROOT)
+                else py_file.name
+            )
+            if sym not in _get_python_file_symbols(py_file):
+                issues.append(
+                    Issue(
+                        path,
+                        line_idx,
+                        "Python Symbol",
+                        f"{py_rel}::{sym}",
+                        f"Symbol '{sym}' not found in {py_rel}",
+                    )
+                )
+
+    for m_paren in CTX_PY_PAREN_PATTERN.finditer(line):
+        target = m_paren.group("link")
+        parens = m_paren.group("parens")
+        py_file = _resolve_candidate_path(path.parent, target)
+        if py_file and py_file.suffix == ".py":
+            py_rel = (
+                py_file.relative_to(REPO_ROOT)
+                if py_file.is_relative_to(REPO_ROOT)
+                else py_file.name
+            )
+            syms = _get_python_file_symbols(py_file)
+            for cm in INLINE_CODE_PATTERN.finditer(parens):
+                raw_s = cm.group(1).strip()
+                if PY_PAREN_SYM_PATTERN.match(raw_s):
+                    clean_s = raw_s[:-2] if raw_s.endswith("()") else raw_s
+                    if clean_s not in syms:
+                        issues.append(
+                            Issue(
+                                path,
+                                line_idx,
+                                "Python Symbol",
+                                f"{py_rel}::{clean_s}",
+                                f"Symbol '{clean_s}' not found in {py_rel}",
+                            )
+                        )
+
+    return issues
+
+
 def audit_markdown_file(path: Path) -> list[Issue]:
     """Scan a single markdown file for broken file paths, links, and code symbols."""
     issues: list[Issue] = []
@@ -593,6 +1299,17 @@ def audit_markdown_file(path: Path) -> list[Issue]:
     lines = content.splitlines()
 
     for line_idx, line in enumerate(lines, start=1):
+        # Collect any revision-pinned .tf addresses on this line for historical HCL lookups
+        pinned_tf_addrs: set[str] = set()
+        for cm in INLINE_CODE_PATTERN.finditer(line):
+            pm = PINNED_PATH_PATTERN.match(cm.group(1).strip())
+            if pm and pm["path"].endswith(".tf"):
+                rev = f"{pm['commit']}{pm['parent']}"
+                ok, out = _git(REPO_ROOT, "show", f"{rev}:{pm['path']}")
+                if ok:
+                    for blk in _parse_tf_blocks(out, Path(pm["path"])):
+                        pinned_tf_addrs.add(blk.address)
+
         # 1. Standard Markdown links: [Text](target)
         local_link_labels: list[tuple[int, int]] = []
         for link in MD_LINK_PATTERN.finditer(line):
@@ -613,6 +1330,7 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                 )
 
         # 2. Inline code backticks: `target`
+        is_mutation_row = bool(re.search(r"\|\s*(?:Re-declare|Restore)\s+`", line))
         for code_match in INLINE_CODE_PATTERN.finditer(line):
             if any(
                 start <= code_match.start() and code_match.end() <= end
@@ -624,9 +1342,27 @@ def audit_markdown_file(path: Path) -> list[Issue]:
             if (
                 not code_snippet
                 or code_snippet.startswith(("-", "$", "@"))
-                or " " in code_snippet
                 or is_template_or_pattern(code_snippet)
             ):
+                continue
+
+            if not is_mutation_row:
+                tf_check = verify_terraform_snippet(code_snippet, pinned_tf_addrs)
+                if tf_check is not None:
+                    tf_valid, tf_reason = tf_check
+                    if not tf_valid:
+                        issues.append(
+                            Issue(
+                                path,
+                                line_idx,
+                                "Terraform Symbol",
+                                code_snippet,
+                                tf_reason,
+                            )
+                        )
+                    continue
+
+            if " " in code_snippet:
                 continue
 
             pinned = PINNED_PATH_PATTERN.match(code_snippet)
@@ -640,16 +1376,23 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                     )
                 continue
 
-            has_ext = any(code_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS)
-            is_explicit_path = "/" in code_snippet and (
-                code_snippet.startswith(
-                    ("src/", "tests/", "docs/", "compliance/", "scripts/")
+            clean_snippet = re.split(r"[:#]", code_snippet)[0].strip()
+            has_ext = any(clean_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS)
+            has_colon_spec = bool(COLON_LINE_SPEC_PATTERN.match(code_snippet))
+            is_explicit_path = (
+                "/" in clean_snippet
+                and (
+                    clean_snippet.startswith(
+                        ("src/", "tests/", "docs/", "compliance/", "scripts/", "infra/")
+                    )
+                    or has_ext
                 )
-                or has_ext
-            )
+            ) or (has_ext and has_colon_spec)
 
             if is_explicit_path:
-                valid, reason = verify_file_path(path.parent, code_snippet)
+                valid, reason = verify_file_path(
+                    path.parent, code_snippet, allow_colon_anchor=True
+                )
                 if not valid and not any(
                     code_snippet.startswith(p) for p in ("../..", "...")
                 ):
@@ -667,6 +1410,13 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                     issues.append(
                         Issue(path, line_idx, "Python Symbol", code_snippet, reason)
                     )
+
+        # 3. Prose line references, YAML UUID spans, and contextual Python symbols
+        issues.extend(
+            _audit_line_references_and_contextual_symbols(
+                path, line_idx, line, local_link_labels
+            )
+        )
 
     return issues
 

@@ -31,7 +31,7 @@ All Python modules in [`proof/`](../../proof/) are pure-stdlib verification arti
 | [`proof/distributed_cbf_model.py`](../../proof/distributed_cbf_model.py) | Multi-process distributed CBF state-space twin of [`proof/DistributedCBF.tla`](../../proof/DistributedCBF.tla) | [`tests/test_distributed_cbf_proof.py`](../../tests/test_distributed_cbf_proof.py), [`tests/test_stream_invariants_oracle.py`](../../tests/test_stream_invariants_oracle.py) |
 | [`proof/tla_pins.py`](../../proof/tla_pins.py) | Pinned TLC state counts and expected negative-control invariant violations for TLA+ specifications | [`tests/test_tla_specs_proof.py`](../../tests/test_tla_specs_proof.py), [`tests/test_stream_invariants_oracle.py`](../../tests/test_stream_invariants_oracle.py) |
 
-`test_proof_directory_has_zero_src_imports` in [`tests/test_stream_invariants_oracle.py`](../../tests/test_stream_invariants_oracle.py) parses the AST of every `proof/*.py` file and fails if any `import src...` or `from src...` statement is introduced.
+`test_proof_modules_have_zero_src_imports` in [`tests/test_stream_invariants_oracle.py`](../../tests/test_stream_invariants_oracle.py) parses the AST of every `proof/*.py` file and fails if any `import src...` or `from src...` statement is introduced.
 
 ### 2.2 Single Source of Truth Between `proof/` and `packages/cage-conformance/`
 
