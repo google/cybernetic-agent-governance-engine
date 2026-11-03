@@ -20,6 +20,10 @@ nothing read the list. Two guards now hold the claim:
 * the plan: the gcp-gke target's ``control_plane_access_guard`` refuses an empty list
   or a /0 whenever compliance is active. An empty list makes the cluster module emit
   no allowlist, and GKE then accepts any address.
+
+POAM-2026-174: every committed profile sets ``enable_nist_compliance`` itself, so a
+direct terraform run plans the same posture as deploy_all.sh, and the classifier
+below reads only what the profile says.
 """
 
 from __future__ import annotations
@@ -34,7 +38,18 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GKE_TARGET_DIR = REPO_ROOT / "infra" / "targets" / "gcp-gke"
-PROFILES = sorted(p.name for p in GKE_TARGET_DIR.glob("*.tfvars"))
+# Committed profiles only. terraform.tfvars and *.auto.tfvars are operator-local
+# (gitignored), and Terraform loads them without being asked.
+PROFILES = sorted(
+    p.name
+    for p in GKE_TARGET_DIR.glob("*.tfvars")
+    if p.name != "terraform.tfvars" and not p.name.endswith(".auto.tfvars")
+)
+COMPLIANCE_FLAGS = (
+    "enable_nist_compliance",
+    "enable_eu_ecb_compliance",
+    "enable_apac_mas_compliance",
+)
 
 
 def _setting(text: str, name: str) -> str | None:
@@ -43,22 +58,12 @@ def _setting(text: str, name: str) -> str | None:
 
 
 def _compliance_active(text: str) -> bool:
-    """Mirror ``local.any_compliance_active`` plus deploy_all.sh's NIST default.
+    """Mirror ``local.any_compliance_active`` from the profile's own settings.
 
-    A profile's explicit ``enable_nist_compliance`` wins. Otherwise deploy_all.sh
-    turns it on for the staging and prod tiers in US_FED only.
+    ``test_every_profile_sets_the_nist_flag_itself`` keeps every profile explicit,
+    so there is no deploy_all.sh default to model.
     """
-    nist = _setting(text, "enable_nist_compliance")
-    if nist is None:
-        nist_on = _setting(text, "environment") in {"staging", "prod"} and (
-            _setting(text, "cage_deployment_region") == "US_FED"
-        )
-    else:
-        nist_on = nist == "true"
-    return nist_on or any(
-        _setting(text, flag) == "true"
-        for flag in ("enable_eu_ecb_compliance", "enable_apac_mas_compliance")
-    )
+    return any(_setting(text, flag) == "true" for flag in COMPLIANCE_FLAGS)
 
 
 def _authorized_cidrs(text: str) -> list[str]:
@@ -77,7 +82,8 @@ ENFORCING = [
 
 def test_enforcing_profiles_are_the_ones_terraform_hardens() -> None:
     # Pins the classifier, so the profile check below cannot pass by finding no
-    # enforcing profile. A new profile has to be classified on purpose.
+    # enforcing profile. A new profile has to be classified on purpose. With
+    # every profile explicit, staging.tfvars is here by its own setting.
     assert set(ENFORCING) == {
         "staging.tfvars",
         "prod.tfvars",
@@ -120,11 +126,12 @@ def test_plan_refuses_an_open_or_empty_allowlist_under_compliance() -> None:
     assert '!endswith(n.cidr, "/0")' in guard, "the guard must refuse a /0 entry"
 
 
-def test_staging_profile_sets_the_nist_flag_itself() -> None:
-    # POAM-2026-174: the guard above binds only while compliance is active. The
-    # staging profile must turn it on itself, so a direct terraform run with
-    # -var-file=staging.tfvars, not only deploy_all.sh, plans the guard.
-    text = (GKE_TARGET_DIR / "staging.tfvars").read_text(encoding="utf-8")
-    assert re.search(r"^enable_nist_compliance\s*=\s*true\b", text, re.MULTILINE), (
-        "staging.tfvars must set enable_nist_compliance = true on an uncommented line"
-    )
+@pytest.mark.parametrize("profile", PROFILES)
+def test_every_profile_sets_the_nist_flag_itself(profile: str) -> None:
+    # POAM-2026-174: staging.tfvars left the flag to deploy_all.sh, so a direct
+    # terraform run with it planned no compliance posture and skipped the guard
+    # above. A profile that states the flag plans the same posture on every path.
+    text = (GKE_TARGET_DIR / profile).read_text(encoding="utf-8")
+    assert re.search(
+        r"^enable_nist_compliance\s*=\s*(true|false)\b", text, re.MULTILINE
+    ), f"{profile} must set enable_nist_compliance to true or false, uncommented"

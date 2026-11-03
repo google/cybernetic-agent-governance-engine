@@ -137,9 +137,11 @@ terraform destroy -var-file=staging.tfvars \
 ```
 
 `staging.tfvars` sets `enable_nist_compliance = true` itself, so a direct `terraform`
-run with it plans the same compliance posture as `deploy_all.sh`. Supply
-`authorized_networks` and distinct `langfuse_compliance_*` keys, or the plan stops
-(`POAM-2026-174`, `POAM-2026-126`, `POAM-019`).
+run with it plans the same compliance posture as `deploy_all.sh`. A direct `plan` or
+`apply` stops unless you supply `authorized_networks` and distinct
+`langfuse_compliance_*` keys (`POAM-2026-174`, `POAM-2026-126`, `POAM-019`). The
+teardown above needs neither: those checks are resource preconditions, which
+Terraform reports only as warnings while refreshing for a destroy.
 
 See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)
 for full configuration and [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)

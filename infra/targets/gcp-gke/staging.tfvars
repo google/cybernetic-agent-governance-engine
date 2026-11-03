@@ -49,8 +49,8 @@
 #   deploy_all.sh builds the images this profile deploys, renders their digests to
 #   image_digests.<short_sha>.tfvars.json (gitignored) and passes it to terraform.
 #
-# Teardown needs the same inputs as the plan, including the rendered digests file
-# the apply used (deploy_all.sh leaves it next to this file):
+# Teardown needs the rendered digests file the apply used (deploy_all.sh leaves it
+# next to this file), not authorized_networks or the compliance keys (POAM-2026-174):
 #   terraform destroy -var-file=staging.tfvars \
 #     -var-file=image_digests.<short_sha>.tfvars.json -var project_id=<project>
 

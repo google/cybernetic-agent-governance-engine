@@ -1299,6 +1299,13 @@ resource "terraform_data" "control_plane_access_guard" {
   }
 }
 
+# Teardown (POAM-2026-174): the three compliance guards above are resource
+# preconditions on purpose. A destroy plan refreshes state with them reported as
+# warnings, so `terraform destroy -var-file=staging.tfvars` needs neither
+# authorized_networks nor the compliance keys. The same check written as a
+# variable validation fails the destroy plan instead (both verified on Terraform
+# 1.15.8 and 1.17.1). Keep them out of variable validations.
+
 # W6: what each inference backend deploys must be able to run. "vllm" schedules
 # its pods on the GPU pool, so it needs one (min 0 costs nothing while idle). The
 # standalone NeMo server calls the in-cluster vLLM service, so under "none" it
