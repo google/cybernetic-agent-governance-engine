@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from datetime import datetime, timezone
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -445,7 +446,7 @@ async def test_actuator_04_attestation_provider():
         "tpm_pcr_quote": "expected-pcr-quote-hex",
         "envelope_digest": "expected-pcr-quote-hex",
         "kid": "node-attest-0",
-        "timestamp_utc": "2026-11-02T20:00:00Z",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
     jcs_body = jcs_canonicalize_plan(resp_payload)
     sig = priv.sign(ATTESTATION_RECEIPT_DOMAIN_TAG + jcs_body)
@@ -465,6 +466,19 @@ async def test_actuator_04_attestation_provider():
     assert len(attestations) == 1
     assert attestations[0].receipt_id == "node-attest-0"
     assert attestations[0].status == AttestationStatus.VERIFIED.value
+
+    # Verify stale attestation quote (> 300s) is rejected with ERROR
+    resp_payload_stale = dict(resp_payload)
+    resp_payload_stale["timestamp_utc"] = "2020-01-01T00:00:00Z"
+    stale_body = jcs_canonicalize_plan(resp_payload_stale)
+    resp_payload_stale["signature"] = base64.urlsafe_b64encode(
+        priv.sign(ATTESTATION_RECEIPT_DOMAIN_TAG + stale_body)
+    ).decode("ascii")
+    mock_resp.json.return_value = resp_payload_stale
+    stale_attestations = await provider.fetch_attestations({})
+    assert len(stale_attestations) == 1
+    assert stale_attestations[0].status == AttestationStatus.ERROR.value
+    assert stale_attestations[0].metadata["code"] == "ATTESTATION_TIMESTAMP_STALE"
 
 
 # ---------------------------------------------------------------------------

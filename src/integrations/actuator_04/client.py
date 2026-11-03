@@ -21,6 +21,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 import ssl
 from typing import Any
 from urllib.parse import urlsplit
@@ -46,6 +47,84 @@ _DISALLOWED_IP_NETWORKS = (
     ipaddress.ip_network("::/128"),               # IPv6 Unspecified
     ipaddress.ip_network("::ffff:0:0/96"),        # IPv4-mapped IPv6
 )
+
+
+def _parse_ip_part(p: str) -> int:
+    p = p.strip()
+    if p.startswith(("0x", "0X")):
+        return int(p, 16)
+    if p.startswith(("0o", "0O")):
+        return int(p, 8)
+    if p.startswith(("0b", "0B")):
+        return int(p, 2)
+    if p.startswith("0") and len(p) > 1 and p.isdigit():
+        return int(p, 8)
+    return int(p, 10)
+
+
+def _try_parse_ip_literal(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    # 1. Standard library parser (handles dotted-quad, standard IPv6, ::ffff:x.x.x.x, etc.)
+    try:
+        return ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+
+    # 2. Single integer / octal / hex number (e.g. 2130706433, 017700000001, 0x7f000001)
+    try:
+        val = _parse_ip_part(hostname)
+        if 0 <= val <= 0xFFFFFFFF:
+            return ipaddress.IPv4Address(val)
+    except (ValueError, TypeError):
+        pass
+
+    # 3. Dotted octal or hex IPv4 notation (e.g. 0177.0.0.1, 0x7f.0.0.1, 0251.0376.0251.0376)
+    parts = hostname.split(".")
+    if len(parts) == 4:
+        try:
+            nums = [_parse_ip_part(p) for p in parts]
+            if all(0 <= n <= 255 for n in nums):
+                val = (nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3]
+                return ipaddress.IPv4Address(val)
+        except (ValueError, TypeError):
+            pass
+
+    return None
+
+
+def _extract_embedded_ip(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    parts = hostname.split(".")
+    if len(parts) >= 4:
+        for i in range(len(parts) - 3):
+            sub = ".".join(parts[i : i + 4])
+            parsed = _try_parse_ip_literal(sub)
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _check_single_ip(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    *,
+    allow_loopback: bool,
+    enforcing: bool,
+) -> None:
+    # If IPv4-mapped IPv6, validate mapped IPv4 as well
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        _check_single_ip(ip.ipv4_mapped, allow_loopback=allow_loopback, enforcing=enforcing)
+
+    if ip.is_loopback:
+        if not allow_loopback or enforcing:
+            raise ValueError(f"Loopback IP {ip} forbidden in this posture")
+        return
+
+    for net in _DISALLOWED_IP_NETWORKS:
+        if ip in net:
+            raise ValueError(f"Endpoint IP {ip} falls inside restricted network {net}")
+
+    if enforcing and (ip.is_private or ip.is_unspecified or ip.is_reserved or ip.is_link_local):
+        raise ValueError(
+            f"Private/unspecified/reserved/link-local IP {ip} forbidden in enforcing posture"
+        )
 
 
 def validate_destination_url(url: str, *, allow_loopback: bool = False) -> str:
@@ -79,33 +158,47 @@ def validate_destination_url(url: str, *, allow_loopback: bool = False) -> str:
     if not hostname:
         raise ValueError(f"No hostname in endpoint URL: {clean!r}")
 
-    # Resolve literal IP or check host string
-    try:
-        ip = ipaddress.ip_address(hostname)
-        is_ip = True
-    except ValueError:
-        is_ip = False
+    # Resolve literal IP (decimal, octal, hex, IPv6, or dotted-quad)
+    ip = _try_parse_ip_literal(hostname)
+    if ip is not None:
+        _check_single_ip(ip, allow_loopback=allow_loopback, enforcing=enforcing)
+        return clean.rstrip("/")
 
-    if is_ip:
-        if ip.is_loopback:
-            if not allow_loopback or enforcing:
-                raise ValueError(f"Loopback IP {ip} forbidden in this posture")
-            return clean.rstrip("/")
+    # Hostname string check
+    lower_host = hostname.lower()
+    if lower_host in ("169.254.169.254", "metadata.google.internal"):
+        raise ValueError("Cloud metadata service hostnames are strictly blocked")
+    if lower_host in ("localhost", "localhost.localdomain") and (enforcing or not allow_loopback):
+        raise ValueError("localhost forbidden in this posture")
 
-        for net in _DISALLOWED_IP_NETWORKS:
-            if ip in net:
-                raise ValueError(f"Endpoint IP {ip} falls inside restricted network {net}")
+    embedded_ip = _extract_embedded_ip(hostname)
+    if embedded_ip is not None:
+        _check_single_ip(embedded_ip, allow_loopback=allow_loopback, enforcing=enforcing)
 
-        if enforcing and (ip.is_private or ip.is_unspecified or ip.is_reserved):
-            raise ValueError(f"Private/unspecified/reserved IP {ip} forbidden in enforcing posture")
-
+    # In enforcing posture, perform DNS resolution via socket.getaddrinfo to defeat DNS rebinding
+    if enforcing:
+        try:
+            infos = socket.getaddrinfo(hostname, None)
+        except Exception as exc:
+            raise ValueError(
+                f"DNS resolution failed for hostname {hostname!r} in enforcing posture: {exc}"
+            )
+        if not infos:
+            raise ValueError(f"No DNS records returned for hostname {hostname!r}")
+        for info in infos:
+            resolved_ip_str = info[4][0]
+            resolved_ip = ipaddress.ip_address(resolved_ip_str)
+            _check_single_ip(resolved_ip, allow_loopback=allow_loopback, enforcing=enforcing)
     else:
-        # Hostname string check
-        lower_host = hostname.lower()
-        if lower_host in ("169.254.169.254", "metadata.google.internal"):
-            raise ValueError("Cloud metadata service hostnames are strictly blocked")
-        if lower_host in ("localhost", "localhost.localdomain") and enforcing:
-            raise ValueError("localhost forbidden in enforcing posture")
+        # In non-enforcing posture, check resolved IPs if getaddrinfo succeeds without breaking hermetic tests
+        try:
+            infos = socket.getaddrinfo(hostname, None)
+            for info in infos:
+                resolved_ip_str = info[4][0]
+                resolved_ip = ipaddress.ip_address(resolved_ip_str)
+                _check_single_ip(resolved_ip, allow_loopback=allow_loopback, enforcing=enforcing)
+        except (socket.gaierror, socket.herror, OSError):
+            pass
 
     return clean.rstrip("/")
 

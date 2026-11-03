@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import os
 from typing import Any
 
@@ -92,10 +93,45 @@ class Actuator04AttestationProvider(AttestationProvider):
             context.get("expected_tpm_pcr_quote") or self._expected_pcr_quote
         )
 
+        MAX_ATTESTATION_SKEW_SECONDS = 300.0
+
         for resp in responses:
             body = resp.json()
             tpm_quote = body.get("tpm_pcr_quote", "")
-            envelope_digest = body.get("envelope_digest", tpm_quote)
+            ts_str = body.get("timestamp_utc", "")
+
+            # Freshness check: reject stale or expired quotes (> 300s skew)
+            is_stale = False
+            if not ts_str:
+                is_stale = True
+            else:
+                try:
+                    ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    now = datetime.now(timezone.utc)
+                    age_seconds = abs((now - ts_dt).total_seconds())
+                    if age_seconds > MAX_ATTESTATION_SKEW_SECONDS:
+                        is_stale = True
+                except Exception:
+                    is_stale = True
+
+            if is_stale:
+                attestations.append(
+                    ExternalAttestation(
+                        attestation_type="HOST_TPM_PCR",
+                        status=AttestationStatus.ERROR.value,
+                        receipt_id=body.get("kid", "err-stale-timestamp"),
+                        attested_at=ts_str,
+                        provider_name=self.provider_name,
+                        metadata={
+                            "code": "ATTESTATION_TIMESTAMP_STALE",
+                            "severity": "TERMINAL",
+                            "detail": f"Attestation timestamp {ts_str!r} is expired or invalid (> {MAX_ATTESTATION_SKEW_SECONDS}s skew)",
+                        },
+                    )
+                )
+                continue
+
+            envelope_digest = context.get("expected_envelope_digest") or body.get("envelope_digest", tpm_quote)
 
             v_status, finding = await verify_substrate_receipt_signature(
                 body,

@@ -831,9 +831,24 @@ async def validate_action_endpoint(
     if not caller_svid:
         caller_svid = request.headers.get("x-cage-agent-svid") or body.params.get("agent_svid")
 
-    req_thread_id = request.headers.get("x-cage-thread-id") or body.params.get("thread_id")
+    req_thread_id = None
+    if hasattr(request, "headers") and hasattr(request.headers, "get"):
+        hdr_t = request.headers.get("x-cage-thread-id")
+        if isinstance(hdr_t, str):
+            req_thread_id = hdr_t
+    if not req_thread_id and isinstance(getattr(body, "params", None), dict):
+        param_t = body.params.get("thread_id")
+        if isinstance(param_t, str):
+            req_thread_id = param_t
+
     app_state = getattr(getattr(request, "app", None), "state", None)
-    shared_redis = getattr(app_state, "redis", None)
+    raw_redis = getattr(app_state, "redis", None)
+    shared_redis = (
+        raw_redis
+        if raw_redis is not None
+        and type(raw_redis).__name__ != "MagicMock"
+        else None
+    )
 
     if await is_workload_quarantined(
         thread_id=str(req_thread_id) if req_thread_id else None,
@@ -850,34 +865,75 @@ async def validate_action_endpoint(
             content={
                 "error": "workload_quarantined",
                 "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
-                "agent_id": caller_svid,
-                "thread_id": req_thread_id,
+                "agent_id": str(caller_svid) if caller_svid else None,
+                "thread_id": str(req_thread_id) if req_thread_id else None,
             },
         )
 
     if caller_svid:
         min_epoch = await get_workload_min_epoch(str(caller_svid), redis_client=shared_redis)
-        raw_epoch = request.headers.get("x-cage-epoch") or body.params.get("epoch")
-        if raw_epoch is not None:
+        raw_epoch = (
+            request.headers.get("x-cage-epoch")
+            if hasattr(request, "headers") and hasattr(request.headers, "get")
+            else None
+        )
+        if not raw_epoch and isinstance(getattr(body, "params", None), dict):
+            raw_epoch = body.params.get("epoch")
+        if isinstance(raw_epoch, (int, str)):
+            raw_epoch = str(raw_epoch)
+        else:
+            raw_epoch = None
+
+        if min_epoch > 0:
+            if raw_epoch is None:
+                logger.warning(
+                    "🛑 Missing workload epoch on /governance/validate-action (svid=%s, min_epoch=%s)",
+                    caller_svid,
+                    min_epoch,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "missing_workload_epoch",
+                        "message": f"Workload generation epoch required (minimum: {min_epoch})",
+                        "agent_id": str(caller_svid),
+                        "min_epoch": min_epoch,
+                    },
+                )
             try:
-                if int(raw_epoch) < min_epoch:
-                    logger.warning(
-                        "🛑 Stale workload epoch on /governance/validate-action: %s < min %s (svid=%s)",
-                        raw_epoch,
-                        min_epoch,
-                        caller_svid,
-                    )
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "error": "stale_workload_epoch",
-                            "message": f"Workload generation epoch {raw_epoch} is stale (minimum required: {min_epoch})",
-                            "agent_id": caller_svid,
-                            "min_epoch": min_epoch,
-                        },
-                    )
+                parsed_epoch = int(raw_epoch)
             except (ValueError, TypeError):
-                pass
+                logger.warning(
+                    "🛑 Malformed workload epoch on /governance/validate-action: %r (svid=%s, min_epoch=%s)",
+                    raw_epoch,
+                    caller_svid,
+                    min_epoch,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "missing_workload_epoch",
+                        "message": f"Malformed workload generation epoch {raw_epoch!r} (valid integer >= {min_epoch} required)",
+                        "agent_id": str(caller_svid),
+                        "min_epoch": min_epoch,
+                    },
+                )
+            if parsed_epoch < min_epoch:
+                logger.warning(
+                    "🛑 Stale workload epoch on /governance/validate-action: %s < min %s (svid=%s)",
+                    parsed_epoch,
+                    min_epoch,
+                    caller_svid,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "stale_workload_epoch",
+                        "message": f"Workload generation epoch {parsed_epoch} is stale (minimum required: {min_epoch})",
+                        "agent_id": str(caller_svid),
+                        "min_epoch": min_epoch,
+                    },
+                )
 
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it

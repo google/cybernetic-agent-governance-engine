@@ -100,8 +100,8 @@ async def verify_substrate_receipt_signature(
 
     if not kid or not val:
         return (
-            ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MISSING", "TERMINAL", "Missing kid or signature value"),
+            ReceiptVerification.UNVERIFIED,
+            _finding("RECEIPT_SIGNATURE_MISSING", "WARNING", "Missing kid or signature value on unsigned receipt"),
         )
 
     if key_resolver is None:
@@ -306,8 +306,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
 
         # Fail closed: verify every target node returned a valid, verified receipt
         combined_findings: list[dict[str, Any]] = []
-        overall_verified = True
         overall_rule_id: str | None = None
+        has_invalid = False
+        all_verified = True
 
         for resp in responses:
             if resp.status_code != 200:
@@ -337,10 +338,12 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
             if finding:
                 combined_findings.append(finding)
 
-            if self._require_signed_receipts and v_status is not ReceiptVerification.VERIFIED:
-                overall_verified = False
+            if v_status is ReceiptVerification.INVALID:
+                has_invalid = True
+            elif v_status is not ReceiptVerification.VERIFIED:
+                all_verified = False
 
-        if not overall_verified:
+        if (self._require_signed_receipts and not all_verified) or has_invalid:
             return QuarantineReceipt(
                 quarantined=False,
                 enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
@@ -353,13 +356,19 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 timestamp_utc=now_utc,
             )
 
+        verification_status = (
+            ReceiptVerification.VERIFIED
+            if all_verified and self._receipt_key_resolver is not None
+            else ReceiptVerification.UNVERIFIED
+        )
+
         return QuarantineReceipt(
             quarantined=True,
             enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
             rule_id=overall_rule_id,
             latency_us=(time.perf_counter() - t0) * 1_000_000.0,
             outcome=ActuationOutcome.ACCEPTED,
-            verification=ReceiptVerification.VERIFIED,
+            verification=verification_status,
             findings=combined_findings,
             envelope_digest=envelope_digest,
             timestamp_utc=now_utc,
@@ -419,40 +428,112 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 timestamp_utc=now_utc,
             )
 
-        body = responses[0].json()
-        epoch_before = int(body.get("epoch_before", directive.expected_min_epoch))
-        epoch_after = int(body.get("epoch_after", epoch_before + 1))
-
-        v_status, finding = await verify_substrate_receipt_signature(
-            body,
-            domain_tag=QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG,
-            expected_envelope_digest=envelope_digest,
-            key_resolver=self._receipt_key_resolver,
-        )
-
-        if self._require_signed_receipts and v_status is not ReceiptVerification.VERIFIED:
+        if not responses:
             return QuarantineReleaseReceipt(
                 released=False,
                 enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
-                epoch_before=epoch_before,
-                epoch_after=epoch_before,
+                epoch_before=directive.expected_min_epoch,
+                epoch_after=directive.expected_min_epoch,
                 outcome=ActuationOutcome.UNKNOWN,
-                verification=ReceiptVerification.INVALID,
-                findings=[finding] if finding else [],
+                verification=ReceiptVerification.UNVERIFIED,
+                findings=[_finding("NO_RESPONSES", "TERMINAL", "No response received from any host endpoint")],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
             )
 
-        # Monotonic epoch advancement invariant
-        if epoch_after <= epoch_before:
+        combined_findings: list[dict[str, Any]] = []
+        has_invalid = False
+        all_verified = True
+        consensus_epoch_before: int | None = None
+        consensus_epoch_after: int | None = None
+
+        for resp in responses:
+            if resp.status_code != 200:
+                return QuarantineReleaseReceipt(
+                    released=False,
+                    enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
+                    epoch_before=directive.expected_min_epoch,
+                    epoch_after=directive.expected_min_epoch,
+                    outcome=ActuationOutcome.REJECTED,
+                    verification=ReceiptVerification.UNVERIFIED,
+                    findings=[_finding("SUBSTRATE_ERROR_STATUS", "TERMINAL", f"HTTP {resp.status_code}")],
+                    envelope_digest=envelope_digest,
+                    timestamp_utc=now_utc,
+                )
+
+            body = resp.json()
+            epoch_before = int(body.get("epoch_before", directive.expected_min_epoch))
+            epoch_after = int(body.get("epoch_after", epoch_before + 1))
+
+            # Monotonic epoch advancement invariant per node
+            if epoch_after <= epoch_before:
+                return QuarantineReleaseReceipt(
+                    released=False,
+                    enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
+                    epoch_before=epoch_before,
+                    epoch_after=epoch_before,
+                    outcome=ActuationOutcome.UNKNOWN,
+                    verification=ReceiptVerification.UNVERIFIED,
+                    findings=[_finding("NON_MONOTONIC_EPOCH", "TERMINAL", f"epoch_after {epoch_after} <= {epoch_before}")],
+                    envelope_digest=envelope_digest,
+                    timestamp_utc=now_utc,
+                )
+
+            # Check multi-node consensus on epoch
+            if consensus_epoch_before is None:
+                consensus_epoch_before = epoch_before
+            elif consensus_epoch_before != epoch_before:
+                return QuarantineReleaseReceipt(
+                    released=False,
+                    enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
+                    epoch_before=directive.expected_min_epoch,
+                    epoch_after=directive.expected_min_epoch,
+                    outcome=ActuationOutcome.UNKNOWN,
+                    verification=ReceiptVerification.UNVERIFIED,
+                    findings=[_finding("DIVERGENT_NODE_EPOCH", "TERMINAL", f"epoch_before mismatch: {consensus_epoch_before} vs {epoch_before}")],
+                    envelope_digest=envelope_digest,
+                    timestamp_utc=now_utc,
+                )
+
+            if consensus_epoch_after is None:
+                consensus_epoch_after = epoch_after
+            elif consensus_epoch_after != epoch_after:
+                return QuarantineReleaseReceipt(
+                    released=False,
+                    enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
+                    epoch_before=directive.expected_min_epoch,
+                    epoch_after=directive.expected_min_epoch,
+                    outcome=ActuationOutcome.UNKNOWN,
+                    verification=ReceiptVerification.UNVERIFIED,
+                    findings=[_finding("DIVERGENT_NODE_EPOCH", "TERMINAL", f"epoch_after mismatch: {consensus_epoch_after} vs {epoch_after}")],
+                    envelope_digest=envelope_digest,
+                    timestamp_utc=now_utc,
+                )
+
+            v_status, finding = await verify_substrate_receipt_signature(
+                body,
+                domain_tag=QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG,
+                expected_envelope_digest=envelope_digest,
+                key_resolver=self._receipt_key_resolver,
+            )
+
+            if finding:
+                combined_findings.append(finding)
+
+            if v_status is ReceiptVerification.INVALID:
+                has_invalid = True
+            elif v_status is not ReceiptVerification.VERIFIED:
+                all_verified = False
+
+        if has_invalid or (self._require_signed_receipts and not all_verified):
             return QuarantineReleaseReceipt(
                 released=False,
                 enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
-                epoch_before=epoch_before,
-                epoch_after=epoch_before,
+                epoch_before=consensus_epoch_before or directive.expected_min_epoch,
+                epoch_after=consensus_epoch_before or directive.expected_min_epoch,
                 outcome=ActuationOutcome.UNKNOWN,
-                verification=v_status,
-                findings=[_finding("NON_MONOTONIC_EPOCH", "TERMINAL", f"epoch_after {epoch_after} <= {epoch_before}")],
+                verification=ReceiptVerification.INVALID,
+                findings=combined_findings or [_finding("RECEIPT_NOT_VERIFIED", "TERMINAL", "Release receipt signature not verified")],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
             )
@@ -460,16 +541,25 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
         # Advance gateway epoch tracker
         from src.gateway.governance.quarantine_actuator import advance_workload_epoch
 
-        await advance_workload_epoch(directive.agent_svid, epoch_after)
+        final_epoch_before = consensus_epoch_before if consensus_epoch_before is not None else directive.expected_min_epoch
+        final_epoch_after = consensus_epoch_after if consensus_epoch_after is not None else final_epoch_before + 1
+
+        await advance_workload_epoch(directive.agent_svid, final_epoch_after)
+
+        verification_status = (
+            ReceiptVerification.VERIFIED
+            if all_verified and self._receipt_key_resolver is not None
+            else ReceiptVerification.UNVERIFIED
+        )
 
         return QuarantineReleaseReceipt(
             released=True,
             enforcement_plane=ENFORCEMENT_PLANE_HOST_OS_KERNEL,
-            epoch_before=epoch_before,
-            epoch_after=epoch_after,
+            epoch_before=final_epoch_before,
+            epoch_after=final_epoch_after,
             outcome=ActuationOutcome.ACCEPTED,
-            verification=v_status,
-            findings=[],
+            verification=verification_status,
+            findings=combined_findings,
             envelope_digest=envelope_digest,
             timestamp_utc=now_utc,
         )
@@ -533,6 +623,18 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 raw_receipt=None,
                 findings=[_finding("ACTUATION_POST_FAILED", "TRANSIENT", str(exc))],
                 outcome=ActuationOutcome.UNKNOWN,
+                timestamp_utc=now_utc,
+            )
+
+        if not responses or any(r.status_code != 200 for r in responses):
+            status = responses[0].status_code if responses else 500
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=[_finding("ACTUATION_ERROR_STATUS", "TERMINAL", f"HTTP {status}")],
+                outcome=ActuationOutcome.REJECTED,
                 timestamp_utc=now_utc,
             )
 
