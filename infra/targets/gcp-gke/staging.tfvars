@@ -34,7 +34,7 @@
 #   - enable_cmek=true (requires KMS key — set kms_key_id in terraform.auto.tfvars)
 #   - enable_pod_security_standards=true (restricted)
 #   - enable_private_nodes=true
-#   - Authorized networks: operator CIDRs only, never 0.0.0.0/0 (the plan refuses it, POAM-2026-126)
+#   - Authorized networks: operator CIDRs only, never 0.0.0.0/0 (an untargeted plan refuses it, POAM-2026-126; -target skips that, POAM-2026-180)
 #   - enable_deletion_protection=false (ephemeral — can be destroyed)
 #
 # What this proves:
@@ -121,9 +121,9 @@ enable_fqdn_network_policy = true
 # Supply them with TF_VAR_authorized_networks or a --var-file after this profile:
 #   export TF_VAR_authorized_networks='[{cidr="203.0.113.10/32",display_name="deployer egress"}]'
 # Terraform's kubernetes and helm providers use the public endpoint, so the machine
-# running terraform must be on the list. The plan refuses an empty list or a /0
-# while compliance is active (POAM-2026-126). The cluster's own node, Pod and
-# Service ranges can always reach the control plane.
+# running terraform must be on the list. With compliance active, an untargeted plan
+# refuses an empty list or a /0 (POAM-2026-126; -target=module.gke skips it, POAM-2026-180).
+# The cluster's own node, Pod and Service ranges can always reach the control plane.
 
 # ─── Cost Optimization (Staging: Dev-Scale Hardware) ──────────────────────────
 

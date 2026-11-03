@@ -141,7 +141,9 @@ run with it plans the same compliance posture as `deploy_all.sh`. A direct `plan
 `apply` stops unless you supply `authorized_networks` and distinct
 `langfuse_compliance_*` keys (`POAM-2026-174`, `POAM-2026-126`, `POAM-019`). The
 teardown above needs neither: those checks are resource preconditions, which
-Terraform reports only as warnings while refreshing for a destroy.
+Terraform reports only as warnings while refreshing for a destroy. A plan with
+`-target` skips them unless it targets them, because nothing depends on them
+(`POAM-2026-180`).
 
 See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)
 for full configuration and [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)
@@ -457,7 +459,7 @@ Successful staging deployments have run under personal human credentials (Owner 
 
 ### Authorized Networks Lockout (POAM-2026-126)
 
-With a compliance posture active, `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. Committed profiles such as `staging.tfvars` deliberately set no operator address.
+With a compliance posture active, `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. A plan targeted at `module.gke` skips the guard, because the cluster does not depend on it (POAM-2026-180). Committed profiles such as `staging.tfvars` deliberately set no operator address.
 - **Plan refused**: An empty list fails the plan with `[POAM-2026-126] AC-3 control-plane access: ...` before anything changes.
 - **Lockout symptom**: From an address that is not on the list, `kubectl` and Terraform's `kubernetes` / `helm` providers cannot reach the endpoint; the connection typically times out (`dial tcp <endpoint>:443: i/o timeout`) rather than being refused or rejected as unauthorized. A deployer whose egress address has changed (new network, VPN on or off) hits this on the next apply.
 - **Deploy prerequisite**: Pass the public egress CIDR of the deployer's workstation or CI runner to `deploy_all.sh`, which applies `--var` after the profile, or export it as `TF_VAR_authorized_networks`:

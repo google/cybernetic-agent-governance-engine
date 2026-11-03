@@ -191,9 +191,9 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 #     Langfuse project isolation in dev. AU-9 / SR 26-2 §IV.D are prod-only controls.
 #   - With no compliance flag set, the POAM-019 key guards in main.tf
 #     (terraform_data.poam_019_empty_key_guard / poam_019_shared_key_guard) are skipped.
-#   - The compliance bridge _make_compliance_langfuse() guard in audit_workflow.py
-#     detects when LANGFUSE_COMPLIANCE_PUBLIC_KEY == LANGFUSE_PUBLIC_KEY and skips
-#     Step 3 (OSCAL score ingestion) to prevent circular evidence contamination.
+#   - Nothing in the compliance bridge compares the two projects' keys: its startup
+#     check in audit_workflow.py only requires both to be set outside dev, and Step 3
+#     ingests with whatever compliance key it is given.
 #   - LANGFUSE_COMPLIANCE_PUBLIC_KEY and LANGFUSE_COMPLIANCE_SECRET_KEY are injected
 #     from .env via TF_VAR_* exports in deploy_all.sh. If the cage-compliance project
 #     keys are set in .env (as they are in this deployment), the compliance bridge
@@ -201,7 +201,7 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 #
 # For prod posture: set LANGFUSE_COMPLIANCE_PUBLIC_KEY to a DIFFERENT key than
 # LANGFUSE_PUBLIC_KEY. With any compliance flag set, the POAM-019 key guards in
-# main.tf FAIL the plan if either compliance key is empty or equals its counterpart.
+# main.tf FAIL an untargeted plan if either compliance key is empty or equals its counterpart (POAM-2026-180).
 #
 # Keys are NOT hardcoded here — they are injected via TF_VAR_* from .env.
 

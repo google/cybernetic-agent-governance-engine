@@ -19,7 +19,8 @@ nothing read the list. Two guards now hold the claim:
 * the shipped profiles: no profile with a compliance posture active authorizes a /0;
 * the plan: the gcp-gke target's ``control_plane_access_guard`` refuses an empty list
   or a /0 whenever compliance is active. An empty list makes the cluster module emit
-  no allowlist, and GKE then accepts any address.
+  no allowlist, and GKE then accepts any address. A plan targeted at ``module.gke``
+  skips the guard (POAM-2026-180; see test_guard_placement.py).
 
 POAM-2026-174: every committed profile sets ``enable_nist_compliance`` itself, so a
 direct terraform run plans the same posture as deploy_all.sh, and the classifier
