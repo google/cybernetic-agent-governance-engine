@@ -289,16 +289,16 @@ class Issue:
 LINE_ANCHOR_PATTERN = re.compile(r"#L(\d+)(?:-L(\d+))?$")
 # Inline colon line anchor: path/to/file.ext:<line_spec>
 COLON_LINE_SPEC_PATTERN = re.compile(
-    r"^(?P<path>[A-Za-z0-9_./-]+\.[a-z0-9]+):(?P<spec>\d+(?:[-–]\d+)?(?:,\d+(?:[-–]\d+)?)*)$"
+    r"^(?P<path>[A-Za-z0-9_./-]+\.[a-z0-9]+):(?P<spec>\d+(?:[-\u2013]\d+)?(?:,\d+(?:[-\u2013]\d+)?)*)$"
 )
 # Prose line citation immediately following a file link or inline file path
 PROSE_LINE_REF_PATTERN = re.compile(
     r"(?:\[(?P<label>[^\]]+)\]\((?P<link>[^)]+)\)|`(?P<codepath>[A-Za-z0-9_./-]+\.[a-z0-9]+)`)"
-    r"(?:\s*,\s*|\s+|\s*\(\s*|\s+at\s+|\s*\(`)(?:`?lines?\s+(?P<spec>\d+(?:[-–]\d+)?(?:\s*,\s*\d+(?:[-–]\d+)?)*)`?)"
+    r"(?:\s*,\s*|\s+|\s*\(\s*|\s+at\s+|\s*\(`)(?:`?lines?\s+(?P<spec>\d+(?:[-\u2013]\d+)?(?:\s*,\s*\d+(?:[-\u2013]\d+)?)*)`?)"
 )
 # Standalone line range on a line that also links a YAML file and a UUID
 STANDALONE_LINE_RANGE_PATTERN = re.compile(
-    r"`?lines\s+(?P<spec>\d+[-–]\d+)`?"
+    r"`?lines\s+(?P<spec>\d+[-\u2013]\d+)`?"
 )
 
 # HCL / Terraform block header in .tf files
@@ -370,7 +370,7 @@ def _parse_line_spec(spec: str) -> list[tuple[int, int]]:
     """Parse a line specification like '42', '10-20', or '12, 15-18' into (start, end) pairs."""
     spans: list[tuple[int, int]] = []
     for part in re.split(r"\s*,\s*", spec.strip()):
-        match = re.match(r"^(\d+)(?:[-–](\d+))?$", part.strip())
+        match = re.match(r"^(\d+)(?:[-\u2013](\d+))?$", part.strip())
         if match:
             start = int(match.group(1))
             end = int(match.group(2)) if match.group(2) is not None else start

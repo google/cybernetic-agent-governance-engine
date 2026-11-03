@@ -423,8 +423,8 @@ def test_prose_line_reference_yaml_uuid_span_validation(tmp_path: Path) -> None:
     )
     doc = tmp_path / "doc.md"
     doc.write_text(
-        "Valid span: `423a5590-5440-411f-a3fd-81a950236704` in [`component-definition.yaml`](component-definition.yaml) (`lines 2–5`).\n"
-        "Drifted span: `423a5590-5440-411f-a3fd-81a950236704` in [`component-definition.yaml`](component-definition.yaml) (`lines 2–7`).\n",
+        "Valid span: `423a5590-5440-411f-a3fd-81a950236704` in [`component-definition.yaml`](component-definition.yaml) (`lines 2\u20135`).\n"
+        "Drifted span: `423a5590-5440-411f-a3fd-81a950236704` in [`component-definition.yaml`](component-definition.yaml) (`lines 2\u20137`).\n",
         encoding="utf-8",
     )
     issues = audit_markdown_file(doc)
