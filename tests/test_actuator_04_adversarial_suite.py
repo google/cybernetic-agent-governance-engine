@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime, timedelta, timezone
 import hashlib
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -112,69 +112,303 @@ def make_signed_node_body(
 # 1. MATHEMATICAL SSRF ADVERSARIAL VECTORS
 # ===========================================================================
 
+
 @pytest.mark.parametrize(
     ("url", "allow_loopback", "env", "should_block", "desc"),
     [
         # a) Decimal integer IP hostnames
-        ("http://2130706433:8080", False, "dev", True, "Decimal integer loopback in dev"),
-        ("https://2130706433:8080", False, "production", True, "Decimal integer loopback in prod"),
-        ("http://2852039166:8080", False, "dev", True, "Decimal integer metadata in dev"),
-        ("https://2852039166:8080", False, "production", True, "Decimal integer metadata in prod"),
+        (
+            "http://2130706433:8080",
+            False,
+            "dev",
+            True,
+            "Decimal integer loopback in dev",
+        ),
+        (
+            "https://2130706433:8080",
+            False,
+            "production",
+            True,
+            "Decimal integer loopback in prod",
+        ),
+        (
+            "http://2852039166:8080",
+            False,
+            "dev",
+            True,
+            "Decimal integer metadata in dev",
+        ),
+        (
+            "https://2852039166:8080",
+            False,
+            "production",
+            True,
+            "Decimal integer metadata in prod",
+        ),
         ("http://0:8080", False, "dev", True, "Decimal zero current network in dev"),
-        ("https://0:8080", False, "production", True, "Decimal zero current network in prod"),
-
+        (
+            "https://0:8080",
+            False,
+            "production",
+            True,
+            "Decimal zero current network in prod",
+        ),
         # b) Octal IP hostnames
         ("http://0177.0.0.1:8080", False, "dev", True, "Octal loopback in dev"),
-        ("https://0177.0.0.1:8080", False, "production", True, "Octal loopback in prod"),
-        ("http://0177.0.0.01:8080", False, "dev", True, "Octal quad with leading 0 in dev"),
-        ("https://0177.0.0.01:8080", False, "production", True, "Octal quad with leading 0 in prod"),
-        ("http://0251.0376.0251.0376:8080", False, "dev", True, "Octal metadata in dev"),
-        ("https://0251.0376.0251.0376:8080", False, "production", True, "Octal metadata in prod"),
-
+        (
+            "https://0177.0.0.1:8080",
+            False,
+            "production",
+            True,
+            "Octal loopback in prod",
+        ),
+        (
+            "http://0177.0.0.01:8080",
+            False,
+            "dev",
+            True,
+            "Octal quad with leading 0 in dev",
+        ),
+        (
+            "https://0177.0.0.01:8080",
+            False,
+            "production",
+            True,
+            "Octal quad with leading 0 in prod",
+        ),
+        (
+            "http://0251.0376.0251.0376:8080",
+            False,
+            "dev",
+            True,
+            "Octal metadata in dev",
+        ),
+        (
+            "https://0251.0376.0251.0376:8080",
+            False,
+            "production",
+            True,
+            "Octal metadata in prod",
+        ),
         # c) Hex IP hostnames
         ("http://0x7f.0.0.1:8080", False, "dev", True, "Hex dotted quad in dev"),
-        ("https://0x7f.0.0.1:8080", False, "production", True, "Hex dotted quad in prod"),
-        ("http://0x7f000001:8080", False, "dev", True, "Hex single integer loopback in dev"),
-        ("https://0x7f000001:8080", False, "production", True, "Hex single integer loopback in prod"),
-        ("http://0xa9fea9fe:8080", False, "dev", True, "Hex single integer metadata in dev"),
-        ("https://0xa9fea9fe:8080", False, "production", True, "Hex single integer metadata in prod"),
-
+        (
+            "https://0x7f.0.0.1:8080",
+            False,
+            "production",
+            True,
+            "Hex dotted quad in prod",
+        ),
+        (
+            "http://0x7f000001:8080",
+            False,
+            "dev",
+            True,
+            "Hex single integer loopback in dev",
+        ),
+        (
+            "https://0x7f000001:8080",
+            False,
+            "production",
+            True,
+            "Hex single integer loopback in prod",
+        ),
+        (
+            "http://0xa9fea9fe:8080",
+            False,
+            "dev",
+            True,
+            "Hex single integer metadata in dev",
+        ),
+        (
+            "https://0xa9fea9fe:8080",
+            False,
+            "production",
+            True,
+            "Hex single integer metadata in prod",
+        ),
         # d) Mixed octal/hex/decimal quads
-        ("http://127.0.0x0.1:8080", False, "dev", True, "Mixed hex/decimal loopback in dev"),
-        ("https://127.0.0x0.1:8080", False, "production", True, "Mixed hex/decimal loopback in prod"),
-        ("http://0177.0.0x0.1:8080", False, "dev", True, "Mixed octal/hex/decimal loopback in dev"),
-        ("https://0177.0.0x0.1:8080", False, "production", True, "Mixed octal/hex/decimal loopback in prod"),
-
+        (
+            "http://127.0.0x0.1:8080",
+            False,
+            "dev",
+            True,
+            "Mixed hex/decimal loopback in dev",
+        ),
+        (
+            "https://127.0.0x0.1:8080",
+            False,
+            "production",
+            True,
+            "Mixed hex/decimal loopback in prod",
+        ),
+        (
+            "http://0177.0.0x0.1:8080",
+            False,
+            "dev",
+            True,
+            "Mixed octal/hex/decimal loopback in dev",
+        ),
+        (
+            "https://0177.0.0x0.1:8080",
+            False,
+            "production",
+            True,
+            "Mixed octal/hex/decimal loopback in prod",
+        ),
         # e) IPv4-mapped IPv6 literals
-        ("http://[::ffff:127.0.0.1]:8080", False, "dev", True, "IPv4-mapped IPv6 loopback in dev"),
-        ("https://[::ffff:127.0.0.1]:8080", False, "production", True, "IPv4-mapped IPv6 loopback in prod"),
-        ("http://[::ffff:7f00:1]:8080", False, "dev", True, "IPv4-mapped IPv6 hex loopback in dev"),
-        ("https://[::ffff:7f00:1]:8080", False, "production", True, "IPv4-mapped IPv6 hex loopback in prod"),
-        ("http://[::ffff:169.254.169.254]:8080", False, "dev", True, "IPv4-mapped IPv6 metadata in dev"),
-        ("https://[::ffff:169.254.169.254]:8080", False, "production", True, "IPv4-mapped IPv6 metadata in prod"),
-        ("http://[::ffff:a9fe:a9fe]:8080", False, "dev", True, "IPv4-mapped IPv6 hex metadata in dev"),
-        ("https://[::ffff:a9fe:a9fe]:8080", False, "production", True, "IPv4-mapped IPv6 hex metadata in prod"),
-
+        (
+            "http://[::ffff:127.0.0.1]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 loopback in dev",
+        ),
+        (
+            "https://[::ffff:127.0.0.1]:8080",
+            False,
+            "production",
+            True,
+            "IPv4-mapped IPv6 loopback in prod",
+        ),
+        (
+            "http://[::ffff:7f00:1]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 hex loopback in dev",
+        ),
+        (
+            "https://[::ffff:7f00:1]:8080",
+            False,
+            "production",
+            True,
+            "IPv4-mapped IPv6 hex loopback in prod",
+        ),
+        (
+            "http://[::ffff:169.254.169.254]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 metadata in dev",
+        ),
+        (
+            "https://[::ffff:169.254.169.254]:8080",
+            False,
+            "production",
+            True,
+            "IPv4-mapped IPv6 metadata in prod",
+        ),
+        (
+            "http://[::ffff:a9fe:a9fe]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 hex metadata in dev",
+        ),
+        (
+            "https://[::ffff:a9fe:a9fe]:8080",
+            False,
+            "production",
+            True,
+            "IPv4-mapped IPv6 hex metadata in prod",
+        ),
         # f) Loopback/link-local IPv6
-        ("http://[::1]:8080", False, "dev", True, "IPv6 loopback in dev (allow_loopback=False)"),
-        ("http://[::1]:8080", True, "dev", False, "IPv6 loopback in dev (allow_loopback=True)"),
-        ("https://[::1]:8080", False, "production", True, "IPv6 loopback in prod (allow_loopback=False)"),
-        ("https://[::1]:8080", True, "production", True, "IPv6 loopback in prod (allow_loopback=True)"),
+        (
+            "http://[::1]:8080",
+            False,
+            "dev",
+            True,
+            "IPv6 loopback in dev (allow_loopback=False)",
+        ),
+        (
+            "http://[::1]:8080",
+            True,
+            "dev",
+            False,
+            "IPv6 loopback in dev (allow_loopback=True)",
+        ),
+        (
+            "https://[::1]:8080",
+            False,
+            "production",
+            True,
+            "IPv6 loopback in prod (allow_loopback=False)",
+        ),
+        (
+            "https://[::1]:8080",
+            True,
+            "production",
+            True,
+            "IPv6 loopback in prod (allow_loopback=True)",
+        ),
         ("http://[fe80::1]:8080", False, "dev", True, "IPv6 link-local in dev"),
-        ("https://[fe80::1]:8080", False, "production", True, "IPv6 link-local in prod"),
-
+        (
+            "https://[fe80::1]:8080",
+            False,
+            "production",
+            True,
+            "IPv6 link-local in prod",
+        ),
         # g) DNS rebinding hostnames
-        ("http://169.254.169.254.nip.io:8080", False, "dev", True, "DNS rebinding metadata in dev"),
-        ("https://169.254.169.254.nip.io:8080", False, "production", True, "DNS rebinding metadata in prod"),
-        ("http://127.0.0.1.nip.io:8080", False, "dev", True, "DNS rebinding loopback in dev"),
-        ("https://127.0.0.1.nip.io:8080", False, "production", True, "DNS rebinding loopback in prod"),
-
+        (
+            "http://169.254.169.254.nip.io:8080",
+            False,
+            "dev",
+            True,
+            "DNS rebinding metadata in dev",
+        ),
+        (
+            "https://169.254.169.254.nip.io:8080",
+            False,
+            "production",
+            True,
+            "DNS rebinding metadata in prod",
+        ),
+        (
+            "http://127.0.0.1.nip.io:8080",
+            False,
+            "dev",
+            True,
+            "DNS rebinding loopback in dev",
+        ),
+        (
+            "https://127.0.0.1.nip.io:8080",
+            False,
+            "production",
+            True,
+            "DNS rebinding loopback in prod",
+        ),
         # h) Valid public hosts (must be admitted)
-        ("https://example.com:443", False, "production", False, "Valid public domain in prod"),
+        (
+            "https://example.com:443",
+            False,
+            "production",
+            False,
+            "Valid public domain in prod",
+        ),
         ("https://example.com:443", False, "dev", False, "Valid public domain in dev"),
-        ("http://example.com:80", False, "dev", False, "Valid public domain over http in dev"),
-        ("https://8.8.8.8:443", False, "production", False, "Valid public IP 8.8.8.8 in prod"),
-        ("https://198.51.100.1:443", False, "dev", False, "Test net IP admitted in dev"),
+        (
+            "http://example.com:80",
+            False,
+            "dev",
+            False,
+            "Valid public domain over http in dev",
+        ),
+        (
+            "https://8.8.8.8:443",
+            False,
+            "production",
+            False,
+            "Valid public IP 8.8.8.8 in prod",
+        ),
+        (
+            "https://198.51.100.1:443",
+            False,
+            "dev",
+            False,
+            "Test net IP admitted in dev",
+        ),
     ],
 )
 def test_ssrf_adversarial_vectors(
@@ -191,12 +425,15 @@ def test_ssrf_adversarial_vectors(
         validate_destination_url(url, allow_loopback=allow_loopback)
     except ValueError:
         blocked = True
-    assert blocked == should_block, f"SSRF vector failed: {desc} (expected_block={should_block}, got_blocked={blocked})"
+    assert blocked == should_block, (
+        f"SSRF vector failed: {desc} (expected_block={should_block}, got_blocked={blocked})"
+    )
 
 
 # ===========================================================================
 # 2. MULTI-NODE FAN-OUT QUORUM & CONSENSUS TESTS
 # ===========================================================================
+
 
 @pytest.mark.asyncio
 async def test_multinode_2a_secondary_node_http_500_fails_closed():
@@ -211,7 +448,10 @@ async def test_multinode_2a_secondary_node_http_500_fails_closed():
     node1_resp = httpx.Response(500, json={"error": "Node 1 kernel fault"})
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json=node0_body),
         node1_resp,
@@ -236,7 +476,9 @@ async def test_multinode_2b_split_brain_epoch_divergence_fails_closed():
     """2b: Primary returns 1->2, secondary returns 1->3 (split-brain) -> released=False."""
     priv0 = ed25519.Ed25519PrivateKey.generate()
     priv1 = ed25519.Ed25519PrivateKey.generate()
-    resolver = StubKeyResolver({"node-0": priv0.public_key(), "node-1": priv1.public_key()})
+    resolver = StubKeyResolver(
+        {"node-0": priv0.public_key(), "node-1": priv1.public_key()}
+    )
     signer = StubSigner()
     directive = make_directive()
     env_digest = hashlib.sha256(jcs_canonicalize_plan(directive.to_dict())).hexdigest()
@@ -245,7 +487,10 @@ async def test_multinode_2b_split_brain_epoch_divergence_fails_closed():
     node1_body = make_signed_node_body(priv1, "node-1", env_digest, 1, 3)
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json=node0_body),
         httpx.Response(200, json=node1_body),
@@ -266,11 +511,15 @@ async def test_multinode_2b_split_brain_epoch_divergence_fails_closed():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("require_signed", [True, False])
-async def test_multinode_2c_invalid_ed25519_signature_fails_closed_no_crash(require_signed: bool):
+async def test_multinode_2c_invalid_ed25519_signature_fails_closed_no_crash(
+    require_signed: bool,
+):
     """2c: Node returns invalid Ed25519 signature -> verification=INVALID and released=False without crash."""
     priv0 = ed25519.Ed25519PrivateKey.generate()
     priv1 = ed25519.Ed25519PrivateKey.generate()
-    resolver = StubKeyResolver({"node-0": priv0.public_key(), "node-1": priv1.public_key()})
+    resolver = StubKeyResolver(
+        {"node-0": priv0.public_key(), "node-1": priv1.public_key()}
+    )
     signer = StubSigner()
     directive = make_directive()
     env_digest = hashlib.sha256(jcs_canonicalize_plan(directive.to_dict())).hexdigest()
@@ -281,7 +530,10 @@ async def test_multinode_2c_invalid_ed25519_signature_fails_closed_no_crash(requ
     node1_body["signature"] = base64.urlsafe_b64encode(b"X" * 64).decode("ascii")
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json=node0_body),
         httpx.Response(200, json=node1_body),
@@ -326,7 +578,10 @@ async def test_multinode_2d_unsigned_receipts_return_unverified():
     }
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json=node0_body),
         httpx.Response(200, json=node1_body),
@@ -350,7 +605,9 @@ async def test_multinode_2e_all_nodes_matching_verified_receipts():
     """2e: All nodes return matching verified receipts -> released=True, verification=VERIFIED."""
     priv0 = ed25519.Ed25519PrivateKey.generate()
     priv1 = ed25519.Ed25519PrivateKey.generate()
-    resolver = StubKeyResolver({"node-0": priv0.public_key(), "node-1": priv1.public_key()})
+    resolver = StubKeyResolver(
+        {"node-0": priv0.public_key(), "node-1": priv1.public_key()}
+    )
     signer = StubSigner()
     directive = make_directive()
     env_digest = hashlib.sha256(jcs_canonicalize_plan(directive.to_dict())).hexdigest()
@@ -359,7 +616,10 @@ async def test_multinode_2e_all_nodes_matching_verified_receipts():
     node1_body = make_signed_node_body(priv1, "node-1", env_digest, 1, 2)
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json=node0_body),
         httpx.Response(200, json=node1_body),
@@ -384,7 +644,10 @@ async def test_multinode_2e_all_nodes_matching_verified_receipts():
 async def test_multinode_actuate_partial_failure_fails_closed():
     """Verify actuate fails closed when any node in cluster returns non-200."""
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json={"receipt_id": "r1", "session_uuid": "s1"}),
         httpx.Response(503, json={"error": "Service Unavailable"}),
@@ -421,6 +684,7 @@ async def test_multinode_actuate_partial_failure_fails_closed():
 # ===========================================================================
 # 3. ATTESTATION TIMESTAMP FRESHNESS ADVERSARIAL TESTS
 # ===========================================================================
+
 
 def make_signed_attestation(
     priv: ed25519.Ed25519PrivateKey,
@@ -463,12 +727,16 @@ def make_signed_attestation(
         (299, True, "Fresh quote 299 seconds ahead (boundary)"),
     ],
 )
-async def test_attestation_timestamp_freshness(offset_seconds: int, should_pass: bool, desc: str):
+async def test_attestation_timestamp_freshness(
+    offset_seconds: int, should_pass: bool, desc: str
+):
     priv = ed25519.Ed25519PrivateKey.generate()
     resolver = StubKeyResolver({"node-att": priv.public_key()})
 
     ts = (datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)).isoformat()
-    tpm_quote = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    tpm_quote = (
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    )
     body = make_signed_attestation(priv, "node-att", ts, tpm_quote)
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
@@ -486,7 +754,13 @@ async def test_attestation_timestamp_freshness(offset_seconds: int, should_pass:
     att = results[0]
 
     if should_pass:
-        assert att.status == AttestationStatus.VERIFIED.value, f"Failed on {desc}: status={att.status}, metadata={att.metadata}"
+        assert att.status == AttestationStatus.VERIFIED.value, (
+            f"Failed on {desc}: status={att.status}, metadata={att.metadata}"
+        )
     else:
-        assert att.status == AttestationStatus.ERROR.value, f"Failed on {desc}: expected ERROR, got {att.status}"
-        assert att.metadata.get("code") == "ATTESTATION_TIMESTAMP_STALE", f"Failed on {desc}: expected ATTESTATION_TIMESTAMP_STALE, got {att.metadata}"
+        assert att.status == AttestationStatus.ERROR.value, (
+            f"Failed on {desc}: expected ERROR, got {att.status}"
+        )
+        assert att.metadata.get("code") == "ATTESTATION_TIMESTAMP_STALE", (
+            f"Failed on {desc}: expected ATTESTATION_TIMESTAMP_STALE, got {att.metadata}"
+        )

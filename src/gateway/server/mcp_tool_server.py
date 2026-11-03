@@ -595,6 +595,7 @@ async def verify_content_safety(text: str) -> str:
 # Mount Stateless MCP Streamable HTTP with distributed tracing (A3)
 # ---------------------------------------------------------------------------
 
+
 class McpQuarantineMiddleware:
     """ASGI middleware ensuring quarantined or stale-epoch workloads cannot reach /mcp."""
 
@@ -805,7 +806,9 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         hdr_thread = request.headers.get("x-cage-thread-id")
         if isinstance(hdr_thread, str):
             request_thread_id = hdr_thread
-    if not request_thread_id and isinstance(getattr(request_body, "params", None), dict):
+    if not request_thread_id and isinstance(
+        getattr(request_body, "params", None), dict
+    ):
         param_thread = request_body.params.get("thread_id")
         if isinstance(param_thread, str):
             request_thread_id = param_thread
@@ -814,8 +817,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     raw_redis = getattr(app_state, "redis", None)
     shared_redis = (
         raw_redis
-        if raw_redis is not None
-        and type(raw_redis).__name__ != "MagicMock"
+        if raw_redis is not None and type(raw_redis).__name__ != "MagicMock"
         else None
     )
 
@@ -835,7 +837,9 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 "error": "workload_quarantined",
                 "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
                 "agent_id": caller_identity,
-                "thread_id": str(request_thread_id) if request_thread_id is not None else None,
+                "thread_id": str(request_thread_id)
+                if request_thread_id is not None
+                else None,
             },
         )
 

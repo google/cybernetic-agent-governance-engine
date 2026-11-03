@@ -44,6 +44,8 @@ from src.gateway.governance.seams.actuation import (
 from src.gateway.governance.seams.quarantine import (
     QuarantineDirective,
     QuarantineReceipt,
+    QuarantineReleaseDirective,
+    QuarantineReleaseReceipt,
     QuarantineTriggerReason,
 )
 from src.integrations.actuator_03.constants import (
@@ -511,6 +513,31 @@ class Actuator03Adapter:
             outcome=ActuationOutcome.ACCEPTED,
             verification=verification,
             findings=findings,
+            envelope_digest=envelope_digest,
+            timestamp_utc=now_utc,
+        )
+
+    async def release_workload(
+        self, directive: QuarantineReleaseDirective
+    ) -> QuarantineReleaseReceipt:
+        """Fail-closed release for in-silicon DPU isolation (requires out-of-band hardware reset)."""
+        now_utc = datetime.now(tz=timezone.utc).isoformat()
+        canonical_bytes = jcs_canonicalize_plan(directive.to_dict())
+        envelope_digest = hashlib.sha256(canonical_bytes).hexdigest()
+        return QuarantineReleaseReceipt(
+            released=False,
+            enforcement_plane="IN_SILICON_DPU",
+            epoch_before=0,
+            epoch_after=0,
+            outcome=ActuationOutcome.REJECTED,
+            verification=ReceiptVerification.UNVERIFIED,
+            findings=[
+                _finding(
+                    "DPU_RELEASE_REQUIRES_OUT_OF_BAND_RESET",
+                    "TERMINAL",
+                    "in-silicon DPU flow quarantine cannot be lifted via in-band API",
+                )
+            ],
             envelope_digest=envelope_digest,
             timestamp_utc=now_utc,
         )

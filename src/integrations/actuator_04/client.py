@@ -40,12 +40,12 @@ from src.integrations.actuator_04.constants import (
 logger = logging.getLogger("cage.integrations.actuator_04.transport")
 
 _DISALLOWED_IP_NETWORKS = (
-    ipaddress.ip_network("169.254.0.0/16"),       # IPv4 Link-local / AWS / GCP Metadata
-    ipaddress.ip_network("100.64.0.0/10"),        # Shared Address Space / CGNAT
-    ipaddress.ip_network("0.0.0.0/8"),            # Current network
-    ipaddress.ip_network("fe80::/10"),            # IPv6 Link-local
-    ipaddress.ip_network("::/128"),               # IPv6 Unspecified
-    ipaddress.ip_network("::ffff:0:0/96"),        # IPv4-mapped IPv6
+    ipaddress.ip_network("169.254.0.0/16"),  # IPv4 Link-local / AWS / GCP Metadata
+    ipaddress.ip_network("100.64.0.0/10"),  # Shared Address Space / CGNAT
+    ipaddress.ip_network("0.0.0.0/8"),  # Current network
+    ipaddress.ip_network("fe80::/10"),  # IPv6 Link-local
+    ipaddress.ip_network("::/128"),  # IPv6 Unspecified
+    ipaddress.ip_network("::ffff:0:0/96"),  # IPv4-mapped IPv6
 )
 
 
@@ -62,7 +62,9 @@ def _parse_ip_part(p: str) -> int:
     return int(p, 10)
 
 
-def _try_parse_ip_literal(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+def _try_parse_ip_literal(
+    hostname: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     # 1. Standard library parser (handles dotted-quad, standard IPv6, ::ffff:x.x.x.x, etc.)
     try:
         return ipaddress.ip_address(hostname)
@@ -91,7 +93,9 @@ def _try_parse_ip_literal(hostname: str) -> ipaddress.IPv4Address | ipaddress.IP
     return None
 
 
-def _extract_embedded_ip(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+def _extract_embedded_ip(
+    hostname: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     parts = hostname.split(".")
     if len(parts) >= 4:
         for i in range(len(parts) - 3):
@@ -110,7 +114,9 @@ def _check_single_ip(
 ) -> None:
     # If IPv4-mapped IPv6, validate mapped IPv4 as well
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-        _check_single_ip(ip.ipv4_mapped, allow_loopback=allow_loopback, enforcing=enforcing)
+        _check_single_ip(
+            ip.ipv4_mapped, allow_loopback=allow_loopback, enforcing=enforcing
+        )
 
     if ip.is_loopback:
         if not allow_loopback or enforcing:
@@ -121,7 +127,9 @@ def _check_single_ip(
         if ip in net:
             raise ValueError(f"Endpoint IP {ip} falls inside restricted network {net}")
 
-    if enforcing and (ip.is_private or ip.is_unspecified or ip.is_reserved or ip.is_link_local):
+    if enforcing and (
+        ip.is_private or ip.is_unspecified or ip.is_reserved or ip.is_link_local
+    ):
         raise ValueError(
             f"Private/unspecified/reserved/link-local IP {ip} forbidden in enforcing posture"
         )
@@ -149,10 +157,14 @@ def validate_destination_url(url: str, *, allow_loopback: bool = False) -> str:
     enforcing = is_enforcing(resolve_posture())
 
     if enforcing and scheme != "https":
-        raise ValueError(f"Scheme {scheme!r} forbidden in enforcing posture; https required")
+        raise ValueError(
+            f"Scheme {scheme!r} forbidden in enforcing posture; https required"
+        )
 
     if not enforcing and scheme not in ("https", "http"):
-        raise ValueError(f"Unsupported endpoint scheme: {scheme!r}; must be https or http")
+        raise ValueError(
+            f"Unsupported endpoint scheme: {scheme!r}; must be https or http"
+        )
 
     hostname = parsed.hostname
     if not hostname:
@@ -168,12 +180,16 @@ def validate_destination_url(url: str, *, allow_loopback: bool = False) -> str:
     lower_host = hostname.lower()
     if lower_host in ("169.254.169.254", "metadata.google.internal"):
         raise ValueError("Cloud metadata service hostnames are strictly blocked")
-    if lower_host in ("localhost", "localhost.localdomain") and (enforcing or not allow_loopback):
+    if lower_host in ("localhost", "localhost.localdomain") and (
+        enforcing or not allow_loopback
+    ):
         raise ValueError("localhost forbidden in this posture")
 
     embedded_ip = _extract_embedded_ip(hostname)
     if embedded_ip is not None:
-        _check_single_ip(embedded_ip, allow_loopback=allow_loopback, enforcing=enforcing)
+        _check_single_ip(
+            embedded_ip, allow_loopback=allow_loopback, enforcing=enforcing
+        )
 
     # In enforcing posture, perform DNS resolution via socket.getaddrinfo to defeat DNS rebinding
     if enforcing:
@@ -188,7 +204,9 @@ def validate_destination_url(url: str, *, allow_loopback: bool = False) -> str:
         for info in infos:
             resolved_ip_str = info[4][0]
             resolved_ip = ipaddress.ip_address(resolved_ip_str)
-            _check_single_ip(resolved_ip, allow_loopback=allow_loopback, enforcing=enforcing)
+            _check_single_ip(
+                resolved_ip, allow_loopback=allow_loopback, enforcing=enforcing
+            )
     else:
         # In non-enforcing posture, check resolved IPs if getaddrinfo succeeds without breaking hermetic tests
         try:
@@ -196,7 +214,9 @@ def validate_destination_url(url: str, *, allow_loopback: bool = False) -> str:
             for info in infos:
                 resolved_ip_str = info[4][0]
                 resolved_ip = ipaddress.ip_address(resolved_ip_str)
-                _check_single_ip(resolved_ip, allow_loopback=allow_loopback, enforcing=enforcing)
+                _check_single_ip(
+                    resolved_ip, allow_loopback=allow_loopback, enforcing=enforcing
+                )
         except (socket.gaierror, socket.herror, OSError):
             pass
 
@@ -259,14 +279,18 @@ class Actuator04Transport:
                             str(v), allow_loopback=allow_loopback
                         )
                 except Exception as exc:
-                    raise ValueError(f"Invalid JSON in {ENV_NODE_ENDPOINTS}: {exc}") from exc
+                    raise ValueError(
+                        f"Invalid JSON in {ENV_NODE_ENDPOINTS}: {exc}"
+                    ) from exc
             else:
                 for token in raw_nodes.split(","):
                     token = token.strip()
                     if not token:
                         continue
                     if "=" not in token:
-                        raise ValueError(f"Node endpoint must be node=url, got: {token}")
+                        raise ValueError(
+                            f"Node endpoint must be node=url, got: {token}"
+                        )
                     k, v = token.split("=", 1)
                     node_map[k.strip()] = validate_destination_url(
                         v.strip(), allow_loopback=allow_loopback
@@ -281,9 +305,7 @@ class Actuator04Transport:
 
         ssl_ctx: ssl.SSLContext | None = None
         if cert_path and key_path:
-            ssl_ctx = ssl.create_default_context(
-                cafile=ca_path if ca_path else None
-            )
+            ssl_ctx = ssl.create_default_context(cafile=ca_path if ca_path else None)
             ssl_ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
         client = httpx.AsyncClient(
@@ -345,7 +367,7 @@ class Actuator04Transport:
 
         responses: list[httpx.Response] = []
         for ep, res in zip(endpoints, results, strict=True):
-            if isinstance(res, Exception):
+            if isinstance(res, BaseException):
                 logger.error("Transport POST failed to endpoint %s: %s", ep, res)
                 raise res
             if not isinstance(res, httpx.Response):
@@ -377,7 +399,7 @@ class Actuator04Transport:
 
         responses: list[httpx.Response] = []
         for ep, res in zip(endpoints, results, strict=True):
-            if isinstance(res, Exception):
+            if isinstance(res, BaseException):
                 logger.error("Transport GET failed to endpoint %s: %s", ep, res)
                 raise res
             responses.append(res)

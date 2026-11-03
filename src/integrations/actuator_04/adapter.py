@@ -84,7 +84,9 @@ async def verify_substrate_receipt_signature(
     if not isinstance(body, dict):
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_MALFORMED", "TERMINAL", "Receipt body is not a JSON object"),
+            _finding(
+                "RECEIPT_MALFORMED", "TERMINAL", "Receipt body is not a JSON object"
+            ),
         )
 
     sig_raw = body.get("signature")
@@ -101,7 +103,11 @@ async def verify_substrate_receipt_signature(
     if not kid or not val:
         return (
             ReceiptVerification.UNVERIFIED,
-            _finding("RECEIPT_SIGNATURE_MISSING", "WARNING", "Missing kid or signature value on unsigned receipt"),
+            _finding(
+                "RECEIPT_SIGNATURE_MISSING",
+                "WARNING",
+                "Missing kid or signature value on unsigned receipt",
+            ),
         )
 
     if key_resolver is None:
@@ -133,17 +139,23 @@ async def verify_substrate_receipt_signature(
     except (binascii.Error, ValueError):
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "Invalid base64url signature"),
+            _finding(
+                "RECEIPT_SIGNATURE_MALFORMED", "TERMINAL", "Invalid base64url signature"
+            ),
         )
 
     if len(sig_bytes) != ED25519_SIGNATURE_BYTES:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_LENGTH", "TERMINAL", "Signature must be 64 bytes"),
+            _finding(
+                "RECEIPT_SIGNATURE_LENGTH", "TERMINAL", "Signature must be 64 bytes"
+            ),
         )
 
     # Verification preimage: DOMAIN_TAG + JCS(body_without_signature)
-    signed_body = {k: v for k, v in body.items() if k not in ("signature", "raw_response")}
+    signed_body = {
+        k: v for k, v in body.items() if k not in ("signature", "raw_response")
+    }
     canonical_body = jcs_canonicalize_plan(signed_body)
     preimage = domain_tag + canonical_body
 
@@ -152,7 +164,11 @@ async def verify_substrate_receipt_signature(
     except InvalidSignature:
         return (
             ReceiptVerification.INVALID,
-            _finding("RECEIPT_SIGNATURE_INVALID", "TERMINAL", f"Ed25519 verify failed (kid={kid})"),
+            _finding(
+                "RECEIPT_SIGNATURE_INVALID",
+                "TERMINAL",
+                f"Ed25519 verify failed (kid={kid})",
+            ),
         )
     except Exception as exc:
         return (
@@ -240,7 +256,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
         """Probe substrate health across configured endpoints."""
         try:
             endpoints = self._transport.resolve_target_endpoints()
-            responses = await self._transport.get_from_endpoints("/v1/cage/attest", endpoints=endpoints)
+            responses = await self._transport.get_from_endpoints(
+                "/v1/cage/attest", endpoints=endpoints
+            )
             return all(r.status_code == 200 for r in responses)
         except Exception:
             return False
@@ -259,7 +277,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
             sig_bytes = await self._signer.sign_raw_async(
                 QUARANTINE_ASSERTION_DOMAIN_TAG + canonical_bytes
             )
-            assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
+            assertion_b64 = (
+                base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
+            )
         except Exception as exc:
             return QuarantineReceipt(
                 quarantined=False,
@@ -319,7 +339,13 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                     latency_us=(time.perf_counter() - t0) * 1_000_000.0,
                     outcome=ActuationOutcome.REJECTED,
                     verification=ReceiptVerification.UNVERIFIED,
-                    findings=[_finding("SUBSTRATE_ERROR_STATUS", "TERMINAL", f"HTTP {resp.status_code}")],
+                    findings=[
+                        _finding(
+                            "SUBSTRATE_ERROR_STATUS",
+                            "TERMINAL",
+                            f"HTTP {resp.status_code}",
+                        )
+                    ],
                     envelope_digest=envelope_digest,
                     timestamp_utc=now_utc,
                 )
@@ -386,7 +412,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
             sig_bytes = await self._signer.sign_raw_async(
                 QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical_bytes
             )
-            assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
+            assertion_b64 = (
+                base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
+            )
         except Exception as exc:
             return QuarantineReleaseReceipt(
                 released=False,
@@ -409,7 +437,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
         }
 
         try:
-            endpoints = self._transport.resolve_target_endpoints(sandbox_id=directive.sandbox_id)
+            endpoints = self._transport.resolve_target_endpoints(
+                sandbox_id=directive.sandbox_id
+            )
             responses = await self._transport.post_to_endpoints(
                 "/v1/cage/release",
                 content=canonical_bytes,
@@ -437,7 +467,13 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 epoch_after=directive.expected_min_epoch,
                 outcome=ActuationOutcome.UNKNOWN,
                 verification=ReceiptVerification.UNVERIFIED,
-                findings=[_finding("NO_RESPONSES", "TERMINAL", "No response received from any host endpoint")],
+                findings=[
+                    _finding(
+                        "NO_RESPONSES",
+                        "TERMINAL",
+                        "No response received from any host endpoint",
+                    )
+                ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
             )
@@ -457,7 +493,13 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                     epoch_after=directive.expected_min_epoch,
                     outcome=ActuationOutcome.REJECTED,
                     verification=ReceiptVerification.UNVERIFIED,
-                    findings=[_finding("SUBSTRATE_ERROR_STATUS", "TERMINAL", f"HTTP {resp.status_code}")],
+                    findings=[
+                        _finding(
+                            "SUBSTRATE_ERROR_STATUS",
+                            "TERMINAL",
+                            f"HTTP {resp.status_code}",
+                        )
+                    ],
                     envelope_digest=envelope_digest,
                     timestamp_utc=now_utc,
                 )
@@ -475,7 +517,13 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                     epoch_after=epoch_before,
                     outcome=ActuationOutcome.UNKNOWN,
                     verification=ReceiptVerification.UNVERIFIED,
-                    findings=[_finding("NON_MONOTONIC_EPOCH", "TERMINAL", f"epoch_after {epoch_after} <= {epoch_before}")],
+                    findings=[
+                        _finding(
+                            "NON_MONOTONIC_EPOCH",
+                            "TERMINAL",
+                            f"epoch_after {epoch_after} <= {epoch_before}",
+                        )
+                    ],
                     envelope_digest=envelope_digest,
                     timestamp_utc=now_utc,
                 )
@@ -491,7 +539,13 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                     epoch_after=directive.expected_min_epoch,
                     outcome=ActuationOutcome.UNKNOWN,
                     verification=ReceiptVerification.UNVERIFIED,
-                    findings=[_finding("DIVERGENT_NODE_EPOCH", "TERMINAL", f"epoch_before mismatch: {consensus_epoch_before} vs {epoch_before}")],
+                    findings=[
+                        _finding(
+                            "DIVERGENT_NODE_EPOCH",
+                            "TERMINAL",
+                            f"epoch_before mismatch: {consensus_epoch_before} vs {epoch_before}",
+                        )
+                    ],
                     envelope_digest=envelope_digest,
                     timestamp_utc=now_utc,
                 )
@@ -506,7 +560,13 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                     epoch_after=directive.expected_min_epoch,
                     outcome=ActuationOutcome.UNKNOWN,
                     verification=ReceiptVerification.UNVERIFIED,
-                    findings=[_finding("DIVERGENT_NODE_EPOCH", "TERMINAL", f"epoch_after mismatch: {consensus_epoch_after} vs {epoch_after}")],
+                    findings=[
+                        _finding(
+                            "DIVERGENT_NODE_EPOCH",
+                            "TERMINAL",
+                            f"epoch_after mismatch: {consensus_epoch_after} vs {epoch_after}",
+                        )
+                    ],
                     envelope_digest=envelope_digest,
                     timestamp_utc=now_utc,
                 )
@@ -534,7 +594,14 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 epoch_after=consensus_epoch_before or directive.expected_min_epoch,
                 outcome=ActuationOutcome.UNKNOWN,
                 verification=ReceiptVerification.INVALID,
-                findings=combined_findings or [_finding("RECEIPT_NOT_VERIFIED", "TERMINAL", "Release receipt signature not verified")],
+                findings=combined_findings
+                or [
+                    _finding(
+                        "RECEIPT_NOT_VERIFIED",
+                        "TERMINAL",
+                        "Release receipt signature not verified",
+                    )
+                ],
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
             )
@@ -542,8 +609,16 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
         # Advance gateway epoch tracker
         from src.gateway.governance.quarantine_actuator import advance_workload_epoch
 
-        final_epoch_before = consensus_epoch_before if consensus_epoch_before is not None else directive.expected_min_epoch
-        final_epoch_after = consensus_epoch_after if consensus_epoch_after is not None else final_epoch_before + 1
+        final_epoch_before = (
+            consensus_epoch_before
+            if consensus_epoch_before is not None
+            else directive.expected_min_epoch
+        )
+        final_epoch_after = (
+            consensus_epoch_after
+            if consensus_epoch_after is not None
+            else final_epoch_before + 1
+        )
 
         await advance_workload_epoch(directive.agent_svid, final_epoch_after)
 
@@ -574,7 +649,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[_finding("CLEARANCE_NOT_ALLOW", "TERMINAL", clearance.decision)],
+                findings=[
+                    _finding("CLEARANCE_NOT_ALLOW", "TERMINAL", clearance.decision)
+                ],
                 outcome=ActuationOutcome.REJECTED,
                 timestamp_utc=now_utc,
             )
@@ -582,7 +659,7 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
         # ADR-008 fail-closed single-use routing seal verification
         if clearance.routing_seal:
             try:
-                verify_and_consume_seal(
+                await verify_and_consume_seal(
                     clearance.routing_seal,
                     clearance.action,
                     clearance.params,
@@ -634,7 +711,9 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
                 receipt_id=None,
                 session_uuid=None,
                 raw_receipt=None,
-                findings=[_finding("ACTUATION_ERROR_STATUS", "TERMINAL", f"HTTP {status}")],
+                findings=[
+                    _finding("ACTUATION_ERROR_STATUS", "TERMINAL", f"HTTP {status}")
+                ],
                 outcome=ActuationOutcome.REJECTED,
                 timestamp_utc=now_utc,
             )

@@ -65,7 +65,9 @@ class Actuator04NormativeProvider(NormativeProvider):
         resolver: Ed25519KeyResolver | None = (
             Ed25519KeyManifestClient(manifest_url) if manifest_url else None
         )
-        return cls(transport=transport, default_alpha=alpha, receipt_key_resolver=resolver)
+        return cls(
+            transport=transport, default_alpha=alpha, receipt_key_resolver=resolver
+        )
 
     async def fetch_baseline(self, region: str) -> NormativeBaseline:
         """GET /v1/cage/normative-baseline/{region} — fetch conformal calibration parameters."""
@@ -112,7 +114,13 @@ class Actuator04NormativeProvider(NormativeProvider):
         except Exception as exc:
             return ValidationResult(
                 admitted=False,
-                findings=[{"code": "CONFORMAL_VALIDATE_FAILED", "status": FindingStatus.ERROR, "detail": str(exc)}],
+                findings=[
+                    {
+                        "code": "CONFORMAL_VALIDATE_FAILED",
+                        "status": FindingStatus.ERROR,
+                        "detail": str(exc),
+                    }
+                ],
                 error=str(exc),
             )
 
@@ -134,7 +142,9 @@ class Actuator04NormativeProvider(NormativeProvider):
             code = finding["code"] if finding else "RECEIPT_NOT_VERIFIED"
             return ValidationResult(
                 admitted=False,
-                findings=[{"code": code, "status": FindingStatus.ERROR, "detail": detail}],
+                findings=[
+                    {"code": code, "status": FindingStatus.ERROR, "detail": detail}
+                ],
                 error="Signature verification failed",
             )
 
@@ -145,20 +155,24 @@ class Actuator04NormativeProvider(NormativeProvider):
         if p_value <= alpha or not admitted:
             return ValidationResult(
                 admitted=False,
-                findings=[{
-                    "code": "CONFORMAL_NONCONFORMITY_EXCEEDED",
-                    "status": FindingStatus.FAIL,
-                    "detail": f"Conformal p-value {p_value:.4f} <= alpha {alpha:.4f}",
-                }],
+                findings=[
+                    {
+                        "code": "CONFORMAL_NONCONFORMITY_EXCEEDED",
+                        "status": FindingStatus.FAIL,
+                        "detail": f"Conformal p-value {p_value:.4f} <= alpha {alpha:.4f}",
+                    }
+                ],
             )
 
         return ValidationResult(
             admitted=True,
-            findings=[{
-                "code": "CONFORMAL_ADMISSION_CLEARED",
-                "status": FindingStatus.PASS,
-                "detail": f"Conformal p-value {p_value:.4f} > alpha {alpha:.4f}",
-            }],
+            findings=[
+                {
+                    "code": "CONFORMAL_ADMISSION_CLEARED",
+                    "status": FindingStatus.PASS,
+                    "detail": f"Conformal p-value {p_value:.4f} > alpha {alpha:.4f}",
+                }
+            ],
             sealed_at=time.time(),
         )
 

@@ -19,8 +19,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from datetime import datetime, timezone
 import time
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -75,6 +75,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 # Test Helpers & Mock Classes
 # ---------------------------------------------------------------------------
 
+
 class StubKeyResolver:
     """In-memory key resolver for tests."""
 
@@ -106,7 +107,9 @@ class StubSigner:
         return b"m" * 64
 
 
-def _generate_ed25519_keypair() -> tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey]:
+def _generate_ed25519_keypair() -> tuple[
+    ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey
+]:
     priv = ed25519.Ed25519PrivateKey.generate()
     pub = priv.public_key()
     return priv, pub
@@ -115,6 +118,7 @@ def _generate_ed25519_keypair() -> tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25
 # ---------------------------------------------------------------------------
 # Quarantine Release Directive & Receipt RFC 8785 Canonical JCS
 # ---------------------------------------------------------------------------
+
 
 def test_quarantine_release_directive_canonical_jcs():
     directive = QuarantineReleaseDirective(
@@ -158,6 +162,7 @@ def test_quarantine_release_receipt_serialization():
 # ---------------------------------------------------------------------------
 # Workload Epoch Tracking & Monotonicity
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_monotonic_workload_epoch_advancement():
@@ -203,6 +208,7 @@ async def test_monotonic_workload_epoch_in_redis():
 # Arm Containment Ring (Containment Invariants)
 # ---------------------------------------------------------------------------
 
+
 def test_arm_containment_ring_hmac_and_epoch_verification():
     master_seed = b"01234567890123456789012345678901"  # 32 bytes
     ring = ArmContainmentRing(master_seed)
@@ -246,6 +252,7 @@ def test_arm_containment_ring_lateral_sink_isolation():
 # Actuator_04 Detached Signature Verification
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_verify_substrate_receipt_signature_success():
     priv, pub = _generate_ed25519_keypair()
@@ -277,7 +284,7 @@ async def test_verify_substrate_receipt_signature_success():
 
 @pytest.mark.asyncio
 async def test_verify_substrate_receipt_signature_unknown_kid_fails_closed():
-    priv, pub = _generate_ed25519_keypair()
+    _priv, _pub = _generate_ed25519_keypair()
     # Empty resolver - unknown kid
     resolver = StubKeyResolver({})
 
@@ -300,6 +307,7 @@ async def test_verify_substrate_receipt_signature_unknown_kid_fails_closed():
 # ---------------------------------------------------------------------------
 # Actuator_04 Adapter Quarantine and Release Execution
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_actuator_04_adapter_quarantine_workload():
@@ -413,6 +421,7 @@ async def test_actuator_04_adapter_release_workload():
 # Actuator_04 Normative Provider & Attestation Provider
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_actuator_04_normative_provider():
     mock_transport = AsyncMock(spec=Actuator04Transport)
@@ -485,6 +494,7 @@ async def test_actuator_04_attestation_provider():
 # Actuator_04 OCSF Bridge (Automated Quarantine Trigger)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_actuator_04_ocsf_ingestor_triggers_quarantine_on_severity_4():
     priv, pub = _generate_ed25519_keypair()
@@ -515,7 +525,9 @@ async def test_actuator_04_ocsf_ingestor_triggers_quarantine_on_severity_4():
     mock_sink.ingest.return_value = "receipt-ocsf-001"
     ingestor = Actuator04OcsfIngestor(sink=mock_sink, key_resolver=resolver)
 
-    with patch("src.gateway.governance.quarantine_actuator.dispatch_quarantine") as mock_dispatch:
+    with patch(
+        "src.gateway.governance.quarantine_actuator.dispatch_quarantine"
+    ) as mock_dispatch:
         mock_dispatch.return_value = QuarantineReceipt(
             quarantined=True,
             enforcement_plane="HOST_OS_KERNEL",
@@ -529,5 +541,8 @@ async def test_actuator_04_ocsf_ingestor_triggers_quarantine_on_severity_4():
         assert receipt_id is not None
         assert mock_dispatch.called is True
         call_directive = mock_dispatch.call_args[0][0]
-        assert call_directive.agent_svid == "spiffe://cluster.local/ns/agents/sa/rogue-agent"
+        assert (
+            call_directive.agent_svid
+            == "spiffe://cluster.local/ns/agents/sa/rogue-agent"
+        )
         assert call_directive.reason == QuarantineTriggerReason.SANDBOX_ESCAPE_ATTEMPT

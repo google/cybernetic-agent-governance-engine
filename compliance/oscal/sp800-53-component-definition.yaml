@@ -104,9 +104,17 @@ component-definition:
                 3. **OPA RBAC Policy Evaluation on API Requests**:
                    Access enforcement is implemented via OPA RBAC policy evaluation on every
                    inbound API request through deployment/system_authz.rego. Before any
-                   handler runs, WorkloadIdentityMiddleware rejects requests outside the exact
-                   open-path list (health, metrics, JWKS). OPA allow/deny decisions are recorded
-                   in structured audit logs with full request context and user identity.
+                   handler runs, WorkloadIdentityMiddleware
+                   (src/gateway/server/workload_identity.py) rejects with 403 every request
+                   outside a small exact open-path list (health, metrics, JWKS; no prefixes)
+                   unless its Linkerd-verified l5d-client-id is listed in
+                   CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only), verified in CI by
+                   tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
+                   The header counts only on a connection from inside the pod, where the
+                   pod's own Linkerd proxy writes it, and an admission policy refuses
+                   governance pods created without the proxy (POAM-2026-167).
+                   OPA allow/deny decisions are recorded in structured audit logs with full
+                   request context and user identity.
 
                 4. **Dual-Control Authentication & Quorum Enforcement for DEFER Escalation**:
                    All defer escalation endpoints require cryptographically-verified operator
@@ -137,10 +145,17 @@ component-definition:
                    mutates no state, and mints no GovernanceSeal. When an action requires human
                    approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken in DeferQueue;
                    execute_trade_action(..., deferred_id=...) is the sole committing path:
-                   enforce_approved_governance() checks the approved token without spending it,
-                   and the governor spends it atomically (consume_approval()) only after every stage
-                   passes and before the seal is minted. Advisory narrowing is re-verified before
-                   surfacing and re-verified in full by the single committing run.
+                   enforce_approved_governance() (src/gateway/server/governance_middleware.py)
+                   checks the approved token without spending it (DeferQueue.redeemable_approval())
+                   and hands SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval.
+                   The governor spends it atomically (DeferQueue.consume_approval(), a RESOLVED to
+                   CONSUMED CAS) only after every stage passes and before the seal is minted, so a
+                   DENY spends it, a warrant-ineligible DEFER leaves it redeemable (POAM-2026-104),
+                   and concurrent redemptions seal at most once. Advisory narrowing is dry-run
+                   re-verified before surfacing (_reverified_narrow_hint) and re-verified in full
+                   by the single committing run (_sealed_narrow with issue_narrow_receipt). Every
+                   pipeline run verifies that the action is in governor.claimed_actions, refusing
+                   unclaimed actions with ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]).
               props:
                 - name: implementation-status
                   value: implemented
@@ -1827,7 +1842,7 @@ component-definition:
     # Enforces: SC-7 (Boundary Protection), SI-4 (System Monitoring),
     #           IR-4 (Incident Handling), IA-3 (Device Identification and Attestation)
     # -----------------------------------------------------------------------
-    - uuid: "a0400001-4e47-bbc8-host-quarantine01"
+    - uuid: "83f0137c-e6e6-5fbc-b1f5-5038752c9168"
       title: "Host OS Kernel Quarantine Substrate (actuator_04)"
       type: software
       description: >
@@ -1845,11 +1860,11 @@ component-definition:
       responsible-roles:
         - role-id: provider
       control-implementations:
-        - uuid: "a0400001-ctrl-impl-8000-actuator0401"
+        - uuid: "0538f3f4-023d-528e-83c4-b791a8807f17"
           source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
           description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by Host OS Kernel Quarantine Substrate (actuator_04)"
           implemented-requirements:
-            - uuid: "a0400001-sc07-8000-actuator00001"
+            - uuid: "c84c0e4a-c931-529a-b4e9-976ac4dee410"
               control-id: sc-7
               description: |
                 Boundary protection (SC-7) is enforced at the host operating system kernel
@@ -1882,7 +1897,7 @@ component-definition:
                   rel: implementation
                   text: "Hardened Kubernetes DaemonSet and NetworkPolicy for host quarantine daemon"
 
-            - uuid: "a0400001-si04-8000-actuator00001"
+            - uuid: "b96d2068-bf8c-57e0-b96a-5dd9b2df95c0"
               control-id: si-4
               description: |
                 System monitoring (SI-4) is implemented via real-time host kernel DLP lineage
@@ -1906,7 +1921,7 @@ component-definition:
                   rel: implementation
                   text: "Signed OCSF telemetry ingestion and automated sandbox escape response"
 
-            - uuid: "a0400001-ir04-8000-actuator00001"
+            - uuid: "1927dfe5-1b2b-53f5-936e-97b258db3953"
               control-id: ir-4
               description: |
                 Incident handling (IR-4) containment and recovery protocols are enforced via
@@ -1934,7 +1949,7 @@ component-definition:
                   rel: implementation
                   text: "Monotonic workload epoch tracking and quorum release coordination"
 
-            - uuid: "a0400001-ia03-8000-actuator00001"
+            - uuid: "1986097d-c4ce-55f1-8ea8-315977620c34"
               control-id: ia-3
               description: |
                 Device identification and attestation (IA-3) is enforced through hardware TPM 2.0
@@ -2025,7 +2040,7 @@ component-definition:
         title: "Lula Validation: IR-6 Incident Reporting"
         rlinks:
           - href: "../../compliance/lula/lula-validation-ir6.yaml"
-      - uuid: "a0400001-rsrc-8000-actuator00001"
+      - uuid: "46d5d6d7-0dba-54c6-b4b9-5789f1a137d0"
         title: "Lula Validation: Host OS Kernel Quarantine Substrate (actuator_04)"
         rlinks:
           - href: "../../compliance/lula/lula-validation-host-quarantine.yaml"

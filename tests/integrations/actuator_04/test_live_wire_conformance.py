@@ -27,9 +27,9 @@ import math
 import uuid
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric import ed25519
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.integrations.actuator_04.constants import (
@@ -46,7 +46,7 @@ from src.integrations.actuator_04.constants import (
     QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.live_external]
 
 CONFORMAL_BASELINE_DOMAIN_TAG: bytes = b"CAGE_CONFORMAL_BASELINE_V1:"
 
@@ -148,7 +148,9 @@ def test_t1_1_1_jwks_fetch_loopback(killswitch_server_harness: dict[str, Any]) -
     assert len(data["keys"]) >= 1
 
 
-def test_t1_1_2_jwks_rfc8037_conformance(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_1_2_jwks_rfc8037_conformance(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.1.2: JWKS strictly conforms to RFC 8037 parameters (kty=OKP, crv=Ed25519)."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -160,7 +162,9 @@ def test_t1_1_2_jwks_rfc8037_conformance(killswitch_server_harness: dict[str, An
     assert key.get("alg") == "EdDSA"
 
 
-def test_t1_1_3_jwks_kid_derivation_integrity(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_1_3_jwks_kid_derivation_integrity(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.1.3: Substrate kid is exactly 64-hex SHA-256 of the unpadded raw public key bytes."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -175,7 +179,9 @@ def test_t1_1_3_jwks_kid_derivation_integrity(killswitch_server_harness: dict[st
     assert kid == expected_kid
 
 
-def test_t1_1_4_jwks_public_key_length_and_format(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_1_4_jwks_public_key_length_and_format(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.1.4: Parameter x decodes to exactly 32 raw bytes of valid Ed25519 public key."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -189,21 +195,25 @@ def test_t1_1_4_jwks_public_key_length_and_format(killswitch_server_harness: dic
     ed25519.Ed25519PublicKey.from_public_bytes(raw_pub)
 
 
-def test_t1_1_5_jwks_public_key_cryptographic_verification(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_1_5_jwks_public_key_cryptographic_verification(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.1.5: VerifyingKey can verify cryptographic signatures emitted by the substrate."""
     base_url = killswitch_server_harness["base_url"]
-    pub_key, kid = _get_server_pub_key(base_url)
+    pub_key, _kid = _get_server_pub_key(base_url)
     with httpx.Client(timeout=2.0) as client:
         resp = client.get(f"{base_url}/v1/cage/attest")
     assert resp.status_code == 200
     _verify_server_receipt(resp.json(), ATTESTATION_RECEIPT_DOMAIN_TAG, pub_key)
 
 
-def test_t1_2_1_quarantine_workload_level(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_2_1_quarantine_workload_level(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.2.1: Workload-level quarantine directive succeeds over physical loopback."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
-    canonical, payload, env_digest = _build_quarantine_payload(target_pid=None)
+    canonical, _payload, env_digest = _build_quarantine_payload(target_pid=None)
 
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     sig_b64 = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
@@ -216,7 +226,9 @@ def test_t1_2_1_quarantine_workload_level(killswitch_server_harness: dict[str, A
     }
 
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "QUARANTINED"
@@ -224,11 +236,13 @@ def test_t1_2_1_quarantine_workload_level(killswitch_server_harness: dict[str, A
     assert body["enforcement_plane"] == "HOST_OS_KERNEL"
 
 
-def test_t1_2_2_quarantine_target_pid_freeze(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_2_2_quarantine_target_pid_freeze(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.2.2: Process PID targeted freeze records target_pid in receipt."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
-    canonical, payload, env_digest = _build_quarantine_payload(target_pid=4242)
+    canonical, _payload, env_digest = _build_quarantine_payload(target_pid=4242)
 
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     sig_b64 = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
@@ -241,18 +255,22 @@ def test_t1_2_2_quarantine_target_pid_freeze(killswitch_server_harness: dict[str
     }
 
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 200
     body = resp.json()
     assert body["target_pid"] == 4242
 
 
-def test_t1_2_3_quarantine_receipt_signature_verification(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_2_3_quarantine_receipt_signature_verification(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.2.3: Quarantine receipt contains valid detached Ed25519 signature over JCS body."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
     pub_key, _ = _get_server_pub_key(base_url)
-    canonical, payload, env_digest = _build_quarantine_payload()
+    canonical, _payload, env_digest = _build_quarantine_payload()
 
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     sig_b64 = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
@@ -265,16 +283,20 @@ def test_t1_2_3_quarantine_receipt_signature_verification(killswitch_server_harn
     }
 
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 200
     _verify_server_receipt(resp.json(), QUARANTINE_RECEIPT_DOMAIN_TAG, pub_key)
 
 
-def test_t1_2_4_quarantine_envelope_digest_binding(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_2_4_quarantine_envelope_digest_binding(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.2.4: Receipt envelope_digest matches sha256(JCS(request_body))."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
-    canonical, payload, env_digest = _build_quarantine_payload()
+    canonical, _payload, env_digest = _build_quarantine_payload()
 
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     sig_b64 = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
@@ -287,17 +309,23 @@ def test_t1_2_4_quarantine_envelope_digest_binding(killswitch_server_harness: di
     }
 
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 200
     body = resp.json()
     assert body["envelope_digest"] == env_digest
 
 
-def test_t1_2_5_quarantine_rule_and_reason_propagation(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_2_5_quarantine_rule_and_reason_propagation(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.2.5: Custom rule_id is accurately bound to receipt."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
-    canonical, payload, env_digest = _build_quarantine_payload(rule_id="RULE-CUSTOM-LETHAL-99")
+    canonical, _payload, env_digest = _build_quarantine_payload(
+        rule_id="RULE-CUSTOM-LETHAL-99"
+    )
 
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     sig_b64 = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
@@ -310,7 +338,9 @@ def test_t1_2_5_quarantine_rule_and_reason_propagation(killswitch_server_harness
     }
 
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 200
     assert resp.json()["rule_id"] == "RULE-CUSTOM-LETHAL-99"
 
@@ -325,7 +355,9 @@ def test_t1_3_1_attest_probe(killswitch_server_harness: dict[str, Any]) -> None:
     assert body["attestation_type"] == "HOST_TPM_PCR"
 
 
-def test_t1_3_2_attest_pcr_measurements(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_3_2_attest_pcr_measurements(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.3.2: PCR measurement map contains keys 0, 1, 7 as 64-char hex SHA-256 strings."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -337,7 +369,9 @@ def test_t1_3_2_attest_pcr_measurements(killswitch_server_harness: dict[str, Any
         int(pcr_map[idx], 16)  # must be valid hex
 
 
-def test_t1_3_3_attest_tpm_quote_binding(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_3_3_attest_tpm_quote_binding(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.3.3: TPM quote field matches PCR 7 measurement."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -352,10 +386,16 @@ def test_t1_3_4_attest_ring0_posture(killswitch_server_harness: dict[str, Any]) 
     with httpx.Client(timeout=2.0) as client:
         resp = client.get(f"{base_url}/v1/cage/attest")
     posture = resp.json()["ring0_posture"]
-    assert posture in ("ACTIVE_WFP_FILTERED", "ACTIVE_RING0_ENFORCED", "VERIFIED_STAGED")
+    assert posture in (
+        "ACTIVE_WFP_FILTERED",
+        "ACTIVE_RING0_ENFORCED",
+        "VERIFIED_STAGED",
+    )
 
 
-def test_t1_3_5_attest_signature_verification(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_3_5_attest_signature_verification(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.3.5: Attestation receipt signature cryptographically verifies against server JWKS."""
     base_url = killswitch_server_harness["base_url"]
     pub_key, _ = _get_server_pub_key(base_url)
@@ -364,13 +404,17 @@ def test_t1_3_5_attest_signature_verification(killswitch_server_harness: dict[st
     _verify_server_receipt(resp.json(), ATTESTATION_RECEIPT_DOMAIN_TAG, pub_key)
 
 
-def test_t1_4_1_release_quorum_execution(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_4_1_release_quorum_execution(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.4.1: Quorum release execution returns HTTP 200, released=True, outcome=RELEASED."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
 
     # 1. Quarantine first
-    q_canon, _, q_env = _build_quarantine_payload(workload_id="spiffe://cage.local/ns/test/sa/release-1")
+    q_canon, _, q_env = _build_quarantine_payload(
+        workload_id="spiffe://cage.local/ns/test/sa/release-1"
+    )
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + q_canon)
     sig_b64 = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
     headers = {
@@ -380,11 +424,15 @@ def test_t1_4_1_release_quorum_execution(killswitch_server_harness: dict[str, An
         HEADER_ENVELOPE_DIGEST: q_env,
     }
     with httpx.Client(timeout=2.0) as client:
-        q_resp = client.post(f"{base_url}/v1/cage/quarantine", content=q_canon, headers=headers)
+        q_resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=q_canon, headers=headers
+        )
     assert q_resp.status_code == 200
 
     # 2. Release with quorum_count=2
-    rel_canon, _, rel_env = _build_release_payload(workload_id="spiffe://cage.local/ns/test/sa/release-1")
+    rel_canon, _, rel_env = _build_release_payload(
+        workload_id="spiffe://cage.local/ns/test/sa/release-1"
+    )
     rel_sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + rel_canon)
     rel_sig_b64 = base64.urlsafe_b64encode(rel_sig).decode("ascii").rstrip("=")
     rel_headers = {
@@ -394,7 +442,9 @@ def test_t1_4_1_release_quorum_execution(killswitch_server_harness: dict[str, An
         HEADER_ENVELOPE_DIGEST: rel_env,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers
+        )
     assert resp.status_code == 200
     body = resp.json()
     assert body["released"] is True
@@ -402,7 +452,9 @@ def test_t1_4_1_release_quorum_execution(killswitch_server_harness: dict[str, An
     assert body["enforcement_plane"] == "HOST_OS_KERNEL"
 
 
-def test_t1_4_2_release_monotonic_epoch_autotomy(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_4_2_release_monotonic_epoch_autotomy(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.4.2: Release advances epoch monotonically (epoch_after > epoch_before)."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -432,7 +484,9 @@ def test_t1_4_2_release_monotonic_epoch_autotomy(killswitch_server_harness: dict
         HEADER_ENVELOPE_DIGEST: rel_env,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers
+        )
     assert resp.status_code == 200
     body = resp.json()
     assert body["epoch_before"] == 1
@@ -440,7 +494,9 @@ def test_t1_4_2_release_monotonic_epoch_autotomy(killswitch_server_harness: dict
     assert body["epoch_after"] > body["epoch_before"]
 
 
-def test_t1_4_3_release_quorum_scaling(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_4_3_release_quorum_scaling(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.4.3: Quorum scaling supports quorum_count >= 2 (e.g. count=3, count=5)."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -451,28 +507,40 @@ def test_t1_4_3_release_quorum_scaling(killswitch_server_harness: dict[str, Any]
         sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + q_canon)
         headers = {
             "Content-Type": "application/json",
-            HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+            HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+            .decode("ascii")
+            .rstrip("="),
             HEADER_SIGNER_KID: signer.key_id,
             HEADER_ENVELOPE_DIGEST: q_env,
         }
         with httpx.Client(timeout=2.0) as client:
-            client.post(f"{base_url}/v1/cage/quarantine", content=q_canon, headers=headers)
+            client.post(
+                f"{base_url}/v1/cage/quarantine", content=q_canon, headers=headers
+            )
 
-        rel_canon, _, rel_env = _build_release_payload(workload_id=w, quorum_count=count)
+        rel_canon, _, rel_env = _build_release_payload(
+            workload_id=w, quorum_count=count
+        )
         rel_sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + rel_canon)
         rel_headers = {
             "Content-Type": "application/json",
-            HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(rel_sig).decode("ascii").rstrip("="),
+            HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(rel_sig)
+            .decode("ascii")
+            .rstrip("="),
             HEADER_SIGNER_KID: signer.key_id,
             HEADER_ENVELOPE_DIGEST: rel_env,
         }
         with httpx.Client(timeout=2.0) as client:
-            resp = client.post(f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers)
+            resp = client.post(
+                f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers
+            )
         assert resp.status_code == 200
         assert resp.json()["released"] is True
 
 
-def test_t1_4_4_release_receipt_signature_verification(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_4_4_release_receipt_signature_verification(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.4.4: Release receipt contains valid detached Ed25519 signature."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -484,7 +552,9 @@ def test_t1_4_4_release_receipt_signature_verification(killswitch_server_harness
         "Content-Type": "application/json",
         HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(
             signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + q_canon)
-        ).decode("ascii").rstrip("="),
+        )
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
         HEADER_ENVELOPE_DIGEST: q_env,
     }
@@ -496,17 +566,23 @@ def test_t1_4_4_release_receipt_signature_verification(killswitch_server_harness
         "Content-Type": "application/json",
         HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(
             signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + rel_canon)
-        ).decode("ascii").rstrip("="),
+        )
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
         HEADER_ENVELOPE_DIGEST: rel_env,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers
+        )
     assert resp.status_code == 200
     _verify_server_receipt(resp.json(), QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG, pub_key)
 
 
-def test_t1_4_5_release_host_isolation_lift(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_4_5_release_host_isolation_lift(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.4.5: Release envelope_digest matches request envelope digest."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -517,7 +593,9 @@ def test_t1_4_5_release_host_isolation_lift(killswitch_server_harness: dict[str,
         "Content-Type": "application/json",
         HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(
             signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + q_canon)
-        ).decode("ascii").rstrip("="),
+        )
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
         HEADER_ENVELOPE_DIGEST: q_env,
     }
@@ -529,17 +607,23 @@ def test_t1_4_5_release_host_isolation_lift(killswitch_server_harness: dict[str,
         "Content-Type": "application/json",
         HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(
             signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + rel_canon)
-        ).decode("ascii").rstrip("="),
+        )
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
         HEADER_ENVELOPE_DIGEST: rel_env,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=rel_canon, headers=rel_headers
+        )
     assert resp.status_code == 200
     assert resp.json()["envelope_digest"] == rel_env
 
 
-def test_t1_5_1_baseline_fetch_primary(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_5_1_baseline_fetch_primary(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.5.1: Primary baseline fetch for europe-west1 returns alpha=0.05, calibration_size=500."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -551,7 +635,9 @@ def test_t1_5_1_baseline_fetch_primary(killswitch_server_harness: dict[str, Any]
     assert data["calibration_size"] == 500
 
 
-def test_t1_5_2_baseline_multi_region(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_5_2_baseline_multi_region(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.5.2: Multi-region baseline fetches accurately reflect queried region in path."""
     base_url = killswitch_server_harness["base_url"]
     for reg in ("us-central1", "asia-southeast1"):
@@ -561,7 +647,9 @@ def test_t1_5_2_baseline_multi_region(killswitch_server_harness: dict[str, Any])
         assert resp.json()["region"] == reg
 
 
-def test_t1_5_3_baseline_nonconformity_threshold(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_5_3_baseline_nonconformity_threshold(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.5.3: Substrate returns calibrated nonconformity_threshold=4.25."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -570,7 +658,9 @@ def test_t1_5_3_baseline_nonconformity_threshold(killswitch_server_harness: dict
     assert resp.json()["nonconformity_threshold"] == 4.25
 
 
-def test_t1_5_4_baseline_signature_verification(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_5_4_baseline_signature_verification(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.5.4: Baseline signature verifies over CAGE_CONFORMAL_BASELINE_V1:<JCS>."""
     base_url = killswitch_server_harness["base_url"]
     pub_key, _ = _get_server_pub_key(base_url)
@@ -580,7 +670,9 @@ def test_t1_5_4_baseline_signature_verification(killswitch_server_harness: dict[
     _verify_server_receipt(resp.json(), CONFORMAL_BASELINE_DOMAIN_TAG, pub_key)
 
 
-def test_t1_5_5_baseline_routing_resilience(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_5_5_baseline_routing_resilience(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.5.5: Both /v1/cage/normative-baseline/... and /api/v1/cage/... resolve HTTP 200."""
     base_url = killswitch_server_harness["base_url"]
     with httpx.Client(timeout=2.0) as client:
@@ -591,7 +683,9 @@ def test_t1_5_5_baseline_routing_resilience(killswitch_server_harness: dict[str,
     assert r1.json()["region"] == r2.json()["region"]
 
 
-def test_t1_6_1_conformal_conforming_score_allow(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_6_1_conformal_conforming_score_allow(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.6.1: High-conformity score (0.1) results in admitted=True, CONSENSUS_ALLOW."""
     base_url = killswitch_server_harness["base_url"]
     body = {
@@ -609,7 +703,9 @@ def test_t1_6_1_conformal_conforming_score_allow(killswitch_server_harness: dict
     assert data["voter_consensus"] == "CONSENSUS_ALLOW"
 
 
-def test_t1_6_2_conformal_anomaly_score_deny(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_6_2_conformal_anomaly_score_deny(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.6.2: Non-conforming anomalous score (25.0) results in admitted=False, CONSENSUS_DENY."""
     base_url = killswitch_server_harness["base_url"]
     body = {
@@ -627,7 +723,9 @@ def test_t1_6_2_conformal_anomaly_score_deny(killswitch_server_harness: dict[str
     assert data["voter_consensus"] == "CONSENSUS_DENY"
 
 
-def test_t1_6_3_conformal_multidimensional_vector(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_6_3_conformal_multidimensional_vector(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.6.3: Multi-dimensional feature vector projected into calibrated space yields valid p-value."""
     base_url = killswitch_server_harness["base_url"]
     body = {
@@ -643,7 +741,9 @@ def test_t1_6_3_conformal_multidimensional_vector(killswitch_server_harness: dic
     assert 0.0 <= data["p_value"] <= 1.0
 
 
-def test_t1_6_4_conformal_action_and_alpha_tuning(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_6_4_conformal_action_and_alpha_tuning(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.6.4: Custom action and strict alpha (0.01) evaluated properly."""
     base_url = killswitch_server_harness["base_url"]
     body = {
@@ -658,7 +758,9 @@ def test_t1_6_4_conformal_action_and_alpha_tuning(killswitch_server_harness: dic
     assert resp.json()["alpha"] == 0.01
 
 
-def test_t1_6_5_conformal_signature_verification(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t1_6_5_conformal_signature_verification(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T1.6.5: Conformal validation receipt signature verifies over CAGE_CONFORMAL_VALIDATION_V1:<JCS>."""
     base_url = killswitch_server_harness["base_url"]
     pub_key, _ = _get_server_pub_key(base_url)
@@ -672,7 +774,11 @@ def test_t1_6_5_conformal_signature_verification(killswitch_server_harness: dict
     expected_digest = hashlib.sha256(canonical).hexdigest()
 
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/conformal/validate", content=canonical, headers={"Content-Type": "application/json"})
+        resp = client.post(
+            f"{base_url}/v1/cage/conformal/validate",
+            content=canonical,
+            headers={"Content-Type": "application/json"},
+        )
     assert resp.status_code == 200
     data = resp.json()
     assert data["envelope_digest"] == expected_digest
@@ -684,7 +790,9 @@ def test_t1_6_5_conformal_signature_verification(killswitch_server_harness: dict
 # ==============================================================================
 
 
-def test_t2_1_1_quarantine_missing_assertion_header(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_1_1_quarantine_missing_assertion_header(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.1.1: Missing X-CAGE-Quarantine-Assertion header returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -694,11 +802,15 @@ def test_t2_1_1_quarantine_missing_assertion_header(killswitch_server_harness: d
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_1_2_quarantine_missing_signer_kid_header(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_1_2_quarantine_missing_signer_kid_header(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.1.2: Missing X-CAGE-Signer-Kid header returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -706,14 +818,20 @@ def test_t2_1_2_quarantine_missing_signer_kid_header(killswitch_server_harness: 
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_1_3_release_missing_assertion_header(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_1_3_release_missing_assertion_header(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.1.3: Missing X-CAGE-Quarantine-Release header returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -723,11 +841,15 @@ def test_t2_1_3_release_missing_assertion_header(killswitch_server_harness: dict
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_1_4_release_missing_signer_kid_header(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_1_4_release_missing_signer_kid_header(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.1.4: Missing X-CAGE-Signer-Kid header on release returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -735,14 +857,20 @@ def test_t2_1_4_release_missing_signer_kid_header(killswitch_server_harness: dic
     sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_2_1_forged_random_signature(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_2_1_forged_random_signature(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.2.1: Cryptographically forged 64 random signature bytes returns HTTP 401."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -750,15 +878,21 @@ def test_t2_2_1_forged_random_signature(killswitch_server_harness: dict[str, Any
     forged_sig = b"\xaa" * 64
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(forged_sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(forged_sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 401
 
 
-def test_t2_2_2_truncated_signature_32_bytes(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_2_2_truncated_signature_32_bytes(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.2.2: Truncated signature (<64 bytes) returns HTTP 401."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -766,15 +900,21 @@ def test_t2_2_2_truncated_signature_32_bytes(killswitch_server_harness: dict[str
     truncated_sig = b"\xbb" * 32
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(truncated_sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(truncated_sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 401
 
 
-def test_t2_2_3_inflated_signature_96_bytes(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_2_3_inflated_signature_96_bytes(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.2.3: Inflated signature (>64 bytes) returns HTTP 401."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -782,15 +922,21 @@ def test_t2_2_3_inflated_signature_96_bytes(killswitch_server_harness: dict[str,
     inflated_sig = b"\xcc" * 96
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(inflated_sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(inflated_sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 401
 
 
-def test_t2_2_4_corrupted_base64_symbols(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_2_4_corrupted_base64_symbols(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.2.4: Non-base64 characters in signature header returns HTTP 401."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -801,15 +947,21 @@ def test_t2_2_4_corrupted_base64_symbols(killswitch_server_harness: dict[str, An
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 401
 
 
-def test_t2_2_5_tampered_body_after_signing(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_2_5_tampered_body_after_signing(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.2.5: Tampered payload bytes after signature generation fails verification with HTTP 401."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
-    canonical, payload, _ = _build_quarantine_payload(workload_id="spiffe://cage.local/legit")
+    canonical, payload, _ = _build_quarantine_payload(
+        workload_id="spiffe://cage.local/legit"
+    )
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
 
     # Tamper body
@@ -818,11 +970,15 @@ def test_t2_2_5_tampered_body_after_signing(killswitch_server_harness: dict[str,
 
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=tampered_bytes, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=tampered_bytes, headers=headers
+        )
     assert resp.status_code == 401
 
 
@@ -835,11 +991,15 @@ def test_t2_3_1_unknown_signer_kid(killswitch_server_harness: dict[str, Any]) ->
 
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: "unknown-kid-00000000000000000000000000000000000000000000000000000000",
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 403
 
 
@@ -852,11 +1012,15 @@ def test_t2_3_2_empty_signer_kid(killswitch_server_harness: dict[str, Any]) -> N
 
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: "",
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 403
 
 
@@ -873,15 +1037,21 @@ def test_t2_3_3_kid_case_mutated(killswitch_server_harness: dict[str, Any]) -> N
 
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: mutated_kid,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 403
 
 
-def test_t2_4_1_quarantine_duplicate_nonce_replay(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_4_1_quarantine_duplicate_nonce_replay(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.4.1: Replaying duplicate quarantine nonce returns HTTP 409 Conflict."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -890,18 +1060,26 @@ def test_t2_4_1_quarantine_duplicate_nonce_replay(killswitch_server_harness: dic
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
         HEADER_ENVELOPE_DIGEST: env,
     }
     with httpx.Client(timeout=2.0) as client:
-        r1 = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        r1 = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
         assert r1.status_code == 200
-        r2 = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        r2 = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
         assert r2.status_code == 409
 
 
-def test_t2_4_2_release_duplicate_nonce_replay(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_4_2_release_duplicate_nonce_replay(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.4.2: Replaying duplicate release nonce returns HTTP 409 Conflict."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -910,18 +1088,26 @@ def test_t2_4_2_release_duplicate_nonce_replay(killswitch_server_harness: dict[s
     sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
         HEADER_ENVELOPE_DIGEST: env,
     }
     with httpx.Client(timeout=2.0) as client:
-        r1 = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        r1 = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
         assert r1.status_code == 200
-        r2 = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        r2 = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
         assert r2.status_code == 409
 
 
-def test_t2_4_3_conformal_duplicate_nonce_replay(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_4_3_conformal_duplicate_nonce_replay(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.4.3: Replaying duplicate conformal validation nonce returns HTTP 409 Conflict."""
     base_url = killswitch_server_harness["base_url"]
     fixed_nonce = f"nonce-conformal-replay-{uuid.uuid4()}"
@@ -950,15 +1136,21 @@ def test_t2_5_1_keys_unsorted_order(killswitch_server_harness: dict[str, Any]) -
     sig = signer.sign_raw(QUARANTINE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_ASSERTION: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=canonical, headers=headers
+        )
     assert resp.status_code == 200
 
 
-def test_t2_5_2_malformed_json_syntax(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_5_2_malformed_json_syntax(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.5.2: Malformed JSON syntax returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -969,11 +1161,15 @@ def test_t2_5_2_malformed_json_syntax(killswitch_server_harness: dict[str, Any])
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", content=bad_bytes, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", content=bad_bytes, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_5_3_payload_too_large_exceeding_max_bytes(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_5_3_payload_too_large_exceeding_max_bytes(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.5.3: Overly large request body exceeding max_body_bytes returns HTTP 413 or 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -985,11 +1181,15 @@ def test_t2_5_3_payload_too_large_exceeding_max_bytes(killswitch_server_harness:
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=5.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/quarantine", json=payload, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/quarantine", json=payload, headers=headers
+        )
     assert resp.status_code in (413, 400)
 
 
-def test_t2_6_1_quorum_count_insufficient_1(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_6_1_quorum_count_insufficient_1(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.6.1: Quorum release with quorum_count == 1 returns HTTP 400 (quorum >= 2 required)."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -997,11 +1197,15 @@ def test_t2_6_1_quorum_count_insufficient_1(killswitch_server_harness: dict[str,
     sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
@@ -1013,15 +1217,21 @@ def test_t2_6_2_quorum_count_zero(killswitch_server_harness: dict[str, Any]) -> 
     sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_6_3_digest_length_invalid_63_chars(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_6_3_digest_length_invalid_63_chars(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.6.3: Digest with invalid length (63 hex chars) returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -1030,15 +1240,21 @@ def test_t2_6_3_digest_length_invalid_63_chars(killswitch_server_harness: dict[s
     sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_6_4_digest_characters_non_hex(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_6_4_digest_characters_non_hex(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.6.4: Digest containing non-hex characters (e.g. 'z') returns HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
@@ -1047,58 +1263,95 @@ def test_t2_6_4_digest_characters_non_hex(killswitch_server_harness: dict[str, A
     sig = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical)
     headers = {
         "Content-Type": "application/json",
-        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
+        HEADER_QUARANTINE_RELEASE: base64.urlsafe_b64encode(sig)
+        .decode("ascii")
+        .rstrip("="),
         HEADER_SIGNER_KID: signer.key_id,
     }
     with httpx.Client(timeout=2.0) as client:
-        resp = client.post(f"{base_url}/v1/cage/release", content=canonical, headers=headers)
+        resp = client.post(
+            f"{base_url}/v1/cage/release", content=canonical, headers=headers
+        )
     assert resp.status_code == 400
 
 
-def test_t2_7_1_extreme_float_saturation_2pow63_minus_1(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_7_1_extreme_float_saturation_2pow63_minus_1(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.7.1: Extreme float saturation at 2^63 - 1 handled cleanly without crash."""
     base_url = killswitch_server_harness["base_url"]
     val = float(2**63 - 1)
-    body = {"scores": [val], "alpha": 0.05, "action": "saturation_test", "nonce": str(uuid.uuid4())}
+    body = {
+        "scores": [val],
+        "alpha": 0.05,
+        "action": "saturation_test",
+        "nonce": str(uuid.uuid4()),
+    }
     with httpx.Client(timeout=2.0) as client:
         resp = client.post(f"{base_url}/v1/cage/conformal/validate", json=body)
     assert resp.status_code == 200
 
 
-def test_t2_7_2_extreme_negative_float_2pow63(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_7_2_extreme_negative_float_2pow63(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.7.2: Extreme negative float -2^63 handled cleanly."""
     base_url = killswitch_server_harness["base_url"]
     val = float(-(2**63))
-    body = {"scores": [val], "alpha": 0.05, "action": "neg_test", "nonce": str(uuid.uuid4())}
+    body = {
+        "scores": [val],
+        "alpha": 0.05,
+        "action": "neg_test",
+        "nonce": str(uuid.uuid4()),
+    }
     with httpx.Client(timeout=2.0) as client:
         resp = client.post(f"{base_url}/v1/cage/conformal/validate", json=body)
     assert resp.status_code == 200
 
 
-def test_t2_7_3_scientific_notation_10e20_vs_10e21(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_7_3_scientific_notation_10e20_vs_10e21(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.7.3: Scientific notation boundaries (1e20, 1e21) parsed successfully."""
     base_url = killswitch_server_harness["base_url"]
     for val in (1e20, 1e21):
-        body = {"scores": [val], "alpha": 0.05, "action": "sci_test", "nonce": str(uuid.uuid4())}
+        body = {
+            "scores": [val],
+            "alpha": 0.05,
+            "action": "sci_test",
+            "nonce": str(uuid.uuid4()),
+        }
         with httpx.Client(timeout=2.0) as client:
             resp = client.post(f"{base_url}/v1/cage/conformal/validate", json=body)
         assert resp.status_code == 200
 
 
-def test_t2_7_4_subnormal_float_10e_minus_6_vs_10e_minus_7(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_7_4_subnormal_float_10e_minus_6_vs_10e_minus_7(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.7.4: Small subnormal floats (1e-6, 1e-7) handled accurately."""
     base_url = killswitch_server_harness["base_url"]
     for val in (1e-6, 1e-7):
-        body = {"scores": [val], "alpha": 0.05, "action": "small_test", "nonce": str(uuid.uuid4())}
+        body = {
+            "scores": [val],
+            "alpha": 0.05,
+            "action": "small_test",
+            "nonce": str(uuid.uuid4()),
+        }
         with httpx.Client(timeout=2.0) as client:
             resp = client.post(f"{base_url}/v1/cage/conformal/validate", json=body)
         assert resp.status_code == 200
 
 
-def test_t2_7_5_unrepresentable_floats_nan_inf(killswitch_server_harness: dict[str, Any]) -> None:
+def test_t2_7_5_unrepresentable_floats_nan_inf(
+    killswitch_server_harness: dict[str, Any],
+) -> None:
     """T2.7.5: Unrepresentable floats (NaN, Infinity) rejected with HTTP 400."""
     base_url = killswitch_server_harness["base_url"]
-    for token in (b'{"scores": [NaN], "nonce": "n1"}', b'{"scores": [Infinity], "nonce": "n2"}'):
+    for token in (
+        b'{"scores": [NaN], "nonce": "n1"}',
+        b'{"scores": [Infinity], "nonce": "n2"}',
+    ):
         with httpx.Client(timeout=2.0) as client:
             resp = client.post(
                 f"{base_url}/v1/cage/conformal/validate",

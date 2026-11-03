@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(errors="replace")
 
 HEADER = """# Copyright 2026 Google LLC
 #

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 component-definition:
-  uuid: e8300001-lula-4000-8000-quarantine001
+  uuid: 8895a056-6ebc-5418-993e-0382546b8834
   metadata:
     title: CAGE Validation — Host OS Kernel Quarantine Substrate (actuator_04)
     last-modified: '2026-11-03T01:30:00Z'
@@ -29,24 +29,24 @@ component-definition:
       4. Container image does not use :latest tag (immutable tag/digest enforced).
       5. NetworkPolicy host-quarantine-ingress-gateway-only restricts TCP 3030 ingress strictly to app=gateway pods.
   components:
-  - uuid: a0400001-4e47-bbc8-host-quarantine01
+  - uuid: 83f0137c-e6e6-5fbc-b1f5-5038752c9168
     type: software
     title: Host OS Kernel Quarantine Substrate (actuator_04)
     description: Host OS Kernel runtime containment and attestation substrate providing dynamic socket severing, process suspension, and hardware TPM PCR validation.
     control-implementations:
-    - uuid: a0400001-ctrl-impl-8000-actuator0401
+    - uuid: 0538f3f4-023d-528e-83c4-b791a8807f17
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
       description: Control implementation for Host Quarantine Substrate (SC-7, SI-4, IR-4, IA-3).
       implemented-requirements:
-      - uuid: a0400001-sc07-8000-actuator00001
+      - uuid: c84c0e4a-c931-529a-b4e9-976ac4dee410
         control-id: sc-7
         description: Automated lula validation for Host OS Kernel Quarantine Substrate hardening and network boundary isolation.
         links:
-        - href: '#a0400001-rsrc-8000-actuator00001'
+        - href: '#46d5d6d7-0dba-54c6-b4b9-5789f1a137d0'
           rel: lula
   back-matter:
     resources:
-    - uuid: a0400001-rsrc-8000-actuator00001
+    - uuid: 46d5d6d7-0dba-54c6-b4b9-5789f1a137d0
       title: Lula Validation — Host OS Kernel Quarantine Substrate Hardening
       rlinks:
       - href: lula.dev

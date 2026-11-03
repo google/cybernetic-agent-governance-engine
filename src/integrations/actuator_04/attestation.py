@@ -62,7 +62,11 @@ class Actuator04AttestationProvider(AttestationProvider):
         resolver: Ed25519KeyResolver | None = (
             Ed25519KeyManifestClient(manifest_url) if manifest_url else None
         )
-        return cls(transport=transport, expected_pcr_quote=expected, receipt_key_resolver=resolver)
+        return cls(
+            transport=transport,
+            expected_pcr_quote=expected,
+            receipt_key_resolver=resolver,
+        )
 
     @property
     def provider_name(self) -> str:
@@ -75,7 +79,9 @@ class Actuator04AttestationProvider(AttestationProvider):
         attestations: list[ExternalAttestation] = []
         try:
             endpoints = self._transport.resolve_target_endpoints()
-            responses = await self._transport.get_from_endpoints("/v1/cage/attest", endpoints=endpoints)
+            responses = await self._transport.get_from_endpoints(
+                "/v1/cage/attest", endpoints=endpoints
+            )
         except Exception as exc:
             return [
                 ExternalAttestation(
@@ -134,7 +140,9 @@ class Actuator04AttestationProvider(AttestationProvider):
                 )
                 continue
 
-            envelope_digest = context.get("expected_envelope_digest") or body.get("envelope_digest", tpm_quote)
+            envelope_digest = context.get("expected_envelope_digest") or body.get(
+                "envelope_digest", tpm_quote
+            )
 
             v_status, finding = await verify_substrate_receipt_signature(
                 body,
@@ -144,7 +152,14 @@ class Actuator04AttestationProvider(AttestationProvider):
             )
 
             if v_status != ReceiptVerification.VERIFIED or finding:
-                meta = finding if finding else {"code": "RECEIPT_NOT_VERIFIED", "detail": "Receipt signature not verified"}
+                meta = (
+                    finding
+                    if finding
+                    else {
+                        "code": "RECEIPT_NOT_VERIFIED",
+                        "detail": "Receipt signature not verified",
+                    }
+                )
                 attestations.append(
                     ExternalAttestation(
                         attestation_type="HOST_TPM_PCR",
@@ -171,7 +186,9 @@ class Actuator04AttestationProvider(AttestationProvider):
                     attested_at=body.get("timestamp_utc", ""),
                     provider_name=self.provider_name,
                     metadata={
-                        "ring0_posture": body.get("ring0_posture", "ACTIVE_RING0_ENFORCED"),
+                        "ring0_posture": body.get(
+                            "ring0_posture", "ACTIVE_RING0_ENFORCED"
+                        ),
                         "tpm_pcr_quote": tpm_quote,
                         "pcr_values": body.get("pcr_values", {}),
                         "epoch_map": body.get("epoch_map", {}),

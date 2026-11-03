@@ -81,9 +81,10 @@ def test_get_git_executable_windows_fallback(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cage_contribute.sys, "platform", "win32")
     monkeypatch.setattr(cage_contribute.shutil, "which", lambda _: None)
 
-    with patch.object(Path, "is_file", return_value=True), patch(
-        "subprocess.run"
-    ) as mock_run:
+    with (
+        patch.object(Path, "is_file", return_value=True),
+        patch("subprocess.run") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(
             args=["git", "--version"], returncode=0, stdout="git version 2.56.0"
         )
@@ -154,7 +155,10 @@ def test_validate_branch_name_valid(branch: str) -> None:
         ("feat/redis_rate_limiter", "lowercase kebab-case"),
         ("feature/new-feature", "Invalid type prefix"),
         ("bugfix/uuid-bug", "Invalid type prefix"),
-        ("feat/this-description-is-way-too-long-exceeding-thirty-chars", "maximum allowed is 30 chars"),
+        (
+            "feat/this-description-is-way-too-long-exceeding-thirty-chars",
+            "maximum allowed is 30 chars",
+        ),
         ("feat/", "Does not match pattern"),
         ("invalid-branch-name", "Missing required '<type>/' prefix"),
     ],
@@ -211,7 +215,10 @@ def test_validate_commit_message_valid_breaking_change() -> None:
 
 def test_validate_commit_message_merge_and_empty_exemption() -> None:
     """Verify git merge commits and comment-only messages are exempt."""
-    assert cage_contribute.validate_commit_message("Merge branch 'feat/foo' into main")[0] is True
+    assert (
+        cage_contribute.validate_commit_message("Merge branch 'feat/foo' into main")[0]
+        is True
+    )
     assert cage_contribute.validate_commit_message("# Just a comment line")[0] is True
     assert cage_contribute.validate_commit_message("")[0] is True
 
@@ -280,7 +287,7 @@ def test_validate_commit_message_leading_newline_handling() -> None:
 
     # 2. Comments + leading newlines before invalid subject must be rejected
     invalid_comment_msg = "# comment\n\nThis is invalid."
-    valid2, errors2 = cage_contribute.validate_commit_message(invalid_comment_msg)
+    valid2, _errors2 = cage_contribute.validate_commit_message(invalid_comment_msg)
     assert valid2 is False
 
     # 3. Valid Conventional Commit with leading newlines should succeed
@@ -292,7 +299,9 @@ def test_validate_commit_message_leading_newline_handling() -> None:
 
 def test_validate_commit_message_missing_blank_line() -> None:
     """Verify missing blank line between subject and body fails."""
-    msg = "feat(gateway): add Redis rate limiter\nThis body has no separating blank line."
+    msg = (
+        "feat(gateway): add Redis rate limiter\nThis body has no separating blank line."
+    )
     valid, errors = cage_contribute.validate_commit_message(msg)
     assert valid is False
     assert any("blank line must separate" in e for e in errors)
@@ -301,7 +310,9 @@ def test_validate_commit_message_missing_blank_line() -> None:
 def test_validate_commit_message_breaking_change_bidirectional_violations() -> None:
     """Verify breaking change rules require both '!' and 'BREAKING CHANGE:' footer."""
     # 1. Bang present, but missing footer
-    msg_no_footer = "feat(gateway)!: update rate limiter API\n\nSome body without footer."
+    msg_no_footer = (
+        "feat(gateway)!: update rate limiter API\n\nSome body without footer."
+    )
     valid1, errors1 = cage_contribute.validate_commit_message(msg_no_footer)
     assert valid1 is False
     assert any("BREAKING CHANGE:" in e for e in errors1)
@@ -325,9 +336,10 @@ def test_cmd_setup_creates_hooks_and_env(tmp_path: Path) -> None:
     (repo / ".git").mkdir()
     (repo / ".env.example").write_text("TEST_VAR=123\n", encoding="utf-8")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
         args = argparse.Namespace(sync=False)
         rc = cage_contribute.cmd_setup(args)
@@ -348,8 +360,9 @@ def test_cmd_setup_preserves_existing_env(tmp_path: Path) -> None:
     (repo / ".env.example").write_text("ORIGINAL=1\n", encoding="utf-8")
     (repo / ".env").write_text("PRESERVED=2\n", encoding="utf-8")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd"),
     ):
         args = argparse.Namespace(sync=False)
         cage_contribute.cmd_setup(args)
@@ -369,9 +382,10 @@ def test_cmd_setup_git_worktree_support(tmp_path: Path) -> None:
     (repo / ".git").write_text(f"gitdir: {main_git_dir}\n", encoding="utf-8")
     (repo / ".env.example").write_text("TEST=1\n", encoding="utf-8")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         # Mock git rev-parse --git-path hooks returning the target hooks directory
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=str(hooks_target) + "\n"
@@ -396,9 +410,10 @@ def test_cmd_setup_git_worktree_fallback(tmp_path: Path) -> None:
     (repo / ".git").write_text(f"gitdir: {worktree_git_dir}\n", encoding="utf-8")
     (repo / ".env.example").write_text("TEST=1\n", encoding="utf-8")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=1, stdout=""
         )
@@ -418,11 +433,14 @@ def test_cmd_branch_success(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        args = argparse.Namespace(type="feat", description="redis-rate-limiter", base="main")
+        args = argparse.Namespace(
+            type="feat", description="redis-rate-limiter", base="main"
+        )
         rc = cage_contribute.cmd_branch(args)
 
         assert rc == 0
@@ -469,9 +487,10 @@ def test_cmd_commit_invokes_git(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
         args = argparse.Namespace(
             message="feat(gateway): add Redis rate limiter",
@@ -499,11 +518,14 @@ def test_cmd_check_fast_mode(tmp_path: Path) -> None:
     scripts_dir.mkdir()
     (scripts_dir / "patch_license.py").touch()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        args = argparse.Namespace(fast=True, all=False, raptor=False, security_audit=False)
+        args = argparse.Namespace(
+            fast=True, all=False, raptor=False, security_audit=False
+        )
         rc = cage_contribute.cmd_check(args)
         assert rc == 0
 
@@ -516,13 +538,16 @@ def test_cmd_check_failure_returns_one(tmp_path: Path) -> None:
     scripts_dir.mkdir()
     (scripts_dir / "patch_license.py").touch()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=1, stderr="Import boundary violation detected"
         )
-        args = argparse.Namespace(fast=True, all=False, raptor=False, security_audit=False)
+        args = argparse.Namespace(
+            fast=True, all=False, raptor=False, security_audit=False
+        )
         rc = cage_contribute.cmd_check(args)
         assert rc == 1
 
@@ -532,13 +557,16 @@ def test_cmd_check_failure_returns_one(tmp_path: Path) -> None:
 # ===========================================================================
 
 
-def test_cmd_cloudbuild_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cmd_cloudbuild_dry_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Verify cloudbuild --dry-run prints exact gcloud command with short SHA."""
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.get_short_sha", return_value="1a2b3c4d"
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.get_short_sha", return_value="1a2b3c4d"),
     ):
         args = argparse.Namespace(
             image="gateway",
@@ -554,7 +582,9 @@ def test_cmd_cloudbuild_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[st
         assert "gcloud builds submit" in captured
         assert "_SHORT_SHA=1a2b3c4d" in captured
         assert "_IMAGE_NAME=gateway" in captured
-        assert "cage-cloudbuild-staging@test-project.iam.gserviceaccount.com" in captured
+        assert (
+            "cage-cloudbuild-staging@test-project.iam.gserviceaccount.com" in captured
+        )
 
 
 def test_cmd_verify_service_sync_agreed(tmp_path: Path) -> None:
@@ -690,7 +720,7 @@ def test_cmd_scaffold_phase_1_read_only_tier(tmp_path: Path) -> None:
 
         # Dynamically instantiate and verify interface
         mod = _load_module_from_path("margin_check_tier", target_file)
-        tier_cls = getattr(mod, "MarginCheckTier")
+        tier_cls = mod.MarginCheckTier
         tier = tier_cls()
         assert tier.tier_name == "margin_check"
         assert tier.order == 20
@@ -727,7 +757,7 @@ def test_cmd_scaffold_phase_2_mutating_tier(tmp_path: Path) -> None:
 
         # Dynamically instantiate and verify interface
         mod = _load_module_from_path("cbf_dose_tier", target_file)
-        tier_cls = getattr(mod, "CbfDoseTier")
+        tier_cls = mod.CbfDoseTier
         tier = tier_cls()
         assert tier.tier_name == "cbf_dose"
         assert tier.order == 30
@@ -760,7 +790,9 @@ def test_cmd_scaffold_tier_kebab_case_normalization(tmp_path: Path) -> None:
         assert rc == 0
 
         # Domain directory must use underscores, not hyphens
-        target_file = repo / "src" / "cage_physical_ai" / "tiers" / "trade_limit_tier.py"
+        target_file = (
+            repo / "src" / "cage_physical_ai" / "tiers" / "trade_limit_tier.py"
+        )
         assert target_file.exists()
         code = target_file.read_text(encoding="utf-8")
 
@@ -771,7 +803,7 @@ def test_cmd_scaffold_tier_kebab_case_normalization(tmp_path: Path) -> None:
         assert 'return "trade_limit"' in code
 
         mod = _load_module_from_path("trade_limit_tier", target_file)
-        tier_cls = getattr(mod, "TradeLimitTier")
+        tier_cls = mod.TradeLimitTier
         tier = tier_cls()
         assert tier.tier_name == "trade_limit"
         assert tier.order == 15
@@ -803,7 +835,7 @@ def test_cmd_scaffold_seam_package(tmp_path: Path) -> None:
 
         # Dynamically instantiate and verify actuator adapter
         mod = _load_module_from_path("actuator_09_adapter", pkg_dir / "adapter.py")
-        adapter_cls = getattr(mod, "ActuatorAdapter")
+        adapter_cls = mod.ActuatorAdapter
         adapter = adapter_cls()
         assert adapter.actuator_id == "actuator_09"
         assert asyncio.run(adapter.health_check()) is True
@@ -868,7 +900,7 @@ def test_cmd_scaffold_attestation_seam(tmp_path: Path) -> None:
 
         # Dynamically instantiate and verify attestation adapter
         mod = _load_module_from_path("provider_08_adapter", pkg_dir / "adapter.py")
-        adapter_cls = getattr(mod, "AttestationAdapter")
+        adapter_cls = mod.AttestationAdapter
         adapter = adapter_cls()
         assert adapter.provider_name == "provider_08"
         attestations = asyncio.run(adapter.fetch_attestations({"action": "check"}))
@@ -895,7 +927,7 @@ def test_cmd_scaffold_normative_seam(tmp_path: Path) -> None:
 
         # Dynamically load and instantiate NormativeAdapter
         mod = _load_module_from_path("provider_07_adapter", adapter_file)
-        adapter_cls = getattr(mod, "NormativeAdapter")
+        adapter_cls = mod.NormativeAdapter
         adapter = adapter_cls()
 
         # 1. fetch_baseline must accept region and return NormativeBaseline with profile dict
@@ -934,7 +966,7 @@ def test_cmd_scaffold_quarantine_seam(tmp_path: Path) -> None:
         assert adapter_file.exists()
 
         mod = _load_module_from_path("quarantine_01_adapter", adapter_file)
-        adapter_cls = getattr(mod, "QuarantineAdapter")
+        adapter_cls = mod.QuarantineAdapter
         adapter = adapter_cls()
 
         assert adapter.actuator_id == "quarantine_01"
@@ -999,7 +1031,7 @@ def test_cmd_scaffold_evidence_seam(tmp_path: Path) -> None:
         assert adapter_file.exists()
 
         mod = _load_module_from_path("evidence_01_adapter", adapter_file)
-        adapter_cls = getattr(mod, "EvidenceAdapter")
+        adapter_cls = mod.EvidenceAdapter
         adapter = adapter_cls()
 
         assert adapter.collector_name == "evidence_01"
@@ -1043,7 +1075,13 @@ def test_cmd_scaffold_all_templates_instantiate_cleanly(tmp_path: Path) -> None:
                 order=10 * phase,
             )
             assert cage_contribute.cmd_scaffold(args) == 0
-            tier_path = repo / "src" / "cage_healthcare" / "tiers" / f"phase_{phase}_check_tier.py"
+            tier_path = (
+                repo
+                / "src"
+                / "cage_healthcare"
+                / "tiers"
+                / f"phase_{phase}_check_tier.py"
+            )
             assert tier_path.exists()
             mod = _load_module_from_path(f"phase_{phase}_tier", tier_path)
             cls_name = f"Phase{phase}CheckTier"
@@ -1082,17 +1120,22 @@ def test_cmd_pr_squash_merge_guard_violation(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.get_current_branch", return_value="feat/my-feature"
-    ), patch("cage_contribute.is_working_tree_clean", return_value=True), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.get_current_branch", return_value="feat/my-feature"),
+        patch("cage_contribute.is_working_tree_clean", return_value=True),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         # Simulate rev-list --parents returning a commit with 2 parents (merge commit)
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="commit_hash parent1 parent2\n"
         )
         args = argparse.Namespace(
-            base="main", title="feat(gateway): add feature", body="desc", allow_dirty=False, dry_run=True
+            base="main",
+            title="feat(gateway): add feature",
+            body="desc",
+            allow_dirty=False,
+            dry_run=True,
         )
         rc = cage_contribute.cmd_pr(args)
         assert rc == 1
@@ -1109,9 +1152,10 @@ def test_cmd_release_tag_validation(tmp_path: Path) -> None:
     assert cage_contribute.cmd_release_tag(args_invalid) == 1
 
     # 2. Valid tag format with CHANGELOG entry
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd"
-    ) as mock_run:
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd") as mock_run,
+    ):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
         args_valid = argparse.Namespace(tag="v3.2.0")
         assert cage_contribute.cmd_release_tag(args_valid) == 0
@@ -1133,30 +1177,40 @@ def test_cmd_doctor_healthy_environment(tmp_path: Path) -> None:
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "--version" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="git version 2.40.0\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="git version 2.40.0\n"
+            )
         if "rev-parse" in cmd and "--git-path" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=".git/hooks\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=".git/hooks\n"
+            )
         if "rev-parse" in cmd and "--abbrev-ref" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="feat/my-feature\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="feat/my-feature\n"
+            )
         if "status" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd", side_effect=fake_run
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd", side_effect=fake_run),
     ):
         args = argparse.Namespace()
         rc = cage_contribute.cmd_doctor(args)
         assert rc == 0
 
 
-def test_cmd_doctor_resilience_missing_git(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cmd_doctor_resilience_missing_git(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Verify doctor command does not crash with FileNotFoundError when git is missing, and returns exit code 1."""
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.get_git_executable", return_value="nonexistent-git"
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.get_git_executable", return_value="nonexistent-git"),
     ):
         args = argparse.Namespace()
         rc = cage_contribute.cmd_doctor(args)
@@ -1172,13 +1226,18 @@ def test_cmd_doctor_fails_on_missing_hooks(tmp_path: Path) -> None:
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "--version" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="git version 2.40.0\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="git version 2.40.0\n"
+            )
         if "rev-parse" in cmd and "--git-path" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=".git/hooks\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=".git/hooks\n"
+            )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "cage_contribute.run_cmd", side_effect=fake_run
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("cage_contribute.run_cmd", side_effect=fake_run),
     ):
         args = argparse.Namespace()
         rc = cage_contribute.cmd_doctor(args)
@@ -1196,14 +1255,20 @@ def test_cmd_doctor_fails_on_unsupported_python(tmp_path: Path) -> None:
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "--version" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="git version 2.40.0\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="git version 2.40.0\n"
+            )
         if "rev-parse" in cmd and "--git-path" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=".git/hooks\n")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=".git/hooks\n"
+            )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
 
-    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
-        "sys.version_info", (3, 8, 0)
-    ), patch("cage_contribute.run_cmd", side_effect=fake_run):
+    with (
+        patch("cage_contribute.find_repo_root", return_value=repo),
+        patch("sys.version_info", (3, 8, 0)),
+        patch("cage_contribute.run_cmd", side_effect=fake_run),
+    ):
         args = argparse.Namespace()
         rc = cage_contribute.cmd_doctor(args)
         assert rc == 1

@@ -49,9 +49,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(errors="replace")
 
 REPO_ROOT = Path.cwd().resolve()
 
@@ -610,16 +610,24 @@ def verify_file_path(
 
 
 def _find_git() -> str | None:
-    for candidate in [
-        r"C:\Program Files\Git\cmd\git.exe",
-        shutil.which("git"),
-    ]:
+    which_git = shutil.which("git")
+    if which_git is None:
+        return None
+    candidates = [which_git]
+    if sys.platform == "win32":
+        candidates.append(r"C:\Program Files\Git\cmd\git.exe")
+    for candidate in candidates:
         if candidate and Path(candidate).exists():
             try:
-                res = subprocess.run([candidate, "--version"], capture_output=True, timeout=2)
+                res = subprocess.run(
+                    [candidate, "--version"],
+                    capture_output=True,
+                    timeout=2,
+                    check=False,
+                )
                 if res.returncode == 0:
                     return str(candidate)
-            except Exception:
+            except OSError:
                 pass
     return None
 

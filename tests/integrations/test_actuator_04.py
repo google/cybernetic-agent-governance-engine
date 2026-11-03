@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from datetime import datetime, timezone
 import hashlib
 import time
+from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -91,33 +91,154 @@ class StubSigner:
 # SSRF & Mathematical IP Validation Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("url", "allow_loopback", "env", "should_block", "desc"),
     [
-        ("http://2130706433:8080", False, "dev", True, "Decimal integer loopback in dev"),
-        ("https://2130706433:8080", False, "production", True, "Decimal integer loopback in prod"),
-        ("http://2852039166:8080", False, "dev", True, "Decimal integer metadata in dev"),
-        ("https://2852039166:8080", False, "production", True, "Decimal integer metadata in prod"),
+        (
+            "http://2130706433:8080",
+            False,
+            "dev",
+            True,
+            "Decimal integer loopback in dev",
+        ),
+        (
+            "https://2130706433:8080",
+            False,
+            "production",
+            True,
+            "Decimal integer loopback in prod",
+        ),
+        (
+            "http://2852039166:8080",
+            False,
+            "dev",
+            True,
+            "Decimal integer metadata in dev",
+        ),
+        (
+            "https://2852039166:8080",
+            False,
+            "production",
+            True,
+            "Decimal integer metadata in prod",
+        ),
         ("http://0177.0.0.1:8080", False, "dev", True, "Octal loopback in dev"),
-        ("https://0177.0.0.1:8080", False, "production", True, "Octal loopback in prod"),
-        ("http://0251.0376.0251.0376:8080", False, "dev", True, "Octal metadata in dev"),
-        ("https://0251.0376.0251.0376:8080", False, "production", True, "Octal metadata in prod"),
+        (
+            "https://0177.0.0.1:8080",
+            False,
+            "production",
+            True,
+            "Octal loopback in prod",
+        ),
+        (
+            "http://0251.0376.0251.0376:8080",
+            False,
+            "dev",
+            True,
+            "Octal metadata in dev",
+        ),
+        (
+            "https://0251.0376.0251.0376:8080",
+            False,
+            "production",
+            True,
+            "Octal metadata in prod",
+        ),
         ("http://0x7f.0.0.1:8080", False, "dev", True, "Hex loopback in dev"),
         ("https://0x7f.0.0.1:8080", False, "production", True, "Hex loopback in prod"),
         ("http://0xa9.0xfe.0xa9.0xfe:8080", False, "dev", True, "Hex metadata in dev"),
-        ("https://0xa9.0xfe.0xa9.0xfe:8080", False, "production", True, "Hex metadata in prod"),
-        ("http://169.254.169.254.nip.io:8080", False, "dev", True, "DNS rebinding metadata in dev"),
-        ("https://169.254.169.254.nip.io:8080", False, "production", True, "DNS rebinding metadata in prod"),
-        ("http://127.0.0.1.nip.io:8080", False, "dev", True, "DNS rebinding loopback in dev"),
-        ("https://127.0.0.1.nip.io:8080", False, "production", True, "DNS rebinding loopback in prod"),
-        ("http://[::ffff:127.0.0.1]:8080", False, "dev", True, "IPv4-mapped IPv6 loopback in dev"),
-        ("http://[::ffff:169.254.169.254]:8080", False, "dev", True, "IPv4-mapped IPv6 metadata in dev"),
-        ("http://[::ffff:7f00:1]:8080", False, "dev", True, "IPv4-mapped IPv6 hex loopback in dev"),
-        ("http://[::ffff:a9fe:a9fe]:8080", False, "dev", True, "IPv4-mapped IPv6 hex metadata in dev"),
-        ("http://169.254.169.254:8080", False, "dev", True, "Standard dotted metadata in dev"),
-        ("https://169.254.169.254:8080", False, "production", True, "Standard dotted metadata in prod"),
-        ("http://127.0.0.1:8080", False, "dev", True, "Loopback when allow_loopback=False in dev"),
-        ("http://127.0.0.1:8080", True, "dev", False, "Loopback when allow_loopback=True in dev"),
+        (
+            "https://0xa9.0xfe.0xa9.0xfe:8080",
+            False,
+            "production",
+            True,
+            "Hex metadata in prod",
+        ),
+        (
+            "http://169.254.169.254.nip.io:8080",
+            False,
+            "dev",
+            True,
+            "DNS rebinding metadata in dev",
+        ),
+        (
+            "https://169.254.169.254.nip.io:8080",
+            False,
+            "production",
+            True,
+            "DNS rebinding metadata in prod",
+        ),
+        (
+            "http://127.0.0.1.nip.io:8080",
+            False,
+            "dev",
+            True,
+            "DNS rebinding loopback in dev",
+        ),
+        (
+            "https://127.0.0.1.nip.io:8080",
+            False,
+            "production",
+            True,
+            "DNS rebinding loopback in prod",
+        ),
+        (
+            "http://[::ffff:127.0.0.1]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 loopback in dev",
+        ),
+        (
+            "http://[::ffff:169.254.169.254]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 metadata in dev",
+        ),
+        (
+            "http://[::ffff:7f00:1]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 hex loopback in dev",
+        ),
+        (
+            "http://[::ffff:a9fe:a9fe]:8080",
+            False,
+            "dev",
+            True,
+            "IPv4-mapped IPv6 hex metadata in dev",
+        ),
+        (
+            "http://169.254.169.254:8080",
+            False,
+            "dev",
+            True,
+            "Standard dotted metadata in dev",
+        ),
+        (
+            "https://169.254.169.254:8080",
+            False,
+            "production",
+            True,
+            "Standard dotted metadata in prod",
+        ),
+        (
+            "http://127.0.0.1:8080",
+            False,
+            "dev",
+            True,
+            "Loopback when allow_loopback=False in dev",
+        ),
+        (
+            "http://127.0.0.1:8080",
+            True,
+            "dev",
+            False,
+            "Loopback when allow_loopback=True in dev",
+        ),
     ],
 )
 def test_validate_destination_url_ssrf_vectors(
@@ -140,6 +261,7 @@ def test_validate_destination_url_ssrf_vectors(
 # ---------------------------------------------------------------------------
 # Multi-Node Quorum & Fan-Out Tests in Adapter
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_release_workload_multinode_partial_failure_fails_closed():
@@ -180,10 +302,15 @@ async def test_release_workload_multinode_partial_failure_fails_closed():
     node0_resp = httpx.Response(200, json=node0_body)
 
     # Node 1 fails with HTTP 500 error
-    node1_resp = httpx.Response(500, json={"error": "Node 1 kernel firewall lock error"})
+    node1_resp = httpx.Response(
+        500, json={"error": "Node 1 kernel firewall lock error"}
+    )
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [node0_resp, node1_resp]
 
     adapter = Actuator04Adapter(
@@ -204,7 +331,9 @@ async def test_release_workload_multinode_epoch_divergence_fails_closed():
     """Verify release_workload fails closed if nodes return divergent generation epochs."""
     priv0 = ed25519.Ed25519PrivateKey.generate()
     priv1 = ed25519.Ed25519PrivateKey.generate()
-    resolver = StubKeyResolver({"node-0": priv0.public_key(), "node-1": priv1.public_key()})
+    resolver = StubKeyResolver(
+        {"node-0": priv0.public_key(), "node-1": priv1.public_key()}
+    )
     signer = StubSigner()
 
     directive = QuarantineReleaseDirective(
@@ -230,7 +359,9 @@ async def test_release_workload_multinode_epoch_divergence_fails_closed():
         "kid": "node-0",
     }
     node0_body["signature"] = base64.urlsafe_b64encode(
-        priv0.sign(QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG + jcs_canonicalize_plan(node0_body))
+        priv0.sign(
+            QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG + jcs_canonicalize_plan(node0_body)
+        )
     ).decode("ascii")
 
     # Node 1 returns epoch_after = 3 (split-brain divergence)
@@ -244,11 +375,16 @@ async def test_release_workload_multinode_epoch_divergence_fails_closed():
         "kid": "node-1",
     }
     node1_body["signature"] = base64.urlsafe_b64encode(
-        priv1.sign(QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG + jcs_canonicalize_plan(node1_body))
+        priv1.sign(
+            QUARANTINE_RELEASE_RECEIPT_DOMAIN_TAG + jcs_canonicalize_plan(node1_body)
+        )
     ).decode("ascii")
 
     mock_transport = AsyncMock(spec=Actuator04Transport)
-    mock_transport.resolve_target_endpoints.return_value = ["https://node0", "https://node1"]
+    mock_transport.resolve_target_endpoints.return_value = [
+        "https://node0",
+        "https://node1",
+    ]
     mock_transport.post_to_endpoints.return_value = [
         httpx.Response(200, json=node0_body),
         httpx.Response(200, json=node1_body),
@@ -293,7 +429,9 @@ async def test_quarantine_workload_returns_unverified_when_unsigned():
         "rule_id": "kernel-rule-1",
         "envelope_digest": env_digest,
     }
-    mock_transport.post_to_endpoints.return_value = [httpx.Response(200, json=resp_body)]
+    mock_transport.post_to_endpoints.return_value = [
+        httpx.Response(200, json=resp_body)
+    ]
 
     adapter = Actuator04Adapter(
         transport=mock_transport,
@@ -343,3 +481,44 @@ async def test_actuate_verifies_http_200():
     assert receipt.accepted is False
     assert receipt.outcome == ActuationOutcome.REJECTED
     assert any(f["code"] == "ACTUATION_ERROR_STATUS" for f in receipt.findings)
+
+
+@pytest.mark.asyncio
+async def test_actuate_awaits_verify_and_consume_seal_and_fails_closed_on_invalid():
+    """Verify actuate() awaits verify_and_consume_seal and rejects invalid/replayed seals."""
+    mock_transport = AsyncMock(spec=Actuator04Transport)
+    adapter = Actuator04Adapter(transport=mock_transport, signer=StubSigner())
+
+    clearance = ExecutionClearance(
+        thread_id="t-seal-1",
+        decision="ALLOW",
+        decision_path="DIRECT",
+        action="EXECUTE_TOOL",
+        target="host",
+        operator_urn="urn:op",
+        issued_at=int(time.time()),
+        issued_at_provenance="CONSTRUCTION_TIME",
+        correlation_id="corr-seal-1",
+        correlation_id_source="INGRESS_MINTED",
+        governance_decision_digest="a" * 64,
+        opa_input_digest="b" * 64,
+        nonce="c" * 32,
+        params={"cmd": "probe"},
+        routing_seal="forged.routing.seal",
+    )
+
+    with patch(
+        "src.integrations.actuator_04.adapter.verify_and_consume_seal",
+        new_callable=AsyncMock,
+        side_effect=ValueError("seal replay rejected"),
+    ) as mock_verify:
+        receipt = await adapter.actuate(clearance)
+        mock_verify.assert_awaited_once_with(
+            "forged.routing.seal",
+            "EXECUTE_TOOL",
+            {"cmd": "probe"},
+        )
+    assert receipt.accepted is False
+    assert receipt.outcome == ActuationOutcome.REJECTED
+    assert any(f["code"] == "ROUTING_SEAL_INVALID" for f in receipt.findings)
+    mock_transport.post_to_endpoints.assert_not_called()

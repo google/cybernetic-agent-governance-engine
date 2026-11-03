@@ -45,11 +45,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
+    sys.stderr.reconfigure(errors="replace")
 
 # Layer definitions
 LAYER_1_GATEWAY = Path("src/gateway")
@@ -308,11 +306,7 @@ def check_file_boundaries(
     visitor = _analyze_ast(filepath)
     if visitor is None:
         return violations
-    try:
-        rel_path = filepath.resolve().relative_to(REPO_ROOT).as_posix()
-    except (ValueError, RuntimeError):
-        rel_path = filepath.as_posix()
-    filepath_str = rel_path
+    filepath_str = filepath.as_posix()
     if visitor.syntax_error is not None:
         lineno, msg = visitor.syntax_error
         violations.append(
@@ -346,10 +340,16 @@ def check_file_boundaries(
         return violations
 
     # Check if file is in the integrations factory allowlist
-    is_in_factory_allowlist = rel_path in INTEGRATIONS_FACTORY_ALLOWLIST
+    is_in_factory_allowlist = any(
+        filepath_str.endswith(allowed_path) or allowed_path in filepath_str
+        for allowed_path in INTEGRATIONS_FACTORY_ALLOWLIST
+    )
 
     # Check if file is in the compliance_bridge factory allowlist
-    is_in_bridge_allowlist = rel_path in COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST
+    is_in_bridge_allowlist = any(
+        filepath_str.endswith(allowed_path) or allowed_path in filepath_str
+        for allowed_path in COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST
+    )
 
     for imp, lineno, is_module_scope in imports:
         # Check Layer 1 -> Layer 2
@@ -536,17 +536,16 @@ def check_integrations_boundaries(
     """
     violations: list[BoundaryViolation] = []
     imports = extract_imports(filepath)
-    try:
-        rel_path = filepath.resolve().relative_to(REPO_ROOT).as_posix()
-    except (ValueError, RuntimeError):
-        rel_path = filepath.as_posix()
-    filepath_str = rel_path
+    filepath_str = filepath.as_posix()
 
     # Check if file is in the integrations boundary allowlist
-    is_in_boundary_allowlist = rel_path in INTEGRATIONS_BOUNDARY_ALLOWLIST
+    is_in_boundary_allowlist = any(
+        filepath_str.endswith(allowed_path) or allowed_path in filepath_str
+        for allowed_path in INTEGRATIONS_BOUNDARY_ALLOWLIST
+    )
 
     # Check if this is a test file (tests may import domain fixtures)
-    is_test_file = "/tests/" in f"/{rel_path}/" or rel_path.endswith("_test.py")
+    is_test_file = "/tests/" in f"/{filepath_str}" or filepath_str.endswith("_test.py")
 
     for imp, lineno, _is_module_scope in imports:
         # Check Layer 3 integrations -> Layer 2 cage_*

@@ -18,9 +18,9 @@ import sys
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(errors="replace")
 
 # Vendor brand names that must not appear in kernel executable code
 # NOTE: This list may start empty if the tree is clean. An empty-but-wired gate

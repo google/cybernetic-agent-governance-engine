@@ -79,7 +79,11 @@ class Actuator04OcsfIngestor:
 
         if v_status != ReceiptVerification.VERIFIED or finding:
             detail = finding["detail"] if finding else "Receipt signature not verified"
-            logger.error("OCSF telemetry signature verification failed: %s (status=%s)", finding, v_status)
+            logger.error(
+                "OCSF telemetry signature verification failed: %s (status=%s)",
+                finding,
+                v_status,
+            )
             raise ValueError(f"Invalid OCSF signature: {detail}")
 
         # 2. Pydantic validation
@@ -114,7 +118,11 @@ class Actuator04OcsfIngestor:
         }
 
         # 3. Emergency Escalation Boundary: Critical breakout -> Revoke SVID immediately
-        if validated.severity_id >= 4 or "escape" in validated.action.lower() or "taint" in validated.action.lower():
+        if (
+            validated.severity_id >= 4
+            or "escape" in validated.action.lower()
+            or "taint" in validated.action.lower()
+        ):
             logger.critical(
                 "Host Kernel Breakout Detected (severity=%d, action=%s). Revoking SVID %s across CAGE Gateway!",
                 validated.severity_id,
@@ -134,7 +142,10 @@ class Actuator04OcsfIngestor:
                 agent_svid=validated.agent_svid or validated.sandbox_id,
                 sandbox_id=validated.sandbox_id,
                 reason=QuarantineTriggerReason.SANDBOX_ESCAPE_ATTEMPT,
-                violation_codes=("HOST_KERNEL_BREAKOUT_TAINT", f"OCSF_SEVERITY_{validated.severity_id}"),
+                violation_codes=(
+                    "HOST_KERNEL_BREAKOUT_TAINT",
+                    f"OCSF_SEVERITY_{validated.severity_id}",
+                ),
                 issued_at=int(datetime.now(tz=timezone.utc).timestamp()),
                 correlation_id=validated.trace_id or validated.thread_id,
                 nonce=hashlib.sha256(jcs_canonicalize_plan(raw_event)).hexdigest()[:32],

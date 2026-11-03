@@ -72,7 +72,7 @@ from tests.integrations.actuator_04.conftest import (
     wait_for_health,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.live_external]
 
 
 class LiveKeyResolver:
@@ -91,9 +91,14 @@ class LiveKeyResolver:
                     if r.status_code == 200:
                         for entry in r.json().get("keys", []):
                             entry_kid = entry.get("kid")
-                            if entry.get("kty") == "OKP" and entry.get("crv") == "Ed25519":
+                            if (
+                                entry.get("kty") == "OKP"
+                                and entry.get("crv") == "Ed25519"
+                            ):
                                 x_bytes = base64.urlsafe_b64decode(entry["x"] + "==")
-                                pub_key = ed25519.Ed25519PublicKey.from_public_bytes(x_bytes)
+                                pub_key = ed25519.Ed25519PublicKey.from_public_bytes(
+                                    x_bytes
+                                )
                                 self._keys[entry_kid] = pub_key
                 except Exception:
                     pass
@@ -298,7 +303,16 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
     log_file1 = open(tmp_path / "server1.log", "wb")
     try:
         p1 = subprocess.Popen(
-            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port1), "--db-dir", str(db_dir)],
+            [
+                str(binary_path),
+                "--daemon",
+                "-H",
+                "127.0.0.1",
+                "-p",
+                str(port1),
+                "--db-dir",
+                str(db_dir),
+            ],
             cwd=str(tmp_path),
             env=env,
             stdout=log_file1,
@@ -307,7 +321,9 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
     except OSError as exc:
         log_file1.close()
         if getattr(exc, "winerror", None) == 4551:
-            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            pytest.skip(
+                f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+            )
         raise
     assert wait_for_health(f"http://127.0.0.1:{port1}", timeout=15.0)
 
@@ -355,7 +371,16 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
     log_file2 = open(tmp_path / "server2.log", "wb")
     try:
         p2 = subprocess.Popen(
-            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port2), "--db-dir", str(db_dir)],
+            [
+                str(binary_path),
+                "--daemon",
+                "-H",
+                "127.0.0.1",
+                "-p",
+                str(port2),
+                "--db-dir",
+                str(db_dir),
+            ],
             cwd=str(tmp_path),
             env=env,
             stdout=log_file2,
@@ -364,7 +389,9 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
     except OSError as exc:
         log_file2.close()
         if getattr(exc, "winerror", None) == 4551:
-            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            pytest.skip(
+                f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+            )
         raise
     assert wait_for_health(f"http://127.0.0.1:{port2}", timeout=15.0)
 
@@ -381,7 +408,9 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
             "timestamp_utc": "2026-11-03T05:01:00Z",
         }
         canonical_rel = jcs_canonicalize_plan(rel_payload)
-        sig_rel = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical_rel)
+        sig_rel = signer.sign_raw(
+            QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical_rel
+        )
         sig_rel_b64 = base64.urlsafe_b64encode(sig_rel).decode("ascii").rstrip("=")
         digest_rel = hashlib.sha256(canonical_rel).hexdigest()
 
@@ -493,7 +522,9 @@ async def test_t4_1_continuous_agent_loop_async_quarantine_injection(
     clear_local_quarantine_state()
     base_url = killswitch_server_harness["base_url"]
     signer = killswitch_server_harness["signer"]
-    svid = f"spiffe://cluster.local/ns/default/sa/continuous-agent-{uuid.uuid4().hex[:6]}"
+    svid = (
+        f"spiffe://cluster.local/ns/default/sa/continuous-agent-{uuid.uuid4().hex[:6]}"
+    )
 
     resolver = LiveKeyResolver([base_url])
     transport = Actuator04Transport(endpoint=base_url, allow_loopback=True)
@@ -522,7 +553,9 @@ async def test_t4_1_continuous_agent_loop_async_quarantine_injection(
     await asyncio.sleep(0.05)
 
     # Inject quarantine mid-stream
-    d = make_quarantine_directive(agent_svid=svid, rule_id="RULE-INJECT", target_pid=1111)
+    d = make_quarantine_directive(
+        agent_svid=svid, rule_id="RULE-INJECT", target_pid=1111
+    )
     receipt = await adapter.quarantine_workload(d)
     assert receipt.quarantined is True
     assert receipt.verification == ReceiptVerification.VERIFIED
@@ -552,7 +585,9 @@ async def test_t4_2_concurrent_quarantine_storm_20_workloads(
     )
 
     async def single_quarantine(idx: int):
-        svid = f"spiffe://cluster.local/ns/default/sa/storm-{idx}-{uuid.uuid4().hex[:6]}"
+        svid = (
+            f"spiffe://cluster.local/ns/default/sa/storm-{idx}-{uuid.uuid4().hex[:6]}"
+        )
         directive = make_quarantine_directive(
             agent_svid=svid,
             rule_id=f"RULE-STORM-{idx}",
@@ -572,7 +607,9 @@ async def test_t4_2_concurrent_quarantine_storm_20_workloads(
         assert r.verification == ReceiptVerification.VERIFIED
 
 
-def test_t4_3_rapid_ephemeral_port_recycling(tmp_path_factory: pytest.TempPathFactory) -> None:
+def test_t4_3_rapid_ephemeral_port_recycling(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
     """T4.3: 3 rapid sequential boots and shutdowns on dynamic ephemeral ports succeed without socket leaks."""
     tmp_path = tmp_path_factory.mktemp("ks_recycle")
     binary_path = resolve_killswitch_binary()
@@ -598,7 +635,16 @@ def test_t4_3_rapid_ephemeral_port_recycling(tmp_path_factory: pytest.TempPathFa
 
         try:
             p = subprocess.Popen(
-                [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port), "--db-dir", str(db_dir)],
+                [
+                    str(binary_path),
+                    "--daemon",
+                    "-H",
+                    "127.0.0.1",
+                    "-p",
+                    str(port),
+                    "--db-dir",
+                    str(db_dir),
+                ],
                 cwd=str(tmp_path),
                 env=env,
                 stdout=log_file,
@@ -607,7 +653,9 @@ def test_t4_3_rapid_ephemeral_port_recycling(tmp_path_factory: pytest.TempPathFa
         except OSError as exc:
             log_file.close()
             if getattr(exc, "winerror", None) == 4551:
-                pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+                pytest.skip(
+                    f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+                )
             raise
         try:
             assert wait_for_health(f"http://127.0.0.1:{port}", timeout=10.0)
@@ -641,7 +689,9 @@ async def test_cluster_broadcast_quarantine_fanout(
         require_signed_receipts=True,
     )
 
-    svid = f"spiffe://cluster.local/ns/default/sa/cluster-broadcast-{uuid.uuid4().hex[:6]}"
+    svid = (
+        f"spiffe://cluster.local/ns/default/sa/cluster-broadcast-{uuid.uuid4().hex[:6]}"
+    )
     directive = make_quarantine_directive(
         agent_svid=svid,
         rule_id="RULE-CLUSTER-BROADCAST",

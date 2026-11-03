@@ -85,6 +85,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 # Test Helpers & Stubs
 # ---------------------------------------------------------------------------
 
+
 class StubKeyResolver:
     """In-memory key resolver for tests."""
 
@@ -117,6 +118,7 @@ class StubSigner:
 # 1. ArmContainmentRing & advance_workload_epoch Stress Tests
 # ===========================================================================
 
+
 def test_arm_containment_ring_stale_epoch_replay_attack():
     """Verify that stale epoch messages cannot be replayed after epoch advancement."""
     seed = b"k" * 32
@@ -139,7 +141,10 @@ def test_arm_containment_ring_stale_epoch_replay_attack():
     # Intermediate stale epochs (2..5) must also be rejected
     for stale_epoch in range(1, 6):
         sig_stale = ring.sign_message(arm_id, stale_epoch, ArmRole.WORKER, msg)
-        assert ring.verify_message(arm_id, stale_epoch, ArmRole.WORKER, msg, sig_stale) is False
+        assert (
+            ring.verify_message(arm_id, stale_epoch, ArmRole.WORKER, msg, sig_stale)
+            is False
+        )
 
     # Current epoch 6 signature MUST be accepted
     sig_epoch_6 = ring.sign_message(arm_id, 6, ArmRole.WORKER, msg)
@@ -182,9 +187,11 @@ async def test_advance_workload_epoch_concurrent_release_races_local():
     results = await asyncio.gather(*[_worker(ep) for ep in epochs_to_set])
     final_epoch = await get_workload_min_epoch(agent_svid)
 
-    assert final_epoch == max_expected, f"Expected final epoch {max_expected}, got {final_epoch}"
+    assert final_epoch == max_expected, (
+        f"Expected final epoch {max_expected}, got {final_epoch}"
+    )
     # Every return value must be >= the epoch requested
-    for req_ep, res_ep in zip(epochs_to_set, results):
+    for req_ep, res_ep in zip(epochs_to_set, results, strict=False):
         assert res_ep >= req_ep
 
 
@@ -200,13 +207,17 @@ async def test_advance_workload_epoch_concurrent_release_races_redis():
 
     async def _worker(epoch: int) -> int:
         await asyncio.sleep(random.uniform(0.001, 0.01))
-        return await advance_workload_epoch(agent_svid, epoch, redis_client=redis_client)
+        return await advance_workload_epoch(
+            agent_svid, epoch, redis_client=redis_client
+        )
 
     results = await asyncio.gather(*[_worker(ep) for ep in epochs_to_set])
     final_epoch = await get_workload_min_epoch(agent_svid, redis_client=redis_client)
 
-    assert final_epoch == max_expected, f"Expected final epoch {max_expected}, got {final_epoch}"
-    for req_ep, res_ep in zip(epochs_to_set, results):
+    assert final_epoch == max_expected, (
+        f"Expected final epoch {max_expected}, got {final_epoch}"
+    )
+    for req_ep, res_ep in zip(epochs_to_set, results, strict=False):
         assert res_ep >= req_ep
 
 
@@ -237,6 +248,7 @@ async def test_advance_workload_epoch_rollback_attempts():
 # ===========================================================================
 # 2. Ingress Quarantine Enforcement Stress Tests
 # ===========================================================================
+
 
 @pytest.mark.asyncio
 async def test_ingress_quarantine_governance_validate_action():
@@ -399,7 +411,10 @@ async def test_ingress_quarantine_mcp_middleware():
 async def test_ingress_quarantine_tools_execute_fail_closed():
     """Verify /tools/execute rejects quarantined workload with HTTP 403."""
     clear_local_quarantine_state()
-    from src.gateway.server.mcp_tool_server import ToolExecutionRequest, execute_tool_endpoint
+    from src.gateway.server.mcp_tool_server import (
+        ToolExecutionRequest,
+        execute_tool_endpoint,
+    )
 
     svid = "spiffe://cluster.local/ns/agents/sa/tools-agent"
     thread_id = "thread-tools-1"
@@ -435,8 +450,15 @@ async def test_ingress_quarantine_tools_execute_fail_closed():
         params={"reason": "lockout", "thread_id": thread_id},
     )
 
-    with patch("src.gateway.server.workload_identity.extract_client_identity", return_value=svid), \
-         patch("src.gateway.server.workload_identity.load_identity_policy") as mock_policy:
+    with (
+        patch(
+            "src.gateway.server.workload_identity.extract_client_identity",
+            return_value=svid,
+        ),
+        patch(
+            "src.gateway.server.workload_identity.load_identity_policy"
+        ) as mock_policy,
+    ):
         mock_policy.return_value.trusted = {svid}
         resp = await execute_tool_endpoint(req_body, mock_request)
         assert resp.status_code == 403
@@ -448,6 +470,7 @@ async def test_ingress_quarantine_tools_execute_fail_closed():
 # ===========================================================================
 # 3. Quorum Release Authorization Stress Tests
 # ===========================================================================
+
 
 def test_quorum_release_directive_insufficient_quorum_fails_closed():
     """Verify that quorum_count < 2 strictly raises ValueError (fail-closed)."""
@@ -548,7 +571,10 @@ def test_quorum_release_receipt_monotonic_epoch_invariant():
 @pytest.mark.asyncio
 async def test_actuator_04_adapter_forged_release_signature_fails_closed():
     """Verify that an invalid Ed25519 signature on a release receipt is rejected."""
-    priv, pub = ed25519.Ed25519PrivateKey.generate(), ed25519.Ed25519PrivateKey.generate().public_key()
+    _priv, pub = (
+        ed25519.Ed25519PrivateKey.generate(),
+        ed25519.Ed25519PrivateKey.generate().public_key(),
+    )
     resolver = StubKeyResolver({"daemon-0": pub})
     signer = StubSigner()
 
@@ -618,6 +644,7 @@ async def test_actuator_04_adapter_forged_release_signature_fails_closed():
 # 4. Adversarial Findings: Gap Demonstrations & Edge Cases
 # ===========================================================================
 
+
 @pytest.mark.asyncio
 async def test_quarantine_svid_case_sensitivity_gap(monkeypatch):
     """Verify that quarantine_actuator normalizes SVID casing with .strip().lower().
@@ -648,10 +675,15 @@ async def test_quarantine_svid_case_sensitivity_gap(monkeypatch):
     await dispatch_quarantine(directive, redis_client=redis_client)
 
     # Upper case matches
-    assert await is_workload_quarantined(agent_svid=svid_upper, redis_client=redis_client) is True
+    assert (
+        await is_workload_quarantined(agent_svid=svid_upper, redis_client=redis_client)
+        is True
+    )
 
     # Lower case also matches because quarantine_actuator normalizes agent_svid
-    case_matched = await is_workload_quarantined(agent_svid=svid_lower, redis_client=redis_client)
+    case_matched = await is_workload_quarantined(
+        agent_svid=svid_lower, redis_client=redis_client
+    )
     assert case_matched is True
 
 
@@ -700,7 +732,10 @@ async def test_epoch_bypass_when_header_omitted_or_malformed(monkeypatch):
         headers={"x-cage-agent-svid": svid},
     )
     assert resp_omitted.status_code == 403
-    assert resp_omitted.json().get("error") in ("missing_workload_epoch", "stale_workload_epoch")
+    assert resp_omitted.json().get("error") in (
+        "missing_workload_epoch",
+        "stale_workload_epoch",
+    )
 
     # Attacker sends malformed x-cage-epoch: fails closed with HTTP 403 missing_workload_epoch
     resp_malformed = client.post(
@@ -709,5 +744,7 @@ async def test_epoch_bypass_when_header_omitted_or_malformed(monkeypatch):
         headers={"x-cage-agent-svid": svid, "x-cage-epoch": "invalid_epoch_string"},
     )
     assert resp_malformed.status_code == 403
-    assert resp_malformed.json().get("error") in ("missing_workload_epoch", "stale_workload_epoch")
-
+    assert resp_malformed.json().get("error") in (
+        "missing_workload_epoch",
+        "stale_workload_epoch",
+    )

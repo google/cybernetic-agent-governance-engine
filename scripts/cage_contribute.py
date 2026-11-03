@@ -61,16 +61,27 @@ from typing import Any
 # Reconfigure stdout/stderr to UTF-8 on Windows with error replacement to prevent cp1252 crashes
 if sys.platform == "win32":
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(errors="replace")
 
 # ---------------------------------------------------------------------------
 # Project Standards & Constants (AGENTS.md & CONTRIBUTING.md)
 # ---------------------------------------------------------------------------
 
 CONVENTIONAL_TYPES: frozenset[str] = frozenset(
-    {"feat", "fix", "docs", "style", "refactor", "perf", "test", "chore", "ci", "revert"}
+    {
+        "feat",
+        "fix",
+        "docs",
+        "style",
+        "refactor",
+        "perf",
+        "test",
+        "chore",
+        "ci",
+        "revert",
+    }
 )
 
 CONVENTIONAL_SCOPES: frozenset[str] = frozenset(
@@ -374,7 +385,9 @@ def validate_branch_name(branch: str) -> tuple[bool, str]:
 
         reasons = []
         if "/" not in branch:
-            reasons.append("Missing required '<type>/' prefix (e.g. feat/, fix/, docs/).")
+            reasons.append(
+                "Missing required '<type>/' prefix (e.g. feat/, fix/, docs/)."
+            )
         elif prefix_part not in {
             "feat",
             "fix",
@@ -403,7 +416,11 @@ def validate_branch_name(branch: str) -> tuple[bool, str]:
             if desc_part.startswith("-") or desc_part.endswith("-"):
                 reasons.append("Description must not start or end with a hyphen.")
 
-        reason_str = " ".join(reasons) if reasons else "Does not match pattern '<type>/<kebab-case-desc-under-30-chars>'."
+        reason_str = (
+            " ".join(reasons)
+            if reasons
+            else "Does not match pattern '<type>/<kebab-case-desc-under-30-chars>'."
+        )
         return False, f"Branch name '{branch}' violates naming convention: {reason_str}"
 
     return True, ""
@@ -520,7 +537,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
     """Install git commit template, hooks, verify prerequisites, and init .env."""
     repo_root = find_repo_root()
     git_bin = get_git_executable()
-    print(f"🔧 Initializing Google-Standard CAGE Contributor Environment at: {repo_root}")
+    print(
+        f"🔧 Initializing Google-Standard CAGE Contributor Environment at: {repo_root}"
+    )
 
     # 1. Commit template
     gitmessage_path = repo_root / ".gitmessage"
@@ -564,7 +583,9 @@ fi
 """
     commit_msg_hook.write_text(commit_msg_script, encoding="utf-8")
     try:
-        commit_msg_hook.chmod(commit_msg_hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        commit_msg_hook.chmod(
+            commit_msg_hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        )
     except Exception:
         pass
     print("  ✅ Installed .git/hooks/commit-msg hook.")
@@ -613,7 +634,9 @@ exit "$status"
 """
     pre_push_hook.write_text(pre_push_script, encoding="utf-8")
     try:
-        pre_push_hook.chmod(pre_push_hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        pre_push_hook.chmod(
+            pre_push_hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        )
     except Exception:
         pass
     print("  ✅ Installed .git/hooks/pre-push hook.")
@@ -624,9 +647,13 @@ exit "$status"
     if not env_file.exists():
         if env_example.exists():
             shutil.copy(env_example, env_file)
-            print("  ✅ Initialized .env from .env.example (please review and populate secrets).")
+            print(
+                "  ✅ Initialized .env from .env.example (please review and populate secrets)."
+            )
         else:
-            env_file.write_text("# CAGE Local Environment Variables\n", encoding="utf-8")
+            env_file.write_text(
+                "# CAGE Local Environment Variables\n", encoding="utf-8"
+            )
             print("  ✅ Created new .env file.")
     else:
         print("  [INFO] Existing .env preserved (zero-overwrite guarantee).")
@@ -636,9 +663,15 @@ exit "$status"
         uv_bin = shutil.which("uv")
         if uv_bin:
             print("  📦 Running 'uv sync --all-groups --all-extras'...")
-            run_cmd([uv_bin, "sync", "--all-groups", "--all-extras"], cwd=repo_root, capture_output=False)
+            run_cmd(
+                [uv_bin, "sync", "--all-groups", "--all-extras"],
+                cwd=repo_root,
+                capture_output=False,
+            )
         else:
-            print("  ⚠️  'uv' not found on PATH. Install uv to run dependency synchronization.")
+            print(
+                "  ⚠️  'uv' not found on PATH. Install uv to run dependency synchronization."
+            )
 
     print("\n✨ Setup complete! Developer environment is ready.")
     return 0
@@ -663,14 +696,18 @@ def cmd_branch(args: argparse.Namespace) -> int:
         return 1
 
     base_branch = args.base or "main"
-    print(f"🌿 Creating and checking out branch '{branch_name}' from '{base_branch}'...")
+    print(
+        f"🌿 Creating and checking out branch '{branch_name}' from '{base_branch}'..."
+    )
 
     res = run_cmd([git_bin, "checkout", "-b", branch_name, base_branch], cwd=repo_root)
     if res.returncode != 0:
         # If branch already exists, try standard checkout
         res_checkout = run_cmd([git_bin, "checkout", branch_name], cwd=repo_root)
         if res_checkout.returncode != 0:
-            print(f"❌ Failed to checkout branch '{branch_name}':\n{res.stderr or res.stdout}")
+            print(
+                f"❌ Failed to checkout branch '{branch_name}':\n{res.stderr or res.stdout}"
+            )
             return 1
 
     print(f"✅ Successfully checked out branch '{branch_name}'.")
@@ -752,52 +789,152 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     checks: list[tuple[str, list[str], bool]] = [
         # (Name, Command, Fail-Closed Required)
-        ("License Headers (patch_license.py)", [sys.executable, "scripts/patch_license.py"], True),
-        ("Gate G3: Import Boundaries (check_import_boundaries.py)", [sys.executable, "scripts/check_import_boundaries.py"], True),
-        ("STPA Freshness (check_stpa_freshness.py)", [sys.executable, "scripts/check_stpa_freshness.py"], True),
-        ("Gate G9: Doc References (check_doc_references.py)", [sys.executable, "scripts/check_doc_references.py"], True),
-        ("Gate G6: Domain Literals (check_domain_literals.py)", [sys.executable, "scripts/check_domain_literals.py"], False),
-        ("Gate G8: Vendor Brands (check_vendor_brands.py)", [sys.executable, "scripts/check_vendor_brands.py"], False),
-        ("Model-Free Install Gate (check_model_free_install.py)", [sys.executable, "scripts/check_model_free_install.py"], False),
+        (
+            "License Headers (patch_license.py)",
+            [sys.executable, "scripts/patch_license.py"],
+            True,
+        ),
+        (
+            "Gate G3: Import Boundaries (check_import_boundaries.py)",
+            [sys.executable, "scripts/check_import_boundaries.py"],
+            True,
+        ),
+        (
+            "STPA Freshness (check_stpa_freshness.py)",
+            [sys.executable, "scripts/check_stpa_freshness.py"],
+            True,
+        ),
+        (
+            "Gate G9: Doc References (check_doc_references.py)",
+            [sys.executable, "scripts/check_doc_references.py"],
+            True,
+        ),
+        (
+            "Gate G6: Domain Literals (check_domain_literals.py)",
+            [sys.executable, "scripts/check_domain_literals.py"],
+            False,
+        ),
+        (
+            "Gate G8: Vendor Brands (check_vendor_brands.py)",
+            [sys.executable, "scripts/check_vendor_brands.py"],
+            False,
+        ),
+        (
+            "Model-Free Install Gate (check_model_free_install.py)",
+            [sys.executable, "scripts/check_model_free_install.py"],
+            False,
+        ),
+        (
+            "Conformance Sync Gate (check_conformance_sync.py)",
+            [sys.executable, "scripts/check_conformance_sync.py"],
+            True,
+        ),
+        (
+            "Lula AI 600-1 Manifest Gate (check_ai600_lula_manifests.py)",
+            [sys.executable, "scripts/check_ai600_lula_manifests.py"],
+            False,
+        ),
     ]
 
     # Additional gates for --all
     if getattr(args, "all", False) and not getattr(args, "fast", False):
         uv_bin = shutil.which("uv")
         if uv_bin:
-            checks.append((
-                "Bandit SAST Security Scan",
-                [uv_bin, "run", "--with", "bandit", "bandit", "-r", "src/", "scripts/", "-c", "pyproject.toml", "-ll", "-ii"],
-                True
-            ))
-            checks.append((
-                "Pytest Local Unit Suite",
-                [uv_bin, "run", "pytest", "tests/", "-m", "local or unit", "-p", "no:langsmith", "-q"],
-                True
-            ))
+            checks.append(
+                (
+                    "Bandit SAST Security Scan",
+                    [
+                        uv_bin,
+                        "run",
+                        "--with",
+                        "bandit",
+                        "bandit",
+                        "-r",
+                        "src/",
+                        "scripts/",
+                        "-c",
+                        "pyproject.toml",
+                        "-ll",
+                        "-ii",
+                    ],
+                    True,
+                )
+            )
+            checks.append(
+                (
+                    "Pytest Local Unit Suite",
+                    [
+                        uv_bin,
+                        "run",
+                        "pytest",
+                        "tests/",
+                        "-m",
+                        "local or unit",
+                        "-p",
+                        "no:langsmith",
+                        "-q",
+                    ],
+                    True,
+                )
+            )
         else:
-            checks.append((
-                "Pytest Local Unit Suite",
-                [sys.executable, "-m", "pytest", "tests/", "-m", "local or unit", "-q"],
-                True
-            ))
+            checks.append(
+                (
+                    "Pytest Local Unit Suite",
+                    [
+                        sys.executable,
+                        "-m",
+                        "pytest",
+                        "tests/",
+                        "-m",
+                        "local or unit",
+                        "-q",
+                    ],
+                    True,
+                )
+            )
 
     # Optional raptor check
     if getattr(args, "raptor", False):
-        raptor_script = Path(r"D:\docker\raptor\Invoke-RaptorScan.ps1")
-        if raptor_script.exists():
-            checks.append((
-                "RAPTOR Security Audit",
-                ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(raptor_script), "-Mode", "all"],
-                True
-            ))
+        raptor_env = os.environ.get("CAGE_RAPTOR_SCRIPT", "").strip()
+        raptor_bin = shutil.which("raptor")
+        if raptor_env and Path(raptor_env).exists():
+            checks.append(
+                (
+                    "RAPTOR Security Audit",
+                    [
+                        "powershell",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        raptor_env,
+                        "-Mode",
+                        "all",
+                    ],
+                    True,
+                )
+            )
+        elif raptor_bin:
+            checks.append(
+                (
+                    "RAPTOR Security Audit",
+                    [raptor_bin, "scan", "--repo", str(repo_root)],
+                    True,
+                )
+            )
         else:
-            print("  ⚠️ RAPTOR scan script not found at D:\\docker\\raptor\\Invoke-RaptorScan.ps1; skipping.")
+            print(
+                "  ⚠️ RAPTOR CLI/script not configured (set CAGE_RAPTOR_SCRIPT or install raptor); skipping."
+            )
 
     overall_success = True
     for name, cmd, is_required in checks:
         # Check if target script exists if first arg after python
-        if len(cmd) > 1 and cmd[1].startswith("scripts/") and not (repo_root / cmd[1]).exists():
+        if (
+            len(cmd) > 1
+            and cmd[1].startswith("scripts/")
+            and not (repo_root / cmd[1]).exists()
+        ):
             continue
 
         print(f"⏳ Running {name}...")
@@ -819,7 +956,9 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("\n✨ All pre-commit verification checks passed cleanly!")
         return 0
     else:
-        print("\n❌ One or more required architectural gates failed. Please fix before submitting.")
+        print(
+            "\n❌ One or more required architectural gates failed. Please fix before submitting."
+        )
         return 1
 
 
@@ -832,7 +971,9 @@ def cmd_cloudbuild(args: argparse.Namespace) -> int:
 
     short_sha = get_short_sha(repo_root)
     if short_sha == "UNKNOWN":
-        print("❌ Error: Refusing to build outside a valid git checkout (immutable SHA tag required).")
+        print(
+            "❌ Error: Refusing to build outside a valid git checkout (immutable SHA tag required)."
+        )
         return 1
 
     dockerfile = args.dockerfile
@@ -888,7 +1029,9 @@ def cmd_cloudbuild(args: argparse.Namespace) -> int:
 
     gcloud_bin = shutil.which("gcloud")
     if not gcloud_bin:
-        print("❌ 'gcloud' CLI not found on PATH. Run with --dry-run or install Google Cloud SDK.")
+        print(
+            "❌ 'gcloud' CLI not found on PATH. Run with --dry-run or install Google Cloud SDK."
+        )
         return 1
 
     res = run_cmd(cmd, cwd=repo_root, capture_output=False)
@@ -901,7 +1044,15 @@ def cmd_verify_service_sync(args: argparse.Namespace) -> int:
     build_script = repo_root / "scripts" / "build_images.sh"
     render_script = repo_root / "scripts" / "render_image_digests.sh"
     main_tf = repo_root / "infra" / "targets" / "gcp-gke" / "main.tf"
-    fixture_tfvars = repo_root / "infra" / "targets" / "gcp-gke" / "tests" / "fixtures" / "image_digests.tfvars"
+    fixture_tfvars = (
+        repo_root
+        / "infra"
+        / "targets"
+        / "gcp-gke"
+        / "tests"
+        / "fixtures"
+        / "image_digests.tfvars"
+    )
 
     required_files = [
         ("build_images.sh", build_script),
@@ -935,7 +1086,9 @@ def cmd_verify_service_sync(args: argparse.Namespace) -> int:
 
     # 2. Parse render_image_digests.sh FIRST_PARTY_IMAGES and THIRD_PARTY_TAGGED_IMAGES
     render_first_party = set(extract_bash_array(render_script, "FIRST_PARTY_IMAGES"))
-    render_third_party = set(extract_bash_array(render_script, "THIRD_PARTY_TAGGED_IMAGES"))
+    render_third_party = set(
+        extract_bash_array(render_script, "THIRD_PARTY_TAGGED_IMAGES")
+    )
     catalogue = render_first_party | render_third_party
 
     # 3. Parse main.tf required_image_digests
@@ -981,7 +1134,9 @@ def cmd_verify_service_sync(args: argparse.Namespace) -> int:
             print(f"  • {err}")
         return 1
 
-    print("✅ Service catalogues across build_images.sh, render_image_digests.sh, and Terraform are fully in sync!")
+    print(
+        "✅ Service catalogues across build_images.sh, render_image_digests.sh, and Terraform are fully in sync!"
+    )
     return 0
 
 
@@ -1075,7 +1230,9 @@ class {class_name}(MutatingTier):
         pass
 """
         tier_file.write_text(tier_code, encoding="utf-8")
-        print(f"✅ Scaffolded Phase {phase} tier at: {tier_file.relative_to(repo_root)}")
+        print(
+            f"✅ Scaffolded Phase {phase} tier at: {tier_file.relative_to(repo_root)}"
+        )
 
     elif scaffold_type == "seam":
         seam_type = args.seam_type.lower()
@@ -1084,7 +1241,10 @@ class {class_name}(MutatingTier):
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
         init_file = pkg_dir / "__init__.py"
-        init_file.write_text(f"{APACHE_LICENSE_HEADER}\n\"\"\"Integration adapter for {seam_name}.\"\"\"\n", encoding="utf-8")
+        init_file.write_text(
+            f'{APACHE_LICENSE_HEADER}\n"""Integration adapter for {seam_name}."""\n',
+            encoding="utf-8",
+        )
 
         adapter_file = pkg_dir / "adapter.py"
         adapter_code = f"""{APACHE_LICENSE_HEADER}
@@ -1231,7 +1391,9 @@ class EvidenceAdapter(EvidenceCollector):
 
         adapter_file.write_text(adapter_code, encoding="utf-8")
         readme_file = pkg_dir / "README.md"
-        readme_file.write_text(f"# {seam_name}\n\nLayer 3 {seam_type} seam adapter.\n", encoding="utf-8")
+        readme_file.write_text(
+            f"# {seam_name}\n\nLayer 3 {seam_type} seam adapter.\n", encoding="utf-8"
+        )
         print(f"✅ Scaffolded {seam_type} seam at: {pkg_dir.relative_to(repo_root)}")
 
     return 0
@@ -1245,22 +1407,32 @@ def cmd_pr(args: argparse.Namespace) -> int:
     curr_branch = get_current_branch(repo_root)
     valid, reason = validate_branch_name(curr_branch)
     if not valid:
-        print(f"\n❌ Cannot open PR from invalid branch '{curr_branch}':\n   {reason}\n")
+        print(
+            f"\n❌ Cannot open PR from invalid branch '{curr_branch}':\n   {reason}\n"
+        )
         return 1
 
     if not getattr(args, "allow_dirty", False) and not is_working_tree_clean(repo_root):
-        print("\n❌ Working tree has uncommitted changes. Commit or stash them before creating a PR.\n")
+        print(
+            "\n❌ Working tree has uncommitted changes. Commit or stash them before creating a PR.\n"
+        )
         return 1
 
     base_branch = args.base or "main"
     # Squash-merge guard check: verify zero two-parent merge commits between base and HEAD
-    res_parents = run_cmd([git_bin, "rev-list", "--parents", f"{base_branch}..HEAD"], cwd=repo_root)
+    res_parents = run_cmd(
+        [git_bin, "rev-list", "--parents", f"{base_branch}..HEAD"], cwd=repo_root
+    )
     if res_parents.returncode == 0:
         for line in res_parents.stdout.strip().splitlines():
             parts = line.strip().split()
             if len(parts) > 2:
-                print(f"\n❌ Squash-Merge Guard Violation: Found two-parent merge commit: {parts[0]}")
-                print("   Merge commits on feature branches are strictly forbidden. Rebase or squash instead.")
+                print(
+                    f"\n❌ Squash-Merge Guard Violation: Found two-parent merge commit: {parts[0]}"
+                )
+                print(
+                    "   Merge commits on feature branches are strictly forbidden. Rebase or squash instead."
+                )
                 return 1
 
     title = args.title or ""
@@ -1282,21 +1454,41 @@ def cmd_pr(args: argparse.Namespace) -> int:
     print(f"🚀 Pushing branch '{curr_branch}' to origin...")
     if args.dry_run:
         print(f"  [Dry Run] git push -u origin {curr_branch}")
-        print(f"  [Dry Run] gh pr create --base {base_branch} --head {curr_branch} --title \"{title}\" --body \"{body}\"")
+        print(
+            f'  [Dry Run] gh pr create --base {base_branch} --head {curr_branch} --title "{title}" --body "{body}"'
+        )
         return 0
 
-    run_cmd([git_bin, "push", "-u", "origin", curr_branch], cwd=repo_root, capture_output=False)
+    run_cmd(
+        [git_bin, "push", "-u", "origin", curr_branch],
+        cwd=repo_root,
+        capture_output=False,
+    )
 
     gh_bin = shutil.which("gh")
     if gh_bin:
         res_gh = run_cmd(
-            [gh_bin, "pr", "create", "--base", base_branch, "--head", curr_branch, "--title", title, "--body", body],
+            [
+                gh_bin,
+                "pr",
+                "create",
+                "--base",
+                base_branch,
+                "--head",
+                curr_branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
             cwd=repo_root,
             capture_output=False,
         )
         return res_gh.returncode
     else:
-        print("\n[INFO] Branch pushed. 'gh' CLI not found; open pull request in browser or install gh.")
+        print(
+            "\n[INFO] Branch pushed. 'gh' CLI not found; open pull request in browser or install gh."
+        )
         return 0
 
 
@@ -1308,7 +1500,9 @@ def cmd_release_tag(args: argparse.Namespace) -> int:
 
     tag_regex = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.-]+)?$")
     if not tag_regex.match(tag):
-        print(f"❌ Invalid release tag format: '{tag}'. Expected 'v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]'.")
+        print(
+            f"❌ Invalid release tag format: '{tag}'. Expected 'v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]'."
+        )
         return 1
 
     # Verify CHANGELOG contains tag
@@ -1317,7 +1511,9 @@ def cmd_release_tag(args: argparse.Namespace) -> int:
         text = changelog_path.read_text(encoding="utf-8")
         clean_ver = tag.lstrip("v")
         if tag not in text and clean_ver not in text:
-            print(f"❌ CHANGELOG.md does not contain release entry for version '{tag}' ({clean_ver}).")
+            print(
+                f"❌ CHANGELOG.md does not contain release entry for version '{tag}' ({clean_ver})."
+            )
             print("   Update CHANGELOG.md before tagging the release.")
             return 1
     else:
@@ -1358,11 +1554,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if git_valid:
         branch = get_current_branch(repo_root)
         valid_branch, _ = validate_branch_name(branch)
-        branch_icon = "✅" if valid_branch else ("⚠️" if branch in PROTECTED_BRANCHES else "❌")
+        branch_icon = (
+            "✅" if valid_branch else ("⚠️" if branch in PROTECTED_BRANCHES else "❌")
+        )
         print(f"  • Git Executable:   {git_bin}")
         print(f"  • Git Version:      {git_ver}")
         print(f"  • Current Branch:   {branch_icon} {branch}")
-        print(f"  • Working Tree:     {'✅ Clean' if is_working_tree_clean(repo_root) else '⚠️ Uncommitted changes'}")
+        print(
+            f"  • Working Tree:     {'✅ Clean' if is_working_tree_clean(repo_root) else '⚠️ Uncommitted changes'}"
+        )
     else:
         print(f"  • Git Executable:   ❌ Not found ({git_bin})")
         print(f"  • Git Version:      ❌ {git_ver}")
@@ -1372,7 +1572,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 2. Python
     py_ver = platform.python_version()
     py_valid = sys.version_info >= (3, 10)
-    print(f"  • Python Version:   {'✅' if py_valid else '❌'} {py_ver} ({sys.executable})")
+    print(
+        f"  • Python Version:   {'✅' if py_valid else '❌'} {py_ver} ({sys.executable})"
+    )
 
     # 3. uv
     uv_bin = shutil.which("uv")
@@ -1383,7 +1585,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except (FileNotFoundError, OSError):
             print("  • uv Package Mgr:   ⚠️  CLI found, but not executable")
     else:
-        print("  • uv Package Mgr:   ⚠️  Not installed (install via https://astral.sh/uv/)")
+        print(
+            "  • uv Package Mgr:   ⚠️  Not installed (install via https://astral.sh/uv/)"
+        )
 
     # 4. Node & npm
     node_bin = shutil.which("node")
@@ -1395,17 +1599,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except (FileNotFoundError, OSError):
             print("  • Node.js & npm:    ⚠️  CLI found, but not executable")
     else:
-        print("  • Node.js & npm:    ⚠️  Not installed (required for src/agentsight-ui/)")
+        print(
+            "  • Node.js & npm:    ⚠️  Not installed (required for src/agentsight-ui/)"
+        )
 
     # 5. Docker
     docker_bin = shutil.which("docker")
     if docker_bin:
         try:
-            docker_info = run_cmd([docker_bin, "info", "--format", "{{.ServerVersion}}"])
+            docker_info = run_cmd(
+                [docker_bin, "info", "--format", "{{.ServerVersion}}"]
+            )
             if docker_info.returncode == 0:
-                print(f"  • Docker Daemon:    ✅ Running (Engine {docker_info.stdout.strip()})")
+                print(
+                    f"  • Docker Daemon:    ✅ Running (Engine {docker_info.stdout.strip()})"
+                )
             else:
-                print("  • Docker Daemon:    ⚠️  CLI found, but daemon is not responding")
+                print(
+                    "  • Docker Daemon:    ⚠️  CLI found, but daemon is not responding"
+                )
         except (FileNotFoundError, OSError):
             print("  • Docker Daemon:    ⚠️  Docker CLI found, but not executable")
     else:
@@ -1415,17 +1627,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     gcloud_bin = shutil.which("gcloud")
     if gcloud_bin:
         try:
-            proj = run_cmd([gcloud_bin, "config", "get-value", "project"]).stdout.strip()
-            print(f"  • Google Cloud SDK: ✅ Installed (active project: {proj or 'none'})")
+            proj = run_cmd(
+                [gcloud_bin, "config", "get-value", "project"]
+            ).stdout.strip()
+            print(
+                f"  • Google Cloud SDK: ✅ Installed (active project: {proj or 'none'})"
+            )
         except (FileNotFoundError, OSError):
             print("  • Google Cloud SDK: ⚠️  gcloud CLI found, but not executable")
     else:
-        print("  • Google Cloud SDK: [INFO] Not installed (needed for Cloud Build submissions)")
+        print(
+            "  • Google Cloud SDK: [INFO] Not installed (needed for Cloud Build submissions)"
+        )
 
     # 7. Git Hooks
     hooks_dir = get_git_hooks_dir(repo_root)
-    hooks_installed = (hooks_dir / "commit-msg").exists() and (hooks_dir / "pre-push").exists()
-    print(f"  • CAGE Git Hooks:   {'✅ Installed' if hooks_installed else '❌ Missing (run: python scripts/cage_contribute.py setup)'}")
+    hooks_installed = (hooks_dir / "commit-msg").exists() and (
+        hooks_dir / "pre-push"
+    ).exists()
+    print(
+        f"  • CAGE Git Hooks:   {'✅ Installed' if hooks_installed else '❌ Missing (run: python scripts/cage_contribute.py setup)'}"
+    )
 
     if not py_valid or not hooks_installed or not git_valid:
         print("\n❌ One or more critical environment checks failed.")
@@ -1446,91 +1668,178 @@ def build_parser() -> argparse.ArgumentParser:
         prog="cage_contribute.py",
         description="Google-standard contributor automation CLI for Cybernetic Governance Engine.",
     )
-    subparsers = parser.add_subparsers(dest="subcommand", required=True, help="Available subcommands")
+    subparsers = parser.add_subparsers(
+        dest="subcommand", required=True, help="Available subcommands"
+    )
 
     # setup
-    p_setup = subparsers.add_parser("setup", help="Configure git hooks, commit template, and .env")
-    p_setup.add_argument("--sync", action="store_true", help="Run 'uv sync --all-groups --all-extras'")
+    p_setup = subparsers.add_parser(
+        "setup", help="Configure git hooks, commit template, and .env"
+    )
+    p_setup.add_argument(
+        "--sync", action="store_true", help="Run 'uv sync --all-groups --all-extras'"
+    )
     p_setup.set_defaults(func=cmd_setup)
 
     # branch
-    p_branch = subparsers.add_parser("branch", help="Validate and checkout a CAGE feature branch")
-    p_branch.add_argument("type", help="Branch type (feat, fix, docs, refactor, etc.) or full branch name")
-    p_branch.add_argument("description", nargs="?", default="", help="Kebab-case description (<= 30 chars)")
+    p_branch = subparsers.add_parser(
+        "branch", help="Validate and checkout a CAGE feature branch"
+    )
+    p_branch.add_argument(
+        "type", help="Branch type (feat, fix, docs, refactor, etc.) or full branch name"
+    )
+    p_branch.add_argument(
+        "description",
+        nargs="?",
+        default="",
+        help="Kebab-case description (<= 30 chars)",
+    )
     p_branch.add_argument("--base", default="main", help="Base branch (default: main)")
     p_branch.set_defaults(func=cmd_branch)
 
     # validate-commit
-    p_val_commit = subparsers.add_parser("validate-commit", help="Validate a Conventional Commits message")
-    p_val_commit.add_argument("commit_msg_file", nargs="?", help="Path to commit message file (from git hook)")
-    p_val_commit.add_argument("-m", "--message", help="Commit message string to validate")
+    p_val_commit = subparsers.add_parser(
+        "validate-commit", help="Validate a Conventional Commits message"
+    )
+    p_val_commit.add_argument(
+        "commit_msg_file", nargs="?", help="Path to commit message file (from git hook)"
+    )
+    p_val_commit.add_argument(
+        "-m", "--message", help="Commit message string to validate"
+    )
     p_val_commit.add_argument("-F", "--file", help="File containing commit message")
-    p_val_commit.add_argument("-q", "--quiet", action="store_true", help="Quiet output on success")
+    p_val_commit.add_argument(
+        "-q", "--quiet", action="store_true", help="Quiet output on success"
+    )
     p_val_commit.set_defaults(func=cmd_validate_commit)
 
     # commit
-    p_commit = subparsers.add_parser("commit", help="Validate commit message and invoke git commit")
+    p_commit = subparsers.add_parser(
+        "commit", help="Validate commit message and invoke git commit"
+    )
     p_commit.add_argument("-m", "--message", help="Commit message")
-    p_commit.add_argument("-a", "--all", action="store_true", help="Stage all modified files")
-    p_commit.add_argument("--allow-empty", action="store_true", help="Allow empty commit")
+    p_commit.add_argument(
+        "-a", "--all", action="store_true", help="Stage all modified files"
+    )
+    p_commit.add_argument(
+        "--allow-empty", action="store_true", help="Allow empty commit"
+    )
     p_commit.add_argument("--no-verify", action="store_true", help="Bypass git hooks")
     p_commit.set_defaults(func=cmd_commit)
 
     # check
-    p_check = subparsers.add_parser("check", help="Run pre-commit architectural verification gates")
-    p_check.add_argument("--fast", action="store_true", help="Run fast static gates only (skip bandit & pytest)")
-    p_check.add_argument("--all", action="store_true", help="Run full suite including SAST and tests")
-    p_check.add_argument("--raptor", action="store_true", help="Run RAPTOR security scanner")
-    p_check.add_argument("--security-audit", action="store_true", help="Validate security audit ledger")
+    p_check = subparsers.add_parser(
+        "check", help="Run pre-commit architectural verification gates"
+    )
+    p_check.add_argument(
+        "--fast",
+        action="store_true",
+        help="Run fast static gates only (skip bandit & pytest)",
+    )
+    p_check.add_argument(
+        "--all", action="store_true", help="Run full suite including SAST and tests"
+    )
+    p_check.add_argument(
+        "--raptor", action="store_true", help="Run RAPTOR security scanner"
+    )
+    p_check.add_argument(
+        "--security-audit", action="store_true", help="Validate security audit ledger"
+    )
     p_check.set_defaults(func=cmd_check)
 
     # cloudbuild
-    p_cb = subparsers.add_parser("cloudbuild", help="Submit or dry-run immutable Cloud Build container image jobs")
-    p_cb.add_argument("--image", default="gateway", help="Image name (gateway, compliance-bridge, etc.)")
+    p_cb = subparsers.add_parser(
+        "cloudbuild",
+        help="Submit or dry-run immutable Cloud Build container image jobs",
+    )
+    p_cb.add_argument(
+        "--image",
+        default="gateway",
+        help="Image name (gateway, compliance-bridge, etc.)",
+    )
     p_cb.add_argument("--dockerfile", help="Path to Dockerfile (inferred if omitted)")
-    p_cb.add_argument("--env", default="staging", help="Target environment posture (default: staging)")
+    p_cb.add_argument(
+        "--env", default="staging", help="Target environment posture (default: staging)"
+    )
     p_cb.add_argument("--project", help="GCP project ID (or PROJECT_ID env)")
-    p_cb.add_argument("--dry-run", action="store_true", help="Print command without executing")
+    p_cb.add_argument(
+        "--dry-run", action="store_true", help="Print command without executing"
+    )
     p_cb.set_defaults(func=cmd_cloudbuild)
 
     # verify-service-sync
-    p_sync = subparsers.add_parser("verify-service-sync", help="Verify service catalogue agreement across repo")
+    p_sync = subparsers.add_parser(
+        "verify-service-sync", help="Verify service catalogue agreement across repo"
+    )
     p_sync.set_defaults(func=cmd_verify_service_sync)
 
     # scaffold
-    p_scaffold = subparsers.add_parser("scaffold", help="Scaffold ADR-009 tiers, Layer 3 seams, or domain plugins")
+    p_scaffold = subparsers.add_parser(
+        "scaffold", help="Scaffold ADR-009 tiers, Layer 3 seams, or domain plugins"
+    )
     scaffold_sub = p_scaffold.add_subparsers(dest="scaffold_type", required=True)
 
     # scaffold tier
     p_sc_tier = scaffold_sub.add_parser("tier", help="Scaffold ADR-009 governance tier")
-    p_sc_tier.add_argument("domain", help="Target domain (finance, healthcare, physical_ai)")
+    p_sc_tier.add_argument(
+        "domain", help="Target domain (finance, healthcare, physical_ai)"
+    )
     p_sc_tier.add_argument("name", help="Tier name (e.g. trade_risk, dosage_limit)")
-    p_sc_tier.add_argument("--phase", type=int, choices=[1, 2], default=1, help="Phase 1 (ReadOnly) or 2 (Mutating)")
-    p_sc_tier.add_argument("--order", type=int, default=10, help="Explicit tier evaluation order")
+    p_sc_tier.add_argument(
+        "--phase",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Phase 1 (ReadOnly) or 2 (Mutating)",
+    )
+    p_sc_tier.add_argument(
+        "--order", type=int, default=10, help="Explicit tier evaluation order"
+    )
 
     # scaffold seam
-    p_sc_seam = scaffold_sub.add_parser("seam", help="Scaffold Layer 3 integration seam")
-    p_sc_seam.add_argument("seam_type", choices=["normative", "attestation", "actuator", "quarantine", "evidence"], help="Seam protocol type")
-    p_sc_seam.add_argument("name", help="Anonymized package name (e.g. provider_07, actuator_05)")
+    p_sc_seam = scaffold_sub.add_parser(
+        "seam", help="Scaffold Layer 3 integration seam"
+    )
+    p_sc_seam.add_argument(
+        "seam_type",
+        choices=["normative", "attestation", "actuator", "quarantine", "evidence"],
+        help="Seam protocol type",
+    )
+    p_sc_seam.add_argument(
+        "name", help="Anonymized package name (e.g. provider_07, actuator_05)"
+    )
 
     p_scaffold.set_defaults(func=cmd_scaffold)
 
     # pr
-    p_pr = subparsers.add_parser("pr", help="Validate branch readiness, clean tree, squash-merge guard, and open PR")
+    p_pr = subparsers.add_parser(
+        "pr",
+        help="Validate branch readiness, clean tree, squash-merge guard, and open PR",
+    )
     p_pr.add_argument("--title", help="PR title (must follow Conventional Commits)")
     p_pr.add_argument("--body", help="PR description body")
     p_pr.add_argument("--base", default="main", help="Base branch (default: main)")
-    p_pr.add_argument("--allow-dirty", action="store_true", help="Allow PR creation with unstaged changes")
-    p_pr.add_argument("--dry-run", action="store_true", help="Print commands without executing")
+    p_pr.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow PR creation with unstaged changes",
+    )
+    p_pr.add_argument(
+        "--dry-run", action="store_true", help="Print commands without executing"
+    )
     p_pr.set_defaults(func=cmd_pr)
 
     # release-tag
-    p_tag = subparsers.add_parser("release-tag", help="Validate tag and CHANGELOG before creating release tag")
+    p_tag = subparsers.add_parser(
+        "release-tag", help="Validate tag and CHANGELOG before creating release tag"
+    )
     p_tag.add_argument("tag", help="Annotated release tag (e.g. v3.2.0)")
     p_tag.set_defaults(func=cmd_release_tag)
 
     # doctor
-    p_doc = subparsers.add_parser("doctor", help="Diagnose contributor environment and toolchain health")
+    p_doc = subparsers.add_parser(
+        "doctor", help="Diagnose contributor environment and toolchain health"
+    )
     p_doc.set_defaults(func=cmd_doctor)
 
     return parser

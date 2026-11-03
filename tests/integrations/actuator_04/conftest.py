@@ -24,6 +24,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 import time
@@ -35,7 +36,10 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.live_external]
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DAEMON_ENV = "ACTUATOR_04_DAEMON_BINARY"
 
 
 def get_free_port() -> int:
@@ -47,17 +51,29 @@ def get_free_port() -> int:
 
 
 def resolve_killswitch_binary() -> Path:
-    """Locate the compiled release binary for killswitch."""
-    candidates = [
-        Path(r"D:\harfile\killswitch\target\release\killswitch.exe"),
-        Path(r"D:\harfile\killswitch\killswitch.exe"),
-        Path(r"D:\harfile\killswitch\target\debug\killswitch.exe"),
-    ]
+    """Locate the compiled host-quarantine substrate binary or skip cleanly."""
+    candidates: list[Path] = []
+    env_bin = os.environ.get(_DAEMON_ENV, "").strip()
+    if env_bin:
+        candidates.append(Path(env_bin))
+    which_bin = shutil.which("killswitch")
+    if which_bin:
+        candidates.append(Path(which_bin))
+    sibling_dir = _REPO_ROOT.parent / "killswitch"
+    for rel in (
+        "target/release/killswitch.exe",
+        "target/release/killswitch",
+        "killswitch.exe",
+        "killswitch",
+        "target/debug/killswitch.exe",
+        "target/debug/killswitch",
+    ):
+        candidates.append(sibling_dir / rel)
     for c in candidates:
         if c.exists() and c.is_file():
             return c
-    raise FileNotFoundError(
-        "Could not find compiled killswitch.exe binary. Run `cargo build --release --workspace` first!"
+    pytest.skip(
+        f"Host-quarantine daemon binary unavailable (set {_DAEMON_ENV} or install in PATH)"
     )
 
 
@@ -111,7 +127,9 @@ class InMemoryEd25519Signer:
 
 
 @pytest.fixture(scope="module")
-def killswitch_server_harness(tmp_path_factory: pytest.TempPathFactory) -> Generator[dict[str, Any], None, None]:
+def killswitch_server_harness(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[dict[str, Any], None, None]:
     """Spawn a real killswitch-server child process on an ephemeral loopback port."""
     tmp_path = tmp_path_factory.mktemp("ks_single")
     port = get_free_port()
@@ -145,9 +163,12 @@ def killswitch_server_harness(tmp_path_factory: pytest.TempPathFactory) -> Gener
     cmd = [
         str(binary_path),
         "--daemon",
-        "-H", "127.0.0.1",
-        "-p", str(port),
-        "--db-dir", str(db_dir),
+        "-H",
+        "127.0.0.1",
+        "-p",
+        str(port),
+        "--db-dir",
+        str(db_dir),
     ]
 
     try:
@@ -161,7 +182,9 @@ def killswitch_server_harness(tmp_path_factory: pytest.TempPathFactory) -> Gener
     except OSError as exc:
         log_file.close()
         if getattr(exc, "winerror", None) == 4551:
-            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            pytest.skip(
+                f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+            )
         raise
 
     base_url = f"http://127.0.0.1:{port}"
@@ -170,8 +193,14 @@ def killswitch_server_harness(tmp_path_factory: pytest.TempPathFactory) -> Gener
     if not healthy:
         proc.kill()
         log_file.close()
-        logs = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
-        raise TimeoutError(f"Server at {base_url} failed readiness probe within 15s. Logs:\n{logs}")
+        logs = (
+            log_path.read_text(encoding="utf-8", errors="replace")
+            if log_path.exists()
+            else ""
+        )
+        raise TimeoutError(
+            f"Server at {base_url} failed readiness probe within 15s. Logs:\n{logs}"
+        )
 
     harness = {
         "proc": proc,
@@ -199,7 +228,9 @@ def killswitch_server_harness(tmp_path_factory: pytest.TempPathFactory) -> Gener
 
 
 @pytest.fixture(scope="module")
-def killswitch_cluster_harness(tmp_path_factory: pytest.TempPathFactory) -> Generator[dict[str, Any], None, None]:
+def killswitch_cluster_harness(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[dict[str, Any], None, None]:
     """Spawn 3 independent live killswitch-server child processes for cluster testing."""
     tmp_path = tmp_path_factory.mktemp("ks_cluster")
     binary_path = resolve_killswitch_binary()
@@ -244,9 +275,12 @@ def killswitch_cluster_harness(tmp_path_factory: pytest.TempPathFactory) -> Gene
         cmd = [
             str(binary_path),
             "--daemon",
-            "-H", "127.0.0.1",
-            "-p", str(port),
-            "--db-dir", str(db_dir),
+            "-H",
+            "127.0.0.1",
+            "-p",
+            str(port),
+            "--db-dir",
+            str(db_dir),
         ]
 
         try:
@@ -263,7 +297,9 @@ def killswitch_cluster_harness(tmp_path_factory: pytest.TempPathFactory) -> Gene
             for p in procs:
                 p.kill()
             if getattr(exc, "winerror", None) == 4551:
-                pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+                pytest.skip(
+                    f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+                )
             raise
         nodes[node_id] = f"http://127.0.0.1:{port}"
 
@@ -274,7 +310,9 @@ def killswitch_cluster_harness(tmp_path_factory: pytest.TempPathFactory) -> Gene
                 p.kill()
             for lf in log_files:
                 lf.close()
-            raise TimeoutError(f"Cluster node {node_id} at {url} failed readiness probe.")
+            raise TimeoutError(
+                f"Cluster node {node_id} at {url} failed readiness probe."
+            )
 
     cluster = {
         "ports": ports,

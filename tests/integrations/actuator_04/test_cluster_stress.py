@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Adversarial Empirical Challenge Suite — Milestone M4 Challenger 2.
+"""Multi-node cluster split-brain, crash recovery, and concurrency stress suite.
 
 Stresses Multi-Node Split-Brain Invariants, Divergent Epoch Consensus, Crash Recovery,
 and High-Concurrency (50-Thread) Storms against live loopback OS child processes.
@@ -74,7 +74,7 @@ from tests.integrations.actuator_04.conftest import (
     wait_for_health,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [pytest.mark.live_external]
 
 
 class LiveKeyResolver:
@@ -95,9 +95,14 @@ class LiveKeyResolver:
                     if r.status_code == 200:
                         for entry in r.json().get("keys", []):
                             entry_kid = entry.get("kid")
-                            if entry.get("kty") == "OKP" and entry.get("crv") == "Ed25519":
+                            if (
+                                entry.get("kty") == "OKP"
+                                and entry.get("crv") == "Ed25519"
+                            ):
                                 x_bytes = base64.urlsafe_b64decode(entry["x"] + "==")
-                                pub_key = ed25519.Ed25519PublicKey.from_public_bytes(x_bytes)
+                                pub_key = ed25519.Ed25519PublicKey.from_public_bytes(
+                                    x_bytes
+                                )
                                 self._keys[entry_kid] = pub_key
                 except Exception:
                     pass
@@ -199,11 +204,13 @@ async def test_challenge_split_brain_1_of_3_unreachable_fails_closed(
     receipt = await adapter.quarantine_workload(directive)
 
     # Invariant: Must fail closed
-    assert receipt.quarantined is False, "Split-brain partition must fail closed (quarantined=False)"
+    assert receipt.quarantined is False, (
+        "Split-brain partition must fail closed (quarantined=False)"
+    )
     assert receipt.outcome in (ActuationOutcome.UNKNOWN, ActuationOutcome.REJECTED)
-    assert any(
-        f.get("code") == "SUBSTRATE_POST_FAILED" for f in receipt.findings
-    ), f"Expected SUBSTRATE_POST_FAILED in findings, got: {receipt.findings}"
+    assert any(f.get("code") == "SUBSTRATE_POST_FAILED" for f in receipt.findings), (
+        f"Expected SUBSTRATE_POST_FAILED in findings, got: {receipt.findings}"
+    )
 
     # Invariant: Gateway local quarantine state must not be committed on fail-closed
     assert await is_workload_quarantined(agent_svid=svid) is False
@@ -366,15 +373,22 @@ async def test_challenge_divergent_epoch_consensus_fails_closed(
     res_broadcast = await adapter.release_workload(rel_broadcast)
 
     # Invariant: Must fail closed
-    assert res_broadcast.released is False, "Release under divergent epochs must fail closed (released=False)"
-    assert res_broadcast.outcome in (ActuationOutcome.UNKNOWN, ActuationOutcome.REJECTED)
+    assert res_broadcast.released is False, (
+        "Release under divergent epochs must fail closed (released=False)"
+    )
+    assert res_broadcast.outcome in (
+        ActuationOutcome.UNKNOWN,
+        ActuationOutcome.REJECTED,
+    )
 
     # Verify findings contain DIVERGENT_NODE_EPOCH or SUBSTRATE_ERROR_STATUS
     has_divergent_code = any(
         f.get("code") in ("DIVERGENT_NODE_EPOCH", "SUBSTRATE_ERROR_STATUS")
         for f in res_broadcast.findings
     )
-    assert has_divergent_code, f"Expected DIVERGENT_NODE_EPOCH or SUBSTRATE_ERROR_STATUS, got: {res_broadcast.findings}"
+    assert has_divergent_code, (
+        f"Expected DIVERGENT_NODE_EPOCH or SUBSTRATE_ERROR_STATUS, got: {res_broadcast.findings}"
+    )
 
     # Invariant: Gateway epoch state must NOT advance
     current_gateway_epoch = await get_workload_min_epoch(svid)
@@ -426,7 +440,16 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
     log_file1 = open(tmp_path / "server_s1.log", "wb")
     try:
         p1 = subprocess.Popen(
-            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port1), "--db-dir", str(db_dir)],
+            [
+                str(binary_path),
+                "--daemon",
+                "-H",
+                "127.0.0.1",
+                "-p",
+                str(port1),
+                "--db-dir",
+                str(db_dir),
+            ],
             cwd=str(tmp_path),
             env=env,
             stdout=log_file1,
@@ -435,7 +458,9 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
     except OSError as exc:
         log_file1.close()
         if getattr(exc, "winerror", None) == 4551:
-            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            pytest.skip(
+                f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+            )
         raise
     assert wait_for_health(f"http://127.0.0.1:{port1}", timeout=15.0)
 
@@ -480,14 +505,25 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
     log_file1.close()
 
     # Step 4: Verify state/database directory files exist
-    assert any(db_dir.iterdir()), "Database directory should not be empty after quarantine engagement"
+    assert any(db_dir.iterdir()), (
+        "Database directory should not be empty after quarantine engagement"
+    )
 
     # Step 5: Start Server 2 pointing to the exact same state & db directory on a fresh ephemeral port
     port2 = get_free_port()
     log_file2 = open(tmp_path / "server_s2.log", "wb")
     try:
         p2 = subprocess.Popen(
-            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port2), "--db-dir", str(db_dir)],
+            [
+                str(binary_path),
+                "--daemon",
+                "-H",
+                "127.0.0.1",
+                "-p",
+                str(port2),
+                "--db-dir",
+                str(db_dir),
+            ],
             cwd=str(tmp_path),
             env=env,
             stdout=log_file2,
@@ -496,7 +532,9 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
     except OSError as exc:
         log_file2.close()
         if getattr(exc, "winerror", None) == 4551:
-            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            pytest.skip(
+                f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)"
+            )
         raise
 
     try:
@@ -522,7 +560,9 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
             "timestamp_utc": "2026-11-03T06:01:00Z",
         }
         canonical_rel = jcs_canonicalize_plan(rel_payload)
-        sig_rel = signer.sign_raw(QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical_rel)
+        sig_rel = signer.sign_raw(
+            QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical_rel
+        )
         sig_rel_b64 = base64.urlsafe_b64encode(sig_rel).decode("ascii").rstrip("=")
         digest_rel = hashlib.sha256(canonical_rel).hexdigest()
 
@@ -538,7 +578,9 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
                     "X-CAGE-Signer-Kid": signer.key_id,
                 },
             )
-            assert r2.status_code == 200, f"Expected 200 OK on release after crash recovery, got {r2.status_code}: {r2.text}"
+            assert r2.status_code == 200, (
+                f"Expected 200 OK on release after crash recovery, got {r2.status_code}: {r2.text}"
+            )
             data2 = r2.json()
             assert data2["released"] is True
             assert data2["epoch_before"] == 1
@@ -590,7 +632,9 @@ async def test_challenge_concurrent_stress_storm_50_requests(
     await resolver.preload_keys()
 
     async def run_quarantine(idx: int) -> dict[str, Any]:
-        svid = f"spiffe://cluster.local/ns/storm/sa/agent-50-{idx}-{uuid.uuid4().hex[:6]}"
+        svid = (
+            f"spiffe://cluster.local/ns/storm/sa/agent-50-{idx}-{uuid.uuid4().hex[:6]}"
+        )
         directive = make_quarantine_directive(
             agent_svid=svid,
             rule_id=f"RULE-50-STORM-{idx}",
@@ -646,20 +690,26 @@ async def test_challenge_concurrent_stress_storm_50_requests(
 
     # Verification: Zero exceptions allowed
     exceptions = [r for r in results if isinstance(r, Exception)]
-    assert len(exceptions) == 0, f"Encountered {len(exceptions)} exceptions during 50-request storm: {exceptions[:3]}"
+    assert len(exceptions) == 0, (
+        f"Encountered {len(exceptions)} exceptions during 50-request storm: {exceptions[:3]}"
+    )
 
     # Verify Quarantine results (first 20)
     q_results = results[:20]
     for idx, qr in enumerate(q_results):
         assert qr["type"] == "quarantine"
         assert qr["status"] is True, f"Quarantine #{idx} failed to quarantine"
-        assert qr["verified"] is True, f"Quarantine #{idx} receipt signature failed verification"
+        assert qr["verified"] is True, (
+            f"Quarantine #{idx} receipt signature failed verification"
+        )
 
     # Verify Attestation results (next 15)
     att_results = results[20:35]
     for idx, ar in enumerate(att_results):
         assert ar["type"] == "attest"
-        assert ar["status_code"] == 200, f"Attestation #{idx} returned {ar['status_code']}"
+        assert ar["status_code"] == 200, (
+            f"Attestation #{idx} returned {ar['status_code']}"
+        )
         assert ar["has_pcr"] is True, f"Attestation #{idx} missing PCR values"
         assert ar["attestation_type"] == "HOST_TPM_PCR"
 
@@ -671,7 +721,9 @@ async def test_challenge_concurrent_stress_storm_50_requests(
         assert cr["findings"][0]["code"] == "CONFORMAL_ADMISSION_CLEARED"
 
     # Verify performance
-    assert t_elapsed < 15.0, f"50-request storm took {t_elapsed:.2f}s, exceeding 15.0s budget"
+    assert t_elapsed < 15.0, (
+        f"50-request storm took {t_elapsed:.2f}s, exceeding 15.0s budget"
+    )
 
 
 @pytest.mark.asyncio
@@ -695,10 +747,14 @@ async def test_challenge_replay_attack_concurrent_race_fails_closed(
         require_signed_receipts=True,
     )
 
-    svid = f"spiffe://cluster.local/ns/race/sa/agent-replay-storm-{uuid.uuid4().hex[:6]}"
+    svid = (
+        f"spiffe://cluster.local/ns/race/sa/agent-replay-storm-{uuid.uuid4().hex[:6]}"
+    )
 
     # Step 1: Engage quarantine for the workload
-    d = make_quarantine_directive(agent_svid=svid, rule_id="RULE-RACE-QUARANTINE", target_pid=6666)
+    d = make_quarantine_directive(
+        agent_svid=svid, rule_id="RULE-RACE-QUARANTINE", target_pid=6666
+    )
     q_receipt = await adapter.quarantine_workload(d)
     assert q_receipt.quarantined is True
 
@@ -762,7 +818,8 @@ def run_standalone_adversarial_suite() -> int:
     # Invoke pytest synchronously so pytest-asyncio creates its own loop cleanly
     pytest_args = [
         str(Path(__file__).resolve()),
-        "-o", "addopts=",
+        "-o",
+        "addopts=",
         "-v",
         "--tb=short",
         "--timeout=120",

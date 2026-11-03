@@ -222,7 +222,9 @@ class QuarantineReleaseDirective:
     def to_canonical_jcs(self) -> bytes:
         import json
 
-        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
 
 
 @dataclass(frozen=True)
@@ -283,4 +285,6 @@ class QuarantineReleaseReceipt:
     def to_canonical_jcs(self) -> bytes:
         import json
 
-        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )

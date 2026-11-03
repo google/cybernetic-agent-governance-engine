@@ -829,7 +829,9 @@ async def validate_action_endpoint(
         except Exception:
             caller_svid = None
     if not caller_svid:
-        caller_svid = request.headers.get("x-cage-agent-svid") or body.params.get("agent_svid")
+        caller_svid = request.headers.get("x-cage-agent-svid") or body.params.get(
+            "agent_svid"
+        )
 
     req_thread_id = None
     if hasattr(request, "headers") and hasattr(request.headers, "get"):
@@ -845,8 +847,7 @@ async def validate_action_endpoint(
     raw_redis = getattr(app_state, "redis", None)
     shared_redis = (
         raw_redis
-        if raw_redis is not None
-        and type(raw_redis).__name__ != "MagicMock"
+        if raw_redis is not None and type(raw_redis).__name__ != "MagicMock"
         else None
     )
 
@@ -871,7 +872,9 @@ async def validate_action_endpoint(
         )
 
     if caller_svid:
-        min_epoch = await get_workload_min_epoch(str(caller_svid), redis_client=shared_redis)
+        min_epoch = await get_workload_min_epoch(
+            str(caller_svid), redis_client=shared_redis
+        )
         raw_epoch = (
             request.headers.get("x-cage-epoch")
             if hasattr(request, "headers") and hasattr(request.headers, "get")

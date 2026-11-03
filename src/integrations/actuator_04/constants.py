@@ -20,8 +20,10 @@ Specific in Prose).
 
 from __future__ import annotations
 
+from typing import Literal
+
 ACTUATOR_04_ID: str = "actuator_04"
-ENFORCEMENT_PLANE_HOST_OS_KERNEL: str = "HOST_OS_KERNEL"
+ENFORCEMENT_PLANE_HOST_OS_KERNEL: Literal["HOST_OS_KERNEL"] = "HOST_OS_KERNEL"
 
 # Preimage domain separation tags (RFC 8785 JCS canonicalization follows tag)
 QUARANTINE_ASSERTION_DOMAIN_TAG: bytes = b"CAGE_QUARANTINE_ASSERTION_V1:"
