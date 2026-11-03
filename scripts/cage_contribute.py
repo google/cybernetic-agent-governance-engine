@@ -99,43 +99,60 @@ BRANCH_REGEX: re.Pattern[str] = re.compile(
     r"^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$"
 )
 
-# Common past-tense or 3rd-person non-imperative verbs to reject
+# Common past-tense, 3rd-person, or continuous gerund non-imperative verbs to reject
 NON_IMPERATIVE_VERBS: frozenset[str] = frozenset(
     {
         "added",
         "adds",
+        "adding",
         "fixed",
         "fixes",
+        "fixing",
         "updated",
         "updates",
+        "updating",
         "created",
         "creates",
+        "creating",
         "removed",
         "removes",
+        "removing",
         "changed",
         "changes",
+        "changing",
         "implemented",
         "implements",
+        "implementing",
         "refactored",
         "refactors",
+        "refactoring",
         "deleted",
         "deletes",
+        "deleting",
         "modified",
         "modifies",
+        "modifying",
         "cleaned",
         "cleans",
+        "cleaning",
         "patched",
         "patches",
+        "patching",
         "improved",
         "improves",
+        "improving",
         "allowed",
         "allows",
+        "allowing",
         "prevented",
         "prevents",
+        "preventing",
         "resolved",
         "resolves",
+        "resolving",
         "adjusted",
         "adjusts",
+        "adjusting",
     }
 )
 
@@ -290,6 +307,38 @@ def is_working_tree_clean(repo_root: Path) -> bool:
     return False
 
 
+def get_git_hooks_dir(repo_root: Path) -> Path:
+    """Resolve git hooks directory, supporting worktrees and submodules."""
+    git_bin = get_git_executable()
+    try:
+        res = run_cmd([git_bin, "rev-parse", "--git-path", "hooks"], cwd=repo_root)
+        if res.returncode == 0 and res.stdout and res.stdout.strip():
+            hooks_path = Path(res.stdout.strip())
+            if not hooks_path.is_absolute():
+                hooks_path = (repo_root / hooks_path).resolve()
+            return hooks_path
+    except (FileNotFoundError, OSError):
+        pass
+
+    dot_git = repo_root / ".git"
+    if dot_git.is_file():
+        try:
+            content = dot_git.read_text(encoding="utf-8").strip()
+            if content.startswith("gitdir:"):
+                gitdir = Path(content.split("gitdir:", 1)[1].strip())
+                if not gitdir.is_absolute():
+                    gitdir = (repo_root / gitdir).resolve()
+                if (gitdir / "hooks").is_dir():
+                    return gitdir / "hooks"
+                if (gitdir.parent.parent / "hooks").is_dir():
+                    return gitdir.parent.parent / "hooks"
+                return gitdir / "hooks"
+        except Exception:
+            pass
+
+    return repo_root / ".git" / "hooks"
+
+
 # ---------------------------------------------------------------------------
 # Validation Engines (Branch & Conventional Commits v1.0.0)
 # ---------------------------------------------------------------------------
@@ -369,12 +418,15 @@ def validate_commit_message(msg: str) -> tuple[bool, list[str]]:
 
     # Strip empty leading/trailing lines
     non_comment_lines = [l for l in lines if not l.strip().startswith("#")]
+    while non_comment_lines and not non_comment_lines[0].strip():
+        non_comment_lines.pop(0)
+    while non_comment_lines and not non_comment_lines[-1].strip():
+        non_comment_lines.pop()
+
     if not non_comment_lines:
         return True, []  # Allow empty (e.g. amend with no change)
 
     subject = non_comment_lines[0].strip()
-    if not subject:
-        return True, []
 
     # Exemption for git merge commits
     if (
@@ -487,7 +539,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     print("  ✅ Configured commit.template in git config.")
 
     # 2. Hooks directory
-    hooks_dir = repo_root / ".git" / "hooks"
+    hooks_dir = get_git_hooks_dir(repo_root)
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     # 2a. commit-msg hook
@@ -850,6 +902,17 @@ def cmd_verify_service_sync(args: argparse.Namespace) -> int:
     main_tf = repo_root / "infra" / "targets" / "gcp-gke" / "main.tf"
     fixture_tfvars = repo_root / "infra" / "targets" / "gcp-gke" / "tests" / "fixtures" / "image_digests.tfvars"
 
+    required_files = [
+        ("build_images.sh", build_script),
+        ("render_image_digests.sh", render_script),
+        ("main.tf", main_tf),
+        ("image_digests.tfvars", fixture_tfvars),
+    ]
+    missing_files = [name for name, path in required_files if not path.is_file()]
+    if missing_files:
+        print(f"❌ Missing required catalogue file(s): {', '.join(missing_files)}")
+        return 1
+
     errors: list[str] = []
 
     def extract_bash_array(path: Path, var_name: str) -> list[str]:
@@ -928,7 +991,7 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
 
     if scaffold_type == "tier":
         domain = args.domain.lower()
-        tier_name = args.name.lower()
+        tier_name = args.name.lower().replace("-", "_")
         phase = int(args.phase or 1)
         order = int(args.order or 10)
 
@@ -1110,6 +1173,25 @@ class QuarantineAdapter(QuarantineActuator):
             outcome=ActuationOutcome.ACCEPTED,
         )
 """ % seam_name
+        elif seam_type == "attestation":
+            adapter_code += """
+from src.gateway.governance.seams.attestation import (
+    AttestationProvider,
+    AttestationStatus,
+    ExternalAttestation,
+)
+
+
+class AttestationAdapter(AttestationProvider):
+    @property
+    def provider_name(self) -> str:
+        return "%s"
+
+    async def fetch_attestations(
+        self, context: dict[str, Any]
+    ) -> list[ExternalAttestation]:
+        return []
+""" % seam_name
 
         adapter_file.write_text(adapter_code, encoding="utf-8")
         readme_file = pkg_dir / "README.md"
@@ -1225,14 +1307,31 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("🩺 Cybernetic Agent Governance Engine — Environment Doctor\n")
 
     # 1. Git
-    git_ver = run_cmd([git_bin, "--version"]).stdout.strip()
-    branch = get_current_branch(repo_root)
-    valid_branch, _ = validate_branch_name(branch)
-    branch_icon = "✅" if valid_branch else ("⚠️" if branch in PROTECTED_BRANCHES else "❌")
-    print(f"  • Git Executable:   {git_bin}")
-    print(f"  • Git Version:      {git_ver}")
-    print(f"  • Current Branch:   {branch_icon} {branch}")
-    print(f"  • Working Tree:     {'✅ Clean' if is_working_tree_clean(repo_root) else '⚠️ Uncommitted changes'}")
+    git_ver = "Unknown"
+    git_valid = False
+    try:
+        git_res = run_cmd([git_bin, "--version"])
+        if git_res.returncode == 0:
+            git_ver = git_res.stdout.strip()
+            git_valid = True
+        else:
+            git_ver = f"Error executing git (exit code {git_res.returncode})"
+    except (FileNotFoundError, OSError):
+        git_ver = "Not found"
+
+    if git_valid:
+        branch = get_current_branch(repo_root)
+        valid_branch, _ = validate_branch_name(branch)
+        branch_icon = "✅" if valid_branch else ("⚠️" if branch in PROTECTED_BRANCHES else "❌")
+        print(f"  • Git Executable:   {git_bin}")
+        print(f"  • Git Version:      {git_ver}")
+        print(f"  • Current Branch:   {branch_icon} {branch}")
+        print(f"  • Working Tree:     {'✅ Clean' if is_working_tree_clean(repo_root) else '⚠️ Uncommitted changes'}")
+    else:
+        print(f"  • Git Executable:   ❌ Not found ({git_bin})")
+        print(f"  • Git Version:      ❌ {git_ver}")
+        print("  • Current Branch:   ⚠️  Unknown")
+        print("  • Working Tree:     ⚠️  Unknown")
 
     # 2. Python
     py_ver = platform.python_version()
@@ -1242,8 +1341,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # 3. uv
     uv_bin = shutil.which("uv")
     if uv_bin:
-        uv_ver = run_cmd([uv_bin, "--version"]).stdout.strip()
-        print(f"  • uv Package Mgr:   ✅ {uv_ver}")
+        try:
+            uv_ver = run_cmd([uv_bin, "--version"]).stdout.strip()
+            print(f"  • uv Package Mgr:   ✅ {uv_ver}")
+        except (FileNotFoundError, OSError):
+            print("  • uv Package Mgr:   ⚠️  CLI found, but not executable")
     else:
         print("  • uv Package Mgr:   ⚠️  Not installed (install via https://astral.sh/uv/)")
 
@@ -1251,33 +1353,47 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     node_bin = shutil.which("node")
     npm_bin = shutil.which("npm")
     if node_bin and npm_bin:
-        node_ver = run_cmd([node_bin, "--version"]).stdout.strip()
-        print(f"  • Node.js & npm:    ✅ Node {node_ver}")
+        try:
+            node_ver = run_cmd([node_bin, "--version"]).stdout.strip()
+            print(f"  • Node.js & npm:    ✅ Node {node_ver}")
+        except (FileNotFoundError, OSError):
+            print("  • Node.js & npm:    ⚠️  CLI found, but not executable")
     else:
         print("  • Node.js & npm:    ⚠️  Not installed (required for src/agentsight-ui/)")
 
     # 5. Docker
     docker_bin = shutil.which("docker")
     if docker_bin:
-        docker_info = run_cmd([docker_bin, "info", "--format", "{{.ServerVersion}}"])
-        if docker_info.returncode == 0:
-            print(f"  • Docker Daemon:    ✅ Running (Engine {docker_info.stdout.strip()})")
-        else:
-            print("  • Docker Daemon:    ⚠️  CLI found, but daemon is not responding")
+        try:
+            docker_info = run_cmd([docker_bin, "info", "--format", "{{.ServerVersion}}"])
+            if docker_info.returncode == 0:
+                print(f"  • Docker Daemon:    ✅ Running (Engine {docker_info.stdout.strip()})")
+            else:
+                print("  • Docker Daemon:    ⚠️  CLI found, but daemon is not responding")
+        except (FileNotFoundError, OSError):
+            print("  • Docker Daemon:    ⚠️  Docker CLI found, but not executable")
     else:
         print("  • Docker Daemon:    ⚠️  Docker CLI not found")
 
     # 6. gcloud
     gcloud_bin = shutil.which("gcloud")
     if gcloud_bin:
-        proj = run_cmd([gcloud_bin, "config", "get-value", "project"]).stdout.strip()
-        print(f"  • Google Cloud SDK: ✅ Installed (active project: {proj or 'none'})")
+        try:
+            proj = run_cmd([gcloud_bin, "config", "get-value", "project"]).stdout.strip()
+            print(f"  • Google Cloud SDK: ✅ Installed (active project: {proj or 'none'})")
+        except (FileNotFoundError, OSError):
+            print("  • Google Cloud SDK: ⚠️  gcloud CLI found, but not executable")
     else:
         print("  • Google Cloud SDK: ℹ️  Not installed (needed for Cloud Build submissions)")
 
     # 7. Git Hooks
-    hooks_installed = (repo_root / ".git" / "hooks" / "commit-msg").exists() and (repo_root / ".git" / "hooks" / "pre-push").exists()
+    hooks_dir = get_git_hooks_dir(repo_root)
+    hooks_installed = (hooks_dir / "commit-msg").exists() and (hooks_dir / "pre-push").exists()
     print(f"  • CAGE Git Hooks:   {'✅ Installed' if hooks_installed else '❌ Missing (run: python scripts/cage_contribute.py setup)'}")
+
+    if not py_valid or not hooks_installed or not git_valid:
+        print("\n❌ One or more critical environment checks failed.")
+        return 1
 
     print("\n✨ Diagnostic check completed.")
     return 0

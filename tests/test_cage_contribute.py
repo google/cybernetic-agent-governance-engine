@@ -248,12 +248,44 @@ def test_validate_commit_message_trailing_period() -> None:
 
 
 def test_validate_commit_message_non_imperative_mood() -> None:
-    """Verify non-imperative verbs (past tense, third person) are rejected."""
-    for verb in ["added", "adds", "fixed", "fixes", "updated", "refactored"]:
+    """Verify non-imperative verbs (past tense, third person, and continuous gerunds) are rejected."""
+    for verb in [
+        "added",
+        "adds",
+        "adding",
+        "fixed",
+        "fixes",
+        "fixing",
+        "updated",
+        "updating",
+        "cleaning",
+        "refactored",
+        "refactoring",
+    ]:
         msg = f"feat(gateway): {verb} rate limiter"
         valid, errors = cage_contribute.validate_commit_message(msg)
         assert valid is False
         assert any("non-imperative verb" in e for e in errors)
+
+
+def test_validate_commit_message_leading_newline_handling() -> None:
+    """Verify leading newlines do not bypass validation for invalid subjects."""
+    # 1. Invalid message with leading newline must be rejected (not bypassed)
+    invalid_msg = "\nThis is completely invalid message with trailing period."
+    valid, errors = cage_contribute.validate_commit_message(invalid_msg)
+    assert valid is False
+    assert len(errors) > 0
+
+    # 2. Comments + leading newlines before invalid subject must be rejected
+    invalid_comment_msg = "# comment\n\nThis is invalid."
+    valid2, errors2 = cage_contribute.validate_commit_message(invalid_comment_msg)
+    assert valid2 is False
+
+    # 3. Valid Conventional Commit with leading newlines should succeed
+    valid_msg = "\n\nfeat(gateway): add test\n\nValid body."
+    valid3, errors3 = cage_contribute.validate_commit_message(valid_msg)
+    assert valid3 is True
+    assert errors3 == []
 
 
 def test_validate_commit_message_missing_blank_line() -> None:
@@ -320,6 +352,58 @@ def test_cmd_setup_preserves_existing_env(tmp_path: Path) -> None:
         args = argparse.Namespace(sync=False)
         cage_contribute.cmd_setup(args)
         assert (repo / ".env").read_text(encoding="utf-8") == "PRESERVED=2\n"
+
+
+def test_cmd_setup_git_worktree_support(tmp_path: Path) -> None:
+    """Verify setup handles git worktrees where .git is a file instead of a directory."""
+    repo = tmp_path / "worktree_repo"
+    repo.mkdir()
+    main_git_dir = tmp_path / "main_repo" / ".git"
+    main_git_dir.mkdir(parents=True)
+    hooks_target = main_git_dir / "hooks"
+    hooks_target.mkdir()
+
+    # In a git worktree, .git is a file pointing to gitdir: <path>
+    (repo / ".git").write_text(f"gitdir: {main_git_dir}\n", encoding="utf-8")
+    (repo / ".env.example").write_text("TEST=1\n", encoding="utf-8")
+
+    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
+        "cage_contribute.run_cmd"
+    ) as mock_run:
+        # Mock git rev-parse --git-path hooks returning the target hooks directory
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=str(hooks_target) + "\n"
+        )
+        args = argparse.Namespace(sync=False)
+        rc = cage_contribute.cmd_setup(args)
+        assert rc == 0
+        assert (hooks_target / "commit-msg").exists()
+        assert (hooks_target / "pre-push").exists()
+
+
+def test_cmd_setup_git_worktree_fallback(tmp_path: Path) -> None:
+    """Verify setup resolves hooks from .git gitdir file when git rev-parse fails."""
+    repo = tmp_path / "worktree_repo_fb"
+    repo.mkdir()
+    common_git_dir = tmp_path / "common_repo" / ".git"
+    common_git_dir.mkdir(parents=True)
+    (common_git_dir / "hooks").mkdir()
+    worktree_git_dir = common_git_dir / "worktrees" / "branch_wt"
+    worktree_git_dir.mkdir(parents=True)
+
+    (repo / ".git").write_text(f"gitdir: {worktree_git_dir}\n", encoding="utf-8")
+    (repo / ".env.example").write_text("TEST=1\n", encoding="utf-8")
+
+    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
+        "cage_contribute.run_cmd"
+    ) as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=""
+        )
+        args = argparse.Namespace(sync=False)
+        rc = cage_contribute.cmd_setup(args)
+        assert rc == 0
+        assert (common_git_dir / "hooks" / "commit-msg").exists()
 
 
 # ===========================================================================
@@ -510,18 +594,49 @@ def test_cmd_verify_service_sync_agreed(tmp_path: Path) -> None:
 
 
 def test_cmd_verify_service_sync_drift_detected(tmp_path: Path) -> None:
-    """Verify verify-service-sync detects discrepancies."""
+    """Verify verify-service-sync detects discrepancies between existing catalogue files."""
     repo = tmp_path / "repo"
     repo.mkdir()
     scripts_dir = repo / "scripts"
     scripts_dir.mkdir()
+    infra_dir = repo / "infra" / "targets" / "gcp-gke"
+    infra_dir.mkdir(parents=True)
+    fixtures_dir = infra_dir / "tests" / "fixtures"
+    fixtures_dir.mkdir(parents=True)
 
-    # Mismatched build_images.sh
+    # 1. Mismatched build_images.sh (contains extra_service)
     (scripts_dir / "build_images.sh").write_text(
-        'ALL_IMAGES="gateway ui extra_service"\n', encoding="utf-8"
+        'FIRST_PARTY_IMAGES=("gateway|src/Dockerfile" "ui|src/ui/Dockerfile")\nALL_IMAGES="gateway ui extra_service"\n',
+        encoding="utf-8",
+    )
+    # 2. render_image_digests.sh
+    (scripts_dir / "render_image_digests.sh").write_text(
+        'FIRST_PARTY_IMAGES=("gateway" "ui")\nTHIRD_PARTY_TAGGED_IMAGES=("redis")\n',
+        encoding="utf-8",
+    )
+    # 3. main.tf
+    (infra_dir / "main.tf").write_text(
+        'required_image_digests = concat(\n  ["gateway", "ui", "redis"]\n  )\n',
+        encoding="utf-8",
+    )
+    # 4. image_digests.tfvars
+    (fixtures_dir / "image_digests.tfvars").write_text(
+        '"gateway" = "test"\n"ui" = "test"\n"redis" = "test"\n',
+        encoding="utf-8",
     )
 
     with patch("cage_contribute.find_repo_root", return_value=repo):
+        args = argparse.Namespace()
+        rc = cage_contribute.cmd_verify_service_sync(args)
+        assert rc == 1
+
+
+def test_cmd_verify_service_sync_missing_catalogue_files(tmp_path: Path) -> None:
+    """Verify verify-service-sync fails closed with rc=1 when any catalogue file is missing."""
+    empty_repo = tmp_path / "empty_repo"
+    empty_repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=empty_repo):
         args = argparse.Namespace()
         rc = cage_contribute.cmd_verify_service_sync(args)
         assert rc == 1
@@ -590,6 +705,33 @@ def test_cmd_scaffold_phase_2_mutating_tier(tmp_path: Path) -> None:
         assert "def confirm" in code
 
 
+def test_cmd_scaffold_tier_kebab_case_normalization(tmp_path: Path) -> None:
+    """Verify scaffold tier normalizes kebab-case names into valid Python identifiers."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo):
+        args = argparse.Namespace(
+            scaffold_type="tier",
+            domain="finance",
+            name="trade-limit",
+            phase=1,
+            order=15,
+        )
+        rc = cage_contribute.cmd_scaffold(args)
+        assert rc == 0
+
+        target_file = repo / "src" / "cage_finance" / "tiers" / "trade_limit_tier.py"
+        assert target_file.exists()
+        code = target_file.read_text(encoding="utf-8")
+
+        # Parse AST to ensure valid python syntax (no syntax errors)
+        tree = ast.parse(code)
+        assert tree is not None
+        assert "class TradeLimitTier(ReadOnlyTier):" in code
+        assert 'return "trade_limit"' in code
+
+
 def test_cmd_scaffold_seam_package(tmp_path: Path) -> None:
     """Verify scaffold seam creates Layer 3 package with Apache 2.0 headers."""
     repo = tmp_path / "repo"
@@ -612,6 +754,37 @@ def test_cmd_scaffold_seam_package(tmp_path: Path) -> None:
         adapter_code = (pkg_dir / "adapter.py").read_text(encoding="utf-8")
         assert "Copyright 2026 Google LLC" in adapter_code
         assert "ExecutionActuator" in adapter_code
+
+
+def test_cmd_scaffold_attestation_seam(tmp_path: Path) -> None:
+    """Verify scaffold seam attestation creates adapter implementing AttestationProvider."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo):
+        args = argparse.Namespace(
+            scaffold_type="seam",
+            seam_type="attestation",
+            name="provider_08",
+        )
+        rc = cage_contribute.cmd_scaffold(args)
+        assert rc == 0
+
+        pkg_dir = repo / "src" / "integrations" / "provider_08"
+        assert (pkg_dir / "__init__.py").exists()
+        assert (pkg_dir / "adapter.py").exists()
+        assert (pkg_dir / "README.md").exists()
+
+        adapter_code = (pkg_dir / "adapter.py").read_text(encoding="utf-8")
+        assert "from src.gateway.governance.seams.attestation import" in adapter_code
+        assert "AttestationProvider" in adapter_code
+        assert "class AttestationAdapter(AttestationProvider):" in adapter_code
+        assert "def provider_name(self) -> str:" in adapter_code
+        assert "def fetch_attestations(" in adapter_code
+
+        # Parse AST to ensure valid python code
+        tree = ast.parse(adapter_code)
+        assert tree is not None
 
 
 # ===========================================================================
@@ -664,12 +837,88 @@ def test_cmd_release_tag_validation(tmp_path: Path) -> None:
 # ===========================================================================
 
 
-def test_cmd_doctor_runs_without_exceptions(tmp_path: Path) -> None:
-    """Verify doctor command diagnoses environment cleanly without unhandled crashes."""
+def test_cmd_doctor_healthy_environment(tmp_path: Path) -> None:
+    """Verify doctor command diagnoses environment cleanly and returns 0 when healthy."""
     repo = tmp_path / "repo"
     repo.mkdir()
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "commit-msg").touch()
+    (hooks_dir / "pre-push").touch()
 
-    with patch("cage_contribute.find_repo_root", return_value=repo):
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="git version 2.40.0\n")
+        if "rev-parse" in cmd and "--git-path" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=".git/hooks\n")
+        if "rev-parse" in cmd and "--abbrev-ref" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="feat/my-feature\n")
+        if "status" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
+        "cage_contribute.run_cmd", side_effect=fake_run
+    ):
         args = argparse.Namespace()
         rc = cage_contribute.cmd_doctor(args)
         assert rc == 0
+
+
+def test_cmd_doctor_resilience_missing_git(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Verify doctor command does not crash with FileNotFoundError when git is missing, and returns exit code 1."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
+        "cage_contribute.get_git_executable", return_value="nonexistent-git"
+    ):
+        args = argparse.Namespace()
+        rc = cage_contribute.cmd_doctor(args)
+        assert rc == 1
+        captured = capsys.readouterr().out
+        assert "Git Executable:   ❌ Not found" in captured
+
+
+def test_cmd_doctor_fails_on_missing_hooks(tmp_path: Path) -> None:
+    """Verify doctor command returns exit code 1 when CAGE git hooks are missing."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="git version 2.40.0\n")
+        if "rev-parse" in cmd and "--git-path" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=".git/hooks\n")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
+        "cage_contribute.run_cmd", side_effect=fake_run
+    ):
+        args = argparse.Namespace()
+        rc = cage_contribute.cmd_doctor(args)
+        assert rc == 1
+
+
+def test_cmd_doctor_fails_on_unsupported_python(tmp_path: Path) -> None:
+    """Verify doctor command returns exit code 1 when Python version is incompatible."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "commit-msg").touch()
+    (hooks_dir / "pre-push").touch()
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="git version 2.40.0\n")
+        if "rev-parse" in cmd and "--git-path" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=".git/hooks\n")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+    with patch("cage_contribute.find_repo_root", return_value=repo), patch(
+        "sys.version_info", (3, 8, 0)
+    ), patch("cage_contribute.run_cmd", side_effect=fake_run):
+        args = argparse.Namespace()
+        rc = cage_contribute.cmd_doctor(args)
+        assert rc == 1
