@@ -171,6 +171,10 @@ only the first two postures, and `verify-report` rejects a report that claims
 either of the others. Only an attested report earns them (above;
 `docs/architecture/CONFORMANCE_VERIFIER_SPEC.md` §3.1).
 
+## Diagnose an `actuator_01` (Archytan) receipt
+
+Run `cage-conformance diagnose-receipt path/to/receipt.json` (or pipe a receipt over stdin with `cage-conformance diagnose-receipt < receipt.json`, or run `python3 -m cage_conformance.receipt_diagnostic receipt.json` with `PYTHONPATH=packages/cage-conformance/src` and no CAGE checkout or third-party dependencies installed; a sample fixture derived from CAGE's README shape ships at `packages/cage-conformance/src/cage_conformance/vectors/actuator_01_readme_receipt.json`) against any captured Archytan receipt JSON. The tool makes no network calls and does not verify the Ed25519 signature; instead, it prints the exact signed-message preimage and SHA-256 digest CAGE constructs (`"ARCHYTAN_RECEIPT_V1:" || JCS(body without "signature" and "ingress_signature")`) alongside the preimage and SHA-256 digest for Archytan's signing scheme (`"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)`), lists which required fields (`envelope_digest` for CAGE, `intent_hash` for Archytan) are absent, and states the specific reconciliation failure reason (`preimage digest mismatch`, `missing envelope_digest`, or `both`). It exits `0` on agreement, `1` on any mismatch, and `2` if the input cannot be parsed as a JSON object (pass `--json` for machine-readable output).
+
 ## License
 
 Apache-2.0.

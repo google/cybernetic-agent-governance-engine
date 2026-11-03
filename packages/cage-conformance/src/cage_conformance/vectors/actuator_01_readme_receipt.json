@@ -1,0 +1,11 @@
+{
+  "receipt_id": "r-readme-fixture-0001",
+  "session_uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "accepted",
+  "envelope_digest": "83398b88482ae07f5ef11a95f7a695849a407da398feef48e4701d9f67c35e6e",
+  "signature": {
+    "alg": "EdDSA",
+    "kid": "archytan-sandbox-receipt-2026-01",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}
