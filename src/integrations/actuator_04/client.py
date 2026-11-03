@@ -209,16 +209,26 @@ class Actuator04Transport:
     def __init__(
         self,
         *,
-        default_endpoint: str,
+        default_endpoint: str = "",
+        endpoint: str | None = None,
         node_endpoints: dict[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 5.0,
+        allow_loopback: bool = True,
     ) -> None:
+        if endpoint is not None and not default_endpoint:
+            default_endpoint = endpoint
+        if not default_endpoint and node_endpoints:
+            default_endpoint = next(iter(node_endpoints.values()))
         self._default_endpoint = default_endpoint
         self._node_endpoints = dict(node_endpoints or {})
-        self._http_client = http_client
         self._timeout_seconds = timeout_seconds
+        self._allow_loopback = allow_loopback
         self._owns_client = http_client is None
+        if http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=timeout_seconds)
+        else:
+            self._http_client = http_client
 
     @classmethod
     def from_env(cls, *, timeout_seconds: float = 5.0) -> Actuator04Transport:

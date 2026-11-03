@@ -259,7 +259,7 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
             sig_bytes = await self._signer.sign_raw_async(
                 QUARANTINE_ASSERTION_DOMAIN_TAG + canonical_bytes
             )
-            assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii")
+            assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
         except Exception as exc:
             return QuarantineReceipt(
                 quarantined=False,
@@ -386,7 +386,7 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
             sig_bytes = await self._signer.sign_raw_async(
                 QUARANTINE_RELEASE_ASSERTION_DOMAIN_TAG + canonical_bytes
             )
-            assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii")
+            assertion_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
         except Exception as exc:
             return QuarantineReleaseReceipt(
                 released=False,
@@ -404,6 +404,7 @@ class Actuator04Adapter(QuarantineActuator, ExecutionActuator):
             "Content-Type": "application/json",
             HEADER_ENVELOPE_DIGEST: envelope_digest,
             HEADER_QUARANTINE_RELEASE: assertion_b64,
+            HEADER_SIGNER_KID: getattr(self._signer, "key_id", ""),
             HEADER_CORRELATION_ID: directive.correlation_id,
         }
 
