@@ -51,8 +51,10 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
 
 `deploy_all.sh` performs the following steps in order:
 1. Loads `.env` via selective export (H-16 security pattern — no `allexport`)
-2. Generates `infra/targets/gcp-gke/terraform.auto.tfvars` from `.env` via
-   [`scripts/gen_tfvars.py`](../../scripts/gen_tfvars.py)
+2. Merges the `.env`-derived `otel_exporter_otlp_headers` into
+   `infra/targets/gcp-gke/terraform.auto.tfvars` via
+   [`scripts/gen_tfvars.py`](../../scripts/gen_tfvars.py), keeping every other
+   assignment already in that file
 3. Runs `terraform init` and `terraform plan` in the target directory
 4. Pre-builds all container images via Cloud Build (`scripts/build_images.sh`)
    before `terraform apply` to eliminate race conditions
