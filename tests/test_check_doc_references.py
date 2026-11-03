@@ -264,3 +264,194 @@ def test_gate_scope_has_one_copy() -> None:
             assert "--path" not in line, f"{config.name} narrows the scope: {line}"
             assert not line.rstrip().endswith("\\"), f"{config.name}: {line}"
     assert "docs/POAM.md" in g9.DOC_SCOPE
+
+
+# ---------------------------------------------------------------------------
+# Terraform / HCL symbol, index, and module output validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def tf_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Fixture repo with a target .tf file and a child module."""
+    target_dir = tmp_path / "infra" / "targets" / "gcp-gke"
+    mod_dir = tmp_path / "infra" / "modules" / "vpc_network"
+    target_dir.mkdir(parents=True)
+    mod_dir.mkdir(parents=True)
+
+    (target_dir / "main.tf").write_text(
+        'resource "google_kms_key_ring" "signing" {\n'
+        '  name = "signing"\n'
+        "}\n"
+        'resource "google_container_analysis_note" "build_attestor_note" {\n'
+        "  count = var.enable_binauthz ? 1 : 0\n"
+        "}\n"
+        'resource "terraform_data" "control_plane_access_guard" {}\n'
+        'data "google_kms_crypto_key_version" "binauthz_attestor" {}\n'
+        'module "vpc_network" {\n'
+        '  count  = 1\n'
+        '  source = "../../modules/vpc_network"\n'
+        "}\n"
+        'variable "network" {\n'
+        '  default = "default"\n'
+        "}\n"
+        "locals {\n"
+        "  any_compliance_active = true\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (mod_dir / "outputs.tf").write_text(
+        'output "subnetwork_name" {\n  value = "cage-subnet"\n}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    g9._get_terraform_index.cache_clear()
+    return tmp_path
+
+
+def test_terraform_symbol_valid_declarations_pass(tf_repo: Path) -> None:
+    doc = tf_repo / "doc.md"
+    doc.write_text(
+        "Valid: `google_kms_key_ring.signing`, "
+        '`resource "terraform_data" "control_plane_access_guard"`, '
+        "`google_container_analysis_note.build_attestor_note[0]`, "
+        "`data.google_kms_crypto_key_version.binauthz_attestor`, "
+        "`module.vpc_network[0].subnetwork_name`, "
+        "`var.network`, `local.any_compliance_active`.\n",
+        encoding="utf-8",
+    )
+    assert audit_markdown_file(doc) == []
+
+
+def test_terraform_symbol_nonexistent_or_wrong_block_type_fails(tf_repo: Path) -> None:
+    doc = tf_repo / "doc.md"
+    doc.write_text(
+        "Missing key: `google_kms_crypto_key.valkey`\n"
+        'Wrong name: `resource "google_memorystore_instance" "valkey"`\n'
+        'Wrong block kind: `check "control_plane_access_guard"`\n',
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [i.reference_type for i in issues] == [
+        "Terraform Symbol",
+        "Terraform Symbol",
+        "Terraform Symbol",
+    ]
+    assert "google_kms_crypto_key.valkey" in issues[0].target
+    assert 'resource "google_memorystore_instance" "valkey"' in issues[1].target
+    assert 'check "control_plane_access_guard"' in issues[2].target
+
+
+def test_terraform_symbol_index_without_count_or_for_each_fails(tf_repo: Path) -> None:
+    doc = tf_repo / "doc.md"
+    doc.write_text("Unindexed resource: `google_kms_key_ring.signing[0]`\n", encoding="utf-8")
+    issues = audit_markdown_file(doc)
+    assert len(issues) == 1
+    assert issues[0].reference_type == "Terraform Symbol"
+    assert "has no count/for_each" in issues[0].reason
+
+
+def test_terraform_symbol_nonexistent_module_output_fails(tf_repo: Path) -> None:
+    doc = tf_repo / "doc.md"
+    doc.write_text("Bad output: `module.vpc_network[0].gke_subnet_name`\n", encoding="utf-8")
+    issues = audit_markdown_file(doc)
+    assert len(issues) == 1
+    assert issues[0].reference_type == "Terraform Symbol"
+    assert "gke_subnet_name" in issues[0].reason
+
+
+# ---------------------------------------------------------------------------
+# Inline `:line_spec` anchors, prose line refs, YAML UUID spans, & Python symbols
+# ---------------------------------------------------------------------------
+
+
+def test_inline_colon_line_anchor_valid_and_out_of_bounds(tmp_path: Path) -> None:
+    _write_sample_target(tmp_path, lines=10)
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Valid `sample.py:5` and `sample.py:2-8`, invalid `sample.py:99` and `sample.py:8-3`.\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.reference_type, i.target) for i in issues] == [
+        ("File Path", "sample.py:99"),
+        ("File Path", "sample.py:8-3"),
+    ]
+
+
+def test_prose_line_reference_bounds_blank_and_clause_tokens(tmp_path: Path) -> None:
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "ALPHA_TOKEN = 1\n"
+        "def first_fn():\n"
+        "\n"
+        "    return ALPHA_TOKEN\n"
+        "def beta_handler():\n"
+        "    return 2\n",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Valid: `beta_handler` in [`sample.py`](sample.py) line 5.\n"
+        "Out of bounds: [`sample.py`](sample.py) line 50.\n"
+        "Blank line: [`sample.py`](sample.py) line 3.\n"
+        "Wrong token line: `beta_handler` in [`sample.py`](sample.py) line 1.\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type) for i in issues] == [
+        (2, "Line Reference"),
+        (3, "Line Reference"),
+        (4, "Line Reference"),
+    ]
+    assert "exceeds file length" in issues[0].reason
+    assert "is blank" in issues[1].reason
+    assert "beta_handler" in issues[2].reason
+
+
+def test_prose_line_reference_yaml_uuid_span_validation(tmp_path: Path) -> None:
+    yaml_file = tmp_path / "component-definition.yaml"
+    yaml_file.write_text(
+        "implemented-requirements:\n"
+        "  - uuid: 423a5590-5440-411f-a3fd-81a950236704\n"
+        "    control-id: cm-2\n"
+        "    description: >\n"
+        "      Baseline configuration.\n"
+        "  - uuid: d29a087a-3209-4429-8a58-019f029f1215\n"
+        "    control-id: sc-7\n",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Valid span: `423a5590-5440-411f-a3fd-81a950236704` in [`component-definition.yaml`](component-definition.yaml) (`lines 2–5`).\n"
+        "Drifted span: `423a5590-5440-411f-a3fd-81a950236704` in [`component-definition.yaml`](component-definition.yaml) (`lines 2–7`).\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert len(issues) == 1
+    assert issues[0].line_number == 2
+    assert issues[0].reference_type == "Line Reference"
+    assert "spans lines 2-5, not 2-7" in issues[0].reason
+
+
+def test_contextual_python_symbol_in_and_paren_patterns(tmp_path: Path) -> None:
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "EXISTING_CONST = ('a', 'b')\n"
+        "def test_existing_func():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Valid: `EXISTING_CONST` in [`sample.py`](sample.py) and [`sample.py`](sample.py) (`test_existing_func`).\n"
+        "Invalid in: `REQUIRED_MAIN_CHECKS` in [`sample.py`](sample.py).\n"
+        "Invalid paren: [`sample.py`](sample.py) (`test_nonexistent_func`).\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
+        (2, "Python Symbol", "sample.py::REQUIRED_MAIN_CHECKS"),
+        (3, "Python Symbol", "sample.py::test_nonexistent_func"),
+    ]
+
