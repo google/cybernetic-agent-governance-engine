@@ -289,7 +289,7 @@ def tf_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         'resource "terraform_data" "control_plane_access_guard" {}\n'
         'data "google_kms_crypto_key_version" "binauthz_attestor" {}\n'
         'module "vpc_network" {\n'
-        '  count  = 1\n'
+        "  count  = 1\n"
         '  source = "../../modules/vpc_network"\n'
         "}\n"
         'variable "network" {\n'
@@ -344,7 +344,9 @@ def test_terraform_symbol_nonexistent_or_wrong_block_type_fails(tf_repo: Path) -
 
 def test_terraform_symbol_index_without_count_or_for_each_fails(tf_repo: Path) -> None:
     doc = tf_repo / "doc.md"
-    doc.write_text("Unindexed resource: `google_kms_key_ring.signing[0]`\n", encoding="utf-8")
+    doc.write_text(
+        "Unindexed resource: `google_kms_key_ring.signing[0]`\n", encoding="utf-8"
+    )
     issues = audit_markdown_file(doc)
     assert len(issues) == 1
     assert issues[0].reference_type == "Terraform Symbol"
@@ -353,7 +355,9 @@ def test_terraform_symbol_index_without_count_or_for_each_fails(tf_repo: Path) -
 
 def test_terraform_symbol_nonexistent_module_output_fails(tf_repo: Path) -> None:
     doc = tf_repo / "doc.md"
-    doc.write_text("Bad output: `module.vpc_network[0].gke_subnet_name`\n", encoding="utf-8")
+    doc.write_text(
+        "Bad output: `module.vpc_network[0].gke_subnet_name`\n", encoding="utf-8"
+    )
     issues = audit_markdown_file(doc)
     assert len(issues) == 1
     assert issues[0].reference_type == "Terraform Symbol"
@@ -437,9 +441,7 @@ def test_prose_line_reference_yaml_uuid_span_validation(tmp_path: Path) -> None:
 def test_contextual_python_symbol_in_and_paren_patterns(tmp_path: Path) -> None:
     sample = tmp_path / "sample.py"
     sample.write_text(
-        "EXISTING_CONST = ('a', 'b')\n"
-        "def test_existing_func():\n"
-        "    pass\n",
+        "EXISTING_CONST = ('a', 'b')\ndef test_existing_func():\n    pass\n",
         encoding="utf-8",
     )
     doc = tmp_path / "doc.md"
@@ -454,4 +456,3 @@ def test_contextual_python_symbol_in_and_paren_patterns(tmp_path: Path) -> None:
         (2, "Python Symbol", "sample.py::REQUIRED_MAIN_CHECKS"),
         (3, "Python Symbol", "sample.py::test_nonexistent_func"),
     ]
-

@@ -297,9 +297,7 @@ PROSE_LINE_REF_PATTERN = re.compile(
     r"(?:\s*,\s*|\s+|\s*\(\s*|\s+at\s+|\s*\(`)(?:`?lines?\s+(?P<spec>\d+(?:[-\u2013]\d+)?(?:\s*,\s*\d+(?:[-\u2013]\d+)?)*)`?)"
 )
 # Standalone line range on a line that also links a YAML file and a UUID
-STANDALONE_LINE_RANGE_PATTERN = re.compile(
-    r"`?lines\s+(?P<spec>\d+[-\u2013]\d+)`?"
-)
+STANDALONE_LINE_RANGE_PATTERN = re.compile(r"`?lines\s+(?P<spec>\d+[-\u2013]\d+)`?")
 
 # HCL / Terraform block header in .tf files
 HCL_HEADER_PATTERN = re.compile(
@@ -431,9 +429,7 @@ def _validate_line_anchor(
     stripped = target_path_str.strip().strip("'\"`")
     match = LINE_ANCHOR_PATTERN.search(stripped)
     colon_match = (
-        COLON_LINE_SPEC_PATTERN.match(stripped)
-        if (allow_colon and not match)
-        else None
+        COLON_LINE_SPEC_PATTERN.match(stripped) if (allow_colon and not match) else None
     )
     if not match and not colon_match:
         return True, ""
@@ -488,9 +484,7 @@ def _validate_line_anchor(
     return True, ""
 
 
-def _resolve_candidate_path(
-    base_dir: Path, target_path_str: str
-) -> Path | None:
+def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None:
     """Resolve a relative or repo-root path string to an existing Path on disk, or None."""
     stripped_target = target_path_str.strip().strip("'\"`")
     clean_target = re.split(r"[:#]", stripped_target)[0].strip()
@@ -719,9 +713,7 @@ def _parse_tf_blocks(text: str, tf_path: Path) -> list[TerraformBlock]:
             kind2 = match.group("kind2")
             name2 = match.group("name2")
             if kind2 == "module":
-                src_match = re.search(
-                    r'^\s*source\s*=\s*"([^"]+)"', block_body, re.M
-                )
+                src_match = re.search(r'^\s*source\s*=\s*"([^"]+)"', block_body, re.M)
                 mod_source = src_match.group(1) if src_match else ""
                 blocks.append(
                     TerraformBlock(
@@ -1084,7 +1076,10 @@ def _audit_line_references_and_contextual_symbols(
         if not any(ls <= cm.start() and cm.end() <= le for ls, le in local_link_labels)
     ]
     line_uuids = [m.group("uuid") for m in UUID_PATTERN.finditer(line)]
-    if "_STPA_IMPL_UUID" in line and "g7000099-stpa-4000-8000-compiler00001" not in line_uuids:
+    if (
+        "_STPA_IMPL_UUID" in line
+        and "g7000099-stpa-4000-8000-compiler00001" not in line_uuids
+    ):
         line_uuids.append("g7000099-stpa-4000-8000-compiler00001")
 
     for pm in PROSE_LINE_REF_PATTERN.finditer(line):
@@ -1096,9 +1091,7 @@ def _audit_line_references_and_contextual_symbols(
         if resolved is None or not resolved.is_file():
             continue
         try:
-            flines = resolved.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
+            flines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
         except Exception:
             continue
         total_lines = len(flines)
@@ -1164,7 +1157,11 @@ def _audit_line_references_and_contextual_symbols(
                 or " | " in between
             ):
                 continue
-            if cs.startswith(("line ", "lines ")) or cs == resolved.name or cs in target:
+            if (
+                cs.startswith(("line ", "lines "))
+                or cs == resolved.name
+                or cs in target
+            ):
                 continue
             if re.match(
                 r"^(?:POAM-|EF\d|PF\d|W\d|Step\s|#\d+|[0-9a-f]{7,40}|\d+|rc=\d+)",
@@ -1333,9 +1330,7 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                 )
 
         # 2. Inline code backticks: `target`
-        is_mutation_row = bool(
-            re.search(r"\|\s*(?:Re-declare|Restore)\s+`", line)
-        )
+        is_mutation_row = bool(re.search(r"\|\s*(?:Re-declare|Restore)\s+`", line))
         for code_match in INLINE_CODE_PATTERN.finditer(line):
             if any(
                 start <= code_match.start() and code_match.end() <= end
