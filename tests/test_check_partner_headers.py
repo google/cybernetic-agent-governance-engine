@@ -33,6 +33,7 @@ import pytest
 
 from scripts import check_partner_headers as gate
 from src.gateway.governance.attestation_aggregator import _load_attestation_provider
+from src.gateway.governance.estate_provider import get_estate_provider
 from src.gateway.governance.normative_provider import get_normative_provider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -60,10 +61,32 @@ _SEAM_METHODS: dict[str, tuple[str, ...]] = {
     "NormativeProvider": ("fetch_baseline", "validate_fria", "submit_evidence"),
     "AttestationProvider": ("fetch_attestations",),
     "WarrantSource": ("fetch", "provider_name"),
+    "EstateProvider": (
+        "get_resource_predicate",
+        "query_blast_radius",
+        "get_topology_snapshot",
+    ),
     "ExecutionActuator": ("actuate", "get_capabilities", "health_check"),
     "PolicyAdvisorBridge": ("evaluate_proposal",),
     "QuarantineActuator": ("quarantine_workload", "health_check"),
 }
+
+
+def _classes_implemented_seams(classes: list[type]) -> frozenset[str]:
+    return frozenset(
+        seam_name
+        for seam_name, methods in _SEAM_METHODS.items()
+        if any(all(hasattr(cls, method) for method in methods) for cls in classes)
+    )
+
+
+def _module_implemented_seams(mod: object) -> frozenset[str]:
+    classes = [
+        getattr(mod, attr)
+        for attr in getattr(mod, "__all__", dir(mod))
+        if isinstance(getattr(mod, attr, None), type)
+    ]
+    return _classes_implemented_seams(classes)
 
 
 def _tree(tmp_path: Path) -> Path:
@@ -323,6 +346,8 @@ def test_partner_readme_attribution_and_role_drift_is_reported(
 
 def test_partner_slots_match_adapter_classes_and_seam_factories() -> None:
     """PARTNER_SLOTS in check_partner_headers.py agrees with src/integrations/ and kernel factories."""
+    assert set(_SEAM_METHODS) == gate.ALL_SEAM_PROTOCOLS
+
     partner_dirs = {p.name for p in gate.PARTNERS_ROOT.iterdir() if p.is_dir()}
     assert partner_dirs == set(gate.PARTNER_SLOTS)
 
@@ -332,24 +357,19 @@ def test_partner_slots_match_adapter_classes_and_seam_factories() -> None:
         for p in integrations_root.iterdir()
         if p.is_dir() and p.name.startswith(("provider_", "actuator_"))
     }
-    # provider_09 is a planned adapter whose seam + factory live in estate_provider.py.
-    assert integration_slots == set(gate.PARTNER_SLOTS) - {"provider_09"}
+    assert integration_slots <= set(gate.PARTNER_SLOTS)
+    # Only provider_09 may lack a src/integrations/<slot>/ package today; once
+    # src/integrations/provider_09/ lands, it enters integration_slots and runs
+    # through the same module-class check below without any skip.
+    assert set(gate.PARTNER_SLOTS) - integration_slots <= {"provider_09"}
 
     for slot, spec in gate.PARTNER_SLOTS.items():
-        if slot == "provider_09":
-            assert spec.seams == ("EstateProvider",)
-            continue
-        mod = importlib.import_module(f"src.integrations.{slot}")
-        classes = [
-            getattr(mod, attr)
-            for attr in getattr(mod, "__all__", dir(mod))
-            if isinstance(getattr(mod, attr, None), type)
-        ]
-        implemented = frozenset(
-            seam_name
-            for seam_name, methods in _SEAM_METHODS.items()
-            if any(all(hasattr(cls, method) for method in methods) for cls in classes)
-        )
+        if slot in integration_slots:
+            mod = importlib.import_module(f"src.integrations.{slot}")
+            implemented = _module_implemented_seams(mod)
+        else:
+            provider = get_estate_provider(slot)
+            implemented = _classes_implemented_seams([type(provider)])
         assert implemented == frozenset(spec.seams), (
             f"{slot}: adapter classes implement {sorted(implemented)}, "
             f"PARTNER_SLOTS declares {sorted(spec.seams)}"
@@ -359,3 +379,51 @@ def test_partner_slots_match_adapter_classes_and_seam_factories() -> None:
         get_normative_provider("provider_02")
     with pytest.raises(ValueError, match="Unknown attestation provider"):
         _load_attestation_provider("provider_01")
+
+
+def test_seam_check_enforces_provider_09_when_package_is_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When src.integrations.provider_09 is installed, its exported classes must implement EstateProvider."""
+    import sys
+    import types
+
+    expected = frozenset(gate.PARTNER_SLOTS["provider_09"].seams)
+    assert expected == frozenset({"EstateProvider"})
+
+    wrong_mod = types.ModuleType("src.integrations.provider_09")
+
+    class WrongSeamAdapter:
+        async def fetch_baseline(self, region: str) -> object: ...
+        async def validate_fria(
+            self, action: str, params: dict, context: dict
+        ) -> object: ...
+        async def submit_evidence(
+            self, thread_id: str, evidence_hash: str
+        ) -> object: ...
+
+    wrong_mod.WrongSeamAdapter = WrongSeamAdapter  # type: ignore[attr-defined]
+    wrong_mod.__all__ = ["WrongSeamAdapter"]  # type: ignore[attr-defined]
+    assert _module_implemented_seams(wrong_mod) != expected
+
+    right_mod = types.ModuleType("src.integrations.provider_09")
+
+    class Provider09EstateProvider:
+        @classmethod
+        def from_env(cls) -> Provider09EstateProvider:
+            return cls()
+
+        async def get_resource_predicate(self, resource_urn: str) -> object: ...
+        async def query_blast_radius(
+            self, resource_urn: str, action: str
+        ) -> object: ...
+        async def get_topology_snapshot(self, scope: str) -> object: ...
+
+    right_mod.Provider09EstateProvider = Provider09EstateProvider  # type: ignore[attr-defined]
+    right_mod.__all__ = ["Provider09EstateProvider"]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "src.integrations.provider_09", right_mod)
+
+    assert _module_implemented_seams(right_mod) == expected
+    resolved = get_estate_provider("provider_09")
+    assert isinstance(resolved, Provider09EstateProvider)
+    assert _classes_implemented_seams([type(resolved)]) == expected
