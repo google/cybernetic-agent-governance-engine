@@ -19,14 +19,16 @@
     cage-conformance audience report.json
     cage-conformance attest report.json --output attested.json [--token-file FILE]
     cage-conformance verify-report report.json [--parties parties.json]
+    cage-conformance diagnose-receipt [receipt.json | -] [--json]
 
 Every identity field is required and has no default, so a report never claims
 an identity the runner did not state. ``audience`` prints the audience an OIDC
 token must carry to attest a report; ``attest`` verifies such a token (read
 from ``--token-file`` or ``$CAGE_CONFORMANCE_OIDC_TOKEN``, never from the
-command line) and binds it to the report. Exit codes: ``verify`` returns 0 if
-conformant, 1 if not, 2 on unreadable input or bad arguments. ``audience``,
-``attest`` and ``verify-report`` return 0 on success and 2 otherwise.
+command line) and binds it to the report. Exit codes: ``verify`` and
+``diagnose-receipt`` return 0 on agreement/conformance, 1 on mismatch, 2 on
+unreadable input or bad arguments. ``audience``, ``attest`` and
+``verify-report`` return 0 on success and 2 otherwise.
 """
 
 from __future__ import annotations
@@ -56,6 +58,10 @@ from .attestation import (
     is_attested,
     parse_parties,
     validate_attested_report,
+)
+from .receipt_diagnostic import (
+    add_diagnose_receipt_arguments,
+    run_diagnose_receipt,
 )
 from .report import (
     MODE_PROFILES,
@@ -292,6 +298,10 @@ def _verify_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _diagnose_receipt(args: argparse.Namespace) -> int:
+    return run_diagnose_receipt(args.receipt, as_json=args.as_json)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="cage-conformance",
@@ -334,16 +344,27 @@ def main(argv: list[str] | None = None) -> int:
         help="Your party pins for attested reports (default: the package's)",
     )
 
+    diagnose_parser = subparsers.add_parser(
+        "diagnose-receipt",
+        help=(
+            "Compare CAGE verify_partner_receipt() preimage and field requirements "
+            "against Archytan's receipt signing scheme"
+        ),
+        allow_abbrev=False,
+    )
+    add_diagnose_receipt_arguments(diagnose_parser)
+
     args = parser.parse_args(argv)
     commands = {
         "verify": _verify,
         "audience": _audience,
         "attest": _attest,
         "verify-report": _verify_report,
+        "diagnose-receipt": _diagnose_receipt,
     }
     try:
         return commands[args.command](args)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
         # ReportError, AttestationError and JSONDecodeError are ValueErrors.
         if isinstance(exc, UnpinnedPartyError):
             kind = "no verified posture"
