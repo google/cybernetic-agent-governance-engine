@@ -76,6 +76,7 @@ import logging
 import os
 import time
 import uuid
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -787,7 +788,10 @@ async def submit_attested_bundle(
     ``include_topology`` defaults to True: the wire topology (including the
     ``execution_analyst`` <-> ``evaluator`` static refinement loop) is sealed
     into ``evidence.topology`` so the node verifies ``topologyValidation:
-    "valid"`` alongside CAGE's own local ``LineageError`` checks.
+    "valid"`` alongside CAGE's own local ``LineageError`` checks. Passing
+    ``include_topology=False`` is deprecated (retained only for NexArt Nodes
+    < v0.30.1) and emits a ``DeprecationWarning`` because omitting
+    ``evidence.topology`` weakens structural execution provenance (AU-10).
 
     Raises:
         StateCommitmentError: A state commitment failed; nothing was submitted.
@@ -796,7 +800,18 @@ async def submit_attested_bundle(
     """
     await callback.seal()
     bundle = callback.get_bundle()
-    topology = topology_to_wire(callback.topology) if include_topology else None
+    if include_topology:
+        topology: Mapping[str, Any] | None = topology_to_wire(callback.topology)
+    else:
+        msg = (
+            "[Provider02Adapter] include_topology=False is deprecated and "
+            "retained only for compatibility with NexArt Nodes < v0.30.1: "
+            "omitting evidence.topology weakens structural execution "
+            "provenance (AU-10)."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        logger.warning(msg)
+        topology = None
     verdict = await attestor.attest_bundle(bundle.to_dict(), topology)
     if not verdict.verified:
         raise Provider02Error(

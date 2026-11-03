@@ -25,6 +25,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import logging
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -181,27 +183,55 @@ class TestFailClosed:
 
 
 class TestSubmitPath:
-    def test_seals_and_includes_wire_topology_by_default(self) -> None:
+    def test_seals_and_includes_wire_topology_by_default(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         cb = _callback(InProcessCommitter())
         _drive(cb)
         attestor = AsyncMock()
         attestor.attest_bundle.return_value = AttestationVerdict(verified=True)
 
-        result = asyncio.run(submit_attested_bundle(cb, attestor))
+        with (
+            warnings.catch_warnings(record=True) as caught,
+            caplog.at_level(logging.WARNING, logger="cage.provider_02_adapter"),
+        ):
+            warnings.simplefilter("always", DeprecationWarning)
+            result = asyncio.run(submit_attested_bundle(cb, attestor))
 
+        assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
+        assert caplog.records == []
         assert result.verified
         (submitted, topology), _ = attestor.attest_bundle.call_args
         assert topology == topology_to_wire(cb.topology)
         assert all(len(s["stateHash"]) == 64 for s in submitted["steps"])
 
-    def test_include_topology_false_omits_wire_topology(self) -> None:
+    def test_include_topology_false_omits_wire_topology(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         cb = _callback(InProcessCommitter())
         _drive(cb)
         attestor = AsyncMock()
         attestor.attest_bundle.return_value = AttestationVerdict(verified=True)
 
-        asyncio.run(submit_attested_bundle(cb, attestor, include_topology=False))
+        with (
+            pytest.deprecated_call(
+                match=(
+                    r"include_topology=False.*NexArt Nodes < v0\.30\.1.*"
+                    r"omitting evidence\.topology weakens structural execution "
+                    r"provenance \(AU-10\)"
+                )
+            ),
+            caplog.at_level(logging.WARNING, logger="cage.provider_02_adapter"),
+        ):
+            asyncio.run(submit_attested_bundle(cb, attestor, include_topology=False))
 
+        assert len(caplog.records) == 1
+        logged = caplog.records[0].getMessage()
+        assert (
+            "omitting evidence.topology weakens structural execution provenance (AU-10)"
+            in logged
+        )
+        assert "NexArt Nodes < v0.30.1" in logged
         (_, topology), _ = attestor.attest_bundle.call_args
         assert topology is None
 
