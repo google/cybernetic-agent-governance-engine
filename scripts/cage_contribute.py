@@ -990,7 +990,7 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
     scaffold_type = args.scaffold_type
 
     if scaffold_type == "tier":
-        domain = args.domain.lower()
+        domain = args.domain.lower().replace("-", "_")
         tier_name = args.name.lower().replace("-", "_")
         phase = int(args.phase or 1)
         order = int(args.order or 10)
@@ -1061,7 +1061,7 @@ class {class_name}(MutatingTier):
     async def commit(
         self, action: str, params: dict[str, Any]
     ) -> tuple[list[Violation], CommitReceipt | None]:
-        return [], CommitReceipt(handle="{tier_name}-reservation-001", tier_name=self.tier_name)
+        return [], CommitReceipt(tier=self.tier_name, token="{tier_name}-reservation-001")
 
     async def rollback(
         self, action: str, params: dict[str, Any], receipt: CommitReceipt
@@ -1105,10 +1105,10 @@ from src.gateway.governance.seams.normative import (
 
 class NormativeAdapter(NormativeProvider):
     async def fetch_baseline(self, region: str) -> NormativeBaseline:
-        return NormativeBaseline(region=region, rules=[])
+        return NormativeBaseline(region=region, profile={})
 
     async def validate_fria(self, payload: dict[str, Any]) -> ValidationResult:
-        return ValidationResult(decision="ALLOW", findings=[])
+        return ValidationResult(admitted=True, findings=[])
 
     async def submit_evidence(self, thread_id: str, evidence_hash: str) -> EvidenceSeal:
         return EvidenceSeal(thread_id=thread_id, seal_hash="SEAL_HASH_PLACEHOLDER")
@@ -1165,10 +1165,15 @@ class QuarantineAdapter(QuarantineActuator):
     async def quarantine_workload(
         self, directive: QuarantineDirective
     ) -> QuarantineReceipt:
+        rule_id = (
+            directive.violation_codes[0]
+            if directive.violation_codes
+            else directive.reason.value
+        )
         return QuarantineReceipt(
             quarantined=True,
             enforcement_plane="SIMULATED",
-            rule_id=directive.trigger_rule,
+            rule_id=rule_id,
             latency_us=100.0,
             outcome=ActuationOutcome.ACCEPTED,
         )
@@ -1191,6 +1196,36 @@ class AttestationAdapter(AttestationProvider):
         self, context: dict[str, Any]
     ) -> list[ExternalAttestation]:
         return []
+""" % seam_name
+        elif seam_type == "evidence":
+            adapter_code += """
+from src.gateway.governance.seams.evidence import (
+    EvidenceCollector,
+    EvidenceReceipt,
+    EvidenceRecord,
+)
+
+
+class EvidenceAdapter(EvidenceCollector):
+    @property
+    def collector_name(self) -> str:
+        return "%s"
+
+    async def collect_evidence(self, record: EvidenceRecord) -> EvidenceReceipt:
+        return EvidenceReceipt(
+            receipt_id="EVID_001",
+            stored=True,
+            stream_offset=0,
+            receipt_sha256="EVIDENCE_SHA256_PLACEHOLDER",
+        )
+
+    async def flush_batch(self, batch_id: str) -> EvidenceReceipt:
+        return EvidenceReceipt(
+            receipt_id=f"BATCH_{batch_id}",
+            stored=True,
+            stream_offset=0,
+            receipt_sha256="BATCH_SHA256_PLACEHOLDER",
+        )
 """ % seam_name
 
         adapter_file.write_text(adapter_code, encoding="utf-8")
@@ -1474,7 +1509,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # scaffold seam
     p_sc_seam = scaffold_sub.add_parser("seam", help="Scaffold Layer 3 integration seam")
-    p_sc_seam.add_argument("seam_type", choices=["normative", "attestation", "actuator", "quarantine"], help="Seam protocol type")
+    p_sc_seam.add_argument("seam_type", choices=["normative", "attestation", "actuator", "quarantine", "evidence"], help="Seam protocol type")
     p_sc_seam.add_argument("name", help="Anonymized package name (e.g. provider_07, actuator_05)")
 
     p_scaffold.set_defaults(func=cmd_scaffold)

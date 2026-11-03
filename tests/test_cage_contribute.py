@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import asyncio
+import importlib.util
 import os
 import stat
 import subprocess
@@ -647,6 +649,15 @@ def test_cmd_verify_service_sync_missing_catalogue_files(tmp_path: Path) -> None
 # ===========================================================================
 
 
+def _load_module_from_path(module_name: str, file_path: Path):
+    """Dynamically load and execute a Python module from an arbitrary path."""
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def test_cmd_scaffold_phase_1_read_only_tier(tmp_path: Path) -> None:
     """Verify scaffold tier generates valid ADR-009 ReadOnlyTier without mutating hooks."""
     repo = tmp_path / "repo"
@@ -677,6 +688,16 @@ def test_cmd_scaffold_phase_1_read_only_tier(tmp_path: Path) -> None:
         assert "def rollback" not in code
         assert "def confirm" not in code
 
+        # Dynamically instantiate and verify interface
+        mod = _load_module_from_path("margin_check_tier", target_file)
+        tier_cls = getattr(mod, "MarginCheckTier")
+        tier = tier_cls()
+        assert tier.tier_name == "margin_check"
+        assert tier.order == 20
+        assert tier.claims_action("trade", {}) is True
+        violations = asyncio.run(tier.evaluate("trade", {}))
+        assert violations == []
+
 
 def test_cmd_scaffold_phase_2_mutating_tier(tmp_path: Path) -> None:
     """Verify scaffold tier generates valid ADR-009 MutatingTier with all hooks."""
@@ -704,16 +725,33 @@ def test_cmd_scaffold_phase_2_mutating_tier(tmp_path: Path) -> None:
         assert "def rollback" in code
         assert "def confirm" in code
 
+        # Dynamically instantiate and verify interface
+        mod = _load_module_from_path("cbf_dose_tier", target_file)
+        tier_cls = getattr(mod, "CbfDoseTier")
+        tier = tier_cls()
+        assert tier.tier_name == "cbf_dose"
+        assert tier.order == 30
+        assert tier.claims_action("trade", {}) is True
+        violations = asyncio.run(tier.evaluate("trade", {}))
+        assert violations == []
+        commit_violations, receipt = asyncio.run(tier.commit("trade", {}))
+        assert commit_violations == []
+        assert receipt is not None
+        assert receipt.tier == "cbf_dose"
+        assert receipt.token == "cbf_dose-reservation-001"
+        asyncio.run(tier.rollback("trade", {}, receipt))
+        asyncio.run(tier.confirm("trade", {}, receipt))
+
 
 def test_cmd_scaffold_tier_kebab_case_normalization(tmp_path: Path) -> None:
-    """Verify scaffold tier normalizes kebab-case names into valid Python identifiers."""
+    """Verify scaffold tier normalizes kebab-case domain and name into valid Python package identifiers."""
     repo = tmp_path / "repo"
     repo.mkdir()
 
     with patch("cage_contribute.find_repo_root", return_value=repo):
         args = argparse.Namespace(
             scaffold_type="tier",
-            domain="finance",
+            domain="physical-ai",
             name="trade-limit",
             phase=1,
             order=15,
@@ -721,7 +759,8 @@ def test_cmd_scaffold_tier_kebab_case_normalization(tmp_path: Path) -> None:
         rc = cage_contribute.cmd_scaffold(args)
         assert rc == 0
 
-        target_file = repo / "src" / "cage_finance" / "tiers" / "trade_limit_tier.py"
+        # Domain directory must use underscores, not hyphens
+        target_file = repo / "src" / "cage_physical_ai" / "tiers" / "trade_limit_tier.py"
         assert target_file.exists()
         code = target_file.read_text(encoding="utf-8")
 
@@ -731,9 +770,16 @@ def test_cmd_scaffold_tier_kebab_case_normalization(tmp_path: Path) -> None:
         assert "class TradeLimitTier(ReadOnlyTier):" in code
         assert 'return "trade_limit"' in code
 
+        mod = _load_module_from_path("trade_limit_tier", target_file)
+        tier_cls = getattr(mod, "TradeLimitTier")
+        tier = tier_cls()
+        assert tier.tier_name == "trade_limit"
+        assert tier.order == 15
+        assert asyncio.run(tier.evaluate("actuate", {})) == []
+
 
 def test_cmd_scaffold_seam_package(tmp_path: Path) -> None:
-    """Verify scaffold seam creates Layer 3 package with Apache 2.0 headers."""
+    """Verify scaffold seam creates Layer 3 package with Apache 2.0 headers and valid ActuatorAdapter."""
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -754,6 +800,40 @@ def test_cmd_scaffold_seam_package(tmp_path: Path) -> None:
         adapter_code = (pkg_dir / "adapter.py").read_text(encoding="utf-8")
         assert "Copyright 2026 Google LLC" in adapter_code
         assert "ExecutionActuator" in adapter_code
+
+        # Dynamically instantiate and verify actuator adapter
+        mod = _load_module_from_path("actuator_09_adapter", pkg_dir / "adapter.py")
+        adapter_cls = getattr(mod, "ActuatorAdapter")
+        adapter = adapter_cls()
+        assert adapter.actuator_id == "actuator_09"
+        assert asyncio.run(adapter.health_check()) is True
+
+        from src.gateway.governance.seams.actuation import (
+            ActuationOutcome,
+            ActuatorCapability,
+            ExecutionClearance,
+        )
+
+        assert ActuatorCapability.SIGNED_RECEIPTS in adapter.get_capabilities()
+
+        clearance = ExecutionClearance(
+            thread_id="th-1",
+            decision="ALLOW",
+            decision_path="DIRECT",
+            action="test_action",
+            target="test_target",
+            operator_urn="urn:cage:operator:test",
+            issued_at=1700000000,
+            issued_at_provenance="CONSTRUCTION_TIME",
+            correlation_id="corr-1",
+            correlation_id_source="INGRESS_MINTED",
+            governance_decision_digest="0" * 64,
+            opa_input_digest="1" * 64,
+            nonce="n" * 32,
+        )
+        receipt = asyncio.run(adapter.actuate(clearance))
+        assert receipt.accepted is True
+        assert receipt.outcome == ActuationOutcome.ACCEPTED
 
 
 def test_cmd_scaffold_attestation_seam(tmp_path: Path) -> None:
@@ -785,6 +865,211 @@ def test_cmd_scaffold_attestation_seam(tmp_path: Path) -> None:
         # Parse AST to ensure valid python code
         tree = ast.parse(adapter_code)
         assert tree is not None
+
+        # Dynamically instantiate and verify attestation adapter
+        mod = _load_module_from_path("provider_08_adapter", pkg_dir / "adapter.py")
+        adapter_cls = getattr(mod, "AttestationAdapter")
+        adapter = adapter_cls()
+        assert adapter.provider_name == "provider_08"
+        attestations = asyncio.run(adapter.fetch_attestations({"action": "check"}))
+        assert attestations == []
+
+
+def test_cmd_scaffold_normative_seam(tmp_path: Path) -> None:
+    """Verify scaffold seam normative generates valid NormativeAdapter matching data contracts."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo):
+        args = argparse.Namespace(
+            scaffold_type="seam",
+            seam_type="normative",
+            name="provider_07",
+        )
+        rc = cage_contribute.cmd_scaffold(args)
+        assert rc == 0
+
+        pkg_dir = repo / "src" / "integrations" / "provider_07"
+        adapter_file = pkg_dir / "adapter.py"
+        assert adapter_file.exists()
+
+        # Dynamically load and instantiate NormativeAdapter
+        mod = _load_module_from_path("provider_07_adapter", adapter_file)
+        adapter_cls = getattr(mod, "NormativeAdapter")
+        adapter = adapter_cls()
+
+        # 1. fetch_baseline must accept region and return NormativeBaseline with profile dict
+        baseline = asyncio.run(adapter.fetch_baseline("US_FED"))
+        assert baseline.region == "US_FED"
+        assert baseline.profile == {}
+        assert baseline.error is None
+
+        # 2. validate_fria must return ValidationResult with admitted: bool
+        result = asyncio.run(adapter.validate_fria({"action": "check_limits"}))
+        assert result.admitted is True
+        assert result.findings == []
+
+        # 3. submit_evidence must return EvidenceSeal
+        seal = asyncio.run(adapter.submit_evidence("thread-001", "hash-001"))
+        assert seal.thread_id == "thread-001"
+        assert seal.seal_hash == "SEAL_HASH_PLACEHOLDER"
+
+
+def test_cmd_scaffold_quarantine_seam(tmp_path: Path) -> None:
+    """Verify scaffold seam quarantine generates valid QuarantineAdapter matching QuarantineDirective."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo):
+        args = argparse.Namespace(
+            scaffold_type="seam",
+            seam_type="quarantine",
+            name="quarantine_01",
+        )
+        rc = cage_contribute.cmd_scaffold(args)
+        assert rc == 0
+
+        pkg_dir = repo / "src" / "integrations" / "quarantine_01"
+        adapter_file = pkg_dir / "adapter.py"
+        assert adapter_file.exists()
+
+        mod = _load_module_from_path("quarantine_01_adapter", adapter_file)
+        adapter_cls = getattr(mod, "QuarantineAdapter")
+        adapter = adapter_cls()
+
+        assert adapter.actuator_id == "quarantine_01"
+        assert asyncio.run(adapter.health_check()) is True
+
+        from src.gateway.governance.seams.quarantine import (
+            QuarantineDirective,
+            QuarantineTriggerReason,
+        )
+
+        # Case A: directive with violation_codes
+        directive_a = QuarantineDirective(
+            thread_id="t1",
+            agent_svid="spiffe://cage/agent/1",
+            sandbox_id="sbx-01",
+            reason=QuarantineTriggerReason.CRITICAL_CBF_BREACH,
+            violation_codes=("CRITICAL_EXPOSURE_01",),
+            issued_at=1700000000,
+            correlation_id="corr-1",
+            nonce="nonce-1",
+            governance_decision_digest="a" * 64,
+        )
+        receipt_a = asyncio.run(adapter.quarantine_workload(directive_a))
+        assert receipt_a.quarantined is True
+        assert receipt_a.enforcement_plane == "SIMULATED"
+        assert receipt_a.rule_id == "CRITICAL_EXPOSURE_01"
+
+        # Case B: directive with empty violation_codes falls back to reason.value
+        directive_b = QuarantineDirective(
+            thread_id="t2",
+            agent_svid="spiffe://cage/agent/2",
+            sandbox_id="sbx-02",
+            reason=QuarantineTriggerReason.SANDBOX_ESCAPE_ATTEMPT,
+            violation_codes=(),
+            issued_at=1700000000,
+            correlation_id="corr-2",
+            nonce="nonce-2",
+            refusal_proof_hash="b" * 64,
+        )
+        receipt_b = asyncio.run(adapter.quarantine_workload(directive_b))
+        assert receipt_b.quarantined is True
+        assert receipt_b.enforcement_plane == "SIMULATED"
+        assert receipt_b.rule_id == "SANDBOX_ESCAPE_ATTEMPT"
+
+
+def test_cmd_scaffold_evidence_seam(tmp_path: Path) -> None:
+    """Verify scaffold seam evidence generates valid EvidenceAdapter implementing EvidenceCollector."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo):
+        args = argparse.Namespace(
+            scaffold_type="seam",
+            seam_type="evidence",
+            name="evidence_01",
+        )
+        rc = cage_contribute.cmd_scaffold(args)
+        assert rc == 0
+
+        pkg_dir = repo / "src" / "integrations" / "evidence_01"
+        adapter_file = pkg_dir / "adapter.py"
+        assert adapter_file.exists()
+
+        mod = _load_module_from_path("evidence_01_adapter", adapter_file)
+        adapter_cls = getattr(mod, "EvidenceAdapter")
+        adapter = adapter_cls()
+
+        assert adapter.collector_name == "evidence_01"
+
+        from src.gateway.governance.seams.evidence import (
+            EvidenceCollector,
+            EvidenceRecord,
+        )
+
+        assert isinstance(adapter, EvidenceCollector)
+
+        record = EvidenceRecord(
+            record_id="rec-001",
+            event_type="DECISION",
+            payload={"action": "test", "allowed": True},
+        )
+        receipt = asyncio.run(adapter.collect_evidence(record))
+        assert receipt.stored is True
+        assert receipt.receipt_id == "EVID_001"
+        assert receipt.receipt_sha256 == "EVIDENCE_SHA256_PLACEHOLDER"
+
+        flush_receipt = asyncio.run(adapter.flush_batch("batch-99"))
+        assert flush_receipt.stored is True
+        assert flush_receipt.receipt_id == "BATCH_batch-99"
+        assert flush_receipt.receipt_sha256 == "BATCH_SHA256_PLACEHOLDER"
+
+
+def test_cmd_scaffold_all_templates_instantiate_cleanly(tmp_path: Path) -> None:
+    """Parametric stress test asserting all 5 seam types and 2 tier phases instantiate cleanly."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with patch("cage_contribute.find_repo_root", return_value=repo):
+        # 1. Test both tier phases
+        for phase in [1, 2]:
+            args = argparse.Namespace(
+                scaffold_type="tier",
+                domain="healthcare",
+                name=f"phase_{phase}_check",
+                phase=phase,
+                order=10 * phase,
+            )
+            assert cage_contribute.cmd_scaffold(args) == 0
+            tier_path = repo / "src" / "cage_healthcare" / "tiers" / f"phase_{phase}_check_tier.py"
+            assert tier_path.exists()
+            mod = _load_module_from_path(f"phase_{phase}_tier", tier_path)
+            cls_name = f"Phase{phase}CheckTier"
+            tier_cls = getattr(mod, cls_name)
+            tier_inst = tier_cls()
+            assert tier_inst.order == 10 * phase
+
+        # 2. Test all 5 seam types
+        seam_types = ["normative", "attestation", "actuator", "quarantine", "evidence"]
+        for st in seam_types:
+            seam_name = f"test_{st}_adapter"
+            args = argparse.Namespace(
+                scaffold_type="seam",
+                seam_type=st,
+                name=seam_name,
+            )
+            assert cage_contribute.cmd_scaffold(args) == 0
+            adapter_path = repo / "src" / "integrations" / seam_name / "adapter.py"
+            assert adapter_path.exists()
+            mod = _load_module_from_path(f"mod_{st}", adapter_path)
+            # Find the adapter class
+            classes = [c for c in dir(mod) if c.endswith("Adapter")]
+            assert len(classes) >= 1
+            adapter_cls = getattr(mod, classes[0])
+            adapter_inst = adapter_cls()
+            assert adapter_inst is not None
 
 
 # ===========================================================================
