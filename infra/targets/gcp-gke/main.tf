@@ -1304,7 +1304,9 @@ resource "terraform_data" "control_plane_access_guard" {
 # warnings, so `terraform destroy -var-file=staging.tfvars` needs neither
 # authorized_networks nor the compliance keys. The same check written as a
 # variable validation fails the destroy plan instead (both verified on Terraform
-# 1.15.8 and 1.17.1). Keep them out of variable validations.
+# 1.15.8 and 1.17.1). Keep them out of variable validations. Being standalone,
+# they are skipped by a plan targeted at module.gke, which does not depend on
+# them (POAM-2026-180).
 
 # W6: what each inference backend deploys must be able to run. "vllm" schedules
 # its pods on the GPU pool, so it needs one (min 0 costs nothing while idle). The
