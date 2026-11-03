@@ -245,8 +245,10 @@ not complete, for reasons this change leaves alone:
 | `gcp-gke` | `prod` | US_FED | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars` |
 | `gcp-gke` | `prod` | EU_ECB | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/eu-prod.tfvars` |
 | `gcp-gke` | `prod` | APAC_MAS | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/apac-prod.tfvars` |
-| `gcp-gke` | `staging` | Any | `CAGE_DEPLOYMENT_REGION=<REGION> ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
+| `gcp-gke` | `staging` | US_FED (set by `staging.tfvars`) | `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
 | `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
+
+`deploy_all.sh` takes the jurisdiction from the profile's `cage_deployment_region` and ignores a `CAGE_DEPLOYMENT_REGION` that disagrees, with a warning. Staging is therefore US_FED unless a profile says otherwise. A staging or prod profile for another jurisdiction must set that jurisdiction's own compliance flag, because the control-plane guard, the POAM-019 key guards and the cluster allowlist follow those flags rather than the tier (POAM-2026-181).
 
 ---
 

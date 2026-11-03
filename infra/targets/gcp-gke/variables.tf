@@ -60,7 +60,7 @@ variable "namespace" {
 # ─── Security Posture Toggles ─────────────────────────────────────────────────
 
 variable "enable_nist_compliance" {
-  description = "Enable NIST SP 800-53 RMF security controls (SC-7, AC-3, deletion protection). US_FED only — do not set for EU_ECB or APAC_MAS deployments."
+  description = "US_FED profiles only. Despite the name, it carries nothing NIST-specific: like enable_eu_ecb_compliance and enable_apac_mas_compliance, in main.tf it only sets local.any_compliance_active (POAM-2026-130). A staging or prod profile for EU_ECB or APAC_MAS must set its own flag instead, or the control-plane and POAM-019 guards stop binding and the control plane falls back to 0.0.0.0/0 (POAM-2026-181)."
   type        = bool
   default     = false
 }
