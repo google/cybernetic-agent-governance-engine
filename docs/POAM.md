@@ -1757,13 +1757,15 @@ However, [`infra/targets/gcp-gke/main.tf`](../infra/targets/gcp-gke/main.tf) wir
 
 **Remediation Plan:**
 1. Define the review: an owner, a cadence (for example at each staging provision, and at least monthly for long-lived clusters), and the rule that an entry is removed unless someone confirms a current need for it.
-2. Require each entry's `display_name` to name an owner, so a reviewer knows whom to ask.
-3. Record each completed review (date, reviewer, entries kept and removed) in a place a check can read.
+2. Require each entry's `display_name` to name an owner, so a reviewer knows whom to ask, and enforce the format with a `validation` block on `variable "authorized_networks"` in [`variables.tf`](../infra/targets/gcp-gke/variables.tf). A plan-time check is the right place for this because only the plan sees the list actually deployed. The live list comes from a gitignored `terraform.auto.tfvars`, an operator `--var-file`, or `TF_VAR_authorized_networks`, and a pull-request check sees none of them. Today no entry meets the convention: every committed profile's `display_name` (for example `"Corporate VPN"` in [`prod.tfvars`](../infra/targets/gcp-gke/prod.tfvars) `line 72`) and the `"deployer-egress"` entry that [`staging_lifecycle.sh`](../scripts/staging_lifecycle.sh) (`line 199`) generates. All of them have to be migrated in the same change.
+3. Record each completed review (date, reviewer role, entry count kept and removed) in a committed file a script can read. The record must not contain CIDRs or personal names, because the repository is public and staging entries are operators' egress addresses.
+4. Run the recency check on the pull-request path, as a CI job on every PR, not on a schedule. A scheduled check that goes red is seen by nobody and stays red. On PRs, the first person to open one after the cadence lapses is blocked until a review is recorded.
 
 **Closure Criteria:**
 1. The review procedure, owner, and cadence are documented in [`docs/operations/DEPLOYMENT_RULES.md`](operations/DEPLOYMENT_RULES.md).
-2. At least one completed review is recorded under that procedure with its date and reviewer, and that date is recorded here.
-3. A check that can be run reports the age of the most recent review record and fails when it is older than the documented cadence.
+2. `terraform plan` rejects any `authorized_networks` entry whose `display_name` does not parse to an owner, and a `terraform test` case shows both an accepted and a rejected entry. Every committed profile and the `staging_lifecycle.sh` default pass.
+3. At least one completed review is recorded under that procedure with its date and reviewer role, and that date is recorded here.
+4. A CI job that runs on every pull request reads the latest review record and fails when it is older than the documented cadence. A deliberately backdated record makes the job fail.
 
 ### POAM-2026-165: Any Branch Can Impersonate the Owner-Equivalent Deployer Through Workload Identity Federation
 
