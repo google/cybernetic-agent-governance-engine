@@ -136,6 +136,11 @@ terraform destroy -var-file=staging.tfvars \
   -var-file=image_digests.<short_sha>.tfvars.json -var project_id=<PROJECT_ID> -auto-approve
 ```
 
+`staging.tfvars` sets `enable_nist_compliance = true` itself, so a direct `terraform`
+run with it plans the same compliance posture as `deploy_all.sh`. Supply
+`authorized_networks` and distinct `langfuse_compliance_*` keys, or the plan stops
+(`POAM-2026-174`, `POAM-2026-126`, `POAM-019`).
+
 See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)
 for full configuration and [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)
 for automated validation workflow.

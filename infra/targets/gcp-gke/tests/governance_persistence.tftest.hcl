@@ -106,7 +106,7 @@ variables {
 
 # ─── Staging: AOF, every write saved, as in prod ─────────────────────────────
 
-# staging.tfvars as CI passes it, with no compliance flag set.
+# staging.tfvars as CI passes it. It sets enable_nist_compliance (POAM-2026-174).
 run "staging_profile_persists_governance_state_on_every_write" {
   command = plan
 
@@ -123,12 +123,12 @@ run "staging_profile_persists_governance_state_on_every_write" {
   }
 }
 
-# What deploy_all.sh plans for US_FED staging: it injects enable_nist_compliance.
-run "staging_with_injected_nist_flag_keeps_aof_always" {
+# The staging tier with the compliance flag forced off: AOF must not depend on it.
+run "staging_without_nist_flag_keeps_aof_always" {
   command = plan
 
   variables {
-    enable_nist_compliance = true
+    enable_nist_compliance = false
   }
 
   assert {
@@ -224,12 +224,14 @@ run "apac_prod_profile_persists_governance_state_on_every_write" {
   }
 }
 
-# The tier alone enforces in prod; it does not wait for a compliance flag.
+# The tier alone enforces in prod; it does not wait for a compliance flag. The
+# flag is forced off because the staging profile CI passes sets it.
 run "prod_tier_without_compliance_flags_keeps_aof_always" {
   command = plan
 
   variables {
-    environment = "prod"
+    environment            = "prod"
+    enable_nist_compliance = false
   }
 
   assert {

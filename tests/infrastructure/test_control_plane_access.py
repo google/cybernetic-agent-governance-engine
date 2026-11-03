@@ -118,3 +118,13 @@ def test_plan_refuses_an_open_or_empty_allowlist_under_compliance() -> None:
         "an empty list leaves GKE's allowlist off, so the guard must refuse it"
     )
     assert '!endswith(n.cidr, "/0")' in guard, "the guard must refuse a /0 entry"
+
+
+def test_staging_profile_sets_the_nist_flag_itself() -> None:
+    # POAM-2026-174: the guard above binds only while compliance is active. The
+    # staging profile must turn it on itself, so a direct terraform run with
+    # -var-file=staging.tfvars, not only deploy_all.sh, plans the guard.
+    text = (GKE_TARGET_DIR / "staging.tfvars").read_text(encoding="utf-8")
+    assert re.search(r"^enable_nist_compliance\s*=\s*true\b", text, re.MULTILINE), (
+        "staging.tfvars must set enable_nist_compliance = true on an uncommented line"
+    )

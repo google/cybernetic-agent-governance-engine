@@ -66,6 +66,11 @@ override_module {
 variables {
   project_id          = "w6-test-project"
   authorized_networks = [{ cidr = "203.0.113.7/32", display_name = "test" }]
+
+  # staging.tfvars activates a compliance posture, which needs distinct
+  # compliance telemetry keys (POAM-019). Test fixtures, not credentials.
+  langfuse_compliance_public_key = "fake-compliance-public-key"
+  langfuse_compliance_secret_key = "fake-compliance-secret-key"
 }
 
 run "staging_none_deploys_no_model_workloads" {

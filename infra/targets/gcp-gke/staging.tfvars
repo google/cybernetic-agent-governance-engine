@@ -28,7 +28,7 @@
 #   - enable_high_availability=false (1 replica per service vs 2+)
 #
 # Security posture: FULL (identical to prod)
-#   - enable_nist_compliance=true (injected by deploy_all.sh)
+#   - enable_nist_compliance=true (set below, so a direct terraform run gets it too)
 #   - enable_binary_authorization=true
 #   - enable_audit_logging=true
 #   - enable_cmek=true (requires KMS key — set kms_key_id in terraform.auto.tfvars)
@@ -86,10 +86,10 @@ master_ipv4_cidr_block = "172.16.0.16/28"
 #   - Private nodes: no external IPs on node VMs (use Cloud NAT for egress)
 #   - Authorized networks: restrict control-plane access to operator CIDRs (VPN range or deployer egress)
 
-# enable_nist_compliance MUST be explicitly true here to activate Redis replication,
-# replica scale-out, PDBs, and NIST SP 800-53 control gates. This is injected
-# dynamically by deploy_all.sh based on --env posture (see steps 13-14).
-# enable_nist_compliance = true # Dynamically injected by deploy_all.sh
+# Set here, not only by deploy_all.sh, so a direct terraform plan, apply or destroy
+# with -var-file=staging.tfvars plans the same posture (POAM-2026-174). It sets
+# local.any_compliance_active in main.tf; POAM-2026-174 lists what that turns on.
+enable_nist_compliance = true
 
 # POAM-024: HA decoupled from compliance — staging runs 1-replica scale to prove
 # that full security posture is achievable without production-scale redundancy.

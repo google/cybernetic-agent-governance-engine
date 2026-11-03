@@ -94,7 +94,7 @@ variables {
 
 # ─── Staging: one day, locked, on both buckets, from one source ──────────────
 
-# staging.tfvars as CI passes it, with no compliance flag set.
+# staging.tfvars as CI passes it. It sets enable_nist_compliance (POAM-2026-174).
 run "staging_profile_locks_both_buckets_for_one_day" {
   command = plan
 
@@ -119,13 +119,13 @@ run "staging_profile_locks_both_buckets_for_one_day" {
   }
 }
 
-# What deploy_all.sh plans for US_FED staging: it injects enable_nist_compliance.
-# The lock must not depend on it, since turning a lock off replaces the bucket.
-run "staging_with_injected_nist_flag_keeps_the_same_lock" {
+# The staging tier with the compliance flag forced off. The lock must not depend
+# on the flag, since turning a lock off replaces the bucket.
+run "staging_without_nist_flag_keeps_the_same_lock" {
   command = plan
 
   variables {
-    enable_nist_compliance = true
+    enable_nist_compliance = false
   }
 
   assert {
@@ -233,12 +233,14 @@ run "apac_prod_profile_keeps_2555_days_locked" {
   }
 }
 
-# The tier alone locks prod; it does not wait for a compliance flag.
+# The tier alone locks prod; it does not wait for a compliance flag. The flag is
+# forced off because the staging profile CI passes sets it.
 run "prod_tier_without_compliance_flags_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment = "prod"
+    environment            = "prod"
+    enable_nist_compliance = false
   }
 
   assert {

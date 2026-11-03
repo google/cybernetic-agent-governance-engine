@@ -74,3 +74,14 @@ output "workload_identity_pool" {
   value       = "${var.project_id}.svc.id.goog"
 }
 
+# AC-3 (POAM-2026-126, POAM-2026-174): the CIDRs the cluster's
+# master_authorized_networks_config allows, as planned. Empty means no block, so
+# GKE leaves the allowlist off; ["0.0.0.0/0"] is the non-compliance fallback.
+output "master_authorized_cidrs" {
+  description = "CIDR blocks in master_authorized_networks_config, as planned"
+  value = flatten([
+    for c in google_container_cluster.primary.master_authorized_networks_config :
+    [for b in c.cidr_blocks : b.cidr_block]
+  ])
+}
+
