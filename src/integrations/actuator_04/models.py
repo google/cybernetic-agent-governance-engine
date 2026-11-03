@@ -22,7 +22,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.gateway.governance.seams.digests import require_sha256_hex
-from src.integrations.actuator_04.constants import ALLOWED_OCSF_CLASS_UIDS, MAX_OCSF_METADATA_BYTES
+from src.integrations.actuator_04.constants import (
+    ALLOWED_OCSF_CLASS_UIDS,
+    MAX_OCSF_METADATA_BYTES,
+)
 
 
 @dataclass(frozen=True)

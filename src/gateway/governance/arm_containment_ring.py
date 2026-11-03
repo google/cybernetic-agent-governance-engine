@@ -31,6 +31,8 @@ from typing import Any
 
 from src.gateway.governance.quarantine_actuator import (
     advance_workload_epoch as _actuator_advance_workload_epoch,
+)
+from src.gateway.governance.quarantine_actuator import (
     get_workload_min_epoch as _actuator_get_workload_min_epoch,
 )
 
@@ -120,7 +122,7 @@ class ArmContainmentRing:
     def derive_epoch_key(self, arm_id: str, epoch: int, role: ArmRole) -> bytes:
         """Cryptographically derive an epoch key using HKDF-like HMAC-SHA256."""
         normalized_id = arm_id.strip().lower()
-        info = f"{normalized_id}:{epoch}:{role.value}".encode("utf-8")
+        info = f"{normalized_id}:{epoch}:{role.value}".encode()
         return hmac.new(self._master_seed, info, hashlib.sha256).digest()
 
     def sign_message(

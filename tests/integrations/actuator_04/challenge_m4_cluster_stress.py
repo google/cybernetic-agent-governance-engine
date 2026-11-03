@@ -31,8 +31,9 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -423,13 +424,19 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
     # Step 1: Start Server 1
     port1 = get_free_port()
     log_file1 = open(tmp_path / "server_s1.log", "wb")
-    p1 = subprocess.Popen(
-        [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port1), "--db-dir", str(db_dir)],
-        cwd=str(tmp_path),
-        env=env,
-        stdout=log_file1,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        p1 = subprocess.Popen(
+            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port1), "--db-dir", str(db_dir)],
+            cwd=str(tmp_path),
+            env=env,
+            stdout=log_file1,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        log_file1.close()
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+        raise
     assert wait_for_health(f"http://127.0.0.1:{port1}", timeout=15.0)
 
     workload = "spiffe://cluster.local/ns/default/sa/crash-survivor-agent"
@@ -478,13 +485,19 @@ def test_challenge_crash_recovery_abrupt_sigkill_lease_survival(
     # Step 5: Start Server 2 pointing to the exact same state & db directory on a fresh ephemeral port
     port2 = get_free_port()
     log_file2 = open(tmp_path / "server_s2.log", "wb")
-    p2 = subprocess.Popen(
-        [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port2), "--db-dir", str(db_dir)],
-        cwd=str(tmp_path),
-        env=env,
-        stdout=log_file2,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        p2 = subprocess.Popen(
+            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port2), "--db-dir", str(db_dir)],
+            cwd=str(tmp_path),
+            env=env,
+            stdout=log_file2,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        log_file2.close()
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+        raise
 
     try:
         assert wait_for_health(f"http://127.0.0.1:{port2}", timeout=15.0)

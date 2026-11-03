@@ -16,11 +16,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from src.gateway.governance.attestation_provider import AttestationProvider
+from src.gateway.governance.seams.actuation import ReceiptVerification
 from src.gateway.governance.seams.attestation import (
     AttestationStatus,
     ExternalAttestation,
@@ -87,7 +88,9 @@ class Actuator04AttestationProvider(AttestationProvider):
                 )
             ]
 
-        from src.integrations.actuator_04.adapter import verify_substrate_receipt_signature
+        from src.integrations.actuator_04.adapter import (
+            verify_substrate_receipt_signature,
+        )
 
         expected_quote = (
             context.get("expected_tpm_pcr_quote") or self._expected_pcr_quote
@@ -140,7 +143,8 @@ class Actuator04AttestationProvider(AttestationProvider):
                 key_resolver=self._receipt_key_resolver,
             )
 
-            if finding:
+            if v_status != ReceiptVerification.VERIFIED or finding:
+                meta = finding if finding else {"code": "RECEIPT_NOT_VERIFIED", "detail": "Receipt signature not verified"}
                 attestations.append(
                     ExternalAttestation(
                         attestation_type="HOST_TPM_PCR",
@@ -148,7 +152,7 @@ class Actuator04AttestationProvider(AttestationProvider):
                         receipt_id=body.get("kid", "err-unknown-kid"),
                         attested_at=body.get("timestamp_utc", ""),
                         provider_name=self.provider_name,
-                        metadata=finding,
+                        metadata=meta,
                     )
                 )
                 continue

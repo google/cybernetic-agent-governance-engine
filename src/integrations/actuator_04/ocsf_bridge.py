@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.seams.actuation import ReceiptVerification
 from src.gateway.governance.seams.quarantine import QuarantineTriggerReason
 from src.integrations.actuator_04.adapter import verify_substrate_receipt_signature
 from src.integrations.actuator_04.constants import OCSF_EVENT_DOMAIN_TAG
@@ -76,9 +77,10 @@ class Actuator04OcsfIngestor:
             key_resolver=self._key_resolver,
         )
 
-        if finding:
-            logger.error("OCSF telemetry signature verification failed: %s", finding)
-            raise ValueError(f"Invalid OCSF signature: {finding['detail']}")
+        if v_status != ReceiptVerification.VERIFIED or finding:
+            detail = finding["detail"] if finding else "Receipt signature not verified"
+            logger.error("OCSF telemetry signature verification failed: %s (status=%s)", finding, v_status)
+            raise ValueError(f"Invalid OCSF signature: {detail}")
 
         # 2. Pydantic validation
         validated = OcsfEventModel.model_validate(raw_event)
@@ -119,13 +121,13 @@ class Actuator04OcsfIngestor:
                 validated.action,
                 validated.agent_svid,
             )
+            # Issue gateway quarantine
+            import hashlib
+
             from src.gateway.governance.quarantine_actuator import (
                 QuarantineDirective,
                 dispatch_quarantine,
             )
-
-            # Issue gateway quarantine
-            import hashlib
 
             directive = QuarantineDirective(
                 thread_id=validated.thread_id,

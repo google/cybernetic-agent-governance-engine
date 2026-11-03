@@ -31,9 +31,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric import ed25519
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.quarantine_actuator import (
@@ -296,13 +296,19 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
 
     port1 = get_free_port()
     log_file1 = open(tmp_path / "server1.log", "wb")
-    p1 = subprocess.Popen(
-        [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port1), "--db-dir", str(db_dir)],
-        cwd=str(tmp_path),
-        env=env,
-        stdout=log_file1,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        p1 = subprocess.Popen(
+            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port1), "--db-dir", str(db_dir)],
+            cwd=str(tmp_path),
+            env=env,
+            stdout=log_file1,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        log_file1.close()
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+        raise
     assert wait_for_health(f"http://127.0.0.1:{port1}", timeout=15.0)
 
     workload = "spiffe://cluster.local/ns/default/sa/journal-survivor"
@@ -347,13 +353,19 @@ def test_t3_3_crash_safe_sealed_journal_restart_survival(
     # Re-spawn server on new port using the SAME db_dir
     port2 = get_free_port()
     log_file2 = open(tmp_path / "server2.log", "wb")
-    p2 = subprocess.Popen(
-        [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port2), "--db-dir", str(db_dir)],
-        cwd=str(tmp_path),
-        env=env,
-        stdout=log_file2,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        p2 = subprocess.Popen(
+            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port2), "--db-dir", str(db_dir)],
+            cwd=str(tmp_path),
+            env=env,
+            stdout=log_file2,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        log_file2.close()
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+        raise
     assert wait_for_health(f"http://127.0.0.1:{port2}", timeout=15.0)
 
     try:
@@ -584,13 +596,19 @@ def test_t4_3_rapid_ephemeral_port_recycling(tmp_path_factory: pytest.TempPathFa
         env["CARGO"] = "1"
         env["RUST_TEST_THREADS"] = "1"
 
-        p = subprocess.Popen(
-            [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port), "--db-dir", str(db_dir)],
-            cwd=str(tmp_path),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            p = subprocess.Popen(
+                [str(binary_path), "--daemon", "-H", "127.0.0.1", "-p", str(port), "--db-dir", str(db_dir)],
+                cwd=str(tmp_path),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as exc:
+            log_file.close()
+            if getattr(exc, "winerror", None) == 4551:
+                pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            raise
         try:
             assert wait_for_health(f"http://127.0.0.1:{port}", timeout=10.0)
             with httpx.Client(timeout=2.0) as client:

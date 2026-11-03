@@ -53,9 +53,10 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 # Reconfigure stdout/stderr to UTF-8 on Windows with error replacement to prevent cp1252 crashes
 if sys.platform == "win32":
@@ -544,7 +545,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     # 2a. commit-msg hook
     commit_msg_hook = hooks_dir / "commit-msg"
-    commit_msg_script = f"""#!/usr/bin/env bash
+    commit_msg_script = """#!/usr/bin/env bash
 # CAGE commit-msg hook — delegates to cage_contribute.py
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 if command -v python3 &>/dev/null; then
@@ -628,7 +629,7 @@ exit "$status"
             env_file.write_text("# CAGE Local Environment Variables\n", encoding="utf-8")
             print("  ✅ Created new .env file.")
     else:
-        print("  ℹ️  Existing .env preserved (zero-overwrite guarantee).")
+        print("  [INFO] Existing .env preserved (zero-overwrite guarantee).")
 
     # 4. Optional uv sync
     if getattr(args, "sync", False):
@@ -1127,7 +1128,7 @@ from src.gateway.governance.seams.actuation import (
 class ActuatorAdapter(ExecutionActuator):
     @property
     def actuator_id(self) -> str:
-        return "%s"
+        return "__SEAM_NAME__"
 
     async def health_check(self) -> bool:
         return True
@@ -1143,7 +1144,7 @@ class ActuatorAdapter(ExecutionActuator):
             raw_receipt={},
             outcome=ActuationOutcome.ACCEPTED,
         )
-""" % seam_name
+""".replace("__SEAM_NAME__", seam_name)
         elif seam_type == "quarantine":
             adapter_code += """
 from src.gateway.governance.seams.actuation import ActuationOutcome
@@ -1157,7 +1158,7 @@ from src.gateway.governance.seams.quarantine import (
 class QuarantineAdapter(QuarantineActuator):
     @property
     def actuator_id(self) -> str:
-        return "%s"
+        return "__SEAM_NAME__"
 
     async def health_check(self) -> bool:
         return True
@@ -1177,7 +1178,7 @@ class QuarantineAdapter(QuarantineActuator):
             latency_us=100.0,
             outcome=ActuationOutcome.ACCEPTED,
         )
-""" % seam_name
+""".replace("__SEAM_NAME__", seam_name)
         elif seam_type == "attestation":
             adapter_code += """
 from src.gateway.governance.seams.attestation import (
@@ -1190,13 +1191,13 @@ from src.gateway.governance.seams.attestation import (
 class AttestationAdapter(AttestationProvider):
     @property
     def provider_name(self) -> str:
-        return "%s"
+        return "__SEAM_NAME__"
 
     async def fetch_attestations(
         self, context: dict[str, Any]
     ) -> list[ExternalAttestation]:
         return []
-""" % seam_name
+""".replace("__SEAM_NAME__", seam_name)
         elif seam_type == "evidence":
             adapter_code += """
 from src.gateway.governance.seams.evidence import (
@@ -1209,7 +1210,7 @@ from src.gateway.governance.seams.evidence import (
 class EvidenceAdapter(EvidenceCollector):
     @property
     def collector_name(self) -> str:
-        return "%s"
+        return "__SEAM_NAME__"
 
     async def collect_evidence(self, record: EvidenceRecord) -> EvidenceReceipt:
         return EvidenceReceipt(
@@ -1226,7 +1227,7 @@ class EvidenceAdapter(EvidenceCollector):
             stream_offset=0,
             receipt_sha256="BATCH_SHA256_PLACEHOLDER",
         )
-""" % seam_name
+""".replace("__SEAM_NAME__", seam_name)
 
         adapter_file.write_text(adapter_code, encoding="utf-8")
         readme_file = pkg_dir / "README.md"
@@ -1295,7 +1296,7 @@ def cmd_pr(args: argparse.Namespace) -> int:
         )
         return res_gh.returncode
     else:
-        print("\nℹ️  Branch pushed. 'gh' CLI not found; open pull request in browser or install gh.")
+        print("\n[INFO] Branch pushed. 'gh' CLI not found; open pull request in browser or install gh.")
         return 0
 
 
@@ -1419,7 +1420,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except (FileNotFoundError, OSError):
             print("  • Google Cloud SDK: ⚠️  gcloud CLI found, but not executable")
     else:
-        print("  • Google Cloud SDK: ℹ️  Not installed (needed for Cloud Build submissions)")
+        print("  • Google Cloud SDK: [INFO] Not installed (needed for Cloud Build submissions)")
 
     # 7. Git Hooks
     hooks_dir = get_git_hooks_dir(repo_root)

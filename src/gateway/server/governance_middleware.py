@@ -815,8 +815,8 @@ async def validate_action_endpoint(
 
     # ── Out-of-Band Quarantine Enforcement (SC-7 / AC-3, CAGE-09) ───────────
     from src.gateway.governance.quarantine_actuator import (
-        is_workload_quarantined,
         get_workload_min_epoch,
+        is_workload_quarantined,
     )
     from src.gateway.server.workload_identity import current_client_identity
 

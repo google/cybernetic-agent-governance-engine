@@ -603,11 +603,11 @@ class McpQuarantineMiddleware:
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope.get("type") == "http":
-            from src.gateway.server.workload_identity import extract_client_identity
             from src.gateway.governance.quarantine_actuator import (
-                is_workload_quarantined,
                 get_workload_min_epoch,
+                is_workload_quarantined,
             )
+            from src.gateway.server.workload_identity import extract_client_identity
 
             try:
                 caller_identity = extract_client_identity(scope)
@@ -796,8 +796,8 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
     # Out-of-Band Quarantine Enforcement (SC-7 / AC-3, CAGE-09)
     from src.gateway.governance.quarantine_actuator import (
-        is_workload_quarantined,
         get_workload_min_epoch,
+        is_workload_quarantined,
     )
 
     request_thread_id: str | None = None

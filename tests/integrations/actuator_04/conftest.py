@@ -24,15 +24,16 @@ import base64
 import hashlib
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import time
-from typing import Any, AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
+from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric import ed25519
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -149,13 +150,19 @@ def killswitch_server_harness(tmp_path_factory: pytest.TempPathFactory) -> Gener
         "--db-dir", str(db_dir),
     ]
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(tmp_path),
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(tmp_path),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        log_file.close()
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+        raise
 
     base_url = f"http://127.0.0.1:{port}"
     healthy = wait_for_health(base_url, timeout=15.0)
@@ -242,14 +249,22 @@ def killswitch_cluster_harness(tmp_path_factory: pytest.TempPathFactory) -> Gene
             "--db-dir", str(db_dir),
         ]
 
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(node_dir),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-        procs.append(proc)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(node_dir),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+            procs.append(proc)
+        except OSError as exc:
+            log_file.close()
+            for p in procs:
+                p.kill()
+            if getattr(exc, "winerror", None) == 4551:
+                pytest.skip(f"Windows Smart App Control (SAC) blocked {binary_path} (OS error 4551)")
+            raise
         nodes[node_id] = f"http://127.0.0.1:{port}"
 
     # Wait for all nodes to become healthy

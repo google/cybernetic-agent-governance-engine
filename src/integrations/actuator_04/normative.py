@@ -117,7 +117,10 @@ class Actuator04NormativeProvider(NormativeProvider):
             )
 
         # Check signature over NORMATIVE_VALIDATION_DOMAIN_TAG + JCS(body_without_sig)
-        from src.integrations.actuator_04.adapter import verify_substrate_receipt_signature
+        from src.gateway.governance.seams.actuation import ReceiptVerification
+        from src.integrations.actuator_04.adapter import (
+            verify_substrate_receipt_signature,
+        )
 
         v_status, finding = await verify_substrate_receipt_signature(
             body,
@@ -126,10 +129,12 @@ class Actuator04NormativeProvider(NormativeProvider):
             key_resolver=self._receipt_key_resolver,
         )
 
-        if finding:
+        if v_status != ReceiptVerification.VERIFIED or finding:
+            detail = finding["detail"] if finding else "Receipt signature not verified"
+            code = finding["code"] if finding else "RECEIPT_NOT_VERIFIED"
             return ValidationResult(
                 admitted=False,
-                findings=[{"code": finding["code"], "status": FindingStatus.ERROR, "detail": finding["detail"]}],
+                findings=[{"code": code, "status": FindingStatus.ERROR, "detail": detail}],
                 error="Signature verification failed",
             )
 
