@@ -394,13 +394,13 @@ info "Running OSCAL SSP exporter to capture live validation state..."
 # Check if Python environment is set up
 if ! command -v uv &> /dev/null; then
   warn "uv not found. Attempting direct Python execution..."
-  if ! python3 src/gateway/governance/oscal_ssp_exporter.py; then
+  if ! python3 -m src.gateway.governance.oscal_ssp_exporter export; then
     error "OSCAL regeneration failed. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
   fi
 else
   # Use uv run for reproducible environment
-  if ! uv run python src/gateway/governance/oscal_ssp_exporter.py; then
+  if ! uv run python -m src.gateway.governance.oscal_ssp_exporter export; then
     error "OSCAL regeneration failed"
     exit 1
   fi
