@@ -104,9 +104,8 @@ module "gke" {
   cluster_dns_provider           = var.cluster_dns_provider
 
   # NIST-specific configuration
-  authorized_networks       = var.authorized_networks
-  kms_key_id                = local.cmek_key_id
-  database_encryption_state = var.database_encryption_state
+  authorized_networks = var.authorized_networks
+  kms_key_id          = local.cmek_key_id
 
   # Pool 1: General node pool (§3: general)
   primary_node_pool_machine_type  = var.primary_node_pool_machine_type
