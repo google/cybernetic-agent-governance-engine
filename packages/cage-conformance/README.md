@@ -59,6 +59,26 @@ lowercase hex characters. A finding names the field's path, never its value.
 Reports from 0.3.0 on carry this assertion, so a stream that 0.2.0 found
 conformant can fail it.
 
+## Verify a live endpoint
+
+Run black-box HTTP conformance vectors against a live CAGE gateway (`substrate-v1`)
+or a partner normative endpoint (`flowsignal-v0.2`):
+
+```bash
+cage-conformance verify --endpoint https://gateway.example.test \
+  --profile substrate-v1 \
+  [provenance options as above] --output endpoint_report.json
+```
+
+`substrate-v1` checks `GET /governance/policy-version` (`active_hash` and
+`thresholds_digest` as 64-character lowercase SHA-256 hex digests) and
+`GET /governance/jwks` (`keys` array). `flowsignal-v0.2` runs the Phase 3
+normative wire vectors (`CASE-1A`..`1F`), hostile response schema vectors
+(`CASE-1G-*`), and consequence bindings (`CASE-2A`, `2B`). Pass endpoint
+credentials via `--api-key-file` / `$CAGE_CONFORMANCE_API_KEY` or
+`--gcp-id-token-file` / `$CAGE_CONFORMANCE_GCP_ID_TOKEN`, never on the command
+line.
+
 ## Check a report
 
 ```bash

@@ -1,0 +1,184 @@
+{
+  "profile": "flowsignal-v0.2",
+  "base_request_template": {
+    "domain": "financial_settlement_v1",
+    "action": "execute_wire_transfer",
+    "policy_pack_id": "cage-fin-settlement-v1.4",
+    "policy_pack_version": "1.4.0",
+    "policy_pack_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "mandate_id": "mandate-treasury-ops-2026-q1",
+    "mandate_valid_until": "2099-12-31T23:59:59Z",
+    "principal_id": "spiffe://cage.local/ns/cage-system/sa/advisor-agent",
+    "payload": {
+      "amount_usd": 45000.0,
+      "beneficiary_id": "ACME-CORP-US-01",
+      "sanctions_screen_passed": true,
+      "dual_control_token": null
+    }
+  },
+  "wire_vectors": [
+    {
+      "id": "CASE-1A",
+      "title": "Valid ALLOW within mandate and under threshold",
+      "request_overrides": {
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a01",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "timestamp": "2026-03-31T21:00:00Z"
+      },
+      "expected_status": 200,
+      "expected_verdict": "ALLOW",
+      "expected_reason_code": "WITHIN_MANDATE_LIMITS",
+      "requires_receipt_signature": true
+    },
+    {
+      "id": "CASE-1C",
+      "title": "Valid DENY on sanctions screen failure",
+      "request_overrides": {
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a02",
+        "trace_id": "5cf92f3577b34da6a3ce929d0e0e4737",
+        "timestamp": "2026-03-31T21:01:00Z",
+        "payload": {
+          "amount_usd": 12000.0,
+          "beneficiary_id": "SANCTIONED-ENTITY-99",
+          "sanctions_screen_passed": false,
+          "dual_control_token": null
+        }
+      },
+      "expected_status": 200,
+      "expected_verdict": "DENY",
+      "expected_reason_code": "SANCTIONS_SCREEN_FAILED",
+      "requires_receipt_signature": true
+    },
+    {
+      "id": "CASE-1D",
+      "title": "Valid ESCALATE when amount exceeds single-Control threshold without dual_control_token",
+      "request_overrides": {
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a03",
+        "trace_id": "6df92f3577b34da6a3ce929d0e0e4738",
+        "timestamp": "2026-03-31T21:02:00Z",
+        "payload": {
+          "amount_usd": 250000.0,
+          "beneficiary_id": "ACME-CORP-US-01",
+          "sanctions_screen_passed": true,
+          "dual_control_token": null
+        }
+      },
+      "expected_status": 200,
+      "expected_verdict": "ESCALATE",
+      "expected_reason_code": "DUAL_CONTROL_REQUIRED",
+      "requires_receipt_signature": true
+    },
+    {
+      "id": "CASE-1E",
+      "title": "Expired mandate must return DENY with MANDATE_EXPIRED",
+      "request_overrides": {
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a04",
+        "trace_id": "7ef92f3577b34da6a3ce929d0e0e4739",
+        "timestamp": "2026-03-31T21:03:00Z",
+        "mandate_valid_until": "2025-12-31T23:59:59Z"
+      },
+      "expected_status": 200,
+      "expected_verdict": "DENY",
+      "expected_reason_code": "MANDATE_EXPIRED",
+      "requires_receipt_signature": true
+    },
+    {
+      "id": "CASE-1F",
+      "title": "Malformed payload (negative amount_usd) returns HTTP 422",
+      "request_overrides": {
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a05",
+        "trace_id": "8ff92f3577b34da6a3ce929d0e0e4740",
+        "timestamp": "2026-03-31T21:04:00Z",
+        "payload": {
+          "amount_usd": -100.0,
+          "beneficiary_id": "ACME-CORP-US-01",
+          "sanctions_screen_passed": true,
+          "dual_control_token": null
+        }
+      },
+      "expected_status": 422,
+      "expected_error_code": "SCHEMA_VALIDATION_FAILED",
+      "requires_receipt_signature": false
+    }
+  ],
+  "hostile_response_vectors": [
+    {
+      "id": "CASE-1G-TRUNCATED-HASH",
+      "title": "Strict schema validator rejects truncated SHA-256 hash",
+      "response": {
+        "receipt_id": "rcpt-0195ec88-1122-7000-8000-aabbccddeeff",
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a01",
+        "verdict": "ALLOW",
+        "reason_code": "WITHIN_MANDATE_LIMITS",
+        "policy_pack_id": "cage-fin-settlement-v1.4",
+        "policy_pack_version": "1.4.0",
+        "policy_pack_hash": "9f86d081884c",
+        "evaluated_at": "2026-03-31T21:00:00Z",
+        "Canonical_payload_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "signature": {
+          "alg": "Ed25519",
+          "kid": "flowsignal-normative-ed25519-2026-01",
+          "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      },
+      "expected_error_code": "INVALID_SHA256_HEX"
+    },
+    {
+      "id": "CASE-1G-UPPERCASE-HASH",
+      "title": "Strict schema validator rejects uppercase hex characters in SHA-256 hash",
+      "response": {
+        "receipt_id": "rcpt-0195ec88-1122-7000-8000-aabbccddeeff",
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a01",
+        "verdict": "ALLOW",
+        "reason_code": "WITHIN_MANDATE_LIMITS",
+        "policy_pack_id": "cage-fin-settlement-v1.4",
+        "policy_pack_version": "1.4.0",
+        "policy_pack_hash": "9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08",
+        "evaluated_at": "2026-03-31T21:00:00Z",
+        "Canonical_payload_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "signature": {
+          "alg": "Ed25519",
+          "kid": "flowsignal-normative-ed25519-2026-01",
+          "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      },
+      "expected_error_code": "INVALID_SHA256_HEX"
+    },
+    {
+      "id": "CASE-1G-FUTURE-RECEIPT",
+      "title": "Strict schema validator rejects future evaluated_at beyond clock skew",
+      "response": {
+        "receipt_id": "rcpt-0195ec88-1122-7000-8000-aabbccddeeff",
+        "request_id": "9f1c2e3a-4b5d-4e6f-8a9b-0c1d2e3f4a01",
+        "verdict": "ALLOW",
+        "reason_code": "WITHIN_MANDATE_LIMITS",
+        "policy_pack_id": "cage-fin-settlement-v1.4",
+        "policy_pack_version": "1.4.0",
+        "policy_pack_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "evaluated_at": "2099-01-01T00:00:00Z",
+        "Canonical_payload_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "signature": {
+          "alg": "Ed25519",
+          "kid": "flowsignal-normative-ed25519-2026-01",
+          "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      },
+      "expected_error_code": "FUTURE_TIMESTAMP_SKEW"
+    }
+  ],
+  "consequence_vectors": [
+    {
+      "id": "CASE-2A",
+      "title": "Decision sequence [ALLOW, ESCALATE, DENY] binds to [EXECUTE, HOLD_FOR_APPROVAL, ABORT]",
+      "verdicts": ["ALLOW", "ESCALATE", "DENY"],
+      "expected_actions": ["EXECUTE", "HOLD_FOR_APPROVAL", "ABORT"]
+    },
+    {
+      "id": "CASE-2B",
+      "title": "Unverifiable receipt forces FAIL_CLOSED_ABORT",
+      "verdict": "ALLOW",
+      "signature_valid": false,
+      "expected_action": "FAIL_CLOSED_ABORT"
+    }
+  ]
+}

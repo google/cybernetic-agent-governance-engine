@@ -1,0 +1,33 @@
+{
+  "profile": "substrate-v1",
+  "checks": [
+    {
+      "id": "SUBSTRATE-POLICY-VERSION",
+      "title": "GET /governance/policy-version returns active_hash and thresholds_digest SHA-256 digests",
+      "method": "GET",
+      "path": "/governance/policy-version",
+      "expected_status": 200,
+      "required_keys": [
+        "active_hash",
+        "thresholds_digest"
+      ],
+      "sha256_hex_keys": [
+        "active_hash",
+        "thresholds_digest"
+      ]
+    },
+    {
+      "id": "SUBSTRATE-JWKS",
+      "title": "GET /governance/jwks returns a JSON Web Key Set with a keys array",
+      "method": "GET",
+      "path": "/governance/jwks",
+      "expected_status": 200,
+      "required_keys": [
+        "keys"
+      ],
+      "list_keys": [
+        "keys"
+      ]
+    }
+  ]
+}
