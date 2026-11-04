@@ -1416,3 +1416,30 @@ class TestImageSupplyChainAndAttestation:
         assert '"@sha256:"' in rego
         assert '"IfNotPresent"' in rego
         assert "advisor-deployment" not in rego
+
+
+# ============================================================================
+# 9. POAM-2026-184 — Remove Dead oscal_api_key Variable & Fix load_env.sh
+# ============================================================================
+
+
+class TestDeadOscalApiKeyRemoval:
+    """Verify POAM-2026-184: dead `oscal_api_key` declarations are removed and `infra/load_env.sh` is accurate."""
+
+    def test_no_terraform_file_declares_or_references_oscal_api_key(self) -> None:
+        tf_files = list((REPO_ROOT / "infra").rglob("*.tf"))
+        assert tf_files, "Expected .tf files under infra/"
+        for tf_file in tf_files:
+            content = tf_file.read_text(encoding="utf-8")
+            assert "oscal_api_key" not in content, (
+                f"{tf_file.relative_to(REPO_ROOT)} must not declare or reference dead oscal_api_key (POAM-2026-184)"
+            )
+
+    def test_load_env_sh_accurately_documents_selective_tf_var_mapping(self) -> None:
+        load_env_sh = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
+        assert (
+            "Export as both the original name and TF_VAR_ prefixed version"
+            not in load_env_sh
+        )
+        assert "only keys mapped in the case" in load_env_sh
+

@@ -125,12 +125,6 @@ variable "langfuse_compliance_secret_key" {
   default   = ""
 }
 
-variable "oscal_api_key" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-
 variable "opa_url" {
   type    = string
   default = ""

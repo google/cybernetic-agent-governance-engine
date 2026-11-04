@@ -755,13 +755,6 @@ variable "langfuse_init_user_password" {
   default     = ""
 }
 
-variable "oscal_api_key" {
-  description = "OSCAL API key (set via gitignored terraform.auto.tfvars)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # ─── Compliance Bridge Configuration ──────────────────────────────────────────
 
 variable "enable_compliance_bridge" {

@@ -49,10 +49,11 @@ while IFS= read -r line || [ -n "$line" ]; do
         # Remove surrounding quotes if present
         var_value=$(echo "$var_value" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
         
-        # Export as both the original name and TF_VAR_ prefixed version
+        # Export under the original variable name; only keys mapped in the case
+        # statement below are also exported with a TF_VAR_ prefix (POAM-2026-184).
         export "$var_name=$var_value"
         
-        # Map common .env variables to Terraform variables
+        # Map recognized .env variables to Terraform TF_VAR_ variables
         case "$var_name" in
             # AWS/S3 credentials
             AWS_ACCESS_KEY_ID)
