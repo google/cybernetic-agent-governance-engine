@@ -302,7 +302,7 @@ Background deployments write logs to `/tmp/cage-deploy-*.log` and their PIDs to
 - Never edit Terraform state directly.
 - Secret values belong in `terraform.auto.tfvars` (gitignored via
   `scripts/gen_tfvars.py`) — never in committed `.tf` files.
-- Active IaC lives under [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf) and [`infra/modules/`](../../infra/modules/). The removed `deployment/terraform/` and `infra/targets/agnostic/` directories are historical reference only.
+- Active IaC lives under [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf) and [`infra/modules/`](../../infra/modules/). The removed `deployment/terraform/` and `2bacc478:infra/targets/agnostic/` (`POAM-2026-185`) directories are historical reference only.
 
 ### Terraform state backend
 

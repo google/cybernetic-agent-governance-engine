@@ -701,17 +701,17 @@ The path to multi-domain extensibility is a configuration exercise, not a rewrit
 
 ## Platform Portability
 
-CAGE's driver-based extensibility model ensures the governance kernel is not tied to any specific cloud provider or Kubernetes distribution. The three key extension points are:
+CAGE's driver-based extensibility model ensures the **Layer 1 governance kernel (`src/gateway/`)** has zero runtime dependency on any specific cloud provider SDK ([`VENDOR_NEUTRALITY_CONTRACT.md`](VENDOR_NEUTRALITY_CONTRACT.md)). The three key infrastructure extension points are:
 
-| Extension Point | GCP Driver | AWS Driver | Azure Driver | On-Prem / Agnostic |
+| Extension Point | GCP Driver | AWS Driver | Azure Driver | Local / Software Driver |
 |---|---|---|---|---|
 | **KMS / Audit Signing** | `GCPKMSProvider` (Cloud KMS, `src/integrations/gcp/`) | `AWSKMSProvider` (AWS KMS, `src/integrations/aws/`) | `AzureKMSProvider` (Azure Key Vault, `src/integrations/azure/`) | `SoftwareEd25519Provider` (development/CI postures only; no on-prem HSM driver ships) |
 | **Evidence Storage** | `GcsColdStore` (Cloud Storage, `src/integrations/storage_gcs/`) | `S3ColdStore` (S3-compatible, `src/integrations/storage_s3/`) | `S3ColdStore` against an S3-compatible endpoint | `S3ColdStore` against MinIO, or `NullColdStore` (dev only) |
-| **Ingress / TLS** | GCE L7 + ManagedCertificate (`deployment/k8s/gcp/`) | AWS ALB Ingress Controller | Azure Application Gateway | nginx ingress (`deployment/k8s/ingress.yaml`) |
+| **Ingress / TLS (Static Manifests)** | GCE L7 + ManagedCertificate (`deployment/k8s/gcp/`) | Adopter-supplied ALB Ingress | Adopter-supplied Application Gateway | Reference nginx ingress (`deployment/k8s/ingress.yaml`) |
 
-All three extension points are selected at runtime via configuration (`KMS_PROVIDER` read by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py), `EVIDENCE_COLD_STORE` read by [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py), and the Ingress `ingressClassName`) — no code changes are required to switch between providers. Enforcing postures refuse the software signers.
+Signing and cold-storage drivers are selected at runtime via configuration (`KMS_PROVIDER` read by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py) and `EVIDENCE_COLD_STORE` read by [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py)) — no kernel code changes are required to switch between providers. Enforcing postures refuse the software signers.
 
-> **For PA Lead reviewers:** This architecture is consistent with the Kubernetes extension NonProduct classification: CAGE works with any Kubernetes 1.24+ cluster (`deployment/k8s/`). GCP integrations are optional drivers, not core dependencies. The repository ships [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/) as its Terraform + Linkerd mTLS reference deployment target (`POAM-2026-185`).
+> **Deployment substrate scope (`POAM-2026-185`, `POAM-2026-169`):** While the Python governance kernel and Layer 3 driver seams are vendor-neutral and run locally without cloud dependencies via [`docker-compose.yml`](../../docker-compose.yml), [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf) is the repository's **sole shipped and CI-validated Kubernetes/Terraform deployment target** (the unvalidated `2bacc478:infra/targets/agnostic/` target was retired in `POAM-2026-185`, and [`deployment/k8s/`](../../deployment/README.md) is a static manifest reference library rather than a standalone deployment path).
 
 ---
 

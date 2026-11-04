@@ -245,7 +245,6 @@ The old code in `deployment/terraform/gcp/` can be safely archived after validat
 
 ## See Also
 
-- [Agnostic Target](../agnostic/) - Deploy to any Kubernetes cluster
 - [GKE Cluster Module](../../modules/gcp_gke_cluster/) - Module documentation
 - Security Postures - Dev vs Prod configurations
 - [NIST Controls Mapping](../../modules/gcp_gke_cluster/NIST_CONTROLS.md)

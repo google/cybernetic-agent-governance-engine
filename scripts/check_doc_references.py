@@ -64,6 +64,7 @@ DOC_SCOPE = (
     "docs/BREAKING_CHANGES_v3.md",
     "docs/architecture",
     "compliance",
+    "infra",
 )
 DOC_ROOTS = [REPO_ROOT / entry for entry in DOC_SCOPE]
 

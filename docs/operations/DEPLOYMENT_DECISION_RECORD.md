@@ -16,9 +16,7 @@ removed on 2026-03-15.
 
 ## 2. Infrastructure Platform
 
-- **Platform:** Kubernetes — GKE on Google Cloud is the reference deployment;
-  k3s, EKS, AKS, and bare-metal Kubernetes are also supported via the `agnostic`
-  target.
+- **Platform:** Kubernetes — GKE on Google Cloud ([`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf)) is the sole shipped Kubernetes and Terraform reference deployment target (`POAM-2026-185`; the unvalidated `2bacc478:infra/targets/agnostic/` target was retired). Local and cloud-agnostic development runs via [`docker-compose.yml`](../../docker-compose.yml).
 - **Reason:** Required for persistent GPU access (vLLM StatefulSets / Deployments)
   which Cloud Run and GKE Autopilot do not support for large model inference.
 - **Regions (reference postures):**
@@ -65,7 +63,6 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
 | Target | Backend | Location |
 |--------|---------|----------|
 | `gcp-gke` | GCS (declared in `main.tf`; bucket and prefix supplied by `deploy_all.sh`) | `YOUR_PROJECT-tfstate/cage/gcp-gke/<cluster_name>` |
-| `agnostic` | Kubernetes Secret | `terraform-state` namespace |
 
 ---
 

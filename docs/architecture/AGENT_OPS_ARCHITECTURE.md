@@ -126,7 +126,7 @@ Result: May work, may fail, inconsistent
 #### With Capability Only ⚠️
 ```
 Agent: *uses deploy_environment tool*
-Agent: "Should I use target=gcp-gke or target=agnostic?"
+Agent: "Should I use env=dev or env=staging?"
 Result: Technically safe, but no governance context
 ```
 
@@ -277,12 +277,10 @@ When deploying to GKE, ALWAYS use Cloud Build.
 ```python
 @app.call_tool()
 async def deploy_environment(target: str, environment: str):
-    if target == "gcp-gke":
-        # Automatically uses Cloud Build
-        cmd = ["./deploy_all.sh", "--target", "gcp-gke", "--env", environment]
-    elif target == "agnostic":
-        # Uses local Docker
-        cmd = ["./deploy_all.sh", "--target", "agnostic", "--env", environment]
+    if target != "gcp-gke":
+        raise ValueError(f"Unsupported deployment target: {target}")
+    # Automatically uses Cloud Build
+    cmd = ["./deploy_all.sh", "--target", "gcp-gke", "--env", environment]
     return await safe_execute(cmd, timeout=600)
 ```
 

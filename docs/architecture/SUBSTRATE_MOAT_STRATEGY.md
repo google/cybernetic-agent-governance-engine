@@ -317,7 +317,7 @@ When implementing the Phase 1 ingress adapters:
 
 ## 9. Google Agent Gateway — Fourth Competitor Analysis
 
-> **Vendor scope note:** Section 9 analyses Google Agent Gateway (AGW), which is a GCP-specific managed service. The CAGE core implementation (Gaps 1–5) is **cloud-agnostic and container-runtime-agnostic** — it runs on any Kubernetes-compatible orchestrator, any cloud provider, or on-premises. Gap 6 (AGW Service Extension integration) is an **optional GCP deployment path** and does not affect CAGE's vendor-neutral substrate. Operators on AWS, Azure, or on-premises should treat Section 9 as a reference architecture for one optional integration pattern.
+> **Vendor scope note:** Section 9 analyses Google Agent Gateway (AGW), which is a GCP-specific managed service. The CAGE Layer 1 governance kernel ([`src/gateway/`](../../src/gateway/__init__.py), Gaps 1–5) and Layer 3 protocol seams ([`VENDOR_NEUTRALITY_CONTRACT.md`](VENDOR_NEUTRALITY_CONTRACT.md)) are **vendor-neutral** — the kernel imports zero cloud SDKs and runs locally without cloud dependencies via [`docker-compose.yml`](../../docker-compose.yml), while [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf) is the repository's sole shipped Kubernetes/Terraform deployment target (`POAM-2026-185`). Gap 6 (AGW Service Extension integration) is an **optional GCP integration pattern** and does not affect CAGE's vendor-neutral kernel. Operators on AWS, Azure, or on-premises should treat Section 9 as a reference architecture for one optional network-edge integration pattern.
 
 ### 9.1 What Agent Gateway Is
 

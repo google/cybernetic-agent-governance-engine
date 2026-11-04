@@ -1478,3 +1478,45 @@ class TestAgnosticTargetEliminated:
         assert "infra/targets/agnostic" not in load_env
         assert "TF_VAR_minio_endpoint" not in load_env
         assert "TF_VAR_minio_bucket" not in load_env
+
+    def test_docs_and_infra_do_not_claim_agnostic_or_any_k8s_target_exists(
+        self,
+    ) -> None:
+        check_doc_refs = (
+            REPO_ROOT / "scripts" / "check_doc_references.py"
+        ).read_text(encoding="utf-8")
+        assert '"infra",' in check_doc_refs, (
+            "scripts/check_doc_references.py DOC_SCOPE must include 'infra' so infra/*.md cannot drift outside Gate G9"
+        )
+
+        vendor_contract = (
+            REPO_ROOT / "docs" / "architecture" / "VENDOR_NEUTRALITY_CONTRACT.md"
+        ).read_text(encoding="utf-8")
+        assert (
+            "### 2.4 Deployment Substrate Scope: Vendor-Neutral Kernel vs. GKE Reference Infrastructure (`POAM-2026-185`)"
+            in vendor_contract
+        )
+
+        doc_paths = [
+            REPO_ROOT / "COMPLIANCE.md",
+            REPO_ROOT / "docs" / "operations" / "DEPLOYMENT_RULES.md",
+            REPO_ROOT / "docs" / "operations" / "DEPLOYMENT_DECISION_RECORD.md",
+            *sorted((REPO_ROOT / "docs" / "architecture").glob("*.md")),
+            *sorted((REPO_ROOT / "infra").rglob("*.md")),
+            *sorted((REPO_ROOT / "deployment").rglob("*.md")),
+        ]
+        forbidden_phrases = (
+            "--target agnostic",
+            "target=agnostic",
+            'target == "agnostic"',
+            "not required for `agnostic` target deployments",
+            "CAGE works with any Kubernetes",
+            "can be deployed on any standard Kubernetes",
+        )
+        for doc_path in doc_paths:
+            text = doc_path.read_text(encoding="utf-8")
+            rel = doc_path.relative_to(REPO_ROOT)
+            for phrase in forbidden_phrases:
+                assert phrase not in text, (
+                    f"{rel} still contains stale deployment claim {phrase!r} after POAM-2026-185"
+                )

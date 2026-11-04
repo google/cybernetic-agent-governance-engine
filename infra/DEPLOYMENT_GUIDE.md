@@ -2,75 +2,72 @@
 
 ## Overview
 
-The Cybernetic Governance Engine supports **target-based deployment**, allowing you to deploy to either a generic Kubernetes cluster or a GCP-optimized GKE cluster using the same application code and Terraform modules.
+The Cybernetic Governance Engine supports local container development via [`docker-compose.yml`](../docker-compose.yml) and Kubernetes/Terraform deployment to Google Kubernetes Engine via [`infra/targets/gcp-gke/`](targets/gcp-gke/) (`POAM-2026-185`).
 
 ## Architecture
 
 ```
 infra/
 ├── modules/              # Reusable Terraform components
-│   ├── k8s_namespace/
-│   ├── minio_storage/
-│   ├── gcp_gke_cluster/
-│   ├── postgres_db/
-│   ├── redis_cache/
-│   ├── vllm_inference/
-│   ├── langfuse_stack/
+│   ├── agentsight_ui/
+│   ├── app_secrets/
+│   ├── clickhouse_operator/
+│   ├── cloudsql_postgres/
 │   ├── compliance_bridge/
-│   └── opa_policy/
+│   ├── deployment_config/
+│   ├── gateway/
+│   ├── gcp_geap_advisor/
+│   ├── gcp_gke_cluster/
+│   ├── governed_advisor/
+│   ├── k8s_namespace/
+│   ├── kms/
+│   ├── langfuse_stack/
+│   ├── memorystore_redis/
+│   ├── memorystore_valkey/
+│   ├── nemo_guardrails/
+│   ├── opa_policy/
+│   ├── service_mesh/
+│   ├── vllm_inference/
+│   ├── vpc_network/
+│   └── worm_bucket/
 │
-└── targets/              # Deployment endpoints
-    ├── agnostic/         # Deploy to any Kubernetes cluster
-    └── gcp-gke/          # Provision and deploy to GKE
+└── targets/              # Deployment endpoint
+    └── gcp-gke/          # Provision and deploy to GKE (sole shipped target)
 ```
 
 ## Deployment Modes
 
 ### 1. Local Development (Docker Compose)
 
-**Use case:** Laptop development — no Kubernetes required.
+**Use case:** Laptop development — no Kubernetes or cloud account required.
 
 ```bash
 # Development mode (hot-reload volumes, dev overrides)
 docker compose -f docker-compose.dev.yml up
 
-# Or via the unified script
-./deploy_all.sh
+# Or full local stack
+docker compose up --build
 ```
 
 > **Compose file distinction:** `docker-compose.yml` is the production-equivalent compose file. `docker-compose.dev.yml` includes hot-reload volume mounts and development overrides. Use `docker-compose.dev.yml` for local iteration.
 
 > **Model backend:** compose is the only place `CAGE_INFERENCE_BACKEND=external`, a model served by a third-party provider, is supported. The GKE target refuses it (see [the gcp-gke README](targets/gcp-gke/README.md#inference-backend)).
 
-### 2. Agnostic Kubernetes Target
+### 2. GCP GKE Target (`infra/targets/gcp-gke/`)
 
-**Use case:** Deploy to an existing Kubernetes cluster (k3s, EKS, AKS, minikube, GKE, etc.)
-
-```bash
-./deploy_all.sh --target agnostic --env dev --auto-approve
-```
-
-**What is provisioned:**
-- Kubernetes namespace (`governance-stack-<env>`)
-- MinIO S3-compatible object storage
-- Terraform state stored in-cluster (no cloud dependencies)
-
-### 3. GCP GKE Target
-
-**Use case:** Provision a complete GKE cluster with GPU support.
+**Use case:** Provision a complete GKE cluster with GPU support, Linkerd mTLS, Cloud KMS signing, and WORM evidence storage.
 
 ```bash
-./deploy_all.sh --target gcp-gke --env dev \
+./deploy_all.sh --target gcp-gke --env staging \
   --var project_id=<YOUR_GCP_PROJECT_ID> \
-  --var minio_root_password=<YOUR_MINIO_PASSWORD> \
   --auto-approve
 ```
 
 **What is provisioned:**
-- GKE cluster with autoscaling CPU and GPU node pools (NVIDIA L4 or T4)
-- Kubernetes namespace
-- MinIO storage on GCP persistent disks
-- GCS bucket for Langfuse events
+- GKE cluster with autoscaling CPU, ClickHouse, and GPU node pools (NVIDIA L4) running under a dedicated least-privilege node service account (`cage-gke-nodes-<env>`)
+- Kubernetes namespaces (`governance-stack`, `vllm-inference`, `agentsight`)
+- Retention-locked GCS WORM bucket for tamper-evident compliance evidence and Langfuse event upload bucket
+- Cloud SQL PostgreSQL, Memorystore Redis/Valkey, and ClickHouse analytical query plane
 - Cloud Router & NAT (when private cluster mode is enabled)
 - vLLM and the advisor, only with `inference_backend = "vllm"`
 
@@ -86,23 +83,19 @@ docker compose -f docker-compose.dev.yml up
 # Show help
 ./deploy_all.sh --help
 
-# Deploy to agnostic target (dev)
-./deploy_all.sh --target agnostic --env dev --auto-approve
-
 # Deploy to GCP target (dev)
 ./deploy_all.sh --target gcp-gke --env dev --auto-approve
 
-# Deploy to GCP target (prod — NIST compliance enabled)
-./deploy_all.sh --target gcp-gke --env prod
+# Deploy to GCP target (staging — full enforcing posture at 1-replica scale)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<YOUR_GCP_PROJECT_ID> --auto-approve
+
+# Deploy to GCP target (prod — full compliance posture enabled)
+./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars
 ```
 
 ### Advanced Options
 
 ```bash
-# Use a custom kubeconfig
-./deploy_all.sh --target agnostic --env dev \
-  --kubeconfig ~/.kube/my-cluster.yaml
-
 # Override specific Terraform variables
 ./deploy_all.sh --target gcp-gke --env dev \
   --var project_id=<YOUR_GCP_PROJECT_ID> \
@@ -136,22 +129,6 @@ terraform destroy -var-file=dev.tfvars
 ---
 
 ## Configuration Files
-
-### Agnostic Target
-
-Edit `infra/targets/agnostic/dev.tfvars`:
-
-```hcl
-# Set the storage class for your cluster type
-storage_class      = "local-path"       # k3s
-# storage_class    = "gp3"              # EKS
-# storage_class    = "managed-premium"  # AKS
-
-minio_storage_size = "10Gi"
-
-# Set your container registry
-registry_url = "ghcr.io/<YOUR_ORG>/cage"
-```
 
 ### GCP-GKE Target
 
@@ -206,29 +183,27 @@ docker compose up
 ### Development
 
 ```bash
-./deploy_all.sh --target agnostic --env dev
+./deploy_all.sh --target gcp-gke --env dev
 ```
 
 **Configuration:**
-- No resource limits
-- No security contexts
-- No Pod Security Standards
-- Public cluster access (GCP target)
+- Reduced replica counts for fast iteration
+- Non-enforcing posture unless `enforce_in_dev = true`
 
-### Production (NIST SP 800-53 HIGH)
+### Production / Staging (`local.enforcing_posture = true`)
 
 ```bash
-./deploy_all.sh --target gcp-gke --env prod
+./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars
 ```
 
 **Configuration:**
 - Resource limits enforced on all containers
 - Security contexts: `runAsNonRoot`, `readOnlyRootFilesystem`
 - Pod Security Standards: `restricted`
-- Private GKE cluster with authorized network access only
+- GKE cluster with scoped `authorized_networks`
 - Binary Authorization (signed images only)
 - Comprehensive audit logging
-- Customer-managed encryption keys (optional)
+- Customer-managed encryption keys (CMEK)
 
 ---
 
@@ -236,14 +211,20 @@ docker compose up
 
 | Module | Description |
 |--------|-------------|
+| `gcp_gke_cluster` | GKE cluster with dedicated node SA, CPU/ClickHouse/GPU node pools, and NIST controls |
+| `vpc_network` | VPC network, subnetwork, Cloud Router, and Cloud NAT |
+| `kms` | Cloud KMS keyring and CMEK keys |
+| `worm_bucket` | Retention-locked GCS WORM evidence bucket |
+| `cloudsql_postgres` | Cloud SQL PostgreSQL instance with private IP and PITR |
+| `memorystore_redis` / `memorystore_valkey` | Managed Memorystore in-memory state backends |
+| `clickhouse_operator` | ClickHouse analytical query plane |
 | `k8s_namespace` | Namespace provisioning with Pod Security Standards (PSS/PSA) |
-| `minio_storage` | MinIO S3-compatible object storage |
-| `postgres_db` | PostgreSQL database with automated init scripts |
-| `redis_cache` | High-Availability Redis with Sentinel support |
-| `vllm_inference` | vLLM deployments with dedicated on-demand GPU node pools (`g2-standard-8`, NVIDIA L4, multi-zone across `us-central1-a/b/c`) |
-| `langfuse_stack` | Self-hosted Langfuse stack (observability, UI, database) |
-| `compliance_bridge` | Langfuse-to-Lula compliance audit bridge with dynamic project key bootstrapping |
+| `vllm_inference` | vLLM deployments with dedicated GPU node pools (`g2-standard-8`, NVIDIA L4) |
+| `langfuse_stack` | Self-hosted Langfuse v3 stack |
+| `compliance_bridge` | Langfuse-to-Lula compliance audit bridge |
 | `opa_policy` | Open Policy Agent engine |
+| `gateway` | CAGE Hybrid Inference & Governance Gateway |
+| `governed_advisor` / `gcp_geap_advisor` | Governed Financial Advisor (GKE or Vertex AI Agent Engine runtime) |
 
 ---
 
@@ -253,43 +234,23 @@ After deployment, validate with:
 
 ```bash
 # Run the validation script
-./infra/validate_deployment.sh governance-stack-dev
+./infra/validate_deployment.sh governance-stack
 
 # Manual checks
 kubectl get ns
-kubectl get pods -n governance-stack-dev
-kubectl get svc -n governance-stack-dev
-
-# Access MinIO console
-kubectl port-forward svc/minio 9001:9001 -n governance-stack-dev
-# Open: http://localhost:9001
+kubectl get pods -n governance-stack
+kubectl get svc -n governance-stack
 ```
 
 ---
 
 ## Troubleshooting
 
-### `terraform init` fails (Agnostic)
-
-```bash
-# Ensure the terraform-state namespace exists
-kubectl create namespace terraform-state
-```
-
 ### `terraform init` fails (GCP)
 
 ```bash
 # Ensure you are authenticated
 gcloud auth application-default login
-```
-
-### Storage class not found
-
-```bash
-# List available storage classes
-kubectl get storageclass
-
-# Update .tfvars with the correct value
 ```
 
 ### GKE provisioning fails

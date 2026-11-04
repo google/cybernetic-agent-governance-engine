@@ -1,6 +1,6 @@
 # CAGE Infrastructure with Terraform
 
-This directory contains infrastructure-as-code for deploying the Cybernetic Governance Engine (CAGE) across different cloud providers and Kubernetes distributions.
+This directory contains infrastructure-as-code for deploying the Cybernetic Governance Engine (CAGE) to Google Kubernetes Engine ([`infra/targets/gcp-gke/`](targets/gcp-gke/)). For local and cloud-agnostic development without cloud dependencies, use [`docker-compose.yml`](../docker-compose.yml) (`docker compose up --build`).
 
 ## 📁 Directory Structure
 
@@ -9,27 +9,34 @@ infra/
 ├── load_env.sh                     # Script to export .env as TF_VAR_* variables
 ├── ENV_INTEGRATION.md              # Detailed guide for .env → Terraform integration
 ├── modules/                        # Reusable Terraform modules
+│   ├── agentsight_ui/              # AgentSight UI frontend
+│   ├── app_secrets/                # Kubernetes Secrets management
+│   ├── clickhouse_operator/        # ClickHouse analytical query plane
+│   ├── cloudsql_postgres/          # Cloud SQL PostgreSQL database
 │   ├── compliance_bridge/          # Langfuse → Lula compliance bridge
-│   ├── gcp_gke_cluster/           # GKE cluster with NIST controls
-│   ├── k8s_namespace/             # Namespace with Pod Security Standards
-│   ├── langfuse_stack/            # Langfuse observability platform
-│   ├── minio_storage/             # MinIO object storage
-│   ├── opa_policy/                # Open Policy Agent
-│   ├── postgres_db/               # PostgreSQL database
-│   ├── redis_cache/               # Redis cache
-│   └── vllm_inference/            # vLLM inference engine
-└── targets/                        # Deployment targets
-    ├── agnostic/                   # Cloud-agnostic (any K8s cluster)
-    │   ├── main.tf                # Agnostic deployment
-    │   ├── variables.tf           # Configurable parameters
-    │   ├── dev.tfvars             # Development configuration
-    │   ├── prod.tfvars            # Production configuration
-    │   └── terraform.auto.tfvars.example  # Template for local overrides
-    └── gcp-gke/                    # Google Cloud GKE
-        ├── main.tf                # GKE deployment
-        ├── variables.tf           # Configurable parameters
-        ├── dev.tfvars             # Development configuration
-        ├── prod.tfvars            # Production configuration
+│   ├── deployment_config/          # Shared deployment ConfigMap
+│   ├── gateway/                    # Inference & Governance Gateway
+│   ├── gcp_geap_advisor/           # GEAP Vertex AI Agent Engine runtime
+│   ├── gcp_gke_cluster/            # GKE cluster with NIST controls
+│   ├── governed_advisor/           # Governed Financial Advisor on GKE
+│   ├── k8s_namespace/              # Namespace with Pod Security Standards
+│   ├── kms/                        # Cloud KMS keyring & CMEK keys
+│   ├── langfuse_stack/             # Langfuse observability platform
+│   ├── memorystore_redis/          # Memorystore Redis instance
+│   ├── memorystore_valkey/         # Memorystore Valkey instance
+│   ├── nemo_guardrails/            # Standalone NeMo Guardrails service
+│   ├── opa_policy/                 # Open Policy Agent
+│   ├── service_mesh/               # Linkerd service mesh & mTLS
+│   ├── vllm_inference/             # vLLM inference engine
+│   ├── vpc_network/                # VPC, subnet, Cloud Router & NAT
+│   └── worm_bucket/                # Retention-locked GCS WORM evidence bucket
+└── targets/                        # Deployment target
+    └── gcp-gke/                    # Google Cloud GKE (sole shipped target)
+        ├── main.tf                 # GKE deployment
+        ├── variables.tf            # Configurable parameters
+        ├── dev.tfvars              # Development configuration
+        ├── staging.tfvars          # Staging configuration
+        ├── prod.tfvars             # Production configuration
         └── terraform.auto.tfvars.example  # Template for local overrides
 ```
 
@@ -39,26 +46,26 @@ infra/
 
 - Terraform >= 1.5.0
 - kubectl
-- Access to a Kubernetes cluster (for agnostic) OR GCP project (for gcp-gke)
+- Access to a GCP project (`gcloud auth application-default login`)
 - `.env` file configured (see `.env.example` in project root)
 
 ### Option 1: Using deploy_all.sh (Recommended)
 
-The simplest method - automatically loads `.env` and runs Terraform:
+The simplest method — automatically loads `.env`, builds/attests images via Cloud Build, and runs Terraform:
 
 ```bash
-# Deploy to local k3s/kind cluster
-./deploy_all.sh --target agnostic --env dev
+# Local / cloud-agnostic development (Docker Compose, no Kubernetes required)
+docker compose up --build
 
-# Deploy to GCP GKE
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
+# Deploy to GCP GKE (staging profile)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve
 ```
 
 **What it does:**
 1. Loads `.env` and exports as `TF_VAR_*` variables
-2. Runs `terraform init` with appropriate backend config
-3. Runs `terraform apply` with environment-specific `.tfvars`
-4. Handles all target-specific configuration automatically
+2. Runs `terraform init` with the GCS state backend
+3. Builds and attests container images via Cloud Build and renders `image_digests.<short_sha>.tfvars.json`
+4. Runs `terraform plan` and `terraform apply` with environment-specific `.tfvars`
 
 ### Option 2: Manual Terraform
 
@@ -69,7 +76,7 @@ If you prefer to run Terraform directly:
 source ./infra/load_env.sh
 
 # 2. Navigate to target
-cd infra/targets/gcp-gke  # or infra/targets/agnostic
+cd infra/targets/gcp-gke
 
 # 3. Initialize Terraform
 terraform init
@@ -81,43 +88,16 @@ terraform plan -var-file="dev.tfvars"
 terraform apply -var-file="dev.tfvars"
 ```
 
-## 🎯 Deployment Targets
+## 🎯 Deployment Target
 
-### Agnostic Target
+### GCP-GKE Target (`infra/targets/gcp-gke/`)
 
-Deploy to **any** Kubernetes cluster:
-- ✅ Local: k3s, k3d, kind, Docker Desktop
-- ✅ Cloud: EKS (AWS), AKS (Azure), GKE (Google)
-- ✅ On-premises: Rancher, OpenShift, vanilla K8s
-
-**Features:**
-- Uses existing cluster (no cluster provisioning)
-- Kubernetes backend (state stored in cluster)
-- MinIO for object storage
-- Works 100% offline (no cloud dependencies)
-
-**Configuration:**
-```bash
-cd infra/targets/agnostic
-terraform apply -var-file="dev.tfvars"
-```
-
-See [`targets/agnostic/README.md`](targets/agnostic/README.md) for details.
-
-### GCP-GKE Target
-
-Provision and deploy to Google Kubernetes Engine:
-- ✅ Creates GKE cluster with NIST security controls
-- ✅ GCS for object storage
+Provision and deploy to Google Kubernetes Engine (the sole shipped Kubernetes/Terraform target; the unvalidated `2bacc478:infra/targets/agnostic/` target was retired in `POAM-2026-185`):
+- ✅ Creates GKE cluster with NIST security controls and dedicated node service account (`cage-gke-nodes-<env>`)
+- ✅ Retention-locked GCS WORM bucket for tamper-evident evidence storage
 - ✅ GPU node pools for vLLM inference
-- ✅ Cloud Build integration
-- ✅ Optional CMEK, Binary Authorization, Private endpoints
-
-**Features:**
-- Full cluster lifecycle management
-- GCP-optimized networking and storage
-- NIST RMF compliance toggles
-- Cloud Armor, VPC-SC ready
+- ✅ Cloud Build integration with Binary Authorization attestation
+- ✅ CMEK, Private endpoints, and Linkerd mTLS workload identity
 
 **Configuration:**
 ```bash
@@ -135,7 +115,7 @@ CAGE uses `.env` for configuration to avoid duplication between Docker Compose a
 
 ```bash
 # Method 1: Automatic (via deploy_all.sh)
-./deploy_all.sh --target agnostic --env dev
+./deploy_all.sh --target gcp-gke --env dev
 # ✅ Automatically loads .env and exports TF_VAR_* variables
 
 # Method 2: Manual sourcing
@@ -170,21 +150,29 @@ terraform apply
 ### Infrastructure Modules
 
 - **[`gcp_gke_cluster`](modules/gcp_gke_cluster/)** - GKE cluster with NIST controls
+- **[`vpc_network`](modules/vpc_network/)** - VPC, subnet, Cloud Router & NAT
+- **[`kms`](modules/kms/)** - Cloud KMS keyring and CMEK keys
+- **[`worm_bucket`](modules/worm_bucket/)** - Retention-locked GCS WORM evidence bucket
+- **[`cloudsql_postgres`](modules/cloudsql_postgres/)** - Cloud SQL PostgreSQL database
+- **[`memorystore_redis`](modules/memorystore_redis/)** - Memorystore Redis instance
+- **[`memorystore_valkey`](modules/memorystore_valkey/)** - Memorystore Valkey instance
+- **[`service_mesh`](modules/service_mesh/)** - Linkerd service mesh and mTLS
 - **[`k8s_namespace`](modules/k8s_namespace/)** - Namespace with PSS/PSA
-- **[`minio_storage`](modules/minio_storage/)** - S3-compatible object storage
-- **[`postgres_db`](modules/postgres_db/)** - PostgreSQL database
-- **[`redis_cache`](modules/redis_cache/)** - Redis with optional HA
 
 ### Application Modules
 
 - **[`vllm_inference`](modules/vllm_inference/)** - vLLM GPU inference
 - **[`langfuse_stack`](modules/langfuse_stack/)** - Observability platform
+- **[`clickhouse_operator`](modules/clickhouse_operator/)** - ClickHouse analytical query plane
 - **[`opa_policy`](modules/opa_policy/)** - Policy engine
 - **[`compliance_bridge`](modules/compliance_bridge/)** - ISO 42001 auditing
 - **[`agentsight_ui`](modules/agentsight_ui/)** - AgentSight UI frontend
 - **[`app_secrets`](modules/app_secrets/)** - Kubernetes Secrets management
+- **[`deployment_config`](modules/deployment_config/)** - Shared deployment ConfigMap
 - **[`gateway`](modules/gateway/)** - Inference Gateway
-- **[`governed_advisor`](modules/governed_advisor/)** - Governed Financial Advisor backend
+- **[`governed_advisor`](modules/governed_advisor/)** - Governed Financial Advisor backend (GKE mode)
+- **[`gcp_geap_advisor`](modules/gcp_geap_advisor/)** - Governed Financial Advisor on Vertex AI Agent Engine (GEAP mode)
+- **[`nemo_guardrails`](modules/nemo_guardrails/)** - Standalone NeMo Guardrails service
 
 Each module includes:
 - ✅ `README.md` - Documentation
@@ -342,16 +330,6 @@ source ./infra/load_env.sh
 
 # Check exports
 env | grep TF_VAR_
-```
-
-### Problem: Kubernetes backend fails (agnostic target)
-
-```bash
-# Create terraform-state namespace
-kubectl create namespace terraform-state
-
-# Verify kubeconfig
-kubectl config current-context
 ```
 
 ### Problem: GCP authentication fails

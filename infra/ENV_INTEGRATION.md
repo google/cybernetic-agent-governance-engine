@@ -38,7 +38,7 @@ cp .env.example .env
 source ./infra/load_env.sh
 
 # 3. Navigate to your target directory
-cd infra/targets/gcp-gke    # or infra/targets/agnostic
+cd infra/targets/gcp-gke
 
 # 4. Initialize and apply Terraform
 terraform init
@@ -57,7 +57,7 @@ For more control, you can create a `terraform.auto.tfvars` file:
 
 ```bash
 # 1. Copy the example file
-cd infra/targets/gcp-gke    # or infra/targets/agnostic
+cd infra/targets/gcp-gke
 cp terraform.auto.tfvars.example terraform.auto.tfvars
 
 # 2. Edit terraform.auto.tfvars with your values
@@ -203,10 +203,8 @@ The following `.env` variables are automatically mapped to Terraform variables:
 |---------------|-------------------|-------------|
 | `OPA_URL` | `opa_url` | OPA base URL, no path (the gateway derives the decision path from the active domain's `DomainConfig.opa_package`) |
 | `REDIS_URL` | `redis_url` | Redis connection URL |
-| `S3_ENDPOINT_URL` | `minio_endpoint` | MinIO/S3 endpoint (agnostic only) |
-| `S3_BUCKET_NAME` | `minio_bucket` | MinIO/S3 bucket (agnostic only) |
 
-`VLLM_*` in `.env` configure Docker Compose only. On gcp-gke the vLLM endpoints follow `inference_backend` (see [`targets/gcp-gke/README.md`](targets/gcp-gke/README.md)). The `vllm_reasoning_url`, `vllm_fast_url` and `vllm_gateway_url` variables this table used to list were never read, and are removed (POAM-2026-136).
+`VLLM_*` in `.env` configure Docker Compose only. On gcp-gke the vLLM endpoints follow `inference_backend` (see [`targets/gcp-gke/README.md`](targets/gcp-gke/README.md)). The `vllm_reasoning_url`, `vllm_fast_url` and `vllm_gateway_url` variables this table used to list were never read, and are removed (POAM-2026-136). `minio_endpoint` and `minio_bucket` were retired with `2bacc478:infra/targets/agnostic/` (`POAM-2026-185`).
 
 ### General Configuration
 
