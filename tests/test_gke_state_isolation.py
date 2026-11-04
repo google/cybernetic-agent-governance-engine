@@ -239,41 +239,58 @@ def _plan_args(calls: list[str]) -> str:
 
 
 @pytest.mark.parametrize(
-    ("args", "banner", "nist"),
+    ("args", "banner", "region_log"),
     [
-        (("--env", "staging"), "STAGING MODE", "true"),
-        (("--env", "prod"), "PROD MODE", "true"),
-        (("--env", "eu-prod"), "PROD MODE", "false"),
-        (("--env", "apac-prod"), "PROD MODE", "false"),
-        (("--env", "us-dev"), "DEV MODE", "false"),
-        (("--env", "dev"), "DEV MODE", "false"),
+        (
+            ("--env", "staging"),
+            "STAGING MODE",
+            "cage_deployment_region=US_FED — staging enforces",
+        ),
+        (
+            ("--env", "prod"),
+            "PROD MODE",
+            "cage_deployment_region=US_FED — prod enforces",
+        ),
+        (
+            ("--env", "eu-prod"),
+            "PROD MODE",
+            "cage_deployment_region=EU_ECB — prod enforces",
+        ),
+        (
+            ("--env", "apac-prod"),
+            "PROD MODE",
+            "cage_deployment_region=APAC_MAS — prod enforces",
+        ),
+        (("--env", "us-dev"), "DEV MODE", ""),
+        (("--env", "dev"), "DEV MODE", ""),
         # The documented regional overlay keeps working: tier from prod.tfvars,
         # jurisdiction from the EU overlay.
         (
             ("--env", "prod", "--var-file=infra/targets/gcp-gke/eu-prod.tfvars"),
             "PROD MODE",
-            "false",
+            "cage_deployment_region=EU_ECB — prod enforces",
         ),
     ],
 )
 def test_posture_comes_from_the_profile(
-    deploy, args: tuple[str, ...], banner: str, nist: str
+    deploy, args: tuple[str, ...], banner: str, region_log: str
 ) -> None:
     """Tier and jurisdiction are read from the profile, not from the --env name.
 
-    staging.tfvars and prod.tfvars declare US_FED, so they get NIST hardening
-    with no CAGE_DEPLOYMENT_REGION set; eu-prod is a production profile.
+    POAM-2026-130 removed enable_nist_compliance; deploy_all.sh no longer
+    injects -var=enable_nist_compliance, and the profile's environment /
+    enforce_in_dev decides local.enforcing_posture in main.tf directly.
     """
     root, run = deploy
     result, calls = run(*args)
     assert result.returncode == 0, result.stderr
     assert banner in result.stdout
+    if region_log:
+        assert region_log in result.stdout
     plan = _plan_args(calls)
-    flag = f"-var=enable_nist_compliance={nist}"
-    assert flag in plan
-    # Injected ahead of the profile, so an explicit setting in it still wins.
+    assert "enable_nist_compliance" not in plan
     profile = (root / "infra" / "targets" / "gcp-gke" / f"{args[1]}.tfvars").resolve()
-    assert plan.index(flag) < plan.index(f"-var-file={profile}")
+    assert f"-var-file={profile}" in plan
 
 
 def test_region_variable_cannot_override_the_profile(deploy) -> None:
@@ -283,7 +300,8 @@ def test_region_variable_cannot_override_the_profile(deploy) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "CAGE_DEPLOYMENT_REGION=US_FED ignored" in result.stdout
-    assert "-var=enable_nist_compliance=false" in _plan_args(calls)
+    assert "cage_deployment_region=EU_ECB — prod enforces" in result.stdout
+    assert "enable_nist_compliance" not in _plan_args(calls)
 
 
 def test_region_variable_is_the_fallback_without_a_profile_region(deploy) -> None:
@@ -299,7 +317,8 @@ def test_region_variable_is_the_fallback_without_a_profile_region(deploy) -> Non
     assert result.returncode == 0, result.stderr
     assert "STAGING MODE" in result.stdout
     assert "ignored" not in result.stdout
-    assert "-var=enable_nist_compliance=true" in _plan_args(calls)
+    assert "cage_deployment_region=US_FED — staging enforces" in result.stdout
+    assert "enable_nist_compliance" not in _plan_args(calls)
 
 
 # ── POAM-2026-131: images are rendered per deployment, before the plan ───────

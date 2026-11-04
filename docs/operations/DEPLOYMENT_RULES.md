@@ -117,7 +117,7 @@ proves full security posture at dev-scale cost:
 - **Cost**: ~$2-4 per validation cycle (20-30 minutes runtime, sub-hour usage).
 - **Lifecycle**: Provision → Validate → Destroy (automated via `scripts/staging_lifecycle.sh`).
 - **Hardware**: Dev-scale (e2-standard-4 nodes, pd-standard disks, GPU scale-to-zero).
-- **Security**: Full prod posture (enable_nist_compliance=true for US_FED,
+- **Security**: Full prod posture (`local.enforcing_posture` via `environment = "staging"`,
   Binary Authorization, audit logging, CMEK, PSS restricted, scoped authorized_networks).
 - **HA**: Decoupled (`enable_high_availability=false`, 1 replica per service).
 - **Deletion protection**: Disabled (`enable_deletion_protection=false`, allows teardown).
@@ -136,6 +136,15 @@ terraform destroy -var-file=staging.tfvars \
   -var-file=image_digests.<short_sha>.tfvars.json -var project_id=<PROJECT_ID> -auto-approve
 ```
 
+`staging.tfvars` sets `environment = "staging"` (`local.enforcing_posture = true`), so a direct `terraform`
+run with it plans the same compliance posture as `deploy_all.sh`. A direct `plan` or
+`apply` stops unless you supply `authorized_networks` and distinct
+`langfuse_compliance_*` keys (`POAM-2026-174`, `POAM-2026-126`, `POAM-019`). The
+teardown above needs neither: those checks are resource preconditions, which
+Terraform reports only as warnings while refreshing for a destroy. A plan with
+`-target` skips them unless it targets them, because nothing depends on them
+(`POAM-2026-180`).
+
 See [`infra/targets/gcp-gke/staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars)
 for full configuration and [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)
 for automated validation workflow.
@@ -149,7 +158,7 @@ lock from one pair of locals in [`main.tf`](../../infra/targets/gcp-gke/main.tf)
 
 | Tier | Retention period | Locked |
 |---|---|---|
-| `dev` (the variable default) | 220752000 s (2555 days) | Only while a compliance flag is set (`eu-dev`, `apac-dev`) |
+| `dev` (the variable default) | 220752000 s (2555 days) | Only while `enforce_in_dev = true` (`eu-dev`, `apac-dev`) |
 | `staging` | 86400 s (1 day) | Always |
 | `prod` | 220752000 s (2555 days) | Always |
 
@@ -162,7 +171,7 @@ in either bucket can be deleted before it is a day old.
 **One-time migration for a staging project applied before this change.** Its
 Langfuse bucket is `google_storage_bucket.langfuse_events`
 (`langfuse-events-<project>-<suffix>`), locked at 220752000 s whenever a
-compliance flag was set, which `deploy_all.sh` does for US_FED staging. GCS
+compliance flag was set, which `deploy_all.sh` did for US_FED staging. GCS
 refuses to shorten a locked retention period, so that bucket can never take the
 one-day lock. On the live staging project it was locked on 2026-09-29 and holds
 35,639 objects (read-only check, 2026-10-30): **the old bucket and the project's
@@ -194,7 +203,7 @@ old bucket and cannot try to destroy it.
 The same apply moves every other deployment made before this change to a new
 `langfuse-event-upload-*` bucket and leaves the old one in place. A prod
 project's old bucket keeps its events under its 2555-day lock. A `dev` project's
-old bucket is unlocked unless a compliance flag was set (`eu-dev`, `apac-dev`),
+old bucket is unlocked unless `enforce_in_dev = true` (`eu-dev`, `apac-dev`),
 and can be removed by hand: `gcloud storage buckets update gs://<old-bucket> --clear-retention-period`,
 then `gcloud storage rm --recursive gs://<old-bucket>`.
 
@@ -221,9 +230,9 @@ not complete, for reasons this change leaves alone:
 
 > **Jurisdiction prerequisite:** Set `CAGE_DEPLOYMENT_REGION` in `.env` (or as
 > an environment variable) before running any `prod` deployment. The script
-> propagates it to `TF_VAR_cage_deployment_region`. The `--env prod` flag
-> activates ISO 42001 baseline hardening; NIST SP 800-53 hardening
-> (`enable_nist_compliance`) is additionally activated only for `US_FED`.
+> propagates it to `TF_VAR_cage_deployment_region`. Every `prod` and `staging`
+> tier enforces the full deployment security posture (`local.enforcing_posture`)
+> across all jurisdictions (`US_FED`, `EU_ECB`, `APAC_MAS`; POAM-2026-181, POAM-2026-130).
 
 | `CAGE_DEPLOYMENT_REGION` | `--var-file` | GCP region |
 |--------------------------|-------------|------------|
@@ -236,8 +245,10 @@ not complete, for reasons this change leaves alone:
 | `gcp-gke` | `prod` | US_FED | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars` |
 | `gcp-gke` | `prod` | EU_ECB | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/eu-prod.tfvars` |
 | `gcp-gke` | `prod` | APAC_MAS | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/apac-prod.tfvars` |
-| `gcp-gke` | `staging` | Any | `CAGE_DEPLOYMENT_REGION=<REGION> ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
+| `gcp-gke` | `staging` | US_FED (set by `staging.tfvars`) | `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
 | `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
+
+`deploy_all.sh` takes the jurisdiction from the profile's `cage_deployment_region` and ignores a `CAGE_DEPLOYMENT_REGION` that disagrees, with a warning. Staging is therefore US_FED unless a profile says otherwise. Whatever jurisdiction or compliance flag a staging or prod profile selects, including none, its plans keep the control-plane guard, the POAM-019 key guards, the cluster allowlist and Cloud SQL PITR: those follow the tier, and the flags decide only whether a dev plan enforces (POAM-2026-181).
 
 ---
 
@@ -450,7 +461,7 @@ Successful staging deployments have run under personal human credentials (Owner 
 
 ### Authorized Networks Lockout (POAM-2026-126)
 
-With a compliance posture active, `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. Committed profiles such as `staging.tfvars` deliberately set no operator address.
+In every staging and prod plan, and in a dev plan with a compliance flag (`local.enforcing_posture`, POAM-2026-181), `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. A plan targeted at `module.gke` skips the guard, because the cluster does not depend on it (POAM-2026-180). Committed profiles such as `staging.tfvars` deliberately set no operator address.
 - **Plan refused**: An empty list fails the plan with `[POAM-2026-126] AC-3 control-plane access: ...` before anything changes.
 - **Lockout symptom**: From an address that is not on the list, `kubectl` and Terraform's `kubernetes` / `helm` providers cannot reach the endpoint; the connection typically times out (`dial tcp <endpoint>:443: i/o timeout`) rather than being refused or rejected as unauthorized. A deployer whose egress address has changed (new network, VPN on or off) hits this on the next apply.
 - **Deploy prerequisite**: Pass the public egress CIDR of the deployer's workstation or CI runner to `deploy_all.sh`, which applies `--var` after the profile, or export it as `TF_VAR_authorized_networks`:
@@ -462,7 +473,7 @@ With a compliance posture active, `terraform_data.control_plane_access_guard` in
 
 ### POAM-019 Telemetry Isolation vs. Environment Loading Diagnostic
 
-With a compliance posture active (`enable_nist_compliance`, `enable_eu_ecb_compliance` or `enable_apac_mas_compliance`), the plan refuses missing or shared Langfuse compliance keys with one of two errors. Each headline names the condition detected, not a cause:
+Under the enforcing posture (`local.enforcing_posture`: every `staging` and `prod` plan, or a `dev` plan with `enforce_in_dev = true`), the plan refuses missing or shared Langfuse compliance keys with one of two errors. Each headline names the condition detected, not a cause:
 
 ```text
 [POAM-019] Compliance telemetry keys are empty under compliance hardening.

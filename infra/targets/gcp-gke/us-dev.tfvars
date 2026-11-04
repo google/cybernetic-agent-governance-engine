@@ -80,9 +80,10 @@ cage_deployment_region = "US_FED"
 # ─── Security Posture (Dev: Minimal — fast iteration, low cost) ───────────────
 # Dev posture intentionally disables ALL hardening flags to reduce cost and friction.
 # SR 26-2 §IV.C requires these controls in PROD; they are NOT required in dev.
-# enable_nist_compliance MUST be explicitly false here to prevent Redis replication,
-# replica scale-out, and PDB creation that the NIST path triggers automatically.
-enable_nist_compliance         = false  # Dev posture — standalone Redis, 1 replica
+# Every committed dev profile sets enforce_in_dev itself (POAM-2026-174). It feeds
+# local.enforcing_posture in main.tf (POAM-2026-130, 181); US dev does not
+# enforce. Redis replication, replica counts and PDBs do not depend on it.
+enforce_in_dev                 = false
 # POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
 enable_high_availability       = false
 enable_deletion_protection     = false
@@ -188,18 +189,19 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 # Rationale (P1-2):
 #   - US_FED_BASELINE.json controls (CTRL_AGT_001–CTRL_OPA_005) do NOT mandate
 #     Langfuse project isolation in dev. AU-9 / SR 26-2 §IV.D are prod-only controls.
-#   - enable_nist_compliance=false → the compliance_secrets precondition is skipped.
-#   - The compliance bridge _make_compliance_langfuse() guard in audit_workflow.py
-#     detects when LANGFUSE_COMPLIANCE_PUBLIC_KEY == LANGFUSE_PUBLIC_KEY and skips
-#     Step 3 (OSCAL score ingestion) to prevent circular evidence contamination.
+#   - With enforce_in_dev = false, the POAM-019 key guards in main.tf
+#     (terraform_data.poam_019_empty_key_guard / poam_019_shared_key_guard) are skipped.
+#   - Nothing in the compliance bridge compares the two projects' keys: its startup
+#     check in audit_workflow.py only requires both to be set outside dev, and Step 3
+#     ingests with whatever compliance key it is given.
 #   - LANGFUSE_COMPLIANCE_PUBLIC_KEY and LANGFUSE_COMPLIANCE_SECRET_KEY are injected
 #     from .env via TF_VAR_* exports in deploy_all.sh. If the cage-compliance project
 #     keys are set in .env (as they are in this deployment), the compliance bridge
 #     will use the real cage-compliance project even in dev — providing full isolation.
 #
 # For prod posture: set LANGFUSE_COMPLIANCE_PUBLIC_KEY to a DIFFERENT key than
-# LANGFUSE_PUBLIC_KEY. The Terraform precondition in app_secrets/main.tf will
-# FAIL the plan if they are the same or empty when enable_nist_compliance=true.
+# LANGFUSE_PUBLIC_KEY. In prod and staging (POAM-2026-181), and in dev with enforce_in_dev, the
+# POAM-019 key guards in main.tf FAIL an untargeted plan if either compliance key is empty or equals its counterpart (POAM-2026-180).
 #
 # Keys are NOT hardcoded here — they are injected via TF_VAR_* from .env.
 

@@ -60,8 +60,8 @@ All values verified by loading them through the threshold loader, `ControlRegist
 |---|---|---|---|---|---|
 | `dev.tfvars` | none in the file; set at deploy time | `cage-dev`, shared with `us-dev` | dev | on; L4 total 0–2, initial 0, `us-central1-a/b/c` | `Makefile` default; deploy examples; tests |
 | `us-dev.tfvars` | US_FED | `cage-dev` | dev | on; L4 total 0–2, initial 0, `us-central1-a/b/c` | PR template; GKE test runbook; tests |
-| `eu-dev.tfvars` | EU_ECB | `cage-eu-dev` | dev with compliance hardening | on; L4 total 0–2, initial 0, `europe-west1-b/c` | EU workflow (warning only); tests |
-| `apac-dev.tfvars` | APAC_MAS | `cage-apac-dev` | dev with compliance hardening | on; L4 total 0–2, initial 0, `asia-southeast1-a/b/c` | APAC workflow (warning only); tests |
+| `eu-dev.tfvars` | EU_ECB | `cage-eu-dev` | dev (`enforce_in_dev = true`) | on; L4 total 0–2, initial 0, `europe-west1-b/c` | EU workflow (warning only); tests |
+| `apac-dev.tfvars` | APAC_MAS | `cage-apac-dev` | dev (`enforce_in_dev = true`) | on; L4 total 0–2, initial 0, `asia-southeast1-a/b/c` | APAC workflow (warning only); tests |
 | `staging.tfvars` | US_FED | `cage-staging` | full; zonal; Binary Authorization dry-run | off (`inference_backend = "none"`, from W6); L4 pool kept, total 0–2, initial 0, `us-central1-a/b/c` | staging scripts; tests |
 | `prod.tfvars` | US_FED (DEP-12) | `cage-prod` | full; regional; HA; Binary Authorization enforced | on, 2 replicas; L4 total 0–5, initial 0, `us-central1-a/b/c` | deploy usage; tests |
 | `eu-prod.tfvars` | EU_ECB | `cage-eu-prod` | as prod | on, 2; L4 total 0–5, initial 0, `europe-west1-b/c` | EU workflow (can fail); tests |
@@ -71,7 +71,7 @@ All values verified by loading them through the threshold loader, `ControlRegist
   - Every profile except `dev.tfvars` carries a placeholder `project_id`.
   - Every profile except `staging.tfvars` inherits placeholder image digests (section 7).
 - **Only tests read a profile's backend and GPU settings.** Since W6, [`test_inference_backend_gke.py`](../../tests/infrastructure/test_inference_backend_gke.py) reads every profile's `inference_backend`, GPU counts, and verified L4 zone list, and fails if a profile still sets `enable_vllm`. The `terraform-test` CI job plans the staging profile and GPU module preconditions with mock providers ([`w6.tftest.hcl`](../../infra/targets/gcp-gke/tests/w6.tftest.hcl), [`gpu_pool.tftest.hcl`](../../infra/targets/gcp-gke/tests/gpu_pool.tftest.hcl)). No other workflow or script reads them (verified, grep). That is not evidence that nothing outside the repository depends on them.
-- **Control-plane access.** Every profile with a compliance posture active must name operator CIDRs and no `/0`; the plan refuses otherwise (POAM-2026-126, [`test_control_plane_access.py`](../../tests/infrastructure/test_control_plane_access.py)). `staging.tfvars` sets no list, so supply one with `TF_VAR_authorized_networks`.
+- **Control-plane access.** Every staging and prod profile, and every dev profile with `enforce_in_dev = true`, must name operator CIDRs and no `/0`; an untargeted plan refuses otherwise (POAM-2026-126, POAM-2026-181, POAM-2026-130, [`test_control_plane_access.py`](../../tests/infrastructure/test_control_plane_access.py)), and a plan targeted at `module.gke` skips the check (POAM-2026-180). `staging.tfvars` sets no list, so supply one with `TF_VAR_authorized_networks`.
 
 ## 4. Jurisdiction and geography: postures do not float
 
@@ -112,7 +112,7 @@ Read at `d830249c`; nothing was planned.
   - `ci-integration.yml`, which runs on dispatch only.
 
   POAM-2026-121 records the first two. POAM-2026-150 records the pattern, with `ci.yml`'s `integration-smoke` job, which skips all 153 tests it selects.
-- **Regional workflows that can fail:** [`eu-ecb-compliance.yml`](../../.github/workflows/eu-ecb-compliance.yml) and [`apac-mas-compliance.yml`](../../.github/workflows/apac-mas-compliance.yml) check the prod profiles' residency, jurisdiction and compliance flag.
+- **Regional workflows that can fail:** [`eu-ecb-compliance.yml`](../../.github/workflows/eu-ecb-compliance.yml) and [`apac-mas-compliance.yml`](../../.github/workflows/apac-mas-compliance.yml) check the prod profiles' residency, jurisdiction and tier (`environment = "prod"`), and the dev profiles' `enforce_in_dev = true`.
 
 ## 7. Inference consumers
 
@@ -139,7 +139,7 @@ Each has a one-line POA&M entry except the stale numbers. Several are one class:
 
 - **Regional tier-1 keywords are not loaded (POAM-2026-128).** EU and APAC extras such as `BYPASS FRIA` are listed in the overlay files, but every region loads the same 14 global keywords (verified).
 - **Two HITL SLA sets (POAM-2026-129).** The runtime uses 4, 8 and 12 hours; the thresholds files say 4, 2 and 1, citing DORA and MAS FEAT. Which is intended is being established.
-- **The EU and APAC compliance flags do in Terraform exactly what the NIST flag does (POAM-2026-130),** although the EU flag's description claims distinct effects (verified, grep). The APAC flag's description claimed Redis persistence that nothing set; POAM-2026-156 item 3 replaced it with what the flag does.
+- **The EU and APAC compliance flags did in Terraform exactly what the NIST flag did (POAM-2026-130, remediated 2026-11-03 in #651),** although the EU flag's description claimed distinct effects (verified, grep) and the APAC flag's claimed Redis persistence that nothing set (POAM-2026-156 item 3). All three flags and `any_compliance_active` have been removed and replaced by `enforce_in_dev`, which decides only whether a `dev` plan turns on `local.enforcing_posture`; every `staging` and `prod` plan enforces by tier (POAM-2026-181).
 - **Placeholder image digests (POAM-2026-131).** Every profile except staging inherits `sha256:e3b0c442…`, the hash of empty input. That includes the three Binary-Authorization-enforcing prod profiles (verified). *Update 2026-10-30:* staging's own committed digests named `gcr.io/cage-reference/`, a registry that does not resolve, so no profile was deployable from the repository. Remediated on `refactor/render-image-digests`: no profile commits digests or a project ID, and `var.image_digests` has no default (see POAM-2026-131).
 - **No L4 in one EU zone (POAM-2026-132, closed 2026-10-29).** `europe-west1-d` offers neither L4 nor `g2-standard-8`, and `eu-dev` and `eu-prod` used to list it alongside per-zone `initial`/`min`/`max` counts that multiplied across zones. `eu-dev` and `eu-prod` now list only `europe-west1-b` and `-c`, every profile starts at `initial = 0` / `min = 0` with pool-wide `total_min_node_count` / `total_max_node_count` (`location_policy = "ANY"`), and `google_container_node_pool.gpu_nodes` refuses non-L4 zones at plan time.
 - **The documented required-check lists disagreed with the ruleset (POAM-2026-133, closed 2026-11-02).** One list remains, in `.github/branch-protection-rules.md` §3, and CI compares it with the ruleset. See section 6.

@@ -28,13 +28,13 @@
 #   - enable_high_availability=false (1 replica per service vs 2+)
 #
 # Security posture: FULL (identical to prod)
-#   - enable_nist_compliance=true (injected by deploy_all.sh)
+#   - environment="staging" activates local.enforcing_posture (POAM-2026-181, 130)
 #   - enable_binary_authorization=true
 #   - enable_audit_logging=true
 #   - enable_cmek=true (requires KMS key — set kms_key_id in terraform.auto.tfvars)
 #   - enable_pod_security_standards=true (restricted)
 #   - enable_private_nodes=true
-#   - Authorized networks: operator CIDRs only, never 0.0.0.0/0 (the plan refuses it, POAM-2026-126)
+#   - Authorized networks: operator CIDRs only, never 0.0.0.0/0 (an untargeted plan refuses it, POAM-2026-126; -target skips that, POAM-2026-180)
 #   - enable_deletion_protection=false (ephemeral — can be destroyed)
 #
 # What this proves:
@@ -49,8 +49,8 @@
 #   deploy_all.sh builds the images this profile deploys, renders their digests to
 #   image_digests.<short_sha>.tfvars.json (gitignored) and passes it to terraform.
 #
-# Teardown needs the same inputs as the plan, including the rendered digests file
-# the apply used (deploy_all.sh leaves it next to this file):
+# Teardown needs the rendered digests file the apply used (deploy_all.sh leaves it
+# next to this file), not authorized_networks or the compliance keys (POAM-2026-174):
 #   terraform destroy -var-file=staging.tfvars \
 #     -var-file=image_digests.<short_sha>.tfvars.json -var project_id=<project>
 
@@ -86,10 +86,10 @@ master_ipv4_cidr_block = "172.16.0.16/28"
 #   - Private nodes: no external IPs on node VMs (use Cloud NAT for egress)
 #   - Authorized networks: restrict control-plane access to operator CIDRs (VPN range or deployer egress)
 
-# enable_nist_compliance MUST be explicitly true here to activate Redis replication,
-# replica scale-out, PDBs, and NIST SP 800-53 control gates. This is injected
-# dynamically by deploy_all.sh based on --env posture (see steps 13-14).
-# enable_nist_compliance = true # Dynamically injected by deploy_all.sh
+# environment = "staging" above activates local.enforcing_posture in main.tf
+# directly: the retention lock, Valkey AOF, the guards, the control-plane
+# allowlist and PITR follow the tier (POAM-2026-174, POAM-2026-181).
+# enable_nist_compliance was removed (POAM-2026-130); terraform plan/apply -var-file=staging.tfvars enforces directly.
 
 # POAM-024: HA decoupled from compliance — staging runs 1-replica scale to prove
 # that full security posture is achievable without production-scale redundancy.
@@ -121,9 +121,9 @@ enable_fqdn_network_policy = true
 # Supply them with TF_VAR_authorized_networks or a --var-file after this profile:
 #   export TF_VAR_authorized_networks='[{cidr="203.0.113.10/32",display_name="deployer egress"}]'
 # Terraform's kubernetes and helm providers use the public endpoint, so the machine
-# running terraform must be on the list. The plan refuses an empty list or a /0
-# while compliance is active (POAM-2026-126). The cluster's own node, Pod and
-# Service ranges can always reach the control plane.
+# running terraform must be on the list. An untargeted staging plan refuses an empty
+# list or a /0 whatever flag is set (POAM-2026-126, POAM-2026-181; -target=module.gke skips it, POAM-2026-180).
+# The cluster's own node, Pod and Service ranges can always reach the control plane.
 
 # ─── Cost Optimization (Staging: Dev-Scale Hardware) ──────────────────────────
 
@@ -247,4 +247,4 @@ cloud_sql_cidr                  = "10.6.80.0/20"
 #     langfuse_compliance_public_key = "pk-lf-<staging-compliance-project-key>"
 #     langfuse_compliance_secret_key = "sk-lf-<staging-compliance-project-key>"
 #   The precondition will FAIL if these match langfuse_public_key / langfuse_secret_key
-#   when enable_nist_compliance=true.
+#   in staging (local.enforcing_posture, POAM-2026-181).

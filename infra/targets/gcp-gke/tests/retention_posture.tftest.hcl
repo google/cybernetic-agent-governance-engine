@@ -94,7 +94,7 @@ variables {
 
 # ─── Staging: one day, locked, on both buckets, from one source ──────────────
 
-# staging.tfvars as CI passes it, with no compliance flag set.
+# staging.tfvars as CI passes it.
 run "staging_profile_locks_both_buckets_for_one_day" {
   command = plan
 
@@ -119,13 +119,13 @@ run "staging_profile_locks_both_buckets_for_one_day" {
   }
 }
 
-# What deploy_all.sh plans for US_FED staging: it injects enable_nist_compliance.
-# The lock must not depend on it, since turning a lock off replaces the bucket.
-run "staging_with_injected_nist_flag_keeps_the_same_lock" {
+# The staging tier with enforce_in_dev forced off. The lock must not depend
+# on enforce_in_dev, since turning a lock off replaces the bucket.
+run "staging_without_nist_flag_keeps_the_same_lock" {
   command = plan
 
   variables {
-    enable_nist_compliance = true
+    enforce_in_dev = false
   }
 
   assert {
@@ -133,14 +133,14 @@ run "staging_with_injected_nist_flag_keeps_the_same_lock" {
       google_storage_bucket.langfuse_event_upload.retention_policy[0].retention_period == 86400 &&
       module.worm_bucket.retention_period_seconds == 86400
     )
-    error_message = "staging must keep the one-day period whatever the compliance flags say"
+    error_message = "staging must keep the one-day period whatever enforce_in_dev says"
   }
   assert {
     condition = (
       google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked &&
       module.worm_bucket.retention_locked
     )
-    error_message = "staging must keep both buckets locked whatever the compliance flags say"
+    error_message = "staging must keep both buckets locked whatever enforce_in_dev says"
   }
 }
 
@@ -150,13 +150,11 @@ run "prod_profile_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment                = var.prod["environment"]
-    region                     = var.prod["region"]
-    zone                       = var.prod["zone"]
-    cage_deployment_region     = var.prod["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.prod, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.prod, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.prod, "enable_apac_mas_compliance", "false") == "true"
+    environment            = var.prod["environment"]
+    region                 = var.prod["region"]
+    zone                   = var.prod["zone"]
+    cage_deployment_region = var.prod["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.prod, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -179,13 +177,11 @@ run "eu_prod_profile_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment                = var.eu_prod["environment"]
-    region                     = var.eu_prod["region"]
-    zone                       = var.eu_prod["zone"]
-    cage_deployment_region     = var.eu_prod["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.eu_prod, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.eu_prod, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.eu_prod, "enable_apac_mas_compliance", "false") == "true"
+    environment            = var.eu_prod["environment"]
+    region                 = var.eu_prod["region"]
+    zone                   = var.eu_prod["zone"]
+    cage_deployment_region = var.eu_prod["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.eu_prod, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -208,13 +204,11 @@ run "apac_prod_profile_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment                = var.apac_prod["environment"]
-    region                     = var.apac_prod["region"]
-    zone                       = var.apac_prod["zone"]
-    cage_deployment_region     = var.apac_prod["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.apac_prod, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.apac_prod, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.apac_prod, "enable_apac_mas_compliance", "false") == "true"
+    environment            = var.apac_prod["environment"]
+    region                 = var.apac_prod["region"]
+    zone                   = var.apac_prod["zone"]
+    cage_deployment_region = var.apac_prod["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.apac_prod, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -233,12 +227,13 @@ run "apac_prod_profile_keeps_2555_days_locked" {
   }
 }
 
-# The tier alone locks prod; it does not wait for a compliance flag.
+# The tier alone locks prod; it does not wait for enforce_in_dev.
 run "prod_tier_without_compliance_flags_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment = "prod"
+    environment    = "prod"
+    enforce_in_dev = false
   }
 
   assert {
@@ -246,18 +241,18 @@ run "prod_tier_without_compliance_flags_keeps_2555_days_locked" {
       google_storage_bucket.langfuse_event_upload.retention_policy[0].retention_period == 220752000 &&
       module.worm_bucket.retention_period_seconds == 220752000
     )
-    error_message = "the prod tier must keep 2555 days with no compliance flag set"
+    error_message = "the prod tier must keep 2555 days with enforce_in_dev = false"
   }
   assert {
     condition = (
       google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked &&
       module.worm_bucket.retention_locked
     )
-    error_message = "the prod tier must lock both buckets with no compliance flag set"
+    error_message = "the prod tier must lock both buckets with enforce_in_dev = false"
   }
 }
 
-# ─── Dev, the default tier: 2555 days, locked only under a compliance flag ───
+# ─── Dev, the default tier: 2555 days, locked only under enforce_in_dev ──────
 # dev.tfvars sets neither region nor cage_deployment_region: deploy_all.sh takes
 # them from .env, so these runs use US_FED's, which us-dev.tfvars names for the
 # same cluster.
@@ -266,13 +261,11 @@ run "dev_profile_keeps_2555_days_unlocked" {
   command = plan
 
   variables {
-    environment                = lookup(var.dev, "environment", "dev")
-    region                     = lookup(var.dev, "region", "us-central1")
-    zone                       = lookup(var.dev, "zone", "us-central1-a")
-    cage_deployment_region     = lookup(var.dev, "cage_deployment_region", "US_FED")
-    enable_nist_compliance     = lookup(var.dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.dev, "environment", "dev")
+    region                 = lookup(var.dev, "region", "us-central1")
+    zone                   = lookup(var.dev, "zone", "us-central1-a")
+    cage_deployment_region = lookup(var.dev, "cage_deployment_region", "US_FED")
+    enforce_in_dev         = lookup(var.dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -287,7 +280,7 @@ run "dev_profile_keeps_2555_days_unlocked" {
       !google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked &&
       !module.worm_bucket.retention_locked
     )
-    error_message = "dev.tfvars sets no compliance flag, so neither bucket may be locked"
+    error_message = "dev.tfvars sets enforce_in_dev = false, so neither bucket may be locked"
   }
 }
 
@@ -295,13 +288,11 @@ run "us_dev_profile_keeps_2555_days_unlocked" {
   command = plan
 
   variables {
-    environment                = lookup(var.us_dev, "environment", "dev")
-    region                     = lookup(var.us_dev, "region", "us-central1")
-    zone                       = lookup(var.us_dev, "zone", "us-central1-a")
-    cage_deployment_region     = lookup(var.us_dev, "cage_deployment_region", "US_FED")
-    enable_nist_compliance     = lookup(var.us_dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.us_dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.us_dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.us_dev, "environment", "dev")
+    region                 = lookup(var.us_dev, "region", "us-central1")
+    zone                   = lookup(var.us_dev, "zone", "us-central1-a")
+    cage_deployment_region = lookup(var.us_dev, "cage_deployment_region", "US_FED")
+    enforce_in_dev         = lookup(var.us_dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -316,7 +307,7 @@ run "us_dev_profile_keeps_2555_days_unlocked" {
       !google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked &&
       !module.worm_bucket.retention_locked
     )
-    error_message = "us-dev.tfvars sets no compliance flag, so neither bucket may be locked"
+    error_message = "us-dev.tfvars sets enforce_in_dev = false, so neither bucket may be locked"
   }
 }
 
@@ -324,13 +315,11 @@ run "eu_dev_profile_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment                = lookup(var.eu_dev, "environment", "dev")
-    region                     = var.eu_dev["region"]
-    zone                       = var.eu_dev["zone"]
-    cage_deployment_region     = var.eu_dev["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.eu_dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.eu_dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.eu_dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.eu_dev, "environment", "dev")
+    region                 = var.eu_dev["region"]
+    zone                   = var.eu_dev["zone"]
+    cage_deployment_region = var.eu_dev["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.eu_dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -345,7 +334,7 @@ run "eu_dev_profile_keeps_2555_days_locked" {
       google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked &&
       module.worm_bucket.retention_locked
     )
-    error_message = "eu-dev.tfvars sets enable_eu_ecb_compliance, so both buckets must be locked"
+    error_message = "eu-dev.tfvars sets enforce_in_dev = true, so both buckets must be locked"
   }
 }
 
@@ -353,13 +342,11 @@ run "apac_dev_profile_keeps_2555_days_locked" {
   command = plan
 
   variables {
-    environment                = lookup(var.apac_dev, "environment", "dev")
-    region                     = var.apac_dev["region"]
-    zone                       = var.apac_dev["zone"]
-    cage_deployment_region     = var.apac_dev["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.apac_dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.apac_dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.apac_dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.apac_dev, "environment", "dev")
+    region                 = var.apac_dev["region"]
+    zone                   = var.apac_dev["zone"]
+    cage_deployment_region = var.apac_dev["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.apac_dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -374,7 +361,7 @@ run "apac_dev_profile_keeps_2555_days_locked" {
       google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked &&
       module.worm_bucket.retention_locked
     )
-    error_message = "apac-dev.tfvars sets enable_apac_mas_compliance, so both buckets must be locked"
+    error_message = "apac-dev.tfvars sets enforce_in_dev = true, so both buckets must be locked"
   }
 }
 

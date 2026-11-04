@@ -67,6 +67,11 @@ variables {
   project_id          = "digests-test-project"
   authorized_networks = [{ cidr = "203.0.113.7/32", display_name = "test" }]
 
+  # staging.tfvars activates a compliance posture, which needs distinct
+  # compliance telemetry keys (POAM-019). Test fixtures, not credentials.
+  langfuse_compliance_public_key = "fake-compliance-public-key"
+  langfuse_compliance_secret_key = "fake-compliance-secret-key"
+
   # What staging deploys under inference_backend = "none" with the bridge on.
   core = {
     "gateway"           = "registry.invalid/cage-test/gateway@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"

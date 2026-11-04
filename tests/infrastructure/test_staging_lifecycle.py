@@ -200,8 +200,9 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     assert "state rm google_kms_key_ring.signing" in calls
     assert "state rm google_kms_crypto_key.binauthz_attestor" in calls
     assert "state rm module.kms" in calls
-    # Phase 6: Destroy passes enable_nist_compliance=true, staging.tfvars, and rendered digests file
-    assert "destroy -var=enable_nist_compliance=true -var-file=staging.tfvars" in calls
+    # Phase 6: Destroy passes staging.tfvars and rendered digests file (POAM-2026-130 removed enable_nist_compliance)
+    assert "destroy -var-file=staging.tfvars" in calls
+    assert "enable_nist_compliance" not in calls
     assert "image_digests.abc1234.tfvars.json" in calls
 
 
@@ -225,7 +226,7 @@ def test_staging_lifecycle_fails_closed_when_workload_unready_after_teardown(
     assert "Workload readiness check failed" in proc.stderr
     calls = log_file.read_text(encoding="utf-8")
     # Still runs Phase 6 teardown for cost containment before exiting non-zero
-    assert "destroy -var=enable_nist_compliance=true" in calls
+    assert "destroy -var-file=staging.tfvars" in calls
 
 
 def test_staging_lifecycle_fails_closed_when_lula_or_posture_fails(
@@ -247,7 +248,7 @@ def test_staging_lifecycle_fails_closed_when_lula_or_posture_fails(
     assert proc.returncode != 0
     assert "Staging lifecycle gate FAILED" in proc.stderr
     calls = log_file.read_text(encoding="utf-8")
-    assert "destroy -var=enable_nist_compliance=true" in calls
+    assert "destroy -var-file=staging.tfvars" in calls
 
 
 def test_staging_lifecycle_fresh_project_bootstraps_and_verifies_zero_survivors(

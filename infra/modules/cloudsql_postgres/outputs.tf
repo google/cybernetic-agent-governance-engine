@@ -46,3 +46,8 @@ output "iam_user_name" {
   description = "IAM user name formatted for PostgreSQL"
   value       = local.effective_user_name
 }
+
+output "point_in_time_recovery_enabled" {
+  description = "Whether the instance plans point-in-time recovery (CP-9)"
+  value       = google_sql_database_instance.postgres.settings[0].backup_configuration[0].point_in_time_recovery_enabled
+}

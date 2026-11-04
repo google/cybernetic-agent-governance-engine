@@ -146,7 +146,7 @@ def test_worm_bucket_configured_as_system_of_record() -> None:
     )
     assert "retention_locked         = local.enforcing_posture" in gke_main
     assert (
-        'enforcing_posture = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active'
+        'enforcing_posture = var.environment == "prod" || var.environment == "staging" || var.enforce_in_dev'
         in gke_main
     )
 

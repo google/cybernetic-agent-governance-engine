@@ -419,7 +419,7 @@ done
 
 info "Destroying staging cluster (enable_deletion_protection=false)..."
 DESTROY_ARGS=(
-  "-var=enable_nist_compliance=true"
+  # POAM-2026-130: enable_nist_compliance removed; staging.tfvars sets environment="staging"
   "-var-file=staging.tfvars"
   "-auto-approve"
   "-var=project_id=${PROJECT_ID}"

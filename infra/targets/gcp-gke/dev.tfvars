@@ -20,7 +20,10 @@ master_ipv4_cidr_block = "172.16.0.0/28"
 
 
 # ─── Security Posture (Dev: Enabled to satisfy Org Policy) ──────────────────────
-# enable_nist_compliance         = true # Dynamically injected by deploy_all.sh based on --env posture
+# Every committed dev profile sets enforce_in_dev itself, so a direct terraform
+# run plans the same posture as deploy_all.sh (POAM-2026-174). Plain dev does
+# not enforce; see local.enforcing_posture in main.tf (POAM-2026-130, 181).
+enforce_in_dev = false
 # POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
 enable_high_availability       = false
 enable_deletion_protection     = false

@@ -109,15 +109,15 @@ jobs:
               print('ERROR: cage_deployment_region must be APAC_MAS in apac-prod.tfvars')
               sys.exit(1)
           print(f'cage_deployment_region=APAC_MAS — OK')
-          # Verify enable_apac_mas_compliance is true
-          if not re.search(r'enable_apac_mas_compliance\s*=\s*true', content):
-              print('ERROR: enable_apac_mas_compliance must be true in apac-prod.tfvars')
+          # Verify environment is prod (activates local.enforcing_posture, POAM-2026-130, 181)
+          if not re.search(r'environment\s*=\s*"prod"', content):
+              print('ERROR: environment must be "prod" in apac-prod.tfvars')
               sys.exit(1)
-          print('enable_apac_mas_compliance=true — OK')
+          print('environment="prod" (local.enforcing_posture) — OK')
           PYEOF
 
       - name: Validate MAS Notice 655 audit logging configuration
-        # Checks that MAS Notice 655 audit logging is enabled in apac-dev.tfvars.
+        # Checks that MAS Notice 655 audit logging and dev posture enforcement are enabled in apac-dev.tfvars.
         run: |
           python3 - <<'PYEOF'
           import pathlib, re, sys
@@ -126,8 +126,11 @@ jobs:
               print('ERROR: infra/targets/gcp-gke/apac-dev.tfvars not found')
               sys.exit(1)
           content = tfvars_path.read_text()
-          if not re.search(r'enable_apac_mas_compliance\s*=\s*true', content):
-              print('ERROR: enable_apac_mas_compliance = true not found in apac-dev.tfvars')
+          if not re.search(r'enforce_in_dev\s*=\s*true', content):
+              print('ERROR: enforce_in_dev = true not found in apac-dev.tfvars')
+              sys.exit(1)
+          if not re.search(r'enable_audit_logging\s*=\s*true', content):
+              print('ERROR: enable_audit_logging = true not found in apac-dev.tfvars')
               sys.exit(1)
           print('MAS Notice 655 audit logging configuration present — OK')
           PYEOF

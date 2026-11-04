@@ -124,6 +124,7 @@ Never write code that embeds secrets:
 ### Terraform Invariants
 - Secret values belong in `terraform.auto.tfvars` (gitignored) — never in committed `.tf` files.
 - `terraform plan` must always precede `terraform apply`. Never edit Terraform state directly.
+- Put a plan-time check where a plan targeted at the resource it protects still evaluates it: a `lifecycle` `precondition` on that resource, or a guard that resource `depends_on`. A standalone `terraform_data` guard is skipped by such a plan, and a variable validation fails `terraform destroy` whenever the teardown inputs fail it. The tested matrix, and the testing trade-off between the two placements, is the comment below `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](infra/targets/gcp-gke/main.tf); [`test_guard_placement.py`](tests/infrastructure/test_guard_placement.py) fails on any new standalone guard (POAM-2026-180).
 
 ### Mandatory Pre-Commit Code & Security Review
 Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo both a **code review** and a **security review** against this document and [`.agents/rules/security.md`](.agents/rules/security.md) before committing or declaring a task complete:

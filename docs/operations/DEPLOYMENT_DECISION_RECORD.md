@@ -224,6 +224,16 @@ portability across cloud providers.
 
 > **Amended by ADR-005 (2026-10-28):** the jurisdiction is read from the
 > profile's `cage_deployment_region`; `CAGE_DEPLOYMENT_REGION` is the fallback.
+>
+> **Amended by POAM-2026-181 and POAM-2026-130 (2026-11-03):** there is no
+> NIST-specific hardening for this gate to withhold. All three jurisdiction
+> flags (`enable_nist_compliance`, `enable_eu_ecb_compliance`,
+> `enable_apac_mas_compliance`) and `any_compliance_active` have been removed.
+> The control-plane and POAM-019 guards, the cluster allowlist, PITR, retention
+> lock, governance AOF, and the NeMo securityContext follow
+> `local.enforcing_posture` (`environment == "prod" || environment == "staging" || var.enforce_in_dev`),
+> and `deploy_all.sh` no longer injects `enable_nist_compliance`. The context
+> and decision below are kept as recorded.
 
 **Date:** 2026-04-01  
 **Status:** Accepted
@@ -322,6 +332,11 @@ testing full security posture at dev-scale cost, blocking POAM-024 (ISO 42001
 ---
 
 ## ADR-005: Profiles Define Posture
+
+> **Amended by POAM-2026-130 (2026-11-03):** `enable_nist_compliance` has been
+> removed, so `deploy_all.sh` no longer injects it. Reading the tier and
+> jurisdiction from the effective inputs (`profile` + `--var-file` + `--var`)
+> remains in place for the tier banner and `TF_VAR_cage_deployment_region`.
 
 **Date:** 2026-10-28
 **Status:** Accepted

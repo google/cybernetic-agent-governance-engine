@@ -68,12 +68,12 @@ master_ipv4_cidr_block = "172.16.1.0/28"
 cage_deployment_region = "EU_ECB"
 
 # ─── Security Posture (EU_ECB Prod: EU AI Act + DORA + GDPR + ISO 42001) ──────
-# DEP-20: enable_eu_ecb_compliance activates DORA Art. 10 HA and GDPR Art. 32
-# encryption at rest independently of enable_nist_compliance.
-# DEP-01: enable_nist_compliance must be false for EU_ECB deployments.
-enable_nist_compliance     = false
-enable_eu_ecb_compliance   = true
-enable_apac_mas_compliance = false
+# POAM-2026-130, 181: environment = "prod" activates local.enforcing_posture in
+# main.tf (retention lock, Valkey AOF, guards, allowlist, PITR);
+# cage_deployment_region above selects the EU_ECB regulatory baseline.
+# DORA Art. 10 HA and GDPR Art. 32 encryption are set directly below.
+# The three enable_*_compliance variables had no per-jurisdiction effect
+# and were removed under POAM-2026-130.
 # POAM-024: HA decoupled from compliance — set explicitly true for production
 regional_cluster               = true
 enable_high_availability       = true

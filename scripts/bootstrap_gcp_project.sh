@@ -198,9 +198,9 @@ import_foundational_state() {
     "-var=environment=${ENV}"
     "-var=region=${REGION}"
   )
-  if [[ "$ENV" == "staging" || "$ENV" == "prod" ]]; then
-    import_args+=("-var=enable_nist_compliance=true")
-  fi
+  # POAM-2026-130, 181: enable_nist_compliance was removed; staging and prod
+  # enforce via local.enforcing_posture directly from environment=${ENV} above,
+  # and dev profiles declare enforce_in_dev in ${ENV}.tfvars below.
   if [[ -f "$TF_DIR/${ENV}.tfvars" ]]; then
     import_args+=("-var-file=${ENV}.tfvars")
   fi
