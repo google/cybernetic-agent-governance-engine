@@ -175,24 +175,27 @@ def assert_schema_lacks_all_objects_encryption(schema_data: dict[str, Any]) -> N
         ]["resource_schemas"]["google_container_cluster"]["block"]["block_types"][
             "database_encryption"
         ]
-        block_desc = db_enc["block"].get("description", "")
-        state_desc = db_enc["block"]["attributes"]["state"].get("description", "")
+        block_desc = db_enc["block"]["description"]
+        state_desc = db_enc["block"]["attributes"]["state"]["description"]
     except (KeyError, TypeError) as exc:
         raise AssertionError(
             "Provider schema is missing google_container_cluster.database_encryption.state"
         ) from exc
 
-    combined = f"{block_desc}\n{state_desc}"
-    assert "ENCRYPTED" in combined and "DECRYPTED" in combined, (
-        "Provider schema description for database_encryption.state did not list "
-        f"ENCRYPTED and DECRYPTED (got {combined!r}); check cannot pass vacuously"
-    )
-    assert ALL_OBJECTS_STATE not in combined, (
-        f"hashicorp/google provider schema now includes {ALL_OBJECTS_STATE} in "
-        "google_container_cluster.database_encryption.state! Remove "
-        "database_encryption from lifecycle.ignore_changes in "
-        "infra/modules/gcp_gke_cluster/main.tf and close POAM-2026-182 in docs/POAM.md."
-    )
+    for label, desc in (
+        ("database_encryption.description", block_desc),
+        ("database_encryption.state.description", state_desc),
+    ):
+        assert isinstance(desc, str) and "ENCRYPTED" in desc and "DECRYPTED" in desc, (
+            f"Provider schema {label} did not list ENCRYPTED and DECRYPTED "
+            f"(got {desc!r}); check cannot pass vacuously"
+        )
+        assert ALL_OBJECTS_STATE not in desc, (
+            f"hashicorp/google provider schema now includes {ALL_OBJECTS_STATE} in "
+            f"google_container_cluster.{label}! Remove "
+            "database_encryption from lifecycle.ignore_changes in "
+            "infra/modules/gcp_gke_cluster/main.tf and close POAM-2026-182 in docs/POAM.md."
+        )
 
 
 def assert_validate_rejects_all_objects_encryption(
@@ -219,10 +222,13 @@ def assert_validate_rejects_all_objects_encryption(
     )
 
 
-def run_live_provider_check(providers_dir: Path = PROVIDERS_DIR) -> None:
+def run_live_provider_check(
+    providers_dir: Path = PROVIDERS_DIR,
+    terraform_bin: str | None = None,
+) -> None:
     """Run terraform providers schema -json and terraform validate -json against the installed provider."""
-    terraform_bin = shutil.which("terraform")
-    assert terraform_bin is not None, "terraform binary not found on PATH"
+    resolved_tf = terraform_bin or shutil.which("terraform")
+    assert resolved_tf is not None, "terraform binary not found on PATH"
     assert providers_dir.is_dir(), (
         f"Initialized provider directory {providers_dir} not found; "
         "run `terraform -chdir=infra/targets/gcp-gke init -backend=false` first"
@@ -236,7 +242,7 @@ def run_live_provider_check(providers_dir: Path = PROVIDERS_DIR) -> None:
         )
         subprocess.run(
             [
-                terraform_bin,
+                resolved_tf,
                 f"-chdir={tmp_path}",
                 "init",
                 "-backend=false",
@@ -250,7 +256,7 @@ def run_live_provider_check(providers_dir: Path = PROVIDERS_DIR) -> None:
         )
 
         schema_res = subprocess.run(
-            [terraform_bin, f"-chdir={tmp_path}", "providers", "schema", "-json"],
+            [resolved_tf, f"-chdir={tmp_path}", "providers", "schema", "-json"],
             check=True,
             capture_output=True,
             text=True,
@@ -258,7 +264,7 @@ def run_live_provider_check(providers_dir: Path = PROVIDERS_DIR) -> None:
         assert_schema_lacks_all_objects_encryption(json.loads(schema_res.stdout))
 
         val_reject = subprocess.run(
-            [terraform_bin, f"-chdir={tmp_path}", "validate", "-json"],
+            [resolved_tf, f"-chdir={tmp_path}", "validate", "-json"],
             check=False,
             capture_output=True,
             text=True,
@@ -271,7 +277,7 @@ def run_live_provider_check(providers_dir: Path = PROVIDERS_DIR) -> None:
             encoding="utf-8",
         )
         val_accept = subprocess.run(
-            [terraform_bin, f"-chdir={tmp_path}", "validate", "-json"],
+            [resolved_tf, f"-chdir={tmp_path}", "validate", "-json"],
             check=False,
             capture_output=True,
             text=True,
@@ -356,33 +362,55 @@ def test_schema_detector_accepts_6_50_schema() -> None:
 
 
 def test_schema_detector_fails_when_provider_adds_all_objects_encryption() -> None:
-    upgraded = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
-    state_attr = upgraded["provider_schemas"]["registry.terraform.io/hashicorp/google"][
-        "resource_schemas"
-    ]["google_container_cluster"]["block"]["block_types"]["database_encryption"][
-        "block"
-    ]["attributes"]["state"]
+    upgraded_state = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
+    state_attr = upgraded_state["provider_schemas"][
+        "registry.terraform.io/hashicorp/google"
+    ]["resource_schemas"]["google_container_cluster"]["block"]["block_types"][
+        "database_encryption"
+    ]["block"]["attributes"]["state"]
     state_attr["description"] = (
         "ENCRYPTED, DECRYPTED, or ALL_OBJECTS_ENCRYPTION_ENABLED."
     )
     with _expect_assertion_error("POAM-2026-182"):
-        assert_schema_lacks_all_objects_encryption(upgraded)
+        assert_schema_lacks_all_objects_encryption(upgraded_state)
+
+    upgraded_block = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
+    db_block = upgraded_block["provider_schemas"][
+        "registry.terraform.io/hashicorp/google"
+    ]["resource_schemas"]["google_container_cluster"]["block"]["block_types"][
+        "database_encryption"
+    ]["block"]
+    db_block["description"] = (
+        'Valid values of state are: "ENCRYPTED"; "DECRYPTED"; '
+        '"ALL_OBJECTS_ENCRYPTION_ENABLED".'
+    )
+    with _expect_assertion_error("POAM-2026-182"):
+        assert_schema_lacks_all_objects_encryption(upgraded_block)
 
 
 def test_schema_detector_refuses_vacuous_or_missing_schema() -> None:
     with _expect_assertion_error("missing"):
         assert_schema_lacks_all_objects_encryption({})
 
-    blank = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
-    db_block = blank["provider_schemas"]["registry.terraform.io/hashicorp/google"][
+    # Neither block.description nor state.description may silently return empty
+    # and be masked by the other.
+    blank_state = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
+    blank_state["provider_schemas"]["registry.terraform.io/hashicorp/google"][
         "resource_schemas"
     ]["google_container_cluster"]["block"]["block_types"]["database_encryption"][
         "block"
-    ]
-    db_block["description"] = ""
-    db_block["attributes"]["state"]["description"] = ""
+    ]["attributes"]["state"]["description"] = ""
     with _expect_assertion_error("cannot pass vacuously"):
-        assert_schema_lacks_all_objects_encryption(blank)
+        assert_schema_lacks_all_objects_encryption(blank_state)
+
+    blank_block = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
+    blank_block["provider_schemas"]["registry.terraform.io/hashicorp/google"][
+        "resource_schemas"
+    ]["google_container_cluster"]["block"]["block_types"]["database_encryption"][
+        "block"
+    ]["description"] = ""
+    with _expect_assertion_error("cannot pass vacuously"):
+        assert_schema_lacks_all_objects_encryption(blank_block)
 
 
 def test_validate_detector_fails_when_provider_accepts_all_objects_state() -> None:
@@ -436,6 +464,100 @@ def test_hcl_detector_fails_if_dead_variable_reintroduced(tmp_path: Path) -> Non
         assert_no_dead_database_encryption_state([tf_file])
 
 
+def _write_stub_terraform(
+    bin_path: Path,
+    *,
+    schema_payload: dict[str, Any],
+    reject_all_objects: bool = True,
+    accept_encrypted: bool = True,
+) -> Path:
+    script = f"""#!{sys.executable}
+import json
+import pathlib
+import sys
+
+args = sys.argv[1:]
+chdir = "."
+for a in args:
+    if a.startswith("-chdir="):
+        chdir = a.split("=", 1)[1]
+
+if "init" in args:
+    sys.exit(0)
+if "providers" in args and "schema" in args:
+    print(json.dumps({schema_payload!r}))
+    sys.exit(0)
+if "validate" in args:
+    main_tf = (pathlib.Path(chdir) / "main.tf").read_text(encoding="utf-8")
+    if 'state    = "{ALL_OBJECTS_STATE}"' in main_tf:
+        if {reject_all_objects!r}:
+            print(json.dumps({{
+                "valid": False,
+                "error_count": 1,
+                "diagnostics": [{{
+                    "severity": "error",
+                    "summary": 'expected database_encryption.0.state to be one of ["ENCRYPTED" "DECRYPTED"], got {ALL_OBJECTS_STATE}',
+                }}],
+            }}))
+            sys.exit(1)
+        print(json.dumps({{"valid": True, "error_count": 0, "diagnostics": []}}))
+        sys.exit(0)
+    if 'state    = "ENCRYPTED"' in main_tf:
+        print(json.dumps({{"valid": {accept_encrypted!r}, "error_count": 0 if {accept_encrypted!r} else 1, "diagnostics": []}}))
+        sys.exit(0 if {accept_encrypted!r} else 1)
+sys.exit(2)
+"""
+    bin_path.write_text(script, encoding="utf-8")
+    bin_path.chmod(0o755)
+    return bin_path
+
+
+def test_run_live_provider_check_end_to_end_mutations(tmp_path: Path) -> None:
+    providers_dir = tmp_path / "providers"
+    providers_dir.mkdir()
+    tf_bin = tmp_path / "terraform"
+
+    # Baseline 6.50.0 behavior: passes.
+    _write_stub_terraform(tf_bin, schema_payload=_SYNTHETIC_6_50_SCHEMA)
+    run_live_provider_check(providers_dir=providers_dir, terraform_bin=str(tf_bin))
+
+    # Mutation 1: schema lookup includes ALL_OBJECTS_ENCRYPTION_ENABLED -> fails red.
+    upgraded_schema = copy.deepcopy(_SYNTHETIC_6_50_SCHEMA)
+    upgraded_schema["provider_schemas"]["registry.terraform.io/hashicorp/google"][
+        "resource_schemas"
+    ]["google_container_cluster"]["block"]["block_types"]["database_encryption"][
+        "block"
+    ]["attributes"]["state"][
+        "description"
+    ] = "ENCRYPTED, DECRYPTED, or ALL_OBJECTS_ENCRYPTION_ENABLED."
+    _write_stub_terraform(tf_bin, schema_payload=upgraded_schema)
+    with _expect_assertion_error("POAM-2026-182"):
+        run_live_provider_check(providers_dir=providers_dir, terraform_bin=str(tf_bin))
+
+    # Mutation 2: schema lookup returns empty dict -> fails red (no vacuous pass).
+    _write_stub_terraform(tf_bin, schema_payload={})
+    with _expect_assertion_error("missing"):
+        run_live_provider_check(providers_dir=providers_dir, terraform_bin=str(tf_bin))
+
+    # Mutation 3: validate -json accepts ALL_OBJECTS_ENCRYPTION_ENABLED -> fails red.
+    _write_stub_terraform(
+        tf_bin,
+        schema_payload=_SYNTHETIC_6_50_SCHEMA,
+        reject_all_objects=False,
+    )
+    with _expect_assertion_error("POAM-2026-182"):
+        run_live_provider_check(providers_dir=providers_dir, terraform_bin=str(tf_bin))
+
+    # Mutation 4: control probe with state = "ENCRYPTED" fails -> fails red.
+    _write_stub_terraform(
+        tf_bin,
+        schema_payload=_SYNTHETIC_6_50_SCHEMA,
+        accept_encrypted=False,
+    )
+    with _expect_assertion_error('Control probe with state = "ENCRYPTED" failed'):
+        run_live_provider_check(providers_dir=providers_dir, terraform_bin=str(tf_bin))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Verify POAM-2026-182 GKE database_encryption provider workaround."
@@ -455,6 +577,8 @@ def main(argv: list[str] | None = None) -> int:
     test_validate_detector_fails_when_provider_accepts_all_objects_state()
     test_validate_detector_fails_on_unrelated_validation_error()
     test_hcl_detector_fails_if_database_encryption_dropped_or_narrowed()
+    with tempfile.TemporaryDirectory(prefix="cage_poam_182_mut_") as mut_tmp:
+        test_run_live_provider_check_end_to_end_mutations(Path(mut_tmp))
     if args.require_provider:
         run_live_provider_check(PROVIDERS_DIR)
     return 0
