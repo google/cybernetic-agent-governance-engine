@@ -324,6 +324,13 @@ run "gke_module_binds_dedicated_node_service_account_to_every_node_pool" {
     error_message = "every GKE node_config block must bind the dedicated node service account"
   }
 
+  # Decision A4 (POAM-2026-187): every node_config intentionally retains
+  # oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] alongside
+  # the dedicated least-privilege node GSA (`cage-gke-nodes-staging`). In GCP,
+  # effective VM permissions equal `OAuth scope ∩ IAM roles`; per Google's GKE
+  # hardening guidance, setting `cloud-platform` avoids brittle legacy per-API
+  # OAuth scope lists while bounding node permissions strictly through the two
+  # IAM bindings verified above.
   assert {
     condition = (
       google_container_cluster.primary.node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
@@ -333,7 +340,7 @@ run "gke_module_binds_dedicated_node_service_account_to_every_node_pool" {
       google_container_node_pool.clickhouse_nodes[0].node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
       google_container_node_pool.extra_pools["custom-pool"].node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"])
     )
-    error_message = "every GKE node_config block must retain cloud-platform oauth_scopes bounded by IAM"
+    error_message = "every GKE node_config block must retain cloud-platform oauth_scopes bounded by IAM (Decision A4)"
   }
 }
 

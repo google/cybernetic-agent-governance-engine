@@ -347,7 +347,7 @@ resource "google_container_node_pool" "primary_nodes" {
     # hashicorp/google we set COS_CONTAINERD image_type and the sandbox.gke.io/runtime label).
     image_type = var.enable_gvisor_sandbox ? "COS_CONTAINERD" : null
 
-    # Dedicated least-privilege node GSA + cloud-platform OAuth scope bounded by IAM (AC-6, POAM-2026-187)
+    # Dedicated least-privilege node GSA; cloud-platform OAuth scope is intentionally retained and bounded by IAM (Decision A4 — see line 755, AC-6, POAM-2026-187)
     service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
@@ -518,7 +518,7 @@ resource "google_container_node_pool" "gpu_nodes" {
       effect = "NO_SCHEDULE"
     }
 
-    # Dedicated least-privilege node GSA + OAuth scopes (AC-6, POAM-2026-187)
+    # Dedicated least-privilege node GSA; cloud-platform OAuth scope is intentionally retained and bounded by IAM (Decision A4 — see line 755, AC-6, POAM-2026-187)
     service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
@@ -756,11 +756,29 @@ resource "google_container_node_pool" "extra_pools" {
 # ─── Dedicated Least-Privilege GKE Node Service Account (AC-6, POAM-2026-187) ─
 # Replaces the implicit Compute Engine default service account
 # (<PROJECT_NUMBER>-compute@developer.gserviceaccount.com) across every GKE
-# node_config block. Grants only roles/container.defaultNodeServiceAccount
-# (logging/monitoring/node-metadata baseline per Google GKE hardening guidance)
-# and roles/artifactregistry.reader (container image pull from Artifact Registry).
-# Every node_config retains oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
-# so effective node permissions are bounded strictly by these IAM bindings.
+# node_config block (`CP-5` in docs/BREAKING_CHANGES_v3.md).
+#
+# Decision A3 (Minimal IAM roles on the dedicated node GSA):
+#   Grants only roles/container.defaultNodeServiceAccount (Cloud Logging,
+#   Cloud Monitoring, and node-metadata baseline per Google GKE hardening
+#   guidance) and roles/artifactregistry.reader (kubelet image pulls from
+#   Artifact Registry). Note: rebinding GKE node pools removes the default
+#   compute SA from GKE nodes only; any project-level or SA-level IAM grants on
+#   <PROJECT_NUMBER>-compute@developer.gserviceaccount.com must be revoked
+#   separately so other workloads defaulting to it do not inherit them
+#   (POAM-2026-165, POAM-2026-187).
+#
+# Decision A4 (Why oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] stays):
+#   Every node_config block intentionally retains the `cloud-platform` OAuth
+#   access scope. In GCP, a VM's effective permissions equal the intersection
+#   of its legacy OAuth access scopes and the IAM roles granted to its attached
+#   service account (`effective = scope ∩ IAM`). When `service_account` was
+#   omitted ("default"), `cloud-platform` exposed every over-broad role on the
+#   Compute Engine default SA. With `service_account = local.node_service_account_email`,
+#   Google's GKE hardening guidance recommends setting `oauth_scopes` to
+#   `cloud-platform` and enforcing least privilege exclusively through the
+#   dedicated GSA's IAM roles above, rather than maintaining brittle legacy
+#   per-API OAuth scope lists (`devstorage.read_only`, `logging.write`, etc.).
 
 locals {
   node_service_account_id    = "cage-gke-nodes-${var.environment}"

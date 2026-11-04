@@ -20,11 +20,17 @@ Verifies that `infra/modules/gcp_gke_cluster/main.tf`:
    Engine default service account (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`).
 2. Grants only `roles/container.defaultNodeServiceAccount` and
    `roles/artifactregistry.reader` to that node service account (Decision A3).
-3. Sets `service_account = local.node_service_account_email` and retains
-   `oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]` (Decision A4)
-   inside all six `node_config` blocks (`google_container_cluster.primary`,
-   `primary_nodes`, `general_spot_nodes`, `gpu_nodes`, `clickhouse_nodes`,
-   `extra_pools`).
+3. Sets `service_account = local.node_service_account_email` and intentionally
+   retains `oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]`
+   (Decision A4: legacy GCE OAuth access scopes are coarse pre-IAM VM ceilings
+   where effective permissions equal `scope ∩ IAM roles`, so per Google's GKE
+   hardening guidance `cloud-platform` is paired with the dedicated least-privilege
+   GSA rather than brittle legacy per-API scope lists) inside all six
+   `node_config` blocks (`google_container_cluster.primary`, `primary_nodes`,
+   `general_spot_nodes`, `gpu_nodes`, `clickhouse_nodes`, `extra_pools`).
+4. Records the Decision A3 / Decision A4 architectural rationale and the
+   `<PROJECT_NUMBER>-compute@developer.gserviceaccount.com` de-privileging boundary
+   directly in the HCL comments of `infra/modules/gcp_gke_cluster/main.tf`.
 """
 
 from __future__ import annotations
@@ -191,3 +197,14 @@ class TestGkeNodePoolServiceAccount:
         assert len(output_blocks) == 1
         _, body = output_blocks[0]
         assert "local.node_service_account_email" in body
+
+    def test_decision_a3_and_a4_rationale_comment_is_recorded_in_main_tf(self) -> None:
+        raw_main_tf = GKE_MAIN_TF.read_text(encoding="utf-8")
+        assert (
+            "Decision A3 (Minimal IAM roles on the dedicated node GSA):" in raw_main_tf
+        )
+        assert (
+            'Decision A4 (Why oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] stays):'
+            in raw_main_tf
+        )
+        assert "effective = scope ∩ IAM" in raw_main_tf
