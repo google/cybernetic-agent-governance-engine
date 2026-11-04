@@ -508,7 +508,10 @@ def test_historical_assertion_deployment_claim_rejects_git_log_or_commit_sha_byp
     assert [(i.line_number, i.reference_type) for i in issues] == [
         (1, "Historical Claim"),
     ]
-    assert "Deployment/cluster historical assertion requires audit-log or Terraform state-serial" in issues[0].reason
+    assert (
+        "Deployment/cluster historical assertion requires audit-log or Terraform state-serial"
+        in issues[0].reason
+    )
 
 
 def test_historical_assertion_rejects_unverified_never_always_and_no_evidence_of(
@@ -555,4 +558,3 @@ def test_historical_assertion_normative_never_and_headings_are_not_flagged(
         encoding="utf-8",
     )
     assert audit_markdown_file(doc) == []
-
