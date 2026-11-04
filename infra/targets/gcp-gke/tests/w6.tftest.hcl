@@ -235,3 +235,36 @@ run "kms_module_respects_grant_service_agents_false" {
   }
 }
 
+run "compliance_bridge_artifactregistry_writer_uses_service_account_resource" {
+  command = plan
+
+  override_resource {
+    target          = google_service_account.compliance_bridge
+    override_during = plan
+    values = {
+      email = "cage-compliance-bridge@cage-test-project.iam.gserviceaccount.com"
+      name  = "projects/cage-test-project/serviceAccounts/cage-compliance-bridge@cage-test-project.iam.gserviceaccount.com"
+    }
+  }
+
+  override_data {
+    target          = data.google_iam_policy.signing_key["compliance_evidence"]
+    override_during = plan
+    values = {
+      policy_data = "{}"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.compliance_bridge.account_id == "cage-compliance-bridge"
+    error_message = "google_service_account.compliance_bridge account_id must be cage-compliance-bridge"
+  }
+  assert {
+    condition = (
+      google_project_iam_member.compliance_bridge_sa_artifactregistry_writer.role == "roles/artifactregistry.writer" &&
+      google_project_iam_member.compliance_bridge_sa_artifactregistry_writer.member == "serviceAccount:cage-compliance-bridge@cage-test-project.iam.gserviceaccount.com"
+    )
+    error_message = "compliance_bridge_sa_artifactregistry_writer must reference google_service_account.compliance_bridge.email"
+  }
+}
+

@@ -363,6 +363,35 @@ def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
     assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 4
 
 
+def test_compliance_bridge_artifactregistry_writer_references_sa_resource_and_no_bare_literal() -> (
+    None
+):
+    """EF9: compliance_bridge_sa_artifactregistry_writer references google_service_account.compliance_bridge.email and no file uses bare compliance-bridge-sa."""
+    main_tf = (_GKE / "main.tf").read_text()
+    match = re.search(
+        r'^\s*resource\s+"google_project_iam_member"\s+"compliance_bridge_sa_artifactregistry_writer"\s*\{(.*?)^\s*\}',
+        main_tf,
+        re.M | re.S,
+    )
+    assert match is not None
+    body = match.group(1)
+    assert 'role    = "roles/artifactregistry.writer"' in body
+    assert (
+        'member  = "serviceAccount:${google_service_account.compliance_bridge.email}"'
+        in body
+    )
+    bare_literal = re.compile(r"(?<![a-z0-9-])compliance-bridge-sa\b")
+    offenders = [
+        str(p.relative_to(_REPO))
+        for p in _tracked(
+            _INFRA, _REPO / "deployment", _REPO / "src", _REPO / "scripts"
+        )
+        if p.suffix in {".tf", ".tfvars", ".hcl", ".yaml", ".yml", ".tpl", ".py", ".sh"}
+        and bare_literal.search(p.read_text())
+    ]
+    assert offenders == [], f"Bare compliance-bridge-sa literal found in: {offenders}"
+
+
 _PROJECT_IAM_BLOCK = re.compile(
     r'^\s*resource\s+"google_project_iam_[a-z_]+"[^{]*\{.*?^\s*\}',
     re.M | re.S,
