@@ -432,10 +432,28 @@ async def chat_completions(
                 )
             token_delta = parsed_max_tokens
 
+        allow_burst = bool(
+            body.get("in_flight_completion")
+            or body.get("allow_burst")
+            or request.headers.get("x-cage-allow-burst", "").lower() in ("true", "1")
+        )
+
         quota_result = await _get_token_quota_proxy().check_and_increment(
             agent_id=agent_id,
             token_delta=token_delta,
+            allow_burst=allow_burst,
         )
+        raw_status = getattr(quota_result, "quota_status", "NORMAL")
+        status_str = (
+            raw_status
+            if isinstance(raw_status, str)
+            else ("EXHAUSTED" if not quota_result.allowed else "NORMAL")
+        )
+        raw_remaining = getattr(quota_result, "tokens_remaining", 0)
+        remaining_int = raw_remaining if isinstance(raw_remaining, (int, float)) else 0
+        raw_burst = getattr(quota_result, "burst_available", False)
+        burst_bool = bool(raw_burst) if isinstance(raw_burst, bool) else False
+
         if not quota_result.allowed:
             stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="BLOCK")
             # Awaited inline — WORM write must complete before 429 is
@@ -450,12 +468,23 @@ async def chat_completions(
                     "accumulated_tokens": quota_result.accumulated_tokens,
                     "quota_max_steps": quota_result.step_quota_max,
                     "quota_max_tokens": quota_result.token_quota_max,
+                    "quota_status": status_str,
+                    "burst_available": burst_bool,
+                    "tokens_remaining": remaining_int,
                     "agent_id": agent_id,
                     "iso42001_control": "A.4",
                     "dge_action": "TERMINATED_WITH_ROLLBACK",
                 },
                 status_code=429,
+                headers={
+                    "X-Cage-Quota-Status": status_str,
+                    "X-Cage-Tokens-Remaining": str(remaining_int),
+                },
             )
+        quota_headers = {
+            "X-Cage-Quota-Status": status_str,
+            "X-Cage-Tokens-Remaining": str(remaining_int),
+        }
         stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="PASS")
 
         # 4. NeMo input verification — runs for ALL requests while semantic
@@ -662,7 +691,9 @@ async def chat_completions(
                                 "total_tokens": 0,
                             },
                         }
-                        return JSONResponse(content=filtered_response)
+                        return JSONResponse(
+                            content=filtered_response, headers=quota_headers
+                        )
 
                 # Apply NeMo output filtering to the assembled content
                 if filtered_content:
@@ -696,7 +727,9 @@ async def chat_completions(
                                 "total_tokens": 0,
                             },
                         }
-                        return JSONResponse(content=filtered_response)
+                        return JSONResponse(
+                            content=filtered_response, headers=quota_headers
+                        )
             except Exception:
                 if not stream_backend_error:
                     await _get_token_quota_proxy().rollback_step(
@@ -715,6 +748,7 @@ async def chat_completions(
                 headers={
                     "Cache-Control": "no-cache",
                     "X-Accel-Buffering": "no",
+                    **quota_headers,
                 },
             )
 
@@ -794,4 +828,4 @@ async def chat_completions(
                 "gen_ai.response.model", vllm_response.get("model", model_id)
             )
 
-        return JSONResponse(content=vllm_response)
+        return JSONResponse(content=vllm_response, headers=quota_headers)

@@ -1252,6 +1252,51 @@ class ResourceGuard(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class AgentHandoverManifest:
+    """Canonical handover manifest emitted upon token/step budget exhaustion (RFC #652).
+
+    Enables graceful transfer to a successor agent or cheaper model tier
+    without repeating context exploration or leaving dirty in-flight state.
+    """
+
+    task_id: str
+    agent_id: str
+    status: str
+    repository_clean: bool = True
+    syntax_valid: bool = True
+    tests_passing: bool = True
+    completed_milestones: tuple[str, ...] = ()
+    pending_actions: tuple[dict[str, Any], ...] = ()
+    successor_instructions: str = ""
+    total_tokens_spent: int = 0
+    burst_tokens_used: int = 0
+    efficiency_rating: float = 1.0
+    created_at_utc: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert manifest to a JSON-serializable dictionary."""
+        return {
+            "task_id": self.task_id,
+            "agent_id": self.agent_id,
+            "status": self.status,
+            "state_integrity": {
+                "repository_clean": self.repository_clean,
+                "syntax_valid": self.syntax_valid,
+                "tests_passing": self.tests_passing,
+            },
+            "completed_milestones": list(self.completed_milestones),
+            "pending_actions": list(self.pending_actions),
+            "successor_instructions": self.successor_instructions,
+            "tokenomics": {
+                "total_tokens_spent": self.total_tokens_spent,
+                "burst_tokens_used": self.burst_tokens_used,
+                "efficiency_rating": self.efficiency_rating,
+            },
+            "created_at_utc": self.created_at_utc,
+        }
+
+
 from src.gateway.governance.types import ReservationToken
 
 
