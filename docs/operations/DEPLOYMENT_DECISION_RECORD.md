@@ -224,6 +224,14 @@ portability across cloud providers.
 
 > **Amended by ADR-005 (2026-10-28):** the jurisdiction is read from the
 > profile's `cage_deployment_region`; `CAGE_DEPLOYMENT_REGION` is the fallback.
+>
+> **Amended by POAM-2026-181 (2026-11-03):** there is no NIST-specific
+> hardening for this gate to withhold. In `main.tf` all three jurisdiction flags
+> only set `local.any_compliance_active`. The control-plane and POAM-019 guards,
+> the cluster allowlist, PITR and the NeMo securityContext follow
+> `local.enforcing_posture`, so every staging and prod plan enforces them in
+> every jurisdiction, and a flag decides only whether a dev plan does. The
+> context and decision below are kept as recorded.
 
 **Date:** 2026-04-01  
 **Status:** Accepted

@@ -16,11 +16,17 @@
 ``staging.tfvars`` authorized ``0.0.0.0/0`` while its header claimed VPN scope, and
 nothing read the list. Two guards now hold the claim:
 
-* the shipped profiles: no profile with a compliance posture active authorizes a /0;
+* the shipped profiles: no enforcing profile authorizes a /0;
 * the plan: the gcp-gke target's ``control_plane_access_guard`` refuses an empty list
-  or a /0 whenever compliance is active. An empty list makes the cluster module emit
-  no allowlist, and GKE then accepts any address. A plan targeted at ``module.gke``
-  skips the guard (POAM-2026-180; see test_guard_placement.py).
+  or a /0 under an enforcing posture: every staging and prod plan, and a dev plan with
+  a compliance flag. An empty list makes the cluster module emit no allowlist, and GKE
+  then accepts any address. A plan targeted at ``module.gke`` skips the guard
+  (POAM-2026-180; see test_guard_placement.py).
+
+POAM-2026-181: the guards, the cluster allowlist, PITR and the NeMo securityContext
+follow ``local.enforcing_posture``, the tier, rather than the jurisdiction flags, so
+a staging or prod plan keeps them whatever jurisdiction it selects. The jurisdiction
+flags now decide only whether a dev plan enforces.
 
 POAM-2026-174: every committed profile sets ``enable_nist_compliance`` itself, so a
 direct terraform run plans the same posture as deploy_all.sh, and the classifier
@@ -58,13 +64,19 @@ def _setting(text: str, name: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _compliance_active(text: str) -> bool:
-    """Mirror ``local.any_compliance_active`` from the profile's own settings.
+ENFORCING_TIERS = ("prod", "staging")
 
-    ``test_every_profile_sets_the_nist_flag_itself`` keeps every profile explicit,
-    so there is no deploy_all.sh default to model.
+
+def _enforcing(text: str) -> bool:
+    """Mirror ``local.enforcing_posture`` from the profile's own settings.
+
+    The prod and staging tiers always enforce; a dev profile enforces only with a
+    compliance flag. ``test_every_profile_sets_the_nist_flag_itself`` keeps every
+    profile explicit, so there is no deploy_all.sh default to model.
     """
-    return any(_setting(text, flag) == "true" for flag in COMPLIANCE_FLAGS)
+    return _setting(text, "environment") in ENFORCING_TIERS or any(
+        _setting(text, flag) == "true" for flag in COMPLIANCE_FLAGS
+    )
 
 
 def _authorized_cidrs(text: str) -> list[str]:
@@ -77,14 +89,14 @@ def _authorized_cidrs(text: str) -> list[str]:
 ENFORCING = [
     name
     for name in PROFILES
-    if _compliance_active((GKE_TARGET_DIR / name).read_text(encoding="utf-8"))
+    if _enforcing((GKE_TARGET_DIR / name).read_text(encoding="utf-8"))
 ]
 
 
 def test_enforcing_profiles_are_the_ones_terraform_hardens() -> None:
     # Pins the classifier, so the profile check below cannot pass by finding no
-    # enforcing profile. A new profile has to be classified on purpose. With
-    # every profile explicit, staging.tfvars is here by its own setting.
+    # enforcing profile. A new profile has to be classified on purpose, and a new
+    # staging or prod profile enforces whatever flags it sets (POAM-2026-181).
     assert set(ENFORCING) == {
         "staging.tfvars",
         "prod.tfvars",
@@ -104,7 +116,7 @@ def test_no_enforcing_profile_authorizes_every_address(profile: str) -> None:
         if ipaddress.ip_network(cidr, strict=False).prefixlen == 0
     ]
     assert not open_entries, (
-        f"{profile} activates a compliance posture and authorizes {open_entries} "
+        f"{profile} enforces and authorizes {open_entries} "
         "on the GKE control plane (POAM-2026-126)"
     )
 
@@ -116,15 +128,42 @@ def _guard_block() -> str:
     return main_tf[start : main_tf.find("\n}\n", start)]
 
 
-def test_plan_refuses_an_open_or_empty_allowlist_under_compliance() -> None:
+def test_plan_refuses_an_open_or_empty_allowlist_under_an_enforcing_posture() -> None:
     guard = re.sub(r"\s+", " ", _guard_block())
-    assert "condition = !local.any_compliance_active ||" in guard, (
-        "the guard must apply whenever a compliance posture is active"
+    assert "condition = !local.enforcing_posture ||" in guard, (
+        "the guard must apply to every staging and prod plan (POAM-2026-181)"
     )
     assert "length(var.authorized_networks) > 0" in guard, (
         "an empty list leaves GKE's allowlist off, so the guard must refuse it"
     )
     assert '!endswith(n.cidr, "/0")' in guard, "the guard must refuse a /0 entry"
+
+
+def test_posture_controls_follow_the_tier_not_a_jurisdiction_flag() -> None:
+    # POAM-2026-181: these bound on local.any_compliance_active, so a staging or
+    # prod plan that selected no jurisdiction flag dropped every one of them.
+    main_tf = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
+    code = [line for line in main_tf.splitlines() if not line.lstrip().startswith("#")]
+    readers = sorted(
+        line.split("=")[0].strip()
+        for line in code
+        if "local.any_compliance_active" in line
+    )
+    assert readers == ["enforcing_posture", "force_destroy"], (
+        "only enforcing_posture and the dev-only force_destroy may read the "
+        f"jurisdiction flags; found {readers}"
+    )
+    flat = re.sub(r"\s+", " ", "\n".join(code))
+    for binding in (
+        "enable_nist_compliance = local.enforcing_posture",
+        "enable_point_in_time_recovery = local.enforcing_posture",
+        "enable_security_context = local.enforcing_posture",
+    ):
+        assert binding in flat, f"main.tf must set {binding}"
+    assert flat.count("condition = !local.enforcing_posture ||") == 3, (
+        "the control-plane guard and both POAM-019 key guards must bind on "
+        "local.enforcing_posture"
+    )
 
 
 @pytest.mark.parametrize("profile", PROFILES)

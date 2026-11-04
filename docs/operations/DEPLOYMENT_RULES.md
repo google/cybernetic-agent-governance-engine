@@ -248,7 +248,7 @@ not complete, for reasons this change leaves alone:
 | `gcp-gke` | `staging` | US_FED (set by `staging.tfvars`) | `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
 | `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
 
-`deploy_all.sh` takes the jurisdiction from the profile's `cage_deployment_region` and ignores a `CAGE_DEPLOYMENT_REGION` that disagrees, with a warning. Staging is therefore US_FED unless a profile says otherwise. A staging or prod profile for another jurisdiction must set that jurisdiction's own compliance flag, because the control-plane guard, the POAM-019 key guards and the cluster allowlist follow those flags rather than the tier (POAM-2026-181).
+`deploy_all.sh` takes the jurisdiction from the profile's `cage_deployment_region` and ignores a `CAGE_DEPLOYMENT_REGION` that disagrees, with a warning. Staging is therefore US_FED unless a profile says otherwise. Whatever jurisdiction or compliance flag a staging or prod profile selects, including none, its plans keep the control-plane guard, the POAM-019 key guards, the cluster allowlist and Cloud SQL PITR: those follow the tier, and the flags decide only whether a dev plan enforces (POAM-2026-181).
 
 ---
 
@@ -461,7 +461,7 @@ Successful staging deployments have run under personal human credentials (Owner 
 
 ### Authorized Networks Lockout (POAM-2026-126)
 
-With a compliance posture active, `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. A plan targeted at `module.gke` skips the guard, because the cluster does not depend on it (POAM-2026-180). Committed profiles such as `staging.tfvars` deliberately set no operator address.
+In every staging and prod plan, and in a dev plan with a compliance flag (`local.enforcing_posture`, POAM-2026-181), `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf) (POAM-2026-126, AC-3 / SC-7) refuses a plan whose `authorized_networks` list is empty or contains a `/0`. The GKE control plane's public endpoint then accepts only the listed CIDRs, plus the cluster's own node, Pod and Service ranges. A plan targeted at `module.gke` skips the guard, because the cluster does not depend on it (POAM-2026-180). Committed profiles such as `staging.tfvars` deliberately set no operator address.
 - **Plan refused**: An empty list fails the plan with `[POAM-2026-126] AC-3 control-plane access: ...` before anything changes.
 - **Lockout symptom**: From an address that is not on the list, `kubectl` and Terraform's `kubernetes` / `helm` providers cannot reach the endpoint; the connection typically times out (`dial tcp <endpoint>:443: i/o timeout`) rather than being refused or rejected as unauthorized. A deployer whose egress address has changed (new network, VPN on or off) hits this on the next apply.
 - **Deploy prerequisite**: Pass the public egress CIDR of the deployer's workstation or CI runner to `deploy_all.sh`, which applies `--var` after the profile, or export it as `TF_VAR_authorized_networks`:

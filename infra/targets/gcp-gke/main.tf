@@ -89,8 +89,8 @@ module "gke" {
   environment      = var.environment
   regional_cluster = var.regional_cluster
 
-  # Security posture toggles (DEP-20: any jurisdiction compliance flag activates hardening)
-  enable_nist_compliance         = local.any_compliance_active
+  # Security posture toggles. The allowlist follows the tier, not a jurisdiction flag (POAM-2026-181)
+  enable_nist_compliance         = local.enforcing_posture
   enable_deletion_protection     = var.enable_deletion_protection
   enable_binary_authorization    = var.enable_binary_authorization
   enable_audit_logging           = var.enable_audit_logging
@@ -197,11 +197,11 @@ module "service_mesh" {
 
 # ─── Enforcing Posture ────────────────────────────────────────────────────────
 # The one predicate for the controls that hold whenever this deployment
-# enforces: the prod and staging tiers always, whatever the compliance flags
-# say, and dev only while a compliance flag is set. Staging enforces like prod
-# so that it stays a rehearsal of it. The predicate locks both retention-locked
-# buckets (below, POAM-2026-159) and gives the governance Valkey instance AOF
-# persistence with append_fsync = ALWAYS (POAM-2026-156 item 3).
+# enforces: the prod and staging tiers always, whatever jurisdiction they
+# select, and dev only while a compliance flag is set. It gates the retention
+# lock (POAM-2026-159), governance Valkey AOF (POAM-2026-156 item 3), the
+# control-plane and POAM-019 guards, module.gke's allowlist, Cloud SQL PITR and
+# the NeMo securityContext (POAM-2026-181), so staging rehearses prod anywhere.
 #
 #   tier      enforcing
 #   dev       only while a compliance flag is set
@@ -377,11 +377,11 @@ resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writ
 }
 
 # ─── Deploy Cloud SQL PostgreSQL (Langfuse Metadata Store) ─────────────────────
-# §2.5: Managed Cloud SQL PostgreSQL (PG15, private IP, ENCRYPTED_ONLY, PITR in prod).
+# §2.5: Managed Cloud SQL PostgreSQL (PG15, private IP, ENCRYPTED_ONLY, PITR when enforcing).
 # IAM database authentication is used with Cloud SQL Auth Proxy sidecar (no static password).
 
 locals {
-  # Any jurisdiction-specific compliance flag activates hardening
+  # Set by any jurisdiction flag. Only enforcing_posture and force_destroy read it.
   any_compliance_active = (
     var.enable_nist_compliance ||
     var.enable_eu_ecb_compliance ||
@@ -402,10 +402,10 @@ module "cloudsql_postgres" {
   # §1.1 Infrastructure Posture:
   # dev: db-f1-micro, ZONAL
   # staging: db-g1-small, ZONAL
-  # prod: db-custom-2-7680, REGIONAL, PITR
+  # prod: db-custom-2-7680, REGIONAL; PITR whenever enforcing (POAM-2026-181)
   tier                          = var.environment == "prod" ? "db-custom-2-7680" : (var.environment == "staging" ? "db-g1-small" : var.postgres_tier)
   enable_high_availability      = var.environment == "prod" || var.enable_high_availability
-  enable_point_in_time_recovery = var.environment == "prod" || local.any_compliance_active
+  enable_point_in_time_recovery = local.enforcing_posture
   disk_size                     = var.postgres_disk_size
 
   enable_cmek = var.enable_cmek
@@ -710,7 +710,7 @@ module "nemo_guardrails" {
   presidio_cpu_limit      = var.enable_high_availability ? "1000m" : ""
   presidio_memory_limit   = var.enable_high_availability ? "2Gi" : ""
 
-  enable_security_context = local.any_compliance_active
+  enable_security_context = local.enforcing_posture
 
   depends_on = [module.gke, module.vllm]
 }
@@ -1184,10 +1184,10 @@ module "app_secrets" {
   s3_bucket_name        = google_storage_bucket.langfuse_event_upload.name
 
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
-  # Dev posture: pass the key as-is. It may be empty: the module still writes the
-  #   secret, with empty values, and the compliance bridge only warns under dev.
-  # Compliance posture (any_compliance_active=true): the POAM-019 guards below
-  #   refuse an empty or shared key in untargeted plans only (POAM-2026-180).
+  # Dev without a compliance flag: pass the key as-is. It may be empty: the module
+  #   still writes the secret, empty, and the compliance bridge only warns in dev.
+  # Enforcing posture (every staging and prod plan, POAM-2026-181): the POAM-019
+  #   guards below refuse an empty or shared key in untargeted plans (POAM-2026-180).
   #   The silent fallback to module.langfuse.public_key has been removed to prevent
   #   circular evidence contamination in Step 5 (_fetch_failing_traces).
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
@@ -1215,8 +1215,8 @@ resource "terraform_data" "memorystore_ca_pinning_guard" {
   }
 }
 
-# POAM-019 (AU-9 / SC-7): with any compliance posture active (US_FED, EU_ECB,
-# APAC_MAS), the cage-compliance Langfuse project keys must be set, and must
+# POAM-019 (AU-9 / SC-7): under an enforcing posture (every staging and prod plan,
+# POAM-2026-181), the cage-compliance Langfuse project keys must be set, and must
 # differ from the application project's. lifecycle { precondition } is only
 # valid inside resource blocks, not module blocks, so terraform_data resources
 # carry the guards, at plan time. Each condition has its own resource, whose
@@ -1227,14 +1227,14 @@ resource "terraform_data" "memorystore_ca_pinning_guard" {
 resource "terraform_data" "poam_019_empty_key_guard" {
   lifecycle {
     precondition {
-      condition = !local.any_compliance_active || (
+      condition = !local.enforcing_posture || (
         var.langfuse_compliance_public_key != "" &&
         var.langfuse_compliance_secret_key != ""
       )
       error_message = <<-EOT
-        [POAM-019] Compliance telemetry keys are empty under compliance hardening.
-        enable_nist_compliance, enable_eu_ecb_compliance or
-        enable_apac_mas_compliance is true, and langfuse_compliance_public_key or
+        [POAM-019] Compliance telemetry keys are empty under an enforcing posture.
+        This is a staging or prod plan, or a dev plan with a compliance flag,
+        and langfuse_compliance_public_key or
         langfuse_compliance_secret_key is empty. AU-9 dual-project telemetry
         isolation needs the cage-compliance Langfuse project's own keys.
         Remediation: supply both keys through TF_VAR_* or terraform.auto.tfvars,
@@ -1253,13 +1253,13 @@ resource "terraform_data" "poam_019_shared_key_guard" {
     precondition {
       # An empty compliance key is the empty-key guard's finding. Skipping it here
       # keeps unset keys ("" == "") from also being reported as shared.
-      condition = !local.any_compliance_active || !(
+      condition = !local.enforcing_posture || !(
         (var.langfuse_compliance_public_key != "" && var.langfuse_compliance_public_key == var.langfuse_public_key) ||
         (var.langfuse_compliance_secret_key != "" && var.langfuse_compliance_secret_key == var.langfuse_secret_key)
       )
       error_message = <<-EOT
         [POAM-019] Compliance telemetry keys equal the application project keys.
-        A compliance posture is active, and langfuse_compliance_public_key equals
+        The posture is enforcing, and langfuse_compliance_public_key equals
         langfuse_public_key or langfuse_compliance_secret_key equals
         langfuse_secret_key. A key shared by both projects collapses the
         dual-project telemetry architecture and defeats the evidentiary
@@ -1273,7 +1273,7 @@ resource "terraform_data" "poam_019_shared_key_guard" {
   }
 }
 
-# POAM-2026-126 (AC-3 / SC-7): a compliance posture must name who may reach the
+# POAM-2026-126 (AC-3 / SC-7): an enforcing posture must name who may reach the
 # control plane. With an empty list the cluster module emits no authorized-networks
 # block, so GKE leaves its allowlist off and the endpoint accepts any address; a /0
 # entry does the same explicitly. staging.tfvars shipped 0.0.0.0/0 under a header
@@ -1282,12 +1282,12 @@ resource "terraform_data" "poam_019_shared_key_guard" {
 resource "terraform_data" "control_plane_access_guard" {
   lifecycle {
     precondition {
-      condition = !local.any_compliance_active || (
+      condition = !local.enforcing_posture || (
         length(var.authorized_networks) > 0 &&
         alltrue([for n in var.authorized_networks : !endswith(n.cidr, "/0")])
       )
       error_message = <<-EOT
-        [POAM-2026-126] AC-3 control-plane access: with a compliance posture active,
+        [POAM-2026-126] AC-3 control-plane access: under an enforcing posture,
         authorized_networks must hold at least one operator CIDR and no /0.
         An empty list leaves GKE's allowlist off, so the control plane would accept
         any address. Supply your VPN range or the deploying machine's egress /32 with

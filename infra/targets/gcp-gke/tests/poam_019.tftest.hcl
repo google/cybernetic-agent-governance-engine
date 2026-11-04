@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # POAM-019 (AU-9): plan-time contracts of the compliance telemetry key guards.
-# With a compliance posture active, empty compliance keys and compliance keys
+# Under an enforcing posture, empty compliance keys and compliance keys
 # equal to the application project's are refused by two separate resources, so
 # each run names exactly the guards it expects to fail; any other failure fails
 # the run. Mock providers and module overrides only, so no credentials and no
@@ -133,26 +133,29 @@ run "compliance_active_distinct_keys_passes" {
     langfuse_compliance_secret_key = "fake-compliance-secret-key"
   }
   assert {
-    condition     = local.any_compliance_active
-    error_message = "this run must plan with a compliance posture active"
+    condition     = local.enforcing_posture
+    error_message = "this run must plan under an enforcing posture"
   }
 }
 
-# Without a compliance posture neither guard applies.
-run "compliance_inactive_empty_keys_passes" {
+# A dev plan without a compliance flag does not enforce, so neither guard
+# applies. A staging or prod plan always enforces (POAM-2026-181).
+run "not_enforcing_empty_keys_passes" {
   command = plan
   variables {
+    environment            = "dev"
     enable_nist_compliance = false
   }
   assert {
-    condition     = !local.any_compliance_active
-    error_message = "this run must plan with no compliance posture active"
+    condition     = !local.enforcing_posture
+    error_message = "this run must plan with no enforcing posture"
   }
 }
 
-run "compliance_inactive_shared_keys_passes" {
+run "not_enforcing_shared_keys_passes" {
   command = plan
   variables {
+    environment                    = "dev"
     enable_nist_compliance         = false
     langfuse_public_key            = "fake-app-public-key"
     langfuse_secret_key            = "fake-app-secret-key"
@@ -160,7 +163,7 @@ run "compliance_inactive_shared_keys_passes" {
     langfuse_compliance_secret_key = "fake-app-secret-key"
   }
   assert {
-    condition     = !local.any_compliance_active
-    error_message = "this run must plan with no compliance posture active"
+    condition     = !local.enforcing_posture
+    error_message = "this run must plan with no enforcing posture"
   }
 }

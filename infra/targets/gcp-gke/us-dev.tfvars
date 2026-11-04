@@ -200,8 +200,8 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 #     will use the real cage-compliance project even in dev — providing full isolation.
 #
 # For prod posture: set LANGFUSE_COMPLIANCE_PUBLIC_KEY to a DIFFERENT key than
-# LANGFUSE_PUBLIC_KEY. With any compliance flag set, the POAM-019 key guards in
-# main.tf FAIL an untargeted plan if either compliance key is empty or equals its counterpart (POAM-2026-180).
+# LANGFUSE_PUBLIC_KEY. In prod and staging, whatever the flags (POAM-2026-181), and in dev with any compliance flag, the
+# POAM-019 key guards in main.tf FAIL an untargeted plan if either compliance key is empty or equals its counterpart (POAM-2026-180).
 #
 # Keys are NOT hardcoded here — they are injected via TF_VAR_* from .env.
 

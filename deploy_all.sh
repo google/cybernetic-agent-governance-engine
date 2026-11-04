@@ -382,10 +382,10 @@ deploy_terraform_target() {
   # the file.
   #
   # DEP-01: Gate enable_nist_compliance on the jurisdiction, not on the tier.
-  # A prod deployment to EU_ECB or APAC_MAS must NOT activate NIST-specific
-  # infrastructure hardening (SC-7, AC-3, deletion protection, Redis replication).
-  # ISO 42001 baseline hardening is always active in prod regardless of region.
-  # R-2: NIST SP 800-53 logic MUST be gated on cage_deployment_region == "US_FED".
+  # The flag names the US_FED posture and carries nothing NIST-specific: in main.tf
+  # it only decides whether a dev plan enforces. Staging and prod enforce in every
+  # jurisdiction: the guards, cluster allowlist, PITR and NeMo securityContext
+  # follow local.enforcing_posture (POAM-2026-181).
   #
   # POAM-024 (closed 2026-08-29): Staging tier provisioned — full security posture
   # at dev-scale cost. Staging behaves like prod for compliance flag injection but
@@ -407,12 +407,12 @@ deploy_terraform_target() {
     echo -e "${GREEN}║  🔒  PROD MODE: ISO 42001 baseline hardening enabled.            ║${RESET}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    # DEP-01: Only activate NIST-specific hardening for US_FED deployments.
+    # DEP-01: the NIST flag names the US_FED posture; prod enforces either way.
     if [[ "$_region" == "US_FED" ]]; then
-      info "cage_deployment_region=US_FED — activating NIST SP 800-53 hardening"
+      info "cage_deployment_region=US_FED — enable_nist_compliance=true"
       _nist=true
     else
-      info "cage_deployment_region=${_region:-unset} — NIST hardening suppressed (not US_FED)"
+      info "cage_deployment_region=${_region:-unset} — enable_nist_compliance=false (not US_FED); prod enforces regardless"
     fi
   elif [[ "$_tier" == "staging" ]]; then
     echo ""
@@ -424,10 +424,10 @@ deploy_terraform_target() {
     echo ""
     # Staging mirrors prod compliance logic but at 1-replica scale
     if [[ "$_region" == "US_FED" ]]; then
-      info "cage_deployment_region=US_FED — activating NIST SP 800-53 hardening"
+      info "cage_deployment_region=US_FED — enable_nist_compliance=true"
       _nist=true
     else
-      info "cage_deployment_region=${_region:-unset} — NIST hardening suppressed (not US_FED)"
+      info "cage_deployment_region=${_region:-unset} — enable_nist_compliance=false (not US_FED); staging enforces regardless"
     fi
   else
     echo ""

@@ -116,25 +116,28 @@ run "staging_with_an_open_authorized_network_is_refused" {
   expect_failures = [terraform_data.control_plane_access_guard]
 }
 
-# What the profile used to plan when run directly. Kept so the assertions above
-# cannot pass by reading an output that never sees the fallback.
-run "flag_forced_off_falls_back_to_an_open_control_plane" {
+# The fallback the module plans when nothing enforces: a dev plan without a
+# compliance flag. Kept so the assertions above cannot pass by reading an output
+# that never sees the fallback. Since POAM-2026-181 a staging plan never plans
+# it, whatever flag is set (posture_guards.tftest.hcl).
+run "dev_without_a_flag_falls_back_to_an_open_control_plane" {
   command = plan
 
   variables {
+    environment            = "dev"
     enable_nist_compliance = false
   }
 
   assert {
-    condition     = !local.any_compliance_active
-    error_message = "this run must plan with no compliance posture active"
+    condition     = !local.enforcing_posture
+    error_message = "this run must plan with no enforcing posture"
   }
   assert {
     condition     = module.gke.master_authorized_cidrs == ["0.0.0.0/0"]
-    error_message = "with compliance off, the module's fallback must be visible in master_authorized_cidrs"
+    error_message = "with nothing enforcing, the module's fallback must be visible in master_authorized_cidrs"
   }
   assert {
     condition     = !module.cloudsql_postgres.point_in_time_recovery_enabled
-    error_message = "with compliance off in staging, Cloud SQL plans no point-in-time recovery"
+    error_message = "with nothing enforcing, Cloud SQL plans no point-in-time recovery"
   }
 }

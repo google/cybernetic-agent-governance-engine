@@ -97,12 +97,14 @@ def test_cloudsql_posture_matrix_tiers() -> None:
 
     # dev: db-f1-micro, ZONAL
     # staging: db-g1-small, ZONAL
-    # prod: db-custom-2-7680, REGIONAL, PITR
+    # prod: db-custom-2-7680, REGIONAL
+    # PITR: whenever the posture enforces, so every staging and prod plan
+    # (local.enforcing_posture, POAM-2026-181)
     assert 'var.environment == "prod" ? "db-custom-2-7680"' in block
     assert '"db-g1-small"' in block
     assert "var.postgres_tier" in block
     assert 'enable_high_availability      = var.environment == "prod"' in block
-    assert 'enable_point_in_time_recovery = var.environment == "prod"' in block
+    assert "enable_point_in_time_recovery = local.enforcing_posture" in block
 
 
 def test_cloudsql_module_enforces_iam_auth_and_encrypted_only() -> None:

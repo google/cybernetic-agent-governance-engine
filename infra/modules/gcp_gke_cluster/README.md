@@ -23,14 +23,14 @@ Provisions a Google Kubernetes Engine (GKE) cluster with security posture toggle
 
 | Flag | Scope | NIST Control | Dev | Prod | Description |
 |------|-------|--------------|-----|------|-------------|
-| `enable_nist_compliance` | Any jurisdiction: the gcp-gke target passes `local.any_compliance_active` | SC-7, AC-3 | `false` | `true` | Private cluster and master authorized networks; when off, the allowlist is `0.0.0.0/0`. Deletion protection is `enable_deletion_protection` |
+| `enable_nist_compliance` | Every staging and prod plan: the gcp-gke target passes `local.enforcing_posture` | SC-7, AC-3 | `false` | `true` | Private cluster and master authorized networks; when off, the allowlist is `0.0.0.0/0`. Deletion protection is `enable_deletion_protection` |
 | `enable_binary_authorization` | Universal (ISO 42001 A.5.2) | CM-7, SI-7 | `false` | `true` | Only signed container images allowed |
 | `enable_audit_logging` | Universal (ISO 42001 A.5.3) | AU-2, AU-3, AU-9 | `false` | `true` | Comprehensive logging to Cloud Logging |
 | `enable_cmek` | Universal (ISO 42001 A.9.2) | SC-12, SC-13 | `false` | `true` | Customer-managed KMS encryption |
 | `enable_private_nodes` | Optional | SC-7 | `false` | `false` | Private node IPs; requires Cloud NAT |
 | `enable_private_master_endpoint` | Optional | SC-7 | `false` | `false` | Private master endpoint; requires VPN |
 
-> **Important:** Despite its name, `enable_nist_compliance` carries nothing NIST-specific. The gcp-gke target passes it `local.any_compliance_active`, so `enable_nist_compliance`, `enable_eu_ecb_compliance` and `enable_apac_mas_compliance` all turn it on, and `eu-prod.tfvars` and `apac-prod.tfvars` get the same private-cluster and allowlist behaviour as `prod.tfvars`. A staging or prod deployment that sets none of the three gets a `0.0.0.0/0` allowlist; binding this input on the tier instead is tracked in POAM-2026-181. ISO 42001 baseline controls are always active in all prod deployments.
+> **Important:** Despite its name, `enable_nist_compliance` carries nothing NIST-specific. The gcp-gke target passes it `local.enforcing_posture`, so every staging and prod plan turns it on, whatever jurisdiction it selects, and a dev plan turns it on only with a compliance flag (POAM-2026-181). Only a dev plan without a compliance flag gets the `0.0.0.0/0` allowlist. ISO 42001 baseline controls are always active in all prod deployments.
 
 ---
 

@@ -60,7 +60,7 @@ variable "namespace" {
 # ─── Security Posture Toggles ─────────────────────────────────────────────────
 
 variable "enable_nist_compliance" {
-  description = "US_FED profiles only. Despite the name, it carries nothing NIST-specific: like enable_eu_ecb_compliance and enable_apac_mas_compliance, in main.tf it only sets local.any_compliance_active (POAM-2026-130). A staging or prod profile for EU_ECB or APAC_MAS must set its own flag instead, or the control-plane and POAM-019 guards stop binding and the control plane falls back to 0.0.0.0/0 (POAM-2026-181)."
+  description = "US_FED profiles only. Despite the name, it carries nothing NIST-specific: like enable_eu_ecb_compliance and enable_apac_mas_compliance, in main.tf it only sets local.any_compliance_active (POAM-2026-130), which decides whether a dev plan enforces. Staging and prod plans enforce whatever it says (POAM-2026-181)."
   type        = bool
   default     = false
 }
@@ -80,7 +80,7 @@ variable "enable_eu_ecb_compliance" {
 # MAS Notice 655 audit logging for APAC_MAS deployments on their own, but it has
 # never had an effect of its own (POAM-2026-130).
 variable "enable_apac_mas_compliance" {
-  description = "Enable APAC_MAS compliance hardening (APAC_MAS only). It does exactly what enable_nist_compliance and enable_eu_ecb_compliance do: each only sets local.any_compliance_active in main.tf, which turns on one hardening set shared by every region and nothing APAC-specific (POAM-2026-130). In the dev tier that set includes AOF persistence on the governance Valkey instance; staging and prod have it regardless."
+  description = "Enable APAC_MAS compliance hardening (APAC_MAS only). It does exactly what enable_nist_compliance and enable_eu_ecb_compliance do: each only sets local.any_compliance_active in main.tf, which decides whether a dev plan enforces (staging and prod always do, POAM-2026-181) and turns on nothing APAC-specific (POAM-2026-130)."
   type        = bool
   default     = false
 }

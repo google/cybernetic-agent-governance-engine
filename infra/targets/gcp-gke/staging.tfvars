@@ -86,9 +86,9 @@ master_ipv4_cidr_block = "172.16.0.16/28"
 #   - Private nodes: no external IPs on node VMs (use Cloud NAT for egress)
 #   - Authorized networks: restrict control-plane access to operator CIDRs (VPN range or deployer egress)
 
-# Set here, not only by deploy_all.sh, so a direct terraform plan, apply or destroy
-# with -var-file=staging.tfvars plans the same posture (POAM-2026-174). It sets
-# local.any_compliance_active in main.tf; POAM-2026-174 lists what that turns on.
+# Set here, not only by deploy_all.sh, so a direct terraform run with this profile
+# states the same jurisdiction posture (POAM-2026-174). Staging enforces whatever
+# it says: the guards, the allowlist and PITR follow the tier (POAM-2026-181).
 enable_nist_compliance = true
 
 # POAM-024: HA decoupled from compliance — staging runs 1-replica scale to prove
@@ -121,8 +121,8 @@ enable_fqdn_network_policy = true
 # Supply them with TF_VAR_authorized_networks or a --var-file after this profile:
 #   export TF_VAR_authorized_networks='[{cidr="203.0.113.10/32",display_name="deployer egress"}]'
 # Terraform's kubernetes and helm providers use the public endpoint, so the machine
-# running terraform must be on the list. With compliance active, an untargeted plan
-# refuses an empty list or a /0 (POAM-2026-126; -target=module.gke skips it, POAM-2026-180).
+# running terraform must be on the list. An untargeted staging plan refuses an empty
+# list or a /0 whatever flag is set (POAM-2026-126, POAM-2026-181; -target=module.gke skips it, POAM-2026-180).
 # The cluster's own node, Pod and Service ranges can always reach the control plane.
 
 # ─── Cost Optimization (Staging: Dev-Scale Hardware) ──────────────────────────
