@@ -85,3 +85,7 @@ output "master_authorized_cidrs" {
   ])
 }
 
+output "node_service_account_email" {
+  description = "Dedicated least-privilege Google Service Account email bound to all GKE node_config blocks (AC-6, POAM-2026-187)"
+  value       = local.node_service_account_email
+}

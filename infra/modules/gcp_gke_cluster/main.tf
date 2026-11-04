@@ -275,18 +275,18 @@ resource "google_container_cluster" "primary" {
     var.cluster_labels
   )
 
-  # Ensure default-pool creation complies with org policies before it's deleted
+  # Ensure default-pool creation uses the dedicated node GSA and shielded boot
   node_config {
+    service_account = local.node_service_account_email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+
     shielded_instance_config {
       enable_secure_boot          = true
       enable_integrity_monitoring = true
     }
   }
 
-  # Vertical pod autoscaling
-  vertical_pod_autoscaling {
-    enabled = var.enable_vertical_pod_autoscaling
-  }
+  vertical_pod_autoscaling { enabled = var.enable_vertical_pod_autoscaling }
 
   lifecycle {
     ignore_changes = [
@@ -298,6 +298,11 @@ resource "google_container_cluster" "primary" {
       resource_labels,
     ]
   }
+
+  depends_on = [
+    google_project_iam_member.gke_nodes_default_node_sa,
+    google_project_iam_member.gke_nodes_artifact_registry_reader,
+  ]
 }
 
 # ─── Pool 1: General On-Demand Node Pool (§3: general) ────────────────────────
@@ -342,7 +347,8 @@ resource "google_container_node_pool" "primary_nodes" {
     # hashicorp/google we set COS_CONTAINERD image_type and the sandbox.gke.io/runtime label).
     image_type = var.enable_gvisor_sandbox ? "COS_CONTAINERD" : null
 
-    # OAuth scopes for GCP service access
+    # Dedicated least-privilege node GSA + cloud-platform OAuth scope bounded by IAM (AC-6, POAM-2026-187)
+    service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
     ]
@@ -385,6 +391,11 @@ resource "google_container_node_pool" "primary_nodes" {
       initial_node_count,
     ]
   }
+
+  depends_on = [
+    google_project_iam_member.gke_nodes_default_node_sa,
+    google_project_iam_member.gke_nodes_artifact_registry_reader,
+  ]
 }
 
 # ─── Pool 2: General-Spot Node Pool (§3: general-spot, staging only) ──────────
@@ -418,6 +429,7 @@ resource "google_container_node_pool" "general_spot_nodes" {
       effect = "NO_SCHEDULE"
     }
 
+    service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
     ]
@@ -506,7 +518,8 @@ resource "google_container_node_pool" "gpu_nodes" {
       effect = "NO_SCHEDULE"
     }
 
-    # OAuth scopes
+    # Dedicated least-privilege node GSA + OAuth scopes (AC-6, POAM-2026-187)
+    service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
     ]
@@ -622,6 +635,7 @@ resource "google_container_node_pool" "clickhouse_nodes" {
       effect = "NO_SCHEDULE"
     }
 
+    service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
     ]
@@ -701,6 +715,7 @@ resource "google_container_node_pool" "extra_pools" {
       }
     }
 
+    service_account = local.node_service_account_email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
     ]
@@ -738,5 +753,35 @@ resource "google_container_node_pool" "extra_pools" {
   ]
 }
 
+# ─── Dedicated Least-Privilege GKE Node Service Account (AC-6, POAM-2026-187) ─
+# Replaces the implicit Compute Engine default service account
+# (<PROJECT_NUMBER>-compute@developer.gserviceaccount.com) across every GKE
+# node_config block. Grants only roles/container.defaultNodeServiceAccount
+# (logging/monitoring/node-metadata baseline per Google GKE hardening guidance)
+# and roles/artifactregistry.reader (container image pull from Artifact Registry).
+# Every node_config retains oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+# so effective node permissions are bounded strictly by these IAM bindings.
 
+locals {
+  node_service_account_id    = "cage-gke-nodes-${var.environment}"
+  node_service_account_email = "${google_service_account.gke_nodes.account_id}@${var.project_id}.iam.gserviceaccount.com"
+}
 
+resource "google_service_account" "gke_nodes" {
+  account_id   = local.node_service_account_id
+  display_name = "CAGE GKE Node Service Account (${var.environment})"
+  description  = "Dedicated least-privilege node VM service account for GKE cluster ${var.cluster_name} (AC-6 / POAM-2026-187)."
+  project      = var.project_id
+}
+
+resource "google_project_iam_member" "gke_nodes_default_node_sa" {
+  project = var.project_id
+  role    = "roles/container.defaultNodeServiceAccount"
+  member  = "serviceAccount:${local.node_service_account_email}"
+}
+
+resource "google_project_iam_member" "gke_nodes_artifact_registry_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${local.node_service_account_email}"
+}
