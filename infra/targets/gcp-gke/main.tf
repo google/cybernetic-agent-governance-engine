@@ -366,13 +366,13 @@ resource "google_storage_hmac_key" "langfuse_key" {
 #
 # Dedicated Cloud Build identity (google_service_account.cloudbuild) and its
 # Artifact Registry / Cloud Logging / staging-bucket bindings are declared in
-# iam.tf (POAM-2026-083). The compliance-bridge-sa binding below is retained
-# for legacy console triggers that still reference compliance-bridge-sa.
+# iam.tf (POAM-2026-083). The compliance_bridge GSA binding below is retained
+# for legacy console triggers that still reference that service account.
 
 resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writer" {
   project = var.project_id
   role    = "roles/artifactregistry.writer"
-  member  = "serviceAccount:compliance-bridge-sa@${var.project_id}.iam.gserviceaccount.com"
+  member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
 # ─── Deploy Cloud SQL PostgreSQL (Langfuse Metadata Store) ─────────────────────

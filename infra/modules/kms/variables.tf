@@ -58,7 +58,7 @@ variable "rotation_period" {
 }
 
 variable "grant_service_agents" {
-  description = "Whether to automatically grant cryptoKeyEncrypterDecrypter to standard GCP service agents (Cloud SQL, GCS, Redis)"
+  description = "Whether to automatically grant cryptoKeyEncrypterDecrypter to standard GCP service agents (Cloud SQL, GCS, Redis, Memorystore, GKE)"
   type        = bool
   default     = true
 }
