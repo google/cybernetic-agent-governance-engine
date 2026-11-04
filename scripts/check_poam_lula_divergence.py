@@ -180,6 +180,13 @@ CODE_EVIDENCE_FINDINGS: dict[str, tuple[str, ...]] = {
     "POAM-2026-170": ("tests/test_check_repo_rules.py",),
     # Partner identity, slot, and seam-role attributions enforced by check_partner_headers.py.
     "POAM-2026-175": ("tests/test_check_partner_headers.py",),
+    # OSCAL SSP exporter single-timestamp idempotency, --check mode, and STPA freshness gate coverage.
+    "POAM-2026-176": (
+        "tests/test_oscal_ssp_exporter.py",
+        "tests/test_stpa_freshness_gate.py",
+    ),
+    # Regional OSCAL SSP routing, EU_ECB/APAC_MAS _STPA_IMPL_UUID export, and CI drift gates.
+    "POAM-2026-177": ("tests/test_oscal_ssp_exporter.py",),
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
@@ -189,6 +196,20 @@ CONTROL_ALIASES: dict[str, list[str]] = {
     "ac4": ["ftra"],
     "ctrlftra001": ["ftra"],
 }
+
+_POAM_HEADER_RE = re.compile(r"^###\s+(POAM-\d{4}-\d+)\b", re.MULTILINE)
+
+
+def find_duplicate_poam_headers(poam_text: str) -> list[str]:
+    """Return sorted POAM IDs that appear in more than one ``### POAM-YYYY-NNN`` header."""
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for match in _POAM_HEADER_RE.finditer(poam_text):
+        poam_id = match.group(1)
+        if poam_id in seen:
+            duplicates.add(poam_id)
+        seen.add(poam_id)
+    return sorted(duplicates)
 
 
 def normalise_control(raw: str) -> str:
@@ -329,6 +350,15 @@ def main() -> int:
         return 1
 
     poam_text = POAM_PATH.read_text(encoding="utf-8")
+    duplicate_headers = find_duplicate_poam_headers(poam_text)
+    if duplicate_headers:
+        print(
+            f"ERROR: Duplicate ### POAM headers in {POAM_PATH}: "
+            f"{', '.join(duplicate_headers)}",
+            file=sys.stderr,
+        )
+        return 1
+
     closed_findings = parse_closed_findings(poam_text)
     lula_stems = get_lula_file_stems(LULA_DIR)
 

@@ -74,3 +74,26 @@ def test_repository_has_no_uncovered_closed_findings(monkeypatch, capsys) -> Non
     monkeypatch.chdir(_REPO_ROOT)
     assert drift.main() == 0
     assert "0 uncovered" in capsys.readouterr().out
+
+
+def test_no_duplicate_poam_headers_at_head() -> None:
+    poam = (_REPO_ROOT / "docs" / "POAM.md").read_text(encoding="utf-8")
+    assert drift.find_duplicate_poam_headers(poam) == []
+
+
+def test_duplicate_poam_header_fails_main(monkeypatch, tmp_path, capsys) -> None:
+    poam_src = (_REPO_ROOT / "docs" / "POAM.md").read_text(encoding="utf-8")
+    planted = (
+        poam_src
+        + "\n### POAM-2026-188: Duplicate Header Allocated by Parallel Branch\n"
+    )
+    assert drift.find_duplicate_poam_headers(planted) == ["POAM-2026-188"]
+
+    planted_poam = tmp_path / "POAM.md"
+    planted_poam.write_text(planted, encoding="utf-8")
+    monkeypatch.setattr(drift, "POAM_PATH", planted_poam)
+    monkeypatch.setattr(drift, "LULA_DIR", _REPO_ROOT / "compliance" / "lula")
+    assert drift.main() == 1
+    err = capsys.readouterr().err
+    assert "Duplicate ### POAM headers" in err
+    assert "POAM-2026-188" in err
