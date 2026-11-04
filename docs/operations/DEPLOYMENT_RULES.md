@@ -470,6 +470,7 @@ In every staging and prod plan, and in a dev plan with a compliance flag (`local
     --var project_id=<PROJECT_ID> \
     --var 'authorized_networks=[{cidr="<DEPLOYER_EGRESS_IP>/32",display_name="deployer egress"}]'
   ```
+- **Adopter operational responsibility — periodic allowlist review (`POAM-2026-179`, SC-7(4) / AC-3)**: Because CAGE is a reference architecture, it enforces owner attribution on `authorized_networks` entries at plan time (`display_name`), while periodic human review of who still needs control-plane access (at each provision and at least monthly for long-lived clusters, removing ephemeral deployer `/32` entries and any CIDR without a confirmed current need) is an adopter operational responsibility.
 
 ### POAM-019 Telemetry Isolation vs. Environment Loading Diagnostic
 

@@ -183,8 +183,8 @@ resource "google_container_cluster" "primary" {
   }
 
   # ─── SC-12, SC-13: Database Encryption (CMEK) ───────────────────────────────
-  # Dev: Google-managed keys
-  # Staging / Prod: Customer-managed KMS keys (§1.1)
+  # GKE 1.32+ returns ALL_OBJECTS_ENCRYPTION_ENABLED, which hashicorp/google 6.50.0
+  # rejects; keep state = "ENCRYPTED" and ignore_changes (POAM-2026-182).
   dynamic "database_encryption" {
     for_each = var.enable_cmek && var.kms_key_id != "" ? [1] : []
     content {
@@ -291,7 +291,7 @@ resource "google_container_cluster" "primary" {
   lifecycle {
     ignore_changes = [
       node_version,
-      database_encryption,
+      database_encryption, # POAM-2026-182: provider 6.50.0 enum lacks ALL_OBJECTS_ENCRYPTION_ENABLED
       master_authorized_networks_config,
       min_master_version,
       monitoring_config,

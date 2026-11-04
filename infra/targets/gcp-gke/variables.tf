@@ -132,12 +132,6 @@ variable "enable_cmek" {
   default     = false
 }
 
-variable "database_encryption_state" {
-  description = "Database encryption state (ENCRYPTED or ALL_OBJECTS_ENCRYPTION_ENABLED). If null, defaults to ENCRYPTED."
-  type        = string
-  default     = null
-}
-
 variable "enable_private_master_endpoint" {
   description = "Make Kubernetes API endpoint private (requires VPN)"
   type        = bool

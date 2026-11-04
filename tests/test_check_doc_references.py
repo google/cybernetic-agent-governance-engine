@@ -456,3 +456,105 @@ def test_contextual_python_symbol_in_and_paren_patterns(tmp_path: Path) -> None:
         (2, "Python Symbol", "sample.py::REQUIRED_MAIN_CHECKS"),
         (3, "Python Symbol", "sample.py::test_nonexistent_func"),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Historical assertion evidence check (POAM-2026-169 instance 9)
+# ---------------------------------------------------------------------------
+
+
+def test_historical_assertion_rejects_f3c88e95_poam_174_false_claims(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All three verbatim false historical claims from f3c88e95:docs/POAM.md must fail."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    poam = docs_dir / "POAM.md"
+    poam.write_text(
+        "| POAM-2026-174 | SC-7 | Verified unfired on `<PROJECT_ID>` (`2026-11-01`: `authorizedNetworksConfig.enabled=true` with 1 CIDR, `databaseEncryption.state=ENCRYPTED`) | Medium | 2026-11-30 |\n"
+        "**Status:** Open — verified unfired on `<PROJECT_ID>` (`2026-11-01`)\n"
+        "**Live posture (`2026-11-01`, `<PROJECT_ID>`):** `gcloud container clusters describe cage-staging --region=us-central1` returned `authorizedNetworksConfig: {cidrBlocks: [{cidrBlock: <DEPLOYER_IP>/32, displayName: Temporary Deploy Access}], enabled: true}` and `databaseEncryption: {keyName: .../cryptoKeys/gke-etcd-key, state: ENCRYPTED}`. The cluster was applied via `deploy_all.sh --target gcp-gke --env staging`, which sets both variables on every run; the latch has therefore unfired on `<PROJECT_ID>`.\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(poam)
+    assert [(i.line_number, i.reference_type) for i in issues] == [
+        (1, "Historical Claim"),
+        (2, "Historical Claim"),
+        (3, "Historical Claim"),
+    ]
+    for issue in issues:
+        assert "Deployment/cluster historical assertion" in issue.reason
+
+
+def test_historical_assertion_deployment_claim_rejects_git_log_or_commit_sha_bypass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Citing git log or a commit SHA on a deployment/cluster claim still fails without state-serial or audit-log evidence."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    doc = docs_dir / "POAM.md"
+    doc.write_text(
+        # Deployment claim with only commit SHA + git log -> must STILL fail:
+        "On `<PROJECT_ID>`, `cage-staging` was applied via `deploy_all.sh` (`git log`, `f3c88e95`).\n"
+        # Deployment claim with state-serial evidence -> passes:
+        "On `<PROJECT_ID>`, the latch fired in `default.tfstate.pre-migration-backup` (`serial: 689`).\n"
+        # Deployment claim with Cloud Audit Log / UpdateCluster evidence -> passes:
+        "On `<PROJECT_ID>`, `cage-staging` has never had a second node pool (`UpdateCluster` in Cloud Audit Logs).\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type) for i in issues] == [
+        (1, "Historical Claim"),
+    ]
+    assert (
+        "Deployment/cluster historical assertion requires audit-log or Terraform state-serial"
+        in issues[0].reason
+    )
+
+
+def test_historical_assertion_rejects_unverified_never_always_and_no_evidence_of(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unverified 'has never', 'has always', 'never fired', and 'no evidence of' claims in docs/ fail."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    doc = docs_dir / "audit.md"
+    doc.write_text(
+        "The workflow had never run on main.\n"
+        "The branch rule has always required two approvals.\n"
+        "There is no evidence of any bypass on main.\n"
+        "The latch never fired during staging runs.\n"
+        # Verified counterparts with repo/CI/audit evidence pass:
+        "The workflow had never run (`total_count: 0`, `run 41362761903`).\n"
+        "The branch rule has always required two approvals (`rulesets/26377312/history`).\n"
+        "There is no evidence of any bypass in `git log`.\n"
+        "The latch never fired in `serial: 42` of `.tfstate`.\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
+        (1, "Historical Claim", "had never run"),
+        (2, "Historical Claim", "has always required"),
+        (3, "Historical Claim", "no evidence of"),
+        (4, "Historical Claim", "never fired"),
+    ]
+
+
+def test_historical_assertion_normative_never_and_headings_are_not_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Normative 'never <verb>' rules and markdown headings are not false-positived as historical assertions."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True)
+    doc = docs_dir / "rules.md"
+    doc.write_text(
+        "# Why the latch had never fired in local tests\n"
+        "A point-in-time snapshot proves only current state and never how the resource reached that state.\n"
+        "Never use local Docker daemon for GKE images.\n",
+        encoding="utf-8",
+    )
+    assert audit_markdown_file(doc) == []
