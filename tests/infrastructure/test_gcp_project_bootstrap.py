@@ -78,6 +78,18 @@ def _make_stub_bins(
         bin_dir / "gcloud",
         f"""#!/usr/bin/env bash
 echo "gcloud $*" >> "{log_file}"
+if [[ "$1" == "services" && "$2" == "enable" ]]; then
+  svc_count=0
+  for arg in "${{@:3}}"; do
+    if [[ "$arg" != --* ]]; then
+      svc_count=$((svc_count + 1))
+    fi
+  done
+  if (( svc_count > 20 )); then
+    echo "ERROR: (gcloud.services.enable) INVALID_ARGUMENT: Number of services must not exceed the maximum batch size (20). [SU_MAX_BATCH_SIZE_EXCEEDED]" >&2
+    exit 1
+  fi
+fi
 if [[ "$*" == *"config get-value project"* ]]; then
   echo "${{STUB_DEFAULT_PROJECT:-}}"
   exit 0
@@ -192,9 +204,25 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
 
     calls = log_file.read_text(encoding="utf-8")
 
-    # PF1: All 21 required APIs are enabled.
+    # PF1 / EF1: All 21 required APIs are enabled, compute.googleapis.com is enabled
+    # first in its own call before dependent APIs, and every call passes <= 20 APIs.
     for api in EXPECTED_APIS:
         assert api in calls, f"Missing required API in bootstrap: {api}"
+    service_enable_lines = [
+        line
+        for line in calls.splitlines()
+        if line.startswith("gcloud services enable ")
+    ]
+    assert len(service_enable_lines) >= 2
+    assert (
+        service_enable_lines[0]
+        == "gcloud services enable compute.googleapis.com --project=clean-proj-01 --quiet"
+    )
+    for line in service_enable_lines:
+        services_in_call = [tok for tok in line.split()[3:] if not tok.startswith("--")]
+        assert 1 <= len(services_in_call) <= 20, (
+            f"gcloud services enable batch size must be 1..20 (EF1), got {len(services_in_call)}: {line}"
+        )
 
     # PF2: Remote Terraform state bucket created and versioned.
     assert "gcloud storage buckets create gs://clean-proj-01-tfstate" in calls
