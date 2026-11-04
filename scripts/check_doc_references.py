@@ -1418,7 +1418,93 @@ def audit_markdown_file(path: Path) -> list[Issue]:
             )
         )
 
+        # 4. Historical assertions require state-serial, audit-log, or git/run history evidence (POAM-2026-169)
+        issues.extend(_audit_historical_assertions(path, line_idx, line))
+
     return issues
+
+
+HISTORICAL_CLAIM_PATTERN = re.compile(
+    r"\b("
+    r"verified\s+unfired"
+    r"|unfired\s+on"
+    r"|therefore\s+unfired"
+    r"|never\s+fired"
+    r"|(?:has|have|had)\s+never\s+\w+"
+    r"|(?:has|have|had)\s+always\s+\w+"
+    r"|no\s+evidence\s+of\b"
+    r"|was\s+applied\s+via\b"
+    r"|always\s+applied\s+via\b"
+    r")",
+    re.IGNORECASE,
+)
+
+DEPLOYMENT_SUBJECT_PATTERN = re.compile(
+    r"(<PROJECT_ID>|<WALK_PROJECT_ID>|\bcage-staging\b|\bwas\s+applied\s+via\b|\balways\s+applied\s+via\b|\btherefore\s+unfired\b)",
+    re.IGNORECASE,
+)
+
+DEPLOYMENT_HISTORICAL_EVIDENCE_PATTERN = re.compile(
+    r"("
+    r"\bserial:\s*\d+"
+    r"|\.tfstate\b"
+    r"|\bstate\s+history\b"
+    r"|\baudit[- ]log"
+    r"|\bCloud Audit Log"
+    r"|\bgcloud logging read\b"
+    r"|\bprotoPayload\b"
+    r"|\bUpdateCluster\b"
+    r"|\bCreateCluster\b"
+    r"|\boperation-\d+"
+    r")",
+    re.IGNORECASE,
+)
+
+REPO_HISTORICAL_EVIDENCE_PATTERN = re.compile(
+    r"("
+    r"\bgit\s+log\b"
+    r"|\bgit\s+rev-list\b"
+    r"|\bactivity_type="
+    r"|\brulesets/\d+/history\b"
+    r"|\btotal_count:\s*\d+"
+    r"|\bcheck[- ]run\s+`?\d+"
+    r"|\brun\s+`?\d{8,}"
+    r"|\bjob\s+log\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _audit_historical_assertions(path: Path, line_idx: int, line: str) -> list[Issue]:
+    """Flag historical assertions unaccompanied by audit-log, state-serial, or history evidence."""
+    if line.lstrip().startswith("#"):
+        return []
+    match = HISTORICAL_CLAIM_PATTERN.search(line)
+    if match is None:
+        return []
+    if DEPLOYMENT_HISTORICAL_EVIDENCE_PATTERN.search(line):
+        return []
+    if DEPLOYMENT_SUBJECT_PATTERN.search(line):
+        return [
+            Issue(
+                path,
+                line_idx,
+                "Historical Claim",
+                match.group(0),
+                "Deployment/cluster historical assertion requires audit-log or Terraform state-serial (.tfstate / serial: N) evidence on the same line (POAM-2026-169)",
+            )
+        ]
+    if REPO_HISTORICAL_EVIDENCE_PATTERN.search(line):
+        return []
+    return [
+        Issue(
+            path,
+            line_idx,
+            "Historical Claim",
+            match.group(0),
+            "Historical assertion requires audit-log, state-serial (.tfstate / serial: N), or git-log/run-history evidence on the same line (POAM-2026-169)",
+        )
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
