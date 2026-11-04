@@ -316,6 +316,43 @@ def test_cmek_grants_memorystore_p4sa_alongside_redis_agent() -> None:
     )
 
 
+def test_cmek_crypto_key_id_output_depends_on_all_iam_members() -> None:
+    """EF8c: module.kms output crypto_key_id depends on all google_kms_crypto_key_iam_member resources."""
+    kms_mod_tf = (_INFRA / "modules" / "kms" / "main.tf").read_text()
+    outputs_tf = (_INFRA / "modules" / "kms" / "outputs.tf").read_text()
+    declared_members = set(
+        re.findall(
+            r'resource\s+"google_kms_crypto_key_iam_member"\s+"(\w+)"', kms_mod_tf
+        )
+    )
+    assert declared_members == {
+        "cloudsql_agent",
+        "gcs_agent",
+        "redis_agent",
+        "gke_agent",
+        "memorystore_agent",
+        "additional_members",
+    }
+    output_match = re.search(
+        r'^\s*output\s+"crypto_key_id"\s*\{(.*?)^\s*\}',
+        outputs_tf,
+        re.M | re.S,
+    )
+    assert output_match is not None
+    depends_match = re.search(
+        r"depends_on\s*=\s*\[(.*?)\]",
+        output_match.group(1),
+        re.S,
+    )
+    assert depends_match is not None, (
+        "output crypto_key_id in infra/modules/kms/outputs.tf must declare depends_on"
+    )
+    depended_members = set(
+        re.findall(r"google_kms_crypto_key_iam_member\.(\w+)", depends_match.group(1))
+    )
+    assert depended_members == declared_members
+
+
 def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
     """§5.1: Gateway, reconciler, compliance bridge (EvidenceCustodian) and langfuse GSAs hold roles/memorystore.dbConnectionUser when IAM auth is enabled."""
     iam_tf = (_GKE / "iam.tf").read_text()

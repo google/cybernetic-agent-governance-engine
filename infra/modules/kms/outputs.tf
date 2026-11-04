@@ -25,6 +25,15 @@ output "key_ring_name" {
 output "crypto_key_id" {
   description = "Symmetric CMEK Crypto Key ID"
   value       = google_kms_crypto_key.cmek_key.id
+
+  depends_on = [
+    google_kms_crypto_key_iam_member.cloudsql_agent,
+    google_kms_crypto_key_iam_member.gcs_agent,
+    google_kms_crypto_key_iam_member.redis_agent,
+    google_kms_crypto_key_iam_member.gke_agent,
+    google_kms_crypto_key_iam_member.memorystore_agent,
+    google_kms_crypto_key_iam_member.additional_members,
+  ]
 }
 
 output "crypto_key_name" {
