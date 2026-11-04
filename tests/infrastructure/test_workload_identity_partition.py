@@ -295,6 +295,27 @@ def test_symmetric_cmek_and_signing_keyrings_are_separate() -> None:
     assert "cage-signing-${var.environment}" in signing_tf
 
 
+def test_cmek_grants_memorystore_p4sa_alongside_redis_agent() -> None:
+    """EF8b: module.kms grants cryptoKeyEncrypterDecrypter to gcp-sa-memorystore (Valkey P4SA)."""
+    kms_mod_tf = (_INFRA / "modules" / "kms" / "main.tf").read_text()
+    match = re.search(
+        r'^\s*resource\s+"google_kms_crypto_key_iam_member"\s+"memorystore_agent"\s*\{(.*?)^\s*\}',
+        kms_mod_tf,
+        re.M | re.S,
+    )
+    assert match is not None, (
+        "google_kms_crypto_key_iam_member.memorystore_agent must be declared in infra/modules/kms/main.tf"
+    )
+    body = match.group(1)
+    assert "count         = var.grant_service_agents ? 1 : 0" in body
+    assert "crypto_key_id = google_kms_crypto_key.cmek_key.id" in body
+    assert 'role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"' in body
+    assert (
+        'member        = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-memorystore.iam.gserviceaccount.com"'
+        in body
+    )
+
+
 def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
     """§5.1: Gateway, reconciler, compliance bridge (EvidenceCustodian) and langfuse GSAs hold roles/memorystore.dbConnectionUser when IAM auth is enabled."""
     iam_tf = (_GKE / "iam.tf").read_text()

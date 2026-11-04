@@ -192,3 +192,46 @@ run "none_on_gke_runtime_deploys_no_advisor" {
     error_message = "inference_backend = none must deploy no advisor on either runtime"
   }
 }
+
+run "kms_module_grants_cmek_to_memorystore_and_redis_p4sas" {
+  command = plan
+
+  module {
+    source = "../../modules/kms"
+  }
+
+  assert {
+    condition = (
+      length(google_kms_crypto_key_iam_member.memorystore_agent) == 1 &&
+      google_kms_crypto_key_iam_member.memorystore_agent[0].role == "roles/cloudkms.cryptoKeyEncrypterDecrypter" &&
+      endswith(google_kms_crypto_key_iam_member.memorystore_agent[0].member, "@gcp-sa-memorystore.iam.gserviceaccount.com")
+    )
+    error_message = "module.kms must grant cryptoKeyEncrypterDecrypter to the Memorystore for Valkey P4SA (gcp-sa-memorystore)"
+  }
+  assert {
+    condition = (
+      length(google_kms_crypto_key_iam_member.redis_agent) == 1 &&
+      google_kms_crypto_key_iam_member.redis_agent[0].role == "roles/cloudkms.cryptoKeyEncrypterDecrypter" &&
+      endswith(google_kms_crypto_key_iam_member.redis_agent[0].member, "@cloud-redis.iam.gserviceaccount.com")
+    )
+    error_message = "module.kms must keep the cloud-redis P4SA CMEK grant"
+  }
+}
+
+run "kms_module_respects_grant_service_agents_false" {
+  command = plan
+
+  module {
+    source = "../../modules/kms"
+  }
+
+  variables {
+    grant_service_agents = false
+  }
+
+  assert {
+    condition     = length(google_kms_crypto_key_iam_member.memorystore_agent) == 0
+    error_message = "grant_service_agents = false must omit google_kms_crypto_key_iam_member.memorystore_agent"
+  }
+}
+
