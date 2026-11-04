@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# POAM-2026-174 (CM-6 / AC-3 / CP-9): staging.tfvars sets enable_nist_compliance
-# itself, so a direct terraform run with -var-file=staging.tfvars plans the same
-# posture deploy_all.sh does. No run in this file sets a compliance flag unless
-# it says so; the flag comes from the profile. CI runs it in the terraform-test
-# job:
+# POAM-2026-174 & POAM-2026-181 & POAM-2026-130 (CM-6 / AC-3 / CP-9):
+# staging.tfvars sets environment = "staging", which activates
+# local.enforcing_posture in main.tf directly, so a direct terraform run with
+# -var-file=staging.tfvars plans the same posture deploy_all.sh does. CI runs
+# it in the terraform-test job:
 #   terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars \
 #     -var-file=tests/fixtures/image_digests.tfvars
 #
@@ -55,7 +55,7 @@ variables {
   project_id          = "staging-compliance-test-project"
   authorized_networks = [{ cidr = "203.0.113.7/32", display_name = "test" }]
 
-  # A compliance posture needs distinct compliance telemetry keys (POAM-019).
+  # An enforcing posture needs distinct compliance telemetry keys (POAM-019).
   langfuse_compliance_public_key = "fake-compliance-public-key"
   langfuse_compliance_secret_key = "fake-compliance-secret-key"
 }
@@ -66,16 +66,16 @@ run "staging_profile_alone_activates_compliance" {
   command = plan
 
   assert {
-    condition     = var.enable_nist_compliance
-    error_message = "staging.tfvars must set enable_nist_compliance = true itself, not rely on deploy_all.sh"
+    condition     = var.environment == "staging"
+    error_message = "staging.tfvars must set environment = \"staging\""
   }
   assert {
-    condition     = local.any_compliance_active
-    error_message = "staging.tfvars alone must make local.any_compliance_active true"
+    condition     = local.enforcing_posture && output.deployment_summary.enforcing_posture
+    error_message = "staging.tfvars alone must make local.enforcing_posture true"
   }
   assert {
     condition     = module.cloudsql_postgres.point_in_time_recovery_enabled
-    error_message = "staging must plan Cloud SQL point-in-time recovery once compliance is active"
+    error_message = "staging must plan Cloud SQL point-in-time recovery under local.enforcing_posture"
   }
 }
 
@@ -94,7 +94,7 @@ run "staging_with_authorized_networks_plans_only_those_cidrs" {
   }
 }
 
-# The intended fail-closed path: compliance is active and nobody is named, so
+# The intended fail-closed path: the posture enforces and nobody is named, so
 # the plan stops at the guard instead of leaving GKE's allowlist off.
 run "staging_with_empty_authorized_networks_is_refused" {
   command = plan
@@ -116,16 +116,16 @@ run "staging_with_an_open_authorized_network_is_refused" {
   expect_failures = [terraform_data.control_plane_access_guard]
 }
 
-# The fallback the module plans when nothing enforces: a dev plan without a
-# compliance flag. Kept so the assertions above cannot pass by reading an output
-# that never sees the fallback. Since POAM-2026-181 a staging plan never plans
-# it, whatever flag is set (posture_guards.tftest.hcl).
+# The fallback the module plans when nothing enforces: a dev plan with
+# enforce_in_dev = false. Kept so the assertions above cannot pass by reading an
+# output that never sees the fallback. Since POAM-2026-181 a staging plan never
+# plans it (posture_guards.tftest.hcl).
 run "dev_without_a_flag_falls_back_to_an_open_control_plane" {
   command = plan
 
   variables {
-    environment            = "dev"
-    enable_nist_compliance = false
+    environment    = "dev"
+    enforce_in_dev = false
   }
 
   assert {

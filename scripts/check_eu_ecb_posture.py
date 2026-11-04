@@ -18,7 +18,7 @@ EU_ECB compliance posture checks.
 Validates:
   1. EU AI Act Lula manifest YAML structure (component-definition key present)
   2. GDPR Art. 44 data residency (eu-prod.tfvars region starts with europe-)
-  3. DORA Art. 10 audit logging (eu-dev.tfvars has enable_eu_ecb_compliance)
+  3. DORA Art. 10 audit logging (eu-dev.tfvars has enforce_in_dev and enable_audit_logging)
   4. SR 26-2 telemetry suppression sentinel in EU threshold files
 
 Exit codes:
@@ -79,10 +79,10 @@ def check_gdpr_residency() -> list[str]:
         errors.append("cage_deployment_region must be EU_ECB in eu-prod.tfvars")
     else:
         print("cage_deployment_region=EU_ECB — OK")
-    if not re.search(r"enable_eu_ecb_compliance\s*=\s*true", content):
-        errors.append("enable_eu_ecb_compliance must be true in eu-prod.tfvars")
+    if not re.search(r'environment\s*=\s*"prod"', content):
+        errors.append('environment must be "prod" in eu-prod.tfvars')
     else:
-        print("enable_eu_ecb_compliance=true — OK")
+        print('environment="prod" (local.enforcing_posture) — OK')
     return errors
 
 
@@ -95,8 +95,12 @@ def check_dora_logging() -> None:
         )
         return
     content = tfvars_path.read_text()
-    if "enable_eu_ecb_compliance" not in content:
-        print("WARNING: enable_eu_ecb_compliance not found in eu-dev.tfvars")
+    if not re.search(r"enforce_in_dev\s*=\s*true", content) or not re.search(
+        r"enable_audit_logging\s*=\s*true", content
+    ):
+        print(
+            "WARNING: enforce_in_dev = true / enable_audit_logging = true not found in eu-dev.tfvars"
+        )
     else:
         print("DORA Art. 10 audit logging configuration present — OK")
 

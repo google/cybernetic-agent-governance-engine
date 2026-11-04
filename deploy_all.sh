@@ -378,19 +378,20 @@ deploy_terraform_target() {
   # Posture comes from the profile, not from the --env name: the tier is the
   # profile's `environment` and the jurisdiction its `cage_deployment_region`,
   # after --var-file / --var overrides (last value wins). The banner and the
-  # NIST flag therefore describe what terraform will apply; --env only selects
-  # the file.
+  # jurisdiction log therefore describe what terraform will apply; --env only
+  # selects the file.
   #
-  # DEP-01: Gate enable_nist_compliance on the jurisdiction, not on the tier.
-  # The flag names the US_FED posture and carries nothing NIST-specific: in main.tf
-  # it only decides whether a dev plan enforces. Staging and prod enforce in every
-  # jurisdiction: the guards, cluster allowlist, PITR and NeMo securityContext
-  # follow local.enforcing_posture (POAM-2026-181).
+  # POAM-2026-181 & POAM-2026-130: staging and prod enforce in every
+  # jurisdiction via local.enforcing_posture in main.tf (retention lock, Valkey
+  # AOF, the guards, cluster allowlist, PITR and NeMo securityContext); dev
+  # enforces only when the profile sets enforce_in_dev = true. The three
+  # enable_*_compliance variables selected nothing per-jurisdiction and were
+  # removed, so deploy_all.sh no longer injects -var=enable_nist_compliance.
   #
   # POAM-024 (closed 2026-08-29): Staging tier provisioned — full security posture
-  # at dev-scale cost. Staging behaves like prod for compliance flag injection but
-  # uses enable_high_availability=false and enable_deletion_protection=false.
-  local _tier _region _region_env _nist=false
+  # at dev-scale cost, with enable_high_availability=false and
+  # enable_deletion_protection=false.
+  local _tier _region _region_env
   _tier=$(_effective_tf_var environment ${tf_args[@]+"${tf_args[@]}"})
   _tier="${_tier:-$env}"
   _region=$(_effective_tf_var cage_deployment_region ${tf_args[@]+"${tf_args[@]}"})
@@ -400,20 +401,19 @@ deploy_terraform_target() {
   fi
   _region="${_region:-$_region_env}"
 
-  # Set tier-specific banners and compliance flags
+  # Set tier-specific banners and log the resolved jurisdiction posture
   if [[ "$_tier" == "prod" ]]; then
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
     echo -e "${GREEN}║  🔒  PROD MODE: ISO 42001 baseline hardening enabled.            ║${RESET}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    # DEP-01: the NIST flag names the US_FED posture; prod enforces either way.
-    if [[ "$_region" == "US_FED" ]]; then
-      info "cage_deployment_region=US_FED — enable_nist_compliance=true"
-      _nist=true
-    else
-      info "cage_deployment_region=${_region:-unset} — enable_nist_compliance=false (not US_FED); prod enforces regardless"
-    fi
+    # POAM-2026-181: prod enforces in every jurisdiction; cage_deployment_region
+    # selects the regulatory baseline for OSCAL and runtime workloads.
+    info "cage_deployment_region=${_region:-unset} — prod enforces (local.enforcing_posture)"
+    #
+    #
+    #
   elif [[ "$_tier" == "staging" ]]; then
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
@@ -422,13 +422,11 @@ deploy_terraform_target() {
     echo -e "${CYAN}║      POAM-024: CA-2 pre-production validation satisfied.         ║${RESET}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    # Staging mirrors prod compliance logic but at 1-replica scale
-    if [[ "$_region" == "US_FED" ]]; then
-      info "cage_deployment_region=US_FED — enable_nist_compliance=true"
-      _nist=true
-    else
-      info "cage_deployment_region=${_region:-unset} — enable_nist_compliance=false (not US_FED); staging enforces regardless"
-    fi
+    # Staging mirrors prod posture at 1-replica scale (local.enforcing_posture).
+    info "cage_deployment_region=${_region:-unset} — staging enforces (local.enforcing_posture)"
+    #
+    #
+    #
   else
     echo ""
     echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════════╗${RESET}"
@@ -437,9 +435,9 @@ deploy_terraform_target() {
     echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
   fi
-  # Prepended, so an explicit enable_nist_compliance in the profile or on the
-  # command line still wins: terraform keeps the last value it is given.
-  tf_args=("-var=enable_nist_compliance=$_nist" ${tf_args[@]+"${tf_args[@]}"})
+  # POAM-2026-130: posture is declared in the profile (environment / enforce_in_dev);
+  # no CLI -var=enable_nist_compliance injection is needed or valid.
+  #
   
   # Target-specific backend configuration
   if [[ "$target" == "agnostic" ]]; then

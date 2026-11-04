@@ -80,10 +80,10 @@ cage_deployment_region = "US_FED"
 # ─── Security Posture (Dev: Minimal — fast iteration, low cost) ───────────────
 # Dev posture intentionally disables ALL hardening flags to reduce cost and friction.
 # SR 26-2 §IV.C requires these controls in PROD; they are NOT required in dev.
-# Every committed profile sets enable_nist_compliance itself (POAM-2026-174). It
-# only sets local.any_compliance_active in main.tf; POAM-2026-174 lists what that
-# turns on. Redis replication, replica counts and PDBs do not depend on it.
-enable_nist_compliance         = false
+# Every committed dev profile sets enforce_in_dev itself (POAM-2026-174). It feeds
+# local.enforcing_posture in main.tf (POAM-2026-130, 181); US dev does not
+# enforce. Redis replication, replica counts and PDBs do not depend on it.
+enforce_in_dev                 = false
 # POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
 enable_high_availability       = false
 enable_deletion_protection     = false
@@ -189,7 +189,7 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 # Rationale (P1-2):
 #   - US_FED_BASELINE.json controls (CTRL_AGT_001–CTRL_OPA_005) do NOT mandate
 #     Langfuse project isolation in dev. AU-9 / SR 26-2 §IV.D are prod-only controls.
-#   - With no compliance flag set, the POAM-019 key guards in main.tf
+#   - With enforce_in_dev = false, the POAM-019 key guards in main.tf
 #     (terraform_data.poam_019_empty_key_guard / poam_019_shared_key_guard) are skipped.
 #   - Nothing in the compliance bridge compares the two projects' keys: its startup
 #     check in audit_workflow.py only requires both to be set outside dev, and Step 3
@@ -200,7 +200,7 @@ langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
 #     will use the real cage-compliance project even in dev — providing full isolation.
 #
 # For prod posture: set LANGFUSE_COMPLIANCE_PUBLIC_KEY to a DIFFERENT key than
-# LANGFUSE_PUBLIC_KEY. In prod and staging, whatever the flags (POAM-2026-181), and in dev with any compliance flag, the
+# LANGFUSE_PUBLIC_KEY. In prod and staging (POAM-2026-181), and in dev with enforce_in_dev, the
 # POAM-019 key guards in main.tf FAIL an untargeted plan if either compliance key is empty or equals its counterpart (POAM-2026-180).
 #
 # Keys are NOT hardcoded here — they are injected via TF_VAR_* from .env.

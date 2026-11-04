@@ -136,11 +136,11 @@ resource "google_container_cluster" "primary" {
   # ─── SC-7: Private Cluster Configuration ───────────────────────────────────
   # Dev: Public nodes for easier access (unless org policy forces private nodes)
   # Prod: Private nodes with NAT for outbound traffic
-  # enable_private_nodes can be set independently of enable_nist_compliance to
-  # satisfy constraints/compute.vmExternalIpAccess org policy without activating
-  # the full NIST compliance stack (Redis HA, PDB, audit logging, etc.).
+  # enable_private_nodes can be set independently of restrict_control_plane to
+  # satisfy constraints/compute.vmExternalIpAccess org policy without restricting
+  # the control plane.
   dynamic "private_cluster_config" {
-    for_each = (var.enable_nist_compliance || var.enable_private_nodes) ? [1] : []
+    for_each = (var.restrict_control_plane || var.enable_private_nodes) ? [1] : []
     content {
       enable_private_nodes    = true
       enable_private_endpoint = var.enable_private_master_endpoint
@@ -152,7 +152,7 @@ resource "google_container_cluster" "primary" {
   # Dev: Allow all (0.0.0.0/0)
   # Prod: Only corporate VPN or specific IPs
   dynamic "master_authorized_networks_config" {
-    for_each = var.enable_nist_compliance && length(var.authorized_networks) > 0 ? [1] : []
+    for_each = var.restrict_control_plane && length(var.authorized_networks) > 0 ? [1] : []
     content {
       dynamic "cidr_blocks" {
         for_each = var.authorized_networks
@@ -166,7 +166,7 @@ resource "google_container_cluster" "primary" {
 
   # Fallback: Allow all for dev
   dynamic "master_authorized_networks_config" {
-    for_each = !var.enable_nist_compliance ? [1] : []
+    for_each = !var.restrict_control_plane ? [1] : []
     content {
       cidr_blocks {
         cidr_block   = "0.0.0.0/0"

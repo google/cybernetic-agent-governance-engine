@@ -23,14 +23,14 @@ Provisions a Google Kubernetes Engine (GKE) cluster with security posture toggle
 
 | Flag | Scope | NIST Control | Dev | Prod | Description |
 |------|-------|--------------|-----|------|-------------|
-| `enable_nist_compliance` | Every staging and prod plan: the gcp-gke target passes `local.enforcing_posture` | SC-7, AC-3 | `false` | `true` | Private cluster and master authorized networks; when off, the allowlist is `0.0.0.0/0`. Deletion protection is `enable_deletion_protection` |
+| `restrict_control_plane` | Every staging and prod plan: the gcp-gke target passes `local.enforcing_posture` | SC-7, AC-3 | `false` | `true` | Private cluster and master authorized networks; when off, the allowlist is `0.0.0.0/0`. Deletion protection is `enable_deletion_protection` |
 | `enable_binary_authorization` | Universal (ISO 42001 A.5.2) | CM-7, SI-7 | `false` | `true` | Only signed container images allowed |
 | `enable_audit_logging` | Universal (ISO 42001 A.5.3) | AU-2, AU-3, AU-9 | `false` | `true` | Comprehensive logging to Cloud Logging |
 | `enable_cmek` | Universal (ISO 42001 A.9.2) | SC-12, SC-13 | `false` | `true` | Customer-managed KMS encryption |
 | `enable_private_nodes` | Optional | SC-7 | `false` | `false` | Private node IPs; requires Cloud NAT |
 | `enable_private_master_endpoint` | Optional | SC-7 | `false` | `false` | Private master endpoint; requires VPN |
 
-> **Important:** Despite its name, `enable_nist_compliance` carries nothing NIST-specific. The gcp-gke target passes it `local.enforcing_posture`, so every staging and prod plan turns it on, whatever jurisdiction it selects, and a dev plan turns it on only with a compliance flag (POAM-2026-181). Only a dev plan without a compliance flag gets the `0.0.0.0/0` allowlist. ISO 42001 baseline controls are always active in all prod deployments.
+> **Important:** The gcp-gke target passes `restrict_control_plane` `local.enforcing_posture`, so every staging and prod plan turns it on, whatever jurisdiction it selects, and a dev plan turns it on only with `enforce_in_dev = true` (POAM-2026-181, POAM-2026-130). Only a dev plan with `enforce_in_dev = false` gets the `0.0.0.0/0` allowlist. ISO 42001 baseline controls are always active in all prod deployments.
 
 ---
 
@@ -49,7 +49,7 @@ module "gke_dev" {
   environment  = "dev"
 
   # Security: all disabled for fast iteration
-  enable_nist_compliance      = false
+  restrict_control_plane      = false
   enable_binary_authorization = false
   enable_audit_logging        = false
   enable_cmek                 = false
@@ -79,8 +79,8 @@ module "gke_prod" {
   cluster_name = "cage-governance"
   environment  = "prod"
 
-  # ISO 42001 baseline + NIST SP 800-53 (US_FED only)
-  enable_nist_compliance         = true   # US_FED only — private cluster + deletion protection
+  # ISO 42001 baseline + NIST SP 800-53
+  restrict_control_plane         = true   # Restrict master authorized networks + private cluster
   enable_binary_authorization    = true
   enable_audit_logging           = true
   enable_cmek                    = true
@@ -122,7 +122,7 @@ Use `infra/targets/gcp-gke/eu-prod.tfvars`:
 # cage_deployment_region = "EU_ECB"
 # region                 = "europe-west1"
 # zone                   = "europe-west1-b"
-# enable_nist_compliance = false   # NIST hardening is US_FED only
+# environment            = "prod"  # Enforces control-plane allowlist in every jurisdiction
 # enable_audit_logging   = true    # Required by DORA Art. 10
 # enable_cmek            = true    # GDPR Art. 32 — key in europe-west1
 ```
@@ -135,7 +135,7 @@ Use `infra/targets/gcp-gke/apac-prod.tfvars`:
 # cage_deployment_region = "APAC_MAS"
 # region                 = "asia-southeast1"
 # zone                   = "asia-southeast1-a"
-# enable_nist_compliance = false   # NIST hardening is US_FED only
+# environment            = "prod"  # Enforces control-plane allowlist in every jurisdiction
 # enable_audit_logging   = true    # Required by MAS Notice 655
 # enable_cmek            = true    # MAS TRM §9.1 — key in asia-southeast1
 ```
@@ -158,12 +158,12 @@ Use `infra/targets/gcp-gke/apac-prod.tfvars`:
 
 | Name | Description | Type | Default |
 |------|-------------|------|---------|
-| `enable_nist_compliance` | Private cluster + deletion protection (US_FED only) | bool | `false` |
+| `restrict_control_plane` | Restrict master authorized networks to `authorized_networks`; when false, the allowlist is `0.0.0.0/0` | bool | `false` |
 | `enable_binary_authorization` | Enforce signed images (ISO 42001 A.5.2) | bool | `false` |
 | `enable_audit_logging` | Comprehensive Cloud Logging (ISO 42001 A.5.3) | bool | `false` |
 | `enable_cmek` | Customer-managed KMS encryption (ISO 42001 A.9.2) | bool | `false` |
 | `enable_private_master_endpoint` | Private master endpoint (SC-7) | bool | `false` |
-| `enable_private_nodes` | Private node IPs; independent of `enable_nist_compliance` | bool | `false` |
+| `enable_private_nodes` | Private node IPs; independent of `restrict_control_plane` | bool | `false` |
 
 ### Network configuration
 

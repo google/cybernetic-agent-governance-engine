@@ -28,7 +28,7 @@
 #   - enable_high_availability=false (1 replica per service vs 2+)
 #
 # Security posture: FULL (identical to prod)
-#   - enable_nist_compliance=true (set below, so a direct terraform run gets it too)
+#   - environment="staging" activates local.enforcing_posture (POAM-2026-181, 130)
 #   - enable_binary_authorization=true
 #   - enable_audit_logging=true
 #   - enable_cmek=true (requires KMS key — set kms_key_id in terraform.auto.tfvars)
@@ -86,10 +86,10 @@ master_ipv4_cidr_block = "172.16.0.16/28"
 #   - Private nodes: no external IPs on node VMs (use Cloud NAT for egress)
 #   - Authorized networks: restrict control-plane access to operator CIDRs (VPN range or deployer egress)
 
-# Set here, not only by deploy_all.sh, so a direct terraform run with this profile
-# states the same jurisdiction posture (POAM-2026-174). Staging enforces whatever
-# it says: the guards, the allowlist and PITR follow the tier (POAM-2026-181).
-enable_nist_compliance = true
+# environment = "staging" above activates local.enforcing_posture in main.tf
+# directly: the retention lock, Valkey AOF, the guards, the control-plane
+# allowlist and PITR follow the tier (POAM-2026-174, POAM-2026-181).
+# enable_nist_compliance was removed (POAM-2026-130); terraform plan/apply -var-file=staging.tfvars enforces directly.
 
 # POAM-024: HA decoupled from compliance — staging runs 1-replica scale to prove
 # that full security posture is achievable without production-scale redundancy.
@@ -247,4 +247,4 @@ cloud_sql_cidr                  = "10.6.80.0/20"
 #     langfuse_compliance_public_key = "pk-lf-<staging-compliance-project-key>"
 #     langfuse_compliance_secret_key = "sk-lf-<staging-compliance-project-key>"
 #   The precondition will FAIL if these match langfuse_public_key / langfuse_secret_key
-#   when enable_nist_compliance=true.
+#   in staging (local.enforcing_posture, POAM-2026-181).

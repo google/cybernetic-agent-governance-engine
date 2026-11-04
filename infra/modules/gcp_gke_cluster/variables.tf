@@ -34,14 +34,14 @@ variable "cluster_name" {
 
 # ─── Security Posture Toggles ────────────────────────────────────────────────
 
-variable "enable_nist_compliance" {
-  description = "Enable strict NIST RMF security controls (Private cluster, Master Authorized Networks)"
+variable "restrict_control_plane" {
+  description = "Make the cluster private and limit control-plane access to authorized_networks (SC-7, AC-3). When false, the control plane accepts any address (0.0.0.0/0). The gcp-gke target passes local.enforcing_posture (POAM-2026-130, POAM-2026-181)."
   type        = bool
   default     = false
 }
 
-# POAM-024: Decoupled from enable_nist_compliance to allow ephemeral staging clusters.
-# Staging needs full security validation (enable_nist_compliance=true) but must be
+# POAM-024: Decoupled from the security posture to allow ephemeral staging clusters.
+# Staging needs full security validation (restrict_control_plane=true) but must be
 # teardown-capable (enable_deletion_protection=false) to cap spend.
 variable "enable_deletion_protection" {
   description = "Enable deletion protection on the GKE cluster. Set false for ephemeral environments (staging) that need terraform destroy capability. Set true for production to prevent accidental cluster deletion."
@@ -74,7 +74,7 @@ variable "enable_private_master_endpoint" {
 }
 
 variable "enable_private_nodes" {
-  description = "Enable private nodes (no external IPs on node VMs). Required when org policy constraints/compute.vmExternalIpAccess is enforced. Nodes use Cloud NAT for egress. Independent of enable_nist_compliance."
+  description = "Enable private nodes (no external IPs on node VMs). Required when org policy constraints/compute.vmExternalIpAccess is enforced. Nodes use Cloud NAT for egress. Set independently of restrict_control_plane; restrict_control_plane turns private nodes on anyway."
   type        = bool
   default     = false
 }

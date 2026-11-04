@@ -67,12 +67,12 @@ master_ipv4_cidr_block = "172.16.2.0/28"
 cage_deployment_region = "APAC_MAS"
 
 # ─── Security Posture (APAC_MAS Prod: MAS FEAT + MAS TRM + ISO 42001) ─────────
-# DEP-20: enable_apac_mas_compliance activates MAS TRM §9.1 encryption at rest
-# and MAS Notice 655 audit logging independently of enable_nist_compliance.
-# DEP-01: enable_nist_compliance must be false for APAC_MAS deployments.
-enable_nist_compliance     = false
-enable_eu_ecb_compliance   = false
-enable_apac_mas_compliance = true
+# POAM-2026-130, 181: environment = "prod" activates local.enforcing_posture in
+# main.tf (retention lock, Valkey AOF, guards, allowlist, PITR);
+# cage_deployment_region above selects the APAC_MAS regulatory baseline.
+# MAS TRM §9.1 encryption and MAS Notice 655 audit logging are set directly below.
+# The three enable_*_compliance variables had no per-jurisdiction effect
+# and were removed under POAM-2026-130.
 # POAM-024: HA decoupled from compliance — set explicitly true for production
 regional_cluster               = true
 enable_high_availability       = true

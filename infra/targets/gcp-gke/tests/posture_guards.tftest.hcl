@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# POAM-2026-181 (AC-3 / SC-7 / AU-9 / CP-9): the control-plane guard, both
-# POAM-019 key guards, module.gke's allowlist, Cloud SQL PITR and the NeMo
-# securityContext follow local.enforcing_posture: every staging and prod plan,
-# whatever jurisdiction it selects, and a dev plan only with a compliance flag.
-# They used to follow local.any_compliance_active, so a staging or prod plan
-# that selected no jurisdiction flag dropped all of them and planned a
-# 0.0.0.0/0 control plane. Every run here sets no jurisdiction flag unless it
-# says so. For each tier and jurisdiction, three runs: the supplied allowlist is
-# planned exactly, an empty allowlist is refused, and empty compliance keys are
-# refused. CI runs it in the terraform-test job:
+# POAM-2026-181 & POAM-2026-130 (AC-3 / SC-7 / AU-9 / CP-9): the control-plane
+# guard, both POAM-019 key guards, module.gke's allowlist, Cloud SQL PITR and
+# the NeMo securityContext follow local.enforcing_posture: every staging and
+# prod plan, whatever jurisdiction it selects, and a dev plan only with
+# enforce_in_dev = true. They used to follow local.any_compliance_active (the
+# three removed enable_*_compliance variables), so a staging or prod plan that
+# selected no jurisdiction flag dropped all of them and planned a 0.0.0.0/0
+# control plane. Every run here sets enforce_in_dev = false unless it says so.
+# For each tier and jurisdiction, three runs: the supplied allowlist is planned
+# exactly, an empty allowlist is refused, and empty compliance keys are refused.
+# CI runs it in the terraform-test job:
 #   terraform -chdir=infra/targets/gcp-gke test -var-file=staging.tfvars \
 #     -var-file=tests/fixtures/image_digests.tfvars
 #
@@ -56,9 +57,7 @@ variables {
   project_id          = "posture-guards-test-project"
   authorized_networks = [{ cidr = "203.0.113.7/32", display_name = "test" }]
 
-  enable_nist_compliance     = false
-  enable_eu_ecb_compliance   = false
-  enable_apac_mas_compliance = false
+  enforce_in_dev = false
 
   langfuse_compliance_public_key = "fake-compliance-public-key"
   langfuse_compliance_secret_key = "fake-compliance-secret-key"
@@ -70,8 +69,8 @@ run "us_staging_without_a_flag_keeps_the_allowlist_and_pitr" {
   command = plan
 
   assert {
-    condition     = var.environment == "staging" && local.enforcing_posture && !local.any_compliance_active
-    error_message = "this run must plan the staging tier with no jurisdiction flag"
+    condition     = var.environment == "staging" && local.enforcing_posture && !var.enforce_in_dev
+    error_message = "this run must plan the staging tier with enforce_in_dev = false"
   }
   assert {
     condition     = module.gke.master_authorized_cidrs == ["203.0.113.7/32"]
@@ -130,8 +129,8 @@ run "eu_staging_without_a_flag_keeps_the_allowlist_and_pitr" {
   }
 
   assert {
-    condition     = local.enforcing_posture && !local.any_compliance_active
-    error_message = "this run must plan the staging tier with no jurisdiction flag"
+    condition     = local.enforcing_posture && !var.enforce_in_dev
+    error_message = "this run must plan the staging tier with enforce_in_dev = false"
   }
   assert {
     condition     = module.gke.master_authorized_cidrs == ["203.0.113.7/32"]
@@ -185,8 +184,8 @@ run "apac_staging_without_a_flag_keeps_the_allowlist_and_pitr" {
   }
 
   assert {
-    condition     = local.enforcing_posture && !local.any_compliance_active
-    error_message = "this run must plan the staging tier with no jurisdiction flag"
+    condition     = local.enforcing_posture && !var.enforce_in_dev
+    error_message = "this run must plan the staging tier with enforce_in_dev = false"
   }
   assert {
     condition     = module.gke.master_authorized_cidrs == ["203.0.113.7/32"]
@@ -365,16 +364,16 @@ run "apac_prod_without_a_flag_refuses_empty_compliance_keys" {
   expect_failures = [terraform_data.poam_019_empty_key_guard]
 }
 
-# ─── Dev: a flag still makes it enforce ─────────────────────────────────────
-# Dev without a flag is the control run in staging_compliance.tftest.hcl.
+# ─── Dev: enforce_in_dev = true makes it enforce ────────────────────────────
+# Dev with enforce_in_dev = false is the control run in staging_compliance.tftest.hcl.
 
 run "dev_with_a_flag_refuses_an_empty_allowlist" {
   command = plan
 
   variables {
-    environment            = "dev"
-    enable_nist_compliance = true
-    authorized_networks    = []
+    environment         = "dev"
+    enforce_in_dev      = true
+    authorized_networks = []
   }
 
   expect_failures = [terraform_data.control_plane_access_guard]

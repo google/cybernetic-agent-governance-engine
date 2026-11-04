@@ -18,7 +18,7 @@ APAC_MAS compliance posture checks.
 Validates:
   1. MAS FEAT Lula manifest YAML structure (component-definition key present)
   2. MAS TRM §4.2 data residency (apac-prod.tfvars region starts with asia-)
-  3. MAS Notice 655 audit logging (apac-dev.tfvars has enable_apac_mas_compliance)
+  3. MAS Notice 655 audit logging (apac-dev.tfvars has enforce_in_dev and enable_audit_logging)
   4. SR 26-2 telemetry suppression sentinel in APAC threshold files
   5. ISO 42001 universal Lula manifests (component-definition key present)
 
@@ -80,10 +80,10 @@ def check_mas_trm_residency() -> list[str]:
         errors.append("cage_deployment_region must be APAC_MAS in apac-prod.tfvars")
     else:
         print("cage_deployment_region=APAC_MAS — OK")
-    if not re.search(r"enable_apac_mas_compliance\s*=\s*true", content):
-        errors.append("enable_apac_mas_compliance must be true in apac-prod.tfvars")
+    if not re.search(r'environment\s*=\s*"prod"', content):
+        errors.append('environment must be "prod" in apac-prod.tfvars')
     else:
-        print("enable_apac_mas_compliance=true — OK")
+        print('environment="prod" (local.enforcing_posture) — OK')
     return errors
 
 
@@ -97,8 +97,12 @@ def check_mas_notice655_logging() -> None:
         )
         return
     content = tfvars_path.read_text()
-    if "enable_apac_mas_compliance" not in content:
-        print("WARNING: enable_apac_mas_compliance not found in apac-dev.tfvars")
+    if not re.search(r"enforce_in_dev\s*=\s*true", content) or not re.search(
+        r"enable_audit_logging\s*=\s*true", content
+    ):
+        print(
+            "WARNING: enforce_in_dev = true / enable_audit_logging = true not found in apac-dev.tfvars"
+        )
     else:
         print("MAS Notice 655 audit logging configuration present — OK")
 

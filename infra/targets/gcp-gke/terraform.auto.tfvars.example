@@ -50,9 +50,9 @@ namespace = "governance-stack"
 # Security Posture (NIST RMF Controls)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Enable NIST compliance controls (SC-7, AC-3, deletion protection)
-# When true: enables HA Redis, backups, resource limits, PodDisruptionBudgets
-enable_nist_compliance = false
+# Opt a dev deployment into the enforcing posture that staging and prod always have
+# (retention lock, Valkey AOF, guards, control-plane allowlist, PITR — POAM-2026-130, 181)
+enforce_in_dev = false
 
 # Enable Binary Authorization (CM-7, SI-7)
 # Requires: Binary Authorization policy configured in GCP

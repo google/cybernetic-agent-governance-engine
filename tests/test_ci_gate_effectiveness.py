@@ -918,14 +918,14 @@ def test_gate_apac_mas_and_eu_ecb_compliance_workflows_catch_planted_defects(
             "apac-mas-compliance.yml",
             "asia-",
             "apac-dev.tfvars",
-            "enable_apac_mas_compliance",
+            "enforce_in_dev",
             "APAC_MAS_BASELINE.json",
         ),
         (
             "eu-ecb-compliance.yml",
             "europe-",
             "eu-dev.tfvars",
-            "enable_eu_ecb_compliance",
+            "enforce_in_dev",
             "EU_ECB_BASELINE.json",
         ),
     ):
@@ -968,20 +968,24 @@ def test_gate_apac_mas_and_eu_ecb_compliance_workflows_catch_planted_defects(
                 f"{wf_name} step {step_name!r} silently exited 0 when files were missing!"
             )
 
-        # 3. Planted dev.tfvars with flag set to false must fail step 3
+        # 3. Planted dev.tfvars with enforce_in_dev or enable_audit_logging set to false must fail step 3
         dev_tfvars = sandbox / "infra" / "targets" / "gcp-gke" / dev_tfvars_name
         dev_tfvars.parent.mkdir(parents=True, exist_ok=True)
-        dev_tfvars.write_text(f"{enable_flag} = false\n", encoding="utf-8")
-        proc_step3 = subprocess.run(
-            [sys.executable, "-c", py_steps[2][1]],
-            cwd=sandbox,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert proc_step3.returncode != 0, (
-            f"{wf_name} step 3 ({py_steps[2][0]!r}) exited 0 when {enable_flag} = false!"
-        )
+        for bad_tfvars in (
+            f"{enable_flag} = false\nenable_audit_logging = true\n",
+            f"{enable_flag} = true\nenable_audit_logging = false\n",
+        ):
+            dev_tfvars.write_text(bad_tfvars, encoding="utf-8")
+            proc_step3 = subprocess.run(
+                [sys.executable, "-c", py_steps[2][1]],
+                cwd=sandbox,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert proc_step3.returncode != 0, (
+                f"{wf_name} step 3 ({py_steps[2][0]!r}) exited 0 on {bad_tfvars!r}!"
+            )
 
         # 4. Planted baseline threshold file without SR 26-2 sentinel must fail step 4
         thresh_dir = sandbox / "config" / "thresholds"

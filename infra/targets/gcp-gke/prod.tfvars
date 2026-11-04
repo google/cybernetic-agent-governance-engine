@@ -45,11 +45,11 @@ namespace    = "governance-stack"
 cage_deployment_region = "US_FED"
 
 # ─── Security Posture (US_FED Prod: NIST SP 800-53 + ISO 42001 baseline) ──────
-# DEP-01: enable_nist_compliance is now only activated for US_FED deployments.
-# EU_ECB and APAC_MAS use enable_eu_ecb_compliance / enable_apac_mas_compliance.
-enable_nist_compliance     = true
-enable_eu_ecb_compliance   = false
-enable_apac_mas_compliance = false
+# POAM-2026-130, 181: environment = "prod" activates local.enforcing_posture in
+# main.tf (retention lock, Valkey AOF, guards, allowlist, PITR);
+# cage_deployment_region above selects the US_FED regulatory baseline. The three
+# enable_*_compliance variables had no per-jurisdiction effect and were removed.
+#
 # POAM-024: HA decoupled from compliance — set explicitly true for production
 regional_cluster               = true
 enable_high_availability       = true

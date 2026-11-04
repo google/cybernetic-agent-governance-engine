@@ -89,8 +89,8 @@ module "gke" {
   environment      = var.environment
   regional_cluster = var.regional_cluster
 
-  # Security posture toggles. The allowlist follows the tier, not a jurisdiction flag (POAM-2026-181)
-  enable_nist_compliance         = local.enforcing_posture
+  # Security posture: the control-plane allowlist follows the tier (POAM-2026-181)
+  restrict_control_plane         = local.enforcing_posture
   enable_deletion_protection     = var.enable_deletion_protection
   enable_binary_authorization    = var.enable_binary_authorization
   enable_audit_logging           = var.enable_audit_logging
@@ -198,17 +198,17 @@ module "service_mesh" {
 # ─── Enforcing Posture ────────────────────────────────────────────────────────
 # The one predicate for the controls that hold whenever this deployment
 # enforces: the prod and staging tiers always, whatever jurisdiction they
-# select, and dev only while a compliance flag is set. It gates the retention
+# select, and dev only with enforce_in_dev (POAM-2026-130). It gates the retention
 # lock (POAM-2026-159), governance Valkey AOF (POAM-2026-156 item 3), the
 # control-plane and POAM-019 guards, module.gke's allowlist, Cloud SQL PITR and
 # the NeMo securityContext (POAM-2026-181), so staging rehearses prod anywhere.
 #
 #   tier      enforcing
-#   dev       only while a compliance flag is set
+#   dev       only with enforce_in_dev = true
 #   staging   always
 #   prod      always
 locals {
-  enforcing_posture = var.environment == "prod" || var.environment == "staging" || local.any_compliance_active
+  enforcing_posture = var.environment == "prod" || var.environment == "staging" || var.enforce_in_dev
 }
 
 # ─── Retention Posture (§1.1, NIST AU-9 / AU-11, POAM-2026-159) ──────────────
@@ -216,12 +216,12 @@ locals {
 # Langfuse event-upload bucket and the evidence WORM bucket. The tier
 # (var.environment, which variables.tf limits to dev, staging and prod) selects
 # it, and only the exact tier "staging" gets the short period: every other value,
-# the dev default included, keeps 2555 days. Staging is locked whatever the
-# compliance flags say, because GCS refuses to shorten or remove a locked policy
-# and the provider replaces a bucket whose lock is turned off.
+# the dev default included, keeps 2555 days. Staging is always locked,
+# because GCS refuses to shorten or remove a locked policy and the provider
+# replaces a bucket whose lock is turned off.
 #
 #   tier      retention period          locked
-#   dev       220752000 s (2555 days)   only while a compliance flag is set
+#   dev       220752000 s (2555 days)   only with enforce_in_dev = true
 #   staging   86400 s (1 day)           always
 #   prod      220752000 s (2555 days)   always
 locals {
@@ -324,7 +324,7 @@ module "worm_bucket" {
   kms_key_id               = local.cmek_key_id
   retention_period_seconds = local.retention_period_seconds
   is_locked                = local.retention_locked
-  force_destroy            = var.environment == "dev" && !local.any_compliance_active
+  force_destroy            = !local.enforcing_posture
 }
 
 
@@ -380,14 +380,14 @@ resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writ
 # §2.5: Managed Cloud SQL PostgreSQL (PG15, private IP, ENCRYPTED_ONLY, PITR when enforcing).
 # IAM database authentication is used with Cloud SQL Auth Proxy sidecar (no static password).
 
-locals {
-  # Set by any jurisdiction flag. Only enforcing_posture and force_destroy read it.
-  any_compliance_active = (
-    var.enable_nist_compliance ||
-    var.enable_eu_ecb_compliance ||
-    var.enable_apac_mas_compliance
-  )
-}
+# POAM-2026-130 removed the three jurisdiction flags, enable_nist_compliance,
+# enable_eu_ecb_compliance and enable_apac_mas_compliance, and the
+# local.any_compliance_active they set. All three did the same thing and
+# selected nothing jurisdiction-specific. OSCAL and the workloads read
+# cage_deployment_region, every control the flags once gated follows
+# local.enforcing_posture (POAM-2026-181), and their last effect, making a
+# dev plan enforce, is now var.enforce_in_dev. A tfvars file that still sets
+# a removed flag gets a "Value for undeclared variable" warning and is ignored.
 
 module "cloudsql_postgres" {
   source = "../../modules/cloudsql_postgres"
@@ -452,8 +452,8 @@ module "memorystore_governance" {
 
   # POAM-2026-156 item 3: whenever the posture enforces, governance state (CBF
   # commits, single-use markers, deferrals, the evidence stream) is persisted
-  # with AOF, and every write is saved to durable storage. Dev without a
-  # compliance flag keeps persistence off.
+  # with AOF, and every write is saved to durable storage. Dev without
+  # enforce_in_dev keeps persistence off.
   persistence_mode = local.enforcing_posture ? "AOF" : "DISABLED"
   aof_append_fsync = local.enforcing_posture ? "ALWAYS" : null
 
@@ -1184,7 +1184,7 @@ module "app_secrets" {
   s3_bucket_name        = google_storage_bucket.langfuse_event_upload.name
 
   # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
-  # Dev without a compliance flag: pass the key as-is. It may be empty: the module
+  # Dev without enforce_in_dev: pass the key as-is. It may be empty: the module
   #   still writes the secret, empty, and the compliance bridge only warns in dev.
   # Enforcing posture (every staging and prod plan, POAM-2026-181): the POAM-019
   #   guards below refuse an empty or shared key in untargeted plans (POAM-2026-180).
@@ -1233,7 +1233,7 @@ resource "terraform_data" "poam_019_empty_key_guard" {
       )
       error_message = <<-EOT
         [POAM-019] Compliance telemetry keys are empty under an enforcing posture.
-        This is a staging or prod plan, or a dev plan with a compliance flag,
+        This is a staging or prod plan, or a dev plan with enforce_in_dev,
         and langfuse_compliance_public_key or
         langfuse_compliance_secret_key is empty. AU-9 dual-project telemetry
         isolation needs the cage-compliance Langfuse project's own keys.

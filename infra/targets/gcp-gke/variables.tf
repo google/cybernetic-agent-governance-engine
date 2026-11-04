@@ -57,32 +57,32 @@ variable "namespace" {
   default     = "governance-stack"
 }
 
-# ─── Security Posture Toggles ─────────────────────────────────────────────────
+# ─── Security Posture Toggle ──────────────────────────────────────────────────
 
-variable "enable_nist_compliance" {
-  description = "US_FED profiles only. Despite the name, it carries nothing NIST-specific: like enable_eu_ecb_compliance and enable_apac_mas_compliance, in main.tf it only sets local.any_compliance_active (POAM-2026-130), which decides whether a dev plan enforces. Staging and prod plans enforce whatever it says (POAM-2026-181)."
+# POAM-2026-130: enforce_in_dev replaces enable_nist_compliance,
+# enable_eu_ecb_compliance and enable_apac_mas_compliance, which all did the
+# same thing and selected nothing jurisdiction-specific. The posture follows the
+# tier (local.enforcing_posture in main.tf):
+#   tier      enforcing
+#   dev       only with enforce_in_dev = true
+#   staging   always, whatever enforce_in_dev says
+#   prod      always, whatever enforce_in_dev says
+# Enforcing means the retention lock on both evidence buckets, governance Valkey
+# AOF, control_plane_access_guard and the two POAM-019 compliance key guards,
+# the cluster's control-plane allowlist, Cloud SQL PITR and the NeMo server's
+# securityContext (POAM-2026-181). The jurisdiction is cage_deployment_region,
+# which OSCAL and the workloads read. A tfvars file that still sets a removed
+# flag gets Terraform's "Value for undeclared variable" warning and the value is
+# ignored, so a dev profile that used one to enforce must set enforce_in_dev =
+# true instead. A -var for a removed flag fails. Every committed dev profile
+# states enforce_in_dev; no staging or prod profile sets it.
+#
+#
+variable "enforce_in_dev" {
+  description = "Give a dev deployment the enforcing posture that staging and prod always have (POAM-2026-130, POAM-2026-181). Staging and prod ignore it."
   type        = bool
   default     = false
-}
-
-# DEP-20: Introduce enable_eu_ecb_compliance to independently activate DORA Art. 10
-# HA and GDPR Art. 32 encryption requirements for EU_ECB deployments.
-# Previously, EU_ECB deployments had no mechanism to activate HA/encryption
-# because enable_nist_compliance was the only hardening toggle.
-# R-3: EU AI Act / GDPR / DORA logic MUST be gated on CAGE_DEPLOYMENT_REGION == "EU_ECB".
-variable "enable_eu_ecb_compliance" {
-  description = "Enable EU_ECB compliance hardening: DORA Art. 10 HA, GDPR Art. 32 encryption at rest. EU_ECB only — activates Redis replication, PostgreSQL resource limits, and ClickHouse PDB independently of enable_nist_compliance."
-  type        = bool
-  default     = false
-}
-
-# DEP-20 added enable_apac_mas_compliance to activate MAS TRM §9.1 encryption and
-# MAS Notice 655 audit logging for APAC_MAS deployments on their own, but it has
-# never had an effect of its own (POAM-2026-130).
-variable "enable_apac_mas_compliance" {
-  description = "Enable APAC_MAS compliance hardening (APAC_MAS only). It does exactly what enable_nist_compliance and enable_eu_ecb_compliance do: each only sets local.any_compliance_active in main.tf, which decides whether a dev plan enforces (staging and prod always do, POAM-2026-181) and turns on nothing APAC-specific (POAM-2026-130)."
-  type        = bool
-  default     = false
+  nullable    = false
 }
 
 # ─── High Availability Toggle ─────────────────────────────────────────────────
@@ -96,12 +96,12 @@ variable "enable_apac_mas_compliance" {
 #   - prod: secure=true, ha=true (production HA + security)
 
 variable "enable_high_availability" {
-  description = "Enable high availability redundancy: multi-replica deployments (gateway ×2, advisor ×2, OPA ×2, NeMo ×2, Langfuse web/worker ×2, compliance bridge ×2), Redis replication (3 replicas + sentinel), PodDisruptionBudgets, and production resource limits. Independent of security compliance flags. Set true for production workloads requiring fault tolerance; false for dev/staging cost optimization."
+  description = "Enable high availability redundancy: multi-replica deployments (gateway ×2, advisor ×2, OPA ×2, NeMo ×2, Langfuse web/worker ×2, compliance bridge ×2), Redis replication (3 replicas + sentinel), PodDisruptionBudgets, and production resource limits. Independent of the security posture. Set true for production workloads requiring fault tolerance; false for dev/staging cost optimization."
   type        = bool
   default     = false
 }
 
-# POAM-024: Decoupled from enable_nist_compliance to allow ephemeral staging clusters.
+# POAM-024: Decoupled from the security posture to allow ephemeral staging clusters.
 variable "enable_deletion_protection" {
   description = "Enable deletion protection on the GKE cluster. Set false for ephemeral environments (staging) that need terraform destroy capability. Set true for production to prevent accidental cluster deletion."
   type        = bool
@@ -145,7 +145,7 @@ variable "enable_private_master_endpoint" {
 }
 
 variable "enable_private_nodes" {
-  description = "Enable private nodes (no external IPs on node VMs). Required when org policy constraints/compute.vmExternalIpAccess is enforced. Nodes use Cloud NAT for egress. Independent of enable_nist_compliance."
+  description = "Enable private nodes (no external IPs on node VMs). Required when org policy constraints/compute.vmExternalIpAccess is enforced. Nodes use Cloud NAT for egress. Set independently of the posture; an enforcing plan turns private nodes on anyway."
   type        = bool
   default     = false
 }
@@ -839,7 +839,7 @@ variable "langfuse_secret_key" {
 }
 
 variable "langfuse_compliance_public_key" {
-  description = "Langfuse compliance project public key (from LANGFUSE_COMPLIANCE_PUBLIC_KEY). REQUIRED when enable_nist_compliance=true. Leaving this empty when enable_nist_compliance=true defeats the AU-9 dual-project telemetry isolation architecture (POAM-019)."
+  description = "Langfuse compliance project public key (from LANGFUSE_COMPLIANCE_PUBLIC_KEY). REQUIRED under an enforcing posture: every staging and prod plan, and dev with enforce_in_dev. Leaving it empty there defeats the AU-9 dual-project telemetry isolation architecture (POAM-019)."
   type        = string
   sensitive   = true
   nullable    = false
@@ -847,19 +847,19 @@ variable "langfuse_compliance_public_key" {
 
   validation {
     # POAM-019: Prevent silent collapse of dual-project telemetry isolation.
-    # When enable_nist_compliance=true this key MUST be a distinct cage-compliance
+    # Under an enforcing posture this key MUST be a distinct cage-compliance
     # project key.  An empty value silently falls back to the app project,
     # defeating AU-9 evidentiary independence.
-    # NOTE: Terraform validates variables in isolation — we cannot reference
-    # var.enable_nist_compliance here. The precondition in main.tf enforces
-    # the cross-variable constraint at plan time.
+    # NOTE: the posture check stays in the precondition in main.tf, not here: a
+    # variable validation would also block terraform destroy (POAM-2026-174).
+    # The precondition enforces the cross-variable constraint at plan time.
     condition     = var.langfuse_compliance_public_key == "" || length(var.langfuse_compliance_public_key) >= 10
-    error_message = "langfuse_compliance_public_key must be a valid Langfuse API key (≥10 chars) or empty string. An empty value is only valid when enable_nist_compliance=false. (POAM-019)"
+    error_message = "langfuse_compliance_public_key must be a valid Langfuse API key (≥10 chars) or empty string. An empty value is only valid when the posture does not enforce. (POAM-019)"
   }
 }
 
 variable "langfuse_compliance_secret_key" {
-  description = "Langfuse compliance project secret key (from LANGFUSE_COMPLIANCE_SECRET_KEY). REQUIRED when enable_nist_compliance=true. Leaving this empty when enable_nist_compliance=true defeats the AU-9 dual-project telemetry isolation architecture (POAM-019)."
+  description = "Langfuse compliance project secret key (from LANGFUSE_COMPLIANCE_SECRET_KEY). REQUIRED under an enforcing posture: every staging and prod plan, and dev with enforce_in_dev. Leaving it empty there defeats the AU-9 dual-project telemetry isolation architecture (POAM-019)."
   type        = string
   sensitive   = true
   nullable    = false
@@ -868,7 +868,7 @@ variable "langfuse_compliance_secret_key" {
   validation {
     # POAM-019: Same constraint as langfuse_compliance_public_key.
     condition     = var.langfuse_compliance_secret_key == "" || length(var.langfuse_compliance_secret_key) >= 10
-    error_message = "langfuse_compliance_secret_key must be a valid Langfuse API key (≥10 chars) or empty string. An empty value is only valid when enable_nist_compliance=false. (POAM-019)"
+    error_message = "langfuse_compliance_secret_key must be a valid Langfuse API key (≥10 chars) or empty string. An empty value is only valid when the posture does not enforce. (POAM-019)"
   }
 }
 

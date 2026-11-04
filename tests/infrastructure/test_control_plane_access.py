@@ -23,14 +23,16 @@ nothing read the list. Two guards now hold the claim:
   then accepts any address. A plan targeted at ``module.gke`` skips the guard
   (POAM-2026-180; see test_guard_placement.py).
 
-POAM-2026-181: the guards, the cluster allowlist, PITR and the NeMo securityContext
-follow ``local.enforcing_posture``, the tier, rather than the jurisdiction flags, so
-a staging or prod plan keeps them whatever jurisdiction it selects. The jurisdiction
-flags now decide only whether a dev plan enforces.
+POAM-2026-181 & POAM-2026-130: the guards, the cluster allowlist, PITR and the NeMo
+securityContext follow ``local.enforcing_posture``, the tier, and the three
+jurisdiction flags (``enable_nist_compliance``, ``enable_eu_ecb_compliance``,
+``enable_apac_mas_compliance``) and ``local.any_compliance_active`` were removed.
+``enforce_in_dev`` is the one posture variable for opting a ``dev`` profile into
+``local.enforcing_posture``.
 
-POAM-2026-174: every committed profile sets ``enable_nist_compliance`` itself, so a
-direct terraform run plans the same posture as deploy_all.sh, and the classifier
-below reads only what the profile says.
+POAM-2026-174: every committed profile states its posture itself (``environment`` in
+every profile, plus ``enforce_in_dev`` in every ``dev`` profile), so a direct
+terraform run plans the same posture as deploy_all.sh.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GKE_TARGET_DIR = REPO_ROOT / "infra" / "targets" / "gcp-gke"
+GKE_CLUSTER_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gcp_gke_cluster"
 # Committed profiles only. terraform.tfvars and *.auto.tfvars are operator-local
 # (gitignored), and Terraform loads them without being asked.
 PROFILES = sorted(
@@ -52,7 +55,7 @@ PROFILES = sorted(
     for p in GKE_TARGET_DIR.glob("*.tfvars")
     if p.name != "terraform.tfvars" and not p.name.endswith(".auto.tfvars")
 )
-COMPLIANCE_FLAGS = (
+REMOVED_COMPLIANCE_FLAGS = (
     "enable_nist_compliance",
     "enable_eu_ecb_compliance",
     "enable_apac_mas_compliance",
@@ -70,12 +73,12 @@ ENFORCING_TIERS = ("prod", "staging")
 def _enforcing(text: str) -> bool:
     """Mirror ``local.enforcing_posture`` from the profile's own settings.
 
-    The prod and staging tiers always enforce; a dev profile enforces only with a
-    compliance flag. ``test_every_profile_sets_the_nist_flag_itself`` keeps every
-    profile explicit, so there is no deploy_all.sh default to model.
+    The prod and staging tiers always enforce; a dev profile enforces only with
+    ``enforce_in_dev = true``.
     """
-    return _setting(text, "environment") in ENFORCING_TIERS or any(
-        _setting(text, flag) == "true" for flag in COMPLIANCE_FLAGS
+    return (
+        _setting(text, "environment") in ENFORCING_TIERS
+        or _setting(text, "enforce_in_dev") == "true"
     )
 
 
@@ -140,22 +143,35 @@ def test_plan_refuses_an_open_or_empty_allowlist_under_an_enforcing_posture() ->
 
 
 def test_posture_controls_follow_the_tier_not_a_jurisdiction_flag() -> None:
-    # POAM-2026-181: these bound on local.any_compliance_active, so a staging or
-    # prod plan that selected no jurisdiction flag dropped every one of them.
+    # POAM-2026-181 & POAM-2026-130: the three enable_*_compliance variables and
+    # local.any_compliance_active were removed, and var.enforce_in_dev is read
+    # only by local.enforcing_posture.
+    for tf_path in (
+        *GKE_TARGET_DIR.glob("*.tf"),
+        *GKE_CLUSTER_MODULE_DIR.glob("*.tf"),
+    ):
+        non_comment = "\n".join(
+            line
+            for line in tf_path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        for removed in (*REMOVED_COMPLIANCE_FLAGS, "any_compliance_active"):
+            assert removed not in non_comment, (
+                f"{tf_path.name} still references removed identifier {removed!r}"
+            )
+
     main_tf = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
     code = [line for line in main_tf.splitlines() if not line.lstrip().startswith("#")]
     readers = sorted(
-        line.split("=")[0].strip()
-        for line in code
-        if "local.any_compliance_active" in line
+        line.split("=")[0].strip() for line in code if "var.enforce_in_dev" in line
     )
-    assert readers == ["enforcing_posture", "force_destroy"], (
-        "only enforcing_posture and the dev-only force_destroy may read the "
-        f"jurisdiction flags; found {readers}"
+    assert readers == ["enforcing_posture"], (
+        f"only enforcing_posture may read var.enforce_in_dev; found {readers}"
     )
     flat = re.sub(r"\s+", " ", "\n".join(code))
     for binding in (
-        "enable_nist_compliance = local.enforcing_posture",
+        "restrict_control_plane = local.enforcing_posture",
+        "force_destroy = !local.enforcing_posture",
         "enable_point_in_time_recovery = local.enforcing_posture",
         "enable_security_context = local.enforcing_posture",
     ):
@@ -168,10 +184,24 @@ def test_posture_controls_follow_the_tier_not_a_jurisdiction_flag() -> None:
 
 @pytest.mark.parametrize("profile", PROFILES)
 def test_every_profile_sets_the_nist_flag_itself(profile: str) -> None:
-    # POAM-2026-174: staging.tfvars left the flag to deploy_all.sh, so a direct
-    # terraform run with it planned no compliance posture and skipped the guard
-    # above. A profile that states the flag plans the same posture on every path.
+    # POAM-2026-174 & POAM-2026-130: every profile states its tier, no profile
+    # sets a removed enable_*_compliance flag, and every dev profile states
+    # enforce_in_dev explicitly so a direct terraform run plans the same posture
+    # as deploy_all.sh. Staging and prod profiles never set enforce_in_dev.
     text = (GKE_TARGET_DIR / profile).read_text(encoding="utf-8")
-    assert re.search(
-        r"^enable_nist_compliance\s*=\s*(true|false)\b", text, re.MULTILINE
-    ), f"{profile} must set enable_nist_compliance to true or false, uncommented"
+    tier = _setting(text, "environment")
+    assert tier in ("dev", "staging", "prod"), (
+        f"{profile} must set environment to dev, staging, or prod"
+    )
+    for flag in REMOVED_COMPLIANCE_FLAGS:
+        assert not re.search(rf"^\s*{flag}\s*=", text, re.MULTILINE), (
+            f"{profile} must not set removed flag {flag} (POAM-2026-130)"
+        )
+    if tier == "dev":
+        assert re.search(r"^enforce_in_dev\s*=\s*(true|false)\b", text, re.MULTILINE), (
+            f"{profile} (dev tier) must set enforce_in_dev to true or false, uncommented"
+        )
+    else:
+        assert not re.search(r"^\s*enforce_in_dev\s*=", text, re.MULTILINE), (
+            f"{profile} ({tier} tier) always enforces and must not set enforce_in_dev"
+        )

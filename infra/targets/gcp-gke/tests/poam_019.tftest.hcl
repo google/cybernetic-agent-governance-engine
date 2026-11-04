@@ -76,7 +76,7 @@ variables {
 run "compliance_active_empty_keys_fails_only_empty_key_guard" {
   command = plan
   variables {
-    enable_nist_compliance = true
+    enforce_in_dev = true
   }
   expect_failures = [terraform_data.poam_019_empty_key_guard]
 }
@@ -84,7 +84,7 @@ run "compliance_active_empty_keys_fails_only_empty_key_guard" {
 run "compliance_active_shared_keys_fails_only_shared_key_guard" {
   command = plan
   variables {
-    enable_nist_compliance         = true
+    enforce_in_dev                 = true
     langfuse_public_key            = "fake-app-public-key"
     langfuse_secret_key            = "fake-app-secret-key"
     langfuse_compliance_public_key = "fake-app-public-key"
@@ -98,7 +98,7 @@ run "compliance_active_shared_keys_fails_only_shared_key_guard" {
 run "compliance_active_empty_public_shared_secret_fails_both_guards" {
   command = plan
   variables {
-    enable_nist_compliance         = true
+    enforce_in_dev                 = true
     langfuse_public_key            = "fake-app-public-key"
     langfuse_secret_key            = "fake-app-secret-key"
     langfuse_compliance_secret_key = "fake-app-secret-key"
@@ -112,7 +112,7 @@ run "compliance_active_empty_public_shared_secret_fails_both_guards" {
 run "compliance_active_empty_secret_shared_public_fails_both_guards" {
   command = plan
   variables {
-    enable_nist_compliance         = true
+    enforce_in_dev                 = true
     langfuse_public_key            = "fake-app-public-key"
     langfuse_secret_key            = "fake-app-secret-key"
     langfuse_compliance_public_key = "fake-app-public-key"
@@ -126,7 +126,7 @@ run "compliance_active_empty_secret_shared_public_fails_both_guards" {
 run "compliance_active_distinct_keys_passes" {
   command = plan
   variables {
-    enable_nist_compliance         = true
+    enforce_in_dev                 = true
     langfuse_public_key            = "fake-app-public-key"
     langfuse_secret_key            = "fake-app-secret-key"
     langfuse_compliance_public_key = "fake-compliance-public-key"
@@ -138,13 +138,13 @@ run "compliance_active_distinct_keys_passes" {
   }
 }
 
-# A dev plan without a compliance flag does not enforce, so neither guard
+# A dev plan with enforce_in_dev = false does not enforce, so neither guard
 # applies. A staging or prod plan always enforces (POAM-2026-181).
 run "not_enforcing_empty_keys_passes" {
   command = plan
   variables {
-    environment            = "dev"
-    enable_nist_compliance = false
+    environment    = "dev"
+    enforce_in_dev = false
   }
   assert {
     condition     = !local.enforcing_posture
@@ -156,7 +156,7 @@ run "not_enforcing_shared_keys_passes" {
   command = plan
   variables {
     environment                    = "dev"
-    enable_nist_compliance         = false
+    enforce_in_dev                 = false
     langfuse_public_key            = "fake-app-public-key"
     langfuse_secret_key            = "fake-app-secret-key"
     langfuse_compliance_public_key = "fake-app-public-key"

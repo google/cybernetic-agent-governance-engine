@@ -106,7 +106,7 @@ variables {
 
 # ─── Staging: AOF, every write saved, as in prod ─────────────────────────────
 
-# staging.tfvars as CI passes it. It sets enable_nist_compliance (POAM-2026-174).
+# staging.tfvars as CI passes it.
 run "staging_profile_persists_governance_state_on_every_write" {
   command = plan
 
@@ -123,12 +123,12 @@ run "staging_profile_persists_governance_state_on_every_write" {
   }
 }
 
-# The staging tier with the compliance flag forced off: AOF must not depend on it.
+# The staging tier with enforce_in_dev forced off: AOF must not depend on it.
 run "staging_without_nist_flag_keeps_aof_always" {
   command = plan
 
   variables {
-    enable_nist_compliance = false
+    enforce_in_dev = false
   }
 
   assert {
@@ -136,7 +136,7 @@ run "staging_without_nist_flag_keeps_aof_always" {
       module.memorystore_governance.persistence_mode == "AOF" &&
       module.memorystore_governance.aof_append_fsync == "ALWAYS"
     )
-    error_message = "staging must keep AOF with append_fsync = ALWAYS whatever the compliance flags say"
+    error_message = "staging must keep AOF with append_fsync = ALWAYS whatever enforce_in_dev says"
   }
   assert {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
@@ -150,13 +150,11 @@ run "prod_profile_persists_governance_state_on_every_write" {
   command = plan
 
   variables {
-    environment                = var.prod["environment"]
-    region                     = var.prod["region"]
-    zone                       = var.prod["zone"]
-    cage_deployment_region     = var.prod["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.prod, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.prod, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.prod, "enable_apac_mas_compliance", "false") == "true"
+    environment            = var.prod["environment"]
+    region                 = var.prod["region"]
+    zone                   = var.prod["zone"]
+    cage_deployment_region = var.prod["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.prod, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -176,13 +174,11 @@ run "eu_prod_profile_persists_governance_state_on_every_write" {
   command = plan
 
   variables {
-    environment                = var.eu_prod["environment"]
-    region                     = var.eu_prod["region"]
-    zone                       = var.eu_prod["zone"]
-    cage_deployment_region     = var.eu_prod["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.eu_prod, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.eu_prod, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.eu_prod, "enable_apac_mas_compliance", "false") == "true"
+    environment            = var.eu_prod["environment"]
+    region                 = var.eu_prod["region"]
+    zone                   = var.eu_prod["zone"]
+    cage_deployment_region = var.eu_prod["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.eu_prod, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -202,13 +198,11 @@ run "apac_prod_profile_persists_governance_state_on_every_write" {
   command = plan
 
   variables {
-    environment                = var.apac_prod["environment"]
-    region                     = var.apac_prod["region"]
-    zone                       = var.apac_prod["zone"]
-    cage_deployment_region     = var.apac_prod["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.apac_prod, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.apac_prod, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.apac_prod, "enable_apac_mas_compliance", "false") == "true"
+    environment            = var.apac_prod["environment"]
+    region                 = var.apac_prod["region"]
+    zone                   = var.apac_prod["zone"]
+    cage_deployment_region = var.apac_prod["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.apac_prod, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -224,14 +218,13 @@ run "apac_prod_profile_persists_governance_state_on_every_write" {
   }
 }
 
-# The tier alone enforces in prod; it does not wait for a compliance flag. The
-# flag is forced off because the staging profile CI passes sets it.
+# The tier alone enforces in prod; it does not wait for enforce_in_dev.
 run "prod_tier_without_compliance_flags_keeps_aof_always" {
   command = plan
 
   variables {
-    environment            = "prod"
-    enable_nist_compliance = false
+    environment    = "prod"
+    enforce_in_dev = false
   }
 
   assert {
@@ -239,11 +232,11 @@ run "prod_tier_without_compliance_flags_keeps_aof_always" {
       module.memorystore_governance.persistence_mode == "AOF" &&
       module.memorystore_governance.aof_append_fsync == "ALWAYS"
     )
-    error_message = "the prod tier must plan AOF with append_fsync = ALWAYS with no compliance flag set"
+    error_message = "the prod tier must plan AOF with append_fsync = ALWAYS with enforce_in_dev = false"
   }
 }
 
-# ─── Dev, the default tier: AOF only under a compliance flag ─────────────────
+# ─── Dev, the default tier: AOF only under enforce_in_dev ───────────────────
 # dev.tfvars sets neither region nor cage_deployment_region: deploy_all.sh takes
 # them from .env, so these runs use US_FED's, which us-dev.tfvars names for the
 # same cluster.
@@ -252,18 +245,16 @@ run "dev_profile_keeps_persistence_disabled" {
   command = plan
 
   variables {
-    environment                = lookup(var.dev, "environment", "dev")
-    region                     = lookup(var.dev, "region", "us-central1")
-    zone                       = lookup(var.dev, "zone", "us-central1-a")
-    cage_deployment_region     = lookup(var.dev, "cage_deployment_region", "US_FED")
-    enable_nist_compliance     = lookup(var.dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.dev, "environment", "dev")
+    region                 = lookup(var.dev, "region", "us-central1")
+    zone                   = lookup(var.dev, "zone", "us-central1-a")
+    cage_deployment_region = lookup(var.dev, "cage_deployment_region", "US_FED")
+    enforce_in_dev         = lookup(var.dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
     condition     = module.memorystore_governance.persistence_mode == "DISABLED"
-    error_message = "dev.tfvars sets no compliance flag, so the governance instance must plan an explicit DISABLED"
+    error_message = "dev.tfvars sets enforce_in_dev = false, so the governance instance must plan an explicit DISABLED"
   }
   assert {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
@@ -275,18 +266,16 @@ run "us_dev_profile_keeps_persistence_disabled" {
   command = plan
 
   variables {
-    environment                = lookup(var.us_dev, "environment", "dev")
-    region                     = lookup(var.us_dev, "region", "us-central1")
-    zone                       = lookup(var.us_dev, "zone", "us-central1-a")
-    cage_deployment_region     = lookup(var.us_dev, "cage_deployment_region", "US_FED")
-    enable_nist_compliance     = lookup(var.us_dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.us_dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.us_dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.us_dev, "environment", "dev")
+    region                 = lookup(var.us_dev, "region", "us-central1")
+    zone                   = lookup(var.us_dev, "zone", "us-central1-a")
+    cage_deployment_region = lookup(var.us_dev, "cage_deployment_region", "US_FED")
+    enforce_in_dev         = lookup(var.us_dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
     condition     = module.memorystore_governance.persistence_mode == "DISABLED"
-    error_message = "us-dev.tfvars sets no compliance flag, so the governance instance must plan an explicit DISABLED"
+    error_message = "us-dev.tfvars sets enforce_in_dev = false, so the governance instance must plan an explicit DISABLED"
   }
   assert {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
@@ -298,13 +287,11 @@ run "eu_dev_profile_persists_governance_state_on_every_write" {
   command = plan
 
   variables {
-    environment                = lookup(var.eu_dev, "environment", "dev")
-    region                     = var.eu_dev["region"]
-    zone                       = var.eu_dev["zone"]
-    cage_deployment_region     = var.eu_dev["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.eu_dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.eu_dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.eu_dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.eu_dev, "environment", "dev")
+    region                 = var.eu_dev["region"]
+    zone                   = var.eu_dev["zone"]
+    cage_deployment_region = var.eu_dev["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.eu_dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -312,7 +299,7 @@ run "eu_dev_profile_persists_governance_state_on_every_write" {
       module.memorystore_governance.persistence_mode == "AOF" &&
       module.memorystore_governance.aof_append_fsync == "ALWAYS"
     )
-    error_message = "eu-dev.tfvars sets enable_eu_ecb_compliance, so the governance instance must plan AOF with append_fsync = ALWAYS"
+    error_message = "eu-dev.tfvars sets enforce_in_dev = true, so the governance instance must plan AOF with append_fsync = ALWAYS"
   }
   assert {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
@@ -324,13 +311,11 @@ run "apac_dev_profile_persists_governance_state_on_every_write" {
   command = plan
 
   variables {
-    environment                = lookup(var.apac_dev, "environment", "dev")
-    region                     = var.apac_dev["region"]
-    zone                       = var.apac_dev["zone"]
-    cage_deployment_region     = var.apac_dev["cage_deployment_region"]
-    enable_nist_compliance     = lookup(var.apac_dev, "enable_nist_compliance", "false") == "true"
-    enable_eu_ecb_compliance   = lookup(var.apac_dev, "enable_eu_ecb_compliance", "false") == "true"
-    enable_apac_mas_compliance = lookup(var.apac_dev, "enable_apac_mas_compliance", "false") == "true"
+    environment            = lookup(var.apac_dev, "environment", "dev")
+    region                 = var.apac_dev["region"]
+    zone                   = var.apac_dev["zone"]
+    cage_deployment_region = var.apac_dev["cage_deployment_region"]
+    enforce_in_dev         = lookup(var.apac_dev, "enforce_in_dev", "false") == "true"
   }
 
   assert {
@@ -338,7 +323,7 @@ run "apac_dev_profile_persists_governance_state_on_every_write" {
       module.memorystore_governance.persistence_mode == "AOF" &&
       module.memorystore_governance.aof_append_fsync == "ALWAYS"
     )
-    error_message = "apac-dev.tfvars sets enable_apac_mas_compliance, so the governance instance must plan AOF with append_fsync = ALWAYS"
+    error_message = "apac-dev.tfvars sets enforce_in_dev = true, so the governance instance must plan AOF with append_fsync = ALWAYS"
   }
   assert {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
@@ -346,13 +331,13 @@ run "apac_dev_profile_persists_governance_state_on_every_write" {
   }
 }
 
-# The NIST flag on the dev tier, which no committed dev profile sets.
+# enforce_in_dev = true on a US dev plan.
 run "dev_tier_with_nist_flag_persists_governance_state_on_every_write" {
   command = plan
 
   variables {
-    environment            = "dev"
-    enable_nist_compliance = true
+    environment    = "dev"
+    enforce_in_dev = true
   }
 
   assert {
@@ -360,11 +345,11 @@ run "dev_tier_with_nist_flag_persists_governance_state_on_every_write" {
       module.memorystore_governance.persistence_mode == "AOF" &&
       module.memorystore_governance.aof_append_fsync == "ALWAYS"
     )
-    error_message = "a compliance flag on the dev tier must plan the governance instance with AOF and append_fsync = ALWAYS"
+    error_message = "enforce_in_dev = true on the dev tier must plan the governance instance with AOF and append_fsync = ALWAYS"
   }
   assert {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
-    error_message = "the app instance must plan an explicit DISABLED under a compliance flag too"
+    error_message = "the app instance must plan an explicit DISABLED under enforce_in_dev = true too"
   }
 }
 
