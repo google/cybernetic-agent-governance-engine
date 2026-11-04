@@ -43,8 +43,7 @@ removed on 2026-03-15.
 
 ```bash
 # Approved commands — see DEPLOYMENT_RULES.md for the full matrix
-./deploy_all.sh --target agnostic --env dev
-./deploy_all.sh --target gcp-gke --env dev --auto-approve
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve
 CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
   --var-file=infra/targets/gcp-gke/prod.tfvars
 ```

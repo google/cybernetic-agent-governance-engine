@@ -10,7 +10,7 @@
 
 > **Jurisdictional Architecture:** CAGE deploys to three regions controlled by `CAGE_DEPLOYMENT_REGION`. **ISO 42001** is the **universal baseline** active in all regions. NIST SP 800-53, EU AI Act/GDPR/DORA, and MAS FEAT are **jurisdictional extensions** active only in their respective regions. See [`docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md) for the full architectural rationale.
 
-> **Deployment Targets:** The `gcp-gke` deployment target (`infra/targets/gcp-gke/`) is an optional GCP-specific configuration. The `agnostic` deployment target (`infra/targets/agnostic/`) deploys to any Kubernetes 1.24+ cluster without GCP dependencies.
+> **Deployment Target:** The `gcp-gke` deployment target ([`infra/targets/gcp-gke/`](infra/targets/gcp-gke/main.tf)) is the repository's reference Terraform deployment target (`POAM-2026-185`); the core CAGE runtime (`src/gateway/`) remains cloud-agnostic and vendor-neutral.
 
 ---
 

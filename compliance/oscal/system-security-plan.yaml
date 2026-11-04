@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-04T22:02:42Z'
+    last-modified: '2026-11-04T19:59:27Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -19,10 +19,11 @@ system-security-plan:
 
       Posture Scope: US Federal deployments only (CAGE_DEPLOYMENT_REGION=US_FED)
 
-      EU_ECB SSP: compliance/oscal/system-security-plan-eu-ecb.yaml (EU AI Act + GDPR)
+      EU_ECB SSP: compliance/oscal/system-security-plan-eu-ecb.yaml (stub — not yet
+      implemented)
 
-      APAC_MAS SSP: compliance/oscal/system-security-plan-apac-mas.yaml (MAS FEAT
-      + MAS Notice 655)
+      APAC_MAS SSP: compliance/oscal/system-security-plan-apac-mas.yaml (stub — not
+      yet implemented)
 
       Note: This SSP is NOT applicable to EU_ECB or APAC_MAS deployments. Those regions
       use their own regional SSPs aligned to EU AI Act and MAS FEAT respectively.
@@ -1464,7 +1465,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-11-04T22:02:42Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-11-04T19:59:27Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1508,7 +1509,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-04T22:02:42Z'
+        value: '2026-11-04T19:59:27Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa
@@ -1741,24 +1742,24 @@ system-security-plan:
     - uuid: p9000001-plat-sc39-8000-platform001
       control-id: sc-39
       description: 'CAGE is a cloud-agnostic governance engine whose baseline process
-        isolation is enforced across all deployment modes (`infra/targets/agnostic/`
-        and cloud targets) via universal Kubernetes Pod Security Standards (`restricted`
-        profile in `deployment/k8s/pod-security-admission.yaml`), non-root execution
-        (`runAsNonRoot: true`, `runAsUser: 1000`), `allowPrivilegeEscalation: false`,
-        `capabilities: drop: ["ALL"]`, and `seccompProfile: RuntimeDefault` (`deployment/k8s/security-context-patch.yaml`,
-        `infra/modules/gateway/main.tf`). When deployed in the optional `gcp-gke`
-        deployment mode (`infra/targets/gcp-gke/`), CAGE adds target-specific split-plane
-        isolation: (1) Agent Application Plane (Optional GEAP Agent Runtime mode,
-        `advisor_runtime = "geap"` via `infra/modules/gcp_geap_advisor/main.tf`):
+        isolation is enforced across Kubernetes deployments (`deployment/k8s/` and
+        `infra/targets/gcp-gke/`) via universal Kubernetes Pod Security Standards
+        (`restricted` profile in `deployment/k8s/pod-security-admission.yaml`), non-root
+        execution (`runAsNonRoot: true`, `runAsUser: 1000`), `allowPrivilegeEscalation:
+        false`, `capabilities: drop: ["ALL"]`, and `seccompProfile: RuntimeDefault`
+        (`deployment/k8s/security-context-patch.yaml`, `infra/modules/gateway/main.tf`).
+        When deployed on the `gcp-gke` target (`infra/targets/gcp-gke/`), CAGE adds
+        target-specific split-plane isolation: (1) Agent Application Plane (Optional
+        GEAP Agent Runtime mode, `advisor_runtime = "geap"` via `infra/modules/gcp_geap_advisor/main.tf`):
         Untrusted agent orchestration and tool-calling workloads execute on Vertex
         AI Agent Engine (Agent Substrate) with hardware-enforced MicroVM isolation
         (dedicated guest Linux kernel per agent sandbox), eliminating the need for
-        nested-virtualization `runtimeClassName: microvm` pods on GKE (while `agnostic`
-        and `advisor_runtime = "gke"` modes run the advisor as a standard `restricted`
-        Kubernetes Deployment via `infra/modules/governed_advisor/main.tf`). (2) Governance
-        Control Plane (`gcp-gke` mode): Stateless governance-stack pods (`gateway`,
-        `compliance-bridge`, `opa`, `reconciliation-worker`) support optional `runtimeClassName:
-        gvisor` user-space kernel sandboxing on E2 CPU node pools (`enable_gvisor_sandbox`
+        nested-virtualization `runtimeClassName: microvm` pods on GKE (while `advisor_runtime
+        = "gke"` runs the advisor as a standard `restricted` Kubernetes Deployment
+        via `infra/modules/governed_advisor/main.tf`). (2) Governance Control Plane
+        (`gcp-gke` mode): Stateless governance-stack pods (`gateway`, `compliance-bridge`,
+        `opa`, `reconciliation-worker`) support optional `runtimeClassName: gvisor`
+        user-space kernel sandboxing on E2 CPU node pools (`enable_gvisor_sandbox`
         in `infra/modules/gcp_gke_cluster/main.tf`). (3) GPU Inference & Stateful
         Storage Plane (`gcp-gke` mode): Hardware-bound workloads (`vllm` on `gpu-l4`
         `g2-standard-8` NVIDIA L4 nodes and `clickhouse` on local-NVMe nodes) are

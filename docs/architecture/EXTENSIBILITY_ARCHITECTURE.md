@@ -711,7 +711,7 @@ CAGE's driver-based extensibility model ensures the governance kernel is not tie
 
 All three extension points are selected at runtime via configuration (`KMS_PROVIDER` read by [`signer_factory.py`](../../src/gateway/governance/signer_factory.py), `EVIDENCE_COLD_STORE` read by [`evidence/factory.py`](../../src/gateway/governance/evidence/factory.py), and the Ingress `ingressClassName`) — no code changes are required to switch between providers. Enforcing postures refuse the software signers.
 
-> **For PA Lead reviewers:** This architecture is consistent with the Kubernetes extension NonProduct classification: CAGE works with any Kubernetes 1.24+ cluster. GCP integrations are optional drivers, not core dependencies. The repository ships two Terraform targets: [`infra/targets/agnostic/`](../../infra/targets/agnostic/) (cloud-agnostic) and [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/) (the GKE + Linkerd mTLS reference deployment).
+> **For PA Lead reviewers:** This architecture is consistent with the Kubernetes extension NonProduct classification: CAGE works with any Kubernetes 1.24+ cluster (`deployment/k8s/`). GCP integrations are optional drivers, not core dependencies. The repository ships [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/) as its Terraform + Linkerd mTLS reference deployment target (`POAM-2026-185`).
 
 ---
 

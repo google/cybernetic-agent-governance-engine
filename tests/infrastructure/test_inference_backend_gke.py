@@ -253,7 +253,6 @@ def test_nemo_server_is_off_by_default() -> None:
     "path",
     [
         "infra/targets/gcp-gke/variables.tf",
-        "infra/targets/agnostic/variables.tf",
         "deploy_all.sh",
         "infra/load_env.sh",
     ],

@@ -63,14 +63,6 @@ while IFS= read -r line || [ -n "$line" ]; do
                 export TF_VAR_aws_secret_key="$var_value"
                 ;;
             
-            # MinIO configuration
-            S3_ENDPOINT_URL)
-                export TF_VAR_minio_endpoint="$var_value"
-                ;;
-            S3_BUCKET_NAME)
-                export TF_VAR_minio_bucket="$var_value"
-                ;;
-            
             # Model configuration
             MODEL_REASONING)
                 if [[ "$var_value" == gs://* ]]; then
@@ -167,7 +159,7 @@ echo "   REGISTRY_URL=${REGISTRY_URL:-<not set>}"
 echo "   STORAGE_BACKEND=${STORAGE_BACKEND:-<not set>}"
 echo ""
 echo "💡 Usage with Terraform:"
-echo "   cd infra/targets/gcp-gke  # or infra/targets/agnostic"
+echo "   cd infra/targets/gcp-gke"
 echo "   terraform plan"
 echo "   terraform apply"
 echo ""

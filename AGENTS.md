@@ -144,9 +144,8 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
   gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
     --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
   ```
-- **Local/agnostic target**: `./deploy_all.sh --target agnostic --env dev`
 - **DNS & Custom Domains**: When provisioning custom domains in cloud sandbox or staging environments, subdomains must be managed in Cloud DNS with upstream NS delegation rather than ephemeral workload stacks. Managed zones must be persistent foundational resources to avoid orphaned zone takeover.
-- `deployment/terraform/` was historical reference (directory has been removed from the repository); active IaC lives exclusively under `infra/`.
+- `deployment/terraform/` and `2bacc478:infra/targets/agnostic/main.tf` were historical reference (both directories have been removed from the repository); active IaC lives exclusively under [`infra/targets/gcp-gke/`](infra/targets/gcp-gke/main.tf) and [`infra/modules/`](infra/modules/).
 
 ---
 

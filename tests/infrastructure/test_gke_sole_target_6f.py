@@ -1443,3 +1443,38 @@ class TestDeadOscalApiKeyRemoval:
         )
         assert "only keys mapped in the case" in load_env_sh
 
+
+# ============================================================================
+# 10. POAM-2026-185 — Retire Broken agnostic Target & Agnostic-Only Modules
+# ============================================================================
+
+
+class TestAgnosticTargetEliminated:
+    """Verify POAM-2026-185: broken `infra/targets/agnostic` and its legacy modules are removed."""
+
+    def test_gcp_gke_is_the_sole_terraform_target_directory(self) -> None:
+        targets_dir = REPO_ROOT / "infra" / "targets"
+        target_names = sorted(p.name for p in targets_dir.iterdir() if p.is_dir())
+        assert target_names == ["gcp-gke"], (
+            f"Expected ['gcp-gke'] as the sole Terraform target under infra/targets/, got {target_names}"
+        )
+
+    @pytest.mark.parametrize(
+        "retired_module",
+        ["minio_storage", "postgres_db", "redis_cache"],
+    )
+    def test_agnostic_only_modules_are_removed(self, retired_module: str) -> None:
+        assert not (REPO_ROOT / "infra" / "modules" / retired_module).exists(), (
+            f"infra/modules/{retired_module} was only used by the retired agnostic target and must not exist"
+        )
+
+    def test_deploy_scripts_do_not_accept_or_advertise_agnostic_target(self) -> None:
+        deploy_all = (REPO_ROOT / "deploy_all.sh").read_text(encoding="utf-8")
+        assert "--target agnostic" not in deploy_all
+        assert 'if [[ "$target" == "agnostic" ]]' not in deploy_all
+        assert 'if [[ "$target" != "gcp-gke" || ! -d "$tf_dir" ]]' in deploy_all
+
+        load_env = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
+        assert "infra/targets/agnostic" not in load_env
+        assert "TF_VAR_minio_endpoint" not in load_env
+        assert "TF_VAR_minio_bucket" not in load_env
