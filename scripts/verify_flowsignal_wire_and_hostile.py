@@ -137,7 +137,7 @@ from src.gateway.governance.routing_seal import (
 )
 from src.gateway.governance.seams.normative import ValidationResult
 from src.integrations.provider_01.provider import (
-    FlowSignalNormativeProvider,
+    Provider01NormativeProvider,
     _build_cage_authority_request,
 )
 
@@ -389,7 +389,7 @@ async def main() -> None:
             return_value=mock_evidence_sink,
         ),
     ):
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint=endpoint,
             api_key=bearer,
             gcp_id_token=id_token,
@@ -461,7 +461,7 @@ async def main() -> None:
         assert res_refuse_action.admitted is False
         assert not refuse_token_minted
         assert any(
-            f.get("code") == "FLOWSIGNAL_REFUSE" for f in res_refuse_action.findings
+            f.get("code") == "PROVIDER_01_REFUSE" for f in res_refuse_action.findings
         )
 
         # 1D. Provider-level live REFUSE (expired mandate) -> no token

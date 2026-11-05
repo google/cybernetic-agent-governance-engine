@@ -831,7 +831,7 @@ async def validate_action_endpoint(
             policy_version_id=body.policy_version_id,
         )
 
-        # Phase 1, §3.2: HTTP 202 Accepted for FlowSignal ESCALATE decisions
+        # Phase 1, §3.2: HTTP 202 Accepted for normative provider ESCALATE decisions
         # When the verdict is DEFER and it's an external provider escalation, return
         # HTTP 202 with an async receipt body so clients know to poll for resolution.
         # Detection: defer_reason == "EXTERNAL_HOLD" OR
@@ -856,7 +856,7 @@ async def validate_action_endpoint(
                 "latency_ms": result.get("latency_ms", 0),
             }
             logger.info(
-                "🔔 FlowSignal ESCALATE → HTTP 202: defer_id=%s action=%s",
+                "🔔 Normative provider ESCALATE → HTTP 202: defer_id=%s action=%s",
                 defer_id,
                 body.action,
             )

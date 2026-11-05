@@ -439,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         "diagnose-receipt",
         help=(
             "Compare CAGE verify_partner_receipt() preimage and field requirements "
-            "against Archytan's receipt signing scheme"
+            "against actuator_01 partner receipt signing scheme"
         ),
         allow_abbrev=False,
     )

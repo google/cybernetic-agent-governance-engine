@@ -87,7 +87,7 @@ _VECTORS_DIR = Path(__file__).resolve().parent / "vectors"
 _PROFILE_VECTOR_FILES: Mapping[str, str] = MappingProxyType(
     {
         "substrate-v1": "substrate_v1.json",
-        "flowsignal-v0.2": "flowsignal_v02.json",
+        "provider-01-v0.2": "provider_01_v02.json",
     }
 )
 _SHA256_LOWER_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -281,7 +281,7 @@ def _load_profile_vectors(profile: str) -> tuple[InputDigest, dict[str, Any]]:
 def _validate_strict_response_schema(
     body: Mapping[str, Any], *, max_clock_skew_seconds: int = 300
 ) -> Optional[str]:
-    """Validate a FlowSignal v0.2 receipt against strict hash and timestamp rules."""
+    """Validate a provider_01 v0.2 receipt against strict hash and timestamp rules."""
     for field_name in ("policy_pack_hash", "Canonical_payload_hash"):
         val = body.get(field_name)
         if not isinstance(val, str) or not _SHA256_LOWER_RE.match(val):
@@ -407,7 +407,7 @@ def _run_substrate_v1(
     return len(checks), tuple(assertions)
 
 
-def _run_flowsignal_v02(
+def _run_provider_01_v02(
     base_url: str,
     headers: Mapping[str, str],
     vectors: Mapping[str, Any],
@@ -628,8 +628,8 @@ def verify_endpoint(
         checked, assertions = _run_substrate_v1(
             endpoint_url, headers, vectors, http_requester, timeout_s
         )
-    elif profile == "flowsignal-v0.2":
-        checked, assertions = _run_flowsignal_v02(
+    elif profile == "provider-01-v0.2":
+        checked, assertions = _run_provider_01_v02(
             endpoint_url, headers, vectors, http_requester, timeout_s
         )
     else:  # pragma: no cover - guarded by _load_profile_vectors

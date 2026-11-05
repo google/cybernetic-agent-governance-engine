@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Ed25519 JCS Signature Verification for InferTheta Inference Responses.
+Ed25519 JCS Signature Verification for Provider 07 Inference Responses.
 
 Implements RFC 8785 JSON Canonicalization Scheme (JCS) with Ed25519
 cryptographic verification to ensure inference response integrity and
@@ -58,7 +58,7 @@ def verify_inference_signature(
     canonicalizes it via RFC 8785 JCS, and verifies the Ed25519 signature.
 
     Args:
-        payload: Inference response payload (InferThetaInferenceResponse dict)
+        payload: Inference response payload (Provider07InferenceResponse dict)
         public_key: Ed25519 public key resolved from out-of-band JWKS
         signature_b64: Base64url-encoded signature bytes from response.signature
 
@@ -80,7 +80,7 @@ def verify_inference_signature(
         # Step 2: Canonicalize via RFC 8785 JCS
         # This produces deterministic byte representation, preventing
         # floating-point canonicalization drift between Python and other
-        # languages (e.g., Go, Java in the InferTheta service).
+        # languages (e.g., Go, Java in the Provider 07 service).
         canonical_bytes = jcs_canonicalize_plan(canonical_payload)
 
         # Step 3: Decode base64url signature bytes

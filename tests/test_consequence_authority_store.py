@@ -206,7 +206,7 @@ async def test_ttl_expiry_allows_re_consumption(
     await asyncio.sleep(1.2)
 
     # Key should be gone
-    key = "flowsignal:token:fs-token-004"
+    key = "consequence:token:fs-token-004"
     exists = await redis_client.exists(key)
     assert exists == 0, "Key should be expired"
 
@@ -476,12 +476,12 @@ def test_from_env_uses_defaults() -> None:
 
 @pytest.mark.local
 def test_from_env_reads_custom_env_vars() -> None:
-    """from_env() reads REDIS_URL and FLOWSIGNAL_CONSUMPTION_TTL_SECONDS env vars."""
+    """from_env() reads REDIS_URL and CAGE_CONSEQUENCE_CONSUMPTION_TTL_SECONDS env vars."""
     with patch.dict(
         os.environ,
         {
             "REDIS_URL": "redis://custom-host:6380/1",
-            "FLOWSIGNAL_CONSUMPTION_TTL_SECONDS": "120",
+            "CAGE_CONSEQUENCE_CONSUMPTION_TTL_SECONDS": "120",
         },
     ):
         with patch(
@@ -511,7 +511,7 @@ def test_from_env_reads_custom_env_vars() -> None:
 async def test_key_schema_format(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
-    """Verify the Redis key schema is flowsignal:token:<authority_record_id>."""
+    """Verify the Redis key schema is consequence:token:<authority_record_id>."""
     store = ConsequenceAuthorityStore(
         redis_client=redis_client,
         replication=ReplicationPolicy.standalone(),
@@ -532,7 +532,7 @@ async def test_key_schema_format(
     )
 
     # Verify the key exists with the expected schema
-    key = f"flowsignal:token:{authority_record_id}"
+    key = f"consequence:token:{authority_record_id}"
     exists = await redis_client.exists(key)
     assert exists == 1, f"Key {key} should exist in Redis"
 

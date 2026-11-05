@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live integration tests for Provider 07 (InferTheta Bayesian Causal Suitability Oracle).
+"""Live integration tests for Provider 07 (Bayesian Causal Suitability Oracle).
 
 Executes live HTTP requests against the deployed Provider 07 staging endpoint
 when configured via environment variables.
@@ -41,10 +41,10 @@ from src.gateway.governance.seams.normative import (
 from src.integrations.provider_07.adapter import Provider07NormativeProvider
 from src.integrations.provider_07.jwks_client import Provider07JwksClient
 from src.integrations.provider_07.schema import (
-    InferThetaBaselineResponse,
-    InferThetaEvidenceResponse,
-    InferThetaInferenceRequest,
-    InferThetaInferenceResponse,
+    Provider07BaselineResponse,
+    Provider07EvidenceResponse,
+    Provider07InferenceRequest,
+    Provider07InferenceResponse,
 )
 from src.integrations.provider_07.signature import verify_inference_signature
 
@@ -283,7 +283,7 @@ async def test_live_jwks_resolution(
     assert len(public_key.public_bytes_raw()) == 32
 
     # Unknown kid must return None (fail-closed contract)
-    unknown_key = await jwks_client.get_key("infertheta-unknown-kid-9999")
+    unknown_key = await jwks_client.get_key("provider07-unknown-kid-9999")
     assert unknown_key is None
 
 
@@ -307,7 +307,7 @@ async def test_live_infer_contract_vectors(
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         for vector in canonical_vectors:
-            req_model = InferThetaInferenceRequest(**vector["request"])
+            req_model = Provider07InferenceRequest(**vector["request"])
             response = await client.post(
                 url, json=req_model.model_dump(), headers=headers
             )
@@ -315,7 +315,7 @@ async def test_live_infer_contract_vectors(
 
             resp_data = response.json()
             assert "authority_record_id" in resp_data
-            resp_model = InferThetaInferenceResponse(**resp_data)
+            resp_model = Provider07InferenceResponse(**resp_data)
 
             # Assert tri-state decision matches partner expectation
             assert resp_model.decision == vector["expected_decision"]
@@ -370,7 +370,7 @@ async def test_live_adapter_step2_enforcing_validation(
 
         if vector["expected_decision"] == "ALLOW":
             assert result.admitted is True
-            assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
+            assert result.findings[0]["code"] == "PROVIDER_07_ALLOW"
             assert "step1_demo_mode" not in result.findings[0]
             assert result.findings[0]["authority_record_id"].startswith(
                 "infertheta-ar-"
@@ -378,11 +378,11 @@ async def test_live_adapter_step2_enforcing_validation(
             assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.094135)
         elif vector["expected_decision"] == "REFUSE":
             assert result.admitted is False
-            assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
+            assert result.findings[0]["code"] == "PROVIDER_07_UNSUITABLE"
             assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.449457)
         elif vector["expected_decision"] == "ESCALATE":
             assert result.admitted is False
-            assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
+            assert result.findings[0]["code"] == "PROVIDER_07_ESCALATE"
             assert result.findings[0]["needs_human_review"] is True
             assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.257988)
 

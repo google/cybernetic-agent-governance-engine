@@ -45,7 +45,7 @@ from src.gateway.governance.normative_provider import (
 from src.gateway.governance.seams.normative import (
     NormativeBaseline,
 )
-from src.integrations.provider_01 import FlowSignalNormativeProvider
+from src.integrations.provider_01 import Provider01NormativeProvider
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -273,9 +273,9 @@ class TestProviderFactory:
         assert isinstance(provider, StubNormativeProvider)
 
     def test_provider_factory_maps_provider_01(self) -> None:
-        """get_normative_provider('provider_01') returns FlowSignalNormativeProvider."""
+        """get_normative_provider('provider_01') returns Provider01NormativeProvider."""
         provider = get_normative_provider("provider_01")
-        assert isinstance(provider, FlowSignalNormativeProvider)
+        assert isinstance(provider, Provider01NormativeProvider)
 
     def test_provider_factory_unknown_raises(self) -> None:
         """Unknown provider name raises ValueError."""
@@ -289,12 +289,12 @@ class TestProviderFactory:
             assert isinstance(provider, StubNormativeProvider)
 
 
-class TestFlowSignalNormativeProvider:
-    """Tests for FlowSignalNormativeProvider URL construction."""
+class TestProvider01NormativeProvider:
+    """Tests for Provider01NormativeProvider URL construction."""
 
     def test_constructs_correct_baseline_url(self) -> None:
-        """FlowSignalNormativeProvider builds correct endpoint URL for baseline fetch."""
-        provider = FlowSignalNormativeProvider(
+        """Provider01NormativeProvider builds correct endpoint URL for baseline fetch."""
+        provider = Provider01NormativeProvider(
             endpoint="https://api.provider01.example.com"
         )
         # Verify endpoint is stored correctly (URL construction tested via fetch)
@@ -302,7 +302,7 @@ class TestFlowSignalNormativeProvider:
 
     def test_strips_trailing_slash(self) -> None:
         """Endpoint trailing slash is stripped."""
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://api.provider01.example.com/"
         )
         assert provider._endpoint == "https://api.provider01.example.com"
@@ -332,7 +332,7 @@ class TestFlowSignalNormativeProvider:
                 captured["url"] = url
                 raise RuntimeError("stop after URL capture")
 
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://api.provider01.example.com"
         )
         with patch("httpx.AsyncClient", _Client):
@@ -362,7 +362,7 @@ class TestFlowSignalNormativeProvider:
                 captured["url"] = url
                 raise RuntimeError("stop after URL capture")
 
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://api.provider01.example.com"
         )
         with patch("httpx.AsyncClient", _Client):

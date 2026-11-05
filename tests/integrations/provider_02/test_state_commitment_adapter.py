@@ -216,7 +216,7 @@ class TestSubmitPath:
         with (
             pytest.deprecated_call(
                 match=(
-                    r"include_topology=False.*NexArt Nodes < v0\.30\.1.*"
+                    r"include_topology=False.*Provider 02 nodes < v0\.30\.1.*"
                     r"omitting evidence\.topology weakens structural execution "
                     r"provenance \(AU-10\)"
                 )
@@ -231,7 +231,7 @@ class TestSubmitPath:
             "omitting evidence.topology weakens structural execution provenance (AU-10)"
             in logged
         )
-        assert "NexArt Nodes < v0.30.1" in logged
+        assert "Provider 02 nodes < v0.30.1" in logged
         (_, topology), _ = attestor.attest_bundle.call_args
         assert topology is None
 

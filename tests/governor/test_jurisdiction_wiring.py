@@ -645,7 +645,7 @@ def _escalate() -> ValidationResult:
 def _refuse() -> ValidationResult:
     return ValidationResult(
         admitted=False,
-        findings=[{"code": "FLOWSIGNAL_REFUSE", "message": "mandate revoked"}],
+        findings=[{"code": "PROVIDER_01_REFUSE", "message": "mandate revoked"}],
     )
 
 

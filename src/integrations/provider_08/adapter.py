@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-provider_08 — Verdict Runtime Evidence Normative Provider Adapter
-==================================================================
+provider_08 — Runtime Evidence Normative Provider Adapter
+==========================================================
 
-Implements the three-endpoint ``NormativeProvider`` seam against Verdict
-(https://verdict.systems/api/cage):
+Implements the three-endpoint ``NormativeProvider`` seam for ``provider_08``:
 
   - GET  /legal-baseline/{region}       → Normative Data Supply
   - POST /validate/fria                 → External Validation (sync gate)
@@ -24,11 +23,11 @@ Implements the three-endpoint ``NormativeProvider`` seam against Verdict
 
 Decision mapping (mirrors provider_01 / provider_07 tri-state contract):
 
-  ALLOW     → kernel mints a ConsequenceToken bound to Verdict's
+  ALLOW     → kernel mints a ConsequenceToken bound to the provider's
               ``authority_record_id``; mint failure fails closed.
   REFUSE    → admitted=False, finding ``PROVIDER_08_REFUSE`` (blocked).
   ESCALATE  → admitted=False, finding ``EXTERNAL_HOLD`` with
-              ``needs_human_review=True`` and Verdict's ``hold_ttl_seconds``
+              ``needs_human_review=True`` and ``hold_ttl_seconds``
               (default 300) for DeferQueue parking.
   HTTP/timeout error → ``ENDPOINT_ERROR``; malformed body → ``PARSE_ERROR``.
 
@@ -40,7 +39,7 @@ Environment variables (``from_env()``):
   PROVIDER_08_API_KEY            — Bearer key (falls back to
                                     CAGE_NORMATIVE_API_KEY_SECRET)
   PROVIDER_08_TIMEOUT_SECONDS    — HTTP timeout (default 5.0)
-  PROVIDER_08_REQUIRE_ANCHOR     — "true" to fail closed when Verdict reports
+  PROVIDER_08_REQUIRE_ANCHOR     — "true" to fail closed when the provider reports
                                     the Rekor anchor as deferred (default false)
 
 The adapter never raises across the seam: every failure is captured in the
@@ -65,9 +64,9 @@ from src.gateway.governance.seams.normative import (
 )
 
 from .schema import (
-    VerdictBaselineResponse,
-    VerdictEvidenceSealResponse,
-    VerdictFriaResponse,
+    Provider08BaselineResponse,
+    Provider08EvidenceSealResponse,
+    Provider08FriaResponse,
 )
 
 if TYPE_CHECKING:
@@ -110,7 +109,7 @@ def _first_str(payload: dict[str, Any], *keys: str) -> str:
 
 
 class Provider08NormativeProvider:
-    """Verdict Systems runtime-evidence ``NormativeProvider`` (slot ``provider_08``)."""
+    """Runtime-evidence ``NormativeProvider`` (slot ``provider_08``)."""
 
     def __init__(
         self,
@@ -134,7 +133,7 @@ class Provider08NormativeProvider:
         self._require_anchor = require_anchor
         if not api_key:
             logger.warning(
-                "provider_08: no API key configured — keyed Verdict endpoints "
+                "provider_08: no API key configured — keyed provider_08 endpoints "
                 "answer 401/503 and every gate call will fail closed."
             )
 
@@ -174,7 +173,7 @@ class Provider08NormativeProvider:
     async def fetch_baseline(self, region: str) -> NormativeBaseline:
         """Fetch the regional control-mapping profile.
 
-        Verdict's strong ETag equals the SHA-256 of the canonical profile, so
+        The provider's strong ETag equals the SHA-256 of the canonical profile, so
         ``NormativeDaemon`` change detection works on either field.
         """
         url = f"{self._endpoint}/legal-baseline/{quote(region, safe='')}"
@@ -182,7 +181,7 @@ class Provider08NormativeProvider:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
-                parsed = VerdictBaselineResponse(**resp.json())
+                parsed = Provider08BaselineResponse(**resp.json())
             etag = resp.headers.get("ETag", "").strip('"') or parsed.profile_sha256
             return NormativeBaseline(
                 region=region,
@@ -217,12 +216,12 @@ class Provider08NormativeProvider:
             return self._blocked(FINDING_CODE_ENDPOINT_ERROR, str(exc))
 
         try:
-            parsed = VerdictFriaResponse(**data)
+            parsed = Provider08FriaResponse(**data)
         except (ValidationError, TypeError) as exc:
             logger.warning("provider_08: malformed FRIA response: %s", exc)
             return self._blocked(
                 FINDING_CODE_PARSE_ERROR,
-                f"Malformed Verdict FRIA response: {exc}",
+                f"Malformed provider_08 FRIA response: {exc}",
             )
 
         provider_findings = [
@@ -262,7 +261,7 @@ class Provider08NormativeProvider:
                         "code": FINDING_CODE_REFUSE,
                         "status": "fail",
                         "severity": "blocked",
-                        "message": parsed.message or "Verdict refused the action",
+                        "message": parsed.message or "Provider 08 refused the action",
                         "authority_record_id": parsed.authority_record_id,
                     },
                     *provider_findings,
@@ -277,7 +276,7 @@ class Provider08NormativeProvider:
                     "code": FINDING_CODE_EXTERNAL_HOLD,
                     "status": "fail",
                     "severity": "review",
-                    "message": parsed.message or "Verdict escalated — human review",
+                    "message": parsed.message or "Provider 08 escalated — human review",
                     "needs_human_review": True,
                     "hold_ttl_seconds": parsed.hold_ttl_seconds
                     or _DEFAULT_HOLD_TTL_SECONDS,
@@ -290,7 +289,7 @@ class Provider08NormativeProvider:
     # -- GET /evidence-chain/{thread_id} --------------------------------------
 
     async def submit_evidence(self, thread_id: str, evidence_hash: str) -> EvidenceSeal:
-        """Seal the local evidence digest into a Verdict record held externally."""
+        """Seal the local evidence digest into a record held externally."""
         url = f"{self._endpoint}/evidence-chain/{quote(thread_id, safe='')}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -300,7 +299,7 @@ class Provider08NormativeProvider:
                     params={"evidence_hash": evidence_hash},
                 )
                 resp.raise_for_status()
-                parsed = VerdictEvidenceSealResponse(**resp.json())
+                parsed = Provider08EvidenceSealResponse(**resp.json())
         except httpx.HTTPStatusError as exc:
             msg = f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
             logger.error("provider_08: submit_evidence %s → %s", url, msg)

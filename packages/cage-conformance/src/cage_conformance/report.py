@@ -50,7 +50,7 @@ MODE_PROFILES: Mapping[str, str] = MappingProxyType(
     {"trace": "trace-v1", "stream": "stream-v1"}
 )
 #: Live endpoint contract profiles.
-ENDPOINT_PROFILES: tuple[str, ...] = ("substrate-v1", "flowsignal-v0.2")
+ENDPOINT_PROFILES: tuple[str, ...] = ("substrate-v1", "provider-01-v0.2")
 MODES: tuple[str, ...] = (*MODE_PROFILES, "endpoint")
 
 _ORG_TOKEN = re.compile(r"[a-z0-9]+")

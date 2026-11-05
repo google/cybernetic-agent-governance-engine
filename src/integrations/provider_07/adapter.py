@@ -27,7 +27,7 @@ Key Features:
 - Comprehensive error handling with structured findings
 
 Architectural Invariants:
-- Gate G8: Vendor brand name "InferTheta" used ONLY in docstrings
+- Gate G8: No vendor brand names in code or finding codes
 - Gate G3: No circular imports (lazy seam import via function-scope)
 - Fail-closed on HTTP errors, timeouts, signature failures, unknown kid
 - ALLOW decisions require non-empty authority_record_id (token mint proof)
@@ -58,10 +58,10 @@ from src.gateway.governance.seams.normative import (
 
 from .jwks_client import Provider07JwksClient
 from .schema import (
-    InferThetaBaselineResponse,
-    InferThetaEvidenceResponse,
-    InferThetaInferenceRequest,
-    InferThetaInferenceResponse,
+    Provider07BaselineResponse,
+    Provider07EvidenceResponse,
+    Provider07InferenceRequest,
+    Provider07InferenceResponse,
 )
 from .signature import verify_inference_signature
 
@@ -94,7 +94,7 @@ class Provider07NormativeProvider:
     3. submit_evidence(thread_id, evidence_hash) → Audit trail submission
 
     Configuration:
-        endpoint: Base URL of the InferTheta service (e.g., "http://localhost:8087")
+        endpoint: Base URL of the Provider 07 service (e.g., "http://localhost:8087")
         api_key: Optional API key for authentication (default: "")
         jwks_url: JWKS manifest endpoint for Ed25519 key resolution
         timeout_seconds: HTTP request timeout (default: 5.0)
@@ -120,7 +120,7 @@ class Provider07NormativeProvider:
         Initialize Provider 07 adapter.
 
         Args:
-            endpoint: Base URL of the InferTheta service
+            endpoint: Base URL of the Provider 07 service
             api_key: Optional API key for HTTP Authentication header
             jwks_url: JWKS manifest endpoint (default: {endpoint}/.well-known/jwks.json)
             timeout_seconds: HTTP request timeout in seconds
@@ -232,10 +232,10 @@ class Provider07NormativeProvider:
                 data = response.json()
 
             # Parse to Pydantic schema for validation
-            baseline_response = InferThetaBaselineResponse(**data)
+            baseline_response = Provider07BaselineResponse(**data)
 
             # Convert to NormativeBaseline format
-            # Map InferTheta's rule schema to CAGE's profile format
+            # Map Provider 07's rule schema to CAGE's profile format
             profile = {
                 "region": baseline_response.region,
                 "rules": [rule.model_dump() for rule in baseline_response.rules],
@@ -267,9 +267,9 @@ class Provider07NormativeProvider:
         Wire Protocol:
             POST {endpoint}/infer
             Content-Type: application/json
-            Body: InferThetaInferenceRequest
+            Body: Provider07InferenceRequest
 
-        Response Schema (InferThetaInferenceResponse):
+        Response Schema (Provider07InferenceResponse):
             {
                 "decision": "ALLOW" | "REFUSE" | "ESCALATE",
                 "confidence_score": 0.95,
@@ -285,9 +285,9 @@ class Provider07NormativeProvider:
         Fail-Closed Decision Mapping:
             ALLOW + valid signature + non-empty authority_record_id → admitted=True
             ALLOW + valid signature + missing authority_record_id → admitted=False (TOKEN_MINT_FAILED)
-            ALLOW + invalid signature → admitted=False (INFERTHETA_SIGNATURE_INVALID)
-            REFUSE → admitted=False (INFERTHETA_UNSUITABLE)
-            ESCALATE → admitted=False, needs_human_review=True (INFERTHETA_ESCALATE)
+            ALLOW + invalid signature → admitted=False (PROVIDER_07_SIGNATURE_INVALID)
+            REFUSE → admitted=False (PROVIDER_07_UNSUITABLE)
+            ESCALATE → admitted=False, needs_human_review=True (PROVIDER_07_ESCALATE)
             HTTP error / timeout / unknown kid → admitted=False (PROVIDER_07_HTTP_ERROR)
 
         Args:
@@ -300,9 +300,9 @@ class Provider07NormativeProvider:
         logger.info("provider_07: Validating FRIA at %s", url)
 
         try:
-            # Map generic payload to InferTheta inference request schema
-            # This adapter expects the payload to already be in InferThetaInferenceRequest format
-            request_data = InferThetaInferenceRequest(**payload)
+            # Map generic payload to Provider 07 inference request schema
+            # This adapter expects the payload to already be in Provider07InferenceRequest format
+            request_data = Provider07InferenceRequest(**payload)
 
             headers = {"Content-Type": "application/json"}
             if self._api_key:
@@ -318,7 +318,7 @@ class Provider07NormativeProvider:
                 data = response.json()
 
             # Parse response to Pydantic schema
-            inference_response = InferThetaInferenceResponse(**data)
+            inference_response = Provider07InferenceResponse(**data)
 
         except httpx.HTTPError as exc:
             error_msg = f"HTTP error during inference: {exc}"
@@ -369,7 +369,7 @@ class Provider07NormativeProvider:
                     admitted=False,
                     findings=[
                         {
-                            "code": "INFERTHETA_JWKS_ERROR",
+                            "code": "PROVIDER_07_JWKS_ERROR",
                             "message": f"Failed to resolve kid={inference_response.kid}: {exc}",
                             "status": "error",
                         }
@@ -386,7 +386,7 @@ class Provider07NormativeProvider:
                     admitted=False,
                     findings=[
                         {
-                            "code": "INFERTHETA_UNKNOWN_KEY",
+                            "code": "PROVIDER_07_UNKNOWN_KEY",
                             "message": f"Unknown Key Identifier: {inference_response.kid}",
                             "status": "fail",
                         }
@@ -410,7 +410,7 @@ class Provider07NormativeProvider:
                     admitted=False,
                     findings=[
                         {
-                            "code": "INFERTHETA_SIGNATURE_INVALID",
+                            "code": "PROVIDER_07_SIGNATURE_INVALID",
                             "message": "Ed25519 signature verification failed",
                             "status": "fail",
                         }
@@ -451,7 +451,7 @@ class Provider07NormativeProvider:
                 inference_response.posterior_risk_score,
             )
             finding: dict[str, Any] = {
-                "code": "INFERTHETA_ALLOW",
+                "code": "PROVIDER_07_ALLOW",
                 "message": "Bayesian inference admits action",
                 "status": "pass",
                 "authority_record_id": inference_response.authority_record_id,
@@ -495,7 +495,7 @@ class Provider07NormativeProvider:
                 admitted=False,
                 findings=[
                     {
-                        "code": "INFERTHETA_UNSUITABLE",
+                        "code": "PROVIDER_07_UNSUITABLE",
                         "message": "Bayesian inference refuses action (unsuitable)",
                         "status": "fail",
                         "posterior_risk_score": inference_response.posterior_risk_score,
@@ -512,7 +512,7 @@ class Provider07NormativeProvider:
                 admitted=False,
                 findings=[
                     {
-                        "code": "INFERTHETA_ESCALATE",
+                        "code": "PROVIDER_07_ESCALATE",
                         "message": "Bayesian inference escalates action to human review",
                         "status": "fail",
                         "needs_human_review": True,
@@ -528,7 +528,7 @@ class Provider07NormativeProvider:
                 admitted=False,
                 findings=[
                     {
-                        "code": "INFERTHETA_UNKNOWN_DECISION",
+                        "code": "PROVIDER_07_UNKNOWN_DECISION",
                         "message": f"Unknown decision state: {decision}",
                         "status": "error",
                     }
@@ -544,7 +544,7 @@ class Provider07NormativeProvider:
             Content-Type: application/json
             Body: {"evidence_hash": "sha256..."}
 
-        Response (InferThetaEvidenceResponse):
+        Response (Provider07EvidenceResponse):
             {
                 "thread_id": "...",
                 "seal_hash": "8a767c98...",
@@ -577,7 +577,7 @@ class Provider07NormativeProvider:
                 response.raise_for_status()
                 data = response.json()
 
-            evidence_response = InferThetaEvidenceResponse(**data)
+            evidence_response = Provider07EvidenceResponse(**data)
             if evidence_response.thread_id != thread_id:
                 raise ValueError(
                     f"Evidence seal thread_id mismatch: expected={thread_id!r} got={evidence_response.thread_id!r}"

@@ -500,7 +500,7 @@ def _substrate_requester(
     return _req
 
 
-def _flowsignal_requester(
+def _provider_01_requester(
     *, break_case1a: bool = False, seen_headers: list[dict[str, str]] | None = None
 ) -> cc.HttpRequester:
     def _req(
@@ -550,7 +550,7 @@ def _flowsignal_requester(
             "Canonical_payload_hash": canonical_hash,
             "signature": {
                 "alg": "Ed25519",
-                "kid": "flowsignal-normative-ed25519-2026-01",
+                "kid": "provider-01-normative-ed25519-2026-01",
                 "sig": "c2lnbmF0dXJl",
             },
         }
@@ -591,15 +591,15 @@ def test_substrate_v1_endpoint_conformance() -> None:
     ]
 
 
-def test_flowsignal_v02_endpoint_conformance() -> None:
+def test_provider_01_v02_endpoint_conformance() -> None:
     seen_headers: list[dict[str, str]] = []
     report = cc.verify_endpoint(
         "https://normative.example.test",
-        profile="flowsignal-v0.2",
-        provenance=_endpoint_provenance("flowsignal-v0.2"),
+        profile="provider-01-v0.2",
+        provenance=_endpoint_provenance("provider-01-v0.2"),
         api_key="test-key",
         gcp_id_token="test-id-token",
-        http_requester=_flowsignal_requester(seen_headers=seen_headers),
+        http_requester=_provider_01_requester(seen_headers=seen_headers),
     )
     assert report.conformant, [a for a in report.assertions if not a.passed]
     assert report.checked == 11
@@ -621,9 +621,9 @@ def test_flowsignal_v02_endpoint_conformance() -> None:
 
     broken = cc.verify_endpoint(
         "https://normative.example.test",
-        profile="flowsignal-v0.2",
-        provenance=_endpoint_provenance("flowsignal-v0.2"),
-        http_requester=_flowsignal_requester(break_case1a=True),
+        profile="provider-01-v0.2",
+        provenance=_endpoint_provenance("provider-01-v0.2"),
+        http_requester=_provider_01_requester(break_case1a=True),
     )
     assert not broken.conformant
     assert {a.assertion_id for a in broken.assertions if not a.passed} == {

@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """
-test_provider_07_adapter.py — Provider 07 (InferTheta) Adapter Tests
-====================================================================
+test_provider_07_adapter.py — Provider 07 Adapter Tests
+=======================================================
 
 Comprehensive test suite for the Bayesian Causal Suitability Oracle adapter.
 
@@ -49,9 +49,9 @@ from src.gateway.governance.seams.normative import (
     ValidationResult,
 )
 from src.integrations.provider_07 import (
-    InferThetaInferenceRequest,
-    InferThetaInferenceResponse,
     NormativeProviderError,
+    Provider07InferenceRequest,
+    Provider07InferenceResponse,
     Provider07JwksClient,
     Provider07NormativeProvider,
     verify_inference_signature,
@@ -120,7 +120,7 @@ def sign_response(
     private_key: Ed25519PrivateKey,
     kid: str = "test-key-001",
 ) -> dict[str, Any]:
-    """Generate a canonically signed InferTheta response payload."""
+    """Generate a canonically signed Provider 07 response payload."""
     # Add kid first (will be part of signed content)
     payload_with_kid = {**payload, "kid": kid}
 
@@ -145,7 +145,7 @@ def sign_response(
 
 @pytest.fixture
 def valid_request_payload() -> dict[str, Any]:
-    """Create a complete valid InferThetaInferenceRequest payload."""
+    """Create a complete valid Provider07InferenceRequest payload."""
     return {
         "scenario_id": "test-scenario-123",
         "action": "rebalance_portfolio",
@@ -324,7 +324,7 @@ class TestTriStateDecisionMapping:
         assert isinstance(result, ValidationResult)
         assert result.admitted is True
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
+        assert result.findings[0]["code"] == "PROVIDER_07_ALLOW"
         assert result.findings[0]["authority_record_id"] == "auth-token-12345"
         assert result.error is None
 
@@ -369,7 +369,7 @@ class TestTriStateDecisionMapping:
         valid_request_payload: dict[str, Any],
         ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
     ) -> None:
-        """REFUSE decision → admitted=False with INFERTHETA_UNSUITABLE."""
+        """REFUSE decision → admitted=False with PROVIDER_07_UNSUITABLE."""
         private_key, _ = ed25519_keypair
 
         unsigned_payload = {
@@ -394,7 +394,7 @@ class TestTriStateDecisionMapping:
 
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
+        assert result.findings[0]["code"] == "PROVIDER_07_UNSUITABLE"
         assert result.findings[0]["posterior_risk_score"] == 0.78
 
     @pytest.mark.asyncio
@@ -429,7 +429,7 @@ class TestTriStateDecisionMapping:
 
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
+        assert result.findings[0]["code"] == "PROVIDER_07_ESCALATE"
         assert result.findings[0]["needs_human_review"] is True
         assert result.findings[0]["posterior_risk_score"] == 0.55
 
@@ -449,7 +449,7 @@ class TestSignatureVerification:
         valid_request_payload: dict[str, Any],
         ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
     ) -> None:
-        """Unknown kid not in JWKS → admitted=False, INFERTHETA_UNKNOWN_KEY."""
+        """Unknown kid not in JWKS → admitted=False, PROVIDER_07_UNKNOWN_KEY."""
         private_key, _ = ed25519_keypair
 
         unsigned_payload = {
@@ -477,7 +477,7 @@ class TestSignatureVerification:
 
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_UNKNOWN_KEY"
+        assert result.findings[0]["code"] == "PROVIDER_07_UNKNOWN_KEY"
 
     @pytest.mark.asyncio
     async def test_validate_fria_invalid_signature(
@@ -486,7 +486,7 @@ class TestSignatureVerification:
         valid_request_payload: dict[str, Any],
         ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
     ) -> None:
-        """Signature verification failure → admitted=False, INFERTHETA_SIGNATURE_INVALID."""
+        """Signature verification failure → admitted=False, PROVIDER_07_SIGNATURE_INVALID."""
         private_key, _ = ed25519_keypair
 
         unsigned_payload = {
@@ -517,7 +517,7 @@ class TestSignatureVerification:
 
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_SIGNATURE_INVALID"
+        assert result.findings[0]["code"] == "PROVIDER_07_SIGNATURE_INVALID"
 
 
 # ---------------------------------------------------------------------------
@@ -689,16 +689,16 @@ class TestEnvironmentConfiguration:
     def test_from_env_instantiation(self) -> None:
         """from_env() reads PROVIDER_07_* environment variables."""
         env_vars = {
-            "PROVIDER_07_ENDPOINT": "http://infertheta.example.com",
+            "PROVIDER_07_ENDPOINT": "http://provider07.example.com",
             "PROVIDER_07_API_KEY": "test-key-abc",
-            "PROVIDER_07_JWKS_URL": "http://infertheta.example.com/.well-known/jwks.json",
+            "PROVIDER_07_JWKS_URL": "http://provider07.example.com/.well-known/jwks.json",
             "PROVIDER_07_TIMEOUT_SECONDS": "10.0",
         }
 
         with patch.dict(os.environ, env_vars, clear=False):
             adapter = Provider07NormativeProvider.from_env()
 
-        assert adapter._endpoint == "http://infertheta.example.com"
+        assert adapter._endpoint == "http://provider07.example.com"
         assert adapter._api_key == "test-key-abc"
         assert adapter._timeout_seconds == 10.0
 
@@ -822,13 +822,13 @@ def test_verify_inference_signature_invalid(
 
 
 # ---------------------------------------------------------------------------
-# Partner Contract Alignment Vectors (InferTheta Step 1 Review Package)
+# Partner Contract Alignment Vectors (Step 1 Review Package)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def partner_contract_vectors() -> list[dict[str, Any]]:
-    """Test vectors provided by InferTheta partner for Step 1 field-name lock."""
+    """Test vectors provided by Provider 07 partner for Step 1 field-name lock."""
     return [
         {
             "id": "allow",
@@ -1019,8 +1019,8 @@ def partner_contract_vectors() -> list[dict[str, Any]]:
     ]
 
 
-class TestInferThetaPartnerContractVectors:
-    """Test suite validating partner InferTheta contract vectors against adapter."""
+class TestProvider07PartnerContractVectors:
+    """Test suite validating partner Provider 07 contract vectors against adapter."""
 
     def test_partner_vectors_schema_validation(
         self,
@@ -1028,11 +1028,11 @@ class TestInferThetaPartnerContractVectors:
     ) -> None:
         """All partner test vectors parse strictly into CAGE Pydantic models."""
         for vector in partner_contract_vectors:
-            req = InferThetaInferenceRequest(**vector["request"])
+            req = Provider07InferenceRequest(**vector["request"])
             assert req.action in ("rebalance_portfolio", "execute_trade")
             assert req.proposed_trade.currency == "USD"
 
-            resp = InferThetaInferenceResponse(**vector["response"])
+            resp = Provider07InferenceResponse(**vector["response"])
             assert resp.decision in ("ALLOW", "REFUSE", "ESCALATE")
             assert 0.0 <= resp.confidence_score <= 1.0
             assert 0.0 <= resp.posterior_risk_score <= 1.0
@@ -1061,7 +1061,7 @@ class TestInferThetaPartnerContractVectors:
         assert isinstance(result, ValidationResult)
         assert result.admitted is True
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
+        assert result.findings[0]["code"] == "PROVIDER_07_ALLOW"
         assert (
             result.findings[0]["authority_record_id"]
             == "infertheta-step1-allow-unsigned"
@@ -1092,7 +1092,7 @@ class TestInferThetaPartnerContractVectors:
         assert isinstance(result, ValidationResult)
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
+        assert result.findings[0]["code"] == "PROVIDER_07_UNSUITABLE"
         assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.449457)
 
     @pytest.mark.asyncio
@@ -1121,7 +1121,7 @@ class TestInferThetaPartnerContractVectors:
         assert isinstance(result, ValidationResult)
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
+        assert result.findings[0]["code"] == "PROVIDER_07_ESCALATE"
         assert result.findings[0]["needs_human_review"] is True
         assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.257988)
 
@@ -1147,8 +1147,8 @@ class TestInferThetaPartnerContractVectors:
         assert isinstance(result, ValidationResult)
         assert result.admitted is False
         assert result.findings[0]["code"] in (
-            "INFERTHETA_UNKNOWN_KEY",
-            "INFERTHETA_SIGNATURE_INVALID",
+            "PROVIDER_07_UNKNOWN_KEY",
+            "PROVIDER_07_SIGNATURE_INVALID",
         )
 
     @pytest.mark.asyncio
@@ -1174,7 +1174,7 @@ class TestInferThetaPartnerContractVectors:
 
         assert isinstance(result, ValidationResult)
         assert result.admitted is True
-        assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
+        assert result.findings[0]["code"] == "PROVIDER_07_ALLOW"
         assert result.findings[0].get("step1_demo_mode") is True
         assert (
             result.findings[0]["authority_record_id"]
@@ -1466,8 +1466,8 @@ def step2_signed_partner_vectors(
     ]
 
 
-class TestInferThetaStep2SignedVectors:
-    """Hermetic verification of real InferTheta Step 2 signed vectors and JWK."""
+class TestProvider07Step2SignedVectors:
+    """Hermetic verification of real Provider 07 Step 2 signed vectors and JWK."""
 
     def _load_staging_public_key(self) -> Ed25519PublicKey:
         x_b64 = STEP2_STAGING_JWKS["keys"][0]["x"]
@@ -1503,10 +1503,10 @@ class TestInferThetaStep2SignedVectors:
         """Provider07NormativeProvider verifies real Step 2 JWKS and signed payloads across allow/refuse/escalate."""
         jwks_http_resp = _mock_http_response(STEP2_STAGING_JWKS)
         jwks_client = Provider07JwksClient(
-            jwks_url="https://infertheta-cage-staging.onrender.com/.well-known/jwks.json"
+            jwks_url="https://provider07-cage-staging.example.com/.well-known/jwks.json"
         )
         adapter = Provider07NormativeProvider(
-            endpoint="https://infertheta-cage-staging.onrender.com",
+            endpoint="https://provider07-cage-staging.example.com",
             api_key="test-key",
             jwks_client=jwks_client,
         )
@@ -1523,17 +1523,17 @@ class TestInferThetaStep2SignedVectors:
 
             if vector["id"] == "allow":
                 assert result.admitted is True
-                assert result.findings[0]["code"] == "INFERTHETA_ALLOW"
+                assert result.findings[0]["code"] == "PROVIDER_07_ALLOW"
                 assert (
                     result.findings[0]["authority_record_id"]
                     == "infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a"
                 )
             elif vector["id"] == "refuse":
                 assert result.admitted is False
-                assert result.findings[0]["code"] == "INFERTHETA_UNSUITABLE"
+                assert result.findings[0]["code"] == "PROVIDER_07_UNSUITABLE"
             elif vector["id"] == "escalate":
                 assert result.admitted is False
-                assert result.findings[0]["code"] == "INFERTHETA_ESCALATE"
+                assert result.findings[0]["code"] == "PROVIDER_07_ESCALATE"
                 assert result.findings[0]["needs_human_review"] is True
 
     @pytest.mark.asyncio
@@ -1546,10 +1546,10 @@ class TestInferThetaStep2SignedVectors:
 
         jwks_http_resp = _mock_http_response(STEP2_STAGING_JWKS)
         jwks_client = Provider07JwksClient(
-            jwks_url="https://infertheta-cage-staging.onrender.com/.well-known/jwks.json"
+            jwks_url="https://provider07-cage-staging.example.com/.well-known/jwks.json"
         )
         adapter = Provider07NormativeProvider(
-            endpoint="https://infertheta-cage-staging.onrender.com",
+            endpoint="https://provider07-cage-staging.example.com",
             api_key="test-key",
             jwks_client=jwks_client,
         )
@@ -1571,4 +1571,4 @@ class TestInferThetaStep2SignedVectors:
             result = await adapter.validate_fria(allow_vec["request"])
 
         assert result.admitted is False
-        assert result.findings[0]["code"] == "INFERTHETA_SIGNATURE_INVALID"
+        assert result.findings[0]["code"] == "PROVIDER_07_SIGNATURE_INVALID"

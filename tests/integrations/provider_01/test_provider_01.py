@@ -32,7 +32,7 @@ import pytest
 
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
-from src.integrations.provider_01.provider import FlowSignalNormativeProvider
+from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 # Hermetic: tests FlowSignal adapter with mocks, no live services.
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
@@ -52,9 +52,9 @@ _MAGNITUDES = ConsequenceMagnitudes(
 
 
 @pytest.fixture
-def adapter() -> FlowSignalNormativeProvider:
+def adapter() -> Provider01NormativeProvider:
     """Create an adapter with a mock endpoint."""
-    return FlowSignalNormativeProvider(
+    return Provider01NormativeProvider(
         endpoint="http://localhost:8080",
         api_key="test-api-key",
         timeout=5.0,
@@ -63,9 +63,9 @@ def adapter() -> FlowSignalNormativeProvider:
 
 
 @pytest.fixture
-def adapter_no_endpoint() -> FlowSignalNormativeProvider:
+def adapter_no_endpoint() -> Provider01NormativeProvider:
     """Create an adapter without an endpoint configured."""
-    return FlowSignalNormativeProvider(
+    return Provider01NormativeProvider(
         endpoint="",
         api_key="",
         timeout=5.0,
@@ -94,7 +94,7 @@ class TestProtocolCompliance:
     @pytest.mark.local
     async def test_fetch_baseline_returns_normative_baseline(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """fetch_baseline returns NormativeBaseline dataclass."""
         mock_response = _mock_response(
@@ -122,7 +122,7 @@ class TestProtocolCompliance:
     @pytest.mark.local
     async def test_validate_fria_returns_validation_result(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """validate_fria returns ValidationResult dataclass."""
         mock_response = _mock_response(
@@ -144,14 +144,14 @@ class TestProtocolCompliance:
         assert isinstance(result, ValidationResult)
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
+        assert result.findings[0]["code"] == "PROVIDER_01_REFUSE"
         assert result.error is None
 
     @pytest.mark.asyncio
     @pytest.mark.local
     async def test_submit_evidence_returns_evidence_seal(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """submit_evidence returns EvidenceSeal dataclass."""
         mock_response = _mock_response(
@@ -187,7 +187,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_http_status_error_on_validate_fria_returns_rich_findings(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """HTTPStatusError returns admitted=False with ENDPOINT_ERROR finding."""
         import httpx
@@ -218,7 +218,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_request_error_on_validate_fria_returns_rich_findings(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """RequestError returns admitted=False with ENDPOINT_ERROR finding."""
         import httpx
@@ -241,7 +241,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_http_status_error_on_fetch_baseline_returns_error(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """HTTPStatusError on fetch_baseline returns NormativeBaseline with error."""
         import httpx
@@ -268,7 +268,7 @@ class TestErrorHandling:
     @pytest.mark.local
     async def test_request_error_on_submit_evidence_returns_error(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """RequestError on submit_evidence returns EvidenceSeal with error."""
         import httpx
@@ -309,7 +309,7 @@ class TestFactoryRegistration:
         from src.gateway.governance.normative_provider import get_normative_provider
 
         provider = get_normative_provider("provider_01")
-        assert isinstance(provider, FlowSignalNormativeProvider)
+        assert isinstance(provider, Provider01NormativeProvider)
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +384,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_allow_mints_consequence_token(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """FlowSignal ALLOW mints a ConsequenceToken and attaches it as a finding."""
         from unittest.mock import patch
@@ -446,7 +446,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_minted_token_round_trips_verification(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """The minted ConsequenceToken can be verified and claims match inputs."""
         from unittest.mock import patch
@@ -515,7 +515,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_minted_token_integrates_with_consequence_gateway(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """Cross-module integration: minted token produces EXECUTE from ConsequenceGateway."""
         pytest.importorskip("fakeredis", reason="fakeredis required")
@@ -595,7 +595,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_mint_failure_fails_closed(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """If ConsequenceToken minting fails, validate_fria returns admitted=False."""
         from unittest.mock import MagicMock, patch
@@ -649,7 +649,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_refuse_does_not_mint_token(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """FlowSignal REFUSE does not mint a token."""
         from unittest.mock import patch
@@ -683,7 +683,7 @@ class TestConsequenceTokenMinting:
         # Assertions: no token minted, mint not called
         assert result.admitted is False
         assert len(result.findings) == 1
-        assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
+        assert result.findings[0]["code"] == "PROVIDER_01_REFUSE"
         assert "token" not in result.findings[0]
         mock_signer.sign_raw.assert_not_called()
         mock_signer.sign_raw_async.assert_not_called()
@@ -692,7 +692,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_escalate_does_not_mint_token(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """FlowSignal ESCALATE does not mint a token."""
         from unittest.mock import patch
@@ -735,7 +735,7 @@ class TestConsequenceTokenMinting:
     @pytest.mark.local
     async def test_flowsignal_allow_without_authority_record_fails_closed(
         self,
-        adapter: FlowSignalNormativeProvider,
+        adapter: Provider01NormativeProvider,
     ) -> None:
         """FlowSignal ALLOW without authority_record_id fails closed (Phase 2 ST-4).
 
@@ -791,7 +791,7 @@ class TestDualHeaderAuthentication:
 
     def test_headers_standard_bearer_only(self) -> None:
         """Adapter sets standard Authorization header when only API key is provided."""
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="http://localhost:8080",
             api_key="flowsignal-app-key-123",
             gcp_id_token="",
@@ -805,7 +805,7 @@ class TestDualHeaderAuthentication:
 
     def test_headers_dual_header_gcp_oidc(self) -> None:
         """Adapter sets both X-Serverless-Authorization and Authorization when gcp_id_token is set."""
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://flowsignal-staging.example.com",
             api_key="flowsignal-app-key-123",
             gcp_id_token="google-oidc-identity-token-xyz",
@@ -825,7 +825,7 @@ class TestDualHeaderAuthentication:
 
         monkeypatch.setattr(prov_mod, "_GCP_ID_TOKEN", "env-google-oidc-token")
 
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://flowsignal-staging.example.com",
             api_key="flowsignal-app-key-123",
         )
@@ -840,7 +840,7 @@ class TestDualHeaderAuthentication:
         monkeypatch.setattr(prov_mod, "_API_KEY_SECRET", "")
         monkeypatch.setattr(prov_mod, "_GCP_ID_TOKEN", "")
 
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="http://localhost:8080",
             api_key="",
             gcp_id_token="",
@@ -859,7 +859,7 @@ class TestMtlsConfiguration:
 
     def test_client_kwargs_with_full_mtls_bundle(self) -> None:
         """Adapter passes verify and cert tuple to httpx.AsyncClient when mTLS is configured."""
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://flowsignal-staging.example.com",
             api_key="test-key",
             timeout=5.0,
@@ -878,7 +878,7 @@ class TestMtlsConfiguration:
     @pytest.mark.local
     async def test_incomplete_mtls_cert_without_key_fails_closed(self) -> None:
         """Missing client_key when client_cert is set fails closed without making network calls."""
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="https://flowsignal-staging.example.com",
             api_key="test-key",
             client_cert="/etc/cage/tls/client.crt",
@@ -901,7 +901,7 @@ class TestMtlsConfiguration:
     @pytest.mark.local
     async def test_plain_http_rejected_when_mtls_configured(self) -> None:
         """Plain http:// endpoint is rejected fail-closed when mTLS material is configured."""
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint="http://flowsignal-staging.example.com",
             api_key="test-key",
             ca_bundle="/etc/cage/tls/ca.pem",

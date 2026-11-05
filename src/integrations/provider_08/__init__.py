@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-provider_08 — Verdict Runtime Evidence Normative Provider (Layer 3)
-====================================================================
+provider_08 — Runtime Evidence Normative Provider (Layer 3)
+============================================================
 
-Synchronous ``NormativeProvider`` adapter for Verdict Systems, an external
+Synchronous ``NormativeProvider`` adapter for ``provider_08``, an external
 runtime-evidence layer that holds sealed governance records outside the
 system that produced them and anchors each record commitment to the Sigstore
 Rekor transparency log.
 
 Public Exports:
 - ``Provider08NormativeProvider`` — the adapter (``from_env()`` for config)
-- Pydantic v2 wire models for the three Verdict endpoints
+- Pydantic v2 wire models for the three ``provider_08`` endpoints
 """
 
 from .adapter import (
@@ -34,10 +34,10 @@ from .adapter import (
     Provider08NormativeProvider,
 )
 from .schema import (
-    VerdictBaselineResponse,
-    VerdictEvidenceSealResponse,
-    VerdictFinding,
-    VerdictFriaResponse,
+    Provider08BaselineResponse,
+    Provider08EvidenceSealResponse,
+    Provider08Finding,
+    Provider08FriaResponse,
 )
 
 __all__ = [
@@ -46,9 +46,9 @@ __all__ = [
     "FINDING_CODE_EXTERNAL_HOLD",
     "FINDING_CODE_PARSE_ERROR",
     "FINDING_CODE_REFUSE",
+    "Provider08BaselineResponse",
+    "Provider08EvidenceSealResponse",
+    "Provider08Finding",
+    "Provider08FriaResponse",
     "Provider08NormativeProvider",
-    "VerdictBaselineResponse",
-    "VerdictEvidenceSealResponse",
-    "VerdictFinding",
-    "VerdictFriaResponse",
 ]

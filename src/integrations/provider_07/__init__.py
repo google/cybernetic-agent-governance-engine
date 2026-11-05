@@ -28,25 +28,25 @@ from .jwks_client import Provider07JwksClient
 from .schema import (
     ActionUtility,
     ClientProfile,
-    InferThetaBaselineResponse,
-    InferThetaEvidenceResponse,
-    InferThetaInferenceRequest,
-    InferThetaInferenceResponse,
     NormativeRule,
     ProposedTrade,
+    Provider07BaselineResponse,
+    Provider07EvidenceResponse,
+    Provider07InferenceRequest,
+    Provider07InferenceResponse,
 )
 from .signature import verify_inference_signature
 
 __all__ = [
     "ActionUtility",
     "ClientProfile",
-    "InferThetaBaselineResponse",
-    "InferThetaEvidenceResponse",
-    "InferThetaInferenceRequest",
-    "InferThetaInferenceResponse",
     "NormativeProviderError",
     "NormativeRule",
     "ProposedTrade",
+    "Provider07BaselineResponse",
+    "Provider07EvidenceResponse",
+    "Provider07InferenceRequest",
+    "Provider07InferenceResponse",
     "Provider07JwksClient",
     "Provider07NormativeProvider",
     "verify_inference_signature",

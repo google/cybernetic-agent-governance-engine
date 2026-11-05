@@ -13,7 +13,7 @@
 |---|---|
 | Protocol | [`NormativeProvider`](../../gateway/governance/normative_provider.py:273) |
 | Integration style | Synchronous gate, remote HTTP, on the request hot path |
-| Class | `FlowSignalNormativeProvider` ([`provider.py`](provider.py:273)) |
+| Class | `Provider01NormativeProvider` ([`provider.py`](provider.py:273)) |
 | Status | `INTERFACE READY` — HTTP client fully implemented; no endpoint configured |
 | Factory names | `provider_01`, alias `p01` |
 | Conformance suite | Registered in `NORMATIVE_PROVIDERS` ([`tests/test_normative_provider_conformance.py`](../../../tests/test_normative_provider_conformance.py:48)) |
@@ -40,12 +40,12 @@ v0.2) and sends the 37-field `CageAuthorityDetermineRequest` payload constructed
 
 `ALLOW` / `REFUSE` / `ESCALATE` — declared at
 [`provider.py:101`](provider.py:101), matched case-insensitively via
-`.upper().strip()` in [`_map_flowsignal_decision()`](provider.py:111).
+`.upper().strip()` in [`_map_provider_01_decision()`](provider.py:111).
 
 | `decision` | `admitted` | Finding code | Severity | Effect |
 |---|---|---|---|---|
 | `ALLOW` | `True` | `CONSEQUENCE_TOKEN` | `info` | ConsequenceToken JWS minted and attached |
-| `REFUSE` | `False` | `FLOWSIGNAL_REFUSE` | `blocked` | Hard deny |
+| `REFUSE` | `False` | `PROVIDER_01_REFUSE` | `blocked` | Hard deny |
 | `ESCALATE` | `False` | `EXTERNAL_HOLD` | `review` | `needs_human_review: True` → parks in `DeferQueue` |
 
 > **`REVIEW` is not part of this vocabulary.** `PASS` / `REVIEW` / `BLOCKED`
@@ -67,7 +67,7 @@ All of these yield `ValidationResult(admitted=False)`:
 ### `authority_record_id` is required on `ALLOW`
 
 On `ALLOW`, [`mint_consequence_token_finding()`](../../gateway/governance/consequence_token_service.py)
-(invoked from [`_map_flowsignal_decision()`](provider.py:150)) needs five inputs.
+(invoked from [`_map_provider_01_decision()`](provider.py:150)) needs five inputs.
 Two come from the CAGE-side FRIA payload (`actor_id`, `thread_id`); one is
 computed (SHA-256 over the JCS-canonicalized payload); and two come from the
 vendor response:

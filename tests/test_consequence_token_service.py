@@ -105,7 +105,8 @@ class TestConsequenceTokenService:
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"
         assert (
-            "authority_record_id missing from FlowSignal response" in finding["message"]
+            "authority_record_id missing from normative provider response"
+            in finding["message"]
         )
 
     async def test_mint_without_actor_id_fails_closed(self) -> None:

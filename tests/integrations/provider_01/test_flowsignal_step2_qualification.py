@@ -57,7 +57,7 @@ from src.gateway.governance.kms_signer import (
     reset_governance_signer,
 )
 from src.gateway.infrastructure.redis_replication import ReplicationPolicy
-from src.integrations.provider_01.provider import FlowSignalNormativeProvider
+from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
@@ -159,7 +159,7 @@ def test_step1_record_contains_complete_phase3_and_phase4_provenance() -> None:
 @respx.mock
 async def test_scb_001_refuse_with_authority_record_id_never_mints_token() -> None:
     """Verify REFUSE responses carrying authority_record_id never mint a ConsequenceToken."""
-    provider = FlowSignalNormativeProvider(
+    provider = Provider01NormativeProvider(
         endpoint="https://flowsignal.example.com",
         api_key="test-key",
     )
@@ -184,7 +184,7 @@ async def test_scb_001_refuse_with_authority_record_id_never_mints_token() -> No
     )
     assert result.admitted is False
     assert len(result.findings) == 1
-    assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
+    assert result.findings[0]["code"] == "PROVIDER_01_REFUSE"
     assert "token" not in result.findings[0]
 
 
@@ -195,7 +195,7 @@ async def test_zero_negative_or_nonfinite_magnitude_fails_closed_on_allow(
     bad_amount: float,
 ) -> None:
     """Verify zero, negative, or non-finite payment magnitudes fail closed even on ALLOW."""
-    provider = FlowSignalNormativeProvider(
+    provider = Provider01NormativeProvider(
         endpoint="https://flowsignal.example.com",
         api_key="test-key",
         consequence_magnitudes=_MAGNITUDES,
@@ -226,7 +226,7 @@ async def test_zero_negative_or_nonfinite_magnitude_fails_closed_on_allow(
 @respx.mock
 async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
     """Execute TC-01..TC-06 consequence token and receipt-vs-mandate separation vectors."""
-    provider = FlowSignalNormativeProvider(
+    provider = Provider01NormativeProvider(
         endpoint="https://flowsignal.example.com",
         api_key="test-key",
         consequence_magnitudes=_MAGNITUDES,
@@ -298,7 +298,7 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
             eval_mutated = await gateway.evaluate(token_1, mutated_payload)
             assert eval_mutated.decision == ConsequenceDecision.BLOCK
             assert eval_mutated.reason_code == "ACTION_BINDING_MISMATCH"
-            assert "flowsignal:token:rcpt-step2-0001" not in redis_stub.data
+            assert "consequence:token:rcpt-step2-0001" not in redis_stub.data
 
             # TC-01 (cont.): Unmutated payload consumes token_1 -> EXECUTE
             eval_ok = await gateway.evaluate(token_1, base_payload)
@@ -380,7 +380,7 @@ async def test_allow_without_authority_receipt_id_fails_closed_even_when_mandate
     """ALLOW omitting authority_receipt.id / authority_receipt_id fails closed
     with CONSEQUENCE_TOKEN_MINT_FAILED even when authority_record_id is present.
     """
-    provider = FlowSignalNormativeProvider(
+    provider = Provider01NormativeProvider(
         endpoint="https://flowsignal.example.com",
         api_key="test-key",
     )

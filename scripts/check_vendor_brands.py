@@ -17,10 +17,24 @@ import ast
 import sys
 from pathlib import Path
 
-# Vendor brand names that must not appear in kernel executable code
+# Vendor brand names that must not appear in kernel or conformance executable code
 # NOTE: This list may start empty if the tree is clean. An empty-but-wired gate
 # that catches the next violation is still worth having.
-FORBIDDEN_VENDOR_BRANDS: set[str] = {"langsmith", "langfuse", "openai"}
+FORBIDDEN_VENDOR_BRANDS: set[str] = {
+    "langsmith",
+    "langfuse",
+    "openai",
+    "flowsignal",
+    "flow_signal",
+    "archytan",
+    "nexart",
+    "primust",
+    "thoughtbox",
+    "thoughtproof",
+    "ackagent",
+    "infertheta",
+    "verdict_systems",
+}
 
 
 # Files that are allowed to contain vendor brand names
@@ -111,13 +125,14 @@ def should_skip(path: Path, base_dir: Path) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Check vendor brand literals in kernel"
+        description="Check vendor brand literals in kernel and conformance packages"
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
     repo_root = Path(__file__).parent.parent
     gateway_dir = repo_root / "src" / "gateway"
+    conformance_dir = repo_root / "packages" / "cage-conformance" / "src"
 
     if not gateway_dir.exists():
         print(f"❌ Gateway directory not found: {gateway_dir}", file=sys.stderr)
@@ -130,33 +145,38 @@ def main() -> int:
         )
         return 1
 
+    scan_dirs = [gateway_dir]
+    if conformance_dir.exists():
+        scan_dirs.append(conformance_dir)
+
     violations_found = False
     scanned_count = 0
 
-    for py_file in gateway_dir.rglob("*.py"):
-        if should_skip(py_file, gateway_dir):
-            continue
+    for scan_dir in scan_dirs:
+        for py_file in scan_dir.rglob("*.py"):
+            if should_skip(py_file, scan_dir):
+                continue
 
-        scanned_count += 1
-        violations = check_file(py_file)
+            scanned_count += 1
+            violations = check_file(py_file)
 
-        if violations:
-            violations_found = True
-            rel_path = py_file.relative_to(repo_root)
-            print(f"❌ {rel_path}:")
-            for line_num, literal in violations:
-                print(f"   Line {line_num}: '{literal}'")
+            if violations:
+                violations_found = True
+                rel_path = py_file.relative_to(repo_root)
+                print(f"❌ {rel_path}:")
+                for line_num, literal in violations:
+                    print(f"   Line {line_num}: '{literal}'")
 
     if violations_found:
         print()
         print(
-            "❌ Gate G8 FAILED: Found forbidden vendor brand literals in kernel code."
+            "❌ Gate G8 FAILED: Found forbidden vendor brand literals in kernel/conformance code."
         )
         print(f"   Forbidden brands: {', '.join(sorted(FORBIDDEN_VENDOR_BRANDS))}")
         print()
         print("   The kernel must be vendor-neutral. Vendor names are acceptable in:")
         print("   • Docstrings and comments (documentation and prose)")
-        print("   • Layer 3 adapter identifiers (src/integrations/provider_*/)")
+        print("   • Layer 3 adapter wire protocols (src/integrations/provider_*/)")
         print()
         print("   They must NOT appear in:")
         print("   • Enum members, string literals in executable code")
@@ -166,7 +186,9 @@ def main() -> int:
         return 1
 
     if args.verbose:
-        print(f"📊 Scanned {scanned_count} files in {gateway_dir}/")
+        print(
+            f"📊 Scanned {scanned_count} files across {', '.join(str(d) for d in scan_dirs)}"
+        )
     print(
         f"✅ Gate G8 PASSED: No vendor brand literals found (scanned {scanned_count} files)."
     )

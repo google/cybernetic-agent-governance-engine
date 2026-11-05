@@ -85,7 +85,7 @@ async def mint_consequence_token_finding(
             every adapter passes it explicitly; ``None`` (an adapter built
             without one) refuses every mint.
         authority_state_version: Optional authority state version.
-        ttl_seconds: Token time-to-live (default 60s per FlowSignal plan §5.4).
+        ttl_seconds: Token time-to-live (default 60s).
 
     Returns:
         A finding dict with code=CONSEQUENCE_TOKEN, severity=info, and the JWS
@@ -107,7 +107,9 @@ async def mint_consequence_token_finding(
         if not thread_id:
             raise ValueError("thread_id missing from action_payload")
         if not authority_record_id:
-            raise ValueError("authority_record_id missing from FlowSignal response")
+            raise ValueError(
+                "authority_record_id missing from normative provider response"
+            )
         if not action_payload:
             raise ValueError("action_payload is required")
 
@@ -130,7 +132,7 @@ async def mint_consequence_token_finding(
         # Get kernel signer singleton
         signer = get_governance_signer()
 
-        # Mint the token (60s TTL default per FlowSignal plan §5.4)
+        # Mint the token (60s TTL default)
         token = await ConsequenceToken.mint(
             sub=actor_id,
             tid=thread_id,

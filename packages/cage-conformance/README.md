@@ -62,7 +62,7 @@ conformant can fail it.
 ## Verify a live endpoint
 
 Run black-box HTTP conformance vectors against a live CAGE gateway (`substrate-v1`)
-or a partner normative endpoint (`flowsignal-v0.2`):
+or a partner normative endpoint (`provider-01-v0.2`):
 
 ```bash
 cage-conformance verify --endpoint https://gateway.example.test \
@@ -72,7 +72,7 @@ cage-conformance verify --endpoint https://gateway.example.test \
 
 `substrate-v1` checks `GET /governance/policy-version` (`active_hash` and
 `thresholds_digest` as 64-character lowercase SHA-256 hex digests) and
-`GET /governance/jwks` (`keys` array). `flowsignal-v0.2` runs the Phase 3
+`GET /governance/jwks` (`keys` array). `provider-01-v0.2` runs the Phase 3
 normative wire vectors (`CASE-1A`..`1F`), hostile response schema vectors
 (`CASE-1G-*`), and consequence bindings (`CASE-2A`, `2B`). Pass endpoint
 credentials via `--api-key-file` / `$CAGE_CONFORMANCE_API_KEY` or
@@ -191,9 +191,9 @@ only the first two postures, and `verify-report` rejects a report that claims
 either of the others. Only an attested report earns them (above;
 `docs/architecture/CONFORMANCE_VERIFIER_SPEC.md` §3.1).
 
-## Diagnose an `actuator_01` (Archytan) receipt
+## Diagnose an `actuator_01` receipt
 
-Run `cage-conformance diagnose-receipt path/to/receipt.json` (or pipe a receipt over stdin with `cage-conformance diagnose-receipt < receipt.json`, or run `python3 -m cage_conformance.receipt_diagnostic receipt.json` with `PYTHONPATH=packages/cage-conformance/src` and no CAGE checkout or third-party dependencies installed; a sample fixture derived from CAGE's README shape ships at `packages/cage-conformance/src/cage_conformance/vectors/actuator_01_readme_receipt.json`) against any captured Archytan receipt JSON. The tool makes no network calls and does not verify the Ed25519 signature; instead, it prints the exact signed-message preimage and SHA-256 digest CAGE constructs (`"ARCHYTAN_RECEIPT_V1:" || JCS(body without "signature" and "ingress_signature")`) alongside the preimage and SHA-256 digest for Archytan's signing scheme (`"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)`), lists which required fields (`envelope_digest` for CAGE, `intent_hash` for Archytan) are absent, and states the specific reconciliation failure reason (`preimage digest mismatch`, `missing envelope_digest`, or `both`). It exits `0` on agreement, `1` on any mismatch, and `2` if the input cannot be parsed as a JSON object (pass `--json` for machine-readable output).
+Run `cage-conformance diagnose-receipt path/to/receipt.json` (or pipe a receipt over stdin with `cage-conformance diagnose-receipt < receipt.json`, or run `python3 -m cage_conformance.receipt_diagnostic receipt.json` with `PYTHONPATH=packages/cage-conformance/src` and no CAGE checkout or third-party dependencies installed; a sample fixture derived from CAGE's README shape ships at `packages/cage-conformance/src/cage_conformance/vectors/actuator_01_readme_receipt.json`) against any captured `actuator_01` receipt JSON. The tool makes no network calls and does not verify the Ed25519 signature; instead, it prints the exact signed-message preimage and SHA-256 digest CAGE constructs (`"ARCHYTAN_RECEIPT_V1:" || JCS(body without "signature" and "ingress_signature")`) alongside the preimage and SHA-256 digest for the partner's signing scheme (`"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)`), lists which required fields (`envelope_digest` for CAGE, `intent_hash` for the partner) are absent, and states the specific reconciliation failure reason (`preimage digest mismatch`, `missing envelope_digest`, or `both`). It exits `0` on agreement, `1` on any mismatch, and `2` if the input cannot be parsed as a JSON object (pass `--json` for machine-readable output).
 
 ## License
 

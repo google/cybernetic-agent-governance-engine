@@ -47,7 +47,7 @@ marker recovered from a lost reply.
     False on a Redis failure.
 
 Key schema:
-  flowsignal:token:<rec>  →  "<SHA-256 binding hash>:<op id>"   (TTL 90 s)
+  consequence:token:<rec>  →  "<SHA-256 binding hash>:<op id>"   (TTL 90 s)
 
 The 90 s TTL is 1.5 times the ConsequenceToken's 60 s lifetime, so a token
 always expires before its marker. That suffices while ``rec`` names one
@@ -94,7 +94,7 @@ from src.gateway.infrastructure.redis_single_use import (
 
 logger = logging.getLogger(__name__)
 
-_KEY_PREFIX = "flowsignal:token:"
+_KEY_PREFIX = "consequence:token:"
 
 #: Re-write the marker on the current socket only while it is still ours.
 #: The SET advances this connection's replication offset, so the WAIT that
@@ -195,7 +195,7 @@ class ConsequenceAuthorityStore:
     def from_env(cls) -> ConsequenceAuthorityStore:
         """Construct from the environment.
 
-        Reads ``REDIS_URL``, ``FLOWSIGNAL_CONSUMPTION_TTL_SECONDS`` and the
+        Reads ``REDIS_URL``, ``CAGE_CONSEQUENCE_CONSUMPTION_TTL_SECONDS`` and the
         replication policy (``CAGE_REDIS_WAIT_REPLICAS``,
         ``CAGE_REDIS_WAIT_TIMEOUT_MS``, ``CAGE_STRICT_REPLICATION``; see
         ``ReplicationPolicy.from_env()``).
@@ -203,7 +203,9 @@ class ConsequenceAuthorityStore:
         from src.gateway.infrastructure.redis_client import build_async_redis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        ttl_seconds = int(os.environ.get("FLOWSIGNAL_CONSUMPTION_TTL_SECONDS", "90"))
+        ttl_seconds = int(
+            os.environ.get("CAGE_CONSEQUENCE_CONSUMPTION_TTL_SECONDS", "90")
+        )
         client = build_async_redis(redis_url, socket_timeout=3.0)
         return cls(
             client, replication=ReplicationPolicy.from_env(), ttl_seconds=ttl_seconds

@@ -310,7 +310,7 @@ def test_is_external_hold_finding_missing_needs_human_review():
 def test_is_external_hold_finding_wrong_code():
     """is_external_hold_finding() returns False for non-EXTERNAL_HOLD codes."""
     finding = {
-        "code": "FLOWSIGNAL_REFUSE",
+        "code": "PROVIDER_01_REFUSE",
         "severity": "blocked",
         "message": "Hard deny",
         "needs_human_review": True,  # Even with this, wrong code
