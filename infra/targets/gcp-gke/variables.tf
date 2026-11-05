@@ -1222,3 +1222,34 @@ variable "gcp_organization_id" {
   type        = string
   default     = "cage-sovereign"
 }
+
+# ─── Workload Identity Federation & Deployer / Partner-Harness Isolation (POAM-2026-165) ─
+
+variable "github_repository" {
+  description = "GitHub <owner>/<repo> bound by the Workload Identity Federation OIDC provider condition (POAM-2026-165)."
+  type        = string
+  default     = "google/cybernetic-agent-governance-engine"
+}
+
+variable "github_deployer_ref" {
+  description = "Git ref principal allowed to impersonate sa-cage-deployer via Workload Identity Federation (POAM-2026-165)."
+  type        = string
+  default     = "refs/heads/main"
+
+  validation {
+    condition     = startswith(var.github_deployer_ref, "refs/heads/") && !endswith(var.github_deployer_ref, "*")
+    error_message = "github_deployer_ref must be an exact branch ref under refs/heads/ (no wildcards)."
+  }
+}
+
+variable "partner_harness_kms_keyring" {
+  description = "Cloud KMS KeyRing name in var.region containing the partner harness signing key (POAM-2026-165)."
+  type        = string
+  default     = "cybernetics-keyring"
+}
+
+variable "partner_harness_kms_key" {
+  description = "Cloud KMS CryptoKey name granted to cage-partner-harness for CI partner integration signing (POAM-2026-165). Empty string skips the key binding."
+  type        = string
+  default     = "actuator-01-signing"
+}
