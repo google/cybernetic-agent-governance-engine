@@ -237,9 +237,7 @@ async def _map_provider_01_decision(
 
     if decision_upper == _PROVIDER_01_ESCALATE:
         # ESCALATE: soft deny for human review (DeferQueue parking)
-        message = data.get(
-            "message", "Provider 01 escalated — requires human approval"
-        )
+        message = data.get("message", "Provider 01 escalated — requires human approval")
         return False, [
             {
                 "code": FINDING_CODE_EXTERNAL_HOLD,

@@ -196,9 +196,7 @@ def test_readme_fixture_reports_preimage_digest_mismatch_and_exits_nonzero(
     assert "absent_required_fields:  intent_hash" in out
 
     expected_cage_sha256 = hashlib.sha256(capturing_key.verified_preimage).hexdigest()
-    expected_partner_preimage = f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}".encode(
-        "ascii"
-    )
+    expected_partner_preimage = f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}".encode("ascii")
     expected_partner_sha256 = hashlib.sha256(expected_partner_preimage).hexdigest()
 
     assert capturing_key.verified_preimage.decode("utf-8") in out

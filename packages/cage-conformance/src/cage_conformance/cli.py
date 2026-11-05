@@ -110,8 +110,8 @@ def _read(
 
 
 def _read_optional_secret(
-    secret_file: Optional[Path], env_vars: Sequence[str]
-) -> Optional[str]:
+    secret_file: Path | None, env_vars: Sequence[str]
+) -> str | None:
     """Read an optional credential from a file or environment, never from argv."""
     if secret_file is not None:
         val = secret_file.read_text(encoding="utf-8").strip()

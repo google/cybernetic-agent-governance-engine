@@ -251,7 +251,9 @@ async def test_live_allow_mints_a_bound_consequence_token(
     assert result.admitted is True, result
     (finding,) = result.findings
     assert finding["code"] == "CONSEQUENCE_TOKEN"
-    assert finding.get("authority_receipt_id"), "Provider 01 issued no authority receipt"
+    assert finding.get("authority_receipt_id"), (
+        "Provider 01 issued no authority receipt"
+    )
 
     claims = ConsequenceToken.verify(finding["token"], signer=signer)
     assert claims.rec

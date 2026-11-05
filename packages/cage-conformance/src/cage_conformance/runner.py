@@ -106,7 +106,7 @@ class HttpResponse:
 
 
 HttpRequester = Callable[
-    [str, str, Mapping[str, str], Optional[bytes], float], HttpResponse
+    [str, str, Mapping[str, str], bytes | None, float], HttpResponse
 ]
 
 
@@ -122,7 +122,7 @@ def http_request(
     method: str,
     url: str,
     headers: Mapping[str, str],
-    body: Optional[bytes] = None,
+    body: bytes | None = None,
     timeout_s: float = 15.0,
 ) -> HttpResponse:
     """Stdlib HTTP requester with strict scheme validation (Bandit B310)."""
@@ -280,7 +280,7 @@ def _load_profile_vectors(profile: str) -> tuple[InputDigest, dict[str, Any]]:
 
 def _validate_strict_response_schema(
     body: Mapping[str, Any], *, max_clock_skew_seconds: int = 300
-) -> Optional[str]:
+) -> str | None:
     """Validate a provider_01 v0.2 receipt against strict hash and timestamp rules."""
     for field_name in ("policy_pack_hash", "Canonical_payload_hash"):
         val = body.get(field_name)
@@ -400,7 +400,9 @@ def _run_substrate_v1(
                 assertion_id=cid,
                 title=title,
                 passed=not failures,
-                detail="; ".join(failures) if failures else f"HTTP {resp.status_code} OK",
+                detail="; ".join(failures)
+                if failures
+                else f"HTTP {resp.status_code} OK",
             )
         )
 
@@ -440,7 +442,7 @@ def _run_provider_01_v02(
                 req_body[key] = value
 
         raw_req = json.dumps(req_body, sort_keys=True).encode("utf-8")
-        case1a_passed_body: Optional[Mapping[str, Any]] = None
+        case1a_passed_body: Mapping[str, Any] | None = None
 
         try:
             resp = requester("POST", evaluate_url, post_headers, raw_req, timeout_s)
@@ -504,9 +506,8 @@ def _run_provider_01_v02(
                 if isinstance(error_obj, Mapping)
                 else (body.get("code") if isinstance(body, Mapping) else None)
             )
-            passed = (
-                resp.status_code == expected_status
-                and err_code == vec.get("expected_error_code")
+            passed = resp.status_code == expected_status and err_code == vec.get(
+                "expected_error_code"
             )
             assertions.append(
                 AssertionResult(
@@ -609,8 +610,8 @@ def verify_endpoint(
     *,
     profile: str,
     provenance: Provenance,
-    api_key: Optional[str] = None,
-    gcp_id_token: Optional[str] = None,
+    api_key: str | None = None,
+    gcp_id_token: str | None = None,
     timeout_s: float = 15.0,
     http_requester: HttpRequester = http_request,
 ) -> ConformanceReport:

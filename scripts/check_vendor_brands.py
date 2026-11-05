@@ -421,7 +421,9 @@ def main() -> int:
             "❌ LAYER3_WIRE_PROTOCOL_PROVENANCE contains unused allowlist entries (ceiling check):"
         )
         for unused in unused_wire_literals:
-            print(f"   • '{unused}' (cited in {LAYER3_WIRE_PROTOCOL_PROVENANCE[unused]})")
+            print(
+                f"   • '{unused}' (cited in {LAYER3_WIRE_PROTOCOL_PROVENANCE[unused]})"
+            )
 
     if violations_found:
         print()

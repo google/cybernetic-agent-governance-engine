@@ -39,3 +39,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 cage_conformance = ["py.typed", "parties.json", "vectors/*.json"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"

@@ -344,12 +344,12 @@ BAD_URL = "https://flowsignal.example.com/v1/evaluate"
 
         # Rejects citing a .md/.json artifact that does not contain the literal
         spec_file = tmp_path / "spec.md"
-        spec_file.write_text("# Partner Spec\nNo such constant here.\n", encoding="utf-8")
+        spec_file.write_text(
+            "# Partner Spec\nNo such constant here.\n", encoding="utf-8"
+        )
         errs_missing = check_wire_literal_provenance(
             tmp_path,
             {"flowsignal-unverified-constant": "spec.md"},
         )
         assert len(errs_missing) == 1
         assert "not found in cited provenance artifact" in errs_missing[0]
-
-

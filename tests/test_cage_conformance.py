@@ -467,9 +467,7 @@ def _endpoint_provenance(profile: str = "substrate-v1") -> cc.Provenance:
     return cc.build_provenance(_adapter(contract_profile=profile), _runner())
 
 
-def _substrate_requester(
-    *, omit_thresholds_digest: bool = False
-) -> cc.HttpRequester:
+def _substrate_requester(*, omit_thresholds_digest: bool = False) -> cc.HttpRequester:
     def _req(
         method: str,
         url: str,
@@ -521,9 +519,9 @@ def _provider_01_requester(
             return cc.HttpResponse(
                 status_code=422,
                 headers={"content-type": "application/json"},
-                body=json.dumps(
-                    {"error": {"code": "SCHEMA_VALIDATION_FAILED"}}
-                ).encode("utf-8"),
+                body=json.dumps({"error": {"code": "SCHEMA_VALIDATION_FAILED"}}).encode(
+                    "utf-8"
+                ),
             )
         if req.get("mandate_valid_until") == "2025-12-31T23:59:59Z":
             verdict, reason = "DENY", "MANDATE_EXPIRED"
@@ -712,14 +710,16 @@ def test_cli_endpoint_mode_and_verify_report(
     monkeypatch.setattr(
         cli_mod,
         "verify_endpoint",
-        lambda url, *, profile, provenance, api_key=None, gcp_id_token=None, timeout_s=15.0: cc.verify_endpoint(
-            url,
-            profile=profile,
-            provenance=provenance,
-            api_key=api_key,
-            gcp_id_token=gcp_id_token,
-            timeout_s=timeout_s,
-            http_requester=_substrate_requester(),
+        lambda url, *, profile, provenance, api_key=None, gcp_id_token=None, timeout_s=15.0: (
+            cc.verify_endpoint(
+                url,
+                profile=profile,
+                provenance=provenance,
+                api_key=api_key,
+                gcp_id_token=gcp_id_token,
+                timeout_s=timeout_s,
+                http_requester=_substrate_requester(),
+            )
         ),
     )
     key_file = tmp_path / "api.key"
